@@ -35,6 +35,7 @@ from . import _render as T
 from . import _incpath as INC
 from ._builtins import require_param_names
 from ._object import _regenerate_module
+from ._report import Refusal
 
 # A function param is ``(name, type)``; ``(name, type, is_out)`` for a writable
 # array output param (``--out-param``), where a truthy third element renders the
@@ -376,6 +377,24 @@ def run(
     if _status_err:
         print(f"error: {_status_err}", file=sys.stderr)
         sys.exit(1)
+
+    # gh-1888: an output the binding allocates and the C fills blind needs a
+    # length the call carries -- an array param's, or the integer param a
+    # `T[n]` names. Without one it got ONE element, and a kernel filling
+    # `n` wrote past it. Refused here, before any C is written, by the check
+    # the renderer makes; `apply`'s replay comes through here too.
+    _len_err = T.out_length_why_not(
+        {
+            "name": fn_name,
+            "params": rows,
+            "out_type": out_type,
+            "out_size": out_size,
+            "variable_output": variable_output,
+            "result_fields": result_fields,
+        }
+    )
+    if _len_err:
+        raise Refusal(_len_err)
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():

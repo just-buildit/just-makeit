@@ -1843,6 +1843,18 @@ def run(
     # it is the first one that needs the manifest -- what is declared is a
     # property of the project, not of this command line.
     _declared_records = C.records(cfg, object_name)
+    # gh-2068: `--record-dtype` naming a SCALAR element wrote a prototype
+    # over a type name no C type carries, and exited 0. `apply` replays the
+    # manifest through here, so a hand-written row is refused by this same
+    # call. First, because the columns check below would otherwise answer
+    # with a message about columns a scalar does not have.
+    _scalar_why = _record.record_dtype_why_not(
+        f"method '{object_name}.{method_name}'",
+        record_dtype,
+        _declared_records,
+    )
+    if _scalar_why:
+        raise _report.Refusal(_scalar_why)
     _restated = _record.restated_columns(
         {
             "name": method_name,

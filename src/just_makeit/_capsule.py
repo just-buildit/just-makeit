@@ -585,7 +585,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     """
     mp = C.module_paths(module)
     leaf, cname = mp.leaf, mp.cname
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
 
     link_cores = C.dep_link_libs(C.capsule_depends_on(cfg, module))
     extra = C.capsule_extra_link_libs(cfg, module)
@@ -741,7 +741,7 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
     require_scope_names(arg_scopes(cfg, module))  # gh-1525
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
 
     _write(
         root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",

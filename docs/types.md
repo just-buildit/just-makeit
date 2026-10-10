@@ -33,10 +33,10 @@ and `<pkg>_<comp>_set_<name>(state, src)`. In Python these are
 view) and `set_<name>(ndarray)`. In C you can also index
 `state->name[i]` directly.
 
-The element type `T` must be one of the
-[array-element types](#array-element-types) — a strict subset of the
-scalar registry (excludes `bool`, `int`, `const char *`,
-`long double _Complex`).
+Which element types `T` may be depends on the slot, and the
+[Supported types](#supported-types) table has a column for each: a step's
+`T[]` takes any type marked **IO**, an array parameter's `T[]` any marked
+**A**, and a state `T[N]` any marked **N**.
 
 ### Pointers — three forms in generated code
 
@@ -88,42 +88,50 @@ take over; the renderer steps aside.
 Every type registered in `_CTYPE_META`, plus the array shapes and
 opaque. Slot legality:
 
-- **S** — state field (`--state`)
-- **IO** — step input / output (`--arg-type`, `--return-type`)
+- **S** — state field (`--state name:T`)
+- **N** — element of a fixed state array (`--state name:T[N]`)
+- **IO** — step input / output (`--arg-type`, `--return-type`), as a
+    scalar and as the element of a step `T[]`
 - **I** — init param (`--init-param`)
 - **P** — function / method param (`--param`)
-- **A** — array element (legal as `T` in `T[]` or `T[N]`)
+- **A** — element of an array parameter or result: `T[]` in `--param`,
+    `--out-param` and `--init-param`, and `--out-type`
 
-| C type                 | NumPy dtype      | S   | IO  | I   | P   | A   | Zero literal          |
-| ---------------------- | ---------------- | --- | --- | --- | --- | --- | --------------------- |
-| `float`                | `np.float32`     | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0f`                |
-| `double`               | `np.float64`     | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0`                 |
-| `int`                  | `np.int32`       | ✓   | ✓   | ✓   | ✓   |     | `0`                   |
-| `bool`                 | `np.bool_`       | ✓   | ✓   | ✓   | ✓   |     | `0`                   |
-| `int8_t`               | `np.int8`        | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
-| `int16_t`              | `np.int16`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
-| `int32_t`              | `np.int32`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
-| `int64_t`              | `np.int64`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
-| `uint8_t`              | `np.uint8`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
-| `uint16_t`             | `np.uint16`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
-| `uint32_t`             | `np.uint32`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
-| `uint64_t`             | `np.uint64`      | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
-| `size_t`               | `np.uintp`       | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
-| `ptrdiff_t`            | `np.intp`        | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
-| `float _Complex`       | `np.complex64`   | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0f + 0.0f * I`     |
-| `double _Complex`      | `np.complex128`  | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0 + 0.0 * I`       |
-| `long double _Complex` | `np.clongdouble` | ✓   | ✓   | ✓   | ✓   |     | `0.0L + 0.0L * I`     |
-| `const char *`         | `str`            |     |     | ✓   | ✓   |     | `NULL`                |
-| `void`                 | (none)           |     | ✓   |     |     |     | — (`--arg-type void`) |
-| `T[N]` (fixed array)   | (none — C-only)  | ✓   |     |     |     |     | `{0}`                 |
-| `T[]` (variable array) | (T's dtype)      |     | ✓   | ✓   | ✓   |     | numpy-owned           |
-| *opaque* (declared)    | (none)           | ✓   |     |     |     |     | user-managed          |
+| C type                 | NumPy dtype      | S   | N   | IO  | I   | P   | A   | Zero literal          |
+| ---------------------- | ---------------- | --- | --- | --- | --- | --- | --- | --------------------- |
+| `float`                | `np.float32`     | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0f`                |
+| `double`               | `np.float64`     | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0`                 |
+| `int`                  | `np.int32`       | ✓   | ✓   | ✓   | ✓   | ✓   |     | `0`                   |
+| `bool`                 | `np.bool_`       | ✓   |     | ✓   | ✓   | ✓   |     | `0`                   |
+| `int8_t`               | `np.int8`        | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `int16_t`              | `np.int16`       | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `int32_t`              | `np.int32`       | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `int64_t`              | `np.int64`       | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `uint8_t`              | `np.uint8`       | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
+| `uint16_t`             | `np.uint16`      | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
+| `uint32_t`             | `np.uint32`      | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
+| `uint64_t`             | `np.uint64`      | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0U`                  |
+| `size_t`               | `np.uintp`       | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `ptrdiff_t`            | `np.intp`        | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0`                   |
+| `float _Complex`       | `np.complex64`   | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0f + 0.0f * I`     |
+| `double _Complex`      | `np.complex128`  | ✓   | ✓   | ✓   | ✓   | ✓   | ✓   | `0.0 + 0.0 * I`       |
+| `long double _Complex` | `np.clongdouble` | ✓   | ✓   | ✓   | ✓   | ✓   |     | `0.0L + 0.0L * I`     |
+| `const char *`         | `str`            |     |     |     | ✓   | ✓   |     | `NULL`                |
+| `void`                 | (none)           |     |     | ✓   |     |     |     | — (`--arg-type void`) |
+| `T[N]` (fixed array)   | (none — C-only)  | ✓   |     |     |     |     |     | `{0}`                 |
+| `T[]` (variable array) | (T's dtype)      |     |     | ✓   | ✓   | ✓   |     | numpy-owned           |
+| *opaque* (declared)    | (none)           | ✓   |     |     |     |     |     | user-managed          |
 
 Notes:
 
-- `bool` and `int` are not array element types: `bool` doesn't fit
-    the numpy parse path (use `uint8_t` for byte arrays); `int` has
-    platform-dependent width (use `int32_t`).
+- **The three array slots take three element sets.** A step `T[]` takes
+    every step type, so `bool[]`, `int[]` and `long double _Complex[]`
+    arrive as `np.bool_`, `np.int32` and `np.clongdouble` arrays. An array
+    parameter (and `--out-type`) takes only the **A** column: spell those
+    three `uint8_t[]`, `int32_t[]` and `double _Complex[]` there. A state
+    `T[N]` takes the **A** column plus `int` and `long double _Complex`,
+    whose width the struct fixes; `bool[N]` is refused, so use
+    `uint8_t[N]`.
 
 - `const char *` can't be a state field (no lifetime story) or a step
     input / output (no per-sample semantics). It is legal as an
@@ -136,13 +144,9 @@ Notes:
     `return_type`, as a scalar and as a `T[]` element (see
     [Scalar shapes](#scalar-shapes)).
 
-- A fixed state array `T[N]` takes the array element types above plus
-    `int` and `long double _Complex`, whose width the struct fixes. `bool[N]`
-    is refused: use `uint8_t[N]`.
-
-- `long double _Complex` is truncated to `double _Complex` at the
-    Python boundary; not legal as an array element (no contiguous
-    numpy dtype).
+- A `long double _Complex` **scalar** is truncated to `double _Complex`
+    at the Python boundary. Its arrays are not: a step `T[]` and a state
+    `T[N]` of it cross as `np.clongdouble`.
 
 - **There is no complex-integer type, and integer IQ is a structured
     array.** C's `_Complex` is float-only and numpy has no complex-integer
@@ -171,11 +175,8 @@ Notes:
 
 - `void` is special — only legal as `--arg-type` or `--return-type`,
     where it strips that side of the step signature
-    ([generator](templates/generator.md), [consumer](templates/consumer.md)).
-
-- `bool` is a usable scalar everywhere a scalar is legal (state, step
-    IO, init-param, function param) — it just isn't an *array element*
-    type (use `uint8_t` for byte arrays).
+    ([generator](templates/generator.md), [consumer](templates/consumer.md)),
+    and never as an array element.
 
 - Array **input** (`T[]` as `--arg-type`, `--param`, `--out-param`)
     works. Array **return** (`--return-type "T[]"`) is supported via
@@ -289,6 +290,7 @@ default is supplied.
 | `uint64_t`  | `uint64_t`   | `np.uint64` | `0U`         |
 | `size_t`    | `size_t`     | `np.uintp`  | `0`          |
 | `ptrdiff_t` | `ptrdiff_t`  | `np.intp`   | `0`          |
+| `bool`      | `bool`       | `np.bool_`  | `0`          |
 
 Fixed-width types require `<stdint.h>`, which is included via `clib_common.h`.
 They are parsed through the nearest standard integer type and cast to the
@@ -298,6 +300,9 @@ declared type in the generated extension.
 and index arithmetic. They map to NumPy's `uintp` and `intp` respectively.
 
 `int` is kept for convenience; prefer `int32_t` when bit-width matters.
+
+`bool` is parsed with CPython's `p` format, so any truthy Python value sets
+it, and its getter returns a Python `bool`.
 
 ### Complex
 
@@ -313,8 +318,9 @@ Python boundary.
 
 ### Fixed-length arrays
 
-Append `[N]` to any scalar type to embed a fixed-length C array directly inside
-the state struct. `N` must be a positive integer literal.
+Append `[N]` to a type marked **N** in [Supported types](#supported-types) to
+embed a fixed-length C array directly inside the state struct. `N` must be a
+positive integer literal.
 
 ```sh
 --state "coeffs:float[16]"            # float coeffs[16];
@@ -374,6 +380,27 @@ Explicit defaults must be valid C literals for the type:
 > **Note:** Complex defaults are C complex literals:
 > `--state 'pole:double _Complex:1.0+2.0*I'` (the stub shows `(1+2j)`).
 
+A default is one value with two spellings. The C faces write it as declared;
+every Python face (the generated test, the stub's signature and doctest, the
+runtime docstring) writes the same value in Python (gh-1946):
+
+| Declared (C)           | Python spelling                       |
+| ---------------------- | ------------------------------------- |
+| `0.1L`, `1.5f`, `7ULL` | `0.1`, `1.5`, `7` (suffix dropped)    |
+| `017` (octal), `0x1F`  | `0o17`, `0x1F`                        |
+| `2` in a `double`      | `2.0`                                 |
+| `0.1f` in a `double`   | `0.10000000149011612` (what C stores) |
+
+Two literals have no Python spelling and are refused where they are declared:
+an octal with an 8 or 9 in it (`08`, which C refuses too), and a floating
+literal for an integer type (`1.5` or `1e3` into an `int`, which C converts
+silently and Python refuses).
+
+A stub's doctest prints what the getter returns, which for a `float` or
+`float _Complex` field is the declared value rounded to single precision:
+`--state 'z:float _Complex:0.1'` reads back `(0.10000000149011612+0j)`
+(gh-1947).
+
 ## C to Python mapping
 
 Getters return the matching Python scalar (`float`, `int`, `complex`, `bool`);
@@ -415,10 +442,11 @@ plus a few shape forms.
 
 ### Scalar shapes
 
-Every type in [State variable types](#state-variable-types) except
-`const char *` is also a legal `--arg-type` / `--return-type` value.
-Strings can't flow through a sample-by-sample DSP step: `steps()` moves a
-block of samples as an ndarray, which has no dtype for a C string. `jm new`,
+Every type marked **IO** in [Supported types](#supported-types) is a legal
+`--arg-type` / `--return-type` value: every registered type except
+`const char *`. Strings can't flow through a sample-by-sample DSP step:
+`steps()` moves a block of samples as an ndarray, which has no dtype for a
+C string. `jm new`,
 `jm object` (every `--preset` included) and `jm apply` of a manifest
 `arg_type` / `return_type` refuse it, as a scalar and as a `T[]` element,
 with one `error:` line, before anything is written. Take text as an
@@ -426,14 +454,17 @@ init-param or a method `--param` instead.
 
 ### Array shape — `T[]`
 
-Append `[]` to any element type from the
-[array dtypes](#array-element-types) table to declare an input array
-parameter that arrives as a numpy ndarray and expands to
+Append `[]` to any [scalar shape](#scalar-shapes) to declare an input
+array that arrives as a numpy ndarray of that type's dtype and expands to
 `(const T *name, size_t name_len)` in C.
 
 ```sh
 jm object xform --arg-type "float[]" --return-type "float[]"
 ```
+
+That is wider than what an array *parameter* takes
+([below](#array-element-types)): `bool[]`, `int[]` and
+`long double _Complex[]` are step arrays, not parameter arrays.
 
 ### The `void` shape
 
@@ -445,11 +476,15 @@ Pass `void` to either flag to omit that side of the signature:
 | `--arg-type T --return-type void` | Consumer: `step()` returns nothing.              | [consumer](templates/consumer.md)                            |
 | `--no-step`                       | Custom verbs only; no auto `step()` / `steps()`. | [reader](templates/reader.md) (adds a `filepath` init-param) |
 
-### Element types accepted in the array form { #array-element-types }
+______________________________________________________________________
 
-The element-type set is a strict subset of `_CTYPE_META` — `bool`,
-`int`, `const char *`, and `long double _Complex` are not legal array
-elements (no canonical numpy dtype).
+## Array parameter element types { #array-element-types }
+
+An array passed to a method or module function (`--param name:T[]`,
+`--out-param name:T[]`) or to the constructor (`--init-param name:T[]`),
+and the element of an `--out-type` result, takes one of these: the **A**
+column of [Supported types](#supported-types). A step's `T[]` takes more
+([Array shape](#array-shape-t)), and a state `T[N]` the **N** column.
 
 | `T[]` form          | C element         | NumPy dtype     |
 | ------------------- | ----------------- | --------------- |
@@ -558,10 +593,13 @@ choices or 2-D arrays.
 | `--out-param name:T[]` | Array shapes **only**. Drops `const`. Rejected for scalars (gh-72).                                                                                           |
 
 `jm function --out-type T` makes the function return a fresh ndarray sized
-from the first array param's length, or — when no array param is present —
-from the first integer scalar param (gh-65). With `--variable-output`,
+from the first array param's length. `--out-type 'T[n]'` names the integer
+param that holds the length instead (`make_window(512)` from
+`--param n:size_t --out-type 'float[n]'`). With `--variable-output`,
 `--out-size EXPR` sizes it with a C expression over the arguments instead,
-and the C function returns how many elements it wrote.
+and the C function returns how many elements it wrote. The C function is
+handed only the pointer, never the length, so an output with none of these
+is refused rather than guessed at (gh-1888).
 
 ______________________________________________________________________
 

@@ -39,7 +39,13 @@ from . import _incpath as INC
 from . import _csym as CSYM
 from . import _types as T
 from ._context._modpath import module_docstring_lines, module_m_doc
-from ._context._parse import _build_ml_doc, capsule_unwrap_c
+from ._capsule import scalar_meta
+from ._context._parse import (
+    _build_ml_doc,
+    capsule_unwrap_c,
+    scalar_arg_c,
+    scalar_parse_c,
+)
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 from ._docstring import (
     ClassParam,
@@ -55,16 +61,14 @@ from ._pyfmt import reflow_pyi
 
 # ── C type / format helpers ──────────────────────────────────────────────────
 
-# PyArg_ParseTupleAndKeywords format char per C scalar type. Enum fields cross
-# as Python strings ("s"); a bytes buffer crosses opaquely ("O").
-_FMT = {
-    "int": "i",
-    "double": "d",
-    "float": "f",
-    "uint32_t": "I",
-    "uint64_t": "K",
-    "size_t": "n",
-}
+#: The C scalar types a SOURCE field may declare. Which types, not how they
+#: convert: every face converts a field through its `_CTYPE_META` row
+#: (`scalar_arg_c`, `scalar_parse_c`, `to_py`). gh-2035: this was a table of
+#: format chars beside `_CTYPE_META`'s, and a serializer param looked its
+#: type up here with `"i"` as the fallback -- so an `int64_t` was parsed
+#: four bytes wide and `-1` reached C as 4294967295. Enum fields cross as
+#: Python strings ("s"); a bytes buffer crosses opaquely ("O").
+_SOURCE_SCALARS = ("double", "float", "int", "size_t", "uint32_t", "uint64_t")
 
 
 #: Keys a composer field row legitimately carries -- the registry's set, not
@@ -118,20 +122,20 @@ def _field_fmt(field: dict) -> str:
         raise ValueError(
             f"composer source field '{name}': no `type`.{why} A field crosses "
             f"as a C scalar, so it needs `type` -- one of "
-            f"{', '.join(sorted(_FMT))} -- or one of the shapes that stands in "
-            f"for one: `enum`, `bytes = true`, `complex = true`, or an owned pointer "
-            f"(`{'`, `'.join(OWNED_PTR_FNS)}`, gh-1711)."
+            f"{', '.join(_SOURCE_SCALARS)} -- or one of the shapes that "
+            f"stands in for one: `enum`, `bytes = true`, `complex = true`, or "
+            f"an owned pointer (`{'`, `'.join(OWNED_PTR_FNS)}`, gh-1711)."
         )
-    if field["type"] not in _FMT:
+    if field["type"] not in _SOURCE_SCALARS:
         raise ValueError(
             f"composer source field '{field.get('name', '<unnamed>')}': "
             f'`type = "{field["type"]}"` is not a type a field can cross '
-            f"as; jm marshals {', '.join(sorted(_FMT))}, or use `enum`, "
+            f"as; jm marshals {', '.join(_SOURCE_SCALARS)}, or use `enum`, "
             f"`bytes = true` or `complex = true`. A pointer the source owns "
             f"is an owned pointer: name {', '.join(OWNED_PTR_FNS)} beside "
             f"it (gh-1711)."
         )
-    return _FMT[field["type"]]
+    return T.param_fmt(field["type"])
 
 
 def _field_is_buffer(field: dict) -> bool:
@@ -682,17 +686,76 @@ def _field_is_enum(field: dict) -> bool:
     return bool(field.get("enum"))
 
 
-def _to_py_scalar(ctype: str, expr: str) -> str:
-    """C expression building a PyObject from a scalar struct member."""
-    if ctype in ("double", "float"):
-        return f"PyFloat_FromDouble((double){expr})"
-    if ctype == "uint64_t":
-        return f"PyLong_FromUnsignedLongLong((unsigned long long){expr})"
-    if ctype == "uint32_t":
-        return f"PyLong_FromUnsignedLong((unsigned long){expr})"
-    if ctype == "size_t":
-        return f"PyLong_FromSize_t((size_t){expr})"
-    return f"PyLong_FromLong((long){expr})"
+def _row(module: str, table: str, name: str) -> str:
+    """How a refusal names one composer row.
+
+    >>> _row("mix", "settings", "gain")
+    "composer module 'mix' settings row 'gain'"
+    """
+    return f"composer module '{module}' {table} row '{name}'"
+
+
+def _number_meta(ctype: str, where: str) -> dict:
+    """The ``_CTYPE_META`` row of a composer row that crosses as one number.
+
+    gh-2035: a composer's settings, segment fields, computed properties and
+    source fields converted their value without reading its declared type --
+    every setting through ``PyLong_AsLong`` / ``PyLong_FromLong``, the rest
+    through two private helpers that knew five types and sent every other one
+    through ``long``. So a ``double`` setting read back truncated, a ``bool``
+    read back as an ``int`` and a complex lost its imaginary part, all
+    without an error. Every one of those faces now converts by this row, the
+    one each object face converts by: ``to_py`` out, and
+    :func:`~just_makeit._context._parse.scalar_parse_c` /
+    :func:`~just_makeit._context._parse.scalar_arg_c` in.
+
+    The lookup is :func:`~just_makeit._capsule.scalar_meta`, so an array or a
+    spelling jm does not know is refused, naming the row (gh-2009), before
+    anything is written. A string is refused too: these rows hold a number,
+    and a ``const char *`` a segment kept would point into a Python object
+    that does not outlive the call.
+
+    Raises
+    ------
+    Refusal
+        When *ctype* is not a number jm converts.
+
+    Examples
+    --------
+    >>> _number_meta("double", "x")["fmt"]
+    'd'
+    >>> try:
+    ...     _number_meta("const char *", "composer module 'm' settings row 's'")
+    ... except Refusal as e:
+    ...     print(e)
+    composer module 'm' settings row 's': `type = "const char *"` is a string, and this row crosses as one number: a numeric C scalar.
+    """
+    meta = scalar_meta(ctype, where)
+    if meta["kind"] == "str":
+        raise Refusal(
+            f'{where}: `type = "{ctype}"` is a string, and this row crosses '
+            f"as one number: a numeric C scalar."
+        )
+    return meta
+
+
+def _one_real_number(f: dict, module: str, face: str) -> None:
+    """Refuse a segment field *face* would carry as one real number.
+
+    gh-2035: the JSON face writes every segment field as a ``double``
+    (``cJSON_AddNumberToObject``) and the CLI face reads one with
+    ``strtod`` / ``strtoull``; a complex field compiled through both and
+    lost its imaginary part on every round trip. The Python face converts a
+    complex now, so the field is refused only where it would be truncated.
+    """
+    where = _row(module, "segment.fields", f["name"])
+    if _number_meta(f["type"], where)["kind"] == "complex":
+        raise Refusal(
+            f'{where}: `type = "{f["type"]}"` is complex, and the {face} '
+            f"carries a segment field as one real number, so its imaginary "
+            f"part would be dropped. Declare the real and imaginary parts as "
+            f"two fields."
+        )
 
 
 # ── enum SSOT → C tables ─────────────────────────────────────────────────────
@@ -972,19 +1035,51 @@ def arg_scopes(
             f"composer module '{module}' source field",
             f"{src['type_name']}_init",
             list(src.get("fields", [])),
-            SOURCE_INIT_LOCALS,
+            SOURCE_INIT_LOCALS
+            | _raw_locals(
+                f for f in _source_fields(cfg, module) if _is_plain_scalar(f)
+            ),
         )
     ]
     for s in C.composer_serializers(cfg, module):
+        params = list(s.get("params", []))
         scopes.append(
             (
                 f"composer module '{module}' serializer '{s['name']}'",
                 f"{cname}_{s['name']}",
-                list(s.get("params", [])),
-                SERIALIZER_LOCALS,
+                params,
+                SERIALIZER_LOCALS
+                | _raw_locals(p for p in params if not p.get("enum")),
             )
         )
     return scopes
+
+
+def _is_plain_scalar(f: dict) -> bool:
+    """A source field that crosses as one C scalar: none of the shapes
+    (enum string, bytes / complex buffer, ranged pair, owned pointer) that
+    parse a Python object of their own."""
+    return not (
+        _field_is_enum(f)
+        or _field_is_buffer(f)
+        or f.get("_ranged")
+        or _field_is_owned_ptr(f)
+    )
+
+
+def _raw_locals(rows) -> "frozenset[str]":
+    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for *rows*.
+
+    gh-2035: a scalar whose format char writes another width -- a
+    ``size_t``, a ``bool``, a complex -- is parsed into ``<name>_raw`` and
+    converted, so a sibling row named that would redeclare it (gh-1525).
+    A type jm does not know declares nothing here; the render refuses it.
+    """
+    return frozenset(
+        f"{r['name']}_raw"
+        for r in rows
+        if "parse_type" in T._CTYPE_META.get(r.get("type", ""), {})
+    )
 
 
 def _source_fields(cfg: dict, module: str) -> list[dict]:
@@ -1369,7 +1464,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     tname = src["type_name"]  # Python class name, e.g. "Synth"
     fields = _source_fields(cfg, module)
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
 
     obj = f"{tname}Object"
@@ -1455,6 +1550,9 @@ def render_source_type(cfg: dict, module: str) -> str:
     fmt = "|" + "".join(_field_fmt(f) for f in fields) + "d"  # trailing fs
     decls: list[str] = []
     addrs: list[str] = []
+    # gh-2035: a scalar's conversion out of its `parse_type` local, emitted
+    # before the field is stored; empty where the type parses into its own.
+    convs: dict[str, str] = {}
     for f in fields:
         n = f["name"]
         if _field_is_enum(f):
@@ -1465,9 +1563,13 @@ def render_source_type(cfg: dict, module: str) -> str:
             decls.append(f"    PyObject *{n} = NULL;")
             addrs.append(f"&{n}")
         else:
-            default = f.get("default", "0")
-            decls.append(f"    {f['type']} {n} = {default};")
-            addrs.append(f"&{n}")
+            # gh-2035: the one tuple-parse slot, whose format char is the
+            # one `_field_fmt` put in `fmt` above.
+            decl, _fc, addr, convs[n] = scalar_arg_c(
+                n, f["type"], f.get("default") or ""
+            )
+            decls.append(decl)
+            addrs.append(addr)
     decls_s = "\n".join(decls)
     addrs_s = ", ".join(addrs)
 
@@ -1520,7 +1622,10 @@ def render_source_type(cfg: dict, module: str) -> str:
         self->src.{n} = ({ct}){default};
     }}""")
         else:
-            assign.append(f"    self->src.{n} = {n};")
+            assign.append(
+                (f"{convs[n]}\n" if convs[n] else "")
+                + f"    self->src.{n} = {n};"
+            )
     assign_s = "\n".join(assign)
 
     store_bits = """    *dst   = buf;
@@ -1883,7 +1988,9 @@ static int
             # scalar, or (lo, hi) when the field's ranged bit is set.
             flag = f["_ranged"]
             ct = f["type"]
-            to_py = _to_py_scalar(ct, f"self->src.{n}")
+            to_py = _number_meta(ct, _row(module, "source.fields", n))[
+                "to_py"
+            ](f"self->src.{n}")
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -1915,22 +2022,16 @@ static int
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         else:
+            # gh-2035: the constructor's conversion, by the declared type.
+            # This hand-picked `PyLong_AsLong` for a `size_t` and a
+            # `uint32_t`, so a value past LONG_MAX was refused here and
+            # accepted by the type's own format char.
             ctype = f["type"]
-            to_py = _to_py_scalar(ctype, f"self->src.{n}")
-            if ctype in ("double", "float"):
-                store = (
-                    f"    self->src.{n} = ({ctype})PyFloat_AsDouble(value);"
-                )
-                guard = ""
-            elif ctype in ("uint64_t",):
-                store = (
-                    f"    self->src.{n} = "
-                    f"({ctype})PyLong_AsUnsignedLongLong(value);"
-                )
-                guard = ""
-            else:
-                store = f"    self->src.{n} = ({ctype})PyLong_AsLong(value);"
-                guard = ""
+            meta = _number_meta(ctype, _row(module, "source.fields", n))
+            to_py = meta["to_py"](f"self->src.{n}")
+            parse = scalar_parse_c(
+                ctype, "value", "_v", "return -1;", meta=meta
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -1940,9 +2041,8 @@ static int
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
-    (void)closure;{guard}
-{store}
-    if (PyErr_Occurred()) return -1;
+    (void)closure;
+{parse}    self->src.{n} = _v;
     return 0;
 }}""")
             getset_rows.append(
@@ -1976,7 +2076,11 @@ static int
     # [[module.X.source.computed]]. Read-only (NULL setter).
     for c in _source_computed(cfg, module):
         n, ct = c["name"], c["type"]
-        to_py = _to_py_scalar(ct, f"{c['fn']}(&self->src)")
+        # gh-2035: by the declared type. A `bool` read back as an `int` and
+        # a complex as its real part, through `long`.
+        to_py = _number_meta(ct, _row(module, "source.computed", n))["to_py"](
+            f"{c['fn']}(&self->src)"
+        )
         # gh-1499: this pasted the `doc` raw, so a two-line one was an
         # unterminated C string and the module did not compile.
         doc_c = authored_c_doc(str(c.get("doc") or ""))
@@ -2131,19 +2235,6 @@ def factory_method_rows(cfg: dict, module: str) -> list[str]:
 # ── segment type (e.g. Segment) ──────────────────────────────────────────────
 
 
-def _from_py_scalar(ctype: str, obj: str) -> str:
-    """C expression converting a PyObject to a scalar C value."""
-    if ctype in ("double", "float"):
-        return f"({ctype})PyFloat_AsDouble({obj})"
-    if ctype == "uint64_t":
-        return f"(uint64_t)PyLong_AsUnsignedLongLong({obj})"
-    if ctype == "uint32_t":
-        return f"(uint32_t)PyLong_AsUnsignedLong({obj})"
-    if ctype == "size_t":
-        return f"(size_t)PyLong_AsSize_t({obj})"
-    return f"({ctype})PyLong_AsLong({obj})"
-
-
 def _segment_fields(cfg: dict, module: str) -> list[dict]:
     tbl = C.composer_segment(cfg, module)
     for f in tbl.get("fields", []):
@@ -2199,7 +2290,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     src_tname = C.composer_source(cfg, module)["type_name"]  # e.g. "Synth"
     fields = _segment_fields(cfg, module)
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
 
     obj = f"{tname}Object"
@@ -2298,10 +2389,17 @@ def render_segment_type(cfg: dict, module: str) -> str:
                 f"            else {{ self->ranged &= ~(unsigned){flag}; }}\n"
             )
         else:
-            conv = _from_py_scalar(ct, "_o")
+            # gh-2035: by the declared type, the setter's conversion below.
             body = (
-                f"            self->{n} = {conv};\n"
-                "            if (PyErr_Occurred()) goto fail;\n"
+                scalar_parse_c(
+                    ct,
+                    "_o",
+                    "_v",
+                    "goto fail;",
+                    meta=_number_meta(ct, _row(module, "segment.fields", n)),
+                    indent=" " * 12,
+                )
+                + f"            self->{n} = _v;\n"
             )
         return (
             f'    {{\n        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
@@ -2399,11 +2497,13 @@ fail:
     ]
     for f in fields:
         n, ct = f["name"], f["type"]
-        to_py = _to_py_scalar(ct, f"self->{n}")
         if f.get("_ranged"):
             # scalar, or (lo, hi) when the field's ranged bit is set. Segment
             # ranged fields are integer counts → build/parse via Py_ssize_t.
             flag = f["_ranged"]
+            to_py = _number_meta(ct, _row(module, "segment.fields", n))[
+                "to_py"
+            ](f"self->{n}")
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -2471,7 +2571,11 @@ static int
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
             continue
-        store = f"    self->{n} = {_from_py_scalar(ct, 'value')};"
+        # gh-2035: both ways by the declared type. A `bool` read back as an
+        # `int`, and a complex parsed through `PyLong_AsLong`.
+        meta = _number_meta(ct, _row(module, "segment.fields", n))
+        to_py = meta["to_py"](f"self->{n}")
+        parse = scalar_parse_c(ct, "value", "_v", "return -1;", meta=meta)
         getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -2482,8 +2586,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-{store}
-    if (PyErr_Occurred()) return -1;
+{parse}    self->{n} = _v;
     return 0;
 }}""")
         getset_rows.append(
@@ -2592,7 +2695,7 @@ def render_timeline_type(cfg: dict, module: str) -> str:
     tl = C.composer_timeline(cfg, module)
     tname = tl.get("type_name", "Timeline")
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
     obj = f"{tname}Object"
     type_obj = f"{tname}Type"
@@ -2718,6 +2821,7 @@ def render_serializers(
         returns = s.get("returns", "str")
         params = list(s.get("params", []))
         decls, kwl, addrs, enum_val, call = [], [], [], [], []
+        convs: list[str] = []
         fmt, barred = "", False
         for p in params:
             pn, pt = p["name"], p["type"]
@@ -2725,8 +2829,8 @@ def render_serializers(
             bar = "|" if (p.get("default") is not None and not barred) else ""
             if bar:
                 barred = True
-            addrs.append(f"&{pn}")
             if p.get("enum"):
+                addrs.append(f"&{pn}")
                 e = p["enum"]
                 decls.append(
                     f'    const char *{pn} = "{p.get("default", "")}";'
@@ -2741,11 +2845,29 @@ def render_serializers(
                 )
                 call.append(f"_e_{pn}")
             else:
-                decls.append(f"    {pt} {pn} = {p.get('default', '0')};")
-                fmt += bar + _FMT.get(pt, "i")
+                # gh-2035: the one tuple-parse slot, by the declared type.
+                # This looked the format char up in a five-type table with
+                # "i" as the fallback, so an `int64_t` was parsed four bytes
+                # wide and -1 reached C as 4294967295.
+                default = p.get("default")
+                decl, fc, addr, conv = scalar_arg_c(
+                    pn,
+                    pt,
+                    "" if default is None else str(default),
+                    meta=scalar_meta(
+                        pt,
+                        f"composer module '{module}' serializer '{name}' "
+                        f"params row '{pn}'",
+                    ),
+                )
+                decls.append(decl)
+                fmt += bar + fc
+                addrs.append(addr)
+                if conv:
+                    convs.append(conv)
                 call.append(pn)
         decls_s = "\n".join(decls)
-        enum_s = ("\n".join(enum_val) + "\n") if enum_val else ""
+        enum_s = "".join(f"{c}\n" for c in convs + enum_val)
         call_prefix = (", ".join(call) + ", ") if call else ""
         if params:
             py_sig = "PyObject *args, PyObject *kwds"
@@ -3102,7 +3224,7 @@ def render_composer_type(cfg: dict, module: str) -> str:
             for i, op in enumerate(_ptrs)
         )
         src_bytes_copy += "            }\n"
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{cname}"
     obj = f"{cname}Object"
     type_obj = f"{cname}Type"
@@ -4094,14 +4216,15 @@ def _settings_getset_c(
                 f"    return 0;\n"
             )
         else:
-            get_body = (
-                f"    return PyLong_FromLong("
-                f"(long){st['getter_fn']}(self->state));\n"
-            )
+            # gh-2035: by the declared type, both ways. This was
+            # `PyLong_AsLong` / `PyLong_FromLong` whatever the type, so a
+            # `double` setting read back truncated.
+            meta = _number_meta(ctype, _row(module, "settings", n))
+            got = f"{st['getter_fn']}(self->state)"
+            get_body = f"    return {meta['to_py'](got)};\n"
             set_body = (
-                f"    long _v = PyLong_AsLong(value);\n"
-                f"    if (_v == -1 && PyErr_Occurred()) return -1;\n"
-                f"    {st['setter_fn']}(self->state, ({ctype})_v);\n"
+                scalar_parse_c(ctype, "value", "_v", "return -1;", meta=meta)
+                + f"    {st['setter_fn']}(self->state, _v);\n"
                 f"    return 0;\n"
             )
         fns.append(
@@ -4177,11 +4300,18 @@ def _settings_pop_c(cfg: dict, module: str) -> str:
                 f"            {val} = ({ctype})_arg_{n};\n"
             )
         else:
+            # gh-2035: the attribute's conversion, so the constructor and
+            # the setter cannot disagree about a value.
             body = (
-                f"            long _v = PyLong_AsLong(_o);\n"
-                f"            if (_v == -1 && PyErr_Occurred())"
-                f" {{ Py_DECREF(kw); return -1; }}\n"
-                f"            {val} = ({ctype})_v;\n"
+                scalar_parse_c(
+                    ctype,
+                    "_o",
+                    "_v",
+                    "{ Py_DECREF(kw); return -1; }",
+                    meta=_number_meta(ctype, _row(module, "settings", n)),
+                    indent=" " * 12,
+                )
+                + f"            {val} = _v;\n"
             )
         out.append(
             f"    {{\n"
@@ -4401,7 +4531,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     Mirrors the capsule CMake generator."""
     mp = C.module_paths(module)
     leaf, cname = mp.leaf, mp.cname
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
     link_cores = C.dep_link_libs(C.capsule_depends_on(cfg, module))
     extra = C.capsule_extra_link_libs(cfg, module)
     link_lines = "".join(f"    {lib}\n" for lib in link_cores + extra)
@@ -4478,10 +4608,26 @@ def _pyi_field_type(f: dict) -> str:
         # gh-1724: a complex stream is an array argument, spelled by the one
         # helper every face calls.
         return f"{T.array_param_annotation('float _Complex')} | None"
-    scalar = "float" if f["type"] in ("double", "float") else "int"
+    # gh-2035: the one answer to "what does this scalar read as" -- a
+    # `bool` field reads back a bool, a complex one a complex.
+    scalar = T.scalar_py_annotation(f["type"])
     if f.get("_ranged"):  # scalar, or a (lo, hi) per-repeat uniform draw
         return f"{scalar} | tuple[{scalar}, {scalar}]"
     return scalar
+
+
+def _setting_py_type(st: dict) -> str:
+    """What a setting reads as and accepts: its ``[[enum]]`` choice string,
+    or its declared type's Python type (gh-2035: every one said ``int``).
+
+    >>> _setting_py_type({"type": "double"})
+    'float'
+    >>> _setting_py_type({"type": "int", "enum": "mode"})
+    'str'
+    """
+    if st.get("enum"):
+        return "str"
+    return T.scalar_py_annotation(st.get("type", "int"))
 
 
 def _pyi_field_read_type(f: dict) -> str:
@@ -4641,7 +4787,7 @@ def render_pyi(cfg: dict, module: str) -> str:
             )
     # Feature 6 — computed read-only properties (derived in C; never stale).
     for c in _source_computed(cfg, module):
-        pytype = "float" if c["type"] in ("double", "float") else "int"
+        pytype = T.scalar_py_annotation(c["type"])  # gh-2035
         # gh-1499: a documented one is a read-only property carrying its
         # `doc`, the text its getset has at runtime; an attribute cannot
         # hold one. Undocumented, it keeps the annotation it always had.
@@ -4727,8 +4873,7 @@ def render_pyi(cfg: dict, module: str) -> str:
                 # it -- this is its stub face. None of them were listed.
                 *[
                     ClassParam(
-                        f"{st['name']} : "
-                        f"{'str' if st.get('enum') else 'int'}, optional",
+                        f"{st['name']} : {_setting_py_type(st)}, optional",
                         tuple(
                             ["\n".join(authored_doc_lines(str(st["doc"])))]
                             if st.get("doc")
@@ -4746,13 +4891,13 @@ def render_pyi(cfg: dict, module: str) -> str:
             # gh-1126: read/write, unlike the three above. A setting is set
             # once before the first execute(); the pair behind it is the
             # backing's own setter/getter.
-            f"    {st['name']}: {'str' if st.get('enum') else 'int'}"
+            f"    {st['name']}: {_setting_py_type(st)}"
             for st in C.composer_settings(cfg, module)
         ],
         f"    def __init__(self, segments: {seg_or_tl} = ..., *, "
         "repeat: bool = ..., continuous: bool = ..."
         + "".join(
-            f", {st['name']}: {'str' if st.get('enum') else 'int'} = ..."
+            f", {st['name']}: {_setting_py_type(st)} = ..."
             for st in C.composer_settings(cfg, module)
         )
         + ", **segment_kwargs"
@@ -5110,7 +5255,7 @@ def materialize(
     cfg = resolve_field_docs(cfg, module, project_root or root)
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
 
     # gh-998: the project's straight-C seams, published before the binding
     # that calls them. Absent when the source declares none, so a composer
@@ -5326,6 +5471,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
 
     def _seg_enum_name(f: dict) -> str:
         return _enumc.name_expr(f["enum"], "g->" + f["name"], C.enums(cfg))
+
+    for f in seg_fields:
+        if not f.get("enum"):
+            _one_real_number(f, module, "JSON face (`[module.X.json]`)")
 
     seg_ser = "\n".join(
         _ser_ranged("sj", "g", f["name"], f["_ranged"])
@@ -5782,6 +5931,8 @@ def render_cli(cfg: dict, module: str) -> str:
     seg_decls, seg_parse, seg_assign = [], [], []
     for f in seg_fields:
         n, ct = f["name"], f["type"]
+        if not f.get("enum"):
+            _one_real_number(f, module, "generated CLI (`[module.X.cli]`)")
         dflt = f.get("default", "0")
         seg_decls.append(f"    {ct} {n} = ({ct}){dflt};")
         conv = (

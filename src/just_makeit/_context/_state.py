@@ -350,7 +350,7 @@ def _build_no_state_init_ctx(
         # earliest of those failures is a compiler error one command later.
         _dflt_err = _default_type_error(ct, dflt)
         if _dflt_err:
-            raise ValueError(f"init_param '{name}': {_dflt_err}")
+            raise Refusal(f"init_param '{name}': {_dflt_err}")
         real_type = param[4] if len(param) > 4 else ""
         real_create_fn_p = param[5] if len(param) > 5 else ""
         optional_flag = param[6] if len(param) > 6 else False
@@ -1865,9 +1865,11 @@ def _ctor_seed_slots(
     parameter and never validates, so on day one the construction works and the
     suite skips anyway. The issue framed the alternative as reading ``_core.c``
     to find out, and rejected it for three good reasons: jm does not read C,
-    the generated test files are create-only so the answer would be frozen at
-    scaffold time, and an inference that goes stale trades a skip for a red
-    suite (gh-1088, red on ``main`` for 14 runs).
+    the generated test files were create-only then so the answer would be
+    frozen at scaffold time (the C smoke still is; the Python test has been
+    jm's while it carries ``# jm:generated`` since gh-1489), and an inference
+    that goes stale trades a skip for a red suite (gh-1088, red on ``main``
+    for 14 runs).
 
     All three objections are about deciding at RENDER time. None of them apply
     to the C smoke, which decides at *runtime* — so that was the option the
@@ -2978,11 +2980,16 @@ def make_state_ctx(
 
     if roles is None:
         roles = {}
-    for name, ct, _ in state_vars:
+    for name, ct, dflt in state_vars:
         # gh-1514: one answer for the CLI flag and the manifest entry.
         why = T.state_type_error(name, ct)
         if why is not None:
             raise ValueError(why)
+        # gh-1946: and one for a default Python has no spelling of, named
+        # here rather than at the first Python face that renders it.
+        why = T.literal_default_error(ct, dflt)
+        if why:
+            raise Refusal(f"state field '{name}': {why}")
 
     scalar_vars = [
         (n, ct, dflt) for n, ct, dflt in state_vars if ct in _CTYPE_META

@@ -25,10 +25,10 @@ user.
 jm app --target c --object engine --name dsp_tool
 
 # Python console script (installed via [project.scripts])
-jm app --target console --object engine --name dsp_tool
+jm app --target console --object engine --name dsp_tool_py
 
 # PEP 723 inline script (run with `uv run`, no install)
-jm app --target pep723 --object engine --name dsp_tool
+jm app --target pep723 --object engine --name dsp_tool_script
 ```
 
 As of **0.15.0** the generated app is *complete*, not a stub, for the four
@@ -38,20 +38,29 @@ C `strtof`/`argv` parser and the Python `argparse` setup are produced from
 the same spec, so the C binary and the Python CLI accept the same flags and
 behave the same way. There is nothing to hand-edit before it runs.
 
-Every run records an `[app]` section (and any `[[app.flags]]` /
-`[[app.commands]]`) in `just-makeit.toml`, so `jm apply` recreates the scaffold.
-A project records one app: a later `jm app` run replaces the record, and
-`jm apply` then regenerates only the app it names.
+Every run **appends** an `[[app]]` row to `just-makeit.toml` — the app's
+target, its source, and any `[[app.flags]]` / `[[app.commands]]` — so a
+project holds as many apps as you declare, and `jm apply` recreates each one
+(gh-2074). An app is keyed by its `--name`, which is unique in the project:
+
+- a name already taken is refused, naming `jm remove app <name>`;
+- so is a second app whose *default* name is taken (the project's name, or
+    the function's), naming `--name` — which is why the three faces above are
+    named apart;
+- and so is a second console app over the same package, whose `cli.py` it
+    would overwrite (see *Targets* below).
+
+[`jm remove app <name>`](#removing-an-app) takes one out.
 
 **Arguments**
 
 | Argument                            | Description                                                                                                                                                                                           |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--target c\|console\|pep723`       | Output target (repeatable intent via re-runs). Default: `c`. Short form: `-t`.                                                                                                                        |
+| `--target c\|console\|pep723`       | Output target. Default: `c`. Short form: `-t`. One app per run; run `jm app` again, under another `--name`, for another face.                                                                         |
 | `--object name`                     | Component to wrap. Defaults to the first component.                                                                                                                                                   |
 | `--function name`                   | Wrap a module-level function instead of an object (see *Function CLIs*).                                                                                                                              |
 | `--module name`                     | Module the `--object` or `--function` lives in; it decides the import path and where `cli.py` goes.                                                                                                   |
-| `--name name`                       | Name of the generated app/script. Defaults to the project name (the function name with `--function`).                                                                                                 |
+| `--name name`                       | Name of the generated app/script, unique in the project. Defaults to the project name (the function name with `--function`).                                                                          |
 | `--flag name:type[:default[:help]]` | Extra control flag, added to both parsers and persisted as `[[app.flags]]`. Repeatable.                                                                                                               |
 | `--command name[:help]`             | Declare a subcommand (multi-command CLI). Repeatable. See *Subcommands*.                                                                                                                              |
 | `--argc-argv`                       | For an object shape `jm app` doesn't generate a full loop for (e.g. a `--no-step` reader): emit an `argv`-parsing skeleton in the C target's stub instead of a plain `(void)argc; (void)argv;` no-op. |
@@ -117,9 +126,10 @@ ______________________________________________________________________
 
 Generates `native/src/app/<name>.c` — a `main()` with an `argv` parser
 (`strtof`/`strtol` per flag type) and the shape-appropriate
-`create → loop → destroy`. Appends an `add_executable` / `target_link_libraries`
-/ `install` block to `CMakeLists.txt` (printed for manual addition if there is
-no `CMakeLists.txt`). Re-running replaces the block (idempotent).
+`create → loop → destroy`. jm's App block in `CMakeLists.txt` holds an
+`add_executable` / `target_link_libraries` / `install` group for every C app
+the manifest declares, and is rewritten from it on each run (idempotent;
+printed for manual addition if there is no `CMakeLists.txt`).
 
 ```sh
 make && ./build/<name> --help
@@ -132,7 +142,10 @@ for a `--function`/`--object` inside a module: `src/<pkg>/<module>/`, or the
 module's `package` when it declares one) — an `argparse` CLI over the Python
 bindings, one `--<param>` per constructor scalar plus any `--flag`s, with the
 matching process loop. Adds `<name>` to `[project.scripts]` in `pyproject.toml`
-(snippet printed if `tomlkit`/`pyproject.toml` is unavailable).
+(snippet printed if `tomlkit`/`pyproject.toml` is unavailable). The module is
+the package's `cli.py`, not a file named after the app, so one package holds
+one console app: a second over the same package is refused, naming the first
+app's removal.
 
 ```sh
 pip install -e . && <name> --help
@@ -188,9 +201,12 @@ ______________________________________________________________________
 
 ## TOML record
 
+One `[[app]]` row per app. TOML attaches each `[[app.flags]]` and
+`[[app.commands]]` row to the `[[app]]` row above it:
+
 ```toml
-[app]
-target  = "console"
+[[app]]
+target  = "c"
 name    = "dsp_tool"
 object  = "engine"     # or: function = "kaiser_beta"
 
@@ -200,15 +216,43 @@ type = "float"
 default = "1.0"
 help = "output gain"
 
+[[app]]
+target  = "console"
+name    = "dsp_cmds"
+
 [[app.commands]]
 name = "encode"
 help = "encode a stream"
 ```
 
-`jm apply` reads `[app]` (+ `[[app.flags]]` / `[[app.commands]]`) and
-regenerates the app from it on **every** run, as `jm app` does. The app source
-is jm's: edits to it are discarded. Put custom logic in a component
-(`jm method`) and call it from the generated `main()`.
+`jm apply` reads every `[[app]]` row (with its `[[app.flags]]` /
+`[[app.commands]]`) and regenerates each app from it on **every** run, as
+`jm app` does. The app source is jm's: edits to it are discarded. Put custom
+logic in a component (`jm method`) and call it from the generated `main()`.
+
+Schema 8 and earlier held one app, as a single `[app]` table. This jm reads
+the `[[app]]` spelling alone and refuses the old one, naming `jm upgrade`,
+which rewrites it in place as a one-row `[[app]]` — see
+[Upgrading](../upgrading.md#several-apps-gh-2074).
+
+______________________________________________________________________
+
+## Removing an app
+
+```sh
+jm remove app dsp_tool [--force]
+```
+
+Removes the `[[app]]` row named `dsp_tool` and the app's file —
+`native/src/app/<name>.c`, the package's `cli.py`, or `<name>.py` — with its
+wiring: the C app's lines in the App block of `CMakeLists.txt`, the console
+app's `[project.scripts]` entry. A file you edited is kept, with a note to
+delete it by hand, the way `jm remove method` leaves an authored body in
+`_core.c`.
+
+An object, module or function an app is built from cannot be removed while
+the app is there: `jm remove` refuses, naming each app and
+`jm remove app <name>`, and changes nothing (gh-2075).
 
 See the bundled `three_face` and `app_shapes` examples
 (`jm example three_face`, `jm example app_shapes`) for end-to-end runs.

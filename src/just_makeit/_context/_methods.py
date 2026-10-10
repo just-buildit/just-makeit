@@ -69,6 +69,7 @@ from ._parse import (
     borrow_view_c as _borrow_view_c,
     capsule_new_c as _capsule_new_c,
     enum_symbols as _enum_symbols,
+    scalar_parse_c as _scalar_parse_c,
 )
 
 
@@ -4232,33 +4233,28 @@ def make_methods_ctx(
             elif out_type:
                 out_disp = out_type
                 out_npy = _CTYPE_TO_NPY[out_type]
-                first_arr = next(
-                    (
-                        p["name"]
-                        for p in params
-                        if is_array_param_type(p["type"])
-                    ),
-                    None,
-                )
-                # Buffer size: prefer the length of the first array param.
-                # If there is no array param, fall back to the first scalar
-                # integer param so methods like ``foo(n: int) -> ndarray`` (n
-                # samples requested) allocate an n-sized output rather than
-                # an empty one (gh-65).
-                if first_arr:
-                    raw_len = f"{first_arr}_len"
-                else:
-                    first_int = next(
-                        (
-                            p["name"]
-                            for p in params
-                            if not is_array_param_type(p["type"])
-                            and _CTYPE_META.get(p["type"], {}).get("kind")
-                            == "int"
-                        ),
-                        None,
+                # Buffer size: `_outbuf.length`, the rule a module function's
+                # output is sized by too (gh-1888). The first array the call
+                # parses -- an array `arg_type` input first, as the `x` it is
+                # parsed as above; it was left out, so `--arg-type 'T[]'`
+                # allocated nothing and a kernel filling `x_len` wrote past
+                # it. Else the first integer param, so ``foo(n: int) ->
+                # ndarray`` (n samples requested) allocates n (gh-65).
+                _sizing = (
+                    [{"name": "x", "type": arg_type}]
+                    if has_arg and arg_type.endswith("[]")
+                    else []
+                ) + list(params)
+                # With neither, still an empty output: refusing the row
+                # would stop `apply` on projects that declare one -- the
+                # frozen `stale_project` example's `shape` among them --
+                # so that call is left open in gh-2109.
+                raw_len = (
+                    _outbuf.length(
+                        _sizing, out_type=out_type, count_fallback=True
                     )
-                    raw_len = first_int if first_int else "0"
+                    or "0"
+                )
                 if out_divisor > 1:
                     len_expr = f"({raw_len} / {out_divisor})"
                 else:
@@ -5332,19 +5328,11 @@ def make_properties_ctx(
                     + "\n"
                     f"    {disp} v = ({disp})v_idx;\n"
                 )
-            elif "parse_type" in meta:
-                parse_block = (
-                    f"    {meta['parse_type']} v_raw ="
-                    f" {meta['parse_zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v_raw))'
-                    f" return -1;\n"
-                    f"    {disp} v = {meta['to_c']('v')};\n"
-                )
             else:
-                parse_block = (
-                    f"    {disp} v = {meta['zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v))'
-                    f" return -1;\n"
+                # gh-2035: the one PyObject -> C scalar conversion, which a
+                # composer's settings and fields call too.
+                parse_block = _scalar_parse_c(
+                    disp, "value", "v", "return -1;", meta=meta
                 )
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"

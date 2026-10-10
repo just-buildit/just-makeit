@@ -189,6 +189,41 @@ def is_nested_checkout(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+def walk(root: Path):
+    """Each directory of the project's own tree, with the files in it.
+
+    Yields ``(directory, file names)``, *root* first, top down. Never
+    descended into: a skipped name (``_SKIP_DIRS``), a build tree
+    (:func:`is_build_tree`, gh-1473) and another checkout
+    (:func:`is_nested_checkout`, gh-1713). Every file name in a directory
+    it yields is listed, whatever :func:`is_skipped` says of it -- that is
+    the caller's question.
+
+    The one reading of "the project's tree": :func:`_tree_digests` (what
+    `apply` reports) and `_undo` (what a failed command puts back,
+    gh-1867) both walk it through here, so the two cannot disagree about
+    which files a command might have changed.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> (d / "build").mkdir()
+    >>> _ = (d / "build" / "x.o").write_bytes(b"")
+    >>> _ = (d / "a.c").write_bytes(b"")
+    >>> [(p.relative_to(d).as_posix(), names) for p, names in walk(d)]
+    [('.', ['a.c'])]
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in _SKIP_DIRS
+            and not is_build_tree(base / d)
+            and not is_nested_checkout(base / d)
+        ]
+        yield base, filenames
+
+
 def _tree_digests(root: Path) -> dict:
     """Digest of every project file, keyed by POSIX path relative to *root*.
 
@@ -201,8 +236,8 @@ def _tree_digests(root: Path) -> dict:
     and changed no bytes; and two modules sharing one package merged its
     ``__init__.py`` in turn, so it was announced twice.
 
-    Taken once, before anything is written, from the same walk rules
-    `status` uses: skipped names, build trees and nested checkouts
+    Taken once, before anything is written, over :func:`walk`: the same walk
+    rules `status` uses, so skipped names, build trees and nested checkouts
     (gh-1713) are never descended into.
 
     Each value is a pair, the digest of the bytes and of the bytes through
@@ -212,15 +247,7 @@ def _tree_digests(root: Path) -> dict:
     the time it is asked.
     """
     out: dict = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        base = Path(dirpath)
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if d not in _SKIP_DIRS
-            and not is_build_tree(base / d)
-            and not is_nested_checkout(base / d)
-        ]
+    for base, filenames in walk(root):
         for name in filenames:
             p = base / name
             rel = p.relative_to(root)
@@ -606,6 +633,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-1591: and the C symbol prefix, for the same reason: a replay that
         # renders bare names makes the real project's prefixed ones "missing".
         c_prefix=C.c_prefix(cfg),
+        # gh-2083: and the real version, for the same reason. Rendered at the
+        # `new` default, the replay's Doxyfile and bootstrap.toml read as
+        # `0.1.0` and disagree with an in-sync project, and `apply` materialised
+        # a missing copy at `0.1.0`. The stamp below only reached the manifest.
+        version=C.project_version(cfg),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.
@@ -1505,6 +1537,62 @@ def _owned_scaffolds(temp_root: Path, root: Path) -> set:
     return out
 
 
+def _other_backend_makefile(cfg: dict, project_root: Path) -> "str | None":
+    """The Makefile this project would have under the OTHER build backend.
+
+    gh-1899. The make Makefile is patched object by object (its TARGETS and
+    rules), so it is not a function of the manifest's flags. The reliable
+    answer is a replay of the whole manifest with `build` flipped, which is the
+    replay `apply` already runs, through :func:`replay_project`, so it is
+    silent and in apply's scopes like every other replay.
+    """
+    import copy
+    import tempfile
+
+    from . import _new
+
+    other = _new.other_backend(cfg)
+    flipped = copy.deepcopy(cfg)
+    flipped["project"]["build"] = other
+    with tempfile.TemporaryDirectory(prefix="jm-backend-") as tmp:
+        troot = Path(tmp)
+        replay_project(flipped, troot, project_root)
+        mf = troot / "Makefile"
+        return mf.read_text(encoding="utf-8") if mf.is_file() else None
+
+
+def reconcile_backend_makefile(
+    root: Path, cfg: dict, temp_root: Path
+) -> "str | None":
+    """Replace a Makefile that is the other backend's render (gh-1899).
+
+    `apply`'s step for a backend switch. The replay has rendered this
+    manifest's own Makefile into *temp_root*; a real Makefile equal to the
+    other backend's render is replaced with it, and nothing else is touched:
+    an author's edit is left, and `status` keeps reporting it. Returns the line
+    `apply` prints, or None.
+    """
+    from . import _new
+
+    mf = temp_root / "Makefile"
+    if not mf.is_file():
+        return None
+    current = mf.read_text(encoding="utf-8")
+    other = _new.other_backend(cfg)
+    if not _new.is_other_backend_makefile(
+        root,
+        current.replace("\r\n", "\n"),
+        other,
+        lambda: _other_backend_makefile(cfg, root),
+    ):
+        return None
+    _textio.write_text(root / "Makefile", current)
+    return (
+        f"  update  {root / 'Makefile'} (build = {C.build_system(cfg)}; "
+        "was the other backend's)"
+    )
+
+
 def _sync_missing(
     temp_root: Path, root: Path, owned: "set | None" = None
 ) -> list[Path]:
@@ -2218,17 +2306,40 @@ def _reconcile_object_core_cmake(
     ``set_source_files_properties`` the manifest can't express — gh-275) is left
     untouched, since re-rendering it would drop those rules.
 
-    Returns True if the file changed."""
+    Returns True if the file changed. What it writes is
+    :func:`_reconciled_object_core_cmake`'s, which `apply`'s gh-1840
+    refusal reads before anything is written."""
     if not real.exists() or not temp.exists():
         return False
+    original = real.read_text(encoding="utf-8")
+    new = _reconciled_object_core_cmake(
+        original, temp.read_text(encoding="utf-8"), comp, include_dirs
+    )
+    if new == original:
+        return False
+    _warn_dropped_cmake(real, original, new)
+    _textio.write_text(real, new)
+    return True
+
+
+def _reconciled_object_core_cmake(
+    original: str, rendered: str, comp: str, include_dirs: "list[str]"
+) -> str:
+    """The text :func:`_reconcile_object_core_cmake` writes over *original*.
+
+    *rendered* is jm's replay render of the same file. A hand-owned
+    *original* (gh-275) comes back unchanged; otherwise *rendered*, with the
+    two things the manifest-driven render cannot reproduce put back. Pure,
+    so `apply` can ask what a rewrite would leave before it writes anything
+    (gh-1840), and the writer cannot drift from the question.
+    """
     from ._object import _external_cmake_blocks
 
-    original = real.read_text(encoding="utf-8")
-    new = temp.read_text(encoding="utf-8")
+    new = rendered
     # gh-275: never re-render a hand-owned file (vendored sources, per-source
     # build properties) — the canonical render cannot reproduce them.
     if _is_hand_owned_object_cmake(original, comp, rendered=new):
-        return False
+        return original
     # (1) re-add component extra_include_dirs as a second PUBLIC include block,
     # just before the test executable (matches _inject_object_core_cmake).
     if include_dirs and include_dirs[0] not in new:
@@ -2244,11 +2355,102 @@ def _reconcile_object_core_cmake(
     for block in _external_cmake_blocks(original):
         if block not in new:
             new = new.rstrip("\n") + "\n\n" + block + "\n"
-    if new == original:
-        return False
-    _warn_dropped_cmake(real, original, new)
-    _textio.write_text(real, new)
-    return True
+    return new
+
+
+def _reconciled_cmake_dirs(cfg: dict) -> "set[str]":
+    """The ``native/src/<d>`` whose CMakeLists `apply` reconciles.
+
+    A standalone component's and a module object's that is not its module's
+    own, both through :func:`_reconcile_object_core_cmake` (gh-271,
+    gh-1301). Every other directory jm renders -- a module's own, which a
+    collocated object shares, and a capsule / handle / composer module's --
+    is overwritten whole by :func:`_overwrite_if_changed`. The distinction is
+    what `apply` keeps of an author's text, and only gh-1840's refusal asks.
+    """
+    cnames = {C.module_paths(m).cname for m in C.modules(cfg)}
+    return {c for c in C.components(cfg) if c not in cnames}
+
+
+def _refuse_cmake_that_would_lose(
+    temp_root: Path, root: Path, cfg: dict
+) -> None:
+    """Refuse an apply that would erase an author's OBJECT library (gh-1840).
+
+    A ``native/src/<d>/CMakeLists.txt`` jm renders is glue: `apply` rewrites
+    it from the replay. An ``add_library(<x> OBJECT ...)`` the author added
+    there was erased with it, and nothing said so -- gh-1351's warning names
+    a dropped command only when jm never writes that command, and jm writes
+    ``add_library`` itself. Whatever the root wired to the library was left
+    naming a target that no longer exists, which cmake rejects at configure
+    time, and the next apply deleted that wiring too.
+
+    So the rewrite is asked about before the first write: the OBJECT
+    libraries the file declares that the text `apply` would write does not.
+    That text is the replay's render, put through the same reconcile the
+    writer runs (a hand-owned file, an ``if()`` block) where the directory
+    is reconciled, so a library `apply` keeps is never refused. A file
+    `[project] status_allow` names is one `apply` never writes, so it is
+    never asked about -- in the `status` replay too, which writes it anyway
+    to classify it.
+
+    The way out is the hook jm already gives a directory's own CMake,
+    ``<d>_extra.cmake``: the generated file includes it and jm never writes
+    it (gh-1351), and `_libwiring` reads a core declared there (gh-1840).
+
+    Every rendered directory is asked, ``--only`` or not: a library this
+    run would not reach is lost by the next one.
+
+    Raises
+    ------
+    _report.Refusal
+        Naming each file and library, and the hook to move it to. Nothing
+        has been written.
+    """
+    reconciled = _reconciled_cmake_dirs(cfg)
+    lost: "list[tuple[str, list[str]]]" = []
+    src = temp_root / "native" / "src"
+    for temp in sorted(src.glob("*/CMakeLists.txt")) if src.is_dir() else []:
+        d = temp.parent.name
+        rel = f"native/src/{d}/CMakeLists.txt"
+        real = root / rel
+        if not real.is_file() or _status_allowed(cfg, rel):
+            continue
+        original = real.read_text(encoding="utf-8")
+        written = temp.read_text(encoding="utf-8")
+        if d in reconciled:
+            # No include dirs: the block they add declares no library.
+            written = _reconciled_object_core_cmake(original, written, d, [])
+        kept = set(_libwiring.object_libraries(written))
+        gone = [
+            lib
+            for lib in _libwiring.object_libraries(original)
+            if lib not in kept
+        ]
+        if gone:
+            lost.append((d, gone))
+    if not lost:
+        return
+    from ._render import extra_cmake_name
+
+    lines = [
+        "`jm apply` would erase an OBJECT library it does not write, so it"
+        " wrote\nnothing:"
+    ]
+    for d, gone in lost:
+        lines.append(
+            f"  native/src/{d}/CMakeLists.txt: {', '.join(gone)}"
+            f" -> native/src/{d}/{extra_cmake_name(d)}"
+        )
+    lines.append(
+        "Each CMakeLists.txt here is regenerated from the manifest, and a"
+        " line wiring\nthe library would be left naming a target that is"
+        " gone. Move the library,\nwith the statements that configure it,"
+        " into the hook named beside it: the\ngenerated file includes it and"
+        " jm never writes it (gh-1351). Wire it into the\nC library there or"
+        " in the root CMakeLists.txt, then re-run (gh-1840)."
+    )
+    raise _report.Refusal("\n".join(lines))
 
 
 def _refresh_core_h_decls(
@@ -2561,7 +2763,7 @@ def _sync_aggregates(
             or C.is_handle_module(cfg, mod)
         ):
             mp = C.module_paths(mod)
-            out_pkg = C.module_package(cfg, mod) or mp.pypath
+            out_pkg = C.module_package_resolved(cfg, mod)
             glue = [
                 f"native/src/{mp.cname}/{mp.cname}_ext.c",
                 f"native/src/{mp.cname}/CMakeLists.txt",
@@ -2600,7 +2802,7 @@ def _sync_aggregates(
         # gh-523: an object module may declare `package` to land its Python
         # artifacts inside a sibling package; unset it is the module's own
         # pypath, so unpackaged modules reconcile exactly as before.
-        out_pkg = C.module_package(cfg, mod) or mp.pypath
+        out_pkg = C.module_package_resolved(cfg, mod)
         # Re-create any intermediate package markers the user may have deleted
         # (create-only — never clobbers a hand-edited marker).
         from ._init import ensure_parent_packages
@@ -2669,8 +2871,15 @@ def _sync_aggregates(
             # the link block once it already existed, dropping new deps). The
             # reconcile preserves component extra_include_dirs and user external
             # if(VAR) blocks. Collocated objects share the module CMakeLists
-            # (handled above).
-            if obj != mod:
+            # (handled above); gh-1949: which one that is, the writers' rule.
+            #
+            # gh-1840: and, like every peer, never a file `status_allow`
+            # names (gh-441) -- this one alone was rewritten anyway, so an
+            # author keeping their module object's CMakeLists lost it.
+            _obj_cml = f"native/src/{obj}/CMakeLists.txt"
+            if obj != C.collocated_object(cfg, mod) and not (
+                honor_status_allow and _status_allowed(cfg, _obj_cml)
+            ):
                 obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
                 temp_cmake = (
                     temp_root / "native" / "src" / obj / "CMakeLists.txt"
@@ -3459,6 +3668,8 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
                 f"fragment, or `jm remove` the object first."
             )
         shutil.copy2(fragment_path, dest)
+        # gh-2095: a fragment the merged manifest reads, written by copy.
+        _textio.wrote_toml()
         print(f"  copy    {fragment_path} -> {dest}")
 
     # Ensure `include = ["objects/*.toml"]` is present at the top of the
@@ -3530,62 +3741,6 @@ def _dangling_object_fragments(root: Path, cfg: dict) -> list[str]:
     return dangling
 
 
-class _ComposeUndo:
-    """What composing a fragment wrote, undone if the apply refuses (gh-1660).
-
-    A refused apply writes nothing. The refusals are asked before the first
-    write, so for them that holds by ordering alone -- the `jm_version`
-    stamp included, which is why it is written after the last of them. The
-    exception is a composed fragment (``jm apply <fragment.toml>``): it
-    copies the file into ``objects/`` and edits the manifest, and it has to
-    come first, because every refusal after it reads the manifest WITH the
-    fragment. So those writes are recorded here, before they happen, and
-    undone byte for byte when a refusal (or a crash) follows them.
-
-    :meth:`disarm` is called just before the reconcile's first write into the
-    tree; from there on the tree is no longer the one the fragment was
-    composed into, and restoring the manifest alone would describe neither.
-
-    Without a fragment it records nothing and :meth:`rollback` is a no-op.
-    """
-
-    def __init__(self, root: Path, fragment: "Path | None") -> None:
-        self._files: "dict[Path, bytes | None]" = {}
-        self._dirs: "list[Path]" = []
-        if fragment is None:
-            return
-        objects = root / "objects"
-        if not objects.exists():
-            self._dirs.append(objects)
-        # What `_compose_fragment` writes: the copy of the fragment, the
-        # manifest's include line, and the module wiring -- which goes
-        # through `C.save` (gh-1677), and so may land in the manifest or in
-        # any file it includes (`modules/X.toml` in the split layout). All
-        # of them, as `C._provenance` names them: the set `save` routes to.
-        owners, module_owners, _ = C._provenance(root)
-        for p in {
-            root / C.FILENAME,
-            objects / Path(fragment).name,
-            *owners.values(),
-            *module_owners.values(),
-        }:
-            self._files[p] = p.read_bytes() if p.is_file() else None
-
-    def disarm(self) -> None:
-        self._files, self._dirs = {}, []
-
-    def rollback(self) -> None:
-        for p, data in self._files.items():
-            if data is None:
-                if p.is_file():
-                    p.unlink()
-            elif p.read_bytes() != data:
-                p.write_bytes(data)
-        for d in self._dirs:
-            if d.is_dir() and not any(d.iterdir()):
-                d.rmdir()
-
-
 def run(
     root: Path,
     fragment: Path | None = None,
@@ -3617,44 +3772,41 @@ def run(
         )
         sys.exit(1)
 
-    # gh-1660: a refused apply writes nothing, and a fragment is composed
-    # before any refusal can be asked -- so what it writes is undone.
-    undo = _ComposeUndo(root, fragment)
-    try:
-        if fragment is not None:
-            print(f"just-makeit: composing fragment {fragment}")
-            try:
-                _compose_fragment(root, fragment)
-            except (FileNotFoundError, FileExistsError, ValueError) as e:
-                print(f"error: {e}", file=sys.stderr)
-                sys.exit(1)
-            print()
-        _apply_manifest(
-            root,
-            only,
-            undo,
-            honor_status_allow=honor_status_allow,
-            replay_out=replay_out,
-        )
-    except BaseException:
-        undo.rollback()
-        raise
+    # gh-1660: a refused apply writes nothing. A fragment is composed before
+    # any refusal can be asked, because every refusal reads the manifest
+    # WITH it, and the reconcile's own stub guards follow its first writes
+    # (gh-1676): what either wrote is put back by the command's `_undo`
+    # record when a refusal follows (gh-1867), which `_cli.main` takes
+    # around every mutating command.
+    if fragment is not None:
+        print(f"just-makeit: composing fragment {fragment}")
+        try:
+            _compose_fragment(root, fragment)
+        except (FileNotFoundError, FileExistsError, ValueError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print()
+    _apply_manifest(
+        root,
+        only,
+        honor_status_allow=honor_status_allow,
+        replay_out=replay_out,
+    )
 
 
 def _apply_manifest(
     root: Path,
     only: "str | None",
-    undo: _ComposeUndo,
     *,
     honor_status_allow: bool,
     replay_out: "Path | None",
 ) -> None:
     """The body of :func:`run`, once any fragment is composed.
 
-    Every refusal is asked before the first write into the tree, where
-    *undo* is disarmed -- except the reconcile phase's own stub guards,
-    which follow its first writes (gh-1676). The `jm_version` stamp follows
-    even those (gh-1660).
+    Every refusal is asked before the first write into the tree -- except
+    the reconcile phase's own stub guards, which follow its first writes
+    (gh-1676); the command's `_undo` record puts those writes back
+    (gh-1867). The `jm_version` stamp follows even those (gh-1660).
     """
     cfg = C.load(root)
     # gh-1310: a family member whose family header is missing, before anything
@@ -3690,6 +3842,10 @@ def _apply_manifest(
     C.pkg_module_entries(cfg)
     C.public_link_libs(cfg)
     C.public_defines(cfg)
+    # gh-2074: and the apps, which `_app.replay` renders last -- so a
+    # schema-8 `[app]` table is refused (naming `jm upgrade`) before the
+    # first write, not after the last.
+    C.apps(cfg)
     # gh-1600: an additional library the tree cannot build is refused before
     # anything is written -- a missing core is a CMake configure error, and a
     # core also in lib<pkg> puts its objects in a consumer's link twice.
@@ -3710,13 +3866,6 @@ def _apply_manifest(
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
-    if not C.components(cfg) and not C.modules(cfg):
-        print(
-            "error: manifest declares no objects or modules — nothing to materialize.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     # gh-595 / gh-598: refuse to generate from a manifest declaring a type no
     # binding can convert. Left unchecked neither failed — an unknown
     # return_type produced a binding that dropped the C result and returned
@@ -3869,9 +4018,17 @@ def _apply_manifest(
         try:
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
+            # gh-1840: and an author's OBJECT library in a CMakeLists the
+            # reconcile below rewrites.
+            _refuse_cmake_that_would_lose(temp_root, root, cfg)
             _scaffolds = _owned_scaffolds(temp_root, root)
             # The first write into the tree: nothing above it has written.
-            undo.disarm()
+            # gh-1899: a Makefile still rendered for the backend the project
+            # no longer uses is replaced, so the switch reaches the build.
+            # The command's `_undo` guard (gh-1867) puts it back on failure.
+            _backend = reconcile_backend_makefile(root, cfg, temp_root)
+            if _backend:
+                print(_backend)
             created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
@@ -4012,7 +4169,7 @@ def _apply_manifest(
     # already renders a complete numpy docstring from Doxygen.
     from . import _docstring as _doc_mod
 
-    for _md in _doc_mod.manifest_docs_with_sections(cfg):
+    for _md in _doc_mod.manifest_docs_with_sections(cfg, root):
         _report.warn(
             _doc_mod.manifest_doc_advice(_md),
             gates=True,
@@ -4045,9 +4202,11 @@ def _apply_manifest(
             updated.append(_linkcheck.symbols_file(root, obj))
 
     # gh-1404: the element contract between a writer and a reader. Beside
-    # the link-check table above and for the same reason -- the author's
-    # own test file is create-only, so an invariant appended there would
-    # reach a new project and never an existing one.
+    # the link-check table above and for the same reason -- the scaffolded
+    # test is jm's only while it carries `# jm:generated` (gh-1489): the
+    # author takes it over by deleting that line, and a project scaffolded
+    # before the line has none, so an invariant appended there would never
+    # reach either.
     from . import _invariants
 
     _pkg = C.project_name(cfg)

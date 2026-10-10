@@ -30,6 +30,13 @@ GATE: for every command `_cli.COMMANDS` classifies MUTATING -- the one
       the route it offers instead, and leaves the tree byte-identical. Then
       to (a) and (b), on the shape's own tree.
 
+      And every case is run once more with a failure injected where it
+      would have succeeded -- after every write it makes -- and held to
+
+      (d) exit 1, one ``error:`` line, and the tree byte-identical: every
+          file, every directory, and the author's own edit to each
+          ``_core.c`` (gh-1867, gh-2040).
+
 Registration-free where the source can say it: the commands are the
 dispatch's (`test_every_dispatched_command_is_classified`), a mutating
 command without a case fails `test_every_mutating_command_has_a_case`, and
@@ -47,7 +54,9 @@ minutes and timed Coverage out (gh-2057).
 A run red today is ratcheted in `RATCHET` under the issue each of its
 findings belongs to, and must report exactly those: so it fails for that
 cause or not at all (gh-1652), a fix must delete its part of the entry, and
-the ratchet only shrinks.
+the ratchet only shrinks. `RATCHET` is read from one file per issue,
+``tests/gh2057_ratchet/gh-<n>.toml``, so a fix edits only its own issue's
+file and two fixes never conflict there (gh-2108).
 """
 
 from __future__ import annotations
@@ -63,10 +72,12 @@ from typing import NamedTuple
 import pytest
 
 from _jmrun import run_cli
+from _scratchgit import Repo
 from just_makeit import _cli
+from just_makeit import _cli_remove
 from just_makeit import _config as C
 from just_makeit import _createonly as CO
-from just_makeit._upgrade import _manifest_fragments
+from just_makeit._upgrade import MIGRATIONS, AppRows, _manifest_fragments
 from test_cli_dispatch import _dispatched_commands
 from test_gh1648_exports_run_on_windows import CI_YML, _job_block
 from test_own_ci_matrix import _axes
@@ -139,6 +150,23 @@ def _enum(name: str, *values: str):
     return edit
 
 
+def _app_table(root: Path) -> None:
+    """The manifest as the schema before `AppRows` spelled it: its one app
+    a single ``[app]`` table (gh-2074). That schema is read off the
+    migration table, not restated."""
+    (schema,) = [
+        n for n, steps in MIGRATIONS.items() if AppRows() in steps
+    ]  # fmt: skip
+    path = root / C.FILENAME
+    text = path.read_text(encoding="utf-8")
+    text, rows = re.subn(r"(?m)^\[\[app\]\]$", "[app]", text)
+    text, schemas = re.subn(
+        r'(?m)^schema = "\d+"$', f'schema = "{schema}"', text
+    )
+    assert (rows, schemas) == (1, 1), (rows, schemas)
+    path.write_text(text, encoding="utf-8")
+
+
 def _impl_source(root: Path) -> None:
     """A C file `--impl` lifts a body from (``impl.c::lifted``)."""
     (root / "impl.c").write_text(
@@ -164,6 +192,26 @@ def _foreign_header(root: Path) -> None:
         "{\n  return x * state->gain;\n}\n\n#endif\n",
         encoding="utf-8",
     )
+
+
+def _hand_keys(root: Path) -> None:
+    """The keys a whole-manifest rewrite dropped or respelt, which no verb
+    writes in this spelling: a TOML ``true`` (gh-2046), an ``array_args``
+    row's ``dtype`` (gh-2036), and the param keys of gh-2045: every one on
+    the function, and on the method those its sacred fragment renders
+    (`rank`, `str_hint` and `enum` it does not, even regenerated: gh-2121;
+    `out` is the CLI's `--out-param`)."""
+    cfg = C.load(root)
+    k = cfg["k"]
+    k["streamable"] = True
+    (row,) = k["array_args"]
+    row["dtype"] = row.pop("type")
+    k["methods"][0]["params"][0].update(doc="The x.", elements_per_sample=1)
+    fn = cfg["module"]["mod"]["functions"][0]["params"]
+    fn[0].update(doc="The x.", rank=1, elements_per_sample=1,
+                 str_hint="pass an array")  # fmt: skip
+    fn[-1]["enum"] = "mode"
+    C.save(root, cfg)
 
 
 def _members(*module: str) -> tuple:
@@ -222,6 +270,37 @@ SHAPES: "dict[str, Shape]" = {
         _OM | {"dotted"},
         "dsp.filt",
     ),
+    # gh-1949: an object named for its module. Flat, it shares the module's
+    # directory and core; dotted, only the cname names that directory, so
+    # the leaf-named object is a member with its own (it declared
+    # `o_core` twice), and the cname-named one is the collocated object --
+    # with include dirs, which `apply` re-added to the module's CMakeLists
+    # while it took the dotted id for the collocated object's name.
+    "collocated": Shape(
+        (), (("module", "o"), ("object", "o", "--module", "o")), _OM, "o"
+    ),
+    "dotted-leaf": Shape(
+        (),
+        (("module", "dsp.o"), ("object", "o", "--module", "dsp.o")),
+        _OM | {"dotted"},
+        "dsp.o",
+    ),
+    "dotted-cname": Shape(
+        (),
+        (
+            ("module", "dsp.o"),
+            (
+                "object",
+                "dsp_o",
+                "--module",
+                "dsp.o",
+                "--extra-include-dirs",
+                "${FOO_INCLUDE_DIR}",
+            ),
+        ),
+        frozenset({"module", "dotted"}),
+        "dsp.o",
+    ),
     "pair": Shape((), (("object", "o"), *_pair()), _O | {"pair"}),
     "pair-in-module": Shape((), (*_MOD, *_pair(*_M)), _OM | {"pair"}, "mod"),
     "struct": Shape((), (("object", "o"), *_struct()), _O | {"struct"}),
@@ -274,11 +353,42 @@ SHAPES: "dict[str, Shape]" = {
                 "double",
             ),
             ("app", "--object", "o", *_M, "--target", "c"),
-            ("app", "--object", "o", *_M, "--target", "console"),
+            # gh-2074: an app's name is unique; this one's default (`p`)
+            # is the C app's.
+            (
+                "app",
+                "--object",
+                "o",
+                *_M,
+                "--target",
+                "console",
+                "--name",
+                "o-cli",
+            ),
             ("app", "--function", "f", *_M, "--target", "pep723"),
         ),
         _OM | {"function", "apps"},
         "mod",
+    ),  # fmt: skip
+    # gh-2074: an app as schema 8 spelled it, one `[app]` table, then the
+    # `jm upgrade` that rewrites it as `[[app]]`.
+    "app-table": Shape(
+        (),
+        (
+            ("object", "o"),
+            (
+                "app",
+                "--object",
+                "o",
+                "--target",
+                "c",
+                "--flag",
+                "gain:double:1.0:the gain",
+            ),
+            _app_table,
+            ("upgrade",),
+        ),
+        frozenset({"app-table"}),
     ),  # fmt: skip
     # gh-1985: every name added sorts before the ones already there.
     "reverse": Shape(
@@ -301,6 +411,50 @@ SHAPES: "dict[str, Shape]" = {
     "no-c-prefix": Shape(("--no-c-prefix",), (("object", "o"),), _O),
     # gh-2062: a vendored C dependency, and nothing else yet.
     "c-dep": Shape(("--c-dep", "vend"), (), frozenset({"c-dep"})),
+    # gh-2045 / gh-2046 / gh-2036: a central manifest holding keys the
+    # layout-moving verbs rewrote through `_dump` and lost. Last, holding no
+    # `o`, so it is the module-side home of `split-objects` and `migrate`
+    # and of nothing that has one already.
+    "central-keys": Shape(
+        ("--no-fragments",),
+        (
+            _enum("mode", "off", "on"),
+            ("module", "mod"),
+            ("object", "k", *_M, "--array-arg", "taps:float32"),
+            (
+                "method",
+                "k",
+                "run",
+                *_M,
+                "--param",
+                "x:float[]",
+                "--out-param",
+                "y:float[]",
+                "--param",
+                "m:int",
+                "--return-type",
+                "void",
+            ),
+            (
+                "function",
+                "f",
+                *_M,
+                "--param",
+                "x:double[]",
+                "--param",
+                "m:int",
+                "--return-type",
+                "double",
+            ),
+            _hand_keys,
+            # The keys reach k's sacred binding fragment too, so `adopt`
+            # finds it as jm would render it.
+            ("regenerate", "k", "--force"),
+            ("apply",),
+        ),
+        frozenset({"central", "module"}),
+        "mod",
+    ),  # fmt: skip
 }
 
 
@@ -313,20 +467,27 @@ class Case(NamedTuple):
     In ``argv``, ``{M}`` is ``--module <id>`` when ``o`` lives in a module
     and nothing when it is standalone; ``{mod}`` is that module's id.
     ``only`` restricts the case to the named shapes; by default it runs on
-    every shape that holds ``needs``. ``refuses``, when not empty, says the
-    verb must refuse there, and is what its one ``error:`` line names: the
-    route it offers instead.
+    every shape that holds ``needs`` and nothing in ``without``. ``refuses``,
+    when not empty, says the verb must refuse there, and is what its one
+    ``error:`` line names: the route it offers instead. A verb that refuses
+    on some shapes only is two cases: one ``without`` what makes it refuse,
+    one that ``needs`` it and ``refuses`` (gh-2075).
     """
 
     argv: tuple
     needs: frozenset = frozenset({"o"})
     only: "frozenset | None" = None
     refuses: tuple = ()
+    without: frozenset = frozenset()
 
 
-def _case(*argv: str, needs=("o",), only=None, refuses=()) -> Case:
+def _case(*argv: str, needs=("o",), only=None, refuses=(), without=()) -> Case:
     return Case(
-        argv, frozenset(needs), frozenset(only) if only else None, refuses
+        argv,
+        frozenset(needs),
+        frozenset(only) if only else None,
+        refuses,
+        frozenset(without),
     )
 
 
@@ -337,6 +498,14 @@ _FN = ("--param", "x:double", "--return-type", "double")
 
 #: What `jm bind` offers instead of a declared component (gh-2072).
 _BIND_ROUTE = ("`jm regenerate o`", "`jm apply`")
+
+#: What `jm remove` offers instead of removing what the `apps` shape's apps
+#: are built from: each app's own removal (gh-2075).
+_APP_ROUTE = {
+    "o": ("`jm remove app p`", "`jm remove app o-cli`"),
+    "f": ("`jm remove app f`",),
+    "mod": ("`jm remove app p`", "`jm remove app o-cli`", "`jm remove app f`"),
+}
 
 #: verb -> case name -> Case. Held to `_cli.COMMANDS` by
 #: `test_every_mutating_command_has_a_case`: the classification is the list.
@@ -535,9 +704,23 @@ CASES: "dict[str, dict[str, Case]]" = {
                           needs=("o", "module", "members")),
     },
     "remove": {
-        "object": _case("remove", "object", "o", "--force"),
+        "object": _case("remove", "object", "o", "--force",
+                        without=("apps",)),
         "module": _case("remove", "module", "{mod}", "--force",
-                        needs=("o", "module")),
+                        needs=("o", "module"), without=("apps",)),
+        # gh-2075: a component an app is built from stays until its apps
+        # go, and the refusal names each app's own removal.
+        "an-apps-object": _case("remove", "object", "o", "--force",
+                                needs=("o", "apps"),
+                                refuses=_APP_ROUTE["o"]),
+        "an-apps-module": _case("remove", "module", "{mod}", "--force",
+                                needs=("o", "apps"),
+                                refuses=_APP_ROUTE["mod"]),
+        "an-apps-function": _case("remove", "function", "f", "--module",
+                                  "{mod}", "--force", needs=("apps",),
+                                  refuses=_APP_ROUTE["f"]),
+        # gh-2074: an app is removed by its name.
+        "app": _case("remove", "app", "p", "--force", needs=("apps",)),
         "method": _case("remove", "method", "m", "--object", "o",
                         "--force", needs=("o", "members")),
         "property": _case("remove", "property", "lvl", "--object", "o",
@@ -549,7 +732,8 @@ CASES: "dict[str, dict[str, Case]]" = {
         "state": _case("remove", "state", "x", "--object", "o", "--force",
                        needs=("o", "members")),
         "function": _case("remove", "function", "f", "--module", "{mod}",
-                          "--force", needs=("o", "function")),
+                          "--force", needs=("o", "function"),
+                          without=("apps",)),
         "a-pair-reader": _case("remove", "method", "wait", "--object", "o",
                                "--force", needs=("o", "pair")),
         "a-pair-writer": _case("remove", "method", "write", "--object",
@@ -620,6 +804,10 @@ CASES: "dict[str, dict[str, Case]]" = {
             "--variable-output", "--out-type", "float", "--return-type",
             "size_t", "--out-size", "x_len", needs=("o", "module"),
             only=BASE),
+        # gh-1888: the length a scalar holds, named on the command line.
+        "out-type-length": _case(
+            "function", "g", "--module", "{mod}", "--param", "n:size_t",
+            "--out-type", "float[n]", needs=("o", "module"), only=BASE),
         "out-param": _case(
             "function", "g", "--module", "{mod}", "--param", "x:float[]",
             "--out-param", "y:float[]", "--return-type", "void",
@@ -667,7 +855,8 @@ CASES: "dict[str, dict[str, Case]]" = {
             "IQ.", needs=("o", "pair")),
     },
     "app": {
-        "c": _case("app", "--object", "o", "{M}", "--target", "c"),
+        "c": _case("app", "--object", "o", "{M}", "--target", "c",
+                   without=("apps",)),
         "pep723": _case("app", "--object", "o", "{M}", "--target",
                         "pep723", only=BASE),
         "console": _case("app", "--object", "o", "{M}", "--target",
@@ -677,10 +866,35 @@ CASES: "dict[str, dict[str, Case]]" = {
         "c-argv": _case("app", "--object", "o", "{M}", "--target", "c",
                         "--argc-argv", only=BASE),
         "function": _case("app", "--function", "f", "--module", "{mod}",
-                          "--target", "pep723", needs=("function",)),
+                          "--target", "pep723", needs=("function",),
+                          without=("apps",)),
+        # gh-2074: a second app is APPENDED beside the first, and the App
+        # block holds both C executables.
+        "beside-the-others": _case("app", "--function", "f", "{M}",
+                                   "--target", "c", "--name", "f-c",
+                                   needs=("apps",)),
+        # ...and an app's name is unique: a taken one is refused, naming
+        # the taken app's removal, and a taken DEFAULT one names `--name`.
+        "a-taken-name": _case("app", "--object", "o", "{M}", "--target",
+                              "pep723", "--name", "f", needs=("apps",),
+                              refuses=("`jm remove app f`",)),
+        "a-taken-default-name": _case(
+            "app", "--object", "o", "{M}", "--target", "c",
+            needs=("apps",), refuses=("`--name`", "`jm remove app p`")),
+        # A console app's module is its package's `cli.py`: a second one
+        # there would overwrite the first's.
+        "a-taken-console-module": _case(
+            "app", "--function", "f", "{M}", "--target", "console",
+            "--name", "f-cli", needs=("apps",),
+            refuses=("`jm remove app o-cli`",)),
     },
     "perf": {"perf": _case("perf")},
-    "upgrade": {"upgrade": _case("upgrade", needs=())},
+    "upgrade": {
+        "upgrade": _case("upgrade", needs=()),
+        # gh-2074: the shape ends in the upgrade that rewrote `[app]`; a
+        # second one is a fixed point.
+        "an-app-table": _case("upgrade", needs=("app-table",)),
+    },
     "apply": {
         "apply": _case("apply"),
         "only": _case("apply", "--only=o"),
@@ -712,6 +926,11 @@ CASES: "dict[str, dict[str, Case]]" = {
                                 refuses=_BIND_ROUTE),
         # What `bind` is for: a header the manifest does not declare.
         "undeclared": _case("bind", "u", needs=("foreign",)),
+        # gh-2101: `--check` on one not bound yet is a finding, on one line
+        # naming what `bind` would write -- not a FileNotFoundError.
+        "check-undeclared": _case("bind", "u", "--check", needs=("foreign",),
+                                  refuses=("native/src/u/u_ext.c",
+                                           "`jm bind u`")),
     },
     "config": {"version": _case("config", "version", "0.2.0", needs=())},
     "ci": {
@@ -753,45 +972,73 @@ NEW_CASES: "dict[str, tuple]" = {
 # the same change; one that is new is a new red, which needs a fix or an
 # issue of its own. So an entry fails for its issue's cause or not at all
 # (gh-1652), and the ratchet can only shrink.
+#
+# One FILE per issue (gh-2108). As one dict literal, every fix deleted rows
+# beside another issue's, so any two fix PRs conflicted -- six hand
+# resolutions in one batch -- and one clean auto-merge kept a new row naming
+# a findings constant its sibling had deleted: a NameError at import. A file
+# is named for its issue and spells its findings out, so a fix deletes its
+# own file, or its own lines in it, and touches nothing another issue owns.
+
+#: ``gh-<n>.toml`` per issue: ``[[red]]`` tables, each the ``runs`` that
+#: report exactly ``found``.
+RATCHET_DIR = Path(__file__).with_name("gh2057_ratchet")
+_ISSUE_FILE = re.compile(r"gh-\d+\.toml")
+_RED_KEYS = {"runs", "found"}
 
 
-def _stale(*paths: str) -> "tuple[str, ...]":
-    """Glue `status` reports STALE and `apply` rewrites: both oracles."""
-    return tuple(
-        f"{o} {p}" for p in paths for o in ("status:STALE ~", "apply:~")
-    )
+def ratchet_file(issue: str) -> Path:
+    """The one file that holds *issue*'s entries, and that its fix edits."""
+    return RATCHET_DIR / f"{issue}.toml"
 
 
-#: A second `jm app` replaces `[app]`, orphaning the first app (gh-2074).
-_APP_ORPHAN = ("fresh:only-tree native/src/app/p.c",)
-#: `package` set after `jm module` leaves the module id's stub (gh-2081).
-_MOD_ORPHAN = ("fresh:only-tree src/p/mod/mod.pyi",)
+def load_ratchet(
+    where: Path,
+) -> "dict[tuple[str, str, str], dict[str, frozenset[str]]]":
+    """Every issue file in *where*, as ``{run: {issue: findings}}``.
+
+    Strict, because whatever this skipped would be an entry nothing
+    enforces: a file not named ``gh-<n>.toml``, anything but ``[[red]]``
+    tables, a table with a key other than ``runs`` and ``found`` or with
+    either empty, a run that is not three names, and a run its issue lists
+    twice are each refused, naming the file. A dotfile is an editor's, not
+    an entry.
+    """
+    out: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {}
+    for path in sorted(where.iterdir()):
+        if path.name.startswith("."):
+            continue
+        if not _ISSUE_FILE.fullmatch(path.name):
+            raise ValueError(f"{path}: not gh-<n>.toml, so it names no issue")
+        data = C.tomllib.loads(path.read_text(encoding="utf-8"))
+        tables = data.pop("red", None)
+        if data or not isinstance(tables, list) or not tables:
+            raise ValueError(f"{path}: [[red]] tables and nothing else")
+        seen: "set[tuple]" = set()
+        for red in tables:
+            runs, found = red.get("runs"), red.get("found")
+            if set(red) != _RED_KEYS or not runs or not found:
+                raise ValueError(
+                    f"{path}: a [[red]] is a non-empty `runs` and `found`"
+                    f" and nothing else, not {sorted(red)}"
+                )
+            # A bare string is a sequence too: one would read as its letters.
+            if not isinstance(found, list) or not all(
+                isinstance(f, str) for f in found
+            ):
+                raise ValueError(f"{path}: `found` is a list of strings")
+            for run in runs if isinstance(runs, list) else [runs]:
+                key = tuple(run) if isinstance(run, list) else ()
+                if len(key) != 3 or not all(isinstance(s, str) for s in key):
+                    raise ValueError(f"{path}: a run is three names: {run}")
+                if key in seen:
+                    raise ValueError(f"{path}: {key} is listed twice")
+                seen.add(key)
+                out.setdefault(key, {})[path.stem] = frozenset(found)
+    return out
 
 
-def _entries(issue: str, keys, *found: str) -> dict:
-    return {key: {issue: frozenset(found)} for key in keys}
-
-
-_REMOVE_FN = "error: function 'f' not found in module 'mod'."
-
-RATCHET: "dict[tuple[str, str, str], dict[str, frozenset[str]]]" = {
-    **_entries("gh-2062",
-               [("object", "standalone", "c-dep"),
-                ("module", "sorts-first", "c-dep"),
-                ("module", "sorts-last", "c-dep")],
-               *_stale("CMakeLists.txt")),
-    ("remove", "function", "apps"): {
-        "gh-2075": frozenset({
-            "status:exit 1", f"apply:refused {_REMOVE_FN}",
-            f"fresh:refused {_REMOVE_FN}"}),
-        "gh-2074": frozenset(_APP_ORPHAN),
-    },
-    **_entries("gh-2074",
-               [("shape", "apps", ""), ("remove", "object", "apps"),
-                ("remove", "module", "apps")],
-               *_APP_ORPHAN),
-    **_entries("gh-2081", [("shape", "package-edited", "")], *_MOD_ORPHAN),
-}  # fmt: skip
+RATCHET = load_ratchet(RATCHET_DIR)
 
 
 # ── Running a case ───────────────────────────────────────────────────────────
@@ -811,7 +1058,7 @@ def _admits(case: Case, name: str) -> bool:
     shape = SHAPES[name]
     if case.only is not None and name not in case.only:
         return False
-    return case.needs <= shape.has
+    return case.needs <= shape.has and not case.without & shape.has
 
 
 def _runs() -> "list[tuple[str, str, str]]":
@@ -906,14 +1153,6 @@ def findings(root: Path) -> "frozenset[str]":
     before = _tree(root)
     a = run_cli("apply", cwd=root)
     after = _tree(root)
-    if a.returncode and _declares_nothing(root):
-        # `apply` refuses a manifest that declares nothing ("nothing to
-        # materialize"), and `status` stops early on one, so on such a tree
-        # (b) cannot speak and (a) checks less than it does elsewhere: the
-        # version copies and a c_dep's wiring go unchecked (gh-2076). The
-        # tree after removing the last component is one; (c) still sees it.
-        assert after == before, "a refused `apply` wrote to the tree"
-        return frozenset(out)
     if a.returncode:
         # A manifest `apply` refuses is a tree no `apply` can reach.
         (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
@@ -925,11 +1164,6 @@ def findings(root: Path) -> "frozenset[str]":
             )
             out.add(f"apply:{mark} {rel}")
     return frozenset(out)
-
-
-def _declares_nothing(root: Path) -> bool:
-    cfg = C.load(root)
-    return not C.components(cfg) and not C.modules(cfg)
 
 
 def _rewritten_by_apply(root: Path) -> "dict[str, bytes]":
@@ -964,11 +1198,12 @@ def fresh(root: Path, shape: Shape, base: Path) -> "frozenset[str]":
         (other / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, other / rel)
     out = set()
-    if not _declares_nothing(other):
-        a = run_cli("apply", cwd=other)
-        if a.returncode:
-            (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
-            out.add(f"fresh:refused {last}")
+    a = run_cli("apply", cwd=other)
+    if a.returncode:
+        # A refused `apply` writes nothing (gh-1867), so `other` holds only
+        # what `jm new` wrote: there is no from-scratch render to compare.
+        (last, *_) = reversed(a.stderr.strip().splitlines() or ["?"])
+        return frozenset({f"fresh:refused {last}"})
     ours, theirs = _rewritten_by_apply(root), _rewritten_by_apply(other)
     for rel in set(ours) | set(theirs):
         if ours.get(rel) != theirs.get(rel):
@@ -1150,6 +1385,10 @@ def test_every_flag_has_a_case():
     for (cmd, f), _why in UNCOVERED_FLAGS.items():
         if f not in parser_flags(cmd) or f in _flags_cased(cmd):
             stale.append((cmd, f))
+    # gh-2074: and every kind `jm remove` takes -- a word, not a flag, and a
+    # render path of its own all the same.
+    removed = {case.argv[1] for case in CASES["remove"].values()}
+    missing += [("remove", k) for k in _cli_remove._KINDS if k not in removed]
     assert not missing, f"flags no case passes: {missing}"
     assert not stale, f"UNCOVERED_FLAGS entries to delete: {stale}"
 
@@ -1191,14 +1430,94 @@ def test_every_ratchet_entry_names_a_run_and_an_issue():
         assert not overlap, f"{key}: a finding cited for two issues"
 
 
+_ONE_RED = '[[red]]\nruns = [["shape", "s", ""]]\nfound = ["x"]\n'
+
+#: id -> (file name, its text, what the refusal says).
+_NOT_A_RATCHET_FILE = {
+    "not-toml": ("gh-1.txt", _ONE_RED, "names no issue"),
+    "not-an-issue": ("notes.toml", _ONE_RED, "names no issue"),
+    "no-table": ("gh-1.toml", "# nothing\n", "tables and nothing else"),
+    "a-shared-key": (
+        "gh-1.toml", 'shared = ["x"]\n' + _ONE_RED, "tables and nothing else"),
+    "a-stray-key": ("gh-1.toml", _ONE_RED + 'also = ["y"]\n', "nothing else,"),
+    "nothing-found": ("gh-1.toml", _ONE_RED.replace('["x"]', "[]"), "non-em"),
+    "found-a-string": (
+        "gh-1.toml", _ONE_RED.replace('["x"]', '"xyz"'), "list of strings"),
+    "a-short-run": ("gh-1.toml", _ONE_RED.replace(', ""', ""), "three names"),
+    "a-run-a-string": (
+        "gh-1.toml", _ONE_RED.replace('["shape", "s", ""]', '"abc"'),
+        "three names"),
+    "a-run-twice": ("gh-1.toml", _ONE_RED * 2, "listed twice"),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "name, text, why",
+    _NOT_A_RATCHET_FILE.values(),
+    ids=_NOT_A_RATCHET_FILE.keys(),
+)
+def test_a_ratchet_file_is_one_issues_and_nothing_else(
+    tmp_path, name, text, why
+):
+    """What the loader would otherwise skip is an entry nothing enforces,
+    so each such file is refused, by name (gh-2108)."""
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=why):
+        load_ratchet(tmp_path)
+
+
+def test_a_ratchet_file_reads_as_its_issue(tmp_path):
+    """The issue is the file's name, and an editor's dotfile is skipped."""
+    (tmp_path / "gh-7.toml").write_text(_ONE_RED, encoding="utf-8")
+    (tmp_path / ".gh-7.toml.swp").write_text("junk", encoding="utf-8")
+    assert load_ratchet(tmp_path) == {("shape", "s", ""): {"gh-7": {"x"}}}
+
+
+def test_two_issues_fixes_merge_in_either_order(tmp_path):
+    """gh-2108: the fix for one issue -- deleting its file -- merges with
+    the fix for another in either order, with nothing to resolve, and
+    leaves exactly the other issues' entries. On the real files, every
+    pair adjacent by number (adjacency is what conflicted as one dict),
+    plus two of its own so the check never runs out of pairs."""
+    repo = Repo(tmp_path / "r")
+    where = repo.root / RATCHET_DIR.name
+    shutil.copytree(RATCHET_DIR, where)
+    for n in (1, 2):
+        (where / f"gh-{n}.toml").write_text(_ONE_RED, encoding="utf-8")
+    repo.commit("base")
+    every = load_ratchet(where)
+    issues = sorted(
+        {i for by_issue in every.values() for i in by_issue},
+        key=lambda i: int(i[3:]),
+    )
+    for issue in issues:
+        path = ratchet_file(issue).relative_to(RATCHET_DIR.parent)
+        repo.branch(issue, lambda root, p=path: (root / p).unlink())
+    for a, b in zip(issues, issues[1:]):
+        rest = {
+            k: {i: f for i, f in v.items() if i not in (a, b)}
+            for k, v in every.items()
+        }
+        rest = {k: v for k, v in rest.items() if v}
+        for first, second in ((a, b), (b, a)):
+            assert repo.conflicts(first, second) == [], (first, second)
+            repo.git("checkout", "-q", Repo.MERGED)
+            assert load_ratchet(where) == rest, (first, second)
+            repo.git("checkout", "-q", "main")
+
+
 def _check(key: "tuple[str, str, str]", found: "frozenset[str]") -> None:
     """*found* must be exactly what the ratchet expects for *key*."""
     by_issue = RATCHET.get(key, {})
     fixed = [issue for issue, part in by_issue.items() if not part & found]
     expected = frozenset().union(*by_issue.values())
+    where = ", ".join(
+        ratchet_file(i).relative_to(RATCHET_DIR.parent.parent).as_posix()
+        for i in fixed
+    )
     assert not fixed, (
         f"{key} no longer reports what {', '.join(fixed)} ratcheted: delete"
-        f" that part of its RATCHET entry (the ratchet only shrinks)."
+        f" the run from {where} (the ratchet only shrinks)."
     )
     assert found == expected, (
         f"{key}: the tree differs from what `jm apply` writes"
@@ -1251,3 +1570,107 @@ def test_the_verb_leaves_what_apply_writes(
     if verb in FRESH_VERBS:
         found |= fresh(root, shape, tmp_path_factory.mktemp("fresh"))
     _check((verb, cname, sname), found)
+
+
+# ── A verb that fails writes nothing (gh-1867, gh-2040) ──────────────────────
+
+
+def _failure_params():
+    """Each case on its `_home` shapes; on every shape that admits it where
+    `FULL_ENV` asks for the whole matrix. A run is one verb and no oracle:
+    the 234 home runs took 27 s on one core at a load average of 40
+    (2026-10-08, `pytest -p no:xdist -k fails_after`)."""
+    full = os.environ.get(FULL_ENV) == "1"
+    for verb, cname, sname in _runs():
+        if full or sname in _home(verb, cname):
+            yield pytest.param(
+                verb, cname, sname, id=f"{verb}-{cname}@{sname}"
+            )
+
+
+#: Cases that run a read-only MODE of a mutating command (`_cli.MUTATING`
+#: names them): each exits with its report, so it never reaches the success
+#: the failure is injected at -- and writes nothing to put back.
+READ_ONLY_MODES = frozenset({("adopt", "check")})
+
+#: Cases whose `_home` shapes already hold what they would write -- each
+#: shape is in sync with its manifest -- so the failure injected after
+#: their last write finds nothing written. On its home shapes every other
+#: case has written something by then, or its run says so: the comparison
+#: would otherwise hold of a tree nothing touched. (Off them, under
+#: `FULL_ENV`, a case may meet a shape that already holds its change: `jm
+#: app` on the shape that has the app.)
+WRITES_NOTHING = frozenset(
+    {
+        ("apply", "apply"),
+        ("apply", "only"),
+        ("upgrade", "upgrade"),
+        # gh-2074: the second `upgrade` of a manifest that `AppRows` has
+        # already rewritten is a fixed point.
+        ("upgrade", "an-app-table"),
+        ("adopt", "packaging"),
+    }
+)
+
+
+def _tree_and_dirs(root: Path) -> tuple:
+    """`_tree`, and every directory: a directory left behind, or one gone,
+    is a change too."""
+    dirs = frozenset(
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*")
+        if p.is_dir() and not _EXCLUDED & set(p.relative_to(root).parts)
+    )
+    return _tree(root), dirs
+
+
+@pytest.mark.parametrize("verb, cname, sname", list(_failure_params()))
+def test_a_verb_that_fails_after_writing_writes_nothing(
+    shape_copy, monkeypatch, verb, cname, sname
+):
+    """(d) A mutating verb that fails leaves the tree it found, the
+    author's own edit to every ``_core.c`` included: exit 1, one
+    ``error:`` line, every byte and directory as it was.
+
+    The failure is injected at the last moment one can come: where the
+    command would have succeeded (`_undo.commit`), so after every write it
+    makes. A real refusal comes earlier and has less to put back; the
+    issues' own -- `regenerate` losing its component, `jm method` and `jm
+    property` half-writing a member -- are held in
+    `test_gh1867_failed_verb_writes_nothing.py` and
+    `test_gh1884_str_step_type_refused.py`."""
+    from just_makeit import _undo
+    from just_makeit._report import Refusal
+
+    case, shape = CASES[verb][cname], SHAPES[sname]
+    root = shape_copy(sname)
+    for core in sorted(root.glob("native/src/*/*_core.c")):
+        core.write_bytes(core.read_bytes() + b"/* the author's */\n")
+    before = _tree_and_dirs(root)
+    fired = []
+
+    def fail() -> None:
+        fired.append(_tree_and_dirs(root) != before)
+        raise Refusal("injected: the command failed after its last write")
+
+    monkeypatch.setattr(_undo, "commit", fail)
+    r = run_cli(*_expand(case.argv, shape), cwd=root)
+
+    assert _tree_and_dirs(root) == before, (r.stdout + r.stderr)[-3000:]
+    if case.refuses or (verb, cname) in READ_ONLY_MODES:
+        assert not fired, f"{verb} {cname} reached success"
+        return
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert fired and r.returncode == 1 and len(errors) == 1, (
+        fired,
+        (r.stdout + r.stderr)[-3000:],
+    )
+    assert "injected" in errors[0], errors
+    wrote = fired[0]
+    assert sname not in _home(verb, cname) or wrote != (
+        (verb, cname) in WRITES_NOTHING
+    ), (
+        f"{verb} {cname} wrote {'something' if wrote else 'nothing'} on"
+        f" {sname}: {'delete it from' if wrote else 'it belongs in'}"
+        " WRITES_NOTHING"
+    )

@@ -389,9 +389,10 @@ _HANDLE = {
 }
 
 #: Every shape `_dump` writes, across the fixtures below. One manifest cannot
-#: hold them all -- `[app]` names a function OR an object, and a reserved
-#: section no branch renders is written by `_dump_generic` in whichever of
-#: its four shapes it has -- so the later ones carry the other branches.
+#: hold them all -- an `[[app]]` row names a function OR an object, and a
+#: reserved section no branch renders is written by `_dump_generic` in
+#: whichever of its four shapes it has -- so the later ones carry the other
+#: branches.
 FIXTURES: dict[str, dict] = {
     "full": {
         "project": {
@@ -460,40 +461,46 @@ FIXTURES: dict[str, dict] = {
             "ring": _HANDLE,
         },
         "o": _OBJECT,
-        "app": {
-            "target": "cli",
-            "name": "tool",
-            "function": "hello",
-            "module": "filt",
-            "flags": [
-                _row(name="gain", type="double", default="1.0", help="Gain.")
-            ],
-            "commands": [
-                _row(
-                    name="run",
-                    help="Run.",
-                    flags=[
-                        _row(
-                            name="n",
-                            type="int",
-                            default="1",
-                            help="How many.",
-                        )
-                    ],
-                )
-            ],
-        },
+        "app": [
+            {
+                "target": "cli",
+                "name": "tool",
+                "function": "hello",
+                "module": "filt",
+                "flags": [
+                    _row(
+                        name="gain", type="double", default="1.0", help="Gain."
+                    )
+                ],
+                "commands": [
+                    _row(
+                        name="run",
+                        help="Run.",
+                        flags=[
+                            _row(
+                                name="n",
+                                type="int",
+                                default="1",
+                                help="How many.",
+                            )
+                        ],
+                    )
+                ],
+            }
+        ],
         "codec": {"blue": {"entries": ["v"], "label": "Blue"}},
     },
     "object_app": {
         "project": {"name": "p", "version": "0.1.0"},
         "o": {"arg_type": "float", "return_type": "float"},
-        "app": {
-            "target": "console",
-            "name": "tool",
-            "object": "o",
-            "module": "filt",
-        },
+        "app": [
+            {
+                "target": "console",
+                "name": "tool",
+                "object": "o",
+                "module": "filt",
+            }
+        ],
         "template": [_row(name="t", body="x")],
         "codec": {"label": "Blue"},
     },
@@ -554,7 +561,7 @@ def test_the_round_trip_is_armed() -> None:
         "full:module/wfm/source/fields/0/default",  # composer fields
         "full:module/ring/create_args/0/default",  # handle create_args
         "full:o/state/0/default",  # [[state]]
-        "full:app/flags/0/default",  # [[app.flags]]
+        "full:app/0/flags/0/default",  # [[app.flags]]
     ):
         assert want in ids, want
     assert len(_CASES) > 200, len(_CASES)
@@ -681,7 +688,9 @@ def test_the_fixtures_reach_every_escaper_call(monkeypatch) -> None:
     for cfg in FIXTURES.values():
         C._dump(copy.deepcopy(cfg))
     sites = _escaper_call_sites()
-    assert len(sites) > 20, "no escaper call sites found -- gate not armed"
+    # gh-2045: one writer for every table, so a handful of sites where there
+    # were 130-odd. Each still has to be reached.
+    assert len(sites) >= 5, "no escaper call sites found -- gate not armed"
     missed = [
         f"{fn}:{lo}: {seg}"
         for lo, hi, fn, seg in sites
@@ -746,7 +755,7 @@ def test_no_serializer_string_is_quoted_by_hand() -> None:
     """
     src, funcs = _module_tree()
     serializer = _call_graph(("_dump", "_write_doc", "stamp_jm_version"))
-    assert {"_dump", "_method_dump_lines", "_inline_field"} <= serializer
+    assert {"_dump", "_emit", "_assign", "_inline"} <= serializer
     offenders = []
     for name in sorted(serializer - _escapers()):
         for node in ast.walk(funcs[name]):

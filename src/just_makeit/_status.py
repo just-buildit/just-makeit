@@ -398,16 +398,6 @@ def run(
             f"{_run} (gh-183) — results may not reflect the pinned version.",
             file=sys.stderr,
         )
-    if not C.components(cfg) and not C.modules(cfg):
-        if as_json:
-            print(json.dumps({"entries": [], "ok": 0}))
-        else:
-            print(
-                "just-makeit: manifest declares no objects or modules; "
-                "nothing to status."
-            )
-        return 0
-
     # gh-784: names that built yesterday and do not today. `valid_identifier`
     # rejects non-ASCII since the term landed, and `apply` replays a manifest
     # through the same declaration commands — so a tree that already carries
@@ -512,7 +502,7 @@ def run(
     manifest_doc_entries = [
         d
         for d in (
-            _doc_mod.manifest_docs_with_sections(cfg)
+            _doc_mod.manifest_docs_with_sections(cfg, root)
             + _composer_mod.field_doc_drift(root, cfg)
         )
         if not _is_allowed(d.where, allow_patterns)
@@ -681,10 +671,32 @@ def run(
         # and stops hearing about it. Suppressible because adopting jm's
         # render is the author's call — unlike the gh-426 dropped symbol
         # beside it, nothing is being lost here.
+        # gh-1899: a Makefile still rendered for the other backend is a
+        # backend mismatch, reported as drift. Reporting it as OUTDATED sent
+        # the author to "upgrade jm" for a file the manifest made wrong.
+        from . import _apply as _apply_mod
+        from . import _new as _new_mod
+
+        _backend = None
+        _cur_mf = replay_root / "Makefile"
+        _other = _new_mod.other_backend(cfg)
+        if _cur_mf.is_file() and _new_mod.is_other_backend_makefile(
+            root,
+            _cur_mf.read_text(encoding="utf-8").replace("\r\n", "\n"),
+            _other,
+            lambda: _apply_mod._other_backend_makefile(cfg, root),
+        ):
+            _backend = _other
         outdated_entries = [
             (p, _is_allowed(p, allow_patterns))
             for p in _createonly.outdated(root, replay_root)
+            if not (_backend and p == "Makefile")
         ]
+        backend_entries = (
+            [("Makefile", _backend, _is_allowed("Makefile", allow_patterns))]
+            if _backend
+            else []
+        )
         # gh-1589: a packaging template scaffolded before it was born owned
         # carries no token, so `apply` never renders it and, being
         # RECONCILED, it is never OUTDATED either. When it differs from
@@ -719,9 +731,15 @@ def run(
         # unwired although its render has the line could not PLACE it (a
         # missing `# ── Modules` anchor, gh-975), which is a different fix
         # from a core jm never writes a line for.
+        #
+        # gh-1840: "apply wires it" is a core the scratch still DECLARES
+        # after the apply and no longer reports unwired. Asked only as "not
+        # unwired", a core the apply had erased -- an author's OBJECT library
+        # in a CMakeLists it regenerates -- read as one it had wired, and the
+        # advice promised a line that never came.
         from . import _libwiring
 
-        _apply_leaves_unwired = {
+        _apply_wires = set(_libwiring.declared_cores(scratch)) - {
             u.core for u in _libwiring.unwired(scratch, cfg)
         }
         _jm_renders_wiring = {
@@ -1056,6 +1074,7 @@ def run(
         + sum(1 for e in allowed if e[4])
         + len(drift_entries)
         + len(version_entries)
+        + sum(1 for b in backend_entries if not b[2])
         + len(manifest_doc_entries)
         + len(_orphan_pg)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
@@ -1181,6 +1200,12 @@ def run(
                             "kind": d.kind,
                         }
                         for d in manifest_doc_entries
+                    ],
+                    # gh-1899: the Makefile of the backend the project no
+                    # longer uses, which is drift, not outdated.
+                    "backend": [
+                        {"path": p, "backend": b, "allowed": al}
+                        for (p, b, al) in backend_entries
                     ],
                     "version_drift": [
                         {
@@ -1308,7 +1333,7 @@ def run(
                             "allowed": _wiring_allowed[u.core],
                             # gh-1626: whether `jm apply` clears it, read
                             # from the replay, as the text's advice is.
-                            "apply_wires": u.core not in _apply_leaves_unwired,
+                            "apply_wires": u.core in _apply_wires,
                         }
                         for u in _unwired
                     ],
@@ -1651,6 +1676,20 @@ def run(
     # The reported scenario is a reader running `status --check` *before*
     # migrating, seeing OK, and concluding there is nothing to do; collapsing
     # this into the summary line would reproduce it with extra steps.
+    if backend_entries:
+        cur = C.build_system(cfg)
+        print(
+            f"BACKEND ({len(backend_entries)}) — the Makefile is the "
+            f"{backend_entries[0][1]} backend's, but [project] build is "
+            f"{cur!r}:"
+        )
+        for p, _b, al in backend_entries:
+            tag = " [status_allow]" if al else ""
+            print(f"  ! {p}{tag}")
+        print(
+            "  `jm apply` replaces it with the "
+            f"{cur} backend's Makefile. gh-1899.\n"
+        )
     if outdated_entries:
         print(
             f"OUTDATED ({len(outdated_entries)}) — create-only file(s) "
@@ -1817,19 +1856,16 @@ def run(
         # writes only an `add_subdirectory` for a `no_generate` module or a
         # c_dep, so telling that author it would fix the wiring sent them
         # to re-run a command that never would, `--check` red forever.
-        _apply_fixes = [
-            u.core for u in _unwired if u.core not in _apply_leaves_unwired
-        ]
+        _apply_fixes = [u.core for u in _unwired if u.core in _apply_wires]
         _unplaced = [
             u.core
             for u in _unwired
-            if u.core in _apply_leaves_unwired and u.core in _jm_renders_wiring
+            if u.core not in _apply_wires and u.core in _jm_renders_wiring
         ]
         _yours = [
             u
             for u in _unwired
-            if u.core in _apply_leaves_unwired
-            and u.core not in _jm_renders_wiring
+            if u.core not in _apply_wires and u.core not in _jm_renders_wiring
         ]
         _why = (
             "  These build, and their symbols ship in neither lib<pkg>.so nor"
@@ -2175,13 +2211,24 @@ def run(
         )
         for v in version_entries:
             print(f"  ! {v.rel}: {v.found!r} (manifest says {v.expected!r})")
+        # #2102: the advice names the one command that writes every copy
+        # (gh-2069), once per side the author might keep. The manifest is
+        # not always the right one: a release bumps `pyproject.toml` and
+        # never the manifest, so a copy can be the true value.
+        expected = version_entries[0].expected
         print(
-            "  One side is stale — jm can't tell which, so it rewrites "
-            "neither; a release\n  bumps `pyproject.toml` and never the "
-            "manifest, so the manifest is often the\n  stale one. Sync "
-            "whichever is wrong. Note `<pkg>_version()` in\n  "
-            "`native/src/<pkg>_lib.c` is a C API: a linking consumer is "
-            "told this value.\n  See gh-1141."
+            "  One side is stale — jm can't tell which, so `apply` rewrites "
+            "neither. Keep one side with\n  `jm config version`, which "
+            "writes it into every copy:"
+        )
+        print(f"    `jm config version {expected}`   keep the manifest")
+        for found in dict.fromkeys(
+            v.found for v in version_entries if v.found != expected
+        ):
+            print(f"    `jm config version {found}`   keep that copy")
+        print(
+            "  Note `<pkg>_version()` in `native/src/<pkg>_lib.c` is a C "
+            "API: a linking consumer is\n  told this value. See gh-1141."
         )
         print()
 

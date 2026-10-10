@@ -21,6 +21,10 @@ PrefixHeaders()
     Schema 8 (gh-1583): move the project's headers under
     ``native/inc/<pkg>/`` and respell every reference to them.
 
+AppRows()
+    Schema 9 (gh-2074): the one ``[app]`` table becomes a one-row
+    ``[[app]]``.
+
 Usage
 -----
     just-makeit upgrade          # advance to CURRENT_SCHEMA
@@ -98,6 +102,42 @@ class PrefixHeaders:
     (:func:`_prefix_headers`), so a hand-written header is carried along and
     a vendored library's own ``"config.h"`` is not.
     """
+
+
+@dataclass
+class AppRows:
+    """Schema 9 (gh-2074): a manifest holds any number of apps.
+
+    Schema 8 and earlier spelled the one app a manifest could hold as a
+    single ``[app]`` table, so a second `jm app` replaced the first. From
+    schema 9 each app is a row of ``[[app]]``, keyed by its name, and
+    `_config.apps` reads that spelling alone. This rewrites the table as a
+    one-row array (:func:`_app_rows`); nothing else about the app moves.
+    """
+
+
+def _app_rows(root: Path) -> None:
+    """Rewrite the manifest's ``[app]`` table as a one-row ``[[app]]``.
+
+    In place, through tomlkit: the table itself becomes the array's only
+    row, so its keys, comments and the ``[[app.flags]]`` /
+    ``[[app.commands]]`` under it keep their text -- only the header
+    changes. Idempotent: a manifest with no ``[app]`` table, or already
+    spelling ``[[app]]``, is left as it is.
+    """
+    import tomlkit
+    from tomlkit.items import Table
+
+    path = root / C.FILENAME
+    doc = tomlkit.loads(path.read_text(encoding="utf-8"))
+    table = doc.get("app")
+    if not isinstance(table, Table):
+        return
+    rows = tomlkit.aot()
+    rows.append(table)
+    doc["app"] = rows
+    _textio.write_text(path, tomlkit.dumps(doc))
+    print(f"  update  {C.FILENAME}  ([app] -> [[app]])")
 
 
 # `make bench` after migration: a one-line delegation to the jm CLI,
@@ -325,6 +365,11 @@ MIGRATIONS: dict[int, list] = {
         # native/inc/<pkg>/ and every include of one is spelled "<pkg>/...".
         PrefixHeaders(),
     ],
+    8: [
+        # Schema 9 holds several apps (gh-2074): the one [app] table becomes
+        # a one-row [[app]].
+        AppRows(),
+    ],
 }
 
 
@@ -374,6 +419,9 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
 
     elif isinstance(step, PrefixHeaders):
         _prefix_headers(root)
+
+    elif isinstance(step, AppRows):
+        _app_rows(root)
 
     elif isinstance(step, RegenBench):
         cfg = C.load(root)

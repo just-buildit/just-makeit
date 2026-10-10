@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from . import _borrow
+from ._report import Refusal
 
 
 def _required_after_default_ok(
@@ -161,6 +162,12 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            # gh-1946: a default Python has no spelling of, refused before
+            # anything is written -- the backstop in `_py_default` fires
+            # only once the manifest already carries it.
+            _why = T.literal_default_error(ptype, pdefault)
+            if _why:
+                raise Refusal(f"param '{pname}': {_why}")
             # A defaulted param makes everything after it optional too: a
             # required param may not follow a defaulted one (PyArg `|` rule).
             if not pdefault and any(len(fp) > 3 and fp[3] for fp in fn_params):
@@ -189,10 +196,15 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             val = remaining[i]
             # Same allowlist as the function param scalar slot — must be a
-            # type we can return as a numpy array element.
-            if not T.is_out_type(val):
+            # type we can return as a numpy array element. gh-1888: and the
+            # manifest's `T[n]` form, naming the integer param that holds
+            # the length -- asked of its element, as `_out_type_error` asks
+            # the manifest's.
+            if not T.is_out_type(T.parse_out_type(val)[0]):
                 print(
-                    f"error: --out-type '{val}' must be an array-element type.\n"
+                    f"error: --out-type '{val}' must be an array-element type"
+                    ", optionally\nwith the integer param holding its length"
+                    " ('float[n]').\n"
                     f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
                     file=sys.stderr,
                 )

@@ -14,6 +14,10 @@ loop over the object's sample type — no hand-editing required. Extra flags can
 be declared with ``--flag name:type[:default[:help]]`` (persisted as
 ``[[app.flags]]``) and appear in both the C and Python parsers.
 
+Each run declares one more app: an ``[[app]]`` row, keyed by its unique
+``name`` (gh-2074), which `jm apply` re-renders (:func:`replay`) and
+`jm remove app` takes out (:func:`remove`).
+
 Four I/O shapes are generated: ``scalar`` (``x -> y``), ``blockwise``
 (``x[] -> y[]``), ``consumer`` (``x -> void``), and ``generator``
 (``void -> y``). ``no_step`` objects and any other shape fall back to an
@@ -22,7 +26,8 @@ Four I/O shapes are generated: ``scalar`` (``x -> y``), ``blockwise``
 Targets
 -------
 c        Standalone C executable.  Generates native/src/app/<name>.c and
-         appends an add_executable target to CMakeLists.txt.
+         an add_executable target in jm's App block of CMakeLists.txt,
+         which holds every C app.
 
 console  Python console script.  Generates src/<pkg>/cli.py with argparse
          boilerplate and updates [project.scripts] in pyproject.toml.
@@ -938,8 +943,21 @@ def _reserved_targets(cfg: dict, root: "Path | None" = None) -> frozenset:
     return _targets.claimed(cfg, root)
 
 
-def _exe_target(name: str, cfg: dict, root: "Path | None" = None) -> str:
-    """Return a collision-free CMake target id for the app executable.
+def _c_apps(cfg: dict) -> "list[dict]":
+    """The ``[[app]]`` rows that build a C executable, in manifest order.
+
+    A row whose source the manifest no longer declares is left out: it
+    cannot link, and `apply` refuses it by name (:func:`_missing`).
+    """
+    return [
+        e
+        for e in C.apps(cfg)
+        if e.get("target") == "c" and _missing(cfg, e) is None
+    ]
+
+
+def _exe_targets(cfg: dict, root: "Path | None" = None) -> "dict[str, str]":
+    """A collision-free CMake target id for each C app, by app name.
 
     Normally the target id equals the app ``name`` (so ``cmake --build
     --target <name>`` is intuitive and the binary is ``<name>``).  When
@@ -948,56 +966,88 @@ def _exe_target(name: str, cfg: dict, root: "Path | None" = None) -> str:
     while keeping the binary name ``<name>`` via ``OUTPUT_NAME`` (gh-184).
 
     Detection runs on the user-facing ``name`` (not a prior suffixed id), so
-    re-running ``jm app`` / ``jm apply`` yields the same id — never
-    ``<name>_app_app``."""
+    re-running ``jm apply`` yields the same id — never ``<name>_app_app``.
+    gh-2074: a suffixed id also avoids every other C app's name, so ``x``
+    (taken by a module) and an app named ``x_app`` never both claim
+    ``x_app``, in whichever order the manifest lists them."""
     reserved = _reserved_targets(cfg, root)
-    if name not in reserved:
-        return name
-    target = f"{name}_app"
-    while target in reserved:
-        target += "_app"
-    return target
+    names = [e["name"] for e in _c_apps(cfg)]
+    out: "dict[str, str]" = {}
+    for name in names:
+        target = name
+        if name in reserved:
+            target = f"{name}_app"
+            while target in reserved or target in names:
+                target += "_app"
+        out[name] = target
+    return out
 
 
-def _cmake_app_block(
-    name: str, link_target: str, exe_target: str | None = None
-) -> str:
-    tgt = exe_target or name
-    # When the target id differs from the app name (collision avoidance),
-    # keep the built binary named <name> via OUTPUT_NAME.
-    output_name_line = (
-        f"set_target_properties({tgt} PROPERTIES OUTPUT_NAME {name})\n"
-        if tgt != name
-        else ""
-    )
+def _cmake_app_block(cfg: dict, root: "Path | None" = None) -> str:
+    """jm's App block in the root ``CMakeLists.txt``: one executable per C
+    app the manifest declares (gh-2074), or ``""`` when it declares none.
+
+    One block for every C app rather than one per app, so the region jm owns
+    there is a function of the manifest alone: a second app adds its lines
+    to it, and `jm remove app` takes them out, without either reading what an
+    earlier run wrote.
+    """
+    targets = _exe_targets(cfg, root)
+    parts = []
+    for entry in _c_apps(cfg):
+        name = entry["name"]
+        tgt = targets[name]
+        # When the target id differs from the app name (collision
+        # avoidance), keep the built binary named <name> via OUTPUT_NAME.
+        output_name_line = (
+            f"set_target_properties({tgt} PROPERTIES OUTPUT_NAME {name})\n"
+            if tgt != name
+            else ""
+        )
+        parts.append(
+            f"add_executable({tgt} native/src/app/{name}.c)\n"
+            f"{output_name_line}"
+            f"target_link_libraries({tgt} PRIVATE "
+            f"{_link_target(cfg, entry)})\n"
+            f"install(TARGETS {tgt} DESTINATION bin)\n"
+        )
+    if not parts:
+        return ""
     return (
         f"{_APP_CMAKE_SENTINEL}"
         "─────────────────────────────────────────────────────────\n"
-        f"add_executable({tgt} native/src/app/{name}.c)\n"
-        f"{output_name_line}"
-        f"target_link_libraries({tgt} PRIVATE {link_target})\n"
-        f"install(TARGETS {tgt} DESTINATION bin)\n"
-        f"{_APP_CMAKE_END}"
+        + "\n".join(parts)
+        + f"{_APP_CMAKE_END}"
         "─────────────────────────────────────────────────────────\n"
     )
 
 
-def _splice_cmake(
-    cmake: Path, name: str, link_target: str, exe_target: str | None = None
-) -> None:
-    """Insert or replace the App block in CMakeLists.txt."""
-    text = cmake.read_text(encoding="utf-8")
-    block = _cmake_app_block(name, link_target, exe_target)
-    start = text.find(_APP_CMAKE_SENTINEL)
-    end = text.find(_APP_CMAKE_END)
+def _splice_cmake(cmake: Path, cfg: dict, root: Path) -> bool:
+    """Write the App block for *cfg*'s C apps into *cmake*; True if changed.
+
+    Inserted at the end, after a blank line, the first time; replaced in
+    place after that; and taken out with that blank line when the manifest
+    holds no C app any more, so the file is the one no app ever touched.
+    """
+    old = cmake.read_text(encoding="utf-8")
+    block = _cmake_app_block(cfg, root)
+    start = old.find(_APP_CMAKE_SENTINEL)
+    end = old.find(_APP_CMAKE_END)
     if start != -1 and end != -1:
-        end = text.index("\n", end) + 1
-        text = text[:start] + block + text[end:]
-    else:
-        if not text.endswith("\n"):
-            text += "\n"
+        end = old.index("\n", end) + 1
+        head = old[:start]
+        if not block and head.endswith("\n\n"):
+            head = head[:-1]
+        text = head + block + old[end:]
+    elif block:
+        text = old if old.endswith("\n") else old + "\n"
         text += "\n" + block
+    else:
+        return False
+    if text == old:
+        return False
     _textio.write_text(cmake, text)
+    return True
 
 
 def _update_pyproject_scripts(root: Path, name: str, dotted: str) -> bool:
@@ -1469,6 +1519,255 @@ def _build_ctx(
     }
 
 
+def _object_of(cfg: dict, entry: dict) -> str:
+    """The object *entry*'s app is built from: its ``object``, or the first
+    component when a hand-written row names none (as `jm app` does)."""
+    return entry.get("object") or C.components(cfg)[0]
+
+
+def _missing(cfg: dict, entry: dict) -> "str | None":
+    """Why *entry*'s app cannot be rendered from *cfg*, or None if it can.
+
+    The one check, read by `jm app` before it writes, by `apply`'s replay,
+    which refuses with it, and by `jm remove app`, which cannot tell an
+    edited file from jm's when there is no render to compare it with.
+
+    Examples
+    --------
+    >>> cfg = {"project": {"name": "p"}, "o": {}}
+    >>> _missing(cfg, {"target": "c", "name": "p", "object": "o"}) is None
+    True
+    >>> _missing(cfg, {"target": "c", "name": "p", "object": "q"})
+    "object 'q' not found."
+    """
+    function_ = entry.get("function")
+    if function_ is not None:
+        module = entry.get("module") or None
+        _mod, fn = _find_fn(cfg, function_, module)
+        if fn is None:
+            where = f" in module '{module}'" if module else ""
+            return f"function '{function_}' not found{where}."
+        if not _fn_generatable(fn):
+            return (
+                f"function '{function_}' has non-scalar params or return; "
+                "`jm app --function` supports scalar signatures only."
+            )
+        return None
+    if entry.get("commands"):
+        return None
+    object_ = entry.get("object")
+    if object_ is None and not C.components(cfg):
+        return "no components found — run 'just-makeit object' first."
+    if object_ is not None and object_ not in C.components(cfg):
+        return f"object '{object_}' not found."
+    return None
+
+
+def _link_target(cfg: dict, entry: dict) -> str:
+    """What *entry*'s C executable links (gh-187)."""
+    if entry.get("function") is not None:
+        mod, _fn = _find_fn(
+            cfg, entry["function"], entry.get("module") or None
+        )
+        return f"{mod}_core " + _LIBM
+    if entry.get("commands"):
+        # Stub command bodies link the project's aggregate static lib so any
+        # component/function symbol is reachable once the user fills them in.
+        return f"{C.project_name(cfg).replace('-', '_')}_lib_static"
+    return _app_object_link(cfg, _object_of(cfg, entry))
+
+
+def _plan(
+    cfg: dict, entry: dict, argc_argv: bool = False
+) -> "tuple[dict, tuple[str, str, str]]":
+    """The render context for *entry*'s app, and its three faces'
+    templates (C, console, PEP 723). Exits naming what is missing when the
+    manifest no longer declares the app's source (:func:`_missing`)."""
+    why = _missing(cfg, entry)
+    if why is not None:
+        print(f"error: {why}", file=sys.stderr)
+        sys.exit(1)
+    name = entry["name"]
+    if entry.get("function") is not None:
+        # ── module-function app ──────────────────────────────────────────
+        mod, fn = _find_fn(cfg, entry["function"], entry.get("module") or None)
+        return _build_fn_ctx(cfg, mod, entry["function"], name, fn), (
+            R.APP_MAIN_FN_C,
+            R.APP_CONSOLE_CLI_FN,
+            R.APP_PEP723_FN,
+        )
+    if entry.get("commands"):
+        # ── multi-command app ────────────────────────────────────────────
+        return _build_cmd_ctx(cfg, name, entry["commands"]), (
+            R.APP_MAIN_CMD_C,
+            R.APP_CONSOLE_CLI_CMD,
+            R.APP_PEP723_CMD,
+        )
+    # ── object app ───────────────────────────────────────────────────────
+    ctx = _build_ctx(
+        cfg,
+        _object_of(cfg, entry),
+        name,
+        entry["target"],
+        flags=entry.get("flags", []),
+        argc_argv=argc_argv,
+        module=entry.get("module"),
+    )
+    return ctx, (R.APP_MAIN_C, R.APP_CONSOLE_CLI, R.APP_PEP723)
+
+
+def _console_module(root: Path, cfg: dict, entry: dict) -> "tuple[Path, str]":
+    """Where a console app's ``cli.py`` goes, and its import path.
+
+    gh-187: scoped under the owning subpackage when the app is built from a
+    module object or function, so it never collides with a
+    ``src/<pkg>/cli.py`` already used by a ``cli`` subpackage. gh-2054: that
+    subpackage is `_config.module_package_resolved`'s answer -- the package
+    that re-exports the class the template's ``from . import`` names. One
+    derivation for both, so the entry point cannot name a module the
+    scaffold did not write.
+    """
+    pkg = C.project_name(cfg)
+    module_dir = C.module_package_resolved(cfg, entry.get("module") or "")
+    cli_dir = root / "src" / pkg
+    for part in module_dir.split("/"):
+        if part:
+            cli_dir = cli_dir / part
+    return cli_dir / "cli.py", f"{class_import_path(pkg, module_dir)}.cli"
+
+
+def _app_file(root: Path, cfg: dict, entry: dict) -> Path:
+    """The one file *entry*'s app is: ``native/src/app/<name>.c``, its
+    package's ``cli.py``, or ``<name>.py`` beside the manifest."""
+    if entry["target"] == "c":
+        return root / "native" / "src" / "app" / f"{entry['name']}.c"
+    if entry["target"] == "console":
+        return _console_module(root, cfg, entry)[0]
+    return root / f"{entry['name']}.py"
+
+
+def _main_file(
+    root: Path, cfg: dict, entry: dict, argc_argv: bool = False
+) -> "tuple[Path, str]":
+    """The file *entry*'s app is, and the text jm renders into it.
+
+    One render, read by the writer and by `jm remove app`, which keeps a
+    file whose bytes are not this (:func:`remove`).
+    """
+    ctx, (c_tmpl, console_tmpl, pep_tmpl) = _plan(cfg, entry, argc_argv)
+    if entry["target"] == "c":
+        # gh-1583: the app includes the project's headers, in its layout.
+        text = R.render(c_tmpl, {**INC.ctx_slots(root), **ctx})
+    elif entry["target"] == "console":
+        text = R.render(console_tmpl, ctx)
+    else:
+        text = R.render(pep_tmpl, ctx)
+    return _app_file(root, cfg, entry), text
+
+
+def _scaffold(
+    root: Path, cfg: dict, entry: dict, argc_argv: bool = False
+) -> "list[Path]":
+    """Write *entry*'s app, and the wiring its target needs.
+
+    Returns every path written, whether or not its bytes changed (see
+    :func:`run`).
+    """
+    path, text = _main_file(root, cfg, entry, argc_argv)
+    if entry["target"] == "c":
+        return _run_c(root, cfg, entry, path, text)
+    if entry["target"] == "console":
+        return _run_console(root, cfg, entry, path, text)
+    return _run_pep723(path, text)
+
+
+def _declare(
+    cfg: dict,
+    target: str,
+    name: "str | None",
+    object_: "str | None",
+    function_: "str | None",
+    module: "str | None",
+    flags: "list[dict] | None",
+    commands: "list[dict] | None",
+) -> dict:
+    """The ``[[app]]`` row `jm app` appends for its flags (gh-2074).
+
+    A module function's app records the module that holds it; an object's
+    defaults to the first component and records the module only when given
+    (gh-187); a subcommand app records its commands. Each defaults its name:
+    the function's, or the project's.
+    """
+    pkg = C.project_name(cfg)
+    if function_ is not None:
+        mod, _fn = _find_fn(cfg, function_, module)
+        return C.app_entry(
+            target,
+            name or function_,
+            function=function_,
+            module=mod or module,
+        )
+    if commands:
+        return C.app_entry(target, name or pkg, commands=commands)
+    if object_ is None and C.components(cfg):
+        object_ = C.components(cfg)[0]
+    return C.app_entry(
+        target, name or pkg, object_=object_, module=module, flags=flags or ()
+    )
+
+
+def _refuse_a_taken_name(cfg: dict, entry: dict, named: bool) -> None:
+    """Refuse an app whose name another ``[[app]]`` row holds (gh-2074).
+
+    An app is keyed by its name, so a second one under it would be a second
+    row `jm remove app` could not tell apart -- and before gh-2074 it was a
+    replacement that orphaned the first app's files. *named* is whether the
+    author chose the name: a default one that collides is answered with
+    `--name`.
+    """
+    name = entry["name"]
+    other = next((e for e in C.apps(cfg) if e["name"] == name), None)
+    if other is None:
+        return
+    held = f"the {other.get('target')} app '{name}'"
+    if named:
+        raise _report.Refusal(
+            f"an app named '{name}' already exists ({held}), and an app's"
+            f" name is unique in the manifest: to replace it, run"
+            f" `jm remove app {name}` first."
+        )
+    raise _report.Refusal(
+        f"this app's default name '{name}' is taken by {held}, and an app's"
+        f" name is unique in the manifest: give this one its own with"
+        f" `--name`, or run `jm remove app {name}` first."
+    )
+
+
+def _refuse_a_shared_module(root: Path, cfg: dict, entry: dict) -> None:
+    """Refuse a console app whose ``cli.py`` another console app writes.
+
+    A console app's module is the ``cli.py`` of its package
+    (:func:`_console_module`), not a file named after the app, so two in one
+    package would write one file, and the first app's entry point would run
+    the second's CLI (gh-2074).
+    """
+    if entry["target"] != "console":
+        return
+    path, _ = _console_module(root, cfg, entry)
+    for other in C.apps(cfg):
+        if other.get("target") != "console":
+            continue
+        if _console_module(root, cfg, other)[0] != path:
+            continue
+        rel = path.relative_to(root).as_posix()
+        raise _report.Refusal(
+            f"the console app '{other['name']}' already writes {rel}, and a"
+            " console app's module is the `cli.py` of its package, so this"
+            f" one would overwrite it: run `jm remove app {other['name']}`"
+            " first, or pick another `--target`."
+        )
+
+
 def run(
     root: Path,
     cfg: dict | None = None,
@@ -1482,13 +1781,19 @@ def run(
     commands: list[dict] | None = None,
     argc_argv: bool = False,
 ) -> list[Path]:
-    """Scaffold (or re-scaffold) the project's app from ``[app]``.
+    """`jm app`: declare one more app, as an ``[[app]]`` row, and scaffold it.
+
+    gh-2074: the row is APPENDED. The manifest held one ``[app]`` table, so
+    a second `jm app` replaced the first and left its files owned by
+    nothing. A name already taken is refused (:func:`_refuse_a_taken_name`),
+    and so is a console app whose module another one writes
+    (:func:`_refuse_a_shared_module`); `jm remove app` is the route for both.
 
     Returns every path this run wrote, whether or not its bytes changed.
-    `apply` replays this verb and decides what to report by comparing those
-    paths' bytes before and after (gh-1474, gh-1477), so a second apply over
-    an unchanged app prints nothing; `jm app` itself reports each write as it
-    happens.
+    `apply` replays each row (:func:`replay`) and decides what to report by
+    comparing those paths' bytes before and after (gh-1474, gh-1477), so a
+    second apply over an unchanged app prints nothing; `jm app` itself
+    reports each write as it happens.
     """
     if cfg is None:
         cfg_path = root / C.FILENAME
@@ -1516,143 +1821,36 @@ def run(
         )
         sys.exit(1)
 
-    if function_ is not None:
-        # ── module-function app ──────────────────────────────────────────
-        mod, fn = _find_fn(cfg, function_, module)
-        if fn is None:
-            where = f" in module '{module}'" if module else ""
-            print(
-                f"error: function '{function_}' not found{where}.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if not _fn_generatable(fn):
-            print(
-                f"error: function '{function_}' has non-scalar params or "
-                "return; `jm app --function` supports scalar signatures only.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if name is None:
-            name = function_
-        ctx = _build_fn_ctx(cfg, mod, function_, name, fn)
-        C.set_app(cfg, target, name, function=function_, module=mod)
-        main_tmpl, console_tmpl, pep_tmpl = (
-            R.APP_MAIN_FN_C,
-            R.APP_CONSOLE_CLI_FN,
-            R.APP_PEP723_FN,
-        )
-        link_target = f"{mod}_core " + _LIBM
-    elif commands or (object_ is None and C.app_commands(cfg)):
-        # ── multi-command app ────────────────────────────────────────────
-        if name is None:
-            name = pkg
-        C.set_app(cfg, target, name)
-        # gh-1477: over a snapshot. `apply` replays with the manifest's own
-        # `[[app.commands]]` list, which `add_app_command` rewrites in place
-        # (`cmds[:] = ...`), so iterating it directly re-appended each entry
-        # while walking it and reversed the order on every apply -- a real
-        # rewrite of the app source, announced as discarded edits.
-        for c in list(commands or []):
-            C.add_app_command(cfg, c)
-        eff_cmds = C.app_commands(cfg)
-        if not eff_cmds:
-            print("error: no commands declared.", file=sys.stderr)
-            sys.exit(1)
-        ctx = _build_cmd_ctx(cfg, name, eff_cmds)
-        main_tmpl, console_tmpl, pep_tmpl = (
-            R.APP_MAIN_CMD_C,
-            R.APP_CONSOLE_CLI_CMD,
-            R.APP_PEP723_CMD,
-        )
-        # Stub command bodies link the project's aggregate static lib so any
-        # component/function symbol is reachable once the user fills them in.
-        link_target = f"{pkg.replace('-', '_')}_lib_static"
-    else:
-        # ── object app ───────────────────────────────────────────────────
-        comps = C.components(cfg)
-        if object_ is None:
-            if not comps:
-                print(
-                    "error: no components found — run "
-                    "'just-makeit object' first.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            object_ = comps[0]
-        elif object_ not in comps:
-            print(f"error: object '{object_}' not found.", file=sys.stderr)
-            sys.exit(1)
-        if name is None:
-            name = pkg
-        # Persist + merge flags before codegen so stored [[app.flags]] from
-        # prior runs are reflected in the generated parsers (reproducible).
-        C.set_app(cfg, target, name, object_=object_, module=module)
-        # gh-1477: over a snapshot, for the reason given for commands above.
-        for f in list(flags or []):
-            C.add_app_flag(cfg, f)
-        ctx = _build_ctx(
-            cfg,
-            object_,
-            name,
-            target,
-            flags=C.app_flags(cfg),
-            argc_argv=argc_argv,
-            module=module,
-        )
-        main_tmpl, console_tmpl, pep_tmpl = (
-            R.APP_MAIN_C,
-            R.APP_CONSOLE_CLI,
-            R.APP_PEP723,
-        )
-        link_target = _app_object_link(cfg, object_)
+    entry = _declare(
+        cfg, target, name, object_, function_, module, flags, commands
+    )
+    _refuse_a_taken_name(cfg, entry, named=name is not None)
+    _refuse_a_shared_module(root, cfg, entry)
+    # Persisted before codegen: the C App block is rendered from every C
+    # row, this one included.
+    C.add_app(cfg, entry)
 
-    print(f"just-makeit: scaffolding app '{name}' (target={target})")
+    print(f"just-makeit: scaffolding app '{entry['name']}' (target={target})")
     print()
-
-    if target == "c":
-        # Only the C target adds an add_executable() that can clash with a
-        # module/component CMake target; console/pep723 faces don't (gh-184).
-        written = _run_c(
-            root,
-            ctx,
-            name,
-            link_target,
-            main_tmpl,
-            _exe_target(name, cfg, root),
-        )
-    elif target == "console":
-        written = _run_console(
-            root,
-            ctx,
-            name,
-            pkg,
-            console_tmpl,
-            module_dir=C.module_package_resolved(
-                cfg, C.app_config(cfg).get("module") or ""
-            ),
-        )
-    else:
-        written = _run_pep723(root, ctx, name, pep_tmpl)
+    written = _scaffold(root, cfg, entry, argc_argv)
 
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
     print()
-    _print_summary(target, root, name, pkg)
+    _print_summary(target, root, entry["name"], pkg)
     return [*written, root / C.FILENAME]
 
 
 def replay(root: Path, cfg: dict) -> list[Path]:
-    """Re-render the app ``[app]`` records, quietly.
+    """Re-render every app the ``[[app]]`` rows declare, quietly.
 
-    gh-184: the recorded app, not a default one -- passing the record's
-    target, name and source keeps the replay from rewriting it to
-    ``<project>/<first object>``. The verb's own progress is swallowed: the
-    caller reports these writes by the bytes they leave (gh-1477), so an
-    unchanged app says nothing. The warning that edits were discarded goes
-    to stderr and is not swallowed; it fires only when the bytes differ.
+    gh-184: the recorded apps, not a default one. The verb's own progress is
+    swallowed: the caller reports these writes by the bytes they leave
+    (gh-1477), so an unchanged app says nothing. The warning that edits were
+    discarded goes to stderr and is not swallowed; it fires only when the
+    bytes differ.
 
-    One call for every command that must leave the app `apply` writes:
+    One call for every command that must leave the apps `apply` writes:
     `apply` itself, and `jm config version` (gh-2069), whose new version a
     PEP 723 script carries.
 
@@ -1662,41 +1860,82 @@ def replay(root: Path, cfg: dict) -> list[Path]:
         Every path the replay wrote (see :func:`run`); empty when the
         manifest records no app.
     """
-    rec = C.app_config(cfg)
-    if not rec:
-        return []
+    written: "list[Path]" = []
     with contextlib.redirect_stdout(io.StringIO()):
-        return run(
-            root,
-            cfg,
-            target=rec.get("target", "c"),
-            name=rec.get("name"),
-            object_=rec.get("object"),
-            function_=rec.get("function"),
-            module=rec.get("module"),
-            flags=rec.get("flags"),
-            commands=rec.get("commands"),
-        )
+        for entry in C.apps(cfg):
+            written += _scaffold(root, cfg, entry)
+    return written
+
+
+def remove(root: Path, cfg: dict, entry: dict) -> "list[Path]":
+    """Take *entry*'s app out of the tree; *cfg* still holds its row.
+
+    The app's file goes, unless its bytes are not what jm renders for the
+    row: then the author edited it, and it is kept, as `jm remove method`
+    keeps an authored body (gh-2074). So is one jm cannot render any more,
+    because the manifest no longer declares its source -- there is nothing
+    to tell an edit from. Then the target's wiring: a C app's lines in the
+    App block, a console app's ``[project.scripts]`` entry.
+
+    Returns the files kept.
+    """
+    from ._remove import _rm
+
+    kept: "list[Path]" = []
+    path = _app_file(root, cfg, entry)
+    rendered = (
+        _main_file(root, cfg, entry)[1]
+        if _missing(cfg, entry) is None
+        else None
+    )
+    if path.is_file() and path.read_text(encoding="utf-8") != rendered:
+        kept.append(path)
+    else:
+        _rm(path)
+    rest = {**cfg, "app": [e for e in C.apps(cfg) if e is not entry]}
+    if entry["target"] == "c":
+        app_dir = root / "native" / "src" / "app"
+        if app_dir.is_dir() and not any(app_dir.iterdir()):
+            _rm(app_dir)
+        cmake = root / "CMakeLists.txt"
+        if cmake.is_file() and _splice_cmake(cmake, rest, root):
+            print(f"  update  {cmake}")
+    elif entry["target"] == "console":
+        if _drop_pyproject_script(root, entry["name"]):
+            print(f"  update  {root / 'pyproject.toml'}")
+    return kept
+
+
+def _drop_pyproject_script(root: Path, name: str) -> bool:
+    """Remove ``[project.scripts] <name>`` from pyproject.toml; True if it
+    was there. The reverse of :func:`_update_pyproject_scripts`."""
+    pyproject = root / "pyproject.toml"
+    if not pyproject.exists():
+        return False
+    try:
+        import tomlkit as _tk
+    except ModuleNotFoundError:
+        return False
+    doc = _tk.loads(pyproject.read_text(encoding="utf-8"))
+    scripts = doc.get("project", {}).get("scripts")
+    if scripts is None or name not in scripts:
+        return False
+    del scripts[name]
+    if not scripts:
+        del doc["project"]["scripts"]
+    _textio.write_text(pyproject, _tk.dumps(doc))
+    return True
 
 
 def _run_c(
-    root: Path,
-    ctx: dict,
-    name: str,
-    link_target: str,
-    tmpl: str = R.APP_MAIN_C,
-    exe_target: str | None = None,
+    root: Path, cfg: dict, entry: dict, main_c: Path, rendered: str
 ) -> list[Path]:
-    app_dir = root / "native" / "src" / "app"
-    app_dir.mkdir(parents=True, exist_ok=True)
-    main_c = app_dir / f"{name}.c"
-    # gh-1583: the app includes the project's headers, in its layout.
-    rendered = R.render(tmpl, {**INC.ctx_slots(root), **ctx})
+    main_c.parent.mkdir(parents=True, exist_ok=True)
     # gh-962: this file is regenerated wholesale, by `jm app` AND by every
-    # `jm apply` (the replay re-runs the verb from `[app]`). Nothing preserves
-    # a body here the way `_restore_c_function_bodies` preserves `_core.c`, and
-    # there is no `_extra.c` escape hatch for an app — so an edit is simply
-    # lost. Say so at the moment it happens, naming the file.
+    # `jm apply` (the replay re-runs the verb from `[[app]]`). Nothing
+    # preserves a body here the way `_restore_c_function_bodies` preserves
+    # `_core.c`, and there is no `_extra.c` escape hatch for an app — so an
+    # edit is simply lost. Say so at the moment it happens, naming the file.
     #
     # Reported rather than refused: refusing would leave a stale app no command
     # could refresh, and `apply`'s whole contract is to reconcile. The author
@@ -1707,10 +1946,10 @@ def _run_c(
     _existed = main_c.exists()
     if _existed and main_c.read_text(encoding="utf-8") != rendered:
         _report.warn(
-            f"{main_c}: this app is regenerated from `[app]` in the manifest,"
-            " by `jm app` and by every `jm apply`, and your edits to it have"
-            " just been discarded. Nothing preserves a body here — put custom"
-            " logic in a component (`jm method`) and call it from the"
+            f"{main_c}: this app is regenerated from its [[app]] row in the"
+            " manifest, by `jm app` and by every `jm apply`, and your edits to"
+            " it have just been discarded. Nothing preserves a body here — put"
+            " custom logic in a component (`jm method`) and call it from the"
             " generated main(), or keep your own copy outside native/src/app/."
         )
     # gh-1336: through the SHARED guard, so a slot no context filled is
@@ -1724,7 +1963,8 @@ def _run_c(
     # itself as `update`.
     _write_guarded(main_c, rendered, "update" if _existed else "create")
 
-    tgt = exe_target or name
+    name = entry["name"]
+    tgt = _exe_targets(cfg, root)[name]
     if tgt != name:
         print(
             f"  note: target name '{name}' is already used by another target; "
@@ -1732,7 +1972,7 @@ def _run_c(
         )
     cmake = root / "CMakeLists.txt"
     if cmake.exists():
-        _splice_cmake(cmake, name, link_target, exe_target)
+        _splice_cmake(cmake, cfg, root)
         print(f"  update  {cmake}")
         return [main_c, cmake]
     else:
@@ -1744,38 +1984,23 @@ def _run_c(
         print(
             f"  note: CMakeLists.txt not found — add this manually:\n"
             f"    add_executable({tgt} native/src/app/{name}.c){out_name}\n"
-            f"    target_link_libraries({tgt} PRIVATE {link_target})"
+            f"    target_link_libraries({tgt} PRIVATE "
+            f"{_link_target(cfg, entry)})"
         )
         return [main_c]
 
 
 def _run_console(
-    root: Path,
-    ctx: dict,
-    name: str,
-    pkg: str,
-    tmpl: str = R.APP_CONSOLE_CLI,
-    module_dir: str = "",
+    root: Path, cfg: dict, entry: dict, cli_py: Path, rendered: str
 ) -> list[Path]:
-    # gh-187: scope the console module under its owning subpackage when the app
-    # is built from a module object/function, so it never collides with a
-    # `src/<pkg>/cli.py` already used by a `cli` subpackage.
-    # gh-2054: that subpackage is *module_dir*,
-    # `_config.module_package_resolved`'s answer -- the package that
-    # re-exports the class the template's `from . import` names. The module
-    # id's directory is it only while the module declares no `package`.
-    cli_dir = root / "src" / pkg
-    for part in module_dir.split("/"):
-        if part:
-            cli_dir = cli_dir / part
-    cli_py = cli_dir / "cli.py"
-    dotted = f"{class_import_path(pkg, module_dir)}.cli"
     # gh-962's twin, still live here: `exists()` was read AFTER the write,
     # so this always said `update`. gh-1336 routes it through the shared
     # guard, which is also where the ordering gets fixed.
     _verb = "update" if cli_py.exists() else "create"
-    _write_guarded(cli_py, R.render(tmpl, ctx), _verb)
+    _write_guarded(cli_py, rendered, _verb)
 
+    name = entry["name"]
+    dotted = _console_module(root, cfg, entry)[1]
     updated = _update_pyproject_scripts(root, name, dotted)
     if updated:
         print(f"  update  {root / 'pyproject.toml'}")
@@ -1788,13 +2013,10 @@ def _run_console(
     return [cli_py]
 
 
-def _run_pep723(
-    root: Path, ctx: dict, name: str, tmpl: str = R.APP_PEP723
-) -> None:
-    script = root / f"{name}.py"
+def _run_pep723(script: Path, rendered: str) -> list[Path]:
     # Same pair as above: the guard, and the verb read before the write.
     _verb = "update" if script.exists() else "create"
-    _write_guarded(script, R.render(tmpl, ctx), _verb)
+    _write_guarded(script, rendered, _verb)
     return [script]
 
 

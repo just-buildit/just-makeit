@@ -102,7 +102,12 @@ def test_the_first_scaffold_says_create_not_update(app_project, tmp_path):
     assert _cli("object", "gain", cwd=proj).returncode == 0
     r = _cli("app", "--name", "fresh", cwd=proj)
     assert "create" in r.stdout and "fresh.c" in r.stdout, r.stdout
-    # ...and a re-run over the existing file is an update.
+    # ...and over a file already there, an update: the file a removed app's
+    # author edited, which `jm remove app` keeps (gh-2074).
+    main_c = proj / "native/src/app/fresh.c"
+    main_c.write_text(main_c.read_text("utf-8") + "/* mine */\n", "utf-8")
+    assert _cli("remove", "app", "fresh", "--force", cwd=proj).returncode == 0
+    assert main_c.exists()
     again = _cli("app", "--name", "fresh", cwd=proj)
     assert "update" in again.stdout and "fresh.c" in again.stdout
 

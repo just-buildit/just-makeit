@@ -25,6 +25,7 @@ block, so type mapping stays in ``_stubs``/``_context`` where it already lives.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field, replace as dc_replace
 from typing import NamedTuple, Sequence
 
@@ -3322,14 +3323,30 @@ def has_section_rule(text: str) -> bool:
     >>> has_section_rule("A rule with nothing above it.\\n\\n---")
     False
     """
+    return bool(section_headings(text))
+
+
+def section_headings(text: str) -> "list[str]":
+    """The reST section headings in *text*, in order.
+
+    Each is the non-empty, non-rule line immediately above a line of three
+    or more dashes -- the construct :func:`has_section_rule` asks about.
+
+    Examples
+    --------
+    >>> section_headings("Sum.\\n\\nNotes\\n-----\\nA.\\n\\nReturns\\n---\\nB.")
+    ['Notes', 'Returns']
+    >>> section_headings("---\\nA rule with nothing above it.")
+    []
+    """
     lines = text.replace("\r\n", "\n").split("\n")
-    for i in range(1, len(lines)):
-        if not _SECTION_RULE_RE.match(lines[i]):
-            continue
-        above = lines[i - 1].strip()
-        if above and not _SECTION_RULE_RE.match(lines[i - 1]):
-            return True
-    return False
+    return [
+        lines[i - 1].strip()
+        for i in range(1, len(lines))
+        if _SECTION_RULE_RE.match(lines[i])
+        and lines[i - 1].strip()
+        and not _SECTION_RULE_RE.match(lines[i - 1])
+    ]
 
 
 class ManifestDoc(NamedTuple):
@@ -3381,7 +3398,90 @@ _DOC_REMEDIES = {
 }
 
 
-def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
+#: The tables whose ``doc`` is a member's WHOLE docstring, on every face,
+#: keyed by the owner's kind (``"object"`` for a component, else the
+#: module's ``kind``) and then by the table's key path below the owner. Each
+#: renderer here writes the ``doc`` as written and generates no numpy section
+#: beside it (gh-2059), so a ``Parameters`` block in one duplicates nothing:
+#:
+#: - ``extra_methods``: `_extramethods.pyi_member` is the stub body and
+#:   `_extramethods.method_def_row` the ``ml_doc`` -- for an object and a
+#:   composer alike (gh-1997). jm does not know the hand-written function's
+#:   signature (``args`` / ``returns`` are raw text), so it has none to
+#:   document.
+#: - an object's ``properties`` (and a view's): a getset's doc and a bare
+#:   ``@property`` stub, never `render_numpy_doc` (gh-744).
+#: - a capsule's ``methods`` and ``properties``: `_capsule._fn_doc_lines`.
+#: - a handle's ``getters`` and their ``fields``: each field is a getset.
+#: - a composer's ``serializers`` and ``source.computed``: a method row and a
+#:   read-only getset, each carrying the ``doc`` alone.
+#:
+#: A table missing from here is one where jm generates a section beside the
+#: ``doc`` -- or nests the ``doc`` inside one, as a parameter's description.
+#: Tables that generate one only for SOME rows (a module function with no
+#: Doxygen and no documented param, a handle method with no params) are not
+#: here: whether a row gets a section is the renderer's per-row decision,
+#: and a copy of it here would drift -- `_row_docstring` asks the renderer
+#: instead (gh-2103). tests/test_gh2059_doc_stands_alone.py
+#: renders a sectioned ``doc`` in every position and fails when this table
+#: and the artefacts disagree, in either direction.
+DOC_STANDS_ALONE: "dict[str, frozenset[tuple[str, ...]]]" = {
+    "object": frozenset(
+        {("extra_methods",), ("properties",), ("views", "properties")}
+    ),
+    "capsule": frozenset({("methods",), ("properties",)}),
+    "handle": frozenset({("getters",), ("getters", "fields")}),
+    "composer": frozenset(
+        {("extra_methods",), ("serializers",), ("source", "computed")}
+    ),
+}
+
+
+def _row_docstring(
+    cfg: dict, root, owner_kind: str, owner: str, table: tuple, row: dict
+) -> "str | None":
+    """One *row*'s docstring, from the renderer that decides PER ROW.
+
+    gh-2103: four tables generate a numpy section beside a `doc` for some
+    rows and not for others, so neither :data:`DOC_STANDS_ALONE` nor
+    "always" can say which. Each renderer already makes that decision when
+    it writes the row; this asks it to write the row, and the caller reads
+    the answer off the text. Restating each rule here would be a second
+    implementation of it, which drifts. None for every other table: its
+    renderer decides for the whole table.
+
+    The stub face is the one asked. The runtime face of each of these takes
+    the same branch (`_render`'s function table and `_handle.render_ext`
+    each say so where they make it), and tests/test_gh2059_doc_stands_alone
+    .py measures both faces against this answer.
+    """
+    if owner_kind == "module" and table == ("functions",):
+        from ._stubs import function_stub
+
+        return function_stub(cfg, root, owner, row)
+    if owner_kind == "handle" and table == ("methods",):
+        from ._handle import _backing_doc_blocks, method_doc_lines
+
+        blocks = _backing_doc_blocks(cfg, owner, root)
+        return "\n".join(method_doc_lines(row, blocks))
+    if owner_kind == "handle" and table == ("factories",):
+        from ._handle import _factory_doc_lines
+
+        return "\n".join(_factory_doc_lines(cfg, owner, row))
+    if owner_kind == "object" and table == ("methods",):
+        from . import _codec
+        from ._config import codecs
+
+        # The dispatch both method stub writers make: a codec-pack row is
+        # `_codec`'s, every other row the method renderer's, which always
+        # generates sections.
+        cdc = codecs(cfg).get(row.get("codec"))
+        if _codec.is_codec_method(row) and cdc is not None:
+            return "\n".join(_codec.render_method_pyi(row, cdc))
+    return None
+
+
+def manifest_docs_with_sections(cfg: dict, root=None) -> "list[ManifestDoc]":
     """Manifest ``doc`` values carrying a numpy section heading jm duplicates.
 
     History, because it decides what is left to report. gh-1154 gated on a
@@ -3401,6 +3501,16 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
 
     - A **module** doc is never a finding: jm generates no sections for a
       module, so a heading there duplicates nothing.
+    - A doc in a :data:`DOC_STANDS_ALONE` table is never a finding either:
+      it is the member's whole docstring, with nothing generated beside it
+      (gh-2059 -- an ``extra_methods`` row, a property).
+    - A doc in a table whose renderer decides per row is a finding only on
+      a row the renderer writes a section beside (gh-2103): the row is
+      rendered (`_row_docstring`) and its headings compared with the
+      doc's. A module function's answer depends on its header's Doxygen,
+      so *root* -- the project, as both reporters pass it -- is where the
+      header is read from; without one the function is asked as if it had
+      none.
     - Every other ``doc`` is a finding when it carries a **section rule**.
 
     Reporting rather than repairing is unchanged, and so is the remedy: jm
@@ -3426,32 +3536,75 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
     >>> fn = {"module": {"dsp": {"functions": [{"name": "f", "doc": "A.\\n\\nB."}]}}}
     >>> manifest_docs_with_sections(fn)
     []
+
+    A row whose ``doc`` is the whole docstring is not a finding, and the
+    same heading on a generated method still is (gh-2059):
+
+    >>> obj = {"eng": {"extra_methods": [{"name": "h", "doc": mangled}],
+    ...                "methods": [{"name": "m", "doc": mangled}]}}
+    >>> [d.where for d in manifest_docs_with_sections(obj)]
+    ['eng.methods.m.doc']
     """
+    from ._config import RESERVED_SECTIONS, module_kind
+
     found: "list[ManifestDoc]" = []
 
-    def kind_at(path: "tuple[str, ...]") -> str:
-        """Which renderer shape a ``doc`` at *path* belongs to.
+    def owner_at(keys: "tuple[str, ...]") -> "tuple[str, str, tuple] | None":
+        """``(owner kind, owner name, table)`` for a ``doc`` under *keys*.
 
-        ``""`` means the renderer carries the value whole, so there is
-        nothing to report.
+        *keys* is the table path with list rows left out --
+        ``("eng", "extra_methods")`` for any row of that table -- so it
+        names the TABLE. None for a ``doc`` under no component or module.
+        """
+        if keys[:1] == ("module",) and len(keys) >= 2:
+            kind = module_kind(cfg, keys[1]) or "module"
+            return kind, keys[1], keys[2:]
+        if keys and keys[0] not in RESERVED_SECTIONS:
+            return "object", keys[0], keys[1:]
+        return None
+
+    def kind_at(keys: "tuple[str, ...]", row: dict, body: str) -> str:
+        """Which renderer shape the ``doc`` *body* of *row* belongs to.
+
+        ``""`` means the renderer carries the value whole, with nothing
+        generated beside it, so there is nothing to report.
         """
         # A module's own doc: jm generates no sections for a module, so a
-        # heading there duplicates nothing. Everywhere else jm appends its own
-        # Parameters/Returns. (gh-1493 retired the other two shapes: no face
-        # truncates or flattens a `doc` any more.)
-        if path[:1] == ("module",) and len(path) == 2:
+        # heading there duplicates nothing. (gh-1493 retired the other two
+        # shapes: no face truncates or flattens a `doc` any more.)
+        if keys[:1] == ("module",) and len(keys) == 2:
             return ""
+        at = owner_at(keys)
+        if at is None:
+            return "duplicated"
+        kind, owner, table = at
+        # gh-2059: the member's whole docstring -- nothing generated beside.
+        if table in DOC_STANDS_ALONE.get(kind, ()):
+            return ""
+        # gh-2103: a table whose renderer decides per row. A heading in the
+        # row's docstring that the doc does not carry is jm's; none means
+        # the doc stands alone there too.
+        text = _row_docstring(cfg, root, kind, owner, table, row)
+        if text is not None and not (
+            Counter(section_headings(text)) - Counter(section_headings(body))
+        ):
+            return ""
+        # Everywhere else jm appends its own Parameters/Returns/Examples.
         return "duplicated"
 
-    def walk(node: object, path: "tuple[str, ...]") -> None:
+    def walk(
+        node: object, path: "tuple[str, ...]", keys: "tuple[str, ...]"
+    ) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
                 if isinstance(key, str) and key.startswith("_"):
                     continue
                 if key == "doc" and isinstance(value, str):
-                    kind = kind_at(path)
                     body = value.replace("\r\n", "\n").strip("\n")
+                    # The section rule first: asking a renderer to write a
+                    # row costs a render, and almost no `doc` carries one.
                     hit = has_section_rule(body)
+                    kind = kind_at(keys, node, body) if hit else ""
                     if kind and hit:
                         found.append(
                             ManifestDoc(
@@ -3461,7 +3614,7 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
                             )
                         )
                     continue
-                walk(value, path + (str(key),))
+                walk(value, path + (str(key),), keys + (str(key),))
         elif isinstance(node, list):
             for item in node:
                 # Name the entry by its own `name` where it has one — an
@@ -3471,9 +3624,9 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
                     if isinstance(item, dict) and item.get("name")
                     else str(node.index(item))
                 )
-                walk(item, path + (label,))
+                walk(item, path + (label,), keys)
 
-    walk(cfg, ())
+    walk(cfg, (), ())
     return found
 
 

@@ -119,8 +119,8 @@ positional-only).
     for short, pure functions.
 - **`--out-type T`** — the function allocates and returns a fresh `T[]`
     ndarray instead of writing through an `--out-param`, sized from the
-    first array param's length (or the first integer scalar param, if
-    there's no array param). `jm function make_window --module win --param n:size_t --out-type float` generates `void my_dsp_make_window(float *out, size_t n)`, called from Python as `make_window(512)`.
+    first array param's length. `--out-type 'T[n]'` sizes it from the
+    integer param `n` instead: `jm function make_window --module win --param n:size_t --out-type 'float[n]'` generates `void my_dsp_make_window(float *out, size_t n)`, called from Python as `make_window(512)`. With neither, the function is refused: the C body is never told the length, so jm will not guess it (gh-1888).
 - **`--result-field name:type`** — emit a list of `{name, type}` records
     per call (repeatable). Requires `--return-type <struct>` naming the C
     struct one row is, declared in the sacred header.
@@ -132,7 +132,7 @@ positional-only).
 | `--param name:T`       | Any [scalar](../types.md#module-function-param-types) or any `T[]` [array shape](../types.md#array-element-types). Arrays get `const`. Also `name:path` (`str \| os.PathLike`, C `const char *`) and `name:enum:<name>` (a declared `[[enum]]`) — see [`jm function`](../commands/extend.md#just-makeit-function). | `const char *`, `T[][]`, `string_enum:…` (object-only).  | `n:size_t`       |
 | `--out-param name:T[]` | Array shapes only. Drops `const`.                                                                                                                                                                                                                                                                                  | All scalars (rejected at parse time per gh-72), `T[][]`. | `output:float[]` |
 | `--return-type T`      | Any [scalar](../types.md#module-function-param-types) including `void`.                                                                                                                                                                                                                                            | `const char *`, any `T[]`.                               | `void`           |
-| `--out-type T`         | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or — when no array param is present — from the first integer scalar param (gh-65).                                                                                                      | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
+| `--out-type T`         | Any [array element type](../types.md#array-element-types). Sizes the returned ndarray from the first array param's length, or from the integer param `n` named by `T[n]`. With neither it is refused (gh-1888).                                                                                                    | `bool`, `int`, `const char *`, `long double _Complex`.   | —                |
 
 The function preset has the **narrowest** slot allowlist of any
 template — no free-form strings (a filesystem path is `name:path`), no

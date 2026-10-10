@@ -326,7 +326,8 @@ c_deps = ["io", "vendor_dsp"]   # add_subdirectory(native/src/io), …
 
 Each listed dir owns its `CMakeLists.txt` (define `add_library(<name>_core …)`,
 tests, etc.); modules then link it via `extra_link_libs = ["io_core", …]`. CLI:
-`jm new --c-dep DIR` (repeatable; at creation, afterwards edit the manifest).
+`jm new --c-dep DIR` (repeatable; at creation, and it writes the
+`add_subdirectory` itself). Afterwards edit the manifest and run `jm apply`.
 
 ### `no_generate` — hand-written extension modules
 
@@ -587,6 +588,15 @@ carrying one gets a second copy after it, which `jm status` reports as
 `DOC`. For a full docstring with its own sections and doctests, write it as
 Doxygen above the declaration in the component's `_core.h`.
 
+The exception is a `doc` that is the member's whole docstring, with nothing
+generated beside it. Write the whole numpy docstring, sections and doctests
+included, in the `doc` of an
+[`extra_methods`](#componentextra_methods-entries) row, which has no core
+declaration to put Doxygen on. The same goes for an object's or a view's
+property, a capsule's methods and properties, a handle's getters, and a
+composer's serializers and computed properties. `status` does not report
+these (gh-2059).
+
 ### Generated Python style — `py_format_command`
 
 The Python twin of `c_format_command`. jm emits its own layout for the
@@ -753,9 +763,15 @@ show is declared. The same is true of an init-param with no seed at all — a
 `path`, a `bytes` blob, a `capsule` handle — where there is no call to attempt
 and the generated tests skip unconditionally.
 
-**It takes effect when the object is created.** The generated test files are
-create-only — jm writes them once and never rewrites them — so adding
-`example_value` to an existing project changes nothing already on disk.
+**Adding it later reaches the Python faces, not the C smoke.** The scaffolded
+`tests/test_<comp>.py` and `benchmarks/bench_<comp>.py` are jm's while they
+start `# jm:generated`, so the next `jm apply` rewrites them to construct with
+the value; the `.pyi` and the runtime docstrings, which `apply` always
+regenerates, pick it up as well. The C smoke test,
+`native/tests/test_<comp>_core.c`, is yours from the moment it is written:
+`apply` never rewrites it, so it keeps its zero-seeded call until you edit the
+`create()` arguments yourself. Which files `apply` rewrites, and how one
+becomes yours: [Who owns each file](workflows/edit-lifecycle.md#who-owns-each-file).
 
 **One thing changes with it.** For an init-params constructor the generated
 accessor test asserts the set/get **round-trip only**, not the value a field
@@ -769,10 +785,11 @@ makes that assertion a guess. The reset test is the same guess one step later
 
 #### A `default` is a literal; a constant is `default_raw`
 
-`default` is rendered **verbatim** into four places — the C local, both `.pyi`
-writers, and the generated app's `argparse` flags — so it has to be a literal
-of the type declared beside it. jm refuses anything else, naming the type and
-the value:
+`default` is rendered into four places — verbatim into the C local, and as
+the same value spelled in Python into both `.pyi` writers and the generated
+app's `argparse` flags — so it has to be a literal of the type declared beside
+it, and one Python can spell ([Defaults](types.md#defaults)). jm refuses
+anything else, naming the type and the value:
 
 ```toml
 [[det.init_params]]
@@ -1120,6 +1137,11 @@ doc     = "FFT of interleaved int16 I/Q."
 | ----------------------------------------------- | ----------- | ------------ |
 | `name`, `fn`, `flags`, `args`, `returns`, `doc` | (TOML only) | ✅ (gh-1997) |
 
+The `doc` is the method's whole docstring on both faces, the `.pyi` member
+and the runtime `__doc__`, and jm generates nothing beside it. So it can be
+a full numpy docstring with `Parameters`, `Returns` and an `Examples`
+doctest (gh-2059).
+
 Write the function with exactly the signature its `flags` imply, `self`
 included as a `PyObject *` (cast it to the object's struct inside):
 `METH_NOARGS`, `METH_O` and `METH_VARARGS` take
@@ -1269,6 +1291,7 @@ guard, so guard anything platform-specific in it yourself.
 | `params … {elements_per_sample = N}`          | (TOML only) the C counts samples of N elements                                    | ✅ (gh-805)  |
 | `inline = true`                               | `jm function --inline`                                                            | ✅           |
 | `out_type = "T"`                              | `jm function --out-type T`                                                        | ✅ (0.13.23) |
+| `out_type = "T[n]"`                           | `jm function --out-type 'T[n]'`                                                   | ✅ (gh-1888) |
 | `variable_output = true`, `out_size = "EXPR"` | `jm function --variable-output --out-type T --out-size EXPR`                      | ✅ (gh-335)  |
 | `out_type = "str"`                            | (TOML only)                                                                       | 🟡 (0.71.2)  |
 | `check_return = true`                         | `jm function --check-return`                                                      | ✅ (gh-363)  |

@@ -164,18 +164,30 @@ def _included_member_docs(
     return out, structs
 
 
-def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
+def _load_doc_blocks(
+    root: Path,
+    obj: str,
+    cfg: "dict | None" = None,
+    *,
+    owner: "INC.Owner | None" = None,
+) -> dict:
     """Parse Doxygen comments from the sacred ``<obj>_core.h``.
 
     Returns ``{c_function_name: DoxyBlock}`` for every documented declaration,
     or ``{}`` when the header is absent or carries no usable comments. The
     header is the single source of truth for docstrings; generators derive
     Python docs from these blocks and fall back to name-based stubs otherwise.
+
+    *owner* is the project the header's TREE is in -- its layout and its
+    symbol stem -- when no manifest at *root* says so: `jm bind` on a bare
+    ``native/`` reads them off the tree (gh-1895). By default the manifest
+    at the doc root answers.
     """
     doc_root = _DOC_ROOT_OVERRIDE or root
+    tree = doc_root if owner is None else owner
     # Includes inside the header resolve from the -I directory.
     inc_root = INC.inc_dir(doc_root)
-    header = INC.core_h(doc_root, obj)
+    header = INC.core_h(doc_root, obj, tree)
     if not header.exists():
         return {}
     text = header.read_text(encoding="utf-8")
@@ -210,13 +222,13 @@ def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
     if _structs:
         out[struct_members_key()] = _structs
     # gh-1591: a declaration's C name starts with the object's STEM.
-    stem = CSYM.stem(doc_root, obj)
+    stem = CSYM.stem(tree, obj)
     # gh-1651: the class the header was rendered with, so its `reset`
     # boilerplate (which names the CLASS) is recognised under a class_name.
     # From *cfg* when the caller renders from one: at `jm object` time the
     # manifest on disk does not hold the new object yet, and a scaffold that
     # read the brief as authored while `apply` read it as jm's disagreed.
-    manifest = cfg if cfg is not None else INC.manifest(doc_root)
+    manifest = cfg if cfg is not None else INC.manifest(tree)
     cls = C.resolved_class_name(manifest, obj)
     members = _method_members(manifest, obj, stem)
     for cname, block_text in raw.items():
@@ -694,14 +706,11 @@ def package_siblings(cfg: dict, module: str) -> list[str]:
     :func:`_merge_module_init` recognise the neighbour's exports and leave them
     alone instead of pruning them out of ``__all__`` on every other apply.
     """
-    mp = C.module_paths(module)
-    out_pkg = C.module_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
     return [
         C.module_paths(other).leaf
         for other in C.modules(cfg)
-        if other != module
-        and (C.module_package(cfg, other) or C.module_paths(other).pypath)
-        == out_pkg
+        if other != module and C.module_package_resolved(cfg, other) == out_pkg
     ]
 
 
@@ -1448,7 +1457,7 @@ def _make_view_ctx(
         Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )
     )
@@ -1685,7 +1694,7 @@ def build_component_ctxs(
             Ctx.make_module_ctx(
                 module,
                 pkg,
-                C.module_package(cfg, module),
+                C.module_package_resolved(cfg, module),
                 C.module_doc(cfg, module),
             )
         )
@@ -1933,7 +1942,7 @@ def render_module_ext_c(
         module_doc_c=Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )["module_doc_c"],
         # gh-643: the module header's Doxygen for its free functions — the
@@ -2002,15 +2011,26 @@ def _regenerate_module_now(
 ) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
-    # cname drives the flat native dir / file prefixes; leaf is the .so basename
-    # and the collocated-object name; pypath is the nested Python dir. For a
-    # flat module all three equal `module` (zero churn).
+    # cname drives the flat native dir / file prefixes; leaf is the .so basename;
+    # pypath is the nested Python dir. For a flat module all three equal
+    # `module` (zero churn).
     mp = C.module_paths(module)
     cname = mp.cname
+    # gh-1949: the object whose directory IS the module's -- named for the
+    # cname, never the leaf (an object `filters` in `dsp.filters` lives in
+    # native/src/filters/, a directory of its own).
+    collocated = C.collocated_object(cfg, module)
     Module = _to_title(cname)
     # gh-523: `package` redirects every Python-side artifact (.so output dir,
     # .pyi, __init__ re-exports, tests/, benchmarks/) into a sibling package;
     # unset it collapses to the module's own pypath, so nothing changes.
+    #
+    # Spelled inline ON PURPOSE, the one place outside
+    # `C.module_package_resolved` that may (gh-2065): the `__init__.py`
+    # re-exports written here are the independent oracle gh-2054's gate
+    # checks every generated import path against. Through the owner, a
+    # wrong answer would put the re-exports where the imports look, and the
+    # gate would pass on a tree that does not import.
     out_pkg = C.module_package(cfg, module) or mp.pypath
 
     comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
@@ -2153,9 +2173,9 @@ def _regenerate_module_now(
     # <mod>_core; the function sources are appended to that library below.
     # Non-collocated: we define <mod>_core separately so that module-level
     # functions are compiled and linked in.
-    # A collocated object shares the module's leaf name (e.g. module "a.fft",
-    # object "fft"): CMAKE_LISTS_OBJECT_CORE already defines <leaf>_core.
-    has_collocated = mp.leaf in object_names
+    # A collocated object shares the module's cname (e.g. module "a.fft",
+    # object "a_fft"): CMAKE_LISTS_OBJECT_CORE already defines <cname>_core.
+    has_collocated = collocated is not None
     extra_inc_dirs = C.extra_include_dirs(cfg, module)
     inc_dirs_extra = (
         "\n    " + "\n    ".join(extra_inc_dirs) if extra_inc_dirs else ""
@@ -2216,7 +2236,7 @@ def _regenerate_module_now(
     _varargs_srcs: list[str] = []
     for _obj, _ctx_ in zip(object_names, comp_ctxs):
         for _bf in _ctx_.get("varargs_binding_files", []):
-            if _obj == mp.leaf:
+            if _obj == collocated:
                 _varargs_srcs.append(_bf)
             else:
                 _varargs_srcs.append(f"../{_obj}/{_bf}")
@@ -2230,7 +2250,7 @@ def _regenerate_module_now(
         **Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         ),
         "Module": Module,
@@ -2250,7 +2270,7 @@ def _regenerate_module_now(
     # have _methods.c — stubs go in _core.c.
     collocated_cmake = ""
     for obj, ctx_ in zip(object_names, comp_ctxs):
-        if obj == mp.leaf:
+        if obj == collocated:
             # gh-132: inject the module-level extra_link_libs_block so that
             # the collocated object's test/bench targets link against the
             # same extra libraries as the Python extension.
@@ -2346,8 +2366,8 @@ def _regenerate_module_now(
     # find nothing and re-emit the colliding target on every apply. Same
     # override, and the same reason, as the sacred-header lookup above.
     # gh-1055: what the PROJECT claims, and what this module's OWN objects
-    # already emit. A collocated module-object -- a module whose `objects`
-    # list contains its own name -- writes `test_<obj>_core` into the very
+    # already emit. A collocated module-object -- the one named for the
+    # module's cname -- writes `test_<obj>_core` into the very
     # same CMakeLists this module writes to, so gh-1034's identically-named
     # module pair is a second `add_executable` with one name in one file and
     # cmake refuses to configure at all.
@@ -2462,7 +2482,7 @@ def _regenerate_module_now(
             Ctx.make_module_ctx(
                 module,
                 pkg,
-                C.module_package(cfg, module),
+                C.module_package_resolved(cfg, module),
                 C.module_doc(cfg, module),
             ),
         )
@@ -2484,7 +2504,7 @@ def _regenerate_module_now(
         Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )["module_docstring_py"],
     )

@@ -7,6 +7,7 @@
     just-makeit remove warning  <condition> --object <obj>
     just-makeit remove error    <obj> --object <obj>
     just-makeit remove function <name> --module <mod>
+    just-makeit remove app      <name>
 
 `--force` (`-f`) skips the confirmation prompt.
 """
@@ -29,6 +30,7 @@ from . import _remove
 #   error <obj>          — takes no name at all: create() has one failure
 #                          channel, so there is one translation to remove.
 #                          `name` is ignored; --object is what identifies it.
+#   app <name>           — an [[app]] row is keyed by its name (gh-2074).
 _KINDS = (
     "object",
     "module",
@@ -38,6 +40,7 @@ _KINDS = (
     "error",
     "function",
     "state",
+    "app",
 )
 
 
@@ -45,8 +48,7 @@ def run(args: list[str]) -> None:
     if len(args) < 2 or args[0] not in _KINDS:
         print(
             "error: 'remove' requires a kind and a name.\n"
-            "  just-makeit remove object|module|state|method|property|"
-            "warning|error|function <name> [options]",
+            f"  just-makeit remove {'|'.join(_KINDS)} <name> [options]",
             file=sys.stderr,
         )
         sys.exit(1)

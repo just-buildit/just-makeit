@@ -6,6 +6,8 @@ import keyword
 import sys
 from pathlib import Path
 
+from ._report import Refusal
+
 
 def run(args: list[str]) -> None:
     if len(args) < 2:
@@ -410,6 +412,12 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            # gh-1946: a default Python has no spelling of, refused before
+            # anything is written -- the backstop in `_py_default` fires
+            # only once the manifest already carries it.
+            _why = T.literal_default_error(ptype, pdefault)
+            if _why:
+                raise Refusal(f"param '{pname}': {_why}")
             if not pdefault and any(
                 len(mp) > 2 and mp[2] for mp in method_params
             ):

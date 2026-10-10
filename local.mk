@@ -12,9 +12,9 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 conflict-check \
                 complex-spelling-check code-span-check \
                 coverage-subprocess-check coverage-shard \
-                gates-index gates-index-update \
-                gates-declared-check \
-                doppler-pin-check consumer-smoke install-history-update
+                gates-index gates-declared-check \
+                doppler-pin-check consumer-smoke install-history-update \
+                ci-test-legs
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -193,16 +193,22 @@ coverage-shard: coverage-subprocess-check ## Run shard COVERAGE_SHARD=K of the C
 # 14 miss four of the five that actually caught something. So a human
 # declares and the RATCHET refuses shrinkage, which is this repo's idiom for
 # a judgement no predicate can make.
+#
+# The ratchet's floor is derived as well: the gates declared at the merge
+# base with GATES_BASE, read by the same parse (gh-2038). It was a committed
+# file, and every two PRs adding a gate conflicted on it. GATES_BASE is
+# CHANGELOG_BASE because the question is the same one -- what did this branch
+# start from -- and CI already passes the PR's base SHA as that, with the
+# full history the merge base needs.
+GATES_BASE ?= $(CHANGELOG_BASE)
+
 lint: gates-declared-check
 
 gates-index: ## The obligations this repo's gates enforce
 	@python3 scripts/gates-index.py
 
-gates-index-update: ## Record the declared gates as the ratchet's new floor
-	@python3 scripts/gates-index.py --update
-
-gates-declared-check: ## Verify every declared gate is recorded and none dropped
-	@python3 scripts/gates-index.py --check
+gates-declared-check: ## Verify no gate declared at the merge base was dropped
+	@python3 scripts/gates-index.py --check --base '$(GATES_BASE)'
 
 # gh-1590: the acceptance test for epic gh-1584 -- jm packages installed the
 # documented way and consumed by the official pkg-config and CMake
@@ -219,3 +225,12 @@ consumer-smoke: ## Install jm packages, consume them by the official instruction
 install-history-update: ## Record the root install section's commands for adopt
 	@python3 scripts/install_history.py
 	@$(RUFF) format -q src/just_makeit/_installhistory.py
+
+# gh-2125: which `test` legs a ci.yml run owes, from the matrix the
+# toolchain job's `legs` step declares (MATRIX, TRIM) and the run's EVENT
+# and TESTED, all read from the environment as that step sets them. A PR
+# runs each TRIM os at its oldest and newest Python only; the push that lands
+# a PR whose tree it tested runs exactly what that PR trimmed; anything else
+# runs every leg. tests/test_own_ci_matrix.py runs it for each event.
+ci-test-legs: ## Print matrix= for ci.yml's test job (MATRIX, TRIM, EVENT, TESTED)
+	@python3 scripts/ci-test-legs.py
