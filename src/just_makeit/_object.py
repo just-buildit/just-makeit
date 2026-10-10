@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _color as Color
+from . import _borrow
 from . import _config as C
 from . import _csym as CSYM
 from ._docstring import class_import_line, class_import_path
@@ -1367,6 +1368,7 @@ def _make_view_ctx(
             # `create_fn` names, not always `<comp>_destroy`.
             create_fn=C.object_create_fn(cfg, obj) or "",
             csym=ctx["csym"],
+            lends=_borrow.lends(cfg, obj),
         )
     )
     ctx.update(
@@ -1625,6 +1627,7 @@ def build_component_ctxs(
                 # nothing here even though the resolver was right.
                 create_fn=C.object_create_fn(cfg, obj) or "",
                 csym=ctx["csym"],
+                lends=_borrow.lends(cfg, obj),
             )
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
@@ -2846,6 +2849,11 @@ def run(
     )
     # gh-541/gh-544: same as the standalone path in _init.run — this render
     # stamps the sacred _core.h/_core.c destroy signature as well as the glue.
+    _methods_now = (
+        declared_methods
+        if declared_methods is not None
+        else C.methods(cfg, ctx["component"])
+    )
     ctx.update(
         # A freshly created object has no extra methods yet, so [] is the
         # truth here rather than "unknown" — and it makes a destroy spec that
@@ -2858,15 +2866,18 @@ def run(
             # gh-856: was a hardcoded []. `jm apply` REPLAYS creation for
             # existing objects, so [] was not "no methods yet" but the
             # opposite of the truth.
-            declared_methods
-            if declared_methods is not None
-            else C.methods(cfg, ctx["component"]),
+            _methods_now,
             class_name=class_name or "",
             # gh-1326: `jm apply` replays creation through here, and this was
             # the site that dropped `create_fn` -- the derivation was correct
             # in isolation and never reached the render.
             create_fn=create_fn or "",
             csym=ctx["csym"],
+            # gh-2187: from the state THIS render holds (`vars_`), not the
+            # manifest, which a fresh `jm object --state` has not written yet.
+            lends=_borrow.lends_from(
+                _methods_now, C.properties(cfg, ctx["component"]), vars_
+            ),
         )
     )
 
