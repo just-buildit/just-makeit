@@ -136,11 +136,12 @@ jobs:
       # Revisit if uv gains a managed aarch64-apple-darwin build for 3.9 --
       # then this leg becomes as cheap as the others and should come back.
       #
-      # The `include` is the next Python, while it is still a PRE-RELEASE:
-      # one leg, on ubuntu-latest, told to uv as plain "3.15", which uv
-      # resolves to the newest pre-release (3.15.0rc2 at the time of
-      # writing). numpy already ships cp315 wheels, so the suite can really
-      # run.
+      # The next Python, while it is still a PRE-RELEASE, is an `include`:
+      # one leg, on ubuntu-latest, told to uv as its plain "3.N", which uv
+      # resolves to the newest pre-release, marked `"prerelease": true`.
+      # Add it once numpy ships wheels for it (3.15's leg ran from rc2), or
+      # the suite cannot really run. There is none today: 3.15 was promoted
+      # on its final release (gh-2179).
       #
       # Allowed to fail, and deliberately not by job-level
       # `continue-on-error`: how a failed job reads through `CI passed`'s
@@ -149,9 +150,11 @@ jobs:
       # success, and a failure is annotated rather than silent.
       #
       # It EXPIRES: the `test` job's first step fails the job for real once
-      # uv hands back a final 3.15.0, naming the fix -- move "3.15" into
-      # python-version here (and the classifiers), and delete the include.
-      # A note to revisit it would be a wish.
+      # uv hands back a final release, naming the fix -- move "3.N" into
+      # python-version here, and delete the include. A note to revisit it
+      # would be a wish. tests/test_own_ci_matrix.py then refuses the
+      # promotion until the pyproject classifiers and artifact.yml's
+      # pre-publish legs name the same Pythons (gh-2179).
       - name: Which test legs this run owes
         id: legs
         env:
@@ -160,10 +163,9 @@ jobs:
           TRIM: macos-latest
           MATRIX: >-
             {"os": ["ubuntu-latest", "macos-latest", "ubuntu-24.04-arm"],
-            "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"],
-            "exclude": [{"os": "macos-latest", "python-version": "3.9"}],
-            "include": [{"os": "ubuntu-latest", "python-version": "3.15",
-            "prerelease": true}]}
+            "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14",
+            "3.15"],
+            "exclude": [{"os": "macos-latest", "python-version": "3.9"}]}
         run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
 
   test:
