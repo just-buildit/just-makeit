@@ -412,7 +412,8 @@ def _head(field_text: str) -> list[str]:
 
 
 def _same_synopsis(cur_line: str, der_line: str) -> bool:
-    """Two synopsis lines that differ by at most a trailing period.
+    """Two synopsis lines that differ by at most a trailing period, or by
+    an optional return's ``| None``.
 
     jm has spelled the line both ways. gh-1039's canned single-record literal
     was a complete sentence — ``find(x) -> Hit record (found, offset).`` —
@@ -421,14 +422,25 @@ def _same_synopsis(cur_line: str, der_line: str) -> bool:
     another author's writing, which is exactly the misclassification that
     keeps a slot frozen.
 
+    gh-2183: a ``none_on_empty`` method's synopsis gained ``| None``, so the
+    line every earlier jm wrote for it ends without one. Compared literally,
+    that froze the very slot the fix was for: the runtime doc of every
+    existing module object kept saying the array is always there.
+
     Examples
     --------
     >>> _same_synopsis("run(x) -> float.", "run(x) -> float")
     True
     >>> _same_synopsis("run(x) -> float", "run(x, gain) -> float")
     False
+    >>> _same_synopsis("peek(n) -> ndarray", "peek(n) -> ndarray | None")
+    True
     """
-    return cur_line.rstrip(".") == der_line.rstrip(".")
+
+    def _bare(line: str) -> str:
+        return line.rstrip(".").removesuffix(" | None")
+
+    return _bare(cur_line) == _bare(der_line)
 
 
 def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
@@ -489,7 +501,13 @@ def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     if len(cur_head) == 1:
         return True
     fb_head = _head(fb) if fb is not None else []
-    return cur_head == der_head or (bool(fb_head) and cur_head == fb_head)
+    # gh-2183: the synopsis was matched above, by `_same_synopsis`'s rules;
+    # what is left to separate jm's text from an author's is the summary.
+    # Comparing the whole head again re-asked the synopsis literally, and
+    # undid every spelling that function tolerates.
+    return cur_head[1:] == der_head[1:] or (
+        bool(fb_head) and cur_head[1:] == fb_head[1:]
+    )
 
 
 #: jm's generic `tp_doc`, from `_object.py`'s ``[f"{Component} type."]``
