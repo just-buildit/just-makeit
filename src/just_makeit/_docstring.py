@@ -2145,12 +2145,23 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     ``doc`` renders exactly as it did -- but is never wrapped, because an
     authored line's width is its author's.
 
+    The one line jm adds is a blank one before the closing quotes, and only
+    when the text ends inside a doctest (gh-2176). A text-mode ``.pyi``
+    doctest reads an example's expected output up to the next blank line, so
+    without it the last example swallows the closing quotes and the
+    declaration after them, and can never match: gh-691's failure, which
+    jm fixed for a class's authored ``@code`` and which an ``extra_methods``
+    row's numpy ``doc`` reached once gh-2059 allowed one. The author cannot
+    write the line: `authored_doc_lines` drops trailing blank lines.
+
     Examples
     --------
     >>> authored_docstring(["One."], 4)
     ['    \"\"\"One.\"\"\"']
     >>> authored_docstring(["One.", "", "Two."], 4)
     ['    \"\"\"One.', '', '    Two.', '    \"\"\"']
+    >>> authored_docstring(["Two.", "", ">>> 1 + 1", "2"], 4)[-2:]
+    ['', '    \"\"\"']
     """
     pad = " " * indent
     if len(lines) == 1:
@@ -2158,8 +2169,26 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     return (
         [f'{pad}"""{lines[0]}']
         + [f"{pad}{ln}" if ln else "" for ln in lines[1:]]
+        + ([""] if _ends_in_doctest(lines) else [])
         + [f'{pad}"""']
     )
+
+
+def _ends_in_doctest(lines: "Sequence[str]") -> bool:
+    """Whether *lines* end inside a doctest: no blank line after the last
+    ``>>>`` prompt, so its example runs to the end of the text.
+
+    >>> _ends_in_doctest([">>> 1 + 1", "2"])
+    True
+    >>> _ends_in_doctest([">>> 1 + 1", "2", "", "Prose after it."])
+    False
+    >>> _ends_in_doctest(["No example."])
+    False
+    """
+    prompts = [
+        i for i, ln in enumerate(lines) if ln.lstrip().startswith(">>>")
+    ]
+    return bool(prompts) and all(ln.strip() for ln in lines[prompts[-1] :])
 
 
 def docstring_body(lines: "Sequence[str]", indent: int) -> "list[str]":
@@ -2792,9 +2821,13 @@ def render_numpy_doc(
     if examples:  # @code ... @endcode -> runnable doctest
         out += ["", f"{pad}Examples", f"{pad}--------"]
         out += [f"{pad}{ex}".rstrip() for ex in examples]
-        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
-        # text file, where expected output runs until a blank line — without
-        # this the closing `"""` is swallowed into the last example's output.
+    # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
+    # text file, where expected output runs until a blank line — without
+    # this the closing `"""` is swallowed into the last example's output.
+    # Whether the example came from `@code` or is the end of an authored
+    # `doc` (a handle method's, gh-2176): `_ends_in_doctest` is the one rule
+    # `authored_docstring` applies too.
+    if examples or _ends_in_doctest(lines):
         out.append("")
     out.append(f'{pad}"""')
     return out
