@@ -158,6 +158,7 @@ class TestNamesAndAliases:
             {"name": "close", "aliases": ["destroy", "close"]},
             [],
             csym="w",
+            lends=False,
         )["destroy_pymethoddef"]
         assert pmd.count('{"close",') == 1
         assert pmd.count('{"destroy",') == 1

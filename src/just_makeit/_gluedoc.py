@@ -259,7 +259,10 @@ def _serialization(Component: str) -> list[GlueMethod]:
 
 
 def _lifecycle(
-    Component: str, close_name: str = "destroy", finalizes: bool = False
+    Component: str,
+    close_name: str = "destroy",
+    finalizes: bool = False,
+    lends: bool = False,
 ) -> list[GlueMethod]:
     """``destroy``/``close`` plus the context-manager protocol.
 
@@ -298,22 +301,40 @@ def _lifecycle(
             "propagates normally; this never suppresses one.",
         ]
     )
+    # gh-2187: a lending object's teardown cannot free "immediately" -- the
+    # views it handed out point into the memory -- so its prose says when
+    # the memory does go, rather than promising what the body no longer does.
+    _close = (
+        DoxyBlock(
+            brief="Close the object; the memory goes with its last user.",
+            body=[
+                "Ordinarily unnecessary: the resources are freed when the "
+                "object is garbage-collected. Call this, or use the object "
+                "as a context manager, to end its use at a definite point.",
+                "Views this object handed out keep the memory they point "
+                "into, as does a call still running on another thread: it "
+                "is freed when the last of them, and this object, are gone, "
+                "not here (gh-2187). Idempotent: calling it again does "
+                "nothing. Every other method raises ``RuntimeError`` once "
+                "it has run.",
+            ],
+        )
+        if lends
+        else DoxyBlock(
+            brief="Release the underlying C resources immediately.",
+            body=[
+                "Ordinarily unnecessary: the resources are freed when "
+                "the object is garbage-collected. Call this to release "
+                "them at a definite point instead, or use the object as "
+                "a context manager, which calls it on exit.",
+                "Idempotent: calling it again on an already-released "
+                "object does nothing. Every other method raises "
+                "``RuntimeError`` once it has run.",
+            ],
+        )
+    )
     return [
-        GlueMethod(
-            name=close_name,
-            block=DoxyBlock(
-                brief="Release the underlying C resources immediately.",
-                body=[
-                    "Ordinarily unnecessary: the resources are freed when "
-                    "the object is garbage-collected. Call this to release "
-                    "them at a definite point instead, or use the object as "
-                    "a context manager, which calls it on exit.",
-                    "Idempotent: calling it again on an already-released "
-                    "object does nothing. Every other method raises "
-                    "``RuntimeError`` once it has run.",
-                ],
-            ),
-        ),
+        GlueMethod(name=close_name, block=_close),
         GlueMethod(
             name="__enter__",
             # Unquoted: the forward-reference quoting belongs to the emitted
@@ -375,7 +396,11 @@ def glue_method_names() -> frozenset[str]:
 
 
 def glue_methods(
-    Component: str, *, close_name: str = "destroy", finalizes: bool = False
+    Component: str,
+    *,
+    close_name: str = "destroy",
+    finalizes: bool = False,
+    lends: bool = False,
 ) -> dict[str, GlueMethod]:
     """Every generated glue method for *Component*, keyed by Python name.
 
@@ -390,6 +415,10 @@ def glue_methods(
         gh-805 §H. ``True`` when ``__exit__`` calls a finalizer that leaves
         the object alive, so the context-manager prose promises finalization
         rather than release. Affects ``__enter__``/``__exit__`` only.
+    lends : bool, optional
+        gh-2187. ``True`` for an object that hands out views into its
+        memory, whose teardown defers the free to ``tp_dealloc``; the
+        teardown's prose then says so. Affects ``close_name`` only.
 
     Returns
     -------
@@ -408,7 +437,7 @@ def glue_methods(
     """
     out: dict[str, GlueMethod] = {}
     for gm in _serialization(Component) + _lifecycle(
-        Component, close_name, finalizes
+        Component, close_name, finalizes, lends
     ):
         out[gm.name] = gm
     return out

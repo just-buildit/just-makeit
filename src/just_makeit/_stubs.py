@@ -2483,6 +2483,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # slot that does carry the symbol.
         create_fn=C.object_create_fn(cfg, obj) or "",
         csym=csym,
+        lends=_borrow.lends(cfg, obj),
     )
     lines += _dctx["pyi_destroy_methods"].split("\n")
     # gh-647: the context-manager protocol used to be the one part of the
