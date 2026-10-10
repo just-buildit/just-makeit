@@ -2675,6 +2675,7 @@ def render_numpy_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return `.pyi` numpy-docstring lines for one method or free function.
 
@@ -2724,6 +2725,10 @@ def render_numpy_doc(
         raises, rendered as a numpy ``Raises`` section (gh-869). Distinct from
         a header ``@throws``, which the block carries and which is merged with
         these; both end up in the one section.
+    none_when : str, optional
+        The sentence saying when an optional return is ``None``, appended
+        to the ``Returns`` description -- `_diagnostics.empty_is_none_doc`
+        for a method (gh-2183). Both faces take it, as they take *raises*.
 
     Returns
     -------
@@ -2754,6 +2759,7 @@ def render_numpy_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     # gh-652: a backslash in a plain triple-quoted string is an invalid escape
     # sequence — `\l` in `:math:`20\log_{10}(g)`` is the common case — and
@@ -3001,6 +3007,7 @@ def _numpy_sections(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> tuple[list[str], list[str]]:
     """Unindented numpy section lines, with ``Examples`` kept separate.
 
@@ -3107,7 +3114,16 @@ def _numpy_sections(
             out += [f"    {w}" for w in _wrap(desc, DESC_WIDTH)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
-        out += [f"    {w}" for w in _wrap(ret or return_fallback, DESC_WIDTH)]
+        _ret_desc = ret or return_fallback
+        if none_when:
+            # gh-2183: WHEN the optional annotation above is None, after
+            # what the value is. A description without a closing stop gets
+            # one, so the two read as two sentences rather than one.
+            _ret_desc = _ret_desc.rstrip()
+            if _ret_desc and _ret_desc[-1] not in ".!?":
+                _ret_desc += "."
+            _ret_desc = f"{_ret_desc} {none_when}".strip()
+        out += [f"    {w}" for w in _wrap(_ret_desc, DESC_WIDTH)]
         # gh-652: `@retval <v> <desc>` rows read as additional Returns entries.
         # A C function returning 0/-1 becomes a Python method that raises or
         # returns a value, and numpy has no other home for the per-value rows.
@@ -3158,6 +3174,7 @@ def render_runtime_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return runtime ``__doc__`` lines for one method, class or property.
 
@@ -3200,6 +3217,9 @@ def render_runtime_doc(
         passing a different one is precisely the drift this exists to prevent.
     ret_ann : str
         Python return annotation; ``"None"`` suppresses ``Returns``.
+    none_when : str, optional
+        When an optional return is ``None``; see :func:`render_numpy_doc`.
+        Must be the same sentence the stub face is given (gh-2183).
     override : str, optional
         Summary that outranks the header ``@brief`` — the manifest ``doc=``,
         or the caller's own shape-specific default sentence.
@@ -3229,6 +3249,7 @@ def render_runtime_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     if examples:  # @code ... @endcode -> runnable doctest
         lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]

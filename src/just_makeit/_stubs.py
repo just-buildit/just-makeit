@@ -42,6 +42,8 @@ from . import _types as T
 from dataclasses import replace as _replace
 
 from ._context._diagnostics import create_raises_doc as _create_raises_doc
+from ._context._diagnostics import empty_is_none_doc as _empty_is_none_doc
+from ._context._diagnostics import optional_ann as _optional_ann
 from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
 from ._context._types import _py_default
@@ -1422,8 +1424,12 @@ def _method_doc_lines(
     param_defaults: "dict[str, str] | None" = None,
     param_docs: "dict[str, str] | None" = None,
     authored_doc: str = "",
+    none_when: str = "",
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
+
+    *none_when* is `_context._diagnostics.empty_is_none_doc` for the method,
+    for the same reason as *raises* below (gh-2183).
 
     *skeleton_fallback* selects what an UNDOCUMENTED member falls back to.
     Every method caller now passes True -- object, module object and view
@@ -1453,6 +1459,7 @@ def _method_doc_lines(
         param_defaults=param_defaults,
         param_docs=param_docs,
         authored_doc=authored_doc,
+        none_when=none_when,
     )
 
 
@@ -2146,13 +2153,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # borrow carries one. Peer of the same call in the annotation
             # chain; both go through `_borrow.element_type`.
             # gh-1418: and `none_on_empty` makes it optional, exactly as in
-            # the peer. Kept beside that branch rather than derived twice:
-            # the two annotations are gated to agree.
-            ret_ann = (
-                "NDArray[Any]"
-                if m.get("record_dtype")
-                else f"NDArray[{_np(m_ret)}]"
-            ) + (" | None" if m.get("none_on_empty") else "")
+            # the peer. gh-2183: both ask `optional_ann`, the predicate the
+            # binding's `Py_RETURN_NONE` is emitted from.
+            ret_ann = _optional_ann(
+                m,
+                (
+                    "NDArray[Any]"
+                    if m.get("record_dtype")
+                    else f"NDArray[{_np(m_ret)}]"
+                ),
+            )
         elif m_py_return_type:
             ret_ann = m_py_return_type
         elif m.get("status_return"):
@@ -2186,10 +2196,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # already yields for a type it does not know.
             all_rts = [m.get("record_dtype") or m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
-            ret_ann = (
-                f"tuple[{', '.join(ndarrays)}]"
-                if len(ndarrays) > 1
-                else ndarrays[0]
+            # gh-2183: peer of the same `optional_ann` in make_methods_ctx.
+            ret_ann = _optional_ann(
+                m,
+                (
+                    f"tuple[{', '.join(ndarrays)}]"
+                    if len(ndarrays) > 1
+                    else ndarrays[0]
+                ),
             )
         elif m.get("out_type"):
             # gh-529: peer of the `out_type` branch in
@@ -2307,6 +2321,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             authored_doc=m.get("doc", ""),
             param_docs=authored_param_docs(m),
             raises=_raises_doc(m),
+            none_when=_empty_is_none_doc(m),
             # gh-1292: the skeleton, as every other face of the same member
             # renders it -- the standalone stub and BOTH runtime docs. Without
             # it an undocumented method collapsed to its name here alone, so
