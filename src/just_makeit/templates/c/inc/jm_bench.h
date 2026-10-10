@@ -74,8 +74,7 @@ jm_bench_elapsed_sec(uint64_t t0, uint64_t t1)
 #  define JM_BENCH_TIMER_NAME "clock_gettime"
 #endif
 
-#define JM_BENCH_MAX_ENTRIES 32
-#define JM_BENCH_NAME_LEN    64
+#define JM_BENCH_NAME_LEN 64
 
 typedef struct {
     char    name[JM_BENCH_NAME_LEN];
@@ -84,10 +83,34 @@ typedef struct {
     int     iters;  /* inner calls per round (BENCH_N) */
 } jm_bench_entry_t;
 
+/* gh-2188: `entries` is a heap array that jm_bench_add grows, so a benchmark
+ * may record any number of rows. It was a fixed array of 32, and
+ * jm_bench_add returned without a word once it was full: a 39-row benchmark
+ * printed all 39 rows, exited 0 and wrote a JSON holding 32. `= {0}` is
+ * still the whole initialisation -- NULL, 0, 0 is an empty bench. */
 typedef struct {
-    jm_bench_entry_t entries[JM_BENCH_MAX_ENTRIES];
+    jm_bench_entry_t *entries; /* `count` rows, room for `cap` */
     int count;
+    int cap;
 } jm_bench_t;
+
+/* realloc() that never hands back NULL.
+ *
+ * gh-2188: every allocation this header makes holds a row the benchmark
+ * measured, so one that fails cannot be skipped without dropping that row
+ * from the JSON while the run still exits 0. It says so on stderr and exits
+ * non-zero instead. `n` is at least 1 because realloc(p, 0) may free p and
+ * return NULL. */
+static inline void *
+jm_bench_xrealloc(void *p, size_t n)
+{
+    void *q = realloc(p, n ? n : 1);
+    if (!q) {
+        fprintf(stderr, "jm_bench: out of memory recording results\n");
+        exit(EXIT_FAILURE);
+    }
+    return q;
+}
 
 /* Copy src into dst[0..n-1], truncating, always NUL-terminated.
  *
@@ -120,12 +143,18 @@ static inline void
 jm_bench_add(jm_bench_t *b, const char *name,
              const double *times, int rounds, int iters)
 {
-    if (b->count >= JM_BENCH_MAX_ENTRIES)
-        return;
+    /* Grow by doubling: N rows cost O(log N) reallocs. Each entry's `times`
+     * is its own allocation, so moving the array moves only the pointer. */
+    if (b->count == b->cap) {
+        int cap = b->cap ? 2 * b->cap : 16;
+        b->entries = (jm_bench_entry_t *)jm_bench_xrealloc(
+            b->entries, (size_t)cap * sizeof(*b->entries));
+        b->cap = cap;
+    }
     jm_bench_entry_t *e = &b->entries[b->count++];
     jm_bench_strcpy(e->name, sizeof(e->name), name);
-    e->times = (double *)malloc((size_t)rounds * sizeof(double));
-    if (!e->times) { b->count--; return; }
+    e->times = (double *)jm_bench_xrealloc(
+        NULL, (size_t)rounds * sizeof(double));
     memcpy(e->times, times, (size_t)rounds * sizeof(double));
     e->rounds = rounds;
     e->iters  = iters;
@@ -217,8 +246,8 @@ jm_bench_write_json(const jm_bench_t *b, const char *component)
         int n = e->rounds;
 
         /* Sort a copy for order statistics. */
-        double *s = (double *)malloc((size_t)n * sizeof(double));
-        if (!s) continue;
+        double *s = (double *)jm_bench_xrealloc(
+            NULL, (size_t)n * sizeof(double));
         memcpy(s, e->times, (size_t)n * sizeof(double));
         qsort(s, (size_t)n, sizeof(double), jm_dcmp);
 
