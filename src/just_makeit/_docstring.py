@@ -3217,12 +3217,12 @@ def render_runtime_doc(
         passing a different one is precisely the drift this exists to prevent.
     ret_ann : str
         Python return annotation; ``"None"`` suppresses ``Returns``.
-    none_when : str, optional
-        When an optional return is ``None``; see :func:`render_numpy_doc`.
-        Must be the same sentence the stub face is given (gh-2183).
     override : str, optional
         Summary that outranks the header ``@brief`` — the manifest ``doc=``,
         or the caller's own shape-specific default sentence.
+    none_when : str, optional
+        When an optional return is ``None``; see :func:`render_numpy_doc`.
+        Must be the same sentence the stub face is given (gh-2183).
 
     Returns
     -------

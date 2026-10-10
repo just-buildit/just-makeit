@@ -8,5 +8,7 @@
     runtime synopsis) annotates `<array> | None`, a tuple result included,
     and both `Returns` sections say when the result is `None`. A borrow's
     `Returns` now says when too, and its runtime synopsis reads
-    `-> ndarray | None`. Projects without `none_on_empty` regenerate
-    unchanged.
+    `-> ndarray | None`. `jm apply` carries the new runtime doc into an
+    existing module object's sacred `_ext_<obj>.c`: the doc refresh no longer
+    reads a synopsis that gained `| None` as an author's text. Projects
+    without `none_on_empty` regenerate unchanged.

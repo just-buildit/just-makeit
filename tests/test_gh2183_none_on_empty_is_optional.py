@@ -237,25 +237,30 @@ class TestTheGateIsArmed:
         assert {"value", "peek", "plain"} <= set(_help_faces(ext))
 
 
+def _disagreements(ext_c: str, faces: dict) -> dict:
+    """``{method: what is wrong}`` where *faces* and the binding disagree."""
+    wrong = {}
+    for name, returns_none in binding_returns_none(ext_c).items():
+        if name not in {n for n, _, _ in METHODS}:
+            continue
+        if name not in faces:
+            # gh-1905: a batch method has no standalone `.pyi` entry. Absent
+            # is not a false promise; absent where the binding DOES return
+            # None is one.
+            if returns_none:
+                wrong[name] = "missing"
+            continue
+        if _optional(faces[name]) != (returns_none,) * 3:
+            wrong[name] = (returns_none, faces[name])
+    return wrong
+
+
 class TestEveryFaceAgreesWithTheBinding:
     @pytest.mark.parametrize("face", [".pyi", "help()"])
     def test_none_is_documented_exactly_where_it_is_returned(self, tree, face):
         kind, ext, pyi = tree
         faces = _stub_faces(pyi) if face == ".pyi" else _help_faces(ext)
-        wrong = {}
-        for name, returns_none in binding_returns_none(ext).items():
-            if name not in {n for n, _, _ in METHODS}:
-                continue
-            if name not in faces:
-                # gh-1905: a batch method has no standalone `.pyi` entry.
-                # Absent is not a false promise; absent where the binding
-                # DOES return None is one.
-                if returns_none:
-                    wrong[name] = "missing"
-                continue
-            said = _optional(faces[name])
-            if said != (returns_none,) * 3:
-                wrong[name] = (returns_none, faces[name])
+        wrong = _disagreements(ext, faces)
         assert not wrong, f"{kind} {face}: {wrong}"
 
     def test_the_two_stub_producers_say_it_alike(self, tmp_path_factory):
@@ -290,6 +295,42 @@ class TestTheWords:
         assert _stub_faces(pyi)["pair"][0] == (
             "tuple[NDArray[np.float32], NDArray[np.float32]] | None"
         )
+
+
+class TestAnExistingFragmentCatchesUp:
+    """A module object's ``<mod>_ext_<obj>.c`` is sacred: `apply` never
+    re-renders it, and `_docsync` transplants a runtime doc only when the
+    slot is still jm's own text. It recognises that by the synopsis line --
+    which this fix changes, ``-> ndarray`` becoming ``-> ndarray | None``.
+    Compared literally, every fragment an earlier jm wrote read as an
+    author's and froze: the fix reached every fresh tree and none of
+    doppler's nine methods. Measured before `_docsync` learned the
+    spelling."""
+
+    def test_apply_refreshes_the_doc_an_earlier_jm_wrote(
+        self, tmp_path, monkeypatch
+    ):
+        from just_makeit import _stubs
+        from just_makeit._context import _methods
+
+        # The render before gh-2183, for a variable-output method: no
+        # `| None` on any face and nothing said in `Returns`.
+        for mod, prefix in ((_methods, ""), (_stubs, "_")):
+            monkeypatch.setattr(mod, f"{prefix}optional_ann", lambda m, a: a)
+            monkeypatch.setattr(
+                mod, f"{prefix}empty_is_none_doc", lambda m: ""
+            )
+        before, _ = _scaffold(tmp_path / "t", "m")
+        # The fixture is the old render, or this proves nothing.
+        assert _optional(_help_faces(before)["value"]) == (False,) * 3
+        monkeypatch.undo()
+
+        root = tmp_path / "t" / "p"
+        r = run_cli("apply", cwd=root)
+        assert r.returncode == 0, r.stdout + r.stderr
+        ext = (root / "native" / "src" / "m" / "m_ext_o.c").read_text("utf-8")
+        wrong = _disagreements(ext, _help_faces(ext))
+        assert not wrong, wrong
 
 
 def _probe(pyi: str) -> str:
