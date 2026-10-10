@@ -744,6 +744,52 @@ def param_fmt(ctype: str, default: str = "") -> str:
     return _CTYPE_META[ctype]["fmt"]
 
 
+def wider_than_double(ctype: str) -> "str | None":
+    """The C type integer *ctype* parses through, when a double cannot hold it.
+
+    gh-2139. A ``double`` holds every integer of magnitude up to 2**53 and
+    not every one past it, so a face that carries an integer as a double --
+    cJSON's only number is one -- changes a wider type's value with no
+    error. Which types are wider is the type table's own statement, not a
+    list of names: every integer row names the C type its binding parses
+    through (``parse_type``), and that is a ``long long`` exactly when the
+    type needs more than 32 bits -- an ``int32_t`` parses through a
+    ``long``, an ``int64_t``, a ``size_t`` or a ``ptrdiff_t`` through a
+    ``long long``. No row needs between 33 and 53 bits, which
+    ``tests/test_gh2139_composer_json_64bit.py`` holds against numpy's own
+    width for every row.
+
+    Parameters
+    ----------
+    ctype : str
+        A C type spelling; one with no ``_CTYPE_META`` row is not wider.
+
+    Returns
+    -------
+    str or None
+        ``"unsigned long long"`` or ``"long long"`` -- the C type that holds
+        every value of *ctype*, whose signedness is *ctype*'s -- or ``None``
+        for a type a double holds exactly (a narrower integer, a floating
+        type) or that is not a number.
+
+    Examples
+    --------
+    >>> wider_than_double("uint64_t")
+    'unsigned long long'
+    >>> wider_than_double("ptrdiff_t")
+    'long long'
+    >>> wider_than_double("uint32_t") is None
+    True
+    >>> wider_than_double("double") is None
+    True
+    """
+    meta = _CTYPE_META.get(ctype, {})
+    parse_type = meta.get("parse_type", "")
+    if meta.get("kind") == "int" and parse_type.endswith("long long"):
+        return parse_type
+    return None
+
+
 def string_default_literal(default: str) -> str:
     """A ``const char *`` default's Python spelling.
 
