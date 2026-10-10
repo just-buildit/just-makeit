@@ -250,14 +250,15 @@ Do not use it expecting throughput. It is slower on average.
 
 Every single-output `variable_output` method takes one, validated against what
 the binding would have allocated itself: a generator against its count, an
-all-scalar method against `<m>_max_out(state)`, and a method whose params carry
-an array against the first array's length — beside a scalar or another array
-too (`delay(x, mu, out=None)`,
+all-scalar method against `<m>_max_out(state)`, a method with an `arg_type`
+input against the input's length — with params beside it too
+(`run(x, gain, out=None)`,
+[gh-2028](https://github.com/just-buildit/just-makeit/issues/2028)) — and a
+method whose params carry an array against the first array's length — beside
+a scalar or another array too (`delay(x, mu, out=None)`,
 [gh-1998](https://github.com/just-buildit/just-makeit/issues/1998)).
-`<m>_max_out(len(x))` sizes it. Two shapes go without: `multi_output`, where
-one `out=` cannot name two buffers, and params beside an `arg_type` input,
-which that wrapper does not parse
-([gh-1960](https://github.com/just-buildit/just-makeit/issues/1960)).
+`<m>_max_out(len(x))` sizes it. One shape goes without: `multi_output`, where
+one `out=` cannot name two buffers.
 
 ### Throughput: a fixed cost, always
 

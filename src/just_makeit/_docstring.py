@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace as dc_replace
-from typing import NamedTuple, Sequence
+from typing import Collection, NamedTuple, Sequence
 
 
 def extract_doctests(text: str) -> list[str]:
@@ -2696,8 +2696,8 @@ def render_numpy_doc(
         Member name, used for the summary fallback.
     py_params : list of tuple(str, str)
         ``(name, annotation)`` for the Python-facing arguments to document,
-        in order. Only these appear in ``Parameters`` — a binding-level
-        argument such as ``out=`` is deliberately left out by the caller.
+        in order. Only these appear in ``Parameters``; since gh-1042 they
+        include the binding's own ``count`` / ``out=`` where it has them.
     ret_ann : str
         Python return annotation; ``"None"`` suppresses the ``Returns``
         section entirely.
@@ -2724,6 +2724,11 @@ def render_numpy_doc(
         raises, rendered as a numpy ``Raises`` section (gh-869). Distinct from
         a header ``@throws``, which the block carries and which is merged with
         these; both end up in the one section.
+    param_defaults : dict, optional
+        `_gluedoc.binding_param_docs`: jm's description of each binding
+        argument this member synthesized, used when the header has none.
+        Its keys are also what :func:`render_numpy_method_doc` keeps out of
+        the positional ``@param`` match (gh-2028).
 
     Returns
     -------
@@ -3019,8 +3024,11 @@ def _numpy_sections(
         delimiter.
     """
     if block is not None:
+        # gh-2028: `param_defaults` is `_gluedoc.binding_param_docs`, keyed
+        # by exactly the arguments this method's binding synthesized -- so
+        # its keys are the names the positional match must not consume.
         summary, body, descs, ret, examples = render_numpy_method_doc(
-            block, py_params
+            block, py_params, binding=frozenset(param_defaults or ())
         )
     else:
         summary, body, descs, ret, examples = "", [], {}, "", []
@@ -3238,6 +3246,7 @@ def render_runtime_doc(
 def render_numpy_method_doc(
     block: DoxyBlock,
     py_params: list[tuple[str, str]],
+    binding: "Collection[str]" = (),
 ) -> tuple[str, list[str], dict[str, str], str, list[str]]:
     """Resolve a method's prose fields from *block* for numpy rendering.
 
@@ -3261,6 +3270,12 @@ def render_numpy_method_doc(
         listed above as C-only, which it is not: it is Python-facing, and
         treating it as C-only is what silently discarded an authored
         ``@param out``.
+    binding : collection of str, optional
+        The names in *py_params* that are jm's own binding arguments -- the
+        keys of `_gluedoc.binding_param_docs` for this method (``count``,
+        ``out``). An authored ``@param`` of the same name still documents
+        one, but they never take part in the positional match below
+        (gh-2028).
 
     Returns
     -------
@@ -3270,6 +3285,17 @@ def render_numpy_method_doc(
         grouped into flowing paragraphs, ``param_desc_by_name`` maps each Python
         arg name to its description (possibly empty), and ``example_lines`` are
         the verbatim ``@code`` doctest lines (empty if none).
+
+    Examples
+    --------
+    The header documents the block input by its C name, ``in``; the Python
+    argument is ``x``, and ``out`` is the binding's own buffer:
+
+    >>> b = DoxyBlock(brief="Run.", params=[("in", "Samples."),
+    ...                                     ("gain", "Scale.")])
+    >>> py = [("x", "ndarray"), ("gain", "float"), ("out", "ndarray")]
+    >>> render_numpy_method_doc(b, py, binding={"out"})[2]
+    {'gain': 'Scale.', 'x': 'Samples.', 'out': ''}
     """
     py_names = [n for n, _ in py_params]
     # exact-name matches first
@@ -3281,9 +3307,21 @@ def render_numpy_method_doc(
             desc_by_name[n] = d
             matched.add(n)
     # positional zip of the remaining (Doxygen names that aren't Python args,
-    # e.g. C `samples` -> Python `x`) only when the leftover counts align.
-    if len(matched) < len(py_names):
-        leftover_py = [n for n in py_names if n not in matched]
+    # e.g. C `in` -> Python `x`) only when the leftover counts align.
+    #
+    # gh-2028: the binding's own arguments are not leftovers. `count` and
+    # `out=` are jm's, appended after the author's arguments, and documented
+    # by name (`@param out`) or by jm's default -- never by whichever C
+    # `@param` happens to sit in their position. Counted in, they made every
+    # method that has one misalign: `run(x, gain, out)` against `@param in`,
+    # `@param gain` is two Python leftovers against one Doxygen, the zip was
+    # skipped, and `in`'s prose never reached `x`. Every input-only
+    # `variable_output` method has carried `out=` since gh-219, so its
+    # `@param in` reached `x` only when the header also spelled `@param out`.
+    leftover_py = [
+        n for n in py_names if n not in matched and n not in binding
+    ]
+    if leftover_py:
         leftover_dox = [d for nm, d in block.params if nm not in py_names]
         if len(leftover_dox) == len(leftover_py):
             for n, d in zip(leftover_py, leftover_dox):
