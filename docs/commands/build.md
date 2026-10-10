@@ -165,6 +165,24 @@ The builds `jm bench` drives are **not** timed: a cold build on the same board
 took 603 s, and a build that is slow has not failed. Bound a CI job's wall
 clock with the job's own `timeout-minutes:`.
 
+**A benchmark that fails (gh-2189).** A `bench_<comp>_core` that exits
+non-zero, dies of a signal, or exits 0 without writing its JSON (or writing one
+that does not parse) is reported as `failed bench_<comp>_core (<why>)`, with
+its stderr quoted beneath. So is a target that built but whose binary jm cannot
+find. On the Python side, a `pytest` run that exits other than 0 (or 5,
+nothing collected) is reported as `failed pytest <file> (exit N)`: a benchmark
+that raised, or whose test failed after it ran. pytest's own report, printed
+above it, names the test. Like a timeout, a failure costs that benchmark and
+nothing else. The remaining benchmarks still run, the ones that finished are
+saved (the snapshot lists the failure under `"failed"`), and the command then
+exits 1 naming it. A JSON that a failed run did write is not read, since the
+run said it is not good; pytest-benchmark keeps the timing of a test that
+failed after its benchmark ran. Under `--check` the failed benchmark's
+baseline entries are `missing`, the JSON document lists it under `"failed"`,
+and the gate fails. There is no flag that skips a failure; to leave the C
+benchmarks out of a run, name the components you want, or pass
+`--python-only`.
+
 **`silent` from the artifact (gh-1691).** A benchmark that runs and writes an
 empty `"benchmarks": []` is named as `silent bench_<comp>_core`. That is
 read from the JSON the binary wrote, so it holds however the source records —
