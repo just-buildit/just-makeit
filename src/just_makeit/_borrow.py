@@ -342,37 +342,47 @@ def release_count_param(m: dict) -> str:
     return ""
 
 
-def release_resolve_c(m: dict) -> str:
+def release_resolve_c(m: dict, *, kwlist: list[str]) -> str:
     """Resolve the release's count and clear the record (gh-1426 A).
 
     Emitted between the parse block and the call. Three shapes in one, and
     the middle one is the feature:
 
     - **no count param** (``reset()``): clear the record, nothing else.
-    - **omitted argument**: the parsed local is ``0`` (the render-time
-      default), so it takes the outstanding count.
+    - **omitted argument**: it takes the outstanding count.
     - **nothing outstanding and no argument**: a ``RuntimeError`` naming the
       method. The hand-written binding this replaces consumed 0 silently;
-      a release with no borrow behind it is a caller bug, and saying so is
-      kinder than a no-op that looks like it worked.
+      a bare release with no borrow behind it is a caller bug, and saying
+      so is kinder than a no-op that looks like it worked.
 
-    An explicit ``0`` is indistinguishable from an omitted argument here, and
-    deliberately so: releasing nothing is the same caller bug either way, and
-    a sentinel to tell them apart would buy a distinction with no behaviour
-    behind it.
+    **Omitted is decided by PRESENCE, not by value** (gh-2191). An explicit
+    count, 0 included, is passed to C as given. 0 is a count a streaming
+    consumer computes ordinarily -- ``consume(n_processed)`` after a frame
+    that yielded nothing -- and the C release decides what releasing 0
+    means (a ring's is a no-op). Testing the parsed local instead made an
+    explicit 0 take the outstanding count: ``peek(64); consume(0)``
+    released 64 samples nobody had processed. A sentinel default cannot
+    stand in for presence either: ``K`` does not range-check, so
+    ``consume(-1)`` would alias it. So the count is looked for where the
+    parse found it: positionally at its index in ``kwlist`` -- the parse
+    block's own ``_kwlist``, in its order, handed over by the caller that
+    built it -- or by name in ``kwds``.
 
-    **The record is cleared BEFORE the call**, not after. It is a convenience
-    default and never a check -- `consume(k)` with ``k < n`` stays legal for
-    overlapped frames -- so a failing release leaving it clear costs the next
-    bare call its default and nothing else. Clearing it after would mean
-    threading this through every return shape for that.
+    **The record is cleared BEFORE the call**, not after, on every release.
+    It is a convenience default and never a check -- `consume(k)` with
+    ``k < n`` stays legal for overlapped frames -- so a failing release
+    leaving it clear costs the next bare call its default and nothing
+    else. Clearing it after would mean threading this through every return
+    shape for that.
 
     Examples
     --------
     >>> print(release_resolve_c(
     ...     {"name": "consume", "releases": ["wait"],
-    ...      "params": [{"name": "n", "type": "size_t"}]}), end="")
-        if (!n) {
+    ...      "params": [{"name": "n", "type": "size_t"}]},
+    ...     kwlist=["n"]), end="")
+        if (!(PyTuple_GET_SIZE(args) > 0
+              || (kwds && PyDict_GetItemString(kwds, "n")))) {
             n = self->_jm_borrowed;
             if (!n) {
                 PyErr_SetString(PyExc_RuntimeError,
@@ -383,7 +393,7 @@ def release_resolve_c(m: dict) -> str:
         }
         self->_jm_borrowed = 0;
     >>> print(release_resolve_c(
-    ...     {"name": "reset", "releases": ["wait"]}), end="")
+    ...     {"name": "reset", "releases": ["wait"]}, kwlist=[]), end="")
         self->_jm_borrowed = 0;
     """
     if not is_release(m):
@@ -392,9 +402,11 @@ def release_resolve_c(m: dict) -> str:
     clear = f"    self->{RELEASE_FIELD} = 0;\n"
     if not count:
         return clear
+    pos = kwlist.index(count)  # validated: the count names a param
     name = str(m.get("name", "<method>"))
     return (
-        f"    if (!{count}) {{\n"
+        f"    if (!(PyTuple_GET_SIZE(args) > {pos}\n"
+        f'          || (kwds && PyDict_GetItemString(kwds, "{count}")))) {{\n'
         f"        {count} = self->{RELEASE_FIELD};\n"
         f"        if (!{count}) {{\n"
         f"            PyErr_SetString(PyExc_RuntimeError,\n"

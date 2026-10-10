@@ -159,9 +159,11 @@ Commands:
                                 casting, copying and flattening it.
                                 TypeError for dtype, ValueError for shape.
     --releases A[,B]            This method RELEASES the named --borrow
-                                method(s). Its count param then defaults
-                                to the outstanding borrow's count; with
-                                no count param it just clears the record.
+                                method(s). Its count param then defaults,
+                                when omitted, to the outstanding borrow's
+                                count; an explicit 0 is passed through.
+                                With no count param it just clears the
+                                record.
     --release-count NAME        Which param carries that count, when the
                                 method has more than one. Must be last.
     --status-fn NAME            C function saying WHY a --borrow returned
