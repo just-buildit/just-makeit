@@ -531,25 +531,49 @@ def _scalar_string_argparse(
     return decls, parse, calls
 
 
+def _array_args(m: dict) -> list:
+    """The method's array arguments: the ``args`` rows typed ``T[]``."""
+    return [
+        a for a in m.get("args", []) if str(a.get("type", "")).endswith("[]")
+    ]
+
+
+def _data_return(returns: "str | None") -> bool:
+    """Whether the C return is the payload's LENGTH rather than a value.
+
+    An array or ``bytes`` result is sized by what the C call returns, so that
+    return is consumed before anything else could read it, and no declaration
+    can make it a status (gh-1118).
+    """
+    return returns == "bytes" or (
+        bool(returns) and str(returns).endswith("[]")
+    )
+
+
 def raises_instead_of_returning(m: dict) -> bool:
     """Whether this handle method's binding returns ``None`` rather than its rc.
 
-    One predicate for the emitter's shape (a) and the ``.pyi``'s return
-    annotation (gh-1116). Those two classify a method's shape independently —
-    `_emit_method` from `array_in` / `out_len_fn` / `returns`, `render_pyi`
-    from its own `arrays` / `ret_arr` / `writable_out` — and only the second
-    ever asked about ``error``. It asked in ONE of its six branches, so the
-    same declaration produced ``-> None`` with an argument and
-    ``-> <returns>`` without one, while both bindings raised and returned
-    ``None``. A caller trusting the zero-arg stub writes
+    One predicate for the emitter's shapes (a) and (b), the ``.pyi``'s return
+    annotation and the C locals a binding declares (gh-1116). Those classify
+    a method's shape independently — `_emit_method` from `array_in` /
+    `out_len_fn` / `returns`, `render_pyi` from its own `arrays` / `ret_arr` /
+    `writable_out` — and only the second ever asked about ``error``. It asked
+    in ONE of its six branches, so the same declaration produced ``-> None``
+    with an argument and ``-> <returns>`` without one, while both bindings
+    raised and returned ``None``. A caller trusting the zero-arg stub writes
     ``if sink.send_eos() != 0:`` and takes the error branch on every success.
 
     An ``error`` declaration only converts the C return into a raise where
-    that return is a **status**. The array and ``bytes`` shapes consume it as
-    DATA — a length, a count — so their rc is not a status, the binding never
-    raises on it, and the declared return is what crosses. (That those shapes
-    accept an ``error`` and silently ignore it is a separate defect; see
-    gh-1118.)
+    that return is a **status**. The array and ``bytes`` results consume it
+    as DATA, a length, so their rc is never a status, and `_check_error_decl`
+    refuses the declaration there (gh-1118).
+
+    An array ARGUMENT is the case only the manifest can settle. jm reads that
+    return as a count, samples taken, unless the method declares
+    ``status_return = true``, the object face's key and meaning: the ``int``
+    is a status, 0 is success, and the binding raises on anything else and
+    returns ``None`` (gh-2186). A ``send(iq, fs, fc)`` over a stream that can
+    refuse a block is that shape.
 
     Examples
     --------
@@ -565,26 +589,28 @@ def raises_instead_of_returning(m: dict) -> bool:
     ...     {"name": "op", "returns": "int", "error": "OSError",
     ...      "args": [{"name": "x", "type": "float[]"}]})
     False
+    >>> raises_instead_of_returning(
+    ...     {"name": "op", "returns": "int", "error": "OSError",
+    ...      "status_return": True,
+    ...      "args": [{"name": "x", "type": "float[]"}]})
+    True
     """
-    if not m.get("error"):
+    if not (m.get("error") or m.get("status_return")):
         return False
-    returns = m.get("returns")
-    if returns == "bytes" or (returns and str(returns).endswith("[]")):
+    if _data_return(m.get("returns")):
         return False
-    if any(str(a.get("type", "")).endswith("[]") for a in m.get("args", [])):
-        return False
-    return True
+    return bool(m.get("status_return")) or not _array_args(m)
 
 
-def _check_error_decl(
-    m: dict, name: str, returns: "str | None", margs: list
-) -> None:
-    """Refuse an ``error`` declaration this method's shape cannot honour.
+def _check_error_decl(m: dict, name: str, returns: "str | None") -> None:
+    """Refuse a status declaration this method's shape cannot honour.
 
-    Every check here used to live *after* the shape branches, and three of the
-    six shapes reach their own ``return`` before that point — so on an
-    array-in, array-out or ``bytes`` method an ``error`` was read, never
-    validated and never used. Two consequences, both measured (gh-1118):
+    A status is declared by ``error``, by ``status_return``, or by both
+    (gh-2186). Every check here used to live *after* the shape branches, and
+    three of the six shapes reach their own ``return`` before that point —
+    so on an array-in, array-out or ``bytes`` method an ``error`` was read,
+    never validated and never used. Two consequences, both measured
+    (gh-1118):
 
     - an **unrecognised exception name** was accepted in silence on exactly
       those three shapes, while being refused on the other three;
@@ -592,10 +618,17 @@ def _check_error_decl(
       those bindings return their value and no status is ever checked.
 
     The second is the quieter defect and the reason this is a refusal rather
-    than an implementation. For those shapes the C return is the payload
-    **length** — samples written, bytes filled — so there is no separate rc to
-    test. Honouring ``error`` there is not a feature jm declined to build; it
-    is not expressible.
+    than an implementation. For an array or ``bytes`` RESULT the C return is
+    the payload **length** — samples written, bytes filled — so there is no
+    separate rc to test. Honouring a status there is not a feature jm
+    declined to build; it is not expressible.
+
+    An array ARGUMENT is different: jm reads the return as a count, which is
+    wrong for a send whose ``int`` says whether the block was taken.
+    ``status_return = true`` says so, and the refusal of a bare ``error``
+    there names it, because it is the spelling nobody meeting this message
+    could guess (gh-2186). The key claims an integer to test against 0, so a
+    non-integer ``returns`` under it is refused rather than compared.
 
     Hoisting the checks is the whole fix for the first consequence. `jm` was
     already claiming this contract in its own message — "error requires an
@@ -604,43 +637,56 @@ def _check_error_decl(
 
     Raises
     ------
-    ValueError
-        Naming what consumes the return, and the two ways out: drop the key,
-        or move the check into a separate status method.
+    Refusal
+        Naming what consumes the return and the ways out: drop the key,
+        declare ``status_return = true`` where the return can be a status, or
+        move the check into a separate status method.
     """
-    err_cat = m.get("error")
-    if not err_cat:
+    from ._report import Refusal
+
+    declared = [k for k in ("error", "status_return") if m.get(k)]
+    if not declared:
         return
-    if err_cat not in C.ERROR_CATEGORIES:
+    keys = " and ".join(f"`{k}`" for k in declared)
+    err_cat = m.get("error")
+    if err_cat and err_cat not in C.ERROR_CATEGORIES:
         supported = ", ".join(sorted(C.ERROR_CATEGORIES))
-        raise ValueError(
+        raise Refusal(
             f"handle method '{name}': error '{err_cat}' is not a recognised"
             f" exception. Supported: {supported}."
         )
     if not returns:
-        raise ValueError(
-            f"handle method '{name}': error requires an `int` status return"
-            ' (declare returns = "int").'
+        raise Refusal(
+            f"handle method '{name}': {declared[0]} requires an `int` status"
+            ' return (declare returns = "int").'
+        )
+    if _data_return(returns):
+        what = (
+            "the blob's length" if returns == "bytes" else "the output length"
+        )
+        raise Refusal(
+            f"handle method '{name}': {keys} needs a status return to check,"
+            f' but with returns = "{returns}" the C return is {what}. Drop'
+            f" {keys}, or move the check into a separate status method."
+        )
+    if (
+        m.get("status_return")
+        and T._CTYPE_META.get(str(returns), {}).get("kind") != "int"
+    ):
+        raise Refusal(
+            f"handle method '{name}': `status_return` tests the C return"
+            f' against 0, but returns = "{returns}" is not an integer.'
+            " Declare the integer the C function returns"
+            ' (returns = "int"), or drop `status_return`.'
         )
     if not raises_instead_of_returning(m):
-        if returns == "bytes":
-            consumed = 'returns = "bytes"'
-            what = "the blob's length"
-        elif str(returns).endswith("[]"):
-            consumed = f'returns = "{returns}"'
-            what = "the output length"
-        else:
-            arr = next(
-                a["name"]
-                for a in margs
-                if str(a.get("type", "")).endswith("[]")
-            )
-            consumed = f"the array argument '{arr}'"
-            what = "a count, not a status"
-        raise ValueError(
+        raise Refusal(
             f"handle method '{name}': `error` needs a status return to check,"
-            f" but with {consumed} the C return is {what}. Drop `error`, or"
-            " move the check into a separate status method."
+            f" but with the array argument '{_array_args(m)[0]['name']}' jm"
+            " reads the C return as a count. If it is a status (0 ="
+            " success), declare `status_return = true` on the method. Drop"
+            " `error` if it is a count, or move the check into a separate"
+            " status method."
         )
 
 
@@ -698,10 +744,12 @@ def method_locals(m: dict) -> "frozenset[str]":
                 "view",
             }
         )
-    result = frozenset({"r"}) if returns else frozenset()
+    # A status raise keeps its rc in `_rc`, under the shared rule's prefix.
+    status = raises_instead_of_returning(m)
+    result = frozenset({"r"}) if returns and not status else frozenset()
     if array_in:
         return result | {"x_obj", "x_arr", "n_in", "in_data"}  # (b)
-    return frozenset() if m.get("error") else result  # (a)
+    return result  # (a)
 
 
 def arg_scopes(
@@ -750,6 +798,32 @@ def arg_scopes(
     return scopes
 
 
+def _status_call_c(
+    m: dict, call: str, gil_open: str, gil_close: str, release: str
+) -> str:
+    """The C that makes a status call, raises on a non-zero rc, else ``None``.
+
+    Shared by shape (a) and, under ``status_return``, shape (b) (gh-2186), so
+    the two cannot raise differently. *call* is the C call expression;
+    *release* frees what the arguments borrowed — a path's ``fsencode``, an
+    array's reference — after the call and before the raise can return.
+
+    gh-1111: the raise itself is `_context._diagnostics._rc_raise_c`, the same
+    emitter the object face uses -- so `error_message` is honoured here too,
+    and the author's prose reaches PyErr_Format as an ARGUMENT rather than as
+    the format string. The hand-written copy this replaced spliced `fn` into
+    the format directly, which dropped the message and would turn a `%` in
+    ordinary prose into a live conversion with no vararg behind it the moment
+    the message was read at all.
+    """
+    _cat, _msg = _diagnostics.handle_declared_raise(m)
+    return f"""    {m["returns"]} _rc;
+{gil_open}    _rc = {call};
+{gil_close}{release}    if (_rc != 0) {{
+{_diagnostics._rc_raise_c(_cat, _msg)}    }}
+    Py_RETURN_NONE;"""
+
+
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
     """Emit one handle method calling ``fn(self->h, …)``.
 
@@ -758,7 +832,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
       (b) array-in (+ optional trailing scalars) → scalar return — ``write(iq)
           -> size_t`` and ``send(iq, fs, fc) -> None`` (reuses the capsule
           ``PyArray_FROM_OTF`` input marshaling; the scalars parse after the
-          array and pass straight through to ``fn(h, in_data, n_in, …)``, #308);
+          array and pass straight through to ``fn(h, in_data, n_in, …)``, #308;
+          under ``status_return`` the ``int`` is a status that raises,
+          gh-2186);
       (c) int-in → array-out — ``read(n) -> ndarray`` (allocates an out array of
           size n, calls ``fn(h, out, n) -> actual``, returns an INDEPENDENT
           numpy-owned array trimmed to ``actual`` — never a dangling view; the
@@ -786,7 +862,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     args_where = f"handle module '{module}' method '{name}' args"
     returns_where = f"handle module '{module}' method '{name}' returns"
 
-    _check_error_decl(m, name, returns, margs)
+    _check_error_decl(m, name, returns)
 
     # (e) scalar/string args → HANDLE-length array-out. When a method returns an
     # array, takes no input array, and declares `out_len_fn`, the output length
@@ -1036,22 +1112,31 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 "unsupported"
             )
         scal_call = "".join(f", {s['name']}" for s in others)
-        ret_to_py = (
-            _to_py(returns, "r", returns_where)
-            if returns
-            else "(Py_INCREF(Py_None), Py_None)"
-        )
-        ret_decl = f"    {returns} r;\n" if returns else ""
-        assign = "r = " if returns else ""
+        b_call = f"{fn}(self->h, in_data, n_in{scal_call})"
+        if raises_instead_of_returning(m):
+            # gh-2186: `status_return` says this int is a status, not the
+            # count jm reads it as by default -- the same raise as (a).
+            b_ret = _status_call_c(
+                m, b_call, gil_open, gil_close, "    Py_DECREF(x_arr);\n"
+            )
+        else:
+            ret_to_py = (
+                _to_py(returns, "r", returns_where)
+                if returns
+                else "(Py_INCREF(Py_None), Py_None)"
+            )
+            ret_decl = f"    {returns} r;\n" if returns else ""
+            assign = "r = " if returns else ""
+            b_ret = f"""{ret_decl}{gil_open}    {assign}{b_call};
+{gil_close}    Py_DECREF(x_arr);
+    return {ret_to_py};"""
         body_tail = f"""{closed_guard}
     PyArrayObject *x_arr =
         {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", a["name"], _coerce.str_hint(a))};
     if (!x_arr) return NULL;
     size_t n_in = (size_t)PyArray_SIZE(x_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);
-{ret_decl}{gil_open}    {assign}{fn}(self->h, in_data, n_in{scal_call});
-{gil_close}    Py_DECREF(x_arr);
-    return {ret_to_py};"""
+{b_ret}"""
         # Trailing scalars parse with keywords + defaults (gh-178 review #6: the
         # hand-written send(iq, fs, fc=…) had an fc default the old positional
         # PyArg_ParseTuple dropped); a `default` inserts the `|` optional split,
@@ -1099,11 +1184,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # tp_init and module functions); a no-arg method stays a plain METH_VARARGS
     # stub. A `path` arg (gh-565) crosses as a borrowed `const char *` via the
     # ctor's `_arg_*` coercion, released after the call (gh-219). An `error =
-    # "<category>"` (gh-565) marks an `int`-returning method a status check: the
-    # method returns None and raises the declared exception on a non-zero rc,
-    # the handle-method mirror of the object side's `status_return` (gh-432) and
-    # of `wfm_writer.destroy`'s fallible close (gh-541).
-    err_cat = m.get("error")
+    # "<category>"` (gh-565) or a `status_return = true` (gh-2186) marks an
+    # `int`-returning method a status check: the method returns None and
+    # raises on a non-zero rc, as the object side's `status_return` (gh-432)
+    # and `wfm_writer.destroy`'s fallible close (gh-541) do.
     call = ", ".join(["self->h"] + [_create_call_arg(a) for a in margs])
     # path borrows are released only AFTER the C call has copied them (gh-219).
     fs_release = "".join(
@@ -1111,20 +1195,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         for a in margs
         if a.get("type") == "path"
     )
-    if err_cat:
-        # gh-1111: the raise itself is `_context._diagnostics._rc_raise_c`,
-        # the same emitter the object face uses -- so `error_message` is
-        # honoured here too, and the author's prose reaches PyErr_Format as an
-        # ARGUMENT rather than as the format string. This hand-written copy
-        # spliced `fn` into the format directly, which drops the message and
-        # would turn a `%` in ordinary prose into a live conversion with no
-        # vararg behind it the moment the message was read at all.
-        _cat, _msg = _diagnostics.handle_declared_raise(m)
-        ret = f"""    {returns} _rc;
-{gil_open}    _rc = {fn}({call});
-{gil_close}{fs_release}    if (_rc != 0) {{
-{_diagnostics._rc_raise_c(_cat, _msg)}    }}
-    Py_RETURN_NONE;"""
+    if raises_instead_of_returning(m):
+        ret = _status_call_c(
+            m, f"{fn}({call})", gil_open, gil_close, fs_release
+        )
     elif returns:
         ret = f"""    {returns} r;
 {gil_open}    r = {fn}({call});

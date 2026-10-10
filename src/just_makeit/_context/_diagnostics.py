@@ -659,11 +659,14 @@ def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     """`declared_raise` for a ``kind = "handle"`` module method (gh-1111).
 
     A handle method declares "a non-zero return is a failure" as ``error =
-    "<category>"`` over an ``int`` ``returns`` — there is no
-    ``status_return`` on this face, and `_handle._emit_method` refuses an
-    ``error`` without a return to check. So the trigger differs and only the
-    trigger: the category and the message come from `_raise_pair`, the same
-    one the object face reads.
+    "<category>"`` over an ``int`` ``returns``, or as ``status_return =
+    true``, the object face's key and meaning (gh-2186). The second is the
+    one an array-argument method needs: there jm reads the C return as a
+    count unless the author says it is a status, and `_handle._emit_method`
+    refuses an ``error`` it has no status to check against. So the trigger
+    is wider than ``error`` alone and the rest is shared: the category and
+    the message come from `_raise_pair`, the same one the object face reads,
+    so ``status_return`` with no ``error`` raises ``ValueError`` here too.
 
     It exists because those keys were accepted on both faces and honoured on
     one. The binding here spliced the C ``fn`` straight into the
@@ -683,8 +686,11 @@ def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     ...                        "returns": "int", "error": "OSError",
     ...                        "error_message": "budget ran out"})
     ('OSError', 'budget ran out')
+    >>> handle_declared_raise({"name": "send", "fn": "sink_send",
+    ...                        "returns": "int", "status_return": True})
+    ('ValueError', 'sink_send failed')
     """
-    if not m.get("error"):
+    if not (m.get("error") or m.get("status_return")):
         return None
     return _raise_pair(m, str(m.get("fn") or m.get("name", "")))
 
