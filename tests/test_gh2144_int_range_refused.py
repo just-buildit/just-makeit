@@ -20,10 +20,11 @@ The halves:
   constructor (state field and init param), ``set_<field>()``, writable
   property, method param, scalar method arg, variable-output param,
   ``step()``, module function -- builds it ``-Werror`` and sends each its
-  type's ``min``, ``max``, ``min - 1`` and ``max + 1``. The range is numpy's
+  type's ``min``, ``max``, ``min - 1``, ``max + 1`` and ``max + 2**32``
+  (where a masking char lands back inside the range). The range is numpy's
   (``np.iinfo``), an oracle independent of the C macros, and the refusal's
   printed bounds are compared to it. ``tests/test_gh2035_composer_typed_rows``
-  sweeps the composer rows the same way.
+  sweeps the composer rows one step outside the range the same way.
 * **the placement**: nothing but the primitive calls a row's ``to_c`` cast,
   so a face cannot convert around the check.
 * **the advisory**: a sacred fragment rendered before the guard is told it

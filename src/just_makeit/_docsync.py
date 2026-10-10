@@ -1256,9 +1256,6 @@ _FEATURE_MARKERS = {
         "and this fragment does not, so a bytes, bytearray or memoryview "
         "is parsed as text rather than read as its bytes",
     ),
-    # gh-1716: jm's own guard, the read-side twin of the output-size one
-    # -- a fragment rendered before it trusts the count its kernel returns.
-    # Named for its consequence.
     # gh-2144: jm's own guard as well -- a fragment rendered before it casts
     # an integer argument to its C type with no range test. Named for its
     # consequence.
@@ -1268,6 +1265,9 @@ _FEATURE_MARKERS = {
         "this fragment does not, so an out-of-range value wraps silently "
         "(an int8_t given 300 arrives as 44)",
     ),
+    # gh-1716: jm's own guard, the read-side twin of the output-size one
+    # -- a fragment rendered before it trusts the count its kernel returns.
+    # Named for its consequence.
     "returned-count": _Feature(
         (_coerce.RETURNED_COUNT_GUARD_RE,),
         "jm refuses a count the kernel returns past the buffer it was "
