@@ -277,7 +277,8 @@ def _collect_c(
     skipped without a word, so a bench that crashed, or one that refused to
     write a short set, was simply absent from a run that exited 0. A JSON a
     failed binary did write is not read: the binary said its run is not
-    good.
+    good. A target that built but whose binary cannot be found is a failure
+    too, for the same reason: it was skipped without a word.
 
     A binary's stderr is captured so a failure can quote it, and is passed
     on to ours after every run, so a run that did not fail shows what it
@@ -298,6 +299,16 @@ def _collect_c(
                 continue
             binary = _find_bench_binary(build_dir, comp)
             if binary is None:
+                # The target built, so this is not a bad guess to skip: the
+                # benchmark exists and jm cannot run it.
+                _report_failed(
+                    f"bench_{comp}_core (no binary found)",
+                    [
+                        f"the target built, but no bench_{comp}_core is"
+                        f" under {build_dir}"
+                    ],
+                    failed,
+                )
                 continue
             print(f"  run        bench_{comp}_core", flush=True)
             jf = tmpd / f"bench_{comp}_core.json"
@@ -332,9 +343,7 @@ def _collect_c(
             data: dict = {}
             why: "str | None" = None
             if rc != 0:
-                # Negative on POSIX: the binary died of a signal (a crash or
-                # an abort), which no exit code was ever written for.
-                why = f"signal {-rc}" if rc < 0 else f"exit {rc}"
+                why = _exit_status(rc)
             elif not jf.exists():
                 why = "exit 0, wrote no JSON"
             else:
@@ -345,7 +354,12 @@ def _collect_c(
             if jf.exists():
                 jf.unlink()
             if why is not None:
-                _report_failed(f"bench_{comp}_core ({why})", stderr, failed)
+                quoted = stderr.rstrip("\n").splitlines()
+                _report_failed(
+                    f"bench_{comp}_core ({why})",
+                    quoted or ["(nothing on stderr)"],
+                    failed,
+                )
                 continue
             sys.stderr.write(stderr)
             sys.stderr.flush()
@@ -369,19 +383,30 @@ def _collect_c(
     }
 
 
-def _report_failed(run: str, stderr: str, failed: "list[str] | None") -> None:
-    """Name a benchmark run that failed, quote its stderr, and record it.
+def _exit_status(rc: int) -> str:
+    """``exit N``, or ``signal N`` for a process a signal ended.
 
-    *run* is ``bench_<comp>_core (<why>)``, which is also what *failed*
-    carries and what the snapshot and the closing summary name. The stderr
-    is indented under it so it reads as that run's, not as jm's.
+    Negative on POSIX: the process died of a signal (a crash or an abort),
+    which no exit code was ever written for.
+    """
+    return f"signal {-rc}" if rc < 0 else f"exit {rc}"
+
+
+def _report_failed(
+    run: str, detail: list[str], failed: "list[str] | None"
+) -> None:
+    """Name a benchmark run that failed, say why, and record it (gh-2189).
+
+    *run* is ``bench_<comp>_core (<why>)`` or ``pytest <target> (<why>)``,
+    which is also what *failed* carries and what the snapshot and the closing
+    summary name. *detail* is printed indented under it, so it reads as that
+    run's, not as jm's: a binary's stderr, or where the rest is to be found.
     """
     print(
         f"  failed     {run}; the other benchmarks still run",
         file=sys.stderr,
     )
-    lines = stderr.rstrip("\n").splitlines() or ["(nothing on stderr)"]
-    for line in lines:
+    for line in detail:
         print(f"    {line}", file=sys.stderr)
     sys.stderr.flush()
     if failed is not None:
@@ -555,6 +580,7 @@ def _run_python(
     python: str,
     timeout: "float | None" = C.DEFAULT_BENCH_TIMEOUT,
     timed_out: "list[str] | None" = None,
+    failed: "list[str] | None" = None,
 ) -> dict | None:
     """Run pytest-benchmark over each benchmark file; return one report.
 
@@ -578,6 +604,10 @@ def _run_python(
     budget for each of its k slow benchmarks: 1 + k budgets, plus one more when
     the listing itself runs out. The common path is unchanged: one run per file,
     and the extra work only where the first run timed out.
+
+    gh-2189. A run that fails -- a benchmark that raised or whose test failed,
+    or a run that broke -- is named in *failed*, as the C side names a failed
+    binary, and its JSON is not read. See `_run_one`.
     """
     if not _has_pytest_benchmark(python):
         print(
@@ -587,7 +617,9 @@ def _run_python(
         return None
     merged: dict | None = None
     for path in _python_bench_files(root, python, timeout):
-        data = _run_one(root, python, [path], timeout, timed_out=None)
+        data = _run_one(
+            root, python, [path], timeout, timed_out=None, failed=failed
+        )
         if data is _TIMED_OUT:
             print(
                 f"  timeout    pytest --benchmark-only {path} (over"
@@ -611,7 +643,9 @@ def _run_python(
                 continue
             data = None
             for node in nodes:
-                one = _run_one(root, python, [node], timeout, timed_out)
+                one = _run_one(
+                    root, python, [node], timeout, timed_out, failed=failed
+                )
                 if one is _TIMED_OUT or one is None:
                     continue
                 if data is None:
@@ -644,12 +678,22 @@ def _run_one(
     targets: list[str],
     timeout: "float | None",
     timed_out: "list[str] | None",
+    failed: "list[str] | None" = None,
 ):
     """One pytest-benchmark run over *targets*; its report, None, or _TIMED_OUT.
 
     A run that exceeds *timeout* appends each target to *timed_out* and returns
     _TIMED_OUT. The file-level call passes None, so a file that is then retried
     one benchmark at a time is not named before its benchmarks have been tried.
+
+    gh-2189. pytest's exit status is read. 0 is every benchmark passed and 5
+    is nothing collected (gh-1950's "no Python benchmarks"); anything else is
+    a benchmark that raised, a test that failed after its benchmark ran, or a
+    run that broke. That run is reported as ``failed`` and appended to
+    *failed*, and None is returned without reading its JSON: pytest-benchmark
+    keeps the timing of a test that failed after its benchmark ran, so a
+    failed run's JSON can hold a number for code whose test says it is
+    wrong. pytest's own report, printed above it, names the test.
     """
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "py.json"
@@ -669,12 +713,12 @@ def _run_one(
             flush=True,
         )
         try:
-            subprocess.run(
+            rc = subprocess.run(
                 cmd,
                 cwd=str(root),
                 timeout=timeout,
                 env=child_pytest_env(),
-            )
+            ).returncode
         except subprocess.TimeoutExpired:
             if timed_out is not None:
                 for target in targets:
@@ -686,7 +730,14 @@ def _run_one(
                     )
                     timed_out.append(f"pytest {target}")
             return _TIMED_OUT
-        # No JSON => these targets collected no benchmark.
+        if rc not in (0, 5):
+            _report_failed(
+                f"pytest {' '.join(targets)} ({_exit_status(rc)})",
+                ["pytest's own report, above, names what failed"],
+                failed,
+            )
+            return None
+        # No JSON, or an empty one => these targets collected no benchmark.
         if not report.exists():
             return None
         try:
@@ -1272,14 +1323,25 @@ def run(
 
     if do_python:
         py_timed: list[str] = []
-        preport = _run_python(root, python, timeout=budget, timed_out=py_timed)
+        py_failed: list[str] = []
+        preport = _run_python(
+            root,
+            python,
+            timeout=budget,
+            timed_out=py_timed,
+            failed=py_failed,
+        )
         timed_out.extend(py_timed)
+        failed.extend(py_failed)
         if preport and preport.get("benchmarks"):
             _trim(preport)
             if py_timed:
                 # gh-1841. The same marker the C snapshot carries: the
                 # snapshot says it is partial and names what was skipped.
                 preport["timed_out"] = list(py_timed)
+            if py_failed:
+                # gh-2189: and what failed.
+                preport["failed"] = list(py_failed)
             prev = _prev_snapshot(hdir, tag, is_c=False)
             _save_snapshot(root, hdir, tag, preport, is_c=False)
             _display_table("Python benchmarks", preport, prev)
@@ -1295,9 +1357,9 @@ def _fail_on_lost_runs(
     """Exit 1 naming every benchmark run whose results this run lacks.
 
     Two causes, each with its own message because each has its own fix: a
-    run that hit the budget (gh-1687), and a bench binary that failed
-    (gh-2189). Both are said before the one exit, so a run with both names
-    both.
+    run that hit the budget (gh-1687), and a benchmark run that failed --
+    a C bench binary or a pytest run (gh-2189). Both are said before the one
+    exit, so a run with both names both.
 
     Called last, after everything that DID finish has been saved: the other
     benchmarks' numbers are kept, and the failure is still loud. Neither is
@@ -1314,9 +1376,9 @@ def _fail_on_lost_runs(
         )
     if failed:
         print(
-            f"FAILED — {len(failed)} benchmark binary run(s) failed, so their"
+            f"FAILED — {len(failed)} benchmark run(s) failed, so their"
             f" results are not in this run: {', '.join(failed)}.\n"
-            "  Each one's stderr is quoted above, under `failed`.",
+            "  Each is reported above, under `failed`.",
             file=sys.stderr,
         )
     if timed_out or failed:
@@ -1343,9 +1405,9 @@ def _run_check(
 
     A benchmark run past *budget* fails the gate too, after the comparison
     of everything that did finish is printed: its baseline entries are
-    already ``missing`` (gh-1029), and `_fail_on_lost_runs` says why. A bench
-    binary that failed (gh-2189) fails it the same way, and the JSON document
-    names it under ``failed``.
+    already ``missing`` (gh-1029), and `_fail_on_lost_runs` says why. A
+    benchmark run that failed (gh-2189) fails it the same way, and the JSON
+    document names it under ``failed``.
     """
     timed_out: list[str] = []
     failed: list[str] = []
@@ -1370,7 +1432,11 @@ def _run_check(
                 )
         if do_python:
             cur = _run_python(
-                root, python, timeout=budget, timed_out=timed_out
+                root,
+                python,
+                timeout=budget,
+                timed_out=timed_out,
+                failed=failed,
             )
             if cur and cur.get("benchmarks"):
                 _trim(cur)
