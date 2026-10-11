@@ -50,6 +50,20 @@ _NEEDS_BUILD = pytest.mark.skipif(
     reason="the build gate needs cmake and a C compiler",
 )
 
+
+def _no_repair(root: Path) -> None:
+    """Turn off the wheel's repair step (auditwheel / delvewheel). It is not
+    under test here, and a CI image without patchelf dies in it; gh-1896's
+    tests make the same edit for the same reason."""
+    pp = root / "pyproject.toml"
+    body = pp.read_text(encoding="utf-8")
+    old = 'command = "make just-build"\n'
+    assert body.count(old) == 1, "scaffold's [tool.just-buildit] changed"
+    pp.write_text(
+        body.replace(old, old + "repair = false\n"), encoding="utf-8"
+    )
+
+
 _SCALE = {
     "name": "fft_scale",
     "params": [{"name": "n", "type": "int"}, {"name": "x", "type": "float"}],
@@ -289,6 +303,7 @@ class TestTheBuildRuns:
             params=[("n", "int"), ("x", "float")],
             return_type="float",
         )
+        _no_repair(root)
         built = run_cli("build", cwd=root)
         assert built.returncode == 0, built.stdout + built.stderr
         ran = run_cli("test", cwd=root)
@@ -311,6 +326,7 @@ class TestTheBuildRuns:
             params=[("n", "int")],
             return_type="float",
         )
+        _no_repair(root)
         built = run_cli("build", cwd=root)
         assert built.returncode == 0, built.stdout + built.stderr
         ran = run_cli("test", cwd=root)
