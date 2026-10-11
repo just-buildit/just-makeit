@@ -296,7 +296,8 @@ class TestGeneratedProject:
             "kaiser_window",
             "win",
             params=[("n", "size_t"), ("beta", "double")],
-            out_type="double",
+            # gh-1888: the window's length is `n`, and says so.
+            out_type="double[n]",
         )
         hdr = root / INC_ROOT / "win" / "win_core.h"
         text = hdr.read_text(encoding="utf-8")
@@ -341,7 +342,8 @@ class TestGeneratedProject:
             "win",
             doc='Apply the "raised cosine" taper.',
             params=[("n", "size_t")],
-            out_type="double",
+            # gh-1888: the window's length is `n`, and says so.
+            out_type="double[n]",
         )
         ext_c = (root / "native/src/win/win_ext.c").read_text()
         assert r"\"raised cosine\"" in ext_c, (

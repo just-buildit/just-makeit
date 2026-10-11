@@ -115,11 +115,11 @@ assert ret is buf
 
 ## Concrete types
 
-| Slot              | Accepts                                                                                                                                                         | Rejects                                                                                                  | Default            |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------ |
-| `--arg-type`      | Any `T[]` where `T` is in the [array element table](../types.md#array-element-types): `float`, `double`, `int16_t`, `float _Complex`, etc.                      | Scalar types without `[]`; `void`; unsupported element types.                                            | `float _Complex[]` |
-| `--return-type`   | Any `U[]` where `U` is in the [array element table](../types.md#array-element-types). Input and output element types may differ (e.g. `int16_t[]` → `float[]`). | Scalar types without `[]`; `void`; unsupported element types; `T[]` without a matching `--arg-type T[]`. | `float _Complex[]` |
-| `--state field:T` | Any [scalar state type](../types.md#state-variable-types). For opaque heap buffers (plans, scratch arrays) use `opaque = true` in TOML.                         | `const char *`.                                                                                          | (no state vars)    |
+| Slot              | Accepts                                                                                                                                    | Rejects                                                                                         | Default            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------ |
+| `--arg-type`      | Any `T[]` whose `T` is a [step type](../types.md#array-shape-t): `float`, `double`, `int16_t`, `bool`, `float _Complex`, etc.              | Scalar types without `[]`; `void`; `const char *[]`.                                            | `float _Complex[]` |
+| `--return-type`   | Any `U[]` whose `U` is a [step type](../types.md#array-shape-t). Input and output element types may differ (e.g. `int16_t[]` → `float[]`). | Scalar types without `[]`; `void`; `const char *[]`; `T[]` without a matching `--arg-type T[]`. | `float _Complex[]` |
+| `--state field:T` | Any [scalar state type](../types.md#state-variable-types). For opaque heap buffers (plans, scratch arrays) use `opaque = true` in TOML.    | `const char *`.                                                                                 | (no state vars)    |
 
 ## What you fill in
 
@@ -191,7 +191,7 @@ my_dsp_fft_steps(my_dsp_fft_state_t        *state,
 
 ## See also
 
-- [Types reference — array element types](../types.md#array-element-types)
+- [Types reference — step array shape](../types.md#array-shape-t)
 - [Declarative scaffolding — opaque state](../declarative-scaffolding.md#opaque-state-fields-pointers-and-handles)
 - [array_processing example](../examples/array_processing.md) — array input with scalar output (reduction shape)
 - [Template gallery index](index.md)

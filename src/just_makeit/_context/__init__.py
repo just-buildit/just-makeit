@@ -18,10 +18,13 @@ Public API:
 
 from ._sample import make_sample_ctx, resolve_return_type
 from ._state import (
+    RESET_IMPL_KEYS,
     apply_header_only,
+    declared_reset_impl,
     make_state_ctx,
+    manifest_reset_is_authors,
+    reset_is_authors,
     state_accessor_stubs,
-    _pyi_examples_block,
     _build_no_state_init_ctx,
     _unseedable_required,
     _reset_wrapper_slots,
@@ -62,7 +65,11 @@ def bench_todo_for_functions(
 
 
 __all__ = [
+    "RESET_IMPL_KEYS",
     "apply_header_only",
+    "declared_reset_impl",
+    "manifest_reset_is_authors",
+    "reset_is_authors",
     "make_sample_ctx",
     "resolve_return_type",
     "make_state_ctx",
@@ -82,7 +89,6 @@ __all__ = [
     "make_step_ctx",
     "make_stream_ctx",
     "make_module_ctx",
-    "_pyi_examples_block",
     "_build_no_state_init_ctx",
     "_unseedable_required",
     "_reset_wrapper_slots",

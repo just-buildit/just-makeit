@@ -134,8 +134,8 @@ def wide_project(tmp_path) -> Path:
 
     # every app face -- this is the writer that had no guard
     _silent(app_run, root, target="c", object_="widget")
-    _silent(app_run, root, target="console", object_="widget")
-    _silent(app_run, root, target="pep723", object_="widget")
+    _silent(app_run, root, target="console", object_="widget", name="w-cli")
+    _silent(app_run, root, target="pep723", object_="widget", name="w-py")
 
     _silent(apply_run, root)
     return root

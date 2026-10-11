@@ -30,8 +30,13 @@ from _jminc import INC_ROOT  # noqa: E402
 import sys
 from pathlib import Path
 
+import pytest
+
+from _jmrun import run_cli
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit import _config as C  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._docstring import (  # noqa: E402
     extract_doc_blocks,
@@ -295,3 +300,44 @@ class TestScaffoldedHeaderDerivesNothing:
         # ...and none of it is derived, so a manifest-only rebuild -- which has
         # no header at all -- produces the same .pyi.
         assert _load_doc_blocks(root, "fir") == {}
+
+    # gh-2071: the two scaffolds the sentinel read as authored. Each left
+    # jm's own Doxygen for `apply` to derive while the verb that wrote it
+    # rendered the name fallback, so `status --check` called the glue STALE
+    # straight after the verb. The gh-2057 gate sees that on one I/O shape
+    # each; these hold the property behind it on every shape of the two.
+    # Read with the manifest, as `apply` reads it: `INC.manifest`'s cache
+    # is keyed on the central file, which `jm method` does not write.
+
+    @staticmethod
+    def _jm(cwd, *argv):
+        r = run_cli(*argv, cwd=cwd)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    @staticmethod
+    def _derived(root, comp):
+        return _load_doc_blocks(root, comp, C.load(root))
+
+    @pytest.mark.parametrize("arg", ["void", "double"])
+    @pytest.mark.parametrize("ret", ["void", "double"])
+    def test_a_delegating_step_derives_nothing(self, tmp_path, arg, ret):
+        # Both wordings of the gh-208 note: a `void` step() gets the short
+        # one, a value-returning step() the long one.
+        self._jm(tmp_path, "new", "dsp", "--no-c-prefix")
+        root = tmp_path / "dsp"
+        self._jm(root, "object", "fir", "--arg-type", arg, "--return-type",
+                 ret, "--step-delegates-to-steps")  # fmt: skip
+        header = root / INC_ROOT / "fir" / "fir_core.h"
+        assert "Thin delegator" in header.read_text(encoding="utf-8")
+        assert self._derived(root, "fir") == {}
+
+    def test_an_fn_methods_skeleton_derives_nothing(self, tmp_path):
+        # The skeleton's `@brief` is the method's NAME; its symbol is `fn`.
+        self._jm(tmp_path, "new", "dsp", "--no-c-prefix")
+        root = tmp_path / "dsp"
+        self._jm(root, "object", "fir")
+        self._jm(root, "method", "fir", "tune", "--arg-type", "double",
+                 "--return-type", "double", "--fn", "fir_retune")  # fmt: skip
+        header = root / INC_ROOT / "fir" / "fir_core.h"
+        assert "@brief tune." in header.read_text(encoding="utf-8")
+        assert self._derived(root, "fir") == {}

@@ -80,8 +80,10 @@ def _module_flags(cfg: dict, mod: str) -> list[str]:
     The module command used to be emitted bare, so every key `jm module`
     accepts was lost on replay — including ``doc``, which gh-645 had just
     finished wiring through the other two writers. ``objects`` is not a flag
-    (each object names its own ``--module``) and ``package`` has no flag at
-    all; the caller emits a NOTE for that one.
+    (each object names its own ``--module``). ``package`` is one since
+    gh-2064; until then the caller emitted a NOTE asking the reader to
+    re-add it by hand, which is the route that left the module id's
+    directory behind.
     """
     parts: list[str] = []
 
@@ -99,6 +101,9 @@ def _module_flags(cfg: dict, mod: str) -> list[str]:
 
     if C.module_doc(cfg, mod):
         parts.append(_flag("--doc", C.module_doc(cfg, mod)))
+
+    if C.module_package(cfg, mod):
+        parts.append(_flag("--package", C.module_package(cfg, mod)))
 
     return parts
 
@@ -647,10 +652,17 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_bool_flag("--variable-output"))
     if m.get("error_on_empty"):
         parts.append(_bool_flag("--error-on-empty"))
+    # gh-2012: the count's type and its unsigned refusal value.
+    if m.get("count_type"):
+        parts.append(_flag("--count-type", str(m["count_type"])))
+    if m.get("error_sentinel"):
+        parts.append(_flag("--error-sentinel", str(m["error_sentinel"])))
     if m.get("count_default"):
         parts.append(_flag("--count-default", str(m["count_default"])))
     if m.get("count_name"):
         parts.append(_flag("--count-name", str(m["count_name"])))
+    if m.get("out_cols"):
+        parts.append(_flag("--out-cols", str(m["out_cols"])))
     if m.get("pass_capacity"):
         parts.append(_bool_flag("--pass-capacity"))
     if m.get("exact_max_out"):
@@ -737,6 +749,14 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
 
     if p.get("field"):
         parts.append(_bool_flag("--field"))
+
+    # gh-2182: a setter that refuses a value. Dropped, the replay rebuilds a
+    # setter that discards the C return -- the silent drop the key exists to
+    # end.
+    if p.get("error"):
+        parts.append(_flag("--error", p["error"]))
+    if p.get("error_message"):
+        parts.append(_flag("--error-message", p["error_message"]))
 
     if p.get("buf_field"):
         parts.append(_flag("--buf-field", p["buf_field"]))
@@ -1013,20 +1033,10 @@ def run(root: Path) -> None:
 
     # ── modules ──────────────────────────────────────────────────────────────
     for mod in mods:
-        # gh-523: `package` has no CLI flag on any module kind — it is a
-        # manifest-only key. Emitting the bare `jm module` command would
-        # silently rebuild the module in a package of its own (the gh-490
-        # silent-divergence trap), so flag it for the reader instead.
-        pkg_override = C.module_package(cfg, mod)
-        if pkg_override:
-            lines.append(
-                f'# NOTE: [module.{mod}] package = "{pkg_override}" has no\n'
-                f"# CLI flag — re-add it to just-makeit.toml and run"
-                f" `just-makeit apply`.\n"
-            )
-        # gh-1463: the same, for the platforms its extension is built on.
-        # Dropped in silence, the replayed project would build the module on
-        # a platform whose core does not exist.
+        # gh-1463: `platforms` has no CLI flag, so the reader is told to
+        # re-add it. Dropped in silence, the replayed project would build
+        # the module on a platform whose core does not exist (the gh-490
+        # silent-divergence trap). `package` replays as a flag (gh-2064).
         declared = cfg.get("module", {}).get(mod, {}).get("platforms")
         if declared:
             listed = ", ".join(f'"{p}"' for p in declared)
@@ -1245,6 +1255,24 @@ def run(root: Path) -> None:
         lines += destroy_lines
         lines.append("\n")
 
+    # ── hand-written methods' rows (gh-1997) ──────────────────────────────────
+    # Manifest-only for the reason `destroy` is: a repeatable row of six keys
+    # is TOML's to spell, not a flag's. Named, so a replayed script does not
+    # quietly lose the methods the author's `_extra.c` defines.
+    extra_lines: list[str] = []
+    for comp in all_comps:
+        names = [str(r.get("name")) for r in C.extra_methods(cfg, comp)]
+        if not names:
+            continue
+        extra_lines.append(
+            f"# NOTE: [[{comp}.extra_methods]] ({', '.join(names)}) has no"
+            " CLI flag — copy\n# the rows into just-makeit.toml and run"
+            " `just-makeit apply`.\n"
+        )
+    if extra_lines:
+        lines += extra_lines
+        lines.append("\n")
+
     # ── module-level functions ─────────────────────────────────────────────────
     fn_lines: list[str] = []
     for mod in mods:
@@ -1258,4 +1286,65 @@ def run(root: Path) -> None:
         lines += fn_lines
         lines.append("\n")
 
+    # ── apps (gh-2074) ────────────────────────────────────────────────────────
+    # Last: an app is built from an object or a module function, which has to
+    # exist when its `jm app` line runs. One line per [[app]] row, in order,
+    # each naming itself, so no two replay to one default name.
+    app_lines: list[str] = []
+    for entry in C.apps(cfg):
+        app_lines += _app_notes(entry)
+        app_lines.append(
+            _render_cmd(["just-makeit", "app"], _app_flags(entry))
+        )
+    if app_lines:
+        lines += app_lines
+        lines.append("\n")
+
     sys.stdout.write("".join(lines))
+
+
+def _app_flags(entry: dict) -> list[str]:
+    """CLI flags reconstructing one ``[[app]]`` row (gh-2074).
+
+    >>> row = {"target": "c", "name": "t", "object": "o",
+    ...        "flags": [{"name": "g", "type": "double", "help": "gain"}]}
+    >>> for line in _app_flags(row):
+    ...     print(line.split()[:2])
+    ['--target', 'c']
+    ['--name', 't']
+    ['--object', 'o']
+    ['--flag', 'g:double::gain']
+    """
+    parts = [
+        _flag("--target", entry["target"]),
+        _flag("--name", entry["name"]),
+    ]
+    source = "function" if entry.get("function") is not None else "object"
+    if entry.get(source) is not None:
+        parts.append(_flag(f"--{source}", entry[source]))
+        if entry.get("module"):
+            parts.append(_flag("--module", entry["module"]))
+    for f in entry.get("flags", []):
+        spec = f"{f['name']}:{f['type']}"
+        if f.get("default") or f.get("help"):
+            spec += f":{f.get('default', '')}"
+        if f.get("help"):
+            spec += f":{f['help']}"
+        parts.append(_flag("--flag", spec))
+    for c in entry.get("commands", []):
+        spec = f"{c['name']}:{c['help']}" if c.get("help") else c["name"]
+        parts.append(_flag("--command", spec))
+    return parts
+
+
+def _app_notes(entry: dict) -> list[str]:
+    """NOTE lines for an app's command flags, which no CLI flag spells."""
+    named = [c["name"] for c in entry.get("commands", []) if c.get("flags")]
+    if not named:
+        return []
+    return [
+        f"# NOTE: the flags of app '{entry['name']}' command(s)"
+        f" {', '.join(named)} have no CLI flag — copy\n# those"
+        " [[app.commands]] rows into just-makeit.toml and run"
+        " `just-makeit apply`.\n"
+    ]

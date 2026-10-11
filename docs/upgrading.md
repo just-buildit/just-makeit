@@ -23,7 +23,7 @@ Every `just-makeit.toml` carries a `schema` version number:
 [project]
 name    = "my_dsp"
 version = "0.1.0"
-schema  = "8"
+schema  = "9"
 ```
 
 When `just-makeit` itself is updated, `CURRENT_SCHEMA` advances;
@@ -32,7 +32,7 @@ project's schema is behind, `just-makeit` will remind you whenever you run a
 command that modifies the project:
 
 ```
-warning: project schema is v4, current is v8. Run 'just-makeit upgrade' to get new features.
+warning: project schema is v4, current is v9. Run 'just-makeit upgrade' to get new features.
 ```
 
 Running `just-makeit upgrade` applies every pending migration in order, then
@@ -148,6 +148,21 @@ the new way once the project is released with schema 8:
 Nothing else in the consumer moves: `pkg-config --cflags` and
 `find_package` still add `include/`, not `include/<pkg>/`, which is what makes
 the prefix part of every spelling. See [Installing your C library](c-library.md).
+
+______________________________________________________________________
+
+## Several apps (gh-2074)
+
+A project holds any number of [apps](commands/app.md), one `[[app]]` row
+each, keyed by its name. Schema 8 and earlier held one, as a single `[app]`
+table, so a second `jm app` replaced the first and left its files behind.
+
+`jm upgrade` (schema 8 to 9) rewrites that table in place as a one-row
+`[[app]]`: only the header line changes, so the keys, comments and the
+`[[app.flags]]` / `[[app.commands]]` under it keep their text. Until you run
+it, `jm apply`, `jm status` and `jm app` refuse the old spelling, naming
+`jm upgrade`; a command that does not read the app is unaffected. A manifest
+with no `[app]` table needs nothing but the schema bump.
 
 ______________________________________________________________________
 

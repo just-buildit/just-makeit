@@ -419,10 +419,34 @@ def render_pack(
     pmd = (
         f'    {{"{name}", (PyCFunction)(void *){fn},'
         " METH_VARARGS | METH_KEYWORDS,\n"
-        f'     "{name}(...) -- add a codec-typed value."}},\n'
+        f"     {method_c_doc(m)}}},\n"
     )
     pyi = "\n".join(render_method_pyi(m, cdc)) + "\n"
     return body, pmd, pyi
+
+
+def method_c_doc(m: dict) -> str:
+    """The ``ml_doc`` literal for codec-pack method *m*.
+
+    gh-2104: the authored ``doc``, through the same `authored_c_doc` every
+    other method row's runtime doc goes through, so `help()` and the stub
+    (:func:`render_method_pyi`) say the same thing. It was a fixed line that
+    never read ``doc``. With no ``doc`` that line is still the answer.
+
+    Examples
+    --------
+    >>> print(method_c_doc({"name": "add", "doc": "Add one.\\n\\nMore."}))
+    "Add one.\\n"
+         "\\n"
+         "More.\\n"
+    >>> print(method_c_doc({"name": "add"}))
+    "add(...) -- add a codec-typed value."
+    """
+    from ._docstring import authored_c_doc
+
+    if not str(m.get("doc") or "").strip():
+        return f'"{m["name"]}(...) -- add a codec-typed value."'
+    return authored_c_doc(str(m["doc"]))
 
 
 def _fixed_pyi(p: dict) -> str:
@@ -448,13 +472,17 @@ def render_method_pyi(m: dict, cdc: dict) -> list[str]:
     fixed = method_fixed_params(m)
     fixed_sig = "".join(f", {p['name']}: {_fixed_pyi(p)}" for p in fixed)
     union = codec_py_union(cdc, seq="Sequence")
+    from ._docstring import authored_doc_lines, authored_docstring
     from ._docstring import name_summary
 
-    brief = m.get("doc") or name_summary(name)
+    # gh-2104: the authored `doc` laid out as written, every line at the
+    # method body's indent -- it was pasted raw, so each line after the
+    # first landed in column 0. `method_c_doc` reads the same text.
+    lines = authored_doc_lines(str(m.get("doc") or "")) or [name_summary(name)]
     return [
         f"    def {name}(self{fixed_sig}, {disc['name']}: str,"
         f" {var['name']}: {union}) -> None:",
-        f'        """{brief}"""',
+        *authored_docstring(lines, 8),
     ]
 
 

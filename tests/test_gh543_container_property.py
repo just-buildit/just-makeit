@@ -43,6 +43,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -63,7 +64,7 @@ from _jm_stub import drop_jm_stubs  # noqa: E402
 def _skip_reason():
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     return None
 

@@ -25,6 +25,7 @@ import shutil
 import subprocess
 
 import pytest
+from _compilers import default_cxx
 
 from _jmrun import run_cli
 from just_makeit import _incpath
@@ -111,7 +112,7 @@ def test_prose_inside_a_body_keeps_its_words(tree):
     assert "/* float complex, quoted in a comment */" in h, h
 
 
-@pytest.mark.skipif(shutil.which("g++") is None, reason="needs g++")
+@pytest.mark.skipif(default_cxx() is None, reason="no C++ compiler")
 def test_the_upgraded_header_parses_as_cpp(tree, tmp_path):
     """gh-1148's reason for the respell: a C++ caller includes the header.
     Checked on the header as built -- after upgrade then apply -- over a
@@ -125,7 +126,7 @@ def test_the_upgraded_header_parses_as_cpp(tree, tmp_path):
         tu, '#include "p/g/g_core.h"\nint main() { return 0; }\n'
     )
     r = subprocess.run(
-        ["g++", "-std=c++11", "-fsyntax-only", f"-I{inc}", str(tu)],
+        [default_cxx(), "-std=c++11", "-fsyntax-only", f"-I{inc}", str(tu)],
         capture_output=True,
         text=True,
     )

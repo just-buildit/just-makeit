@@ -177,7 +177,12 @@ class TestStep5C:
 
 class TestStep6AddState:
     def test_add_scalar_state(self, project):
-        r = run_cli("add", "--state", "n_taps:int32_t:16", cwd=project)
+        # `--force`, as `.steps/06_add_state.sh` spells it. Without it the
+        # prompt reads EOF and declines, and this passed only because a
+        # declined add exited 0 having written the manifest (gh-1889).
+        r = run_cli(
+            "add", "--force", "--state", "n_taps:int32_t:16", cwd=project
+        )
         assert r.returncode == 0, f"add failed:\n{r.stderr}"
         r = _run(["make", "test"], cwd=project, env=_MAKE_ENV)
         assert r.returncode == 0, f"make test after add failed:\n{r.stdout}"

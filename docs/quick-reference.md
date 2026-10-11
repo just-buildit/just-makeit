@@ -1032,10 +1032,15 @@ out_type = "float64[M]"
 </td>
 <td>
 
-*TOML only* — set `out_type`
-to `"dtype[param]"` after
-scaffolding, then run
-`jm apply`.
+```sh
+jm function ciccompmf \
+  --module resample \
+  --param N:uint32_t \
+  --param R:uint32_t \
+  --param M:uint32_t \
+  --out-type \
+    'float64[M]'
+```
 
 </td>
 </tr>
@@ -1070,6 +1075,7 @@ ______________________________________________________________________
 | Dry run                  | Show what would be compiled without building                                                                                                                                                                                                                            | `just-makeit dry-run`                                                                                  |
 | Extra link libs          | Link a module against an additional library not owned by jm — add `extra_link_libs = ["mylib", "m"]` under `[module.X]`                                                                                                                                                 | `jm module X --extra-link-libs LIB` (at creation)                                                      |
 | Extra types              | Register a hand-written CPython type from a `*_extra.c` file in `PyInit_` — add `extra_types = ["MyType"]` under `[module.X]`                                                                                                                                           | `jm module X --extra-types NAME` (at creation)                                                         |
+| Hand-written method      | Register a CPython function you wrote in the object's `_extra.c` — add `[[<obj>.extra_methods]]` rows (`name`, `fn`, `flags`, `args`, `returns`, `doc`); jm writes its method-table row, a prototype and the `.pyi` member (gh-1997)                                    | (manifest only)                                                                                        |
 | Streaming iterator       | `stream(block, *, count, on_block)` + `__iter__` (`streamable = "true"`)                                                                                                                                                                                                | `jm object <comp> --arg-type void --streamable`                                                        |
 | Serializable state       | `state_bytes()` / `get_state()` / `set_state()` (`serializable = "true"`)                                                                                                                                                                                               | `jm object <comp> --serializable`                                                                      |
 | Second class, one core   | A view: a second Python class over the same C core, with its own constructor                                                                                                                                                                                            | `jm view <obj> <Class> --module M --create-fn fn`                                                      |

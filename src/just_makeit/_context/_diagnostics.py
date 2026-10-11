@@ -153,11 +153,20 @@ def _c_string_literal(message: str, indent: int) -> str:
     return "\n".join(out)
 
 
-def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
+def _rc_raise_c(
+    category: str,
+    message: str,
+    indent: int = 21,
+    *,
+    pad: int = 8,
+    fail: str = "return NULL;",
+) -> str:
     """The ``PyErr_Format`` that turns a failing return code into an exception.
 
     Shared by ``status_return``, ``error_negative`` (gh-823 Ask D) and the
-    ``exit`` finalizer (gh-805 §H). It lives here, beside `_c_string_literal`,
+    ``exit`` finalizer (gh-805 §H), and by a ``variable_output`` method's
+    signed count (gh-2012), whose negative value is the same code read the
+    same way. It lives here, beside `_c_string_literal`,
     rather than in `_methods` — the third caller is in `_destroy`, and a
     teardown emitter reaching into the method renderer for its raise is how
     the two spellings this docstring describes came apart in the first place.
@@ -186,7 +195,20 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
         ``PyErr_Format`` walks off the end of its varargs — on the error path
         only, which is the path least likely to be exercised before a release.
     indent : int
-        Continuation-line indent for the rendered literal.
+        Continuation-line indent for the rendered literal, and for the
+        ``(long long)_rc`` argument after it.
+    pad : int, keyword-only
+        Column of the statements. 8 is a raise in a function body's ``if``;
+        a raise nested one block deeper (a ``variable_output`` method's
+        ``out=`` branch, gh-2012) passes 12, with *indent* moved by the same
+        4, so the literal is wrapped for the column it is printed at rather
+        than shifted past 79 after wrapping.
+    fail : str, keyword-only
+        The statement that leaves the function once the exception is set.
+        ``return NULL;`` in a wrapper returning a ``PyObject *``; a
+        property's setter is a ``setter`` slot returning ``int``, so it
+        passes ``return -1;`` (gh-2182) -- the same knob, for the same
+        reason, as `_parse.capsule_unwrap_c`'s.
 
     Notes
     -----
@@ -196,13 +218,22 @@ def _rc_raise_c(category: str, message: str, indent: int = 21) -> str:
     losslessly — so unifying on the wider conversion removes a difference
     rather than parameterising one, and the rendered message is unchanged
     (``"<name> failed (rc=-4)"`` either way).
+
+    Examples
+    --------
+    >>> print(_rc_raise_c("OSError", "seek failed", indent=25, pad=12), end="")
+                PyErr_Format(PyExc_OSError, "%s (rc=%lld)",
+                             "seek failed",
+                             (long long)_rc);
+                return NULL;
     """
+    lead = " " * pad
     return (
-        f"        PyErr_Format(PyExc_{category},"
+        f"{lead}PyErr_Format(PyExc_{category},"
         f' "%s (rc=%lld)",\n'
         f"{_c_string_literal(message, indent)},\n"
-        f"                     (long long)_rc);\n"
-        f"        return NULL;\n"
+        f"{' ' * indent}(long long)_rc);\n"
+        f"{lead}{fail}\n"
     )
 
 
@@ -212,6 +243,8 @@ def empty_raise_c(
     decrefs: str = "",
     indent: int = 24,
     ret: bool = True,
+    *,
+    pad: int = 8,
 ) -> str:
     """The raise for a ``variable_output`` kernel that wrote nothing (gh-1159).
 
@@ -235,6 +268,14 @@ def empty_raise_c(
     raise under a condition and returns once after it -- `reason_raise_c`'s
     ``else`` branch takes a single statement (gh-1614).
 
+    It is also the raise for a declared ``error_sentinel`` (gh-2012), for
+    the reason it is this one's: the value tested is the sentinel by
+    construction, so there is no code worth appending -- and ``(long long)``
+    of ``SIZE_MAX`` would print ``-1``, a number the kernel never returned.
+
+    *pad* is the statements' column, as `_rc_raise_c`'s: 12 for a raise one
+    block deeper, with *indent* moved by the same 4.
+
     Examples
     --------
     >>> print(empty_raise_c("ValueError", "bad length", indent=0))
@@ -243,11 +284,12 @@ def empty_raise_c(
             return NULL;
     <BLANKLINE>
     """
+    lead = " " * pad
     return (
-        f"        {decrefs}"
+        f"{lead}{decrefs}"
         f"PyErr_SetString(PyExc_{category},\n"
         f"{_c_string_literal(message, indent)});\n"
-        + ("        return NULL;\n" if ret else "")
+        + (f"{lead}return NULL;\n" if ret else "")
     )
 
 
@@ -590,20 +632,52 @@ def declared_raise(m: dict) -> "tuple[str, str] | None":
         # one reading: a binding that raises and a `.pyi` that documents no
         # exception is the gh-869 split.
         or m.get("error_on_empty")
+        # gh-2012: the unsigned count's refusal value, for a kernel whose
+        # zero is a real answer. A signed count needs no line here: it is
+        # `error_negative`, the trigger above.
+        or m.get("error_sentinel")
     ):
         return None
     return _raise_pair(m, str(m.get("name", "")))
+
+
+#: The C type a ``variable_output`` kernel returns its count in when the
+#: manifest names none (gh-2012). Today's type, so a method that does not
+#: declare `count_type` renders byte-identically to before the key existed.
+DEFAULT_COUNT_TYPE = "size_t"
+
+
+def count_type(m: dict) -> str:
+    """The C type *m*'s kernel returns its output count in (gh-2012).
+
+    ``return_type`` names the ELEMENT of a ``variable_output`` result, so the
+    count needs a key of its own: ``count_type``, absent meaning
+    `DEFAULT_COUNT_TYPE`. Read through here by every writer of the kernel's
+    prototype -- the ``_core.h`` declaration, the ``_core.c`` stub and the
+    binding's call -- so the three cannot name different types.
+
+    Examples
+    --------
+    >>> count_type({"name": "interleave"})
+    'size_t'
+    >>> count_type({"name": "execute_ctrl", "count_type": "int64_t"})
+    'int64_t'
+    """
+    return str(m.get("count_type") or DEFAULT_COUNT_TYPE)
 
 
 def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     """`declared_raise` for a ``kind = "handle"`` module method (gh-1111).
 
     A handle method declares "a non-zero return is a failure" as ``error =
-    "<category>"`` over an ``int`` ``returns`` — there is no
-    ``status_return`` on this face, and `_handle._emit_method` refuses an
-    ``error`` without a return to check. So the trigger differs and only the
-    trigger: the category and the message come from `_raise_pair`, the same
-    one the object face reads.
+    "<category>"`` over an ``int`` ``returns``, or as ``status_return =
+    true``, the object face's key and meaning (gh-2186). The second is the
+    one an array-argument method needs: there jm reads the C return as a
+    count unless the author says it is a status, and `_handle._emit_method`
+    refuses an ``error`` it has no status to check against. So the trigger
+    is wider than ``error`` alone and the rest is shared: the category and
+    the message come from `_raise_pair`, the same one the object face reads,
+    so ``status_return`` with no ``error`` raises ``ValueError`` here too.
 
     It exists because those keys were accepted on both faces and honoured on
     one. The binding here spliced the C ``fn`` straight into the
@@ -623,10 +697,101 @@ def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     ...                        "returns": "int", "error": "OSError",
     ...                        "error_message": "budget ran out"})
     ('OSError', 'budget ran out')
+    >>> handle_declared_raise({"name": "send", "fn": "sink_send",
+    ...                        "returns": "int", "status_return": True})
+    ('ValueError', 'sink_send failed')
     """
-    if not m.get("error"):
+    if not (m.get("error") or m.get("status_return")):
         return None
     return _raise_pair(m, str(m.get("fn") or m.get("name", "")))
+
+
+def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
+    """`declared_raise` for a writable property's setter (gh-2182).
+
+    The trigger is ``error`` alone, as on a handle method: a setter has no
+    other use for its C return, so declaring the exception IS declaring that
+    a non-zero return refuses the value. Without it the setter discards the
+    return -- the binding a property had before this key existed -- and an
+    assignment the core refused succeeded silently while the property kept
+    reading its old value.
+
+    *setter* is the C function the binding calls, `_csym.property_setter`.
+    It names the failure in the derived message for the reason
+    `handle_declared_raise` uses ``fn``: it is what a caller reading the
+    traceback can grep for, where the Python name would read ``alpha
+    failed``.
+
+    `validate_property_error` refuses ``error`` wherever there is no C
+    setter call to check, so a pair here is always a pair the binding
+    raises with.
+
+    Examples
+    --------
+    >>> property_declared_raise({"name": "alpha"}, "acc_set_alpha") is None
+    True
+    >>> property_declared_raise({"name": "alpha", "writable": True,
+    ...                          "error": "ValueError"}, "acc_set_alpha")
+    ('ValueError', 'acc_set_alpha failed')
+    """
+    if not p.get("error"):
+        return None
+    return _raise_pair(p, setter)
+
+
+def setter_return_type(p: dict) -> str:
+    """The C type property *p*'s setter returns: ``int`` when it may refuse.
+
+    Read by every writer of the setter's prototype -- the ``_core.h``
+    declaration and the stub `jm property` appends -- so the prototype and
+    the binding that tests the return cannot disagree (gh-2182). A
+    property declaring no ``error`` keeps ``void``, so its render is the
+    one it had before the key existed.
+
+    Examples
+    --------
+    >>> setter_return_type({"name": "alpha", "writable": True})
+    'void'
+    >>> setter_return_type({"name": "alpha", "writable": True,
+    ...                     "error": "ValueError"})
+    'int'
+    """
+    return "int" if property_declared_raise(p, "") else "void"
+
+
+def property_raises_doc(p: dict, setter: str) -> "list[tuple[str, str]]":
+    """The ``raises=`` argument for a refusing property's two doc faces.
+
+    `raises_doc`'s reading for a property, built from the same pair
+    `property_declared_raise` hands the binding, so the documented class is
+    the class the setter raises. The sentence says *assignment* because a
+    property's docstring documents the getter too, and only the setter
+    raises.
+
+    Examples
+    --------
+    >>> property_raises_doc({"name": "alpha"}, "acc_set_alpha")
+    []
+    >>> cat, desc = property_raises_doc(
+    ...     {"name": "alpha", "writable": True, "error": "ValueError",
+    ...      "error_message": "alpha must lie in (0, 1]"}, "acc_set_alpha")[0]
+    >>> cat
+    'ValueError'
+    >>> desc.startswith("On assignment, if ``acc_set_alpha`` refuses")
+    True
+    """
+    pair = property_declared_raise(p, setter)
+    if pair is None:
+        return []
+    category, message = pair
+    return [
+        (
+            category,
+            f"On assignment, if ``{setter}`` refuses the value by returning "
+            f"non-zero. The exception message is ``{message}``, with the "
+            f"return code appended.",
+        )
+    ]
 
 
 def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
@@ -666,6 +831,31 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     if pair is None:
         return []
     category, message = pair
+    # gh-2012: a `variable_output` method may declare its zero refusal AND a
+    # negative code or a sentinel, and each is its own condition with its own
+    # message shape -- `(rc=N)` is appended to one and not the other. One
+    # entry per condition the binding tests, in the order it tests them, so
+    # the documentation is a list of what raises rather than a sentence
+    # trying to hold three.
+    out: "list[tuple[str, str]]" = []
+    if m.get("error_negative"):
+        out.append(
+            (
+                category,
+                f"If the C call returns a negative value. The exception "
+                f"message is ``{message}``, with the return code appended "
+                f"(gh-869).",
+            )
+        )
+    if m.get("error_sentinel"):
+        out.append(
+            (
+                category,
+                f"If the C call returns ``{m['error_sentinel']}``, its "
+                f"refusal value, in place of a count. The exception message "
+                f"is ``{message}``.",
+            )
+        )
     # gh-1159: a refusal is not a status, and saying so matters. This text is
     # what a caller reads at the REPL and in the `.pyi`, and the
     # `status_return` sentence -- "returns a non-zero status ... with the
@@ -674,24 +864,140 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     # by construction. A generated docstring that describes a mechanism the
     # binding does not have is the gh-869 split wearing the other face.
     if m.get("error_on_empty"):
-        return [
+        out.append(
             (
                 category,
                 f"If the C call writes no output. Its return value is a "
                 f"count, so a zero-length result is a REFUSAL rather than an "
                 f"empty answer. The exception message is ``{message}``.",
             )
-        ]
-    condition = (
-        "a negative value" if m.get("error_negative") else "a non-zero status"
-    )
+        )
+    if out:
+        return out
     return [
         (
             category,
-            f"If the C call returns {condition}. The exception message is "
-            f"``{message}``, with the return code appended (gh-869).",
+            f"If the C call returns a non-zero status. The exception message "
+            f"is ``{message}``, with the return code appended (gh-869).",
         )
     ]
+
+
+def empty_is_none(m: dict) -> bool:
+    """Whether *m*'s binding answers ``None`` for an empty result (gh-2183).
+
+    The one reading of ``none_on_empty``, the sibling `declared_raise` gives
+    ``error_on_empty``. The binding's empty-result branches emit
+    ``Py_RETURN_NONE`` when this is true, every return annotation -- both
+    ``.pyi`` producers and the runtime synopsis line -- adds ``| None``
+    through `optional_ann`, and both ``Returns`` sections say when through
+    `empty_is_none_doc`. One answer for all of them, so a stub cannot
+    promise an array the binding may not return.
+
+    That is what gh-2183 was: the borrow route asked the key at its own
+    annotation, the ``variable_output`` route never did, and doppler's nine
+    readouts were stubbed ``-> NDArray[np.float32]`` above a binding that
+    returns ``None`` on both its allocating and its ``out=`` path. A type
+    checker then accepted ``x.value().shape`` and rejected
+    ``if x.value() is None`` -- the opposite of what the binding does.
+
+    Two routes read the key, and they are the two this answers ``True`` for:
+
+    * a ``variable_output`` result, when the kernel's count is zero -- on
+      the allocating route and the ``out=`` route alike;
+    * a ``borrow``, when the kernel lends ``NULL`` and no ``status_errors``
+      row raises first (gh-1418).
+
+    A ``batch`` method is dispatched ahead of both and is 1:1, so it has no
+    empty result to read; the key is inert there, as on every other shape,
+    and the answer is ``False`` so that no face advertises a ``None`` the
+    binding never returns.
+
+    Parameters
+    ----------
+    m : dict
+        One ``[[<comp>.methods]]`` entry.
+
+    Examples
+    --------
+    >>> empty_is_none({"name": "value", "variable_output": True,
+    ...                "none_on_empty": True})
+    True
+    >>> empty_is_none({"name": "peek", "borrow": True, "none_on_empty": True})
+    True
+    >>> empty_is_none({"name": "value", "variable_output": True})
+    False
+    >>> empty_is_none({"name": "gain", "none_on_empty": True})
+    False
+    >>> empty_is_none({"name": "run", "batch": True, "variable_output": True,
+    ...                "none_on_empty": True})
+    False
+    """
+    if not m.get("none_on_empty") or m.get("batch"):
+        return False
+    # Deferred: `_borrow` imports this module for its raise emitters.
+    from .._borrow import is_borrow
+
+    return bool(m.get("variable_output")) or is_borrow(m)
+
+
+def optional_ann(m: dict, ann: str) -> str:
+    """*ann*, made optional when *m*'s binding can return ``None``.
+
+    Every face that annotates a method's return spells the optional form
+    through here, from `empty_is_none` -- the ``.pyi`` producers and the
+    runtime synopsis line alike (gh-2183).
+
+    Examples
+    --------
+    >>> optional_ann({"name": "peek", "borrow": True, "none_on_empty": True},
+    ...              "NDArray[np.complex64]")
+    'NDArray[np.complex64] | None'
+    >>> optional_ann({"name": "peek", "borrow": True}, "ndarray")
+    'ndarray'
+    """
+    return f"{ann} | None" if empty_is_none(m) else ann
+
+
+def empty_is_none_doc(m: dict) -> str:
+    """The ``Returns`` sentence saying when *m* returns ``None``, or ``""``.
+
+    gh-2183: an optional annotation says THAT the call may return ``None``;
+    this says WHEN, on both doc faces, from the one predicate the binding and
+    the annotation read. It is appended to the ``Returns`` description --
+    the header's ``@return`` or jm's fallback -- rather than replacing it,
+    because the author's prose says what the value is and this says what
+    the binding does when there is none.
+
+    Examples
+    --------
+    >>> empty_is_none_doc({"name": "value", "variable_output": True,
+    ...                    "none_on_empty": True})
+    'None when the C call writes no output.'
+    >>> empty_is_none_doc({"name": "peek", "borrow": True,
+    ...                    "none_on_empty": True})
+    'None when the C call lends nothing (returns NULL).'
+    >>> empty_is_none_doc({"name": "peek", "borrow": True,
+    ...                    "none_on_empty": True, "status_fn": "ring_why",
+    ...                    "status_errors": [{"status": "RING_CLOSED",
+    ...                                       "error": "EOFError"}]})
+    'None when the C call lends nothing (returns NULL) and its status has no exception row.'
+    >>> empty_is_none_doc({"name": "value", "variable_output": True})
+    ''
+    """
+    if not empty_is_none(m):
+        return ""
+    from .._borrow import is_borrow, status_rows
+
+    if not is_borrow(m):
+        return "None when the C call writes no output."
+    # gh-1418: a status with a row raises before the fallback is reached,
+    # so with a table the None is the answer for the statuses it omits.
+    return (
+        "None when the C call lends nothing (returns NULL)"
+        + (" and its status has no exception row" if status_rows(m) else "")
+        + "."
+    )
 
 
 def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":

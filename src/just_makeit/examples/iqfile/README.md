@@ -703,14 +703,12 @@ half the 32 768 bytes a cf32 file would use for the same signal.
 
 `just-makeit build` imports just-buildit from just-makeit's own environment
 and, on Linux, repairs the wheel with `uvx auditwheel repair`, which needs
-`uv` and `patchelf` on `PATH`. Neither install route above installs
-just-buildit or uv, and only the `pip` route's `install-deps` installs
-patchelf, so add what is missing first (with the venv from Prerequisites
-active):
+`uv` and `patchelf` on `PATH`. Both install routes above install patchelf
+on Linux, but neither installs just-buildit or uv, so add those first (with
+the venv from Prerequisites active):
 
 ```sh
 pip install just-buildit uv     # into the environment just-makeit runs from
-sudo apt install patchelf       # Linux, if absent (dnf/pacman/zypper: patchelf)
 ```
 
 Then:

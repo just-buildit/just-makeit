@@ -289,6 +289,16 @@ The same check covers `result_fields` entries (gh-598), which report as
 (`void` is absent from a field's supported list — every record field is a
 value the binding has to convert.)
 
+A method's output-side types are checked the same way (gh-1977), each against
+what its command-line flag accepts: `out_type` must be an array element type
+(`--out-type`), each `multi_output` entry a registered scalar
+(`--multi-output`), and `extra_args` follows `params`:
+
+```
+'o' method 'm': out_type 'void' has no numpy equivalent.
+'o' method 'm': multi_output type 'wat_t' is not supported.
+```
+
 **Cause:** the manifest declares a `return_type` that is not one of jm's
 registered types. Common causes are a natural C spelling whose width is
 platform-dependent (`long`, `unsigned`, `ssize_t`), the *display* form of a
@@ -316,6 +326,33 @@ name = "scan"
 return_type = "ber_align_t"          # a user struct — fine, because:
 result_fields = [{name = "lag", type = "int"}]
 ```
+
+______________________________________________________________________
+
+## `nothing says how long it is` on a function's `out_type`
+
+**Symptom:** `jm function`, `jm apply` or `jm status` stops with
+
+```
+error: function 'ramp' returns a fresh out_type 'float', but nothing says how
+  long it is. ...
+```
+
+**Cause:** the binding allocates the output and the C function fills it
+through a bare `float *out`, never told its length. So the length has to
+come from the call -- an array param's length, the integer param an
+`out_type = "T[n]"` names, or (with `variable_output`) an `out_size` -- and
+this function gives none. Before gh-1888 jm allocated ONE element here, and a
+body filling the `n` it was called with wrote past it.
+
+**Fix:** name the param that holds the length:
+
+```sh
+jm function ramp --module m --param n:size_t --out-type 'float[n]'
+```
+
+or, in the manifest, `out_type = "float[n]"`; a `variable_output` function
+gives `out_size = "EXPR"` instead.
 
 ______________________________________________________________________
 

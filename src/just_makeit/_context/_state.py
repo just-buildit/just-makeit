@@ -9,9 +9,9 @@ from __future__ import annotations
 import re
 
 from .. import _coerce, _ctorsig
+from .. import _config as C
 from .._report import Refusal
 from .. import _csym as CSYM
-from .._docstring import ctor_demo_label as _ctor_demo_label
 from .._docstring import (
     struct_member_doc,
     render_numpy_doc,
@@ -314,6 +314,31 @@ def _build_no_state_init_ctx(
     # gh-1756: each array param's `str_hint`, by name, for every acquisition
     # below -- read through the one accessor every other face uses.
     _hints = {param[0]: _coerce.str_hint(param) for param in params}
+    # gh-2004: and its gh-805 §C shape keys, through the same readers a
+    # method's array uses. `_coerce.shape_key_errors` has refused at load
+    # every value and every combination no path below could honour.
+    _ranks = {param[0]: _coerce.array_rank(param) for param in params}
+    _eps = {param[0]: _coerce.elements_per_sample(param) for param in params}
+
+    def _rank_guard(aname: str, cleanup: str, indent: str = "    ") -> str:
+        """gh-2004: *aname*'s rank guard, or "" when it declares no rank.
+
+        *cleanup* releases what this path already holds besides the array
+        itself, which the guard releases. It fails with ``return -1;``:
+        this is a ``tp_init``, where a ``return NULL`` compiles and reports
+        success.
+        """
+        rank = _ranks.get(aname)
+        if not rank:
+            return ""
+        return _coerce.array_rank_guard(
+            aname,
+            f"{aname}_arr",
+            rank,
+            cleanup.strip(),
+            fail="return -1;",
+            indent=indent,
+        )
 
     for param in params:
         name, ct, dflt = param[:3]
@@ -325,7 +350,7 @@ def _build_no_state_init_ctx(
         # earliest of those failures is a compiler error one command later.
         _dflt_err = _default_type_error(ct, dflt)
         if _dflt_err:
-            raise ValueError(f"init_param '{name}': {_dflt_err}")
+            raise Refusal(f"init_param '{name}': {_dflt_err}")
         real_type = param[4] if len(param) > 4 else ""
         real_create_fn_p = param[5] if len(param) > 5 else ""
         optional_flag = param[6] if len(param) > 6 else False
@@ -344,13 +369,13 @@ def _build_no_state_init_ctx(
                     " is always a required positional (like 'path' and"
                     " 'bytes')."
                 )
-            # gh-1224: slot 17 is the Python class an `object` reference
+            # gh-1224: slot 19 is the Python class an `object` reference
             # resolved to, and "" for a capsule declared the gh-790 way. It
             # rides along here rather than in a parallel dict because every
             # consumer below already indexes `_capsule_meta` by name, and a
             # second dict keyed the same way is the peer that drifts.
-            _obj_cls = param[17] if len(param) > 17 else ""
-            _obj_imp = param[18] if len(param) > 18 else ""
+            _obj_cls = param[19] if len(param) > 19 else ""
+            _obj_imp = param[20] if len(param) > 20 else ""
             if _obj_imp and _obj_imp not in object_imports:
                 object_imports.append(_obj_imp)
             capsule_ip.append(
@@ -1261,8 +1286,9 @@ def _build_no_state_init_ctx(
                 f"        ? {_coerce.array_arg(f'{aname}_obj', real_npy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))}\n"
                 f"        : {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"    size_t {aname}_len ="
-                f" (size_t)PyArray_SIZE({aname}_arr);\n"
+                + _rank_guard(aname, cleanup)
+                + _coerce.array_len_c(aname, f"{aname}_arr", _eps[aname])
+                + "\n"
             )
             allocated.append(aname)
         elif andim == 2:
@@ -1283,12 +1309,16 @@ def _build_no_state_init_ctx(
             )
             allocated.append(aname)
         else:
+            # gh-2004: the rank guard between the acquisition and the
+            # length, as a method's array has it -- `PyArray_SIZE` of a 2-D
+            # array is a valid-looking length for a 1-D contract.
             aapb_lines.append(
                 f"    PyArrayObject *{aname}_arr ="
                 f"\n        {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"    size_t {aname}_len ="
-                f" (size_t)PyArray_SIZE({aname}_arr);\n"
+                + _rank_guard(aname, cleanup)
+                + _coerce.array_len_c(aname, f"{aname}_arr", _eps[aname])
+                + "\n"
             )
             allocated.append(aname)
 
@@ -1310,12 +1340,19 @@ def _build_no_state_init_ctx(
             f"        {aname}_arr =\n"
             f"            {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
             f"        if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-            f"        {aname}_len = (size_t)PyArray_SIZE({aname}_arr);\n"
+            + _rank_guard(aname, cleanup, " " * 8)
+            + f"        {aname}_len ="
+            f" {_coerce.array_count_c(f'{aname}_arr', _eps[aname])};\n"
             f"    }}\n"
         )
         maybe_allocated.append(aname)
 
     scalar_call_str = create_call_args
+    # gh-2004: every array held when an optional one is acquired, which its
+    # rank guard releases on top of the optional array itself.
+    _opt_cleanup = "".join(
+        f" Py_DECREF({n}_arr);" for n in allocated
+    ) + "".join(f" Py_XDECREF({n}_arr);" for n in maybe_allocated)
     for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
         if ondim == 2:
             aapb_lines.append(
@@ -1348,17 +1385,25 @@ def _build_no_state_init_ctx(
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
                 f"        if (!{oname}_arr) {{ return -1; }}\n"
-                f"        size_t {oname}_len ="
-                f" (size_t)PyArray_SIZE({oname}_arr);\n"
-                # gh-1827: the argument list its scaffolded prototype is
-                # built from, so the call and the declaration are one list.
-                f"        self->handle ="
-                f" {oalt_fn}({alt_ctors[oalt_fn][3]});\n"
-                f"        Py_DECREF({oname}_arr);\n"
-                f"    }} else {{\n"
-                f"        self->handle ="
-                f" {_create}({scalar_call_str});\n"
-                f"    }}\n"
+                # gh-2004: the guard releases every array this tp_init
+                # already holds. (A path param never reaches here: it is
+                # refused beside optional-array dispatch, gh-515.)
+                + _rank_guard(oname, _opt_cleanup, " " * 8)
+                + "    "
+                + _coerce.array_len_c(oname, f"{oname}_arr", _eps[oname])
+                + (
+                    "\n"
+                    # gh-1827: the argument list its scaffolded prototype
+                    # is built from, so the call and the declaration are
+                    # one list.
+                    f"        self->handle ="
+                    f" {oalt_fn}({alt_ctors[oalt_fn][3]});\n"
+                    f"        Py_DECREF({oname}_arr);\n"
+                    f"    }} else {{\n"
+                    f"        self->handle ="
+                    f" {_create}({scalar_call_str});\n"
+                    f"    }}\n"
+                )
             )
 
     array_args_parse_block = "".join(aapb_lines)
@@ -1727,120 +1772,6 @@ def _build_no_state_init_ctx(
 
 
 # ---------------------------------------------------------------------------
-# _doctest_safe_output
-# ---------------------------------------------------------------------------
-
-
-def _doctest_safe_output(ctype: str, default: str) -> str | None:
-    """Return the expected Python repr for a getter's default, or None.
-
-    Only returns a value when the default round-trips exactly through the C
-    type so the doctest output is predictable without knowing float rounding
-    details.
-    """
-    kind = _CTYPE_META[ctype]["kind"]
-    if kind == "int":
-        val = _py_default(ctype, default)
-        try:
-            int(val)
-            return val
-        except ValueError:
-            return None
-    if kind == "float":
-        s = default.rstrip("fF")
-        try:
-            v = float(s)
-            if v == int(v):
-                return repr(v)
-        except ValueError:
-            pass
-        return None
-    if kind == "complex":
-        return "0j"
-    return None
-
-
-# ---------------------------------------------------------------------------
-# _pyi_examples_block
-# ---------------------------------------------------------------------------
-
-
-def _pyi_examples_block(
-    scalar_vars: list[tuple[str, str, str]],
-    has_array_args: bool,
-    import_line: str,
-    py_create_args: str,
-    Component: str,
-    no_reset: bool = False,
-    header_only: bool = False,
-    init_params: "list | None" = None,
-) -> str:
-    """Build an indented ``Examples`` section for a .pyi class docstring.
-
-    ``init_params`` (gh-1105) only picks the heading — see
-    :func:`~.._docstring.ctor_demo_label`. Optional so the callers that have
-    no manifest to hand (``jm bind``) keep the historical label.
-
-    Returns an empty string when no doctest-safe getter examples exist.
-    The returned string ends with a trailing newline and is ready to embed
-    directly before the closing ``\"\"\"`` in the class docstring.
-
-    no_reset (gh-542) drops the "Reset restores defaults" example. These
-    doctests execute under ``pytest --doctest-glob='*.pyi'``, so a
-    ``>>> obj.reset()`` line on an object that no longer defines the method
-    is not merely stale prose — it is a failing test.
-    """
-    getter_pairs: list[tuple[str, str]] = []
-    for name, ct, dflt in scalar_vars:
-        out = _doctest_safe_output(ct, dflt)
-        if out is not None:
-            getter_pairs.append((name, out))
-
-    lines: list[str] = [
-        "    Examples",
-        "    --------",
-        f"    {_ctor_demo_label(init_params)}",
-        "",
-    ]
-    if has_array_args:
-        lines.append("    >>> import numpy as np")
-    lines.append(f"    >>> {import_line}")
-    lines.append(f"    >>> obj = {Component}({py_create_args})")
-
-    for name, out in getter_pairs[:3]:
-        lines.append(f"    >>> obj.get_{name}()")
-        lines.append(f"    {out}")
-
-    if getter_pairs and not no_reset:
-        first_name, first_out = getter_pairs[0]
-        first_ct = next(ct for n, ct, _ in scalar_vars if n == first_name)
-        kind = _CTYPE_META[first_ct]["kind"]
-        set_val = (
-            "0"
-            if (kind == "int" and first_out != "0")
-            else (
-                "42"
-                if kind == "int"
-                else "0.0"
-                if first_out != "0.0"
-                else "1.0"
-            )
-        )
-        lines += [
-            "",
-            "    Reset restores defaults:",
-            "",
-            f"    >>> obj.set_{first_name}({set_val})",
-            "    >>> obj.reset()",
-            f"    >>> obj.get_{first_name}()",
-            f"    {first_out}",
-        ]
-
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-# ---------------------------------------------------------------------------
 # make_state_ctx
 # ---------------------------------------------------------------------------
 
@@ -1934,9 +1865,11 @@ def _ctor_seed_slots(
     parameter and never validates, so on day one the construction works and the
     suite skips anyway. The issue framed the alternative as reading ``_core.c``
     to find out, and rejected it for three good reasons: jm does not read C,
-    the generated test files are create-only so the answer would be frozen at
-    scaffold time, and an inference that goes stale trades a skip for a red
-    suite (gh-1088, red on ``main`` for 14 runs).
+    the generated test files were create-only then so the answer would be
+    frozen at scaffold time (the C smoke still is; the Python test has been
+    jm's while it carries ``# jm:generated`` since gh-1489), and an inference
+    that goes stale trades a skip for a red suite (gh-1088, red on ``main``
+    for 14 runs).
 
     All three objections are about deciding at RENDER time. None of them apply
     to the C smoke, which decides at *runtime* — so that was the option the
@@ -2069,6 +2002,128 @@ def _pytest_skip_slots(
         "pytest_class_skip": _PROBE_CLASS.format(why=why, call=call, msg=msg),
         "pytest_module_skip": _PROBE_MODULE.format(call=call, msg=msg),
     }
+
+
+#: gh-1882: the manifest keys that hand ``<comp>_reset()``'s body to the
+#: author. Read by :func:`declared_reset_impl` and nowhere else.
+RESET_IMPL_KEYS = ("reset_impl", "reset_impl_file")
+
+
+def reset_is_authors(
+    *, reset_impl: bool, init_params: "list | tuple" = (), no_reset: bool
+) -> bool:
+    """Whether what ``reset()`` restores is the author's to say (gh-1882).
+
+    The ONE predicate every artefact that claims something about ``reset()``
+    asks: the generated C and Python ``test_reset``, the ``.pyi`` "Reset
+    restores defaults" doctest, and the runtime class ``__doc__`` beside it.
+    jm can assert "reset restores every declared default" only where jm both
+    writes the body and knows the post-create state that body must return
+    to. Any one of three facts takes that away:
+
+    - *reset_impl* -- a ``reset_impl`` / ``reset_impl_file`` body (or
+      ``jm object --impl reset::...``) replaces jm's. Preserving a field is
+      what such a body is usually FOR: a delay line keeps its ``length``.
+    - *init_params* -- the constructor is the author's (the #69 contract),
+      and ``reset()``'s contract is "back to the post-create state", which
+      their ``create()`` now defines. Asserting the declared defaults after a
+      reset is the same guess gh-1105 refused to make after construction.
+    - *no_reset* -- there is no ``reset()`` at all (gh-542).
+
+    Each artefact used to answer for itself -- ``bool(init_params) or
+    no_reset`` at six sites, ``bool(init_params)`` alone at two, and the
+    tests not at all -- so a ``reset_impl`` that preserved a field shipped a
+    red C test, a red ``test_reset`` and a red doctest.
+
+    Parameters
+    ----------
+    reset_impl : bool
+        The object's ``reset()`` body is the author's, not jm's.
+    init_params : sequence
+        The object's ``init_params``; any at all make ``create()`` theirs.
+    no_reset : bool
+        The object's ``no_reset`` manifest key.
+
+    Returns
+    -------
+    bool
+        True when no generated artefact may assert what ``reset()`` restores.
+
+    Examples
+    --------
+    >>> reset_is_authors(reset_impl=False, init_params=(), no_reset=False)
+    False
+    >>> reset_is_authors(reset_impl=True, init_params=(), no_reset=False)
+    True
+    >>> reset_is_authors(
+    ...     reset_impl=False, init_params=[("n", "int", "0")], no_reset=False
+    ... )
+    True
+    >>> reset_is_authors(reset_impl=False, no_reset=True)
+    True
+    """
+    return bool(reset_impl) or bool(init_params) or bool(no_reset)
+
+
+def declared_reset_impl(cfg: dict, component: str) -> "dict[str, str]":
+    """The ``reset_impl`` / ``reset_impl_file`` keys *component* declares.
+
+    gh-1882. Returned as written, so ``jm apply``'s replay can carry them
+    into the scratch manifest it rebuilds (`_apply._object_kwargs`) and every
+    render there -- a method's, the module ``.pyi``'s -- reads the same
+    answer the real manifest gives.
+
+    Examples
+    --------
+    >>> declared_reset_impl({"d": {"reset_impl": "state->i = 0;"}}, "d")
+    {'reset_impl': 'state->i = 0;'}
+    >>> declared_reset_impl({"d": {}}, "d")
+    {}
+    """
+    section = cfg.get(component) or {}
+    return {k: section[k] for k in RESET_IMPL_KEYS if section.get(k)}
+
+
+def manifest_reset_is_authors(
+    cfg: dict, component: str, init_params: "list | None" = None
+) -> bool:
+    """:func:`reset_is_authors` for *component*, read from the manifest.
+
+    *init_params* overrides the component's own -- a view (gh-504) is built
+    by its own constructor over its parent's ``reset()``.
+
+    Examples
+    --------
+    >>> manifest_reset_is_authors({"d": {"reset_impl_file": "x.c::f"}}, "d")
+    True
+    >>> manifest_reset_is_authors({"d": {}}, "d")
+    False
+    """
+    return reset_is_authors(
+        reset_impl=bool(declared_reset_impl(cfg, component)),
+        init_params=(
+            C.init_params(cfg, component)
+            if init_params is None
+            else init_params
+        ),
+        no_reset=C.is_no_reset(cfg, component),
+    )
+
+
+def _reset_call_test_c(csym: str) -> str:
+    """The C ``reset`` test that only calls it -- no claim about the result.
+
+    Shared by the no-state object (whose fields are hand-written) and by any
+    object whose ``reset()`` is the author's (gh-1882), so the two cannot
+    grow different spellings of "call it and assert nothing".
+
+    Examples
+    --------
+    >>> print(_reset_call_test_c("dl"))
+        /* reset */
+        dl_reset(obj);
+    """
+    return f"    /* reset */\n    {csym}_reset(obj);"
 
 
 # gh-542: every slot that carries part of the reset() surface — the C
@@ -2707,6 +2762,7 @@ def make_state_ctx(
     *,
     csym: str,
     str_hints: "dict[str, str] | None" = None,
+    reset_impl: bool = False,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -2751,8 +2807,20 @@ def make_state_ctx(
     call it.  For an object with nothing coherent to reset, a generated
     no-op would report success for work that never happened; removing the
     method makes the absence explicit instead.
+
+    reset_impl says the object's reset() body is the author's (a
+    ``reset_impl`` / ``reset_impl_file`` key, or ``--impl reset::...``).
+    With *init_params* and *no_reset* it is an input to
+    :func:`reset_is_authors` (gh-1882): when that holds, the generated C and
+    Python reset tests only call reset() rather than assert the declared
+    defaults it may deliberately not restore.
     """
     _create = CSYM.create_name(csym, create_fn)
+    # gh-1882: one answer for both reset tests below and every docstring
+    # that demonstrates reset().
+    _authors_reset = reset_is_authors(
+        reset_impl=reset_impl, init_params=init_params, no_reset=no_reset
+    )
     # gh-676/gh-644: one lookup, both faces, both branches below.
     _reset_rt, _reset_pyi = _reset_docs(component, doc_blocks, csym=csym)
     if no_state:
@@ -2799,7 +2867,6 @@ def make_state_ctx(
             "pyi_any_typing": "",
             "pyi_object_imports": "",
             "pyi_param_docs": "    (none)",
-            "pyi_examples": "",
             "getter_setter_stubs_pyi": "",
             "py_create_args": "",
             "getter_setter_test_py": (
@@ -2823,7 +2890,7 @@ def make_state_ctx(
             "bench_create_stmt": (f"    {csym}_state_t *obj = {_create}();"),
             "bench_destroy_stmt": f"    {csym}_destroy(obj);",
             "getter_setter_test_c": "",
-            "reset_test_c": (f"    /* reset */\n    {csym}_reset(obj);"),
+            "reset_test_c": _reset_call_test_c(csym),
             "array_args_parse_block": "",
             "array_args_decref": "",
             "create_line": (f"    self->handle = {_create}();\n"),
@@ -2913,11 +2980,16 @@ def make_state_ctx(
 
     if roles is None:
         roles = {}
-    for name, ct, _ in state_vars:
+    for name, ct, dflt in state_vars:
         # gh-1514: one answer for the CLI flag and the manifest entry.
         why = T.state_type_error(name, ct)
         if why is not None:
             raise ValueError(why)
+        # gh-1946: and one for a default Python has no spelling of, named
+        # here rather than at the first Python face that renders it.
+        why = T.literal_default_error(ct, dflt)
+        if why:
+            raise Refusal(f"state field '{name}': {why}")
 
     scalar_vars = [
         (n, ct, dflt) for n, ct, dflt in state_vars if ct in _CTYPE_META
@@ -3431,29 +3503,6 @@ def make_state_ctx(
         ]
     )
 
-    # ── PYI Examples ────────────────────────────────────────────────────
-    # gh-273: a required init-param with no default has no valid construction
-    # seed, so suppress the doctest rather than emit one a validating ctor
-    # rejects under `pytest --doctest-glob='*.pyi'`.
-    # gh-515: likewise when any argument rendered as the `...` sentinel — a
-    # non-required param with no default is equally unseedable, and `Rdr(...)`
-    # would hand the ctor an Ellipsis and raise. Same guard `_stubs.py` applies
-    # to its own construction example.
-    pyi_examples = (
-        _pyi_examples_block(
-            ctor_scalars,
-            bool(py_arr_args),
-            "from <<package>> import <<Component>>",
-            py_create_args,
-            Component,
-            no_reset=no_reset,
-        )
-        if ctor_scalars
-        and not _unseedable_required(init_params)
-        and "..." not in py_create_args
-        else ""
-    )
-
     # ── PYTEST: getter_setter_test_py ────────────────────────────────────
 
     gs_lines = [f"        obj = {Component}({py_create_args})"]
@@ -3469,9 +3518,9 @@ def make_state_ctx(
     # there.
     #
     # The round-trip is kept either way. It is what an accessor test is for;
-    # the initial value is `test_create`'s business, and "reset restores the
-    # declared defaults" is still asserted by `test_reset`, where the code
-    # under test really is jm's.
+    # the initial value is `test_create`'s business. gh-1882 applied the same
+    # reasoning to `test_reset`: reset() returns to the post-create state, so
+    # under init_params its declared-default assertions were this guess too.
     _assert_initial = not init_params
     for name, ct, dflt in scalar_vars:
         meta = _CTYPE_META[ct]
@@ -3522,38 +3571,50 @@ def make_state_ctx(
     # ── PYTEST: reset_test_py ────────────────────────────────────────────
 
     rs_lines = [f"        obj = {Component}({py_create_args})"]
-    # gh-1488: what "the declared default" is, for a field declared with a
-    # header constant, is only knowable at runtime -- so read it off the fresh
-    # object before the setters below overwrite it. Omitted from the call, the
-    # constant is what the constructor used, so this is the constant.
-    _c_only = [
-        name for name, ct, dflt in scalar_vars if T.is_c_only_default(ct, dflt)
-    ]
-    for name in _c_only:
-        rs_lines.append(f"        _{name}0 = obj.get_{name}()")
-    for name, ct, _ in scalar_vars:
-        rs_lines.append(
-            f"        obj.set_{name}({_py_sample_val(_CTYPE_META[ct], ct)})"
-        )
-    for name, elem_ct, size in array_info:
-        np_dtype = _CTYPE_META[elem_ct]["py_type"].replace("np.", "")
-        rs_lines.append(
-            f"        obj.set_{name}(np.ones({size}, dtype=np.{np_dtype}))"
-        )
-    rs_lines.append("        obj.reset()")
-    for name, ct, dflt in scalar_vars:
-        meta = _CTYPE_META[ct]
-        iv = f"_{name}0" if name in _c_only else _py_default(ct, dflt)
-        if meta["kind"] in _ROUNDING_KINDS:
+    if _authors_reset:
+        # gh-1882: an author's reset() may keep a field on purpose -- a delay
+        # line keeps its `length` -- so asserting the declared defaults is a
+        # guess, and a scaffold that fails its own tests. Prove it runs. The
+        # construction line stays first: gh-1105 re-stamps it below.
+        rs_lines.append("        obj.reset()")
+    else:
+        # gh-1488: what "the declared default" is, for a field declared with
+        # a header constant, is only knowable at runtime -- so read it off
+        # the fresh object before the setters below overwrite it. Omitted
+        # from the call, the constant is what the constructor used, so this
+        # is the constant.
+        _c_only = [
+            name
+            for name, ct, dflt in scalar_vars
+            if T.is_c_only_default(ct, dflt)
+        ]
+        for name in _c_only:
+            rs_lines.append(f"        _{name}0 = obj.get_{name}()")
+        for name, ct, _ in scalar_vars:
             rs_lines.append(
-                f"        assert obj.get_{name}() == _approx({iv})"
+                f"        obj.set_{name}({_py_sample_val(_CTYPE_META[ct], ct)})"
             )
-        else:
+        for name, elem_ct, size in array_info:
+            np_dtype = _CTYPE_META[elem_ct]["py_type"].replace("np.", "")
             rs_lines.append(
-                f"        assert {_py_eq(f'obj.get_{name}()', iv)}"
+                f"        obj.set_{name}(np.ones({size}, dtype=np.{np_dtype}))"
             )
-    for name, elem_ct, _ in array_info:
-        rs_lines.append(f"        assert obj.get_{name}()[0] == _approx(0)")
+        rs_lines.append("        obj.reset()")
+        for name, ct, dflt in scalar_vars:
+            meta = _CTYPE_META[ct]
+            iv = f"_{name}0" if name in _c_only else _py_default(ct, dflt)
+            if meta["kind"] in _ROUNDING_KINDS:
+                rs_lines.append(
+                    f"        assert obj.get_{name}() == _approx({iv})"
+                )
+            else:
+                rs_lines.append(
+                    f"        assert {_py_eq(f'obj.get_{name}()', iv)}"
+                )
+        for name, elem_ct, _ in array_info:
+            rs_lines.append(
+                f"        assert obj.get_{name}()[0] == _approx(0)"
+            )
     reset_test_py = "\n".join(rs_lines)
 
     # ── CTEST: getter_setter_test_c ──────────────────────────────────────
@@ -3623,7 +3684,11 @@ def make_state_ctx(
             f"        CHECK(buf[0] == {zero});",
             "    }",
         ]
-    reset_test_c = "\n".join(rst_lines)
+    # gh-1882: the C face of `reset_test_py`'s rule, and the same call-only
+    # test a no-state object gets -- the author's body decides what holds.
+    reset_test_c = (
+        _reset_call_test_c(csym) if _authors_reset else "\n".join(rst_lines)
+    )
 
     result: dict[str, str] = {
         "state_struct_decl": _state_struct_decl(
@@ -3671,7 +3736,6 @@ def make_state_ctx(
         "pyi_any_typing": "",
         "pyi_object_imports": "",
         "pyi_param_docs": pyi_param_docs,
-        "pyi_examples": pyi_examples,
         "getter_setter_stubs_pyi": getter_setter_stubs_pyi,
         "py_create_args": py_create_args,
         "getter_setter_test_py": getter_setter_test_py,

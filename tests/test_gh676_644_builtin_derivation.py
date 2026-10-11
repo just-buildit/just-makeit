@@ -191,12 +191,16 @@ class TestBindAgreesWithApply:
 
     def test_bind_round_trip_is_byte_identical(self, tmp_path):
         from just_makeit._bind import run as bind_run
+        from test_bind import undeclare
 
         root = _scaffold(tmp_path, module=False)
         _author(root)
         apply_run(root)
         ext = root / "native" / "src" / "widget" / "widget_ext.c"
         original = ext.read_text(encoding="utf-8")
+        # bind refuses a declared component (gh-2072): undeclared, this is
+        # the hand-written header bind is for.
+        undeclare(root, "widget")
         ext.unlink()
         bind_run(root, "widget")
         assert ext.read_text(encoding="utf-8") == original

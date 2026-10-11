@@ -42,6 +42,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import JmRun, run_cli
 
@@ -217,9 +218,7 @@ def test_a_standalone_object_is_unaffected(tmp_path):
     assert _cli("status", "--check", cwd=proj).returncode == 0
 
 
-_HAS_TOOLCHAIN = shutil.which("cmake") and any(
-    shutil.which(c) for c in ("cc", "gcc", "clang")
-)
+_HAS_TOOLCHAIN = shutil.which("cmake") and default_cc() is not None
 
 
 @pytest.mark.skipif(not _HAS_TOOLCHAIN, reason="no C toolchain")

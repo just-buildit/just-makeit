@@ -24,14 +24,10 @@ from . import _config as C
 from . import _csym as CSYM
 from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
-from . import _render as R
-from . import _stubs as S
 from . import _incpath as INC
-from ._init import (
-    _to_title,
-    standalone_extra_include,
-)
+from ._init import _to_title
 from ._object import _regenerate_module
+from ._report import Refusal
 
 
 _STUB_MARKER = "/* TODO: implement"
@@ -164,18 +160,23 @@ def _object_paths(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> list[Path]:
     """Return every generated path that belongs to object *obj*."""
+    from . import _invariants
+
     paths = [
         INC.path(root, obj),
         root / "native" / "src" / obj,
         root / "native" / "tests" / f"test_{obj}_core.c",
         root / "native" / "tests" / f"test_{obj}_symbols.c",  # gh-1361
         root / "native" / "benchmarks" / f"bench_{obj}_core.c",
+        # gh-1978: jm's element contract (gh-1404). Left behind, it imported
+        # the removed class, and the project's Python tests failed to
+        # collect on a tree `status --check` called clean.
+        _invariants.file_for(root, cfg, obj, module or ""),
     ]
     if module:
         # gh-523: the module's Python artifacts may live in a `package`
         # override rather than a directory named after the module.
-        mp = C.module_paths(module)
-        sub = root / "src" / pkg / (C.module_package(cfg, module) or mp.pypath)
+        sub = root / "src" / pkg / C.module_package_resolved(cfg, module)
         paths += [
             sub / "tests" / f"test_{obj}.py",
             sub / "benchmarks" / f"bench_{obj}.py",
@@ -309,6 +310,7 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
         sys.exit(1)
+    _refuse_what_an_app_names(cfg, f"object '{obj}'", objects={obj})
     module = C.component_module(cfg, obj)
 
     core_h = INC.core_h(root, obj)
@@ -377,8 +379,7 @@ def _prune_parent_packages(
     # Every directory prefix occupied by a surviving module.
     needed: set[str] = set()
     for other in C.modules(cfg):
-        other_mp = C.module_paths(other)
-        segs = (C.module_package(cfg, other) or other_mp.pypath).split("/")
+        segs = C.module_package_resolved(cfg, other).split("/")
         for d in range(1, len(segs) + 1):
             needed.add("/".join(segs[:d]))
     for depth in range(len(mp.parents), 0, -1):
@@ -405,6 +406,14 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
         sys.exit(1)
 
     objects = C.module_objects(cfg, module)
+    _refuse_what_an_app_names(
+        cfg,
+        f"module '{module}'",
+        objects=set(objects),
+        functions={
+            (module, f["name"]) for f in C.module_functions(cfg, module)
+        },
+    )
     detail = f" and its objects ({', '.join(objects)})" if objects else ""
 
     def _obj_implemented(obj: str) -> bool:
@@ -465,6 +474,87 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     print(f"Done!  Module '{module}' removed.")
 
 
+def _refuse_what_an_app_names(
+    cfg: dict,
+    what: str,
+    objects: "set[str] | frozenset[str]" = frozenset(),
+    functions: "set[tuple[str, str]] | frozenset[tuple[str, str]]" = (
+        frozenset()
+    ),
+) -> None:
+    """Refuse to remove a component that an ``[[app]]`` row names (gh-2075).
+
+    *objects* are the objects the removal takes out, and *functions* the
+    ``(module, function)`` pairs. An app is author-facing code, so removing
+    its source does not silently delete it -- and leaving its row naming
+    nothing left a manifest `status` and `apply` both refused, which no
+    command could reconcile. The route is the app's own removal, named per
+    app, and the tree is untouched: this runs before anything is written.
+    """
+    naming = [
+        e["name"]
+        for e in C.apps(cfg)
+        if (
+            (e.get("module") or "", e["function"]) in functions
+            if e.get("function") is not None
+            else e.get("object") in objects
+        )
+    ]
+    if not naming:
+        return
+    many = len(naming) > 1
+    them = "them" if many else "it"
+    raise Refusal(
+        f"the app{'s' if many else ''} "
+        + ", ".join(f"'{n}'" for n in naming)
+        + f" {'are' if many else 'is'} built from {what}; removing it would"
+        f" leave {them} naming nothing. Remove {them} first: "
+        + ", ".join(f"`jm remove app {n}`" for n in naming)
+        + "."
+    )
+
+
+def _remove_app(root: Path, cfg: dict, name: str, force: bool) -> None:
+    """Remove the ``[[app]]`` row *name* and its files (gh-2074, gh-2075).
+
+    The app's file goes unless the author edited it -- its bytes are not
+    what jm renders for the row -- and then it stays, with a note, as
+    `remove method` leaves an authored body in ``_core.c``. Its wiring goes
+    either way: a C app's lines in the root CMakeLists App block, a console
+    app's ``[project.scripts]`` entry.
+    """
+    from . import _app
+
+    entry = next((e for e in C.apps(cfg) if e["name"] == name), None)
+    if entry is None:
+        declared = [e["name"] for e in C.apps(cfg)]
+        print(
+            f"error: app '{name}' not found."
+            + (f" Declared: {declared}" if declared else " None declared."),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not _confirm(
+        f"Remove the {entry.get('target')} app '{name}' and its files?", force
+    ):
+        print("Aborted.")
+        return
+
+    print(f"just-makeit: removing app '{name}'")
+    print()
+    kept = _app.remove(root, cfg, entry)
+    C.drop_app(cfg, name)
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+    print()
+    note = "".join(
+        f"\n  note: {p.relative_to(root).as_posix()} holds your edits, so it"
+        " remains — delete it by hand."
+        for p in kept
+    )
+    print(f"Done!  App '{name}' removed.{note}")
+
+
 def _drop_named_entry(entries: list[dict], name: str) -> bool:
     """Remove the first entry whose 'name' matches; return True if found."""
     for i, entry in enumerate(entries):
@@ -502,6 +592,16 @@ def _remove_state(
         )
         sys.exit(1)
 
+    # gh-2087: the rebuild below deletes the object's files, and `apply`
+    # writes nothing of a `no_generate` module back; refused before the
+    # manifest is touched. (Imported lazily -- _regenerate imports helpers
+    # from this module.)
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written(
+        cfg, obj, f"remove state field '{name}' from '{obj}'"
+    )
+
     core_h = INC.core_h(root, obj)
     core_c = root / "native" / "src" / obj / f"{obj}_core.c"
     _warn_if_state_ref(core_h, core_c, name)
@@ -525,12 +625,9 @@ def _remove_state(
     print()
     # Removing a field is structural (struct + create/reset change): rebuild
     # from the manifest rather than splicing.  The remove was already
-    # confirmed above, so skip the regenerate prompt.  (Imported lazily —
-    # _regenerate imports helpers from this module.) discard=True: the old
+    # confirmed above, so skip the regenerate prompt.  discard=True: the old
     # body's signature predates the removed field — see _add.py's identical
     # reasoning for the opposite (add) direction.
-    from . import _regenerate
-
     _regenerate.run(root, obj, force=True, discard=True)
     print()
     print(f"Done!  State field '{name}' removed.")
@@ -558,6 +655,10 @@ def _remove_method(
 
     print(f"just-makeit: removing method '{name}' from '{obj}'")
     print()
+    # The C function the method bound, read before the entry goes.
+    sym = C.method_c_symbol(
+        csym, next(m for m in methods if m.get("name") == name)
+    )
     _drop_named_entry(methods, name)
     if not methods:
         cfg[obj].pop("methods", None)
@@ -569,6 +670,29 @@ def _remove_method(
     print(
         f"Done!  Method '{name}' removed."
         f"\n  note: {csym}_{name}() remains in {obj}_core.c — delete it by hand."
+        + _bench_still_calls(root, obj, sym)
+    )
+
+
+def _bench_still_calls(root: Path, obj: str, sym: str) -> str:
+    """A note line when *obj*'s C benchmark still calls *sym*, else ``""``.
+
+    The benchmark is the author's (gh-1987), so the remove leaves it alone
+    -- and one that times the removed method stops linking the moment the
+    author deletes the body as the note above tells them to. Said here,
+    where it is actionable, rather than left for the linker. Read through
+    `_csym.references`, the one "does this C refer to that name" reader, so
+    a comment or string naming the function is not a call.
+    """
+    bench = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
+    if not bench.is_file():
+        return ""
+    if not CSYM.references(bench.read_text(encoding="utf-8"), {sym}):
+        return ""
+    rel = bench.relative_to(root).as_posix()
+    return (
+        f"\n  note: {rel} still calls {sym}() — it is yours, so jm left "
+        "it as it is; update it before deleting the body."
     )
 
 
@@ -750,6 +874,9 @@ def _remove_function(
             file=sys.stderr,
         )
         sys.exit(1)
+    _refuse_what_an_app_names(
+        cfg, f"function '{name}'", functions={(module, name)}
+    )
     if not _confirm(
         f"Remove function '{name}' from module '{module}'?", force
     ):
@@ -813,10 +940,11 @@ def _remove_function_core_harness(
     act, and a harness for code that no longer exists has nothing left to
     hold.
 
-    Kept when an object of the module shares the module's name: that
-    object's core is ``<cname>_core`` too, and these are its files.
+    Kept when the module has a collocated object, the one named for its
+    cname (:func:`_config.collocated_object`): that object's core is
+    ``<cname>_core`` too, and these are its files.
     """
-    if cname in C.module_objects(cfg, module):
+    if C.collocated_object(cfg, module):
         return
     for path in (
         root / "native" / "tests" / f"test_{cname}_core.c",
@@ -826,35 +954,17 @@ def _remove_function_core_harness(
         _rm(path)
 
 
-def _object_ctx(
-    cfg: dict, obj: str, pkg: str, module: str | None, root=None
-) -> dict:
-    """Build the full render ctx for regenerating object *obj* (gh-486).
-
-    Delegates to the one assembly chain. This used to be an inline copy of it,
-    which drifted exactly as gh-446 predicted: it never learned to rebuild
-    ``pyi_examples`` with the real package name, so every ``jm remove``
-    regenerated the stub's doctest as
-    ``>>> from <<package>> import <<Component>>``.
-
-    Two keys the old copy carried are deliberately not reproduced:
-
-    - ``mutable=`` on ``make_step_ctx`` was dead. It changes exactly one slot,
-      ``step_impl_def``, which only ``COMPONENT_CORE_H`` consumes — and
-      ``_core.h`` is sacred, never re-rendered here (this function renders
-      ``_ext.c`` / ``.pyi`` / the benchmark). Passing it changed no output.
-    - the ``module``/``Module`` keys were unreachable: the only caller returns
-      early for a module object, delegating to ``_regenerate_module``, so
-      `module` is always None by the time this runs.
-    """
-    return _glue.component_ctx(cfg, obj, pkg, root)
-
-
 def _regenerate_object_bindings(
     root: Path, cfg: dict, obj: str, pkg: str, removed: str = ""
 ) -> None:
-    """Regenerate the glue (ext.c / .pyi / bench) after a method or property
-    entry was dropped from the TOML.
+    """Regenerate the glue after a member entry was dropped from the TOML.
+
+    The binding and the stub, and the two files jm derives from them: the
+    gh-1361 link-check table and the gh-1404 element contract. Each through
+    the call that writes it on the way in, so a remove leaves exactly the
+    tree an add of the remaining members would (gh-1978).
+
+    The C benchmark is not among them: it is the author's (gh-1987).
 
     The orphaned `_core.c` body and its `_core.h` declaration are left in
     place for the user to delete — they are sacred, so removal never splices
@@ -868,8 +978,16 @@ def _regenerate_object_bindings(
     would take the method out of the manifest and the `.pyi` and leave the
     binding callable forever."""
     module = C.component_module(cfg, obj)
+    # gh-1978: both branches rewrite the element contract (gh-1404) too.
+    # Removing a pair's writer or reader ends it, and the writer then
+    # deletes the file -- left alone, it went on asserting a member the
+    # binding no longer has until the next `apply`. It was written here,
+    # after both; gh-1984 moved it into the two re-renders below, because
+    # the module one is also how `jm method` adds a member, and it never
+    # wrote the contract on the way in.
     if module:
-        # The module's shared ext.c / CMakeLists / __init__ / .pyi.
+        # The module's shared ext.c / CMakeLists / __init__ / .pyi, and each
+        # member's link-check table and element contract.
         _regenerate_module(
             root,
             cfg,
@@ -877,40 +995,19 @@ def _regenerate_object_bindings(
             pkg,
             frozenset([removed]) if removed else frozenset(),
         )
-        return
-
-    # Seed the header's create() Doxygen so the shared chain keeps a
-    # hand-written class @brief/@param through the regen instead of reverting to
-    # the generic stub (same reasoning as _glue.regenerate_standalone).
-    from ._object import _load_doc_blocks
-
-    cfg.setdefault(obj, {})["_doc_blocks"] = _load_doc_blocks(root, obj, cfg)
-    ctx = _object_ctx(cfg, obj, pkg, module, root)
-    # gh-543: keep a hand-written extra wired through a removal.
-    ctx["extra_include"] = standalone_extra_include(root, obj)
-    ext_c = root / "native" / "src" / obj / f"{obj}_ext.c"
-    if ext_c.exists():
-        _textio.write_text(ext_c, R.render(R.COMPONENT_EXT_C, ctx))
-        print(f"  update  {ext_c}")
-    pyi = root / "src" / pkg / f"{obj}.pyi"
-    if pyi.exists():
-        old_pyi = pyi.read_text(encoding="utf-8")
-        new_pyi = R.render_component_pyi(ctx)
-        # gh-428: preserve a sibling manual_stub method's hand-written text
-        # across the regen triggered by removing a different method/property.
-        _textio.write_text(
-            pyi, S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi)
-        )
-        print(f"  update  {pyi}")
-    bench_c = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
-    if bench_c.exists():
-        tmpl = (
-            R.NO_STEP_BENCH_C
-            if C.is_no_step(cfg, obj)
-            else R.COMPONENT_BENCH_C
-        )
-        _textio.write_text(bench_c, R.render(tmpl, ctx))
-        print(f"  update  {bench_c}")
+    else:
+        # gh-1978: through the ONE standalone re-render the adders use (`jm
+        # property`, `jm warning` and `jm error` reach it via
+        # `_glue.regenerate`), which writes the binding, the stub, the
+        # gh-1361 link-check table and the element contract. This was a
+        # copy of it that wrote the binding and the stub only, so the
+        # removed member's symbol stayed in `test_<obj>_symbols.c`.
+        # gh-1987: and NOT the C benchmark. `bench_<obj>_core.c` is the
+        # author's (`_createonly`), which `apply`, the module branch above
+        # and every adding verb already honour; this re-rendered it
+        # wholesale, discarding their edits. A bench still calling a removed
+        # method is theirs to update, which `_bench_still_calls` tells them.
+        _glue.regenerate_standalone(root, cfg, obj, pkg)
 
 
 def run(
@@ -983,6 +1080,8 @@ def run(
             )
             sys.exit(1)
         _remove_function(root, cfg, module, name, force)
+    elif kind == "app":
+        _remove_app(root, cfg, name, force)
     else:
         print(f"error: cannot remove '{kind}'.", file=sys.stderr)
         sys.exit(1)

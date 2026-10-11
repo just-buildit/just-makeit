@@ -78,14 +78,32 @@ def _slots(n: int) -> tuple:
     :func:`_maximal_object_param`.
     """
     # Slot 1 is an ARRAY type (gh-1756): `load` refuses a `str_hint` on a
-    # scalar, and the maximal param carries one.
+    # scalar, and the maximal param carries one. gh-2004: `load` likewise
+    # refuses a `rank` / `elements_per_sample` that is not an integer of at
+    # least 1, so those two slots hold one.
     return tuple(
-        "" if i == 15 else "v1[]" if i == 1 else f"v{i}" for i in range(n)
+        ""
+        if i == 15
+        else "v1[]"
+        if i == 1
+        else _INT_SLOTS[i]
+        if i in _INT_SLOTS
+        else f"v{i}"
+        for i in range(n)
     )
 
 
+#: gh-2004: the authored slots whose key `load` requires to be an integer.
+#: Found by key, so the probe still derives every slot it fills.
+_INT_SLOTS = {
+    i: 1
+    for i, (key, _is_bool) in enumerate(K.INIT_PARAM_FIELDS)
+    if key in ("rank", "elements_per_sample")
+}
+
+
 #: Consecutive slots adding no key before the probe decides the tuple ended.
-#: Longer than the widest run of non-persisted slots (17-18 here).
+#: Longer than the widest run of non-persisted slots (19-20 here).
 _QUIET_SLOTS = 4
 
 
@@ -411,13 +429,16 @@ class TestTheTwoSyntaxesAgree:
     """The drift itself, asserted directly."""
 
     def test_they_write_the_same_key_set(self):
+        """gh-2045 made them one writer; what both read back is asserted,
+        so the table and the inline spelling cannot drift again."""
         param = _maximal_param()
-        block = {
-            line.split(" = ", 1)[0]
-            for line in C._init_param_block_lines(param)
+        cfg = {
+            "obj": {
+                "init_params": [param],
+                "views": [{"class_name": "V", "init_params": [param]}],
+            }
         }
-        inline = {
-            piece.split(" = ", 1)[0]
-            for piece in C._init_param_inline(param).strip("{}").split(", ")
-        }
+        back = C.tomllib.loads(C._dump(cfg))["obj"]
+        block = set(back["init_params"][0])
+        inline = set(back["views"][0]["init_params"][0])
         assert block == inline == set(param)

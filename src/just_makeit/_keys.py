@@ -1,9 +1,10 @@
 """Recognise the keys a manifest table may carry, and say so when it does not.
 
-jm tolerates an unknown scalar key on a manifest table by design: gh-257 makes
-:func:`_config._dump` round-trip any key it does not itself emit, so a
-hand-authored manifest survives ``save()`` -> ``load()`` instead of being
-silently rewritten. That tolerance is deliberate and stays.
+jm tolerates an unknown key on a manifest table by design: gh-257 made
+:func:`_config._dump` round-trip a key it did not itself emit, and gh-2045
+made it write every key a table holds, so a hand-authored manifest survives
+``save()`` -> ``load()`` instead of being silently rewritten. That tolerance
+is deliberate and stays.
 
 What was missing is that the tolerance was also **silent**. A key that belongs
 to a different kind of table — ``check_return``, which ``jm function`` reads
@@ -20,8 +21,8 @@ turning that into an error would break every manifest already relying on it.
 Scope
 -----
 Only the tables whose key sets can be stated with confidence are checked:
-objects, their methods/properties/state/init-params, and module-level
-functions. Handle, composer and capsule modules (``kind = "handle"`` and
+objects, their methods/properties/state/init-params/array-args, and
+module-level functions. Handle, composer and capsule modules (``kind = "handle"`` and
 friends in :mod:`._handle`) carry their own method vocabulary — ``returns``,
 ``out_len_fn``, ``caller_out`` — and are **skipped** rather than guessed at.
 A false warning on a valid key is worse than the silence this replaces: it
@@ -110,6 +111,10 @@ OBJECT_KEYS = frozenset(
         "views",
         "warnings",
         "destroy",
+        # gh-1997: `[[<obj>.extra_methods]]` -- a row for a method whose C
+        # the author writes in the object's `_extra.c`; gh-1190's composer
+        # key, for an ordinary object.
+        "extra_methods",
     }
 )
 
@@ -121,6 +126,20 @@ INIT_GROUP_KEYS = frozenset({"group", "prefix"})
 
 #: Keys valid on a top-level ``[[group]]`` table (gh-999).
 GROUP_KEYS = frozenset({"name", "fields"})
+
+#: Keys valid on a ``[[<component>.array_args]]`` row (gh-2008): a
+#: ``--array-arg name:dtype`` constructor array. Exactly the keys
+#: :func:`_config.array_args` reads -- the name, and the element type spelled
+#: ``type`` or ``dtype`` -- and ``tests/test_gh2008_array_args_keys.py``
+#: holds the two equal in both directions.
+#:
+#: Closed on purpose. A row is the older spelling of a constructor array, and
+#: every key a constructor array has grown since -- gh-2004's ``rank`` /
+#: ``elements_per_sample``, gh-1756's ``str_hint`` -- is read on an
+#: ``[[<component>.init_params]]`` row instead, which is where :data:`HINTS`
+#: sends an author who writes a shape key here. Before this the rows were
+#: walked by nothing, so such a key was accepted, kept, and did nothing.
+ARRAY_ARG_KEYS = frozenset({"name", "type", "dtype"})
 
 
 #: Keys valid on a ``[[<component>.state]]`` entry. ``opaque`` (struct field
@@ -145,7 +164,8 @@ STATE_KEYS = frozenset(
 )
 
 #: Every key valid on an init-param, **in the order `_dump` writes them**,
-#: paired with whether the value is a bare TOML boolean.
+#: paired with whether the value is a TOML boolean. The writer reads the
+#: order; the type it writes is the value's own (gh-2045).
 #:
 #: Mirrors the fields :func:`_config.init_param_tuple_to_dict` persists and
 #: :func:`_config._project_init_params` reads back — the pair that defines the
@@ -204,17 +224,35 @@ INIT_PARAM_FIELDS: tuple[tuple[str, bool], ...] = (
     # appended to that refusal, naming what to pass instead
     # (`_coerce.str_hint`).
     ("str_hint", False),
+    # gh-2004: gh-805 §C's two array-shape keys, on a constructor array as
+    # on a method's. `rank` is the opt-in `PyArray_NDIM` guard -- without
+    # it a 2-D array handed to a 1-D `create()` contract flattens through
+    # `PyArray_SIZE` -- and `elements_per_sample` divides the `<name>_len`
+    # passed to `create()` into the samples the C counts. Each is read by
+    # one reader (`_coerce.array_rank`, `_coerce.elements_per_sample`), and
+    # `_coerce.shape_key_errors` refuses one no array path could honour.
+    ("rank", False),
+    ("elements_per_sample", False),
 )
 
 #: The same set, unordered, for key validation. Derived so it cannot disagree.
 INIT_PARAM_KEYS = frozenset(key for key, _is_bool in INIT_PARAM_FIELDS)
 
+#: gh-805 §C's array-shape keys, in the order a refusal names them -- valid
+#: on a method's, a module function's and (gh-2004) an init-param's array.
+#: Their values are integers, which `_config._dump` writes as integers
+#: (gh-2004, gh-2045), the init-param tuple carries them at their
+#: `INIT_PARAM_FIELDS` index (`_coerce._INIT_PARAM_SLOT`), and
+#: `_coerce.shape_key_errors` refuses one nothing would read.
+SHAPE_KEYS = ("rank", "elements_per_sample")
+
 #: Keys valid on a ``[[<component>.methods]]`` entry.
 #:
-#: The union of what the three manifest writers handle: ``_dump``'s explicit
-#: block (``_config._KNOWN_METHOD_KEYS``), the keys ``_apply._replay_method``
-#: forwards into ``_method.run``, and the flags ``_script`` re-emits. That is
-#: the consumer contract — a key outside it reaches no writer and no renderer.
+#: The union of what the manifest's consumers handle: the keys
+#: ``_apply._replay_method`` forwards into ``_method.run`` (held to this set
+#: by ``tests/test_gh663_apply_threads_method_keys.py``), and the flags
+#: ``_script`` re-emits. That is the consumer contract — a key outside it
+#: reaches no renderer. (``_config._dump`` writes every key, gh-2045.)
 METHOD_KEYS = frozenset(
     {
         "name",
@@ -238,6 +276,8 @@ METHOD_KEYS = frozenset(
         # result shape
         "variable_output",
         "multi_output",
+        # gh-2115: a variable_output result that is a matrix, not a vector.
+        "out_cols",
         "out_type",
         "out_divisor",
         "max_out",
@@ -282,6 +322,11 @@ METHOD_KEYS = frozenset(
         # REFUSAL rather than an empty answer -- the sibling of
         # `none_on_empty`, which reads the same zero the opposite way.
         "error_on_empty",
+        # gh-2012: a variable_output kernel's refusal VALUE, for one whose
+        # zero is a real answer: `error_negative` over a signed
+        # `count_type`, or an unsigned count's `error_sentinel` (C).
+        "count_type",
+        "error_sentinel",
         "status_return",
         "error_negative",
         "error",
@@ -404,6 +449,11 @@ PROPERTY_KEYS = frozenset(
         "capsule_type",
         "default",
         "out",
+        # gh-2182: a writable property's setter may refuse a value -- the C
+        # setter returns int, and a non-zero return raises `error` with
+        # `error_message`, spelled as a method's pair.
+        "error",
+        "error_message",
     }
 )
 
@@ -567,6 +617,8 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
 }
 
 #: A handle method: `args` / `returns`, and the gh-565/gh-1111 status raise.
+#: `status_return` is the object face's key, meaning the same (gh-2186): it
+#: is how an array-argument method says its `int` is a status, not a count.
 HANDLE_METHOD_KEYS = frozenset(
     {
         "name",
@@ -576,6 +628,7 @@ HANDLE_METHOD_KEYS = frozenset(
         "args",
         "error",
         "error_message",
+        "status_return",
         "out_len_fn",
         "doc",
     }
@@ -694,12 +747,18 @@ KIND_TABLE_VOCAB = {
 }
 
 
-#: Keys on a `[[module.X.extra_methods]]` row (gh-1190). `fn` names the C
-#: function the project writes in `<cname>_ext_extra.c`; `type` says which of
-#: the composer's four types it attaches to, defaulting to the composer type.
-COMPOSER_EXTRA_METHOD_KEYS = frozenset(
-    {"name", "fn", "flags", "doc", "args", "returns", "type"}
+#: Keys on an object's `[[<obj>.extra_methods]]` row (gh-1997). `fn` names the
+#: C function the project writes in the object's `_extra.c`; the rest are
+#: its `PyMethodDef` flags and the stub's `args` / `returns` / `doc`.
+EXTRA_METHOD_KEYS = frozenset(
+    {"name", "fn", "flags", "doc", "args", "returns"}
 )
+
+#: Keys on a `[[module.X.extra_methods]]` row (gh-1190): an object's, plus
+#: `type`, which says which of the composer's four types the row attaches
+#: to, defaulting to the composer type. An object has one type, so `type`
+#: on its row is reported as a composer key rather than read.
+COMPOSER_EXTRA_METHOD_KEYS = EXTRA_METHOD_KEYS | {"type"}
 
 # ── composer sub-TABLES (gh-1236) ────────────────────────────────────────────
 #
@@ -713,8 +772,8 @@ COMPOSER_EXTRA_METHOD_KEYS = frozenset(
 # in silence and came out of the renderer as `KeyError: 'type'`, when `object`
 # is a real key one table over and the registry already knows how to say so.
 #
-# Derived from the WRITER (`_config._dump_composer_subtables` and its
-# `_inline_*` helpers) cross-checked against an AST sweep of every reader, not
+# Derived from the writer `_config._dump` had then (one emitter per composer
+# table) cross-checked against an AST sweep of every reader, not
 # from a grep for `f.get(` -- a set that is wrong in the narrow direction turns
 # working manifests red, which is why gh-1236 argued for measuring rather than
 # guessing.
@@ -746,9 +805,9 @@ COMPOSER_OWNED_PTR_FNS = ("copy_fn", "free_fn", "parse_fn", "format_fn")
 #: gh-1711: every key an owned-pointer source field adds to a composer field.
 #: `object` / `capsule` / `header` are the capsule triangle's own keys,
 #: meaning here what they mean on an init_param. The ONE list: the vocabulary
-#: below, the manifest writer (`_config._inline_field`) and the renderer
-#: (`_composer.owned_ptr`) all read it, so a key cannot be accepted and then
-#: dropped on the next save.
+#: below, the manifest writer's layout (`_config._KEY_ORDER`) and the
+#: renderer (`_composer.owned_ptr`) all read it. (Since gh-2045 the writer
+#: keeps every key whether or not a list names it.)
 COMPOSER_OWNED_PTR_KEYS = (
     ("object", "capsule", "header")
     + COMPOSER_OWNED_PTR_FNS
@@ -837,6 +896,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "state": STATE_KEYS,
     "init_param": INIT_PARAM_KEYS,
     "init_group": INIT_GROUP_KEYS,
+    "array_arg": ARRAY_ARG_KEYS,  # gh-2008
     "method": METHOD_KEYS,
     "param": PARAM_KEYS,
     "property": PROPERTY_KEYS,
@@ -844,6 +904,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "record field": RECORD_FIELD_KEYS,
     "function": FUNCTION_KEYS,
     "function param": FUNCTION_PARAM_KEYS,
+    "extra_method": EXTRA_METHOD_KEYS,  # gh-1997
     # gh-1114: the `kind`-bearing module faces. Registered here so `_check`
     # and `Unknown.valid_for` treat them exactly like every other table --
     # a key written on the wrong face is then named as belonging to the
@@ -907,13 +968,12 @@ KIND_NESTED_VOCAB = {
 
 
 #: ``[module.X] kind`` -> the keys that face accepts, derived from
-#: :data:`KIND_KEYS` rather than restated. gh-1229: `_config._dump` reads it to
-#: write back every accepted key it has no hand-written branch for, so the
-#: validator's answer and the writer's answer come from one declaration. A key
-#: added to a ``*_MODULE_KEYS`` set above is therefore preserved on the next
-#: save without touching the dumper -- which is the half that was missing when
-#: gh-794's `capsule` validated, wrote nothing, and took the handle's
-#: `_capsule` property with it on the following command.
+#: :data:`KIND_KEYS` rather than restated. gh-1229: `_config._dump` read it to
+#: write back every accepted key it had no hand-written branch for -- the half
+#: that was missing when gh-794's `capsule` validated, wrote nothing, and took
+#: the handle's `_capsule` property with it on the following command. Since
+#: gh-2045 the writer keeps every key a table holds, and reads this only to
+#: lay a kind's keys out in the order it always has.
 MODULE_KEYS_BY_KIND: dict[str, frozenset] = {
     name.split()[0]: keys
     for name, keys in KIND_KEYS.items()
@@ -950,16 +1010,25 @@ HINTS: dict[tuple[str, str], str] = {
     ("init_param", "create_error_message"): (
         "declare it on the `[<object>]` table, beside `create_error`"
     ),
+    # gh-2008: gh-2004 reads a constructor array's shape keys on an init
+    # param and nowhere else. An `array_args` row is the older spelling of
+    # the same array and does not grow them, so the advice is the table that
+    # honours the key, not a key this row lacks.
+    **{
+        ("array_arg", _k): (
+            "a constructor array's shape keys are read on an "
+            "`[[<object>.init_params]]` row (gh-2004), so declare the array "
+            'there, typed as a C array such as `"float[]"`'
+        )
+        for _k in SHAPE_KEYS
+    },
     # gh-1114. The confusions the two faces invite, each naming the spelling
-    # that works here. `status_return` is the one gh-1111 was reported with:
-    # written beside a working `error`, it read as if it did something.
-    ("handle method", "status_return"): (
-        'this face spells it `error = "<Exception>"` over an `int` '
-        "`returns` — a non-zero return then raises"
-    ),
+    # that works here. `status_return` was the one gh-1111 was reported with,
+    # until gh-2186 made it a handle method key with its object meaning.
     ("handle method", "error_negative"): (
-        "a handle method has one status shape: `error` over an `int` "
-        "`returns`, which treats any non-zero return as the failure"
+        "a handle method has one status shape: `error` or "
+        "`status_return = true` over an `int` `returns`, which treats any "
+        "non-zero return as the failure"
     ),
     ("handle method", "arg_type"): (
         "a handle method declares its arguments as `args = [{ name = ..., "
@@ -1249,6 +1318,13 @@ def unknown_keys(cfg: dict) -> list:
             found += _check(
                 "init_group", f"{name}.{entry.get('group', '?')}", entry
             )
+        # gh-2008: a constructor array declared the older way. Its reader
+        # takes two keys, so anything else on the row -- gh-2004's `rank`,
+        # a misspelt `dtype` -- was accepted and did nothing, in silence.
+        for entry in _entries(section, "array_args"):
+            found += _check(
+                "array_arg", f"{name}.{entry.get('name', '?')}", entry
+            )
         for entry in _entries(section, "properties"):
             found += _check(
                 "property", f"{name}.{entry.get('name', '?')}", entry
@@ -1268,6 +1344,12 @@ def unknown_keys(cfg: dict) -> list:
             found += _check("method", where, entry)
             for p in _entries(entry, "params") + _entries(entry, "extra_args"):
                 found += _check("param", f"{where}({p.get('name', '?')})", p)
+        # gh-1997: a typo on a hand-written method's row is the one that
+        # silently drops its flags or its stub's signature.
+        for entry in _entries(section, "extra_methods"):
+            found += _check(
+                "extra_method", f"{name}.{entry.get('name', '?')}", entry
+            )
     for mod, data in (cfg.get("module") or {}).items():
         if not isinstance(data, dict):
             continue

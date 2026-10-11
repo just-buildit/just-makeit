@@ -1,6 +1,7 @@
 """gh-1199: a module with `objects = []`, and the slot that reached cmake.
 
-`CMAKE_LISTS_MODULE` has two render sites with divergent contexts. The one
+`CMAKE_LISTS_MODULE` had two render sites with divergent contexts (one since
+gh-2070). The one
 `objects = []` takes supplied neither `extra_ext_sources` nor `module_comment`,
 so the written CMakeLists carried the literal template text:
 

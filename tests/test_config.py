@@ -322,8 +322,11 @@ class TestAddComponentFlags:
                 # every param that does not name another generated class: the
                 # declared reference, the class it resolves to, and the `.pyi`
                 # import line that makes the annotation resolvable. gh-1756's
-                # `str_hint` sits between the declared reference and the two
-                # it resolves to, which stay trailing.
+                # `str_hint` and gh-2004's `rank` / `elements_per_sample` sit
+                # between the declared reference and the two it resolves to,
+                # which stay trailing.
+                "",
+                "",
                 "",
                 "",
                 "",
@@ -349,8 +352,11 @@ class TestAddComponentFlags:
                 # every param that does not name another generated class: the
                 # declared reference, the class it resolves to, and the `.pyi`
                 # import line that makes the annotation resolvable. gh-1756's
-                # `str_hint` sits between the declared reference and the two
-                # it resolves to, which stay trailing.
+                # `str_hint` and gh-2004's `rank` / `elements_per_sample` sit
+                # between the declared reference and the two it resolves to,
+                # which stay trailing.
+                "",
+                "",
                 "",
                 "",
                 "",
@@ -404,11 +410,14 @@ class TestDumpFlagFields:
         add_method(cfg, "conv", {"name": "proc", "out_divisor": 4})
         assert "out_divisor = 4" in _dump(cfg)
 
-    def test_dump_method_out_divisor_1_not_written(self):
+    def test_dump_method_out_divisor_1_is_kept_as_written(self):
+        # gh-2045: `jm method` never stores the default (`_method.run`
+        # writes `out_divisor` only when it is not 1), so a 1 here is an
+        # author's, and a rewrite keeps what the author wrote.
         cfg = from_new("p")
         add_component(cfg, "conv", [])
         add_method(cfg, "conv", {"name": "proc", "out_divisor": 1})
-        assert "out_divisor" not in _dump(cfg)
+        assert "out_divisor = 1" in _dump(cfg)
 
     def test_dump_property_type(self):
         cfg = from_new("p")

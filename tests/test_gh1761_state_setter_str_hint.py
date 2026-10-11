@@ -37,6 +37,7 @@ import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -46,9 +47,7 @@ from just_makeit import _config as C  # noqa: E402
 from just_makeit import _context as Ctx  # noqa: E402
 from just_makeit._keys import STATE_KEYS  # noqa: E402
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 SYNC_HINT = "build bits from text with field_bits()"
 #: Quotes, a backslash and a `%`: the hint is a C literal passed as a `%s`

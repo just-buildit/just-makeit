@@ -21,6 +21,7 @@ from . import _textio
 
 from pathlib import Path
 
+from . import _borrow
 from . import _config as C
 from . import _incpath as INC
 from . import _procglobal
@@ -31,7 +32,6 @@ from ._docstring import authored_class_brief, class_import_line
 from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
-from . import _types as T
 from ._builtins import builtin_owned_members, overridden_builtin_slots
 from ._init import (
     _make_component_ctx,
@@ -75,7 +75,9 @@ def component_ctx(
     # gh-1208: a synthesized doctest must name the module segment when the
     # component lives in one. The manifest records membership one way, so
     # ask it here; "" for a standalone object leaves the line unchanged.
-    _module_id = C.module_of(cfg, object_name)
+    # gh-2054: the segment is the module's PACKAGE, which is its id only
+    # while it declares no `package`.
+    _module_dir = C.module_package_resolved(cfg, C.module_of(cfg, object_name))
     state_vars_list = C.state_vars(cfg, object_name)
     arg_type_ = C.arg_type(cfg, object_name)
     return_type_ = C.return_type(cfg, object_name)
@@ -93,6 +95,8 @@ def component_ctx(
             "project": pkg.replace("_", "-"),
             "project_underscore": pkg,
             "version": C.project_version(cfg),
+            # The slot `make_step_ctx` reads, as `_object` seeds it.
+            "module_dir": _module_dir,
             **INC.ctx_slots(cfg),
         }
     )
@@ -130,6 +134,8 @@ def component_ctx(
             # gh-542: the glue render is exactly the pass that used to
             # silently reinstate a hand-removed reset() binding.
             no_reset=C.is_no_reset(cfg, object_name),
+            # gh-1882: whose reset() body it is.
+            reset_impl=bool(Ctx.declared_reset_impl(cfg, object_name)),
             # gh-676/gh-644: the built-ins derive from the header too. Without
             # this the standalone generators never saw doc_blocks at all, so a
             # hand-written @brief on <obj>_reset/_step/_steps reached the
@@ -162,7 +168,7 @@ def component_ctx(
             Component,
             C.methods(cfg, object_name),
             pkg=pkg,
-            module=_module_id,
+            module_dir=_module_dir,
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, object_name),
             serializable=C.is_serializable(cfg, object_name),
@@ -181,6 +187,7 @@ def component_ctx(
             records=C.records(cfg, object_name),  # gh-1405
             properties=C.properties(cfg, object_name),  # gh-1426
             csym=ctx["csym"],
+            extra_methods=C.extra_methods(cfg, object_name),  # gh-1997
         )
     )
     for _slot in _override_slots:
@@ -247,6 +254,7 @@ def component_ctx(
             # gh-1323: pair the destructor with the declared creator.
             create_fn=C.object_create_fn(cfg, object_name) or "",
             csym=ctx["csym"],
+            lends=_borrow.lends(cfg, object_name),
         )
     )
     ctx.update(
@@ -263,40 +271,7 @@ def component_ctx(
         )
     )
 
-    # Re-generate pyi_examples with the real package name. make_state_ctx seeds
-    # this slot with <<package>>/<<Component>> placeholders that only _init.run
-    # was resolving, so every regenerating command (jm property, and now jm
-    # warning) rewrote the stub's doctest to a literal
-    # `>>> from <<package>> import <<Component>>`. That went unnoticed because
-    # the placeholder scan in tests covers .py/.c/.h/.toml/.txt but not .pyi —
-    # the one file it corrupts. Doing it here fixes every caller at once, which
-    # is the point of a single assembly chain.
     init_params = C.init_params(cfg, object_name)
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in state_vars_list
-            if not T.parse_array_type(ct)
-        ]
-        if not C.is_no_state(cfg, object_name)
-        else []
-    )
-    # gh-273: suppress the construction doctest when a required init-param has
-    # no default — there is no valid seed and a validating ctor would reject
-    # the type's zero under `pytest --doctest-glob='*.pyi'`.
-    ctx["pyi_examples"] = (
-        Ctx._pyi_examples_block(
-            scalar_state,
-            bool(C.array_args(cfg, object_name)),
-            class_import_line(pkg, Component, _module_id),
-            ctx.get("py_create_args", ""),
-            Component,
-            no_reset=C.is_no_reset(cfg, object_name),
-            init_params=init_params,
-        )
-        if scalar_state and not Ctx._unseedable_required(init_params)
-        else ""
-    )
     # Class docstring via the one shared builder (identical to the module .pyi
     # path), so the two generators never drift. doc_blocks carry the sacred
     # header's create() @brief/@param; they are seeded on cfg by callers that
@@ -318,12 +293,12 @@ def component_ctx(
         state_vars_list,
         C.is_no_state(cfg, object_name),
         init_params,
-        class_import_line(pkg, Component, _module_id),
+        class_import_line(pkg, Component, _module_dir),
         ctx.get("py_create_args", ""),
         doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         manifest_doc=cfg.get(object_name, {}).get("doc", ""),
         state_docs=C.state_docs(cfg, object_name),
-        custom_reset=bool(init_params) or C.is_no_reset(cfg, object_name),
+        custom_reset=Ctx.manifest_reset_is_authors(cfg, object_name),
         create_fn=C.object_create_fn(cfg, object_name),
         raises=_cls_raises,
         warns=_cls_warns,
@@ -364,13 +339,12 @@ def component_ctx(
                 state_vars_list,
                 C.is_no_state(cfg, object_name),
                 init_params,
-                class_import_line(pkg, Component, _module_id),
+                class_import_line(pkg, Component, _module_dir),
                 ctx.get("py_create_args", ""),
                 doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
                 manifest_doc=cfg.get(object_name, {}).get("doc", ""),
                 state_docs=C.state_docs(cfg, object_name),
-                custom_reset=bool(init_params)
-                or C.is_no_reset(cfg, object_name),
+                custom_reset=Ctx.manifest_reset_is_authors(cfg, object_name),
                 create_fn=C.object_create_fn(cfg, object_name),
                 raises=_cls_raises,
                 warns=_cls_warns,
@@ -412,6 +386,20 @@ def regenerate_standalone(
     Both writes are create-if-exists: a component whose files have not been
     materialised yet is left alone rather than half-written, so this is safe
     to call on a manifest-only component (``jm apply`` is what materialises).
+    The gh-1361 link-check table is rewritten from the binding just written,
+    and the gh-1404 element contract from the manifest (gh-1984).
+
+    Every verb that changes a standalone object's members re-renders it
+    through here -- `jm property`, `jm warning` and `jm error` on the way in,
+    and `jm remove` of any of them (or of a method) on the way out
+    (gh-1978). A second copy of this sequence in `_remove` wrote the binding
+    and never the table, so a removed method's symbol stayed in
+    ``test_<comp>_symbols.c``: `status --check` failed on the tree
+    `jm remove` had just written, and the C test stopped linking once the
+    author deleted the body as the remove told them to.
+
+    The C benchmark is not re-rendered here, by any verb: it is the
+    author's (gh-1987).
     """
     # Seed the sacred header's create() Doxygen (filtered of jm's own scaffold
     # boilerplate) so component_ctx can enrich the class docstring — it is
@@ -427,7 +415,9 @@ def regenerate_standalone(
     ctx = component_ctx(cfg, object_name, pkg, root)
     # gh-543: component_ctx is manifest-only by contract, so the on-disk probe
     # for a hand-written extra belongs here, in the caller that has `root`.
-    ctx["extra_include"] = standalone_extra_include(root, object_name)
+    ctx["extra_include"] = standalone_extra_include(
+        root, object_name, C.extra_methods(cfg, object_name)
+    )
 
     ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
     if ext_c.exists():
@@ -449,6 +439,13 @@ def regenerate_standalone(
     from . import _linkcheck
 
     _linkcheck.write(root, cfg, object_name)
+    # gh-1984: and the element contract (gh-1404), as the module re-render
+    # writes it for every member, so a verb that changes a member gets it
+    # whichever kind of object that is. `jm remove` used to write it itself
+    # after calling this (gh-1978).
+    from . import _invariants
+
+    _invariants.sync(root, cfg, object_name, pkg)
 
 
 def regenerate(

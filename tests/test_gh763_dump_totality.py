@@ -253,36 +253,41 @@ class TestTheGenericRenderer:
 
 
 class TestPresentButWrongFailsClosed:
-    """The half a presence check cannot see, and the reason these tests
-    exist: `_dump`'s component loop claims any unrecognised top-level table
-    and emits a bare `[name]` with none of its keys. The key *survives*,
-    empty — so "is it still there?" answers yes while the content is gone.
+    """The half a presence check cannot see: `_dump`'s component loop once
+    claimed any unrecognised top-level table and emitted a bare `[name]`
+    with none of its keys, so "is it still there?" answered yes while the
+    content was gone, and `_dump` raised rather than write it.
 
-    Appending cannot repair it (TOML forbids a second `[name]`), so `_dump`
-    raises instead. A hard error beats a manifest that silently lost a
-    section, which is the whole of gh-763.
+    gh-2045 made the writer total -- one emitter writes every key a table
+    holds -- so such a table is now simply written. What still fails closed
+    is a value TOML has no spelling for: `_dump` reads its text back and
+    refuses one that means anything else, naming the value, and nothing is
+    written.
     """
 
-    def test_an_unrenderable_table_raises_rather_than_writing(self):
-        with pytest.raises(ValueError, match="cannot faithfully serialise"):
-            C._dump({"project": {"name": "p"}, "tuning": {"depth": 4}})
+    def test_an_unknown_table_is_written_whole(self, tmp_path):
+        C.save(tmp_path, {"project": {"name": "p"}, "tuning": {"depth": 4}})
+        assert C.load(tmp_path)["tuning"] == {"depth": 4}
 
-    def test_the_message_names_the_section(self):
-        with pytest.raises(ValueError, match=r"\[tuning\]"):
-            C._dump({"project": {"name": "p"}, "tuning": {"depth": 4}})
+    def test_an_unwritable_value_raises_rather_than_writing(self):
+        with pytest.raises(ValueError, match="cannot faithfully serialise"):
+            C._dump({"project": {"name": "p"}, "tuning": {"d": [1, None]}})
+
+    def test_the_message_names_the_value(self):
+        with pytest.raises(ValueError, match=r"`tuning\.d\[1\]`"):
+            C._dump({"project": {"name": "p"}, "tuning": {"d": [1, None]}})
 
     def test_nothing_is_written_when_it_raises(self, tmp_path):
         """The point of raising: no half-written manifest is left behind."""
         with pytest.raises(ValueError):
-            C.save(tmp_path, {"project": {"name": "p"}, "tuning": {"d": 4}})
+            C.save(
+                tmp_path, {"project": {"name": "p"}, "tuning": {"d": [None]}}
+            )
         assert not (tmp_path / C.FILENAME).exists()
 
     def test_the_guarded_path_still_writes_it_faithfully(self, tmp_path):
-        """`_dump` raising is not the same as `save` failing. With a file
-        already on disk and tomlkit available, `_round_trips` sends this to
-        the tomlkit writer, which renders the section correctly — the raise
-        is a backstop for the paths that have no such fallback, not a new
-        restriction on what a manifest may contain."""
+        """With a file already on disk and tomlkit available, `save` writes
+        through tomlkit, as it always has."""
         (tmp_path / C.FILENAME).write_text('[project]\nname = "p"\n')
         C.save(tmp_path, {"project": {"name": "p"}, "tuning": {"depth": 4}})
         assert C.load(tmp_path)["tuning"] == {"depth": 4}

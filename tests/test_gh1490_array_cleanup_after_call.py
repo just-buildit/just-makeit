@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import os
 import platform
-import shutil
 import subprocess
 import sys
 import sysconfig
@@ -34,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -89,7 +89,7 @@ def test_a_scalar_only_function_keeps_its_one_line_form():
     assert "    return PyLong_FromLong((long)twice(v));" in body, body
 
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 _GLIBC = platform.libc_ver()[0] == "glibc"
 
 _BACKING = """

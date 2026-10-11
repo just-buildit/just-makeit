@@ -36,6 +36,7 @@ from just_makeit._keys import (
     warn_unknown_keys,
 )
 
+from _jmrun import warning_lines
 from test_manifest_wiring_gate import SHAPES
 
 
@@ -223,7 +224,8 @@ class TestScope:
         }
         (msg,) = _msgs(cfg)
         assert "dsp.lerp" in msg
-        assert "it is a method key" in msg
+        # gh-2186: a handle method reads `status_return` too.
+        assert "it is a method or handle method key" in msg
 
     def test_transient_underscore_keys_are_skipped(self):
         cfg = {"meter": {"_doc_blocks": {}, "methods": [{"name": "m"}]}}
@@ -240,7 +242,7 @@ class TestWarningEmission:
         second = warn_unknown_keys(cfg)
         assert len(first) == 1
         assert second == [], "the same warning was printed twice"
-        assert "warning" in capsys.readouterr().err
+        assert warning_lines(capsys.readouterr().err)
 
     def test_load_reports_it(self, tmp_path, capsys):
         """The whole point: an ordinary command surfaces it."""

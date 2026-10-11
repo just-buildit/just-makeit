@@ -6,6 +6,8 @@ import keyword
 import sys
 from pathlib import Path
 
+from ._report import Refusal
+
 
 def run(args: list[str]) -> None:
     if len(args) < 2:
@@ -38,6 +40,7 @@ def run(args: list[str]) -> None:
     exact_max_out = False
     count_default = ""
     count_name = ""
+    out_cols = ""
     nogil = False
     varargs = False
     manual_stub = False
@@ -59,6 +62,8 @@ def run(args: list[str]) -> None:
     error_message = ""
     batch_method = False
     error_on_empty = False
+    count_type = ""
+    error_sentinel = ""
     none_on_empty = False
     strict = False
     releases: list[str] = []
@@ -119,6 +124,30 @@ def run(args: list[str]) -> None:
             # gh-1159: an empty result is a REFUSAL, not an empty answer.
             error_on_empty = True
             i += 1
+        # gh-2012: a variable_output kernel whose zero is a real answer
+        # refuses with a value no count can be -- a negative one in a signed
+        # `--count-type` (with --error-negative), or an unsigned count's
+        # `--error-sentinel`, a C constant such as SIZE_MAX.
+        elif tok == "--count-type":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --count-type requires a C integer type",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            count_type = remaining[i]
+            i += 1
+        elif tok == "--error-sentinel":
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --error-sentinel requires a C constant expression",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            error_sentinel = remaining[i]
+            i += 1
         elif tok == "--none-on-empty":
             # gh-1418: the opposite reading -- nothing yet is a normal
             # answer, so the call returns None. The key existed and was
@@ -145,6 +174,20 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             count_default = remaining[i]
+            i += 1
+        elif tok == "--out-cols":
+            # gh-2115: the width of a matrix result. A --variable-output
+            # kernel still fills a flat buffer; the binding hands back
+            # (count / width, width). A C expression like `state->nfft`
+            # (the same convention --count-default uses) or an integer.
+            i += 1
+            if i >= len(remaining) or not remaining[i].strip():
+                print(
+                    "error: --out-cols requires an integer or a C expression",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            out_cols = remaining[i].strip()
             i += 1
         elif tok == "--count-name":
             # gh-1074: what that synthesized kwarg is CALLED. `count_default`
@@ -302,7 +345,7 @@ def run(args: list[str]) -> None:
                 print("error: --multi-output requires a type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
-            if val not in T._CTYPE_META:
+            if not T.is_multi_output_type(val):
                 print(
                     f"error: --multi-output '{val}' is not a supported type.",
                     file=sys.stderr,
@@ -369,6 +412,12 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            # gh-1946: a default Python has no spelling of, refused before
+            # anything is written -- the backstop in `_py_default` fires
+            # only once the manifest already carries it.
+            _why = T.literal_default_error(ptype, pdefault)
+            if _why:
+                raise Refusal(f"param '{pname}': {_why}")
             if not pdefault and any(
                 len(mp) > 2 and mp[2] for mp in method_params
             ):
@@ -420,10 +469,10 @@ def run(args: list[str]) -> None:
                 print("error: --out-type requires a type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
-            if val not in T._CTYPE_TO_NPY:
+            if not T.is_out_type(val):
                 print(
                     f"error: --out-type '{val}' has no numpy equivalent.\n"
-                    f"Supported: {', '.join(sorted(T._CTYPE_TO_NPY))}",
+                    f"Supported: {', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -652,6 +701,28 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-2115: `out_cols` reshapes ONE flat variable_output array, so the
+    # shapes that have none are refused here, by the same validator the
+    # manifest loader runs -- the rules live in `_config._out_cols_errors`
+    # and are not restated.
+    if out_cols:
+        from ._config import _out_cols_errors
+
+        _errs = _out_cols_errors(
+            {
+                "out_cols": out_cols,
+                "variable_output": variable_output,
+                "multi_output": multi_output,
+                "record_dtype": record_dtype,
+                "batch": batch_method,
+            },
+            f"--out-cols on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
     # gh-428: manual_stub's C binding is entirely hand-owned, so combining it
     # with any flag that drives jm's own C-side codegen is nonsensical --
     # silently ignoring the extra flag would be a footgun.
@@ -706,6 +777,8 @@ def run(args: list[str]) -> None:
         impl_body=impl_body_m,
         batch=batch_method,
         error_on_empty=error_on_empty,
+        count_type=count_type,
+        error_sentinel=error_sentinel,
         none_on_empty=none_on_empty,
         strict=strict,
         releases=releases or None,
@@ -730,6 +803,7 @@ def run(args: list[str]) -> None:
         exact_max_out=exact_max_out,
         count_default=count_default,
         count_name=count_name,
+        out_cols=out_cols,
         nogil=nogil,
         fn=fn,
         error_negative=error_negative,

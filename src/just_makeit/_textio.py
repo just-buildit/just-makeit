@@ -19,10 +19,63 @@ import sys
 from pathlib import Path
 
 
+#: gh-2095: how many TOML files jm has written in this process -- see
+#: :func:`toml_writes`.
+_TOML_WRITES = 0
+
+
+def toml_writes() -> int:
+    """How many TOML files jm has written in this process (gh-2095).
+
+    Every :func:`write_text` of a ``.toml`` path counts, and so does each
+    write :func:`wrote_toml` reports. A cache of the merged manifest records
+    this when it fills and is stale once it has moved: everything
+    `C.load` reads is TOML -- the manifest, its fragments,
+    ``pyproject.toml`` -- and within one process what changes one is jm
+    writing it. So `_incpath.manifest` keys on it, at one integer compare
+    a lookup rather than a ``stat`` of every fragment.
+
+    Only TOML, because a count of EVERY write was measured useless: the
+    generated C and stubs written between lookups forced 107 reloads in
+    one doppler `jm status` (4.98 s in the cache, against 0.69 s keyed on
+    the manifest alone). Counting TOML: 6 reloads, 0.89 s (2026-10-09).
+
+    Examples
+    --------
+    >>> import tempfile
+    >>> d, before = Path(tempfile.mkdtemp()), toml_writes()
+    >>> _ = write_text(d / "x.c", "x")
+    >>> toml_writes() == before
+    True
+    >>> _ = write_text(d / "x.toml", "x = 1")
+    >>> toml_writes() == before + 1
+    True
+    """
+    return _TOML_WRITES
+
+
+def wrote_toml() -> None:
+    """Count a TOML write jm made without :func:`write_text` (gh-2095).
+
+    For what a text write cannot express -- `C.save` removing an emptied
+    fragment, `apply` copying one in -- so :func:`toml_writes` sees them.
+
+    Examples
+    --------
+    >>> before = toml_writes()
+    >>> wrote_toml()
+    >>> toml_writes() == before + 1
+    True
+    """
+    global _TOML_WRITES
+    _TOML_WRITES += 1
+
+
 def write_text(path: Path, text: str) -> int:
     r"""Write *text* to *path* as UTF-8 with ``\n`` line endings, anywhere.
 
     Returns the number of characters written, as ``Path.write_text`` does.
+    A ``.toml`` *path* is counted by :func:`toml_writes` (gh-2095).
 
     Examples
     --------
@@ -33,6 +86,9 @@ def write_text(path: Path, text: str) -> int:
     >>> p.read_bytes()
     b'a\nb\n'
     """
+    # Counted before the write, so one that fails half-way still counts.
+    if Path(path).suffix == ".toml":
+        wrote_toml()
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         return fh.write(text)
 

@@ -62,11 +62,11 @@ def run(root: Path) -> None:
 
     bench_c = proj / "native" / "benchmarks" / "bench_fir_core.c"
 
-    # 3. Verify the freshly-generated bench already has configure() block.
+    # 3. The bench is the author's once written (gh-1987): `jm method` does
+    #    not add a timing block to it. The upgrade below is what renders one.
     fresh = bench_c.read_text(encoding="utf-8")
-    assert "bench: configure()" in fresh, "fresh bench missing configure block"
-    assert "bench: internal_reset()" not in fresh, (
-        "internal_reset should be excluded via --no-bench"
+    assert "bench: configure()" not in fresh, (
+        "jm method rewrote the author's bench"
     )
 
     # 4. Simulate a pre-feature project: rewrite bench without method blocks

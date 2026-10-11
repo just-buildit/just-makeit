@@ -142,9 +142,11 @@ ______________________________________________________________________
 **bind**
 The `jm bind` command reads a hand-written `<comp>_core.h` and synthesises the
 CPython binding (`<comp>_ext.c` and `<comp>.pyi`) from it — the "point at your
-C, get Python" path. It handles scalar or opaque state, constructor params,
-getter/setter properties, single-argument custom verbs and variable-output
-methods; see [`just-makeit bind`](commands/build.md#just-makeit-bind-component)
+C, get Python" path, for a component the manifest does not declare (a declared
+one's binding is `jm apply`'s, and `bind` refuses it). It handles scalar or
+opaque state, constructor params, getter/setter properties, single-argument
+custom verbs and variable-output methods; see
+[`just-makeit bind`](commands/build.md#just-makeit-bind-component)
 for usage and `--check` (CI gate). Multi-parameter methods, result structs and
 a libclang fallback are the remaining work on the
 [roadmap](roadmap.md#now-write-it-in-c-get-python-jm-bind).

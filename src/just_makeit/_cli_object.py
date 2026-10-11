@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from ._cli_parse import parse_init_param_flag, parse_state_flag
+from ._report import Refusal
 
 
 # Phase 3a preset shorthand. Each entry maps a preset name to the flag
@@ -195,29 +196,11 @@ def run(args: list[str]) -> None:
                 print(f"error: {tok} requires a type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
-            if val.endswith("[]"):
-                elem = val[:-2]
-                if elem not in T._CTYPE_META:
-                    which = (
-                        "--arg-type"
-                        if tok == "--arg-type"
-                        else "--return-type"
-                    )
-                    print(
-                        f"error: {which} array element type '{elem}' "
-                        "is not supported.\n"
-                        f"Supported element types: "
-                        f"{', '.join(sorted(T._CTYPE_META))}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-            elif val != "void" and val not in T._CTYPE_META:
-                print(
-                    f"error: {tok} '{val}' is not a supported scalar type.\n"
-                    f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+            # gh-1884: the one answer `jm new` and the manifest ask too; a
+            # `--preset` has already expanded into these same flags.
+            why = T.step_type_error(tok, val)
+            if why:
+                raise Refusal(why)
             if tok == "--arg-type":
                 arg_type = val
             else:
@@ -306,10 +289,10 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             mo_val = remaining[i]
-            if mo_val not in T._CTYPE_META:
+            if not T.is_multi_output_type(mo_val):
                 print(
                     f"error: --multi-output type '{mo_val}' not supported.\n"
-                    f"Supported: {', '.join(sorted(T._CTYPE_META))}",
+                    f"Supported: {', '.join(sorted(T.SUPPORTED_TYPES))}",
                     file=sys.stderr,
                 )
                 sys.exit(1)

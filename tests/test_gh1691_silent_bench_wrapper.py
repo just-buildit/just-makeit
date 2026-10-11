@@ -23,13 +23,13 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-import shutil
 import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -40,7 +40,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc")
+_CC = default_cc()
 
 
 def _quiet(fn, *a, **kw):

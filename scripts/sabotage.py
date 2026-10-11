@@ -28,6 +28,13 @@ ALL of these hold, and says which one did not:
    and ``--continue-on-collection-errors``; gh-1933), where a FAILED named
    beside it is no proof either: the module that did not import ran none
    of its tests, and the gate may be one of them.
+   A failing subtest counts as a failed test, named by its test: pytest 9
+   reports a unittest ``self.subTest`` failure ONLY as ``SUBFAILED``.
+   A run whose output could hide a collection error is refused too, since
+   "no error shown" is then not "no error" (gh-1945): with no tracebacks
+   (``--tb=no``) and no ``ERROR`` lines (an ``-r`` without ``E``), an error
+   is at most a count, ``1 failed, 1 error``, which a fixture that raised
+   shares, and under ``-qq`` not even that.
    Both are read with the run's colour escapes removed, so a caller whose
    pytest colours its output is answered like one whose does not;
 5. the file is restored byte-identical afterwards, and every ``__pycache__``
@@ -57,45 +64,83 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: pytest's per-test failure line, and its collection-error spellings --
-#: every one anchored at column 0, where pytest prints its OWN run's lines. A
-#: failing test's report can quote another run's output (this helper's tests
-#: do), and an unanchored "errors during collection" matched inside that
-#: quote and refused a sabotage that had gone red for the right reason.
+#: How a red run reads, from pytest's own lines. Every pattern is anchored
+#: at column 0, where pytest prints its OWN run's lines: a failing test's
+#: report can quote another run's output (this helper's tests do), and an
+#: unanchored "errors during collection" matched inside that quote and
+#: refused a sabotage that had gone red for the right reason. Which lines a
+#: run prints depends on how pytest ran (pytest 9.1, xdist 3.8, measured;
+#: gh-1933, gh-1945).
 #:
-#: Which spellings a run prints depends on how pytest ran (pytest 9.1,
-#: xdist 3.8, measured; gh-1933):
+#: The rule above the short test summary. The result lines and the count
+#: line are read only below the LAST one: pytest prints nothing there but
+#: its own summary, while what a test prints -- captured stdout, a log
+#: record, a ``-s`` run's output -- lands above it, at column 0 too. Read
+#: anywhere, a test that printed ``ERROR x.py`` was a module that failed to
+#: collect, and one that printed ``FAILED x.py::y`` named a test that never
+#: ran (gh-1945).
+_SUMMARY = re.compile(r"^=+ short test summary info =+$", re.M)
+#: One short-summary line, ``<word> <node id>[ - <message>]``, as
+#: (word, id):
+#:
+#: - ``FAILED x.py::test_y`` -- a failed test.
+#: - ``SUBFAILED(i=1) x.py::T::test_y`` -- a failed subtest (pytest 9),
+#:   described as ``(k=v, ...)``, ``[msg]``, ``[msg] (k=v, ...)`` or
+#:   ``(<subtest>)``. A unittest ``self.subTest`` failure is reported ONLY
+#:   so, with no FAILED line for its test (the ``subtests`` fixture's test
+#:   gets both), and a red run of nothing else was refused as naming none.
+#: - ``ERROR test_a.py - RuntimeError: boom`` -- a node that errored. An id
+#:   with no ``::`` is a module, or a directory whose conftest failed
+#:   (``ERROR sub``), that did not collect; a test's id always has one, so
+#:   a fixture that raised (``ERROR x.py::test_y``) is not. Under
+#:   pytest-xdist (``make test`` runs ``-n auto``) and
+#:   ``--continue-on-collection-errors`` the run goes on, names the FAILED
+#:   tests beside it, prints no ``Interrupted:``, and this line and the
+#:   ``ERROR collecting`` header are ALL it says -- so a sabotage that only
+#:   broke an import was accepted (gh-1933).
+#:
+#: The id runs to the `` - `` that opens pytest's message, or to the end of
+#: the line. It may hold whitespace -- a directory name, a parametrize id
+#: (``test_w[a b]``) -- and its bracketed part may hold `` - `` itself.
+#: Read as ``\S+``, a module under ``my tests/`` was not seen to fail
+#: collection (silently, under ``--tb=no``), and ``test_w[a b]`` was named
+#: ``test_w[a``.
+_RESULT = re.compile(
+    r"^(FAILED|ERROR|SUBFAILED(?:\[.*?\](?: \(.*?\))?|\(.*?\))) "
+    r"(\S[^\[\n]*?(?:\[.*?\])?)(?: - |$)",
+    re.M,
+)
+#: The other lines saying a module did not collect, read anywhere:
 #:
 #: - ``!!! Interrupted: 1 error during collection !!!`` -- default mode
 #:   only, which stops before any test runs.
-#: - ``ERROR test_a.py - RuntimeError: boom`` -- the short summary's line
-#:   for a node id with no ``::``: a module, or a directory whose conftest
-#:   failed (``ERROR sub``). A test's id always has one, so a fixture that
-#:   raised (``ERROR x.py::test_y``) is not this. Under pytest-xdist
-#:   (``make test`` runs ``-n auto``) and ``--continue-on-collection-errors``
-#:   the run goes on, names the FAILED tests beside it, prints no
-#:   ``Interrupted:``, and this line and the header below are ALL it says
-#:   -- so a sabotage that only broke an import was accepted. The id holds
-#:   no whitespace, so a captured log line (``ERROR    x:a.py:3 broke``) is
-#:   not read as one; a test that PRINTS ``ERROR x.py`` at column 0 still
-#:   is, a loud refusal where the miss was silent. ``-r`` without ``E``
-#:   drops this line.
 #: - ``____ ERROR collecting test_a.py ____`` -- the ERRORS section header,
 #:   which only a collection error gets (a fixture's reads ``ERROR at setup
 #:   of``); ``--tb=no`` drops it. It was spelled ``^ERROR collecting ``,
 #:   which pytest never prints at column 0, so it never matched.
 #: - ``ImportError while ...`` -- the body under that header for an
 #:   ImportError, and pytest's line for a conftest that cannot import.
-_FAILED = re.compile(r"^FAILED (\S+)", re.M)
+#:
+#: A test that PRINTS one of these at column 0 is read as a module that did
+#: not collect: a loud refusal, where a miss would be silent.
 _COLLECTION = re.compile(
     r"^(?:!+ Interrupted: \d+ errors? during collection"
-    r"|ERROR (?:(?!::)\S)+(?: - |$)"
     r"|_+ ERROR collecting "
     r"|ImportError while)",
     re.M,
 )
+#: How a run SHOWS an error it names in no ERROR line (its ``-r`` lacks
+#: ``E``): its tracebacks -- an ERRORS or FAILURES section, which a red run
+#: prints unless ``--tb=no`` -- or its count line, ``1 failed, 2 errors in
+#: 0.30s`` (``=``-ruled unless ``-q``, and gone under ``-qq``), read below
+#: the summary rule like the result lines. Under ``-rf --tb=no`` a module
+#: that failed to collect, beside a FAILED test, is that count and nothing
+#: else, the same count a fixture that raised gives; under ``-qq`` it is
+#: nothing at all. Such a run is refused as unable to show it (gh-1945).
+_TRACEBACKS = re.compile(r"^=+ (?:ERRORS|FAILURES) =+$", re.M)
+_COUNT = re.compile(r"^(?:=+ )?(\d+ [a-z].*?) in \d+(?:\.\d+)?s\b", re.M)
 #: An SGR escape (``\x1b[31m``, ``\x1b[0m``), removed from every run's output
-#: before either pattern above reads it (gh-1845). A coloured pytest puts one
+#: before any pattern above reads it (gh-1845). A coloured pytest puts one
 #: at column 0 -- ``\x1b[31mFAILED\x1b[0m test_mod.py::\x1b[1mtest_one`` --
 #: so under FORCE_COLOR ``^FAILED`` matched nothing and EVERY red sabotage
 #: was refused as naming no test; ``^ImportError while`` misses the same way.
@@ -132,6 +177,73 @@ def _run(cmd: "list[str]", root: Path) -> "tuple[int, str]":
         cmd, cwd=root, capture_output=True, text=True, env=os.environ.copy()
     )
     return r.returncode, _SGR.sub("", r.stdout + r.stderr)
+
+
+def _uncollected(out: str, results: "list[tuple[str, str]]") -> bool:
+    """Whether the run says a module failed to collect: an ``ERROR`` result
+    whose id has no ``::``, or any :data:`_COLLECTION` line."""
+    modules = [i for w, i in results if w == "ERROR" and "::" not in i]
+    return bool(modules) or bool(_COLLECTION.search(out))
+
+
+def _hidden_errors(
+    out: str, summary: str, results: "list[tuple[str, str]]"
+) -> "str | None":
+    """Why the run could hide a module that failed to collect, or None.
+
+    It cannot when it names its errors (an ``ERROR`` result: the ``-r``
+    has ``E``) or prints its tracebacks (every error then gets a header,
+    and a collection error's is :data:`_COLLECTION`'s). Otherwise its count
+    line is all there is: one reporting an error says a node errored and
+    not which, and no count line at all says nothing.
+    """
+    if any(w == "ERROR" for w, _ in results) or _TRACEBACKS.search(out):
+        return None
+    count = _COUNT.search(summary)
+    if count is None:
+        return (
+            "it prints no tracebacks, no ERROR line and no count line;"
+            " drop --tb=no, or one -q"
+        )
+    errors = re.search(r"\b\d+ errors?\b", count.group(1))
+    if errors is None:
+        return None
+    return (
+        f"it counts {errors.group()} and names none; name them with an -r"
+        " holding E, or drop --tb=no"
+    )
+
+
+def _failed_tests(code: int, out: str) -> "list[str]":
+    """The tests a red run names as failed, in order and each once.
+
+    Raises :class:`Refused` when the run reports a collection error, names
+    no failed test, or could hide a collection error -- condition 4 of the
+    module docstring. *code* is the run's exit status and *out* its output,
+    colour removed.
+    """
+    rules = list(_SUMMARY.finditer(out))
+    summary = out[rules[-1].end() :] if rules else ""
+    results = _RESULT.findall(summary)
+    if _uncollected(out, results):
+        raise Refused(
+            "the sabotaged run errored in COLLECTION, so no assertion was"
+            " exercised:\n" + out[-2000:]
+        )
+    failed = list(dict.fromkeys(i for w, i in results if w != "ERROR"))
+    if not failed:
+        raise Refused(
+            f"the command went red (exit {code}) but named no FAILED test;"
+            " a red that is not a test result proves nothing:\n" + out[-2000:]
+        )
+    why = _hidden_errors(out, summary, results)
+    if why:
+        raise Refused(
+            f"the sabotaged run could HIDE a collection error: {why}. A"
+            " FAILED test beside a module that did not import proves nothing"
+            " about that module's tests:\n" + out[-2000:]
+        )
+    return failed
 
 
 def sabotage(
@@ -181,18 +293,7 @@ def sabotage(
             "the command stayed GREEN with the sabotage in place: the gate"
             " does not see this change"
         )
-    if _COLLECTION.search(out):
-        raise Refused(
-            "the sabotaged run errored in COLLECTION, so no assertion was"
-            " exercised:\n" + out[-2000:]
-        )
-    failed = _FAILED.findall(out)
-    if not failed:
-        raise Refused(
-            f"the command went red (exit {code}) but named no FAILED test;"
-            " a red that is not a test result proves nothing:\n" + out[-2000:]
-        )
-    return failed
+    return _failed_tests(code, out)
 
 
 def main(argv: "list[str] | None" = None) -> int:

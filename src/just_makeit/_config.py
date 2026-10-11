@@ -24,6 +24,7 @@ from . import _textio
 from ._report import Refusal
 
 import copy as _copy
+import datetime as _dt
 import re as _re
 import sys as _sys
 
@@ -54,7 +55,7 @@ from . import _incpath as INC
 FILENAME = "just-makeit.toml"
 
 # Increment this whenever a new migration is added to _upgrade.py.
-CURRENT_SCHEMA = 8
+CURRENT_SCHEMA = 9
 
 
 def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:
@@ -108,7 +109,8 @@ def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
                         raise Refusal(
                             f"{source}: [module.{mod}].{mk} conflicts with an "
                             f"earlier definition — a module's config belongs "
-                            f"in exactly one place (modules/{mod}.toml)."
+                            "in exactly one place (modules/"
+                            f"{module_paths(mod).cname}.toml)."
                         )
                     else:
                         dest[mk] = mv
@@ -138,11 +140,11 @@ def load_manifest(root: Path) -> dict:
 #: the manifest keeps its silence, and `save` strips this key *and the value
 #: it resolved* before writing.
 #:
-#: The strip is not optional. `_dump`'s ``[project]`` loop emits every key it
-#: is handed, with no ``_``-prefix guard of the kind the method-key loop has —
-#: so without it the very first mutating command writes both the marker and
-#: the resolved number back into the manifest, silently recreating the carrier
-#: this feature exists to remove. That is the gh-999 failure exactly, and it is
+#: The strip is not optional. The writers drop the ``_`` marker, but the
+#: resolved number is an ordinary ``version``, and `_dump` writes every key it
+#: is handed (gh-2045) -- so without it the very first mutating command writes
+#: the number back into the manifest, silently recreating the carrier this
+#: feature exists to remove. That is the gh-999 failure exactly, and it is
 #: answered the same way: what `load` unfolds, `save` folds back.
 VERSION_DEFERRED_KEY = "_version_deferred"
 
@@ -252,6 +254,12 @@ def load(root: Path) -> dict:
     platform_errors = _modplatforms.errors(cfg)
     if platform_errors:
         _refuse(platform_errors)
+    # gh-2064: a `[module.X] package` is joined onto `src/<pkg>/` as
+    # written, so `../evil` landed outside the package; it stops here,
+    # before any command writes.
+    package_errors = module_package_errors(cfg)
+    if package_errors:
+        raise Refusal("\n".join(package_errors))
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
     # wrong guess -- accepted as truthy, it rendered a two-argument call to
     # a one-argument reader and failed at C compile, far from this line.
@@ -266,6 +274,13 @@ def load(root: Path) -> dict:
     hint_errors = str_hint_errors(cfg)
     if hint_errors:
         _refuse(hint_errors)
+    # gh-2004: likewise a `rank` / `elements_per_sample` no acquisition would
+    # read, on the same rows and after the same expansion.
+    from ._coerce import shape_key_errors
+
+    shape_errors = shape_key_errors(cfg)
+    if shape_errors:
+        _refuse(shape_errors)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
@@ -1123,15 +1138,16 @@ def deferred_save() -> "Iterator[None]":
 
     gh-698 removed most of that cost — but only behind a guard. `scratch_writes`
     swaps the tomlkit round-trip for the plain `_dump`, *if* `_round_trips`
-    confirms `_dump` reproduced the config. `_dump` is hand-written per section
-    kind and is not total: it drops ``[codec.X]`` outright and renders a list
-    value as its Python repr. A project with either — doppler has both — fails
-    the guard on **every** save and pays the full tomlkit path regardless. 718
-    saves, 2.48 million tomlkit ``__setitem__`` calls, 87% of a 90-second apply.
+    confirms `_dump` reproduced the config. `_dump` was hand-written per
+    section kind and not total: it dropped ``[codec.X]`` outright and rendered
+    a list value as its Python repr. A project with either — doppler has both —
+    failed the guard on **every** save and paid the full tomlkit path
+    regardless. 718 saves, 2.48 million tomlkit ``__setitem__`` calls, 87% of a
+    90-second apply.
 
     Deferring sidesteps that entirely: with one write instead of 718, even the
     expensive path costs ~0.13 s, and `_dump`'s totality stops being a
-    performance question. (It remains a correctness one — see gh-763.)
+    performance question. (It was a correctness one — gh-763, gh-2045.)
 
     Safe here because the tree being written is the **throwaway scaffold** the
     replay just synthesized from ``cfg``:
@@ -1174,9 +1190,11 @@ def _round_trips(text: str, cfg: dict, include_list: list[str] | None) -> bool:
     """True when *text* parses back to exactly the config it was dumped from.
 
     The guard for the ``scratch_writes`` fast path (gh-698). Comparing the
-    reparsed document against *cfg* catches any section kind ``_dump`` does not
-    know how to render — the way it silently dropped ``[codec.X]`` — instead of
-    trusting a hand-written serializer to be total.
+    reparsed document against *cfg* caught every section kind ``_dump`` did
+    not know how to render — the way it silently dropped ``[codec.X]`` —
+    instead of trusting a hand-written serializer to be total. Since gh-2045
+    `_dump` checks itself; what this still catches is *cfg* holding what
+    `_dump` leaves out on purpose (`_declared`).
     """
     try:
         got = tomllib.loads(text)
@@ -1251,14 +1269,15 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
 
     if _SCRATCH_WRITES:
         # gh-698: `_dump` is ~5x cheaper than building and dumping a tomlkit
-        # document, but it is hand-written per section kind and is NOT known to
-        # be total — it silently omits `[codec.X]`, and nothing guarantees that
-        # is the only gap. So use it only when it demonstrably round-trips.
+        # document. It was hand-written per section kind and NOT total -- it
+        # silently omitted `[codec.X]` -- so it is used only when the text
+        # demonstrably round-trips. Since gh-2045 it writes every key or
+        # refuses, but *cfg* may still carry what it deliberately leaves out
+        # (`_declared`: runtime `_` keys, None), and then the comparison
+        # below sends the write to tomlkit, which drops the same keys.
         #
         # The check is cheap (tomllib is the C parser) and turns "is `_dump`
         # faithful for this cfg?" from an assumption into a fact, per write.
-        # When it is not, we fall through to the tomlkit path below and are
-        # merely as slow as before rather than silently lossy.
         text = _dump(cfg)
         if include_list:
             text = f"include = {_toml_string_array(include_list)}\n\n" + text
@@ -1283,9 +1302,9 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     # carries no comments, which a scratch tree never had.
     #
     # Note this is *not* the same as taking the `_dump` fast path above: that
-    # dumper is hand-written per section kind and silently omits `[codec.X]`,
-    # so using it here dropped codecs from the replayed manifest and every
-    # later step lost them.
+    # dumper was hand-written per section kind and silently omitted
+    # `[codec.X]`, so using it here dropped codecs from the replayed manifest
+    # and every later step lost them (before gh-2045 made it one writer).
     doc = (
         _tk.document()
         if _SCRATCH_WRITES
@@ -1405,9 +1424,9 @@ def _without_deferred_version(cfg: dict) -> dict:
 
     The `save` half of the gh-1283 pair: what `load` unfolds, `save` folds
     back, so a deferred version round-trips as the *absence* the author
-    wrote. Both the marker and the resolved number come out — `_dump`'s
-    ``[project]`` loop writes every key it is given, so leaving either behind
-    puts the carrier straight back into the manifest.
+    wrote. Both the marker and the resolved number come out — `_dump`
+    writes every key it is given but a ``_`` one, so leaving the number
+    behind puts the carrier straight back into the manifest.
 
     A manifest that declares its own version carries no marker and is
     returned untouched, so the write path is byte-identical to before.
@@ -1519,7 +1538,8 @@ def save(root: Path, cfg: dict) -> None:
     if "project" in cfg:
         manifest_content["project"] = cfg["project"]
     if cfg.get("app"):
-        manifest_content["app"] = cfg["app"]  # gh-190: keep [app] in manifest
+        # gh-190: the apps live in the manifest ([[app]] since gh-2074).
+        manifest_content["app"] = cfg["app"]
     if cfg.get("enum"):
         manifest_content["enum"] = cfg["enum"]  # [[enum]] SSOT, manifest-owned
     if cfg.get("codec"):
@@ -1555,6 +1575,9 @@ def save(root: Path, cfg: dict) -> None:
             _write_doc(fragment_path, sections, None)
         else:
             fragment_path.unlink(missing_ok=True)
+            # gh-2095: a write the merged manifest depends on, and the only
+            # one here that is not a `_textio.write_text`.
+            _textio.wrote_toml()
 
     # Brand-new fragment files (new object/module in a split project).
     for fragment_path, sections in by_file.items():
@@ -1603,6 +1626,44 @@ def component_module(cfg: dict, component: str) -> str | None:
         if component in data.get("objects", []):
             return mod
     return None
+
+
+def object_order(cfg: dict) -> list[str]:
+    """Every generated object, in the one order jm lists them (gh-1985).
+
+    Standalone objects first, in manifest order, then each module's objects,
+    module by module -- the order `apply`'s replay has always materialized
+    them in. A ``no_generate`` module contributes none: the replay builds
+    nothing of it.
+
+    This is the order of the umbrella header's includes and, newest first,
+    of the root CMakeLists' ``# ── Components`` blocks
+    (``_libwiring.section_order``). Every writer of those two files sorts by
+    it, `apply` included. Before, `apply`'s order was whatever the replay
+    left and the adders inserted by history -- a block at the top, an
+    include at the bottom -- so ``jm object q && jm object o`` in a split
+    layout (whose fragments load sorted) wrote what `apply` then rewrote,
+    and so did a standalone object added after a module object.
+
+    "Manifest order" is :func:`load`'s: the central manifest's sections,
+    then each ``include`` glob's fragments sorted by path. It is a fact
+    about the saved manifest, so a writer asks it AFTER saving the entry it
+    is placing.
+
+    >>> object_order({
+    ...     "project": {}, "b": {}, "x": {}, "a": {},
+    ...     "module": {"m": {"objects": ["x"]}},
+    ... })
+    ['b', 'a', 'x']
+    """
+    mods = modules(cfg)
+    owned = {o for m in mods for o in module_objects(cfg, m)}
+    return [c for c in components(cfg) if c not in owned] + [
+        o
+        for m in mods
+        if not is_no_generate_module(cfg, m)
+        for o in module_objects(cfg, m)
+    ]
 
 
 def resolve_module(
@@ -1766,6 +1827,53 @@ def module_cnames(cfg: dict) -> set[str]:
     compare against the cname token the regex captures, not the dotted id.
     """
     return {module_paths(m).cname for m in modules(cfg)}
+
+
+def collocated_object(cfg: dict, module: str) -> str | None:
+    """The object of *module* that shares the module's native directory.
+
+    An object's C lives in ``native/src/<obj>/`` and a module's in
+    ``native/src/<cname>/``, so the one object named for the module's
+    **cname** writes into the module's own directory: its
+    ``<obj>_core`` IS the module's core, and its ``CMakeLists.txt``,
+    ``test_``/``bench_<obj>_core`` and ``*_extra.cmake`` hook are the
+    module's. Every other object is a member with a directory of its own.
+
+    The cname, not the leaf and not the dotted id: for a flat module the
+    three are one string, and for ``dsp.filters`` only ``dsp_filters`` names
+    the directory. gh-1949: the module CMakeLists asked the leaf, so an
+    object ``filters`` was written into ``native/src/filters/`` AND
+    prepended to the module's file as collocated -- ``filters_core``
+    declared twice, and a project that did not configure -- while ``apply``
+    asked the dotted id, which no object name can equal. This is the one
+    answer every writer asks.
+
+    Parameters
+    ----------
+    cfg : dict
+        The loaded manifest.
+    module : str
+        The module id, dotted or flat.
+
+    Returns
+    -------
+    str or None
+        The collocated object's name, or ``None`` when every object of
+        *module* has its own directory.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"dsp.filters": {"objects": ["filters", "fir"]}}}
+    >>> collocated_object(cfg, "dsp.filters") is None
+    True
+    >>> cfg["module"]["dsp.filters"]["objects"].append("dsp_filters")
+    >>> collocated_object(cfg, "dsp.filters")
+    'dsp_filters'
+    >>> collocated_object({"module": {"fft": {"objects": ["fft"]}}}, "fft")
+    'fft'
+    """
+    cname = module_paths(module).cname
+    return cname if cname in module_objects(cfg, module) else None
 
 
 def valid_identifier(name: str) -> bool:
@@ -2251,13 +2359,94 @@ def validate_module_id(module_id: str) -> str | None:
     return None
 
 
+def validate_module_package(package: str) -> str | None:
+    """Return why *package* is not a ``[module.X] package`` value, else None.
+
+    The value is a DIRECTORY below ``src/<pkg>/``, not a dotted name: every
+    reader that writes a file joins it onto that directory as written
+    (``root / "src" / pkg / package``), and the import-path readers split
+    it on ``/`` (`_docstring.class_import_path`, `_invariants`,
+    `_procglobal`). So it is one or more ``/``-separated segments, each a
+    :func:`valid_identifier` -- the predicate a module id's segments go
+    through -- or ``"."``, the package itself (the `composites` example's
+    ``ring``). Anything else was written as given (gh-2064): ``../evil``
+    created ``src/evil/``, outside the package, and ``a b``, ``1x``,
+    ``Other-Pkg`` and ``a.b`` created directories Python cannot import. The
+    message names the value and the rule; each caller says where it came
+    from.
+
+    Examples
+    --------
+    >>> validate_module_package("io") is None
+    True
+    >>> validate_module_package("dsp/io") is None
+    True
+    >>> validate_module_package(".") is None
+    True
+    >>> print(validate_module_package("../evil"))
+    "../evil" is not a directory below src/<pkg>/: each "/"-separated segment must be an ASCII identifier (letters, digits and underscores, not starting with a digit), as in "io" or "dsp/io", or the whole value "." for the package itself.
+    >>> print(validate_module_package("a.b"))
+    "a.b" is not a directory below src/<pkg>/: each "/"-separated segment must be an ASCII identifier (letters, digits and underscores, not starting with a digit), as in "io" or "dsp/io", or the whole value "." for the package itself. A "." does not nest one package in another here; write "a/b".
+    """
+    if package == "." or all(map(valid_identifier, package.split("/"))):
+        return None
+    msg = (
+        f'"{package}" is not a directory below src/<pkg>/: each'
+        ' "/"-separated segment must be an ASCII identifier (letters, digits'
+        " and underscores, not starting with a digit), as in"
+        ' "io" or "dsp/io", or the whole value "." for the package itself.'
+    )
+    nested = package.replace(".", "/")
+    if nested != package and validate_module_package(nested) is None:
+        msg += (
+            ' A "." does not nest one package in another here;'
+            f' write "{nested}".'
+        )
+    return msg
+
+
+def module_package_errors(cfg: dict) -> "list[str]":
+    """Every ``[module.X] package`` that is not a directory below the package.
+
+    Refused when the manifest loads, as a misspelt ``platforms`` is
+    (gh-1463): every command reads the manifest through `load` before it
+    writes, so `apply` and `status` stop on the value instead of writing
+    outside ``src/<pkg>/`` or a directory nothing can import. ``""`` is
+    "not declared" (:func:`module_package`), so it passes.
+
+    Examples
+    --------
+    >>> module_package_errors({"module": {"m": {"package": "io"}}})
+    []
+    >>> module_package_errors({"module": {"m": {"package": 3}}})
+    ['[module.m] package = 3 is not a string; write the directory as one, e.g. "io".']
+    """
+    out: "list[str]" = []
+    for mod, data in (cfg.get("module") or {}).items():
+        if not isinstance(data, dict) or not data.get("package"):
+            continue
+        value = data["package"]
+        if not isinstance(value, str):
+            out.append(
+                f"[module.{mod}] package = {value!r} is not a string;"
+                ' write the directory as one, e.g. "io".'
+            )
+        elif (why := validate_module_package(value)) is not None:
+            out.append(f"[module.{mod}] package = {why}")
+    return out
+
+
 def _module_key(mod: str) -> str:
     """TOML table key for a module id — quoted when dotted.
 
     ``[module."dsp.filters"]`` keeps the dotted id a single key; the bare
-    ``[module.dsp.filters]`` would parse as nested tables.
+    ``[module.dsp.filters]`` would parse as nested tables. A quoted key is a
+    basic string, so it is written by the one escaper (gh-1886).
+
+    >>> _module_key("dsp.filters"), _module_key("filt")
+    ('"dsp.filters"', 'filt')
     """
-    return f'"{mod}"' if "." in mod else mod
+    return _toml_basic_string(mod) if "." in mod else mod
 
 
 def _truthy(v: object) -> bool:
@@ -2731,13 +2920,47 @@ def module_package(cfg: dict, module: str) -> str:
         package = "wfm"
 
     When unset the module's own ``pypath`` is used, so a standalone module
-    (``<pkg>.<module>``) needs no key. Callers spell the fallback explicitly —
-    ``C.module_package(cfg, m) or mp.pypath`` — because ``mp`` is already in
-    scope wherever the path is being built.
+    (``<pkg>.<module>``) needs no key. This is the RAW reader: ``""`` means
+    "not declared". :func:`module_package_resolved` fills the default in,
+    and is what anything naming where a module's class lives must read.
 
     :func:`capsule_package` and :func:`handle_package` are kind-flavoured
     aliases that delegate here; there is exactly one implementation."""
     return cfg.get("module", {}).get(module, {}).get("package", "")
+
+
+def module_package_resolved(cfg: dict, module: str) -> str:
+    """The package directory a module's Python lands in, default filled in.
+
+    THE one answer to "where does a module's class live" (gh-2054), for every
+    module kind: ``[module.X] package`` (gh-523) when declared, else the
+    module's own ``pypath``. It is a directory below ``src/<pkg>/``, ``/``
+    separated for a nested module. Its ``__init__.py`` re-exports the
+    module's classes, so ``<pkg>.<this, dotted>`` is the path a class
+    imports from (`_docstring.class_import_path` spells it); the module's
+    per-object tests, and the gh-1404 element contract beside them, land in
+    its ``tests/``.
+
+    Every generated import of a module object's class reads this: the
+    ``.pyi`` and runtime ``__doc__`` doctests, the element contract and its
+    directory, the ``.pyi`` import of an ``object`` reference, and the
+    apps. They spelled the module id's path instead, which is the class's
+    home only while the module declares no ``package``: on doppler-shaped
+    trees each named a module that does not hold the class.
+
+    ``""`` for ``""``, a standalone object, whose class imports from the
+    package root.
+
+    Examples
+    --------
+    >>> module_package_resolved({"module": {"m": {"package": "wfm"}}}, "m")
+    'wfm'
+    >>> module_package_resolved({"module": {"dsp.filters": {}}}, "dsp.filters")
+    'dsp/filters'
+    >>> module_package_resolved({}, "")
+    ''
+    """
+    return module_package(cfg, module) or module_paths(module).pypath
 
 
 def capsule_package(cfg: dict, module: str) -> str:
@@ -3221,9 +3444,11 @@ def handle_package_resolved(cfg: dict, module: str) -> str:
     Same argument as :func:`handle_header_resolved`: three call sites spelled
     ``C.handle_package(cfg, m) or mp.pypath`` inline, and gh-1227's `.pyi`
     import needed a fourth. One answer to "where does this class live", read
-    by the handle's own writers and by any consumer naming it.
+    by the handle's own writers and by any consumer naming it -- and the key
+    is not handle-specific, so the answer is :func:`module_package_resolved`'s
+    (gh-2054).
     """
-    return handle_package(cfg, module) or module_paths(module).pypath
+    return module_package_resolved(cfg, module)
 
 
 def handle_depends_on(cfg: dict, module: str) -> list:
@@ -3470,24 +3695,29 @@ def object_ref_import(cfg: dict, ref: str) -> str:
     **standalone** object has its own ``.so`` named for the component
     (``from .frame import FrameDesc``). Getting that wrong is not a soft
     failure -- it is an import error in every consumer's type-check.
+
+    A module's package is :func:`module_package_resolved`'s, for a handle and
+    an object module alike: the object branch read the module id's path, so
+    a module declaring ``package`` was imported from a module that does not
+    hold the class (gh-2054).
     """
+    from ._docstring import class_import_path
+
     comp, _, _cls = ref.partition(".")
-    if comp not in components(cfg):
-        # gh-1227: a handle module's class lives in the module's own package,
-        # which `handle_package` already answers for the handle's own `.pyi`.
-        # Reading it here rather than rebuilding the path keeps one answer to
-        # "where does this class live" for both writers.
-        if module_kind(cfg, comp) == "handle":
-            cls = resolve_handle_object_ref(cfg, ref)[3]
-            dotted = handle_package_resolved(cfg, comp).replace("/", ".")
-            return f"from .{dotted} import {cls}"
+    if comp in components(cfg):
+        cls = resolve_object_ref(cfg, ref)[3]
+        home = module_of(cfg, comp)
+        if not home:
+            return f"from .{comp} import {cls}"
+    elif module_kind(cfg, comp) == "handle":
+        # gh-1227: a handle module's class lives in the module's own
+        # package, the one its own `.pyi` lands in.
+        cls = resolve_handle_object_ref(cfg, ref)[3]
+        home = comp
+    else:
         return ""
-    cls = resolve_object_ref(cfg, ref)[3]
-    for mod in modules(cfg):
-        if comp in module_objects(cfg, mod):
-            dotted = module_paths(mod).pypath.replace("/", ".")
-            return f"from .{dotted} import {cls}"
-    return f"from .{comp} import {cls}"
+    where = class_import_path("", module_package_resolved(cfg, home))
+    return f"from .{where} import {cls}"
 
 
 def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
@@ -4516,7 +4746,7 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # one are different values with different readers, and a single
             # slot standing in for both is how a key comes back wrong: slot 15
             # is what the author WROTE (persisted verbatim by
-            # `init_param_tuple_to_dict`), slot 17 is the Python class it
+            # `init_param_tuple_to_dict`), slot 19 is the Python class it
             # RESOLVES to (read by the two `.pyi` producers). Every C-side
             # slot above is already filled by the same resolution, so the
             # generated C path is the shipped capsule one, unchanged.
@@ -4525,8 +4755,16 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # of a str, read by `_coerce.str_hint`. Authored, so it sits with
             # the authored slots, ahead of the two resolved ones.
             p.get("str_hint", ""),
+            # Slots 17 and 18 (gh-2004): gh-805 §C's array-shape keys, read
+            # by `_coerce.array_rank` / `_coerce.elements_per_sample`. Each
+            # authored slot's index is its key's in `_keys.INIT_PARAM_FIELDS`,
+            # which is how `_coerce` finds them. "" when undeclared, like
+            # every slot here; a `rank = 0` stays 0, which load refuses.
+            p.get("rank", ""),
+            p.get("elements_per_sample", ""),
+            # Slot 19: the class an `object` reference resolves to.
             _object_ref_slot(cfg, p, 3),
-            # Slot 18: the `.pyi` import for that class. Resolved HERE, with
+            # Slot 20: the `.pyi` import for that class. Resolved HERE, with
             # the rest, because it is the last point that still has `cfg` --
             # `make_state_ctx` gets tuples, not the manifest, so a stub
             # producer could name the class but never find out where it lives.
@@ -4599,6 +4837,13 @@ def init_param_tuple_to_dict(p: tuple) -> dict:
         rec["example_value"] = p[14]
     if len(p) > 16 and p[16]:
         rec["str_hint"] = p[16]
+    # gh-2004: not truth-tested, so a `rank = 0` the author wrote
+    # round-trips to the load that refuses it rather than vanishing on the
+    # way.
+    if len(p) > 17 and p[17] not in (None, ""):
+        rec["rank"] = p[17]
+    if len(p) > 18 and p[18] not in (None, ""):
+        rec["elements_per_sample"] = p[18]
     return rec
 
 
@@ -4803,14 +5048,21 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
     ...     {"params": [{"name": "h", "type": "dp_plan_t *",
     ...                  "header": "dp/plan.h"}]}, "w")
     []
+    >>> _param_type_errors({"extra_args": [{"name": "k", "type": "wat_t"}]},
+    ...                    "'v' method 'run'")[0].splitlines()[0]
+    "'v' method 'run': extra_arg 'k' has unknown type 'wat_t'."
     """
     errors: list[str] = []
-    for pm in entry.get("params", []) or []:
-        err = _declared_type_error(
-            pm, f"{what}: param {pm.get('name', '?')!r}"
-        )
-        if err:
-            errors.append(err)
+    # gh-1977: `extra_args` is a method's synonym for `params`, and the
+    # replay forwards whichever is set (`_apply._replay_method`). Reading
+    # only `params` let an `extra_args` type reach `_CTYPE_META` unchecked.
+    for key, noun in (("params", "param"), ("extra_args", "extra_arg")):
+        for pm in entry.get(key, []) or []:
+            err = _declared_type_error(
+                pm, f"{what}: {noun} {pm.get('name', '?')!r}"
+            )
+            if err:
+                errors.append(err)
     return errors
 
 
@@ -4895,6 +5147,212 @@ def _arg_type_error(
     return f"{what} has unknown arg_type '{ctype}'.\n{indented}"
 
 
+def _out_type_error(entry: dict, what: str, *, function: bool = False) -> str:
+    """Validate one entry's ``out_type``; "" when the binding can use it.
+
+    gh-1977. ``out_type`` names the element of an ndarray the binding
+    allocates, so it is asked :func:`_types.is_out_type` -- the predicate
+    ``--out-type`` asks on the command line. Left unchecked, a row the CLI
+    refuses reached ``_CTYPE_TO_NPY[out_type]`` in the render, and ``status``
+    and ``apply`` died with a bare ``KeyError``.
+
+    A method's ``out_type`` is that element and nothing else. When the
+    method is an array result whose element is ``void``,
+    :func:`_outbuf.element_why_not` refuses the row at the render, in words
+    about the element; this leaves the row to it, so one row gets one
+    refusal. A module function's grammar is wider (gh-128, gh-1180): a
+    ``[param]`` suffix names the length argument, and ``"str"`` is a
+    variable-output function's text result. Its element is what
+    :func:`_types.parse_out_type` resolves.
+
+    Parameters
+    ----------
+    entry : dict
+        A ``[[<obj>.methods]]`` or ``[[module.<m>.functions]]`` table.
+    what : str
+        Human-readable location, used to open the message.
+    function : bool, optional
+        *entry* is a module function, read with the function grammar.
+
+    Returns
+    -------
+    str
+        The message, or ``""`` when ``out_type`` is absent or usable.
+
+    Examples
+    --------
+    >>> _out_type_error({"out_type": "float"}, "x")
+    ''
+    >>> _out_type_error({"out_type": "void"}, "x").splitlines()[0]
+    "x: out_type 'void' has no numpy equivalent."
+    >>> _out_type_error({"out_type": "float64[M]"}, "x", function=True)
+    ''
+    >>> _out_type_error({"out_type": "str", "variable_output": True}, "x",
+    ...                 function=True)
+    ''
+    """
+    out_type = entry.get("out_type")
+    if not out_type:
+        return ""
+    elem = str(out_type)
+    hint = ""
+    if function:
+        if elem == "str":
+            if entry.get("variable_output"):
+                return ""
+            hint = (
+                "\n  'str' is a variable-output function's text result; it"
+                " needs variable_output = true."
+            )
+        elem = _T.parse_out_type(elem)[0]
+    else:
+        from . import _outbuf
+
+        # The same coercions `_apply._replay_method` applies, so this asks
+        # about the row the render will see.
+        if _outbuf.element_why_not(
+            what,
+            variable_output=bool(entry.get("variable_output")),
+            batch=bool(entry.get("batch")),
+            record_dtype=entry.get("record_dtype", ""),
+            borrow=bool(entry.get("borrow")),
+            out_type=elem,
+            return_type=entry.get("return_type", "float _Complex"),
+        ):
+            return ""
+    if _T.is_out_type(elem):
+        return ""
+    supported = ", ".join(sorted(_T.SUPPORTED_ARRAY_CTYPES))
+    return (
+        f"{what}: out_type {out_type!r} has no numpy equivalent.\n"
+        f"  Supported: {supported}{hint}"
+    )
+
+
+def _multi_output_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``multi_output`` types; [] when all are usable.
+
+    gh-1977. Each entry is an extra ``<T> *outN`` the kernel fills, asked
+    :func:`_types.is_multi_output_type` -- the predicate ``--multi-output``
+    asks on the command line. Left unchecked, an entry the CLI refuses
+    reached ``_CTYPE_META[rt]["zero"]`` in the render as a bare
+    ``KeyError``. A bare string is refused as one message rather than read
+    character by character, which is what iterating it would do.
+
+    Parameters
+    ----------
+    entry : dict
+        A ``[[<obj>.methods]]`` table.
+    what : str
+        Human-readable location, used to open each message.
+
+    Returns
+    -------
+    list of str
+        One message per offending entry, in declaration order.
+
+    Examples
+    --------
+    >>> _multi_output_errors({"multi_output": ["uint8_t", "bool"]}, "x")
+    []
+    >>> _multi_output_errors({"multi_output": ["void"]}, "x")[0].splitlines()[0]
+    "x: multi_output type 'void' is not supported."
+    >>> print(_multi_output_errors({"multi_output": "int"}, "x")[0])
+    x: multi_output must be a list of types, e.g. multi_output = ["int"].
+    """
+    outs = entry.get("multi_output")
+    if not outs:
+        return []
+    if not isinstance(outs, list):
+        return [
+            f"{what}: multi_output must be a list of types, e.g. "
+            f'multi_output = ["{outs}"].'
+        ]
+    errors: list[str] = []
+    for rt in outs:
+        if _T.is_multi_output_type(str(rt)):
+            continue
+        help_text = _T.unsupported_return_type_help(str(rt), allow_void=False)
+        indented = "\n".join(f"  {line}" for line in help_text.splitlines())
+        errors.append(
+            f"{what}: multi_output type {rt!r} is not supported.\n{indented}"
+        )
+    return errors
+
+
+def _out_cols_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``out_cols``; [] when absent or usable.
+
+    gh-2115. ``out_cols`` makes a ``variable_output`` result a matrix: the
+    kernel still fills a flat buffer and returns an element count, and the
+    binding hands back ``(count / out_cols, out_cols)``. That only means
+    something for exactly one flat output array, so the shapes that have no
+    such array are refused here, at load, rather than rendered into a binding
+    that quietly ignores the key.
+
+    Parameters
+    ----------
+    entry : dict
+        One ``[[<component>.methods]]`` entry.
+    what : str
+        How the caller names the entry in a message.
+
+    Returns
+    -------
+    list of str
+        One message per problem.
+
+    Examples
+    --------
+    >>> _out_cols_errors({"name": "push"}, "x")
+    []
+    >>> _out_cols_errors({"out_cols": "state->n", "variable_output": True}, "x")
+    []
+    >>> _out_cols_errors({"out_cols": 8}, "x")[0]
+    'x: out_cols needs variable_output = true: a fixed-size result has no row count to derive from the kernel.'
+    >>> _out_cols_errors({"out_cols": 0, "variable_output": True}, "x")[0]
+    'x: out_cols must be a positive integer or a non-empty C expression, got 0.'
+    >>> _out_cols_errors(
+    ...     {"out_cols": 4, "variable_output": True, "multi_output": ["int"]},
+    ...     "x",
+    ... )[0]
+    'x: out_cols reshapes ONE output array; this method also declares multi_output.'
+    """
+    if "out_cols" not in entry:
+        return []
+    cols = entry["out_cols"]
+    if isinstance(cols, bool) or not (
+        (isinstance(cols, int) and cols >= 1)
+        or (isinstance(cols, str) and cols.strip())
+    ):
+        return [
+            f"{what}: out_cols must be a positive integer or a non-empty "
+            f"C expression, got {cols!r}."
+        ]
+    errors: list[str] = []
+    if not entry.get("variable_output"):
+        errors.append(
+            f"{what}: out_cols needs variable_output = true: a fixed-size "
+            f"result has no row count to derive from the kernel."
+        )
+    if entry.get("multi_output"):
+        errors.append(
+            f"{what}: out_cols reshapes ONE output array; this method also "
+            f"declares multi_output."
+        )
+    if entry.get("record_dtype"):
+        errors.append(
+            f"{what}: out_cols reshapes a flat array of scalars; "
+            f"record_dtype already gives every row its own columns."
+        )
+    if entry.get("batch"):
+        errors.append(
+            f"{what}: out_cols needs a variable_output method; batch is a "
+            f"1:1 transform whose result has the input's shape."
+        )
+    return errors
+
+
 def manifest_type_errors(cfg: dict) -> list[str]:
     """Every unusable type declared anywhere in the manifest.
 
@@ -4911,9 +5369,14 @@ def manifest_type_errors(cfg: dict) -> list[str]:
     it returns anything, which is the manifest-path counterpart of the check
     the ``jm function`` / ``jm method`` front-ends have always done.
 
-    Covers module functions, component methods, view methods, and capsule /
-    composer module methods — every table whose types reach a generated
-    binding.
+    Covers module functions, component methods, view methods, capsule /
+    composer module methods, and each component's own step() ``arg_type`` /
+    ``return_type`` (gh-1884, asked :func:`_types.step_type_error`) — every
+    table whose types reach a generated binding. gh-1977 added the
+    output-side keys of the first three, which reached the render unchecked:
+    ``out_type`` (methods and functions), ``multi_output`` and
+    ``extra_args`` (methods). Each is asked the predicate its command-line
+    flag asks, so a row ``jm method`` refuses is one ``apply`` refuses too.
 
     Parameters
     ----------
@@ -4968,6 +5431,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         what: str,
         exempt: tuple,
         elements: "frozenset[str]" = frozenset(),
+        outputs: str = "",
     ) -> None:
         err = _return_type_error(entry, what, exempt, elements)
         if err:
@@ -4982,6 +5446,16 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         if err:
             errors.append(err)
         errors.extend(_param_type_errors(entry, what))
+        # gh-1977: the output-side keys, on the faces whose vocabulary has
+        # them (`_keys.METHOD_KEYS`, `_keys.FUNCTION_KEYS`); a capsule or
+        # composer method has neither key.
+        if outputs:
+            err = _out_type_error(entry, what, function=outputs == "function")
+            if err:
+                errors.append(err)
+        if outputs == "method":
+            errors.extend(_multi_output_errors(entry, what))
+            errors.extend(_out_cols_errors(entry, what))
 
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
@@ -4991,6 +5465,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 fn,
                 f"module {mod!r} function {fn.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS + ("out_type",),
+                outputs="function",
             )
         for m in module_methods(cfg, mod):
             _check(
@@ -4999,6 +5474,19 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 _RETURN_TYPE_EXEMPT_KEYS,
             )
     for comp in components(cfg):
+        # gh-1884: the component's own step() input and output, asked what
+        # `--arg-type` / `--return-type` ask on the command line. Unchecked
+        # here, a string step type reached the render and `apply` wrote a
+        # binding that fails its own tests or segfaults. An absent key is
+        # the default, which is legal.
+        for key in ("arg_type", "return_type"):
+            declared = cfg.get(comp, {}).get(key)
+            if declared is None:
+                continue
+            err = _T.step_type_error(f"{comp!r} {key}", str(declared))
+            if err:
+                first, *rest = err.splitlines()
+                errors.append("\n".join([first] + [f"  {r}" for r in rest]))
         # gh-1037: the constructor's own inputs. This is the table the issue
         # was filed against -- an unknown init-param type crashed the render.
         for ip in cfg.get(comp, {}).get("init_params", []) or []:
@@ -5017,6 +5505,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 f"{comp!r} method {m.get('name', '?')!r}",
                 _RETURN_TYPE_EXEMPT_KEYS,
                 comp_elements,
+                outputs="method",
             )
         for v in views(cfg, comp):
             vname = v.get("class_name", "?")
@@ -5028,6 +5517,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                     f"{comp!r} view {vname!r} method {m.get('name', '?')!r}",
                     _RETURN_TYPE_EXEMPT_KEYS,
                     comp_elements,
+                    outputs="method",
                 )
     return errors
 
@@ -5109,6 +5599,61 @@ def record(cfg: dict, component: str, name: str) -> dict:
 def record_names(cfg: dict, component: str) -> set[str]:
     """Every record struct name *component* declares (gh-1405)."""
     return {str(r.get("name") or "") for r in records(cfg, component)} - {""}
+
+
+def extra_methods(cfg: dict, component: str) -> "list[dict]":
+    """The ``[[<component>.extra_methods]]`` rows, in manifest order (gh-1997).
+
+    A method whose CPython function the AUTHOR writes, in the object's
+    ``_extra.c`` (``<comp>_ext_extra.c`` standalone,
+    ``<cname>_ext_<comp>_extra.c`` in a module), and whose ``PyMethodDef``
+    row, prototype, ``#include`` and stub jm generates from the row --
+    gh-1190's composer key, for an ordinary object:
+
+    .. code-block:: toml
+
+        [[fft.extra_methods]]
+        name    = "execute_ci16"
+        fn      = "FFTObj_execute_ci16"
+        flags   = "METH_VARARGS"
+        args    = "iq: NDArray[np.int16]"
+        returns = "NDArray[np.complex64]"
+        doc     = "FFT of interleaved int16 I/Q."
+
+    Manifest-only: no CLI flag spells a repeatable multi-key row, so
+    ``jm apply``'s replay carries it explicitly (``_apply._object_kwargs``)
+    and ``jm script`` names it in a NOTE. A view does not inherit these: its
+    rows would call a function written against the parent's struct.
+
+    Examples
+    --------
+    >>> extra_methods({"o": {"extra_methods": [{"name": "h", "fn": "O_h"}]}},
+    ...               "o")
+    [{'name': 'h', 'fn': 'O_h'}]
+    >>> extra_methods({"o": {}}, "o")
+    []
+    """
+    return [
+        dict(r)
+        for r in cfg.get(component, {}).get("extra_methods", []) or []
+        if isinstance(r, dict)
+    ]
+
+
+def set_extra_methods(cfg: dict, component: str, rows: "list[dict]") -> dict:
+    """Store (or clear, when *rows* is empty) *component*'s extra methods.
+
+    The write `jm apply`'s replay makes after `add_component`, beside
+    `set_destroy_spec` and for its reason: a manifest-only table the
+    replayed object is created without (gh-1997).
+    """
+    if rows:
+        cfg.setdefault(component, {})["extra_methods"] = [
+            dict(r) for r in rows
+        ]
+    else:
+        cfg.get(component, {}).pop("extra_methods", None)
+    return cfg
 
 
 def properties(cfg: dict, component: str) -> list[dict]:
@@ -5670,10 +6215,13 @@ def stamp_jm_version(root: Path, cfg: dict) -> str | None:
         text = mp.read_text(encoding="utf-8")
     except OSError:
         return None
+    # A version string holds nothing to escape; it is quoted by the one
+    # escaper anyway, so no TOML text jm writes is quoted by hand (gh-1886).
+    value = _toml_basic_string(running)
     if _re.search(r"^[ \t]*jm_version[ \t]*=", text, _re.M):
         text = _re.sub(
             r"^([ \t]*jm_version[ \t]*=[ \t]*).*$",
-            lambda m: m.group(1) + f'"{running}"',
+            lambda m: m.group(1) + value,
             text,
             count=1,
             flags=_re.M,
@@ -5681,7 +6229,7 @@ def stamp_jm_version(root: Path, cfg: dict) -> str | None:
     elif _re.search(r"^\[project\]", text, _re.M):
         text = _re.sub(
             r"^(\[project\][^\n]*\n)",
-            lambda m: m.group(1) + f'jm_version = "{running}"\n',
+            lambda m: m.group(1) + f"jm_version = {value}\n",
             text,
             count=1,
             flags=_re.M,
@@ -5730,6 +6278,47 @@ def project_version(cfg: dict) -> str:
     `pyproject.toml` supplies nothing either.
     """
     return cfg.get("project", {}).get("version", "0.1.0")
+
+
+#: The release segment of a PEP 440 version: the leading run of dotted
+#: integers. A pre-release, dev, post or local suffix hangs off the end of it.
+_RELEASE_RE = _re.compile(r"[0-9]+(?:\.[0-9]+)*")
+
+
+def cmake_version(version: str) -> str:
+    """The spelling of *version* that CMake's ``project(VERSION)`` accepts.
+
+    CMake takes ``major[.minor[.patch[.tweak]]]`` integers and rejects
+    anything else at configure time, so a PEP 440 pre-release such as
+    ``1.1.2a47`` has no CMake spelling of its own (gh-1141 found it; gh-2084
+    decided it). The CMake copy carries the **release segment** instead,
+    ``1.1.2``: the build then configures, and the pre-release is still the
+    PyPI and manifest version. Each slot's copy is compared and written in
+    this spelling, and the template renders it, so the three cannot disagree.
+
+    A version with no CMake spelling at all is returned unchanged, so the
+    copy it would be written into is reported as unwritable rather than
+    silently given a different version. That is an epoch (``1!2.0``) or more
+    than four integer components.
+
+    Examples
+    --------
+    >>> cmake_version("1.1.2a47")
+    '1.1.2'
+    >>> cmake_version("0.2.0")
+    '0.2.0'
+    >>> cmake_version("1!2.0")
+    '1!2.0'
+    >>> cmake_version("1.2.3.4.5")
+    '1.2.3.4.5'
+    """
+    m = _RELEASE_RE.match(version)
+    if m is None or version[m.end() : m.end() + 1] == "!":
+        return version
+    release = m.group(0)
+    if release.count(".") > 3:
+        return version
+    return release
 
 
 def build_system(cfg: dict) -> str:
@@ -6077,76 +6666,137 @@ def from_new(
     }
 
 
-def app_config(cfg: dict) -> dict:
-    """Return the [app] section, or an empty dict if absent."""
-    return cfg.get("app", {})
+def apps(cfg: dict) -> "list[dict]":
+    """The project's apps: its ``[[app]]`` rows, in manifest order (gh-2074).
+
+    Each row is one app -- a C executable, a console script or a PEP 723
+    script -- keyed by its ``name``, which is unique within the manifest;
+    its target, flags and commands live inside the row. `jm app` appends one
+    (:func:`add_app`), `jm remove app` drops one (:func:`drop_app`), and
+    `apply` re-renders each.
+
+    The one reader, of one spelling. A single ``[app]`` TABLE is how schema
+    8 and earlier spelled the one app a manifest could hold; it is refused
+    here, naming `jm upgrade`, whose migration rewrites it as a one-row
+    ``[[app]]`` (`_upgrade.AppRows`). Two rows sharing a name are refused
+    too: `jm remove app <name>` could not say which one it meant.
+
+    Returns the list the manifest holds -- empty when it declares no app.
+
+    Examples
+    --------
+    >>> apps({"app": [{"target": "c", "name": "t", "object": "o"}]})
+    [{'target': 'c', 'name': 't', 'object': 'o'}]
+    >>> apps({})
+    []
+    """
+    rows = cfg.get("app", [])
+    if isinstance(rows, dict):
+        raise Refusal(
+            f"{FILENAME} declares [app] as one table, the spelling of schema"
+            " 8 and earlier; this jm reads one [[app]] row per app (gh-2074)."
+            " Run `jm upgrade`, which rewrites it as [[app]]."
+        )
+    seen: "set[str]" = set()
+    for row in rows:
+        name = row.get("name") if isinstance(row, dict) else None
+        if not isinstance(name, str) or not name:
+            raise Refusal(
+                f"{FILENAME}: an [[app]] row has no `name` ({row!r}); each"
+                " app is keyed by its name."
+            )
+        if name in seen:
+            raise Refusal(
+                f"{FILENAME}: two [[app]] rows are named {name!r}, and an"
+                " app's name is unique within the manifest. Rename or delete"
+                " one."
+            )
+        seen.add(name)
+    return rows
 
 
-def set_app(
-    cfg: dict,
+def app_entry(
     target: str,
     name: str,
-    object_: str | None = None,
-    function: str | None = None,
-    module: str | None = None,
+    *,
+    object_: "str | None" = None,
+    function: "str | None" = None,
+    module: "str | None" = None,
+    flags: "list[dict] | tuple" = (),
+    commands: "list[dict] | tuple" = (),
 ) -> dict:
-    """Write the [app] target/name and its source (object, or function+module),
-    preserving any [[app.flags]]."""
-    app = cfg.get("app", {})
-    app.update({"target": target, "name": name})
+    """One ``[[app]]`` row, as `jm app` declares it (gh-2074).
+
+    The source is a module function (with the module that holds it, ``""``
+    when unresolved), an object (with its owning module when one was given,
+    gh-187), or neither, for a subcommand app. *flags* and *commands* are
+    keyed by name: a later one of the same name replaces the earlier, and
+    keeps the later one's place. Empty values are not written.
+
+    Examples
+    --------
+    >>> app_entry("c", "t", object_="o", flags=[
+    ...     {"name": "g", "type": "double", "default": "", "help": ""}
+    ... ])["flags"]
+    [{'name': 'g', 'type': 'double'}]
+    >>> app_entry("pep723", "f", function="f", module="m")
+    {'target': 'pep723', 'name': 'f', 'function': 'f', 'module': 'm'}
+    """
+    entry: dict = {"target": target, "name": name}
     if function is not None:
-        app["function"] = function
-        app["module"] = module or ""
-        app.pop("object", None)
-    else:
-        app["object"] = object_
-        app.pop("function", None)
+        entry["function"] = function
+        entry["module"] = module or ""
+    elif object_ is not None:
+        entry["object"] = object_
         if module:
-            app["module"] = module  # owning module (gh-187 console scoping)
-        else:
-            app.pop("module", None)
-    cfg["app"] = app
-    return cfg
-
-
-def app_flags(cfg: dict) -> list[dict]:
-    """Return declared [[app.flags]] (empty list if none)."""
-    return list(cfg.get("app", {}).get("flags", []))
-
-
-def add_app_flag(cfg: dict, flag: dict) -> dict:
-    """Add/replace an [[app.flags]] entry, keyed by name."""
-    app = cfg.setdefault("app", {})
-    flags = app.setdefault("flags", [])
-    flags[:] = [f for f in flags if f.get("name") != flag["name"]]
-    flags.append(
-        {
-            k: flag[k]
+            entry["module"] = module  # owning module (gh-187 console scoping)
+    rows: "dict[str, dict]" = {}
+    for f in flags:
+        rows.pop(f["name"], None)
+        rows[f["name"]] = {
+            k: f[k]
             for k in ("name", "type", "default", "help")
-            if flag.get(k) not in (None, "")
+            if f.get(k) not in (None, "")
         }
-    )
-    return cfg
+    if rows:
+        entry["flags"] = list(rows.values())
+    cmds: "dict[str, dict]" = {}
+    for c in commands:
+        row = {"name": c["name"]}
+        if c.get("help"):
+            row["help"] = c["help"]
+        if c.get("flags"):
+            row["flags"] = [dict(f) for f in c["flags"]]
+        cmds.pop(c["name"], None)
+        cmds[c["name"]] = row
+    if cmds:
+        entry["commands"] = list(cmds.values())
+    return entry
 
 
-def app_commands(cfg: dict) -> list[dict]:
-    """Return declared [[app.commands]] (empty list if none)."""
-    return list(cfg.get("app", {}).get("commands", []))
+def add_app(cfg: dict, entry: dict) -> None:
+    """Append *entry* to the manifest's ``[[app]]`` rows (gh-2074).
+
+    Appends, never replaces: a second `jm app` beside a first is a second
+    app. The caller refuses a name already taken, which :func:`apps` would
+    otherwise refuse on the next load.
+    """
+    apps(cfg)
+    cfg.setdefault("app", []).append(entry)
 
 
-def add_app_command(cfg: dict, command: dict) -> dict:
-    """Add/replace an [[app.commands]] entry, keyed by name. A command is
-    {name, help, flags: [{name, type, default, help}]}."""
-    app = cfg.setdefault("app", {})
-    cmds = app.setdefault("commands", [])
-    cmds[:] = [c for c in cmds if c.get("name") != command["name"]]
-    entry = {"name": command["name"]}
-    if command.get("help"):
-        entry["help"] = command["help"]
-    if command.get("flags"):
-        entry["flags"] = [dict(f) for f in command["flags"]]
-    cmds.append(entry)
-    return cfg
+def drop_app(cfg: dict, name: str) -> dict:
+    """Remove the ``[[app]]`` row named *name* and return it (gh-2074).
+
+    The key goes with the last row, so a manifest whose apps are all removed
+    is the one that never declared any.
+    """
+    rows = apps(cfg)
+    (entry,) = [row for row in rows if row["name"] == name]
+    rows.remove(entry)
+    if not rows:
+        cfg.pop("app", None)
+    return entry
 
 
 def arg_type(cfg: dict, component: str) -> str:
@@ -6285,10 +6935,9 @@ def object_create_name(cfg: dict, component: str) -> str:
 # also keeps the object surface honest — the whole teardown contract is one
 # block a reader can take in at once.
 #
-# Manifest-only, no CLI flag — same call as `package` (gh-523). Five
-# interacting keys is exactly the shape the CLI is the wrong tool for (see
-# `_cli_object`'s division of labour: the CLI handles simple scalars, TOML
-# handles anything with internal structure).
+# Manifest-only, no CLI flag. Five interacting keys is exactly the shape the
+# CLI is the wrong tool for (see `_cli_object`'s division of labour: the CLI
+# handles simple scalars, TOML handles anything with internal structure).
 
 # The only value of `returns` that changes anything. Anything else is either
 # the default (absent / "void") or an authoring error.
@@ -6532,8 +7181,13 @@ _TOML_SHORT_ESCAPES = {
 }
 
 
-def _toml_basic_string(value: str) -> str:
+def _toml_basic_string(value: object) -> str:
     """*value* as a TOML **basic string**, quotes included.
+
+    Anything that is not a string is written as its ``str()`` -- what the
+    ``f'key = "{value}"'`` sites gh-1886 routed through here did, so a
+    number a hand-written manifest gave a string key reads back as the same
+    string it always has. Only the escaping changed.
 
     gh-844. The one escaper. There were **four**, hand-rolled to three
     different levels of completeness, and three of them emitted strings
@@ -6555,9 +7209,17 @@ def _toml_basic_string(value: str) -> str:
     format's rules is not a substitute for the rules — so this states TOML's,
     and `tests/test_gh844_toml_escaping.py` checks every path against every
     class of forbidden character rather than against a remembered list.
+
+    gh-1886: and the one *way* a string is quoted in `_dump`. The serializer
+    had 130-odd ``f'key = "{value}"'`` sites beside the five that called
+    this, so a `const char *` param default -- documented as a C string
+    literal, ``"hi"`` -- made every later `apply` refuse its own manifest.
+    `tests/test_gh1886_dump_escapes_every_string.py` refuses that shape in
+    the source and round-trips a quote, backslash and newline through every
+    string the serializer writes.
     """
     out = []
-    for ch in value:
+    for ch in str(value):
         if ch in _TOML_SHORT_ESCAPES:
             out.append(_TOML_SHORT_ESCAPES[ch])
         elif ch < "\u0020" or ch == "\u007f":
@@ -6565,6 +7227,55 @@ def _toml_basic_string(value: str) -> str:
         else:
             out.append(ch)
     return '"' + "".join(out) + '"'
+
+
+def _toml_multiline_string(value: str) -> str:
+    r"""*value* as a TOML **multi-line** basic string, delimiters included.
+
+    The heredoc form: the opening delimiter, a newline, the text, a newline,
+    the closing delimiter. `_str_assign` uses it for prose that has line
+    breaks in it, and `_dump` for the C bodies (``impl``, ``create_impl``,
+    ``reset_impl``, ``destroy_impl``, ``init_post_parse``), which keep it
+    whatever they hold.
+
+    gh-1886. Those C bodies had their own copy of this, which escaped a run
+    of three quotes and nothing else -- so a backslash reached TOML raw, and
+    a multi-line basic string reads escapes. ``printf("a\n")`` came back with
+    a real newline inside the C string literal, and ``'\0'`` made `_dump`
+    refuse its own output. So the backslash is doubled here, once, for
+    both callers.
+
+    Newline and tab are written raw, which is the point of the form; every
+    other character TOML forbids raw in it (a lone CR, the other C0
+    controls, U+007F) is written as its escape, so any value is
+    representable.
+
+    Leading and trailing newlines are dropped (gh-192): TOML trims the
+    newline after the opening delimiter and keeps the one before the closing
+    one, so the value reads back with exactly one trailing newline -- which
+    the next save drops again, and repeated saves stay byte-stable.
+
+    Examples
+    --------
+    >>> body = _toml_multiline_string('puts("a' + chr(92) + 'n");')
+    >>> body.splitlines()[1]
+    'puts("a\\\\n");'
+    >>> tomllib.loads("k = " + body)["k"] == 'puts("a' + chr(92) + 'n");\n'
+    True
+    """
+    out = []
+    for ch in value.strip("\n"):
+        if ch in "\n\t":
+            out.append(ch)
+        elif ch in _TOML_SHORT_ESCAPES and ch != '"':
+            out.append(_TOML_SHORT_ESCAPES[ch])
+        elif ch < " " or ch == "\x7f":
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    # A quote is legal on its own; three in a row would close the string.
+    body = "".join(out).replace('"""', '\\"\\"\\"')
+    return '"""\n' + body + '\n"""'
 
 
 def _str_assign(key: str, value: str) -> str:
@@ -6583,791 +7294,612 @@ def _str_assign(key: str, value: str) -> str:
     # single-line basic string keeps the pretty form where it is correct and is
     # never wrong where it is not.
     if "\n" in value and not _TOML_UNSAFE_IN_MULTILINE.search(value):
-        # strip("\n") for round-trip idempotency (gh-192) — see _dump impl keys.
-        body = (
-            value.replace("\\", "\\\\").replace('"""', '\\"\\"\\"').strip("\n")
-        )
-        return f'{key} = """\n{body}\n"""'
+        return f"{key} = {_toml_multiline_string(value)}"
     return f"{key} = {_toml_basic_string(value)}"
 
 
-def _doc_assign(value: str) -> str:
-    """Render ``doc = ...`` for the TOML dump."""
-    return _str_assign("doc", value)
+# ── The manifest writer (gh-2045) ────────────────────────────────────────────
+#
+# `_dump` turns a manifest dict into TOML text. It was a hand-written emitter
+# per table -- thirty of them, each writing the keys it had been taught -- and
+# every one fell a key behind the reader: a param's `doc`, `enum`, `out`,
+# `rank`, `elements_per_sample` and `str_hint` (gh-2045), an `array_args`
+# row's `dtype` (gh-2036), an object's `records`, `fragment` and
+# `*_impl_file`, a method's `status_errors` and `releases`, a plain module's
+# `platforms`, an `[[enum]]` row's `enumerators`. The keys it did write it
+# often wrote through `str()` in quotes, so `streamable = true` came back
+# `"True"`, which reads as false (gh-2046). Each fix -- gh-257, gh-549,
+# gh-838, gh-1229, gh-1242, gh-1706, gh-1761 -- taught one emitter one more
+# key, and the next key arrived behind it.
+#
+# Now one emitter writes every table, and it writes every key the table holds
+# as the TOML value the key's Python type is. What is left per table is
+# LAYOUT -- which keys come first, which arrays of tables are `[[...]]` rows,
+# which strings are heredocs -- and it is cosmetic: a key the layout does not
+# name is still written, after the ones it does. So a key `_keys` accepts
+# tomorrow round-trips the day it is added, with no emitter to teach.
+#
+# What is deliberately NOT written is `_declared`'s, and named there: a key
+# beginning `_`, a None value, and a group's expansion. Everything else must
+# read back as it was given, and `_dump` checks that it does (`_unfaithful`)
+# and refuses to return a text that means anything else -- so a value TOML
+# cannot hold fails at the write instead of vanishing from the file.
 
 
-def _toml_inline_string(value: str) -> str:
-    """*value* as a TOML **basic string**, safe on one line, quotes included.
+def _declared(value: object, path: tuple = ()) -> object:
+    """*value* as the manifest declares it: what `_dump` writes, and so what
+    reading the text back must give.
 
-    `_str_assign` is the multi-line-capable sibling and cannot be used inside
-    an inline table, which has no ``\"\"\"`` form. Hand-rolling the escape here
-    was a mistake worth recording: escaping only ``\\``, ``"`` and ``\\n``
-    leaves a raw carriage return in the output, which TOML forbids in a basic
-    string. `_dump` self-checks with ``tomllib.loads`` and, on failure, returns
-    the text anyway — so ``C.save`` wrote a manifest that ``C.load`` then
-    refused, from prose as ordinary as a docstring lifted out of a CRLF file.
+    Three things a loaded or edited manifest dict can hold are not part of
+    the declaration, and are left out on purpose -- the only keys `_dump`
+    does not write:
 
-    ``json.dumps`` is the escape, not a reimplementation of one: JSON's string
-    grammar is a subset of TOML's basic string for every character that needs
-    escaping (``\\b \\t \\n \\f \\r \\" \\\\`` literally, everything else
-    control as ``\\uXXXX``). ``ensure_ascii=False`` keeps an author's non-ASCII
-    prose readable, which TOML accepts unescaped.
+    - a key beginning ``_`` inside a table: state a command attached at run
+      time (``_doc_blocks``, ``_group``, ``_template``,
+      ``_version_deferred``), never authored. Not a NAME the author chose:
+      a component or a module may be called ``_x``, and is written. This is
+      the line the layout-preserving writer (`_sync`) draws too;
+    - a None value: TOML has no null, and every reader takes None as absent;
+    - a row carrying `GROUP_ORIGIN_KEY`: `load` expanded it from an
+      ``[[<obj>.init_groups]]`` row, which is what persists (gh-999). A list
+      that held nothing else is the expansion entire, and goes with it.
+
+    Tuples come back as lists, which is what TOML reads them as.
+
+    Examples
+    --------
+    >>> _declared({"o": {"doc": None, "_doc_blocks": [], "mutable": True}})
+    {'o': {'mutable': True}}
+    >>> _declared({"_x": {"init_params": [{"name": "a", "_group": "g"}]}})
+    {'_x': {}}
     """
-    return _toml_basic_string(value)
+    if isinstance(value, dict):
+        named = not path or path == ("module",)
+        out = {}
+        for key, item in value.items():
+            if item is None or (str(key).startswith("_") and not named):
+                continue
+            if isinstance(item, (list, tuple)):
+                kept = [
+                    row
+                    for row in item
+                    if not (
+                        isinstance(row, dict) and row.get(GROUP_ORIGIN_KEY)
+                    )
+                ]
+                if item and not kept:
+                    continue
+                item = kept
+            out[key] = _declared(item, path + (key,))
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_declared(item, path) for item in value]
+    return value
 
 
-def _init_param_pairs(p: dict) -> list[tuple[str, bool, str]]:
-    """``(key, is_bool, value)`` for each key *p* actually carries.
+#: A key TOML reads bare. Any other -- a dotted module id, a sub-package name
+#: holding a dot, a key with a space or a quote -- is written quoted, or it
+#: would mean a nested table or fail to parse (gh-2047).
+_BARE_KEY_RE = _re.compile(r"[A-Za-z0-9_-]+")
 
-    Presence is the **narrower** of the two old rules, deliberately: a bool key
-    is written when truthy, everything else when present and non-empty. The
-    old table form wrote a present-but-empty value (`if "default" in p`); the
-    old inline form did not. `_project_init_params` reads an absent key and an
-    empty one identically, so dropping it loses no meaning — and converging on
-    the narrower rule is what lets the two syntaxes produce the same key set
-    for the same manifest, which is the property this exists to give them.
 
-    One consequence worth naming, since it is not local to the renderer: a
-    hand-written `default = ""` now disappears on the first save. That makes
-    `_round_trips`' `got == want` false for such a manifest, so the gh-698
-    `_dump` fast path stops applying to it and every save falls back to
-    tomlkit — slower, still correct. On the brand-new-file path, where `_dump`
-    runs unguarded, the key is simply not written. Both are the right outcome
-    for a key whose empty value means nothing, but neither is silent about it
-    here.
+def _toml_key(key: object) -> str:
+    """*key* as a TOML key: bare when TOML allows it, quoted otherwise.
+
+    Examples
+    --------
+    >>> _toml_key("arg_type"), _toml_key("dsp.filters"), _toml_key("a b")
+    ('arg_type', '"dsp.filters"', '"a b"')
     """
-    out: list[tuple[str, bool, str]] = []
-    for key, is_bool in _INIT_PARAM_FIELDS:
-        val = p.get(key)
-        if is_bool:
-            if val:
-                out.append((key, True, "true"))
-        elif isinstance(val, (list, tuple)):
-            # gh-1097. Carried through as a list so the two emitters below can
-            # each render it as a TOML array; `str()` would have flattened it
-            # to Python repr in both.
-            if val:
-                out.append((key, False, list(val)))
-        elif val not in (None, ""):
-            out.append((key, False, str(val)))
-    return out
+    text = str(key)
+    return text if _BARE_KEY_RE.fullmatch(text) else _toml_basic_string(text)
 
 
-def _init_param_block_lines(p: dict) -> list[str]:
-    """One init-param as ``key = value`` lines under a ``[[…]]`` header.
+def _shape(path: "tuple[str, ...]") -> str:
+    """*path* with each name the author chose spelled ``<obj>`` or ``*``.
 
-    ``doc`` goes through `_str_assign` so multi-line prose keeps the readable
-    ``\"\"\"`` form it has always had here; every other key is a plain quoted
-    scalar or a bare boolean.
+    The layout is declared per SHAPE, not per path: ``("o", "methods")``
+    and ``("filt", "methods")`` are both ``<obj>.methods``. A component is
+    ``<obj>``; a module id, a codec and a template are ``*``; and every
+    table under ``[project]`` is, because jm names none of them.
+
+    Examples
+    --------
+    >>> _shape(("o", "methods", "params"))
+    '<obj>.methods.params'
+    >>> _shape(("module", "dsp.filt", "functions"))
+    'module.*.functions'
+    >>> _shape(("project", "libraries", "dsp"))
+    'project.*.*'
     """
-    lines: list[str] = []
-    for key, is_bool, val in _init_param_pairs(p):
-        # Every scalar through `_str_assign`, not just `doc`. It already does
-        # the quote/backslash escape correctly, and the bare f-string this
-        # replaced could not survive its own output: a `default_raw` holding a
-        # C expression with a string literal (`default_raw = 'a"b'`) emitted
-        # `default = "a"b"`, which `C.load` then rejects with a
-        # TOMLDecodeError. Ordinary values render byte-identically, so this is
-        # zero churn for every manifest that was already fine.
-        if is_bool:
-            lines.append(f"{key} = true")
-        elif isinstance(val, list):
-            lines.append(f"{key} = {_toml_string_array(val)}")
-        else:
-            lines.append(_str_assign(key, val))
-    return lines
+    if not path:
+        return ""
+    head, rest = path[0], list(path[1:])
+    if head == "project":
+        rest = ["*"] * len(rest)
+    elif head in ("module", "codec", "template") and rest:
+        rest[0] = "*"
+    elif head not in RESERVED_SECTIONS:
+        head = "<obj>"
+    return ".".join([head, *rest])
 
 
-def _init_param_inline(p: dict) -> str:
-    """One init-param as a TOML **inline table**, for a view's ``init_params``.
+# -- The layout: cosmetic, and only that ------------------------------------
+#
+# Each entry says how a table has always been laid out, so a manifest that
+# round-tripped before this writer is written byte for byte as it was. None of
+# it decides WHETHER a key is written: every key is.
 
-    `doc` is emitted as a single-line basic string even when the prose has
-    newlines: an inline table cannot hold TOML's ``\"\"\"`` form, and dropping
-    the key — which is what happened before — silently loses an author's
-    documentation. `_str_assign`'s escaping is not reused here for that
-    reason; this needs the always-inline spelling.
-    """
-    parts = []
-    for key, is_bool, val in _init_param_pairs(p):
-        if is_bool:
-            parts.append(f"{key} = true")
-        elif isinstance(val, list):
-            # gh-1097: the peer of the block emitter above. Fixing one and not
-            # the other is the pattern this repo keeps paying for.
-            parts.append(f"{key} = {_toml_string_array(val)}")
-        else:
-            parts.append(f"{key} = {_toml_inline_string(val)}")
-    return "{" + ", ".join(parts) + "}"
+_METHOD_ORDER = (
+    "name", "doc", "arg_type", "return_type", "varargs", "manual_stub",
+    "variable_output", "pass_capacity", "exact_max_out", "count_default",
+    "count_name", "out_cols", "nogil", "none_on_empty", "error_on_empty",
+    "batch", "multi_output", "extra_args", "params", "out_type",
+    "out_divisor", "bench", "max_results", "result_fields", "single",
+    "py_return_type", "max_out",
+)  # fmt: skip
+_PROPERTY_ORDER = (
+    "name", "doc", "type", "enum", "writable", "field", "buf_field",
+    "len_field", "valid_field", "expr", "value_type", "count_fn", "key_fn",
+    "value_fn",
+)  # fmt: skip
+_STATE_ORDER = (
+    "name", "type", "default", "opaque", "no_ctor", "controllable",
+)  # fmt: skip
+_FUNCTION_ORDER = (
+    "name", "doc", "return_type", "out_type", "variable_output", "out_size",
+    "max_results_param", "result_fields", "params", "inline",
+)  # fmt: skip
+#: A module's values after the ones its kind names, and its tables -- in the
+#: one order every kind has written them.
+_MODULE_TAIL = (
+    "doc", "extra_types", "extra_link_libs", "extra_include_dirs",
+    "reexports",
+    "functions", "init_params", "create_args", "create_post", "methods",
+    "properties", "getters", "source", "segment", "timeline", "oo",
+    "composer", "json", "serializers", "settings",
+)  # fmt: skip
+_KIND_MODULE_HEAD = (
+    "no_generate", "kind", "backing", "capsule_name", "package", "header",
+)  # fmt: skip
+#: ``[module.X]`` by kind; the rest of the kind's vocabulary follows sorted,
+#: as gh-1229 wrote it. A plain module has no vocabulary in `_keys`.
+_MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
+    "": ("no_generate", "functions_in_core", "objects", "package")
+    + _MODULE_TAIL,
+    **{
+        kind: _KIND_MODULE_HEAD
+        + {
+            "handle": (
+                "type_name", "create_fn", "init_fn", "close_fn",
+                "handle_type", "optional_backend", "serializable",
+                "context_manager",
+            ),
+            "composer": ("composes", "sample_type"),
+        }.get(kind, ())
+        + ("depends_on",)
+        + _MODULE_TAIL
+        for kind in _MODULE_KEYS_BY_KIND
+    },
+}  # fmt: skip
+_OBJECT_ORDER = (
+    "module", "arg_type", "return_type", "mutable", "no_state", "no_step",
+    "no_reset", "opaque_state", "process_global", "header_only",
+    "core_macro", "core_header", "step_delegates_to_steps", "serializable",
+    "streamable", "async_stream", "stream_block_default", "class_name",
+    "create_fn", "create_error", "create_error_message", "doc",
+    "depends_on", "extra_link_libs", "extra_include_dirs", "core_args",
+    "impl", "create_impl", "reset_impl", "destroy_impl", "init_post_parse",
+    "destroy", "array_args", "state", "init_params", "init_groups",
+    "records", "methods", "properties", "extra_methods", "warnings",
+    "views",
+)  # fmt: skip
+_COMPOSER_FIELD_ORDER = (
+    "name", "type", "enum", "default", "bytes", "complex", "c_ptr", "c_len",
+    "aliases", "coerce", "coerce_str_fn", *_COMPOSER_OWNED_PTR_KEYS, "doc",
+)  # fmt: skip
+_INIT_PARAM_ORDER = tuple(key for key, _is_bool in _INIT_PARAM_FIELDS)
+_FIELD_ORDER = ("name", "type", "doc")
 
 
-# Method keys the _dump serializer emits explicitly (the list/table ones —
-# multi_output/extra_args/params/result_fields — included). Any OTHER scalar
-# key authored on a manifest method is round-tripped generically (gh-257) so a
-# hand-written key such as `record_name` survives save()->load() instead of
-# being silently stripped by the write pass.
-_KNOWN_METHOD_KEYS = frozenset(
+def _then_sorted(order: "tuple[str, ...]", vocab: "frozenset[str]") -> tuple:
+    """*order*, then the rest of *vocab* sorted: where the accepted keys no
+    hand-written branch named have always gone (gh-1229, gh-1242)."""
+    return order + tuple(sorted(vocab - set(order)))
+
+
+#: Shape -> the keys written first, in this order. The rest follow in the
+#: table's own order.
+_KEY_ORDER: "dict[str, tuple[str, ...]]" = {
+    "enum": ("name", "values"),
+    "group": ("name", "fields"),
+    "group.fields": _INIT_PARAM_ORDER,
+    "app": ("target", "name", "function", "object", "module"),
+    "app.flags": ("name", "type", "default", "help"),
+    "app.commands": ("name", "help", "flags"),
+    "app.commands.flags": ("name", "type", "default", "help"),
+    "module.*": _MODULE_ORDER[""],
+    **{
+        f"module.*[{kind}]": _then_sorted(_MODULE_ORDER[kind], vocab)
+        for kind, vocab in _MODULE_KEYS_BY_KIND.items()
+    },
+    "module.*.depends_on": ("name", "link", "test_only"),
+    "module.*.functions": _then_sorted(_FUNCTION_ORDER, _FUNCTION_KEYS),
+    "module.*.functions.params": (
+        "name", "type", "out", "default", "capsule", "header",
+    ),
+    "module.*.functions.result_fields": _FIELD_ORDER,
+    "module.*.init_params": ("name", "type", "default"),
+    "module.*.create_args": ("name", "type", "enum", "default", "kwonly"),
+    "module.*.create_post": ("fn", "when", "arg"),
+    "module.*.methods": (
+        "name", "fn", "arg_type", "return_type", "returns", "caller_out",
+        "nogil", "args",
+    ),
+    "module.*.properties": ("name", "type", "writable"),
+    "module.*.getters": ("fn", "out", "cache", "fields"),
+    "module.*.source": (
+        "object", "struct", "type_name", "fields", "computed", "ranged",
+        "generates",
+    ),
+    "module.*.source.fields": _COMPOSER_FIELD_ORDER,
+    "module.*.source.computed": ("name", "type", "fn", "doc"),
+    "module.*.source.ranged": ("name", "flag"),
+    "module.*.source.generates": (
+        "generator", "bridge_fn", "bridge_error_fn", "state_type",
+        "steps_fn", "step_fn", "reset_fn", "destroy_fn", "header",
+        "output_type",
+    ),
+    "module.*.segment": (
+        "type_name", "struct", "sources", "sources_member", "count_member",
+        "flat_sources", "fields", "ranged",
+    ),
+    "module.*.segment.fields": _COMPOSER_FIELD_ORDER,
+    "module.*.segment.ranged": ("name", "flag"),
+    "module.*.timeline": ("type_name", "loop"),
+    "module.*.oo": ("factories", "emit", "discriminant", "composer_type_name"),
+    "module.*.composer": ("stream", "to_dict", "realtime"),
+    "module.*.json": (
+        "enabled", "to_json_fn", "from_json_fn", "from_file_fn", "header",
+        "include_dir", "from_json_why", "from_file_why", "to_json_trailing",
+    ),
+    "module.*.serializers": ("name", "fn", "returns", "header", "params"),
+    "module.*.serializers.params": _COMPOSER_FIELD_ORDER,
+    "module.*.settings": ("name", "setter_fn", "getter_fn", "type", "enum"),
+    "<obj>": _OBJECT_ORDER,
+    "<obj>.depends_on": ("name", "link", "test_only"),
+    "<obj>.destroy": (
+        "name", "aliases", "returns", "error", "error_message", "exit",
+        "wake",
+    ),
+    "<obj>.array_args": ("name", "type", "dtype"),
+    "<obj>.state": _then_sorted(_STATE_ORDER, _STATE_KEYS),
+    "<obj>.init_params": _INIT_PARAM_ORDER,
+    "<obj>.init_groups": ("group", "prefix"),
+    "<obj>.records": ("name", "type", "doc", "fields"),
+    "<obj>.records.fields": _FIELD_ORDER,
+    "<obj>.extra_methods": ("name", "fn", "flags", "args", "returns", "doc"),
+    "<obj>.views": (
+        "class_name", "create_fn", "doc", "init_params",
+        "exclude_properties", "exclude_methods", "create_error",
+        "create_error_message", "warnings", "methods", "properties",
+    ),
+    "<obj>.views.init_params": _INIT_PARAM_ORDER,
+}  # fmt: skip
+
+_PARAM_ORDER = ("name", "type", "default", "role", "capsule", "header")
+#: An object's members, laid out alike where a view adds or overrides one
+#: (gh-504): ``<obj>.methods`` and ``<obj>.views.methods`` are one layout.
+_MEMBER_ORDER: "dict[str, tuple[str, ...]]" = {
+    "methods": _METHOD_ORDER,
+    "methods.params": _PARAM_ORDER,
+    "methods.extra_args": _PARAM_ORDER,
+    "methods.result_fields": _FIELD_ORDER,
+    "properties": _then_sorted(_PROPERTY_ORDER, _PROPERTY_KEYS),
+    "warnings": ("after", "condition", "category", "message", "stacklevel"),
+}
+_KEY_ORDER.update(
     {
-        "name",
-        "doc",
-        "arg_type",
-        "return_type",
-        "varargs",
-        "manual_stub",
-        "variable_output",
-        "pass_capacity",
-        "exact_max_out",
-        "count_default",
-        "count_name",
-        "nogil",
-        "none_on_empty",
-        "error_on_empty",
-        "batch",
-        "multi_output",
-        "extra_args",
-        "params",
-        "out_type",
-        "out_divisor",
-        "bench",
-        "max_results",
-        "result_fields",
-        "single",
-        "py_return_type",
-        "max_out",
+        f"{owner}.{member}": order
+        for owner in ("<obj>", "<obj>.views")
+        for member, order in _MEMBER_ORDER.items()
+    }
+)
+
+#: Shapes whose table is written under its own ``[a.b]`` header. Any other
+#: table below the top level is written inline, ``key = { ... }``.
+_TABLE_SHAPES = frozenset(
+    {
+        "project.*",
+        "project.*.*",
+        "module.*",
+        "module.*.source",
+        "module.*.source.generates",
+        "module.*.segment",
+        "module.*.timeline",
+        "module.*.oo",
+        "module.*.composer",
+        "module.*.json",
+        "<obj>.destroy",
+        "codec.*",
+        "template.*",
+    }
+)
+
+#: Shapes whose array of tables is written as ``[[a.b]]`` rows. Any other
+#: below the top level is written inline, ``key = [{ ... }]``.
+_ROW_SHAPES = frozenset(
+    {
+        "group.fields",
+        "app.flags",
+        "app.commands",
+        "module.*.functions",
+        "module.*.init_params",
+        "module.*.create_args",
+        "module.*.create_post",
+        "module.*.methods",
+        "module.*.properties",
+        "module.*.getters",
+        "module.*.serializers",
+        "module.*.settings",
+        "<obj>.array_args",
+        "<obj>.state",
+        "<obj>.init_params",
+        "<obj>.init_groups",
+        "<obj>.records",
+        "<obj>.methods",
+        "<obj>.properties",
+        "<obj>.extra_methods",
+        "<obj>.warnings",
+        "<obj>.views",
+        "<obj>.views.warnings",
+        "<obj>.views.methods",
+        "<obj>.views.properties",
+    }
+)
+
+#: Inline tables written ``{a = 1}`` rather than ``{ a = 1 }``: the call
+#: shapes, which always have been.
+_COMPACT_SHAPES = frozenset(
+    {
+        "app.commands.flags",
+        "module.*.functions.params",
+        "module.*.functions.result_fields",
+        "<obj>.methods.params",
+        "<obj>.methods.extra_args",
+        "<obj>.methods.result_fields",
+        "<obj>.views.methods.params",
+        "<obj>.views.methods.extra_args",
+        "<obj>.views.methods.result_fields",
+        "<obj>.views.init_params",
+    }
+)
+
+#: The C bodies, always written as a ``\"\"\"`` heredoc whatever they hold.
+_HEREDOC_SHAPES = frozenset(
+    {
+        "<obj>.impl",
+        "<obj>.create_impl",
+        "<obj>.reset_impl",
+        "<obj>.destroy_impl",
+        "<obj>.init_post_parse",
     }
 )
 
 
-def _inline_field(f: dict) -> str:
-    """Serialize a composer field (``{name, type, enum?, default?, bytes?}``) as
-    a TOML inline table — drives the source/segment field marshalling (gh-287)."""
-    # gh-1711: an owned pointer bound by `object` resolves its type from the
-    # referenced component, so `type` is written only when the row has one.
-    parts = [f'name = "{f["name"]}"']
-    if f.get("type"):
-        parts.append(f'type = "{f["type"]}"')
-    if f.get("enum"):
-        parts.append(f'enum = "{f["enum"]}"')
-    if f.get("default") not in (None, ""):
-        parts.append(f'default = "{f["default"]}"')
-    if f.get("bytes"):
-        parts.append("bytes = true")
-    # gh-1236: read by `_composer` and written by nobody, so a field carrying
-    # any of these was silently flattened on the next mutating command.
-    # `complex` turns a complex64 stream back into a scalar, and `c_ptr` /
-    # `c_len` (gh-1184) are what let an owned array live in a nested struct
-    # member -- lose them and the generated C writes to `<name>` / `n_<name>`
-    # instead, against the author's own struct. Same defect as gh-1229, one
-    # table down, and worse: it changes emitted C rather than dropping a
-    # property.
-    if f.get("complex"):
-        parts.append("complex = true")
-    for _k in ("c_ptr", "c_len"):
-        if f.get(_k):
-            parts.append(f'{_k} = "{f[_k]}"')
-    if f.get("aliases"):
-        parts.append(
-            "aliases = [" + ", ".join(f'"{a}"' for a in f["aliases"]) + "]"
+def _is_prose(key: str) -> bool:
+    """True for a key whose string is prose a human wrote: written in the
+    readable multi-line form when it has line breaks (`_str_assign`)."""
+    return key in ("doc", "message", "help") or key.endswith(
+        ("_doc", "_message")
+    )
+
+
+def _ordered(shape: str, table: dict) -> list:
+    """*table*'s keys: the layout's for *shape* first, then the rest as
+    the table holds them. A table with a ``kind`` (a module) is laid out
+    as that kind, where the layout names one.
+
+    >>> _ordered("<obj>.array_args", {"dtype": "float32", "name": "taps"})
+    ['name', 'dtype']
+    """
+    kind = table.get("kind")
+    order = _KEY_ORDER.get(f"{shape}[{kind}]", _KEY_ORDER.get(shape, ()))
+    first = [k for k in order if k in table]
+    return first + [k for k in table if k not in first]
+
+
+def _placement(path: "tuple[str, ...]", value: object) -> str:
+    """How *value* at *path* is written: ``"table"`` under its own header,
+    ``"rows"`` as ``[[...]]`` rows, or ``"value"`` on its key's line.
+
+    A top-level section is always a table or rows -- there is no other way
+    to write it -- and below that the layout decides.
+    """
+    shape = _shape(path)
+    if isinstance(value, dict):
+        if len(path) == 1 or shape in _TABLE_SHAPES:
+            return "table"
+    elif _is_rows(value):
+        if len(path) == 1 or shape in _ROW_SHAPES:
+            return "rows"
+    return "value"
+
+
+def _toml_scalar(v: object) -> str:
+    """*v* as a TOML scalar literal, of the type *v* is.
+
+    A bool is a bool and a number a number -- never their ``str()`` in
+    quotes, which is how ``streamable = true`` came back ``"True"`` (gh-2046).
+    A date or time is TOML's own literal. Anything with no TOML type is
+    written as its ``str()``, which `_unfaithful` accepts as what it is.
+    """
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, (_dt.date, _dt.time)):
+        return v.isoformat()
+    # gh-844: was `\\` and `"` only — no newline, CR or U+007F — and it is
+    # what `_toml_value` falls through to for every generically-rendered
+    # section, so it was the widest of the four broken paths.
+    return _toml_basic_string(str(v))
+
+
+def _inline(path: "tuple[str, ...]", v: object) -> str:
+    """*v* as a TOML value on one line: a scalar, an array or an inline
+    table, keyed and laid out as *path*'s shape says."""
+    if isinstance(v, dict):
+        shape = _shape(path)
+        parts = ", ".join(
+            f"{_toml_key(k)} = {_inline(path + (k,), v[k])}"
+            for k in _ordered(shape, v)
         )
-    if f.get("coerce"):
-        parts.append(f'coerce = "{f["coerce"]}"')
-    if f.get("coerce_str_fn"):
-        parts.append(f'coerce_str_fn = "{f["coerce_str_fn"]}"')
-    # gh-1711: an owned-pointer field. Dropped, the next save would turn it
-    # back into a scalar of a pointer type, which the renderer refuses.
-    # gh-1735: through the scalar writer, because `parse_why` is a switch --
-    # quoted like the names, it would read back as a string and be refused.
-    for _k in _COMPOSER_OWNED_PTR_KEYS:
-        if f.get(_k):
-            parts.append(f"{_k} = {_toml_scalar(f[_k])}")
-    if f.get("doc"):
-        parts.append(f"doc = {_toml_scalar(str(f['doc']))}")
-    return "{ " + ", ".join(parts) + " }"
+        if not parts:
+            return "{}"
+        return (
+            "{" + parts + "}" if shape in _COMPACT_SHAPES else f"{{ {parts} }}"
+        )
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_inline(path, x) for x in v) + "]"
+    return _toml_scalar(v)
 
 
-def _inline_result_field(f: dict) -> str:
-    """One ``result_fields`` entry as a TOML inline table.
-
-    Shared by the method dump and the free-function dump. gh-646 added a ``doc``
-    key to this table, and those are two separate emit sites — the exact shape
-    that lets a manifest key be honoured on one path and silently dropped on
-    the other, which is the class `tests/test_manifest_wiring_gate.py` exists
-    to catch. One writer, so there is nothing to keep in step.
+def _toml_value(v: object) -> str:
+    """*v* as a TOML value — scalar, array, or inline table — of its type.
 
     Examples
     --------
-    >>> _inline_result_field({"name": "enob", "type": "double"})
-    '{name = "enob", type = "double"}'
-    >>> _inline_result_field({"name": "n", "type": "int", "doc": 'say "hi"'})
-    '{name = "n", type = "int", doc = "say \\\\"hi\\\\""}'
+    >>> _toml_value({"name": "x", "link": True, "n": 2})
+    '{ name = "x", link = true, n = 2 }'
     """
-    parts = [f'name = "{f["name"]}"', f'type = "{f["type"]}"']
-    if f.get("doc"):
-        body = (
-            str(f["doc"])
-            .replace("\\", "\\\\")
-            .replace('"', '\\"')
-            # An inline table is one line; a wrapped doc rides as an escape.
-            .replace("\n", "\\n")
-        )
-        parts.append(f'doc = "{body}"')
-    return "{" + ", ".join(parts) + "}"
+    return _inline((), v)
 
 
-def _inline_dict(d: dict) -> str:
-    """Serialize a flat dict (scalar values only) as a TOML inline table.
+def _assign(path: "tuple[str, ...]", key: str, value: object) -> str:
+    """The ``key = value`` line for *key* in the table at *path*."""
+    name = _toml_key(key)
+    if isinstance(value, str):
+        if _shape(path + (key,)) in _HEREDOC_SHAPES:
+            return f"{name} = {_toml_multiline_string(value)}"
+        if _is_prose(key):
+            return _str_assign(name, value)
+        return f"{name} = {_toml_basic_string(value)}"
+    return f"{name} = {_inline(path + (key,), value)}"
 
-    Drives the handle (gh-306) nested ``methods.args`` / ``getters.fields``
-    arrays — each member is one ``{ name = "x", type = "double", … }`` table.
-    Booleans render bare, everything else as a quoted string (the manifest keeps
-    numeric defaults as strings, matching the rest of ``_dump``)."""
-    parts = []
-    for k, v in d.items():
-        if isinstance(v, bool):
-            parts.append(f"{k} = {'true' if v else 'false'}")
+
+def _root_order(doc: dict) -> list:
+    """The top-level sections in the order a manifest has always read:
+    ``[project]``, the ``[[enum]]`` and ``[[group]]`` registries the rest
+    refer to, the modules, the components, ``[app]``, then any other."""
+    first = [k for k in ("project", "enum", "group", "module") if k in doc]
+    rest = [k for k in doc if k not in first]
+    comps = [k for k in rest if k not in RESERVED_SECTIONS]
+    tail = [k for k in rest if k in RESERVED_SECTIONS]
+    tail.sort(key=lambda k: k != "app")
+    return first + comps + tail
+
+
+def _emit(lines: "list[str]", path: tuple, table: dict, row: bool) -> None:
+    """Append *table*, at *path*, to *lines*: its header, its values, a
+    blank line, then each table and row array under it.
+
+    Values precede tables because TOML binds a key to the LAST header above
+    it -- a value written after a sub-table belongs to the sub-table. That
+    is also why the document's own values come before every section
+    (gh-2047). A table holding only tables (``[module]``, ``[codec]``) needs
+    no header of its own: theirs define it.
+    """
+    order = _root_order(table) if not path else _ordered(_shape(path), table)
+    values, tables = [], []
+    for key in order:
+        kind = _placement(path + (key,), table[key])
+        (values if kind == "value" else tables).append((key, kind))
+    header = bool(path) and (
+        row
+        or bool(values)
+        or not tables
+        or any(kind == "rows" for _key, kind in tables)
+    )
+    if header:
+        dotted = ".".join(_toml_key(k) for k in path)
+        lines.append(f"[[{dotted}]]" if row else f"[{dotted}]")
+    for key, _kind in values:
+        lines.append(_assign(path, key, table[key]))
+    # A row runs straight into its own rows (`[[o.views]]` into
+    # `[[o.views.methods]]`), as a view and a group always have; everything
+    # else ends on a blank line.
+    if (header or values) and not (row and tables):
+        lines.append("")
+    for key, kind in tables:
+        if kind == "table":
+            _emit(lines, path + (key,), table[key], row=False)
         else:
-            parts.append(f'{k} = "{v}"')
-    return "{ " + ", ".join(parts) + " }"
+            for item in table[key]:
+                _emit(lines, path + (key,), item, row=True)
 
 
-def _dump_handle_subtables(mk: str, data: dict) -> list[str]:
-    """Render a handle module's create_args / create_post / methods / getters
-    sub-tables (gh-306). Each is a ``[[module.X.<tbl>]]`` array; nested
-    ``methods.args`` and ``getters.fields`` are inline-table arrays, so the whole
-    spec round-trips through ``load`` / ``save`` unchanged."""
-    out: list[str] = []
-
-    for a in data.get("create_args", []):
-        out.append(f"[[module.{mk}.create_args]]")
-        out.append(f'name = "{a["name"]}"')
-        out.append(f'type = "{a["type"]}"')
-        if a.get("enum"):
-            out.append(f'enum = "{a["enum"]}"')
-        if a.get("default") not in (None, ""):
-            out.append(f'default = "{a["default"]}"')
-        if a.get("kwonly"):
-            out.append("kwonly = true")
-        out.append("")
-
-    for p in data.get("create_post", []):
-        out.append(f"[[module.{mk}.create_post]]")
-        out.append(f'fn = "{p["fn"]}"')
-        if p.get("when"):
-            out.append(f'when = "{p["when"]}"')
-        if "arg" in p:
-            out.append(f'arg = "{p["arg"]}"')
-        out.append("")
-
-    for m in data.get("methods", []):
-        out.append(f"[[module.{mk}.methods]]")
-        out.append(f'name = "{m["name"]}"')
-        out.append(f'fn = "{m["fn"]}"')
-        if m.get("returns"):
-            out.append(f'returns = "{m["returns"]}"')
-        if m.get("nogil"):
-            out.append("nogil = true")
-        if m.get("args"):
-            out.append(
-                "args = ["
-                + ", ".join(_inline_dict(a) for a in m["args"])
-                + "]"
-            )
-        out.append("")
-
-    for g in data.get("getters", []):
-        out.append(f"[[module.{mk}.getters]]")
-        # fn/out are absent for a per-field-getter table (gh-314); each field
-        # then carries its own `getter` (dumped inline via _inline_dict).
-        if g.get("fn"):
-            out.append(f'fn = "{g["fn"]}"')
-        if g.get("out"):
-            out.append(f'out = "{g["out"]}"')
-        if g.get("cache"):
-            out.append("cache = true")
-        if g.get("fields"):
-            out.append(
-                "fields = ["
-                + ", ".join(_inline_dict(f) for f in g["fields"])
-                + "]"
-            )
-        out.append("")
-
-    return out
+def _render(doc: dict) -> str:
+    """*doc*, already `_declared`, as TOML text."""
+    lines: "list[str]" = []
+    _emit(lines, (), doc, row=False)
+    return "\n".join(lines)
 
 
-def _inline_computed(c: dict) -> str:
-    """Serialize a computed read-only property (``{name, type, fn, doc?}``) as a
-    TOML inline table — the source's derived-property declarations (gh-287)."""
-    parts = [
-        f'name = "{c["name"]}"',
-        f'type = "{c["type"]}"',
-        f'fn = "{c["fn"]}"',
-    ]
-    if c.get("doc"):
-        # gh-1236: through the shared writer, not raw interpolation. This was
-        # the only `doc` in the composer dumper still interpolated bare, so a
-        # computed property documented with a quote in it made `_dump`'s own
-        # round-trip check reject the manifest jm had just produced --
-        # "just-makeit generated a manifest it cannot read back". Exactly the
-        # gh-1153 shape, which was itself the fifth site of gh-844's.
-        parts.append(f"doc = {_toml_scalar(str(c['doc']))}")
-    return "{ " + ", ".join(parts) + " }"
+#: The Python types `tomllib` reads a TOML scalar as.
+_TOML_SCALARS = (str, bool, int, float, _dt.date, _dt.time)
 
 
-def _module_leftover_lines(
-    data: dict, header: list[str], subtables: list[str], mk: str
-) -> list[str]:
-    """The accepted `[module.X]` keys `_dump` has no hand-written branch for.
+def _unfaithful(want: object, got: object, path: tuple = ()) -> "tuple | None":
+    """The first path at which *got* -- the text read back -- differs from
+    *want*, the `_declared` manifest; None when it reads back as given.
 
-    gh-1229. `_keys` decides which keys a module face accepts and `_dump`
-    decides which it writes back, and for twenty of them those two answers
-    disagreed: the validator said yes, the writer had no branch, and the key
-    was gone from the file the command had just rewritten. gh-794's `capsule`
-    was the sharpest instance -- a handle stopped publishing `_capsule` on the
-    next mutating command, so a consumer's `PyCapsule_GetPointer` began failing
-    against C nobody had touched.
+    Two differences are the writer's own conventions, and accepted:
 
-    So the writer's answer is now *derived* from the validator's:
-    :data:`_keys.MODULE_KEYS_BY_KIND` is the one declaration, and anything in
-    it that the hand-written block did not emit is written here as an inline
-    value. That is what makes it registration-free -- a key added to a
-    ``*_MODULE_KEYS`` set is preserved without anyone remembering this file.
+    - the ``\"\"\"`` form of a C body, or of prose with line breaks, reads
+      back with one trailing newline and no leading one (gh-192), which the
+      next write strips again, so repeated writes are byte-stable;
+    - a value with no TOML type reads back as its ``str()``.
 
-    What "did not emit" means is read off the lines just produced, not from a
-    second list that could drift: a ``key = `` assignment in the module's own
-    header, or a ``[module.X.key]`` / ``[[module.X.key]]`` sub-table header.
-    Only those two -- an assignment *inside* a sub-table belongs to a row, and
-    counting it would let a getter row's `type_name` mask the module's.
-
-    Parameters
-    ----------
-    data : dict
-        The `[module.X]` table as loaded.
-    header : list of str
-        The scalar lines already emitted for this module's own table.
-    subtables : list of str
-        The lines emitted after it (`functions`, `getters`, `source`, ...).
-    mk : str
-        The module's TOML key, as `_module_key` spells it.
-
-    Returns
-    -------
-    list of str
-        Assignment lines to splice in at the end of *header*, in the
-        vocabulary's sorted order so a manifest does not churn between saves.
-
-    Notes
-    -----
-    A falsy value is skipped, matching every hand-written branch above: an
-    empty list or table is indistinguishable from an absent key once written,
-    so emitting one would add churn without preserving anything.
-
-    Examples
-    --------
-    >>> _module_leftover_lines(
-    ...     {"kind": "handle", "capsule": "p.ring", "backing": "ring"},
-    ...     ['[module.ring]', 'kind = "handle"', 'backing = "ring"'],
-    ...     [],
-    ...     "ring",
-    ... )
-    ['capsule = "p.ring"']
+    Types are compared exactly: ``"True"`` for ``True`` is the gh-2046 bug,
+    and ``1`` for ``True`` would be another.
     """
-    accepted = _MODULE_KEYS_BY_KIND.get(str(data.get("kind") or ""))
-    if not accepted:
-        return []
-    written = {
-        m.group(1)
-        for m in (_re.match(r"(\w+) = ", line) for line in header)
-        if m
-    }
-    pat = _re.compile(r"\[\[?module\." + _re.escape(mk) + r"\.(\w+)\]\]?$")
-    written |= {
-        m.group(1) for m in (pat.match(line) for line in subtables) if m
-    }
-    return [
-        f"{k} = {_toml_value(data[k])}"
-        for k in sorted(accepted - written)
-        if data.get(k)
-    ]
-
-
-def _dump_composer_settings(mk: str, data: dict) -> list[str]:
-    """gh-1126 rows, rendered so they survive `load` / `save`.
-
-    Separated out and called from `_dump_composer_subtables` for one reason:
-    a key the dumper does not write is silently absent from anything that
-    re-serialises the manifest, which is how gh-1117's `process_global`
-    reached the generators as False on every real project while every unit
-    test passed.
-    """
-    out: list[str] = []
-    for st in data.get("settings", []) or []:
-        if not isinstance(st, dict):
-            continue
-        out.append(f"[[module.{mk}.settings]]")
-        for k in ("name", "setter_fn", "getter_fn", "type", "enum"):
-            if st.get(k):
-                out.append(f'{k} = "{st[k]}"')
-        out.append("")
-    return out
-
-
-def _dump_ranged(table: dict) -> "list[str]":
-    """``ranged = [{name = …, flag = …}, …]`` for a composer source/segment.
-
-    gh-1381: `_composer._ranged_map` reads it and this writer never did, so a
-    manifest saved through `_dump` -- a new file, or no tomlkit -- lost which
-    fields take a ``(lo, hi)`` pair, and the next render made them scalar.
-    """
-    rows = table.get("ranged") or []
-    if not rows:
-        return []
-    return [
-        "ranged = ["
-        + ", ".join(
-            "{ "
-            + ", ".join(
-                f"{k} = {_toml_inline_string(str(r[k]))}"
-                for k in ("name", "flag")
-                if k in r
-            )
-            + " }"
-            for r in rows
-        )
-        + "]"
-    ]
-
-
-def _dump_composer_subtables(mk: str, data: dict) -> list[str]:
-    """Render a composer module's source/segment/timeline/oo/json sub-tables
-    (gh-287). Each is a single TOML table; field lists are inline-table arrays
-    so the whole spec round-trips through ``load``/``save`` unchanged."""
-    out: list[str] = []
-
-    src = data.get("source")
-    if src:
-        out.append(f"[module.{mk}.source]")
-        for k in ("object", "struct", "type_name"):
-            if src.get(k):
-                out.append(f'{k} = "{src[k]}"')
-        fields = src.get("fields") or []
-        if fields:
-            out.append(
-                "fields = ["
-                + ", ".join(_inline_field(f) for f in fields)
-                + "]"
-            )
-        computed = src.get("computed") or []
-        if computed:
-            out.append(
-                "computed = ["
-                + ", ".join(_inline_computed(c) for c in computed)
-                + "]"
-            )
-        out += _dump_ranged(src)
-        out.append("")
-        gen = src.get("generates")
-        if gen:
-            out.append(f"[module.{mk}.source.generates]")
-            for k in (
-                "generator",
-                "bridge_fn",
-                "bridge_error_fn",
-                "state_type",
-                "steps_fn",
-                "step_fn",
-                "reset_fn",
-                "destroy_fn",
-                "header",
-                "output_type",
-            ):
-                if gen.get(k):
-                    out.append(f'{k} = "{gen[k]}"')
-            out.append("")
-
-    seg = data.get("segment")
-    if seg:
-        out.append(f"[module.{mk}.segment]")
-        for k in (
-            "type_name",
-            "struct",
-            "sources",
-            "sources_member",
-            "count_member",
-        ):
-            if seg.get(k):
-                out.append(f'{k} = "{seg[k]}"')
-        if seg.get("flat_sources"):
-            out.append("flat_sources = true")
-        fields = seg.get("fields") or []
-        if fields:
-            out.append(
-                "fields = ["
-                + ", ".join(_inline_field(f) for f in fields)
-                + "]"
-            )
-        out += _dump_ranged(seg)
-        out.append("")
-
-    tl = data.get("timeline")
-    if tl:
-        out.append(f"[module.{mk}.timeline]")
-        if tl.get("type_name"):
-            out.append(f'type_name = "{tl["type_name"]}"')
-        if tl.get("loop"):
-            out.append(
-                "loop = [" + ", ".join(f'"{x}"' for x in tl["loop"]) + "]"
-            )
-        out.append("")
-
-    oo = data.get("oo")
-    if oo:
-        out.append(f"[module.{mk}.oo]")
-        if oo.get("factories"):
-            out.append(
-                "factories = ["
-                + ", ".join(f'"{x}"' for x in oo["factories"])
-                + "]"
-            )
-        for k in ("emit", "discriminant", "composer_type_name"):
-            if oo.get(k):
-                out.append(f'{k} = "{oo[k]}"')
-        out.append("")
-
-    comp = data.get("composer")
-    if comp:
-        out.append(f"[module.{mk}.composer]")
-        if comp.get("stream"):
-            out.append("stream = true")
-        if comp.get("to_dict"):
-            out.append("to_dict = true")
-        rt = comp.get("realtime")
-        if rt:
-            # gh-317: the realtime stream clock fns as an inline table.
-            _rt = ", ".join(f'{k} = "{v}"' for k, v in rt.items())
-            out.append(f"realtime = {{ {_rt} }}")
-        out.append("")
-
-    js = data.get("json")
-    if js:
-        out.append(f"[module.{mk}.json]")
-        out.append("enabled = " + ("true" if js.get("enabled") else "false"))
-        # gh-1725: `header` / `include_dir` are read by the generated path.
-        for k in (
-            "to_json_fn",
-            "from_json_fn",
-            "from_file_fn",
-            "header",
-            "include_dir",
-        ):
-            if js.get(k):
-                out.append(f"{k} = {_toml_basic_string(js[k])}")
-        # gh-1706: the reason-naming factory signature, per factory.
-        for k in ("from_json_why", "from_file_why"):
-            if js.get(k):
-                out.append(f"{k} = true")
-        if js.get("to_json_trailing"):
-            out.append(
-                "to_json_trailing = ["
-                + ", ".join(f'"{x}"' for x in js["to_json_trailing"])
-                + "]"
-            )
-        out.append("")
-
-    # gh-317: delegated serializers (to_sigmf, …) — each a [[X.serializers]]
-    # table with an inline-table `params` array.
-    for s in data.get("serializers", []):
-        out.append(f"[[module.{mk}.serializers]]")
-        out.append(f'name = "{s["name"]}"')
-        out.append(f'fn = "{s["fn"]}"')
-        if s.get("returns"):
-            out.append(f'returns = "{s["returns"]}"')
-        if s.get("header"):  # gh-343: #include for the serializer fn's decl
-            out.append(f'header = "{s["header"]}"')
-        if s.get("params"):
-            out.append(
-                "params = ["
-                + ", ".join(_inline_field(p) for p in s["params"])
-                + "]"
-            )
-        out.append("")
-
-    out += _dump_composer_settings(mk, data)
-
-    return out
-
-
-def _property_dump_lines(p: dict, header: str) -> list[str]:
-    """TOML lines for one property under *header* (ends with a blank line).
-
-    Shared (gh-504) by an object's ``[[<comp>.properties]]`` and a view's
-    ``[[<comp>.views.properties]]`` so the two emit identically.
-
-    Every optional key a property can carry must be emitted here. This dumper
-    is bypassed on an ordinary save — ``_write_doc`` round-trips an *existing*
-    file through tomlkit, which preserves keys generically — so an omission is
-    invisible until ``jm split-objects`` or ``jm migrate`` rewrites the section
-    from the parsed dict. gh-549: ``enum`` was missing, and splitting a project
-    reverted an enum property's Python face from its ordered string back to a
-    raw int (and dropped the gh-521 bounds check) with no error and no warning.
-    ``tests/test_gh549_property_dump_keys.py`` pins the whole key set rather
-    than any one key, so the next key added cannot repeat it.
-    """
-    lines = [header, f'name = "{p["name"]}"']
-    if p.get("doc"):
-        lines.append(_doc_assign(p["doc"]))
-    lines.append(f'type = "{p.get("type") or p.get("ctype", "size_t")}"')
-    # gh-519: `enum` qualifies how `type` is presented to Python, so it reads
-    # best directly beneath it.
-    if p.get("enum"):
-        lines.append(f'enum = "{p["enum"]}"')
-    if p.get("writable"):
-        lines.append("writable = true")
-    if p.get("field"):
-        lines.append("field = true")
-    if p.get("buf_field"):
-        lines.append(f'buf_field = "{p["buf_field"]}"')
-        lines.append(f'len_field = "{p.get("len_field", "n")}"')
-    if p.get("valid_field"):
-        lines.append(f'valid_field = "{p["valid_field"]}"')
-    if p.get("expr"):
-        lines.append(f'expr = "{p["expr"]}"')
-    # gh-543: a container property's accessors.
-    if p.get("value_type"):
-        lines.append(f'value_type = "{p["value_type"]}"')
-    for _fn in ("count_fn", "key_fn", "value_fn"):
-        if p.get(_fn):
-            lines.append(f'{_fn} = "{p[_fn]}"')
-    # gh-1242: everything else `PROPERTY_KEYS` accepts, DERIVED rather than
-    # listed. The hand-written chain above kept growing a key behind, and the
-    # cost is not cosmetic: `capsule` (gh-788 gap 4) was dropped here, so
-    # `jm split-objects` left a property still typed `capsule` that published
-    # nothing -- and after gh-1224 every `object` reference to that component
-    # stopped resolving against a name that used to be right. A codec property
-    # (gh-554) lost its decoder the same way.
-    #
-    # The order above is deliberate (`enum` reads best under `type`), so this
-    # appends the remainder rather than replacing the chain; a key handled
-    # above is already written and is skipped by `_written`.
-    _written = {
-        m.group(1)
-        for m in (_re.match(r"(\w+) = ", ln) for ln in lines[1:])
-        if m
-    }
-    for _k in sorted(_PROPERTY_KEYS - _written):
-        _v = p.get(_k)
-        if _v not in (None, "", False, [], {}):
-            lines.append(f"{_k} = {_toml_value(_v)}")
-    lines.append("")
-    return lines
-
-
-def _method_dump_lines(m: dict, header: str) -> list[str]:
-    """TOML lines for one method under *header* (ends with a blank line).
-
-    Shared (gh-504) by an object's ``[[<comp>.methods]]`` and a view's
-    ``[[<comp>.views.methods]]``.
-    """
-    lines = [header, f'name = "{m["name"]}"']
-    if m.get("doc"):
-        lines.append(_doc_assign(m["doc"]))
-    if m.get("arg_type"):
-        lines.append(f'arg_type = "{m["arg_type"]}"')
-    if m.get("return_type"):
-        lines.append(f'return_type = "{m["return_type"]}"')
-    if m.get("varargs"):
-        lines.append("varargs = true")
-    if m.get("manual_stub"):
-        lines.append("manual_stub = true")
-    if m.get("variable_output"):
-        lines.append("variable_output = true")
-    if m.get("pass_capacity"):
-        lines.append("pass_capacity = true")
-    if m.get("exact_max_out"):
-        lines.append("exact_max_out = true")
-    if m.get("count_default"):
-        lines.append(_str_assign("count_default", m["count_default"]))
-    if m.get("count_name"):
-        lines.append(_str_assign("count_name", m["count_name"]))
-    if m.get("nogil"):
-        lines.append("nogil = true")
-    if m.get("none_on_empty"):
-        lines.append("none_on_empty = true")
-    if m.get("error_on_empty"):
-        lines.append("error_on_empty = true")
-    if m.get("batch"):
-        lines.append("batch = true")
-    if m.get("multi_output"):
-        mo_str = ", ".join(f'"{t}"' for t in m["multi_output"])
-        lines.append(f"multi_output = [{mo_str}]")
-    _ea = m.get("extra_args") or m.get("params")
-    if _ea:
-        _ekey = "extra_args" if "extra_args" in m else "params"
-
-        def _param_inline(p: dict) -> str:
-            s = f'name = "{p["name"]}"'
-            # gh-554: a codec `role = "variant"` param carries no C type (jm
-            # packs it from a PyObject), so `type` is optional here.
-            if p.get("type"):
-                s += f', type = "{p["type"]}"'
-            # gh-240: an optional scalar default round-trips as a string.
-            if p.get("default") not in (None, ""):
-                s += f', default = "{p["default"]}"'
-            # gh-554: the codec arg role (discriminant / variant) must survive
-            # save()/load() — a per-param key the gh-257 generic passthrough
-            # (method-level scalars only) does not cover.
-            if p.get("role"):
-                s += f', role = "{p["role"]}"'
-            # gh-432: capsule-typed params — the capsule name and the
-            # foreign type's header must survive save()/load(); the
-            # gh-257 generic passthrough covers only method-level
-            # scalar keys, not per-param keys.
-            if p.get("capsule"):
-                s += f', capsule = "{p["capsule"]}"'
-            if p.get("header"):
-                s += f', header = "{p["header"]}"'
-            return "{" + s + "}"
-
-        parts = ", ".join(_param_inline(p) for p in _ea)
-        lines.append(f"{_ekey} = [{parts}]")
-    if m.get("out_type"):
-        lines.append(f'out_type = "{m["out_type"]}"')
-    if m.get("out_divisor") and m["out_divisor"] != 1:
-        lines.append(f"out_divisor = {m['out_divisor']}")
-    if m.get("bench") is False:
-        lines.append("bench = false")
-    if m.get("max_results"):
-        lines.append(f"max_results = {m['max_results']}")
-    if m.get("result_fields"):
-        rf_parts = ", ".join(
-            _inline_result_field(f) for f in m["result_fields"]
-        )
-        lines.append(f"result_fields = [{rf_parts}]")
-    if m.get("single"):
-        lines.append("single = true")
-    if m.get("py_return_type"):
-        lines.append(f'py_return_type = "{m["py_return_type"]}"')
-    if m.get("max_out"):
-        lines.append(f"max_out = {m['max_out']}")
-    # gh-257: preserve any manifest-authored scalar key the explicit block
-    # above doesn't know (e.g. `record_name`). List/table keys are already
-    # emitted above; `_`-prefixed keys are transient (e.g. `_doc_blocks`).
-    # Zero churn — jm only writes known keys, so this emits nothing for
-    # jm-generated manifests.
-    for _k, _v in m.items():
-        if (
-            _k in _KNOWN_METHOD_KEYS
-            or _k.startswith("_")
-            or isinstance(_v, (list, dict))
-        ):
-            continue
-        if isinstance(_v, bool):
-            lines.append(f"{_k} = {'true' if _v else 'false'}")
-        elif isinstance(_v, (int, float)):
-            lines.append(f"{_k} = {_v}")
-        else:
-            lines.append(f'{_k} = "{_v}"')
-    lines.append("")
-    return lines
+    if isinstance(want, dict):
+        if not isinstance(got, dict):
+            return path
+        for key in want:
+            if key not in got:
+                return path + (key,)
+            bad = _unfaithful(want[key], got[key], path + (key,))
+            if bad is not None:
+                return bad
+        extra = [key for key in got if key not in want]
+        return path + (extra[0],) if extra else None
+    if isinstance(want, list):
+        if not isinstance(got, list) or len(got) != len(want):
+            return path
+        for i, (w, g) in enumerate(zip(want, got)):
+            bad = _unfaithful(w, g, path + (i,))
+            if bad is not None:
+                return bad
+        return None
+    if type(want) is type(got):
+        if want == got or (want != want and got != got):  # NaN is NaN
+            return None
+        key = next((k for k in reversed(path) if isinstance(k, str)), "")
+        heredoc = _shape(
+            tuple(k for k in path if isinstance(k, str))
+        ) in _HEREDOC_SHAPES or (_is_prose(key) and "\n" in want)
+        if heredoc and got == want.strip("\n") + "\n":
+            return None
+        return path
+    if (
+        want is not None
+        and not isinstance(want, _TOML_SCALARS)
+        and got == str(want)
+    ):
+        return None
+    return path
 
 
 def _reparse_or_raise(text: str) -> dict:
@@ -7394,731 +7926,65 @@ def _reparse_or_raise(text: str) -> dict:
         ) from exc
 
 
-#: The ``[[<obj>.state]]`` keys `_dump` writes by name, in its own order;
-#: the rest of `STATE_KEYS` is written after them, derived (gh-1761).
-_STATE_KEYS_WRITTEN = frozenset(
-    {"name", "type", "default", "opaque", "no_ctor", "controllable"}
-)
+def _dotted(path: tuple) -> str:
+    """*path* as a reader would name it.
+
+    >>> _dotted(("o", "methods", 0, "params"))
+    'o.methods[0].params'
+    """
+    out = ""
+    for key in path:
+        out += f"[{key}]" if isinstance(key, int) else f".{key}"
+    return out.lstrip(".")
+
+
+def _at(node: object, path: tuple) -> object:
+    """The value at *path* in *node*, or None where it has none."""
+    for key in path:
+        try:
+            node = node[key]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            return None
+    return node
 
 
 def _dump(cfg: dict) -> str:
-    lines: list[str] = []
+    """*cfg* as manifest TOML: every key it declares, each as its own type.
 
-    proj = cfg.get("project", {})
-    if proj:
-        lines.append("[project]")
-        # Nested sub-tables (e.g. `bench`) must follow the scalar keys in TOML,
-        # so collect them and emit `[project.<name>]` blocks after this loop.
-        subtables = {}
-        for k, v in proj.items():
-            if isinstance(v, dict):
-                subtables[k] = v
-            elif isinstance(v, (list, tuple)):
-                # gh-763: this used to be a hand-maintained name list
-                # (`c_deps`, `find_packages`, `pkg_modules`, `platforms`), so
-                # any *other* list-valued key fell through to the scalar
-                # branch and was written as the Python repr of a list inside
-                # quotes — `c_format_command = "['clang-format']"`, which
-                # reloads as a string and raises. Asking the value what it is
-                # needs no registration, and a new list-valued key cannot be
-                # forgotten (see also `status_allow`, mangled the same way).
-                # gh-1576: through `_toml_value`, not `f'"{x}"'` -- an entry
-                # may be a table (`find_packages = [{ name = "X", ... }]`),
-                # and quoting its repr is the gh-763 shape one level down.
-                items_str = ", ".join(_toml_value(x) for x in v)
-                lines.append(f"{k} = [{items_str}]")
-            else:
-                lines.append(f'{k} = "{v}"')
-        for name, sub in subtables.items():
-            lines.append("")
-            lines.append(f"[project.{name}]")
-            for k, v in sub.items():
-                if isinstance(v, (list, tuple)):
-                    items_str = ", ".join(
-                        str(x) if isinstance(x, (int, float)) else f'"{x}"'
-                        for x in v
-                    )
-                    lines.append(f"{k} = [{items_str}]")
-                elif isinstance(v, bool):
-                    lines.append(f"{k} = {str(v).lower()}")
-                elif isinstance(v, (int, float)):
-                    lines.append(f"{k} = {v}")
-                else:
-                    lines.append(f'{k} = "{v}"')
-        lines.append("")
+    gh-2045. The one writer behind every whole-manifest rewrite -- a new
+    fragment, `jm split-objects`, `jm migrate-to-fragments`, a replay's
+    scratch tree, an install without tomlkit -- so what it drops, every
+    one of them drops. It drops only what `_declared` names.
 
-    # [[enum]] SSOT tables (top-level, manifest-owned) — render before modules.
-    for e in cfg.get("enum", []):
-        lines.append("[[enum]]")
-        lines.append(f'name = "{e["name"]}"')
-        vals_str = ", ".join(f'"{v}"' for v in e.get("values", []))
-        lines.append(f"values = [{vals_str}]")
-        lines.append("")
+    It reads its text back before returning it, and refuses -- writing
+    nothing -- when that text means anything other than *cfg*: unreadable
+    TOML (gh-844), or a value that did not survive (gh-763, gh-2045). A
+    silent loss here surfaces commands later as a feature that switched
+    itself off; a refusal names the value at the write that lost it.
 
-    # gh-999: the [[group]] SSOT, beside [[enum]] and for the same reason —
-    # it is manifest-owned, referenced by name from component tables, and must
-    # be written before anything that instantiates it so the file reads in
-    # declaration order.
-    for g in cfg.get("group", []) or []:
-        lines.append("[[group]]")
-        lines.append(_str_assign("name", g.get("name", "")))
-        for f in g.get("fields", []) or []:
-            lines.append("[[group.fields]]")
-            lines += _init_param_block_lines(f)
-        lines.append("")
-
-    for mod, data in cfg.get("module", {}).items():
-        # gh-1229: where this module's block starts, and (below) where its
-        # scalar header ends -- so the accepted keys with no hand-written
-        # branch can be inserted back into the header rather than after the
-        # sub-tables, where TOML would bind them to the wrong table.
-        mod_start = len(lines)
-        lines.append(f"[module.{_module_key(mod)}]")
-        if data.get("no_generate") in (True, "true"):
-            lines.append('no_generate = "true"')
-        if data.get("kind") in ("capsule", "composer", "handle"):
-            # gh-286/gh-287/gh-306: capsule + composer + handle modules expose
-            # an opaque backing (composer adds OO types; handle a typed class) —
-            # no `objects` list.
-            lines.append(f'kind = "{data["kind"]}"')
-            if data.get("backing"):
-                lines.append(f'backing = "{data["backing"]}"')
-            if data.get("capsule_name"):
-                lines.append(f'capsule_name = "{data["capsule_name"]}"')
-            if data.get("package"):
-                lines.append(f'package = "{data["package"]}"')
-            if data.get("header"):
-                lines.append(f'header = "{data["header"]}"')
-            if data.get("kind") == "handle":
-                # gh-306: the typed-class scalar keys.
-                for _hk in (
-                    "type_name",
-                    "create_fn",
-                    "init_fn",
-                    "close_fn",
-                    "handle_type",
-                    "optional_backend",
-                    "serializable",  # gh-403: state triplet over the handle
-                ):
-                    if data.get(_hk):
-                        lines.append(f'{_hk} = "{data[_hk]}"')
-                if data.get("context_manager"):
-                    lines.append("context_manager = true")
-            if data.get("kind") == "composer":
-                # gh-287: composes a generator source object; sample_type turns
-                # on the inherited jm-app output axes.
-                if data.get("composes"):
-                    cstr = ", ".join(f'"{c}"' for c in data["composes"])
-                    lines.append(f"composes = [{cstr}]")
-                if data.get("sample_type"):
-                    lines.append("sample_type = true")
-            if data.get("depends_on"):
-                parts = []
-                for d in data["depends_on"]:
-                    if isinstance(d, dict):
-                        inner = f'name = "{d["name"]}"'
-                        if d.get("link"):
-                            inner += ", link = true"
-                        # gh-537: dropping this republishes a test-only dep
-                        # into the artifact on the next apply.
-                        if d.get("test_only"):
-                            inner += ", test_only = true"
-                        parts.append(f"{{ {inner} }}")
-                    else:
-                        parts.append(f'"{d}"')
-                lines.append(f"depends_on = [{', '.join(parts)}]")
-        elif data.get("functions_in_core") in (True, "true"):
-            lines.append('functions_in_core = "true"')
-        else:
-            objs = data.get("objects", [])
-            objs_str = ", ".join(f'"{o}"' for o in objs)
-            lines.append(f"objects = [{objs_str}]")
-        # gh-523: `package` is not capsule/handle-specific — an object module
-        # can also land its .so / .pyi / __init__ exports inside a sibling
-        # package. The capsule branch above already emitted it (in its own
-        # key order), so only the non-capsule kinds need it here or the key
-        # would be silently dropped on the next save.
-        if data.get("kind") not in ("capsule", "composer", "handle"):
-            if data.get("package"):
-                lines.append(f'package = "{data["package"]}"')
-        # gh-645: applies to every module kind -- a capsule's free functions
-        # need documenting as much as an object group's.
-        if data.get("doc"):
-            lines.append(_str_assign("doc", str(data["doc"])))
-        extra_t = data.get("extra_types", [])
-        if extra_t:
-            types_str = ", ".join(f'"{t}"' for t in extra_t)
-            lines.append(f"extra_types = [{types_str}]")
-        extra = data.get("extra_link_libs", [])
-        if extra:
-            libs_str = ", ".join(f'"{lib}"' for lib in extra)
-            lines.append(f"extra_link_libs = [{libs_str}]")
-        extra_inc = data.get("extra_include_dirs", [])
-        if extra_inc:
-            inc_str = ", ".join(f'"{d}"' for d in extra_inc)
-            lines.append(f"extra_include_dirs = [{inc_str}]")
-        reexp = data.get("reexports", {})
-        if isinstance(reexp, dict) and reexp:
-            parts = []
-            for sub, names in reexp.items():
-                names_str = ", ".join(f'"{n}"' for n in names)
-                parts.append(f"{sub} = [{names_str}]")
-            lines.append(f"reexports = {{ {', '.join(parts)} }}")
-        header_end = len(lines)
-        lines.append("")
-        for fn in data.get("functions", []):
-            lines.append(f"[[module.{_module_key(mod)}.functions]]")
-            fn_start = len(lines)
-            # gh-1153: through the shared writers, not raw interpolation.
-            # gh-844 collapsed four hand-rolled escapers into one and wired
-            # the object, method and property `doc` paths through it; this
-            # block was a fifth and was missed, so a module function's `doc`
-            # was the one prose value in the manifest that could hold neither
-            # a newline nor a quote. It did not corrupt anything -- `_dump`
-            # self-checks with `tomllib` and refuses to write -- so it
-            # presented as jm rejecting a manifest it had just produced:
-            #
-            #     error: just-makeit generated a manifest it cannot read back:
-            #            Illegal character '\n'
-            #
-            # `_str_assign` also gives the `"""…"""` form, so a
-            # multi-paragraph numpy docstring (Parameters/Returns/Examples)
-            # is now expressible here, which is what the downstream needed.
-            lines.append(_str_assign("name", fn["name"]))
-            if fn.get("doc"):
-                lines.append(_doc_assign(fn["doc"]))
-            if fn.get("return_type"):
-                lines.append(_str_assign("return_type", fn["return_type"]))
-            if fn.get("out_type"):
-                lines.append(_str_assign("out_type", fn["out_type"]))
-            if fn.get("variable_output"):
-                lines.append("variable_output = true")
-            if fn.get("out_size"):
-                lines.append(_str_assign("out_size", fn["out_size"]))
-            if fn.get("max_results_param"):
-                lines.append(
-                    _str_assign("max_results_param", fn["max_results_param"])
-                )
-            if fn.get("result_fields"):
-                rf_parts = ", ".join(
-                    _inline_result_field(f) for f in fn["result_fields"]
-                )
-                lines.append(f"result_fields = [{rf_parts}]")
-            if fn.get("params"):
-                _emit = []
-                for p in fn["params"]:
-                    base = f'name = "{p["name"]}", type = "{p["type"]}"'
-                    # `mutable` is a synonym for `out`; canonicalise on dump.
-                    if p.get("out") or p.get("mutable"):
-                        base += ", out = true"
-                    # gh-240: an optional scalar default round-trips as a string.
-                    if p.get("default") not in (None, ""):
-                        base += f', default = "{p["default"]}"'
-                    # gh-432: capsule-typed params round-trip their capsule
-                    # name and foreign header.
-                    if p.get("capsule"):
-                        base += f', capsule = "{p["capsule"]}"'
-                    if p.get("header"):
-                        base += f', header = "{p["header"]}"'
-                    _emit.append("{" + base + "}")
-                lines.append(f"params = [{', '.join(_emit)}]")
-            if fn.get("inline"):
-                lines.append("inline = true")
-            # gh-1706: every accepted function key the branches above do not
-            # write, derived from `_keys.FUNCTION_KEYS` the way gh-1229 derives
-            # a module's. The hand-written list had silently lost
-            # `check_return` (gh-363), `impl*` and `replace`, and would have
-            # lost `why` too -- `jm split-objects` rewrites the manifest
-            # through here, so a function's refusal handling vanished.
-            written = {
-                m.group(1)
-                for m in (
-                    _re.match(r"(\w+) = ", ln) for ln in lines[fn_start:]
-                )
-                if m
-            }
-            lines += [
-                f"{k} = {_toml_value(fn[k])}"
-                for k in sorted(_FUNCTION_KEYS - written)
-                if fn.get(k)
-            ]
-            lines.append("")
-
-        # gh-286/gh-287: capsule + composer sub-tables — create params,
-        # methods, props (shared); composer adds source/segment/timeline/oo/json.
-        if data.get("kind") in ("capsule", "composer"):
-            mk = _module_key(mod)
-            for p in data.get("init_params", []):
-                lines.append(f"[[module.{mk}.init_params]]")
-                lines.append(f'name = "{p["name"]}"')
-                lines.append(f'type = "{p["type"]}"')
-                if p.get("default") not in (None, ""):
-                    lines.append(f'default = "{p["default"]}"')
-                lines.append("")
-            for m in data.get("methods", []):
-                lines.append(f"[[module.{mk}.methods]]")
-                lines.append(f'name = "{m["name"]}"')
-                if m.get("arg_type"):
-                    lines.append(f'arg_type = "{m["arg_type"]}"')
-                if m.get("return_type"):
-                    lines.append(f'return_type = "{m["return_type"]}"')
-                if m.get("caller_out"):
-                    lines.append("caller_out = true")
-                if m.get("nogil"):
-                    lines.append("nogil = true")
-                lines.append("")
-            for pr in data.get("properties", []):
-                lines.append(f"[[module.{mk}.properties]]")
-                lines.append(f'name = "{pr["name"]}"')
-                lines.append(f'type = "{pr["type"]}"')
-                if pr.get("writable"):
-                    lines.append("writable = true")
-                lines.append("")
-        if data.get("kind") == "composer":
-            lines += _dump_composer_subtables(_module_key(mod), data)
-        if data.get("kind") == "handle":
-            lines += _dump_handle_subtables(_module_key(mod), data)
-        lines[header_end:header_end] = _module_leftover_lines(
-            data,
-            lines[mod_start:header_end],
-            lines[header_end:],
-            _module_key(mod),
-        )
-
-    for comp in components(cfg):
-        comp_data = cfg[comp]
-        scalar_keys = (
-            "module",
-            "arg_type",
-            "return_type",
-            "mutable",
-            "no_state",
-            "no_step",
-            # gh-542: must round-trip through _dump or `jm apply` silently
-            # drops the key and regenerates the reset() the manifest asked
-            # to have removed.
-            "no_reset",
-            # gh-588: same reasoning — dropping it would republish the whole
-            # struct in the public header on the next apply.
-            "opaque_state",
-            # gh-1117: same reasoning again, and it is what made the feature
-            # emit nothing on a real project while every unit test passed —
-            # the replay round-trips the manifest through `_dump`, so a key
-            # missing here is silently absent by the time anything renders.
-            "process_global",
-            # gh-1311: and again. Dropping it would put back the `_core.c`
-            # and the OBJECT library on the next apply, and an OBJECT library
-            # with no sources fails CONFIGURE -- so the project would not
-            # build at all.
-            "header_only",
-            # gh-1310: the same again. `core_args` is a list and is emitted
-            # below with the other arrays.
-            "core_macro",
-            "core_header",
-            "step_delegates_to_steps",
-            "serializable",
-            "streamable",
-            "async_stream",
-            "stream_block_default",
-            "class_name",
-            # gh-509: object-level C constructor override. A plain object whose
-            # backing create is not the default ``<comp>_create`` (e.g. acq's
-            # ``acq_create_continuous``) declares it here so the generated
-            # tp_init calls it — no hand-patch that regeneration would drop.
-            "create_fn",
-            # gh-482. `create_error` is a name from ERROR_CATEGORIES, so the
-            # raw f-string emission below is safe for it. Its paired
-            # `create_error_message` is human prose and is emitted separately
-            # via _str_assign — this loop does no escaping, so a message
-            # containing a quote would produce broken TOML here.
-            "create_error",
-        )
-        lines.append(f"[{comp}]")
-        for k in scalar_keys:
-            if k in comp_data:
-                lines.append(f'{k} = "{comp_data[k]}"')
-        if comp_data.get("create_error_message"):
-            lines.append(
-                _str_assign(
-                    "create_error_message", comp_data["create_error_message"]
-                )
-            )
-        if comp_data.get("doc"):
-            lines.append(_doc_assign(comp_data["doc"]))
-        if comp_data.get("depends_on"):
-            parts = []
-            for d in comp_data["depends_on"]:
-                if isinstance(d, dict):
-                    inner = f'name = "{d["name"]}"'
-                    if d.get("link"):
-                        inner += ", link = true"
-                    if d.get("test_only"):  # gh-537, see above
-                        inner += ", test_only = true"
-                    parts.append(f"{{ {inner} }}")
-                else:
-                    parts.append(f'"{d}"')
-            lines.append(f"depends_on = [{', '.join(parts)}]")
-        if comp_data.get("extra_link_libs"):
-            libs_str = ", ".join(
-                f'"{lib}"' for lib in comp_data["extra_link_libs"]
-            )
-            lines.append(f"extra_link_libs = [{libs_str}]")
-        if comp_data.get("extra_include_dirs"):
-            inc_str = ", ".join(
-                f'"{d}"' for d in comp_data["extra_include_dirs"]
-            )
-            lines.append(f"extra_include_dirs = [{inc_str}]")
-        if comp_data.get("core_args"):
-            # Arguments are C expressions, so a string literal's quotes must
-            # survive -- hence the escaping array writer, not an f-string.
-            lines.append(
-                f"core_args = {_toml_string_array(comp_data['core_args'])}"
-            )
-        # Custom C bodies, as heredocs. Emitted here — after the scalar keys,
-        # BEFORE any [[comp.*]] sub-table — so a C.load/C.save round-trip
-        # preserves them and TOML re-parses them onto the component (not the
-        # last sub-table entry). Without this, re-saving a fragment silently
-        # drops hand-written create/reset/destroy/step bodies.
-        for _impl_key in ("impl", "create_impl", "reset_impl", "destroy_impl"):
-            if comp_data.get(_impl_key):
-                # strip("\n") so a load→dump round-trip is idempotent: TOML keeps
-                # the trailing newline from `"""\n{body}\n"""`, which would
-                # otherwise accumulate a blank line per re-dump (gh-192).
-                _body = (
-                    comp_data[_impl_key]
-                    .replace('"""', '\\"\\"\\"')
-                    .strip("\n")
-                )
-                lines.append(f'{_impl_key} = """\n{_body}\n"""')
-        lines.append("")
-        # gh-541/gh-544: the destructor contract. Emitted before the [[...]]
-        # sub-tables purely for readability — TOML headers are absolute paths,
-        # so a following [[<comp>.state]] still binds to <comp>. Nothing is
-        # emitted when undeclared, so existing manifests are unchanged.
-        _destroy = comp_data.get("destroy") or {}
-        if _destroy:
-            lines.append(f"[{comp}.destroy]")
-            if _destroy.get("name"):
-                lines.append(f'name = "{_destroy["name"]}"')
-            if _destroy.get("aliases"):
-                _al = ", ".join(f'"{a}"' for a in _destroy["aliases"])
-                lines.append(f"aliases = [{_al}]")
-            if _destroy.get("returns"):
-                lines.append(f'returns = "{_destroy["returns"]}"')
-            if _destroy.get("error"):
-                lines.append(f'error = "{_destroy["error"]}"')
-            if _destroy.get("error_message"):
-                lines.append(
-                    _str_assign("error_message", _destroy["error_message"])
-                )
-            # gh-805 §H. Plain quoting like `name`/`error`, not `_str_assign`:
-            # both are _PY_IDENT-validated at declaration time, so there is no
-            # free text to escape (gh-844's rule is about the text keys).
-            if _destroy.get("exit"):
-                lines.append(f'exit = "{_destroy["exit"]}"')
-            lines.append("")
-        for a in comp_data.get("array_args", []):
-            lines.append(f"[[{comp}.array_args]]")
-            lines.append(f'name = "{a["name"]}"')
-            lines.append(f'type = "{a.get("type") or a.get("dtype", "")}"')
-            lines.append("")
-        for s in comp_data.get("state", []):
-            lines.append(f"[[{comp}.state]]")
-            lines.append(f'name = "{s["name"]}"')
-            lines.append(f'type = "{s["type"]}"')
-            if "default" in s:
-                lines.append(f'default = "{s["default"]}"')
-            if s.get("opaque"):
-                lines.append("opaque = true")
-            if s.get("no_ctor"):
-                lines.append("no_ctor = true")
-            if s.get("controllable"):
-                lines.append("controllable = true")
-            # gh-1761: every other `STATE_KEYS` key, DERIVED as gh-1242 does
-            # for a property. This chain was a list, and it was a key behind:
-            # gh-1493's `doc` and gh-1761's `str_hint` were both dropped by
-            # any rewrite that goes through this dumper (`jm split-objects`,
-            # `jm migrate-to-fragments`), with no error.
-            for _k in sorted(_STATE_KEYS - _STATE_KEYS_WRITTEN):
-                _v = s.get(_k)
-                if _v not in (None, "", False, [], {}):
-                    lines.append(f"{_k} = {_toml_value(_v)}")
-            lines.append("")
-        # gh-999: the DECLARATION round-trips, not the expansion. A grouped
-        # param carries `GROUP_ORIGIN_KEY` and is skipped here; the
-        # `[[<obj>.init_groups]]` rows below are what persists. Writing the
-        # expansion instead would flatten the group back into the long list it
-        # exists to remove, silently, on the first `jm apply`.
-        for p in comp_data.get("init_params", []):
-            if p.get(GROUP_ORIGIN_KEY):
-                continue
-            lines.append(f"[[{comp}.init_params]]")
-            lines += _init_param_block_lines(p)
-            lines.append("")
-        for row in comp_data.get("init_groups", []) or []:
-            lines.append(f"[[{comp}.init_groups]]")
-            lines.append(_str_assign("group", row.get("group", "")))
-            if row.get("prefix"):
-                lines.append(_str_assign("prefix", row["prefix"]))
-            lines.append("")
-        if comp_data.get("init_post_parse"):
-            ipp = (
-                comp_data["init_post_parse"]
-                .replace('"""', '\\"\\"\\"')
-                .strip("\n")
-            )
-            lines.append(f'init_post_parse = """\n{ipp}\n"""')
-            lines.append("")
-        for m in comp_data.get("methods", []):
-            lines += _method_dump_lines(m, f"[[{comp}.methods]]")
-        for p in comp_data.get("properties", []):
-            lines += _property_dump_lines(p, f"[[{comp}.properties]]")
-        # gh-481. An explicit closed field list (the `properties` style, not
-        # the `methods` generic passthrough): the grammar is deliberately small
-        # and fixed, so a key that isn't one of these is an authoring error
-        # worth losing loudly at validation rather than round-tripping
-        # silently. gh-482 adds a sibling [[<comp>.errors]] table here.
-        for w in comp_data.get("warnings", []):
-            lines.append(f"[[{comp}.warnings]]")
-            lines.append(f'after = "{w.get("after", "__init__")}"')
-            lines.append(f'condition = "{w["condition"]}"')
-            lines.append(f'category = "{w.get("category", "UserWarning")}"')
-            lines.append(_str_assign("message", w["message"]))
-            if w.get("stacklevel"):
-                lines.append(f"stacklevel = {int(w['stacklevel'])}")
-            lines.append("")
-        # gh-504. A view is a second class over the same core. Its own
-        # init_params serialize inline (a nested [[...]] table under a [[...]]
-        # table is awkward TOML); exclude_properties is a plain list key like
-        # multi_output. Nothing emitted when the list is empty → zero churn.
-        for v in comp_data.get("views", []):
-            lines.append(f"[[{comp}.views]]")
-            lines.append(f'class_name = "{v["class_name"]}"')
-            lines.append(f'create_fn = "{v["create_fn"]}"')
-            if v.get("doc"):
-                lines.append(_doc_assign(v["doc"]))
-            if v.get("init_params"):
-                parts = ", ".join(
-                    _init_param_inline(p) for p in v["init_params"]
-                )
-                lines.append(f"init_params = [{parts}]")
-            if v.get("exclude_properties"):
-                ep = ", ".join(f'"{n}"' for n in v["exclude_properties"])
-                lines.append(f"exclude_properties = [{ep}]")
-            if v.get("exclude_methods"):
-                em = ", ".join(f'"{n}"' for n in v["exclude_methods"])
-                lines.append(f"exclude_methods = [{em}]")
-            # gh-580: a view's OWN create_error, when it overrides rather than
-            # inheriting the parent's. Only the explicitly-declared keys are
-            # written — dumping the resolved value would freeze an inherited
-            # translation into a copy that then stops tracking the parent.
-            if v.get("create_error"):
-                lines.append(f'create_error = "{v["create_error"]}"')
-                lines.append(
-                    _str_assign(
-                        "create_error_message",
-                        v.get("create_error_message", ""),
-                    )
-                )
-            # gh-504/gh-509: a view's own added/overriding members and its own
-            # warnings nest under it. All the view's scalar keys above must
-            # precede these subtables (TOML binds [[<comp>.views.properties]]
-            # to the preceding [[…views]]).
-            v_methods = v.get("methods", [])
-            v_props = v.get("properties", [])
-            v_warnings = v.get("warnings", [])
-            for w in v_warnings:
-                lines.append(f"[[{comp}.views.warnings]]")
-                lines.append(f'after = "{w.get("after", "__init__")}"')
-                lines.append(f'condition = "{w["condition"]}"')
-                lines.append(
-                    f'category = "{w.get("category", "UserWarning")}"'
-                )
-                lines.append(_str_assign("message", w["message"]))
-                if w.get("stacklevel"):
-                    lines.append(f"stacklevel = {int(w['stacklevel'])}")
-                lines.append("")
-            for m in v_methods:
-                lines += _method_dump_lines(m, f"[[{comp}.views.methods]]")
-            for p in v_props:
-                lines += _property_dump_lines(
-                    p, f"[[{comp}.views.properties]]"
-                )
-            # The nested helpers each emit a trailing blank; only add the
-            # view separator when there were none.
-            if not v_methods and not v_props and not v_warnings:
-                lines.append("")
-
-    app = cfg.get("app", {})
-    if app.get("target"):
-        lines.append("[app]")
-        lines.append(f'target = "{app["target"]}"')
-        lines.append(f'name = "{app["name"]}"')
-        if app.get("function") is not None:
-            lines.append(f'function = "{app["function"]}"')
-            lines.append(f'module = "{app.get("module", "")}"')
-        elif app.get("object"):
-            lines.append(f'object = "{app["object"]}"')
-            if app.get("module"):  # owning module (gh-187 console scoping)
-                lines.append(f'module = "{app["module"]}"')
-        lines.append("")
-        for f in app.get("flags", []):
-            lines.append("[[app.flags]]")
-            lines.append(f'name = "{f["name"]}"')
-            lines.append(f'type = "{f["type"]}"')
-            if f.get("default") not in (None, ""):
-                lines.append(f'default = "{f["default"]}"')
-            if f.get("help"):
-                lines.append(f'help = "{f["help"]}"')
-            lines.append("")
-        for c in app.get("commands", []):
-            lines.append("[[app.commands]]")
-            lines.append(f'name = "{c["name"]}"')
-            if c.get("help"):
-                lines.append(f'help = "{c["help"]}"')
-            if c.get("flags"):
-                parts = ", ".join(
-                    "{"
-                    + ", ".join(
-                        f'{k} = "{fl[k]}"'
-                        for k in ("name", "type", "default", "help")
-                        if fl.get(k) not in (None, "")
-                    )
-                    + "}"
-                    for fl in c["flags"]
-                )
-                lines.append(f"flags = [{parts}]")
-            lines.append("")
-
-    text = "\n".join(lines)
-
-    # gh-763: everything above renders a section kind `_dump` was taught about,
-    # one branch at a time. A kind nobody taught it — `[codec.X]` is the one
-    # doppler has — is not rendered, and the omission is silent.
-    #
-    # `_round_trips` was meant to contain that, but it only guards the *update*
-    # paths. `save` calls `_dump` unguarded when the file does not exist yet,
-    # and again when tomlkit is unavailable — which is a real environment, not
-    # a hypothetical: just-buildit does not propagate `[project].dependencies`
-    # to the wheel, so a tool-installed jm may have no tomlkit at all. In that
-    # environment every root-writing command silently deleted the whole codec
-    # table.
-    #
-    # So `_dump` closes its own gap instead of trusting a caller to notice:
-    # parse what was just written, and anything from *cfg* that did not survive
-    # is appended generically. Asking the output what is missing needs no list
-    # of known kinds, and cannot be forgotten for the kind added next — the
-    # same reason the array branch above tests the value instead of its name.
-    # gh-844: RAISE, do not hand the text back. This check exists to find
-    # sections `_dump` failed to render, and it was swallowing a different
-    # failure entirely — "what I just wrote is not TOML" — by returning the
-    # bad text for `save` to write. The manifest then broke the *next*
-    # command, in a different verb from the one that caused it, which is why
-    # three separate escaping bugs stayed invisible until someone tested the
-    # escapers directly.
-    #
-    # There is no false alarm to trade against: if `tomllib` cannot read what
-    # this function just emitted, the text is wrong by definition. Anything
-    # reaching here is a jm bug, and the traceback names the manifest jm was
-    # about to corrupt.
-    survived = _reparse_or_raise(text)
-
-    # Absent entirely -> append it generically. `[codec.X]` is this case: the
-    # component loop above does not claim it, so nothing was written at all.
-    missing = [k for k in cfg if k not in survived]
-    if missing:
-        text = text.rstrip("\n") + "\n\n"
-        text += "\n".join(_dump_generic(k, cfg[k]) for k in missing)
-        # Same guard as above: the generic append can itself emit something
-        # unreadable (it renders values jm was never taught about), and this
-        # was the one bare `tomllib.loads` left on the path.
-        survived = _reparse_or_raise(text)
-
-    # Present but WRONG is the other half, and it cannot be repaired by
-    # appending: the section header is already in the file, and TOML forbids a
-    # second one. The component loop claims any unrecognised top-level table
-    # and emits a bare `[name]` with none of its keys — so the key survives,
-    # empty, and a presence check reads that as success. Found by the tests
-    # for this very fix, which is the argument for writing them.
-    #
-    # Raising is the only honest option left. On the guarded path the caller
-    # never gets here (`_round_trips` has already sent it to tomlkit); on the
-    # unguarded ones a hard error beats a manifest that silently lost a
-    # section, which is the failure gh-763 exists to end.
-    # Narrowly: emitted *empty* while cfg has content. A full equality test
-    # here is wrong — a component section legitimately does not compare byte
-    # equal after a round trip, which is exactly why `_round_trips` is a
-    # fall-back guard and not an assertion. Demanding equality raised on 143
-    # ordinary tests before this was narrowed, which is the useful correction:
-    # "does not round-trip exactly" and "silently lost its contents" are
-    # different facts, and only the second one is a bug.
-    _empty = ({}, [])
-    mangled = [
-        k
-        for k in cfg
-        if k in survived and survived[k] in _empty and cfg[k] not in _empty
-    ]
-    if mangled:
+    Examples
+    --------
+    >>> print(_dump({"o": {"streamable": True, "stream_block_default": 64}}))
+    [o]
+    streamable = true
+    stream_block_default = 64
+    <BLANKLINE>
+    """
+    doc = _declared(cfg)
+    text = _render(doc)
+    bad = _unfaithful(doc, _reparse_or_raise(text))
+    if bad is not None:
         raise ValueError(
-            "jm cannot faithfully serialise "
-            + ", ".join(f"[{k}]" for k in mangled)
-            + " and will not write a manifest that loses it. Please report"
-            " this section's shape (jm-763)."
+            f"jm cannot faithfully serialise `{_dotted(bad)}` "
+            f"({_at(doc, bad)!r}) and will not write a manifest that loses "
+            "it. Please report this value's shape (gh-2045)."
         )
     return text
 
 
-def _toml_scalar(v: object) -> str:
-    """*v* as a TOML scalar literal."""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    # gh-844: was `\\` and `"` only — no newline, CR or U+007F — and it is
-    # what `_toml_value` falls through to for every generically-rendered
-    # section, so it was the widest of the four broken paths.
-    return _toml_basic_string(str(v))
-
-
-def _toml_value(v: object) -> str:
-    """*v* as a TOML value — scalar, array, or inline table.
-
-    Covers what a manifest section actually holds: scalars, arrays of
-    scalars, and arrays of inline tables (``[codec.X] entries``). Nesting
-    deeper than this has never appeared in a manifest, and if it ever does
-    the round-trip check in :func:`_dump` is what will say so rather than
-    the file quietly losing it.
-    """
-    if isinstance(v, dict):
-        inner = ", ".join(f"{k} = {_toml_value(x)}" for k, x in v.items())
-        return "{ " + inner + " }"
-    if isinstance(v, (list, tuple)):
-        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
-    return _toml_scalar(v)
-
-
 def _dump_generic(name: str, value: object) -> str:
-    """A top-level key rendered without knowing what kind of section it is."""
-    if isinstance(value, list):
-        return "\n".join(
-            f"[[{name}]]\n"
-            + "\n".join(f"{k} = {_toml_value(x)}" for k, x in item.items())
-            + "\n"
-            for item in value
-            if isinstance(item, dict)
-        )
-    if not isinstance(value, dict):
-        return f"{name} = {_toml_value(value)}\n"
-    # A table of tables (`[codec.blue_keyword]`) versus a plain table.
-    if value and all(isinstance(x, dict) for x in value.values()):
-        return "\n".join(
-            f"[{name}.{sub}]\n"
-            + "\n".join(f"{k} = {_toml_value(x)}" for k, x in body.items())
-            + "\n"
-            for sub, body in value.items()
-        )
-    body = "\n".join(f"{k} = {_toml_value(x)}" for k, x in value.items())
-    return f"[{name}]\n{body}\n"
+    """One top-level key, *name*, rendered as `_dump` renders it."""
+    return _render(_declared({name: value}))
 
 
 #: What an absent ``fragment`` key means -- today's behaviour, so a manifest

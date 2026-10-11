@@ -33,6 +33,7 @@ from . import _codec as _codec
 from . import _coerce
 from . import _config as C
 from . import _csym as CSYM
+from . import _extramethods
 from . import _gluedoc
 from . import _outbuf
 from . import _record
@@ -41,8 +42,11 @@ from . import _types as T
 from dataclasses import replace as _replace
 
 from ._context._diagnostics import create_raises_doc as _create_raises_doc
+from ._context._diagnostics import empty_is_none_doc as _empty_is_none_doc
+from ._context._diagnostics import optional_ann as _optional_ann
 from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
+from ._context._types import _py_default
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
     CLASS_INDENT,
@@ -826,6 +830,12 @@ def _splice_hand_owned(cfg: dict, old_text: str, new_text: str) -> str:
         start = _line_start_offset(old_text, start_lineno)
         return old_text[start:end]
 
+    new_groups = _member_groups(new_text)
+    # gh-1997: members the fresh render types for real. A `manual_stub`
+    # whose old text is still jm's own `<<MANUAL_STUB>>` placeholder has
+    # nothing of the author's to keep, so when an `extra_methods` row of the
+    # same name now renders the member, the row's stub stands.
+    rendered_for_real = set(new_groups) - _placeholder_members(new_text)
     hand_owned: dict[tuple[str, str], str] = {}
     for key, nodes in old_groups.items():
         marked = (
@@ -833,11 +843,17 @@ def _splice_hand_owned(cfg: dict, old_text: str, new_text: str) -> str:
             is not None
         )
         if key in manifest_pairs or marked:
-            hand_owned[key] = _block(key, nodes)
+            block = _block(key, nodes)
+            if (
+                not marked
+                and key in rendered_for_real
+                and _MANUAL_STUB_PLACEHOLDER in block
+            ):
+                continue
+            hand_owned[key] = block
     if not hand_owned:
         return new_text
 
-    new_groups = _member_groups(new_text)
     replacements: list[tuple[int, int, str]] = []
     append_by_class: dict[str, list[str]] = {}
     for key, block in hand_owned.items():
@@ -899,76 +915,45 @@ def _py_default_stub(ctype: str, default: str) -> str:
     Python. Returning the raw empty default instead produced ``x: int = `` —
     a SyntaxError that broke the whole stub for any downstream ``mypy`` run or
     ``pytest --doctest-glob='*.pyi'`` sweep.
+
+    gh-1946: every present default is
+    :func:`~just_makeit._context._types._py_default`'s answer. This was its
+    branch-for-branch peer, and each fix had to land twice -- `bool`
+    (gh-610), header constants (gh-1488), `str` (gh-1271), the integer
+    suffixes (gh-1043), the complex parser (gh-1561) -- until the float
+    branch's suffix rule was the copy neither fix reached, and ``0.1L``
+    reached both stubs verbatim. What stays here is the one real
+    difference: an absent default, or a type jm has no Python for, is
+    ``...`` on this face.
     """
     if ctype not in _CTYPE_TO_PY or not default.strip():
         return "..."
-    if ctype == "bool":
-        # gh-610: "bool" isn't in kind_map (it falls to the generic "int"
-        # bucket below), so the C/TOML spelling `true`/`false` passed
-        # straight through into generated Python — a NameError.
-        # gh-1506: a header constant is `...`, as for every other type.
-        if T.is_c_only_default(ctype, default):
-            return "..."
-        return T.bool_default_py(default)
-    # gh-1488: the peer's answer for a header constant, from the same
-    # predicate -- a stub cannot name `LVL_INFO` any more than a test can.
-    if T.is_c_only_default(ctype, default):
-        return "..."
-    # gh-1271: the peer had a `str` branch and this one did not, so a
-    # `const char *` default fell through to the integer bucket below and
-    # reached the stub as the C token -- `dataset: str = NULL`, a NameError.
-    # One answer, shared, so the two cannot drift again.
-    if T._CTYPE_META.get(ctype, {}).get("kind") == "str":
-        return T.string_default_literal(default)
-    # gh-1561: the type's own kind. A hand list of the complex types sent
-    # `long double _Complex` to the integer bucket.
-    kind = T._CTYPE_META[ctype]["kind"]
-    if kind == "float":
-        s = default.rstrip("fF")
-        if "." not in s and "e" not in s.lower():
-            s += ".0"
-        return s
-    if kind == "complex":
-        # gh-1561: the peer's answer, from the same parser.
-        return T.complex_default_py(default) or "0j"
-    # gh-1043: the integer bucket, the peer of the branch in
-    # `_context/_types._py_default`. Both emitted the C literal unchanged, so
-    # a `uint64_t` state field put `0U` into the .pyi AND the runtime
-    # docstring — one manifest, two faces, the same wrong answer twice.
-    return T.strip_c_literal_suffix(default)
+    return _py_default(ctype, default)
 
 
 def _doctest_out(ctype: str, default: str) -> str | None:
-    """Expected repr from a getter call, or None if not safe for doctests."""
-    m = _ARRAY_RE.match(ctype.strip())
-    if m:
+    """Expected repr from a getter call, or None if not safe for doctests.
+
+    gh-1947: the value the getter RETURNS, which is
+    :func:`~just_makeit._types.held_default_py`'s answer -- not the declared
+    literal. A ``float _Complex`` given ``0.1`` prints
+    ``(0.10000000149011612+0j)``, and this printed ``(0.1+0j)``, so a fresh
+    scaffold's ``pytest --doctest-glob='*.pyi'`` failed.
+
+    A float field is demonstrated only when that value is integral, the
+    policy since the first stubs; every value shown is the exact one.
+    """
+    if _ARRAY_RE.match(ctype.strip()) or ctype not in _CTYPE_TO_PY:
         return None  # array fields: no scalar getter
-    if ctype not in _CTYPE_TO_PY:
+    held = T.held_default_py(ctype, default)
+    if held is None:
         return None
-    # gh-1561: the type's own kind. A hand list of the complex types sent
-    # `long double _Complex` to the integer bucket.
-    kind = T._CTYPE_META[ctype]["kind"]
-    if kind == "int":
-        val = _py_default_stub(ctype, default)
-        try:
-            int(val)
-            return val
-        except ValueError:
-            return None
-    if kind == "float":
-        s = default.rstrip("fF")
-        try:
-            v = float(s)
-            if v == int(v):
-                return repr(v)
-        except ValueError:
-            pass
+    if (
+        T._CTYPE_META[ctype]["kind"] == "float"
+        and not float(held).is_integer()
+    ):
         return None
-    if kind == "complex":
-        # gh-1561: the declared value's repr, which is what the getter
-        # prints; None for a C constant, as for any value Python cannot say.
-        return T.complex_default_py(default) if default.strip() else "0j"
-    return None
+    return held
 
 
 def _ctor_demo_lines(Component: str, py_create_args: str) -> list[str]:
@@ -1238,9 +1223,10 @@ def _build_class_docstring(
     for name, out in scalar_getters[:3]:
         ex += [f"    >>> obj.get_{name}()", f"    {out}"]
 
-    # The "reset restores defaults" demo assumes reset() zeroes the first state
-    # var. A custom reset_impl (#51) may deliberately preserve config (e.g. a
-    # waveform `type` set by create_impl), so skip the demo there.
+    # The "reset restores defaults" demo assumes reset() restores the first
+    # state var's declared default. *custom_reset* is
+    # `Ctx.reset_is_authors` (gh-1882): a reset_impl (#51) may deliberately
+    # preserve it, as a delay line keeps its `length`, so skip the demo.
     if scalar_getters and not custom_reset:
         first_name, first_out = scalar_getters[0]
         first_ct = next(ct for n, ct, _ in state_vars if n == first_name)
@@ -1438,8 +1424,12 @@ def _method_doc_lines(
     param_defaults: "dict[str, str] | None" = None,
     param_docs: "dict[str, str] | None" = None,
     authored_doc: str = "",
+    none_when: str = "",
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
+
+    *none_when* is `_context._diagnostics.empty_is_none_doc` for the method,
+    for the same reason as *raises* below (gh-2183).
 
     *skeleton_fallback* selects what an UNDOCUMENTED member falls back to.
     Every method caller now passes True -- object, module object and view
@@ -1469,6 +1459,7 @@ def _method_doc_lines(
         param_defaults=param_defaults,
         param_docs=param_docs,
         authored_doc=authored_doc,
+        none_when=none_when,
     )
 
 
@@ -1570,6 +1561,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     return_type = C.return_type(cfg, obj)
     obj_methods = C.methods(cfg, obj)
     obj_props = C.properties(cfg, obj)
+    # gh-1997: the methods the author wrote in the object's `_extra.c`.
+    _extra_rows = C.extra_methods(cfg, obj)
+    _extra_names = {str(r.get("name") or "") for r in _extra_rows}
     # Doxygen blocks parsed from the sacred header, stashed on cfg by
     # _object._regenerate_module. Maps C function name -> DoxyBlock.
     doc_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
@@ -1685,19 +1679,21 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # gh-1208: one spelling, shared with every synthesized doctest on the
     # runtime face, so the two faces of a method cannot disagree about where
-    # the class imports from. `...` stays the no-package fallback.
+    # the class imports from. `...` stays the no-package fallback. gh-2054:
+    # from the module's package, not its id.
     import_line = (
-        class_import_line(pkg, Component, module)
+        class_import_line(
+            pkg, Component, C.module_package_resolved(cfg, module)
+        )
         if pkg
         else f"from ... import {Component}"
     )
 
     # Class docstring — same shared builder the standalone COMPONENT_PYI path
     # uses (class_docstring_block), so the two .pyi generators never drift.
-    # init_params imply a create_impl that derives state from the params (the
-    # #69 contract), so the first state var is config — not guaranteed zeroed by
-    # reset(); skip the "reset restores defaults" demo there. gh-542: `no_reset`
-    # removes the method, so the demo would be a failing doctest under
+    # gh-1882: whether to demo "reset restores defaults" is the one predicate
+    # every reset() claim asks -- a reset_impl, init_params (the #69
+    # contract) or gh-542's `no_reset` each make it a failing doctest under
     # `pytest --doctest-glob='*.pyi'`, not just stale prose.
     _raises, _warns = class_diagnostics(cfg, obj)
     doc_lines = class_docstring_block(
@@ -1711,7 +1707,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         doc_blocks=doc_blocks,
         manifest_doc=cfg.get(obj, {}).get("doc", ""),
         state_docs=C.state_docs(cfg, obj),
-        custom_reset=bool(ip) or no_reset,
+        custom_reset=Ctx.manifest_reset_is_authors(cfg, obj),
         create_fn=C.object_create_fn(cfg, obj),
         raises=_raises,
         warns=_warns,
@@ -1802,12 +1798,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 # producer in `_context/_state.py`, which gh-805 §H fixed and
                 # this one was missed by — jm has five `.pyi` producers.
                 # gh-1224: an `object = "<comp>.<Class>"` reference resolves
-                # to a real class (slot 17), so name it. Fixed in BOTH
+                # to a real class (slot 19), so name it. Fixed in BOTH
                 # producers in the same change -- the comment above is the
                 # record of what happens when only one of them learns
                 # something, and doing it again here would have been the
                 # third time.
-                _ocls = param[17] if len(param) > 17 else ""
+                _ocls = param[19] if len(param) > 19 else ""
                 _base = _ocls or "object"
                 req_parts.append(
                     f"{n}: {_base} | None" if not required else f"{n}: {_base}"
@@ -2058,6 +2054,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             ]
             continue
         if m.get("manual_stub"):
+            # gh-1997: the peer of the same skip in `make_methods_ctx` -- an
+            # `extra_methods` row of this name types the member, below.
+            if m_name in _extra_names:
+                continue
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
@@ -2153,13 +2153,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # borrow carries one. Peer of the same call in the annotation
             # chain; both go through `_borrow.element_type`.
             # gh-1418: and `none_on_empty` makes it optional, exactly as in
-            # the peer. Kept beside that branch rather than derived twice:
-            # the two annotations are gated to agree.
-            ret_ann = (
-                "NDArray[Any]"
-                if m.get("record_dtype")
-                else f"NDArray[{_np(m_ret)}]"
-            ) + (" | None" if m.get("none_on_empty") else "")
+            # the peer. gh-2183: both ask `optional_ann`, the predicate the
+            # binding's `Py_RETURN_NONE` is emitted from.
+            ret_ann = _optional_ann(
+                m,
+                (
+                    "NDArray[Any]"
+                    if m.get("record_dtype")
+                    else f"NDArray[{_np(m_ret)}]"
+                ),
+            )
         elif m_py_return_type:
             ret_ann = m_py_return_type
         elif m.get("status_return"):
@@ -2193,10 +2196,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # already yields for a type it does not know.
             all_rts = [m.get("record_dtype") or m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
-            ret_ann = (
-                f"tuple[{', '.join(ndarrays)}]"
-                if len(ndarrays) > 1
-                else ndarrays[0]
+            # gh-2183: peer of the same `optional_ann` in make_methods_ctx.
+            ret_ann = _optional_ann(
+                m,
+                (
+                    f"tuple[{', '.join(ndarrays)}]"
+                    if len(ndarrays) > 1
+                    else ndarrays[0]
+                ),
             )
         elif m.get("out_type"):
             # gh-529: peer of the `out_type` branch in
@@ -2209,8 +2216,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         else:
             ret_ann = _py(m_ret)
 
-        # gh-423: mirror make_methods_ctx's _enable_out/_single_array_param
-        # (gh-219) here -- this loop is a separate stub generator for the
+        # gh-423: mirror make_methods_ctx's _enable_out (gh-219) here --
+        # this loop is a separate stub generator for the
         # module-aggregated .pyi and was never taught the out=/_max_out()
         # shape, so it kept emitting the pre-#219 signature after that fix.
         # gh-1079: the same accessor the binding and the standalone `.pyi`
@@ -2314,13 +2321,17 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             authored_doc=m.get("doc", ""),
             param_docs=authored_param_docs(m),
             raises=_raises_doc(m),
+            none_when=_empty_is_none_doc(m),
             # gh-1292: the skeleton, as every other face of the same member
             # renders it -- the standalone stub and BOTH runtime docs. Without
             # it an undocumented method collapsed to its name here alone, so
             # a module object's `help()` listed parameters its stub did not.
             skeleton_fallback=True,
             param_defaults=_gluedoc.binding_param_docs(
-                _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                _count_kw,
+                count=_stub_count_arg,
+                out=_stub_enable_out,
+                out_cols=bool(m.get("out_cols")),
             ),
         )
         header = (
@@ -2372,7 +2383,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # lookup the standalone path uses, so the faces cannot drift.
             _mo_blk = doc_blocks.get(_mo_key) or doc_blocks.get(_mo_fallback)
             _mo_gm = _max_out_method(
-                m_name, _stub_moc_name or "", int(m.get("max_out", 0) or 0)
+                m_name,
+                _stub_moc_name or "",
+                int(m.get("max_out", 0) or 0),
+                # gh-1996: the unit the binding answers in, read where the
+                # binding reads it.
+                _outbuf.interleave(m_arg != "void", m_params),
             )
             if _mo_blk is not None:
                 _mo_gm = _replace(_mo_gm, block=_mo_blk)
@@ -2397,6 +2413,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         ):
             lines += ["", f"    def {_n}({_sig}:"]
             lines += _glue[_n].pyi_doc()
+
+    # gh-1997: the methods the author wrote in the object's `_extra.c`, after
+    # the generated ones as their rows are -- through the one member emitter
+    # the standalone stub and a composer's use.
+    for _row in _extra_rows:
+        lines += ["", *_extramethods.pyi_member(_row)]
 
     # State get_/set_ accessors. The module runtime emits these for every
     # non-opaque state var (via make_state_ctx, the same builder that generates
@@ -2476,6 +2498,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # slot that does carry the symbol.
         create_fn=C.object_create_fn(cfg, obj) or "",
         csym=csym,
+        lends=_borrow.lends(cfg, obj),
     )
     lines += _dctx["pyi_destroy_methods"].split("\n")
     # gh-647: the context-manager protocol used to be the one part of the
@@ -2575,6 +2598,44 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
             part += f" = {dflt}"
         parts.append(part)
     return ret, py_params, parts
+
+
+def _module_fn_blocks(root, module: str) -> dict:
+    """The Doxygen blocks of *module*'s header, for its function stubs.
+
+    gh-384: free-function docstrings (incl. @code Examples) come from the
+    module header Doxygen, same as object methods. Only when a project root
+    is supplied (the apply/regenerate path); direct callers without a root
+    keep the historical one-line stubs. Local import avoids a cycle
+    (_object imports _stubs); the loader honours _object's apply-replay
+    _DOC_ROOT_OVERRIDE just like the per-object blocks.
+    """
+    if root is None:
+        return {}
+    from ._object import _load_module_doc_blocks
+
+    return _load_module_doc_blocks(root, module)
+
+
+def _fn_block(cfg: dict, blocks: dict, fn: dict):
+    """The header block documenting module function *fn*, or None.
+
+    gh-1591: the header documents the C SYMBOL -- `<p>_<fn>` under a
+    c_prefix -- so the block is found by the stem; keyed by the bare name,
+    every module function's Doxygen fell off the stub in silence.
+    """
+    return blocks.get(CSYM.stem(cfg, fn["name"]))
+
+
+def function_stub(cfg: dict, root, module: str, fn: dict) -> str:
+    """Module function *fn*'s stub, as `make_module_pyi` writes it.
+
+    gh-2103: `_docstring.manifest_docs_with_sections` asks THIS whether the
+    function's `doc` gets a generated numpy section beside it, rather than
+    restating `_fn_stub`'s rule: with no header Doxygen and no documented
+    param it does not, and the `doc` duplicates nothing.
+    """
+    return _fn_stub(fn, _fn_block(cfg, _module_fn_blocks(root, module), fn))
 
 
 def _fn_stub(fn: dict, block=None) -> str:
@@ -2821,6 +2882,10 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
         for p in C.properties(cfg, obj)
         if p["name"] not in excl and p["name"] not in own_prop_names
     ] + own_props
+    # gh-1997: a view does not inherit the parent's `extra_methods`. Its
+    # binding renders none (`_object._make_view_ctx`), because each row's
+    # function is written against the parent's struct.
+    overlay.pop("extra_methods", None)
     own_methods = C.view_methods(view)
     own_method_names = {m["name"] for m in own_methods}
     overlay["methods"] = [
@@ -2930,7 +2995,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # The .pyi sits beside the .so at src/<pkg>/<pypath>/<leaf>.pyi — or, when
     # the module declares a gh-523 `package`, inside that package instead.
     mp = C.module_paths(module)
-    out_pkg = C.module_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
 
     needs_literal = _uses_literal(cfg, module)
     # gh-1272: decided AFTER the body exists — see `_uses_os`. The slot is
@@ -2974,18 +3039,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # gh-384: header Doxygen for free functions, stashed transiently on cfg by
     # build_component_ctxs() (mirrors the per-object _doc_blocks). Empty when
     # the module has no header / hand-written function comments.
-    # gh-384: synthesize free-function docstrings (incl. @code Examples) from
-    # the module header Doxygen, same as object methods. Only when a project
-    # root is supplied (the apply/regenerate path); direct callers without a
-    # root keep the historical one-line stubs. Local import avoids a cycle
-    # (_object imports _stubs); the loader honours _object's apply-replay
-    # _DOC_ROOT_OVERRIDE just like the per-object blocks.
-    if root is not None:
-        from ._object import _load_module_doc_blocks
-
-        fn_doc_blocks = _load_module_doc_blocks(root, module)
-    else:
-        fn_doc_blocks = {}
+    fn_doc_blocks = _module_fn_blocks(root, module)
 
     if objects:
         parts.append("")
@@ -3028,12 +3082,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             parts.append("")
 
     for fn in functions:
-        # gh-1591: the header documents the C SYMBOL -- `<p>_<fn>` under a
-        # c_prefix -- so the block is found by the stem; keyed by the bare
-        # name, every module function's Doxygen fell off the stub in silence.
-        parts.append(
-            _fn_stub(fn, fn_doc_blocks.get(CSYM.stem(cfg, fn["name"])))
-        )
+        parts.append(_fn_stub(fn, _fn_block(cfg, fn_doc_blocks, fn)))
         parts.append("")
 
     # strip trailing blank line

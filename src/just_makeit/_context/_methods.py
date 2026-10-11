@@ -13,11 +13,13 @@ from .. import _config as C
 from .. import _coerce
 from .. import _csym as CSYM
 from .. import _enumc
+from .. import _extramethods
 from .. import _borrow
 from .. import _outbuf
 from .. import _record
 from .. import _types as T
 from .._builtins import result_local
+from .._report import Refusal
 from ._types import _py_default
 from .. import _gluedoc
 from .._types import (
@@ -37,6 +39,7 @@ from .._docstring import (
     name_summary,
     property_doc,
     class_import_line,
+    max_out_is_declared,
     max_out_is_state_only,
     render_numpy_doc,
     render_runtime_doc,
@@ -55,9 +58,16 @@ from ._diagnostics import (
     # defaults a third time behind a branch that cannot be taken.
     _raise_pair as raise_pair_of,
     _rc_raise_c,
+    count_type as count_type_of,
     declared_raise,
+    empty_is_none,
+    empty_is_none_doc,
     empty_raise_c,
+    optional_ann,
+    property_declared_raise,
+    property_raises_doc,
     raises_doc,
+    setter_return_type,
 )
 from ._parse import (
     _build_ml_doc,
@@ -66,6 +76,7 @@ from ._parse import (
     borrow_view_c as _borrow_view_c,
     capsule_new_c as _capsule_new_c,
     enum_symbols as _enum_symbols,
+    scalar_parse_c as _scalar_parse_c,
 )
 
 
@@ -288,9 +299,73 @@ def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
     )
 
 
-def _kernel_call_block(call_expr: str, nogil: bool) -> str:
-    """``size_t n_out = <call>;`` — the variable-output shape."""
+def _kernel_call_block(
+    call_expr: str, nogil: bool, m: "dict | None" = None
+) -> str:
+    """``size_t n_out = <call>;`` — the variable-output shape.
+
+    gh-2012: a SIGNED count (`error_negative`, with the `count_type` it
+    requires) lands in ``<count_type> _rc`` instead, because its sign has to
+    be read before it is a length; :func:`_count_refusal_c` reads it and only
+    then declares ``n_out``. Everything after that sees the same
+    ``size_t n_out`` as before, so no later comparison mixes signedness.
+    """
+    if m and m.get("error_negative"):
+        return _nogil_call(count_type_of(m), "_rc", call_expr, nogil)
     return _nogil_call("size_t", "n_out", call_expr, nogil)
+
+
+def _count_refusal_c(m: dict, name: str, release: str, pad: str) -> str:
+    """A ``variable_output`` count's declared refusal value (gh-2012).
+
+    The kernel's one return value is the count, so a refusal has to be a
+    value no count can be. Two forms, each chosen by the C library's own
+    convention:
+
+    ``error_negative`` (with a signed `count_type`)
+        ``_rc < 0`` raises through `_rc_raise_c`, the raise the scalar
+        ``error_negative`` already uses, so the message carries
+        ``(rc=N)`` -- doppler's negative ``DP_ERR_*`` codes. ``_rc >= 0``
+        becomes ``size_t n_out``.
+    ``error_sentinel``
+        ``n_out == (<sentinel>)`` raises through `empty_raise_c`: the value
+        tested IS the sentinel, so there is no code worth appending. For a
+        library that keeps ``size_t`` counts and cannot change an ABI.
+
+    Emitted on BOTH call paths, right after the kernel returns and BEFORE
+    `_coerce.returned_count_c`: a refusal value is past any capacity, so
+    the overflow guard would otherwise answer first, as a ``RuntimeError``
+    blaming the kernel for writing ``18446744073709551615`` elements. Each
+    path passes the arrays IT holds as *release* -- ``out_arr`` on the
+    ``out=`` path, ``arr0..`` on the allocate path (gh-1159's lesson).
+    ``error_on_empty`` / ``none_on_empty`` still read zero, after the guard,
+    independently of this.
+
+    Empty when the method declares neither, so its binding is unchanged.
+    """
+    body = len(pad) + 4
+    lead = " " * body
+    if m.get("error_negative"):
+        return (
+            f"{pad}if (_rc < 0) {{\n"
+            f"{lead}{release}\n"
+            + _rc_raise_c(*raise_pair_of(m, name), indent=body + 13, pad=body)
+            + f"{pad}}}\n"
+            f"{pad}size_t n_out = (size_t)_rc;\n"
+        )
+    sentinel = m.get("error_sentinel")
+    if sentinel:
+        # Parenthesised: the sentinel is the author's C, and `== A | B`
+        # would bind as `(n_out == A) | B`.
+        return (
+            f"{pad}if (n_out == ({sentinel})) {{\n"
+            f"{lead}{release}\n"
+            + empty_raise_c(
+                *raise_pair_of(m, name), indent=body + 16, pad=body
+            )
+            + f"{pad}}}\n"
+        )
+    return ""
 
 
 def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
@@ -650,6 +725,8 @@ def _bench_method_block(
         # the generic branches entirely.
         rf_disp = return_type
         lines.append(f"        {rf_disp} {name}_results[{max_results}];")
+        # gh-1961: the params sit between the input and the results, as in
+        # the prototype; this call omitted them, like the binding did.
         if has_arg:
             lines += [
                 f"        {arg_elem_disp} *{name}_in ="
@@ -658,11 +735,11 @@ def _bench_method_block(
                 f'        if (!{name}_in) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
             ]
             call = (
-                f"{c_fn}(obj, {name}_in, BENCH_N,"
+                f"{c_fn}(obj, {name}_in, BENCH_N{param_args},"
                 f" {name}_results, {max_results})"
             )
         else:
-            call = f"{c_fn}(obj, {name}_results, {max_results})"
+            call = f"{c_fn}(obj{param_args}, {name}_results, {max_results})"
         lines.append(f"        volatile size_t {name}_sink;")
         has_sink = True
         lines += [
@@ -1046,6 +1123,7 @@ def _max_out_doc(
     c_fn="",
     *,
     csym: str,
+    elements_per_sample: int = 1,
 ):
     """The doc for ``<name>_max_out``: header block if authored, else jm's.
 
@@ -1062,12 +1140,54 @@ def _max_out_doc(
     blk = block_of(
         f"{C.method_c_symbol(csym, {'name': name, 'fn': c_fn})}_max_out"
     )
-    gm = max_out_method(name, count_param or "", int(max_out_const or 0))
+    gm = max_out_method(
+        name,
+        count_param or "",
+        int(max_out_const or 0),
+        elements_per_sample,
+    )
     if blk is not None:
         # gh-1052: through the constructor, which also records that this
         # body is the header's LINES rather than jm's paragraphs.
         gm = gm.with_header_block(blk)
     return gm
+
+
+def _max_out_return_c(call: str, elements_per_sample: int, who: str) -> str:
+    """The ``<m>_max_out`` binding's return, in numpy elements (gh-1996).
+
+    The C ``max_out`` answers in the kernel's samples. The Python face sizes
+    an ``out=`` array, which holds elements, so under an interleave the
+    answer is multiplied back -- bounded first through the one size emitter,
+    so a sample count past ``SIZE_MAX / E`` is an ``OverflowError`` rather
+    than a product that wraps to a small, wrong bound. With no interleave
+    this is the line the binding always returned.
+
+    Examples
+    --------
+    >>> print(_max_out_return_c("f_max_out(s)", 1, "F.m_max_out"), end="")
+        return PyLong_FromSize_t(
+            f_max_out(s));
+    >>> print(_max_out_return_c("f_max_out(s)", 2, "F.m_max_out"), end="")
+        size_t _mo_need = (size_t)(f_max_out(s));
+        if (_mo_need > (size_t)(SIZE_MAX / 2)) {
+            PyErr_Format(PyExc_OverflowError,
+                "F.m_max_out: output of %zu samples of 2 elements is too large", _mo_need);
+            return NULL;
+        }
+        size_t _mo = (size_t)_mo_need;
+        return PyLong_FromSize_t(_mo * 2);
+    """
+    if elements_per_sample == 1:
+        return f"    return PyLong_FromSize_t(\n        {call});\n"
+    return _coerce.output_size_c(
+        "_mo",
+        call,
+        who,
+        ctype="size_t",
+        limit=f"(SIZE_MAX / {elements_per_sample})",
+        unit=f"samples of {elements_per_sample} elements",
+    ) + (f"    return PyLong_FromSize_t(_mo * {elements_per_sample});\n")
 
 
 def _count_default_parts(
@@ -1136,6 +1256,109 @@ def _max_out_count_param_ctx(
                 return f", size_t {p['name']}_len", f"{p['name']}_len"
         return "", None
     return ", size_t n", "n"
+
+
+def _max_out_call_c(
+    c_fn: str, doc_blocks: "dict | None", count: "str | None"
+) -> str:
+    """The ``<c_fn>_max_out(...)`` call a wrapper sizes its output with.
+
+    One spelling for every wrapper that asks a method's capacity before
+    calling its kernel: the ``variable_output`` shapes (gh-607) and a
+    list-of-records method whose header declares one (gh-2184). *count* is
+    the C expression the kernel is about to be handed as its input length,
+    or ``None`` for a shape with no count to mirror.
+
+    gh-761: the header is the source of truth for the arity. A declaration
+    that takes only the state is called with only the state, whatever count
+    the shape has -- a wrapper calling ``max_out(state, n)`` against a
+    ``max_out(state)`` prototype does not compile.
+
+    Examples
+    --------
+    >>> _max_out_call_c("h_push", None, "n_in")
+    'h_push_max_out(self->handle, n_in)'
+    >>> _max_out_call_c("h_push", None, None)
+    'h_push_max_out(self->handle)'
+    >>> from .._docstring import max_out_arity_key
+    >>> _max_out_call_c(
+    ...     "h_push", {max_out_arity_key(): {"h_push_max_out"}}, "n_in"
+    ... )
+    'h_push_max_out(self->handle)'
+    """
+    state_only = max_out_is_state_only(doc_blocks, f"{c_fn}_max_out")
+    arg = f", {count}" if (count and not state_only) else ""
+    return f"{c_fn}_max_out(self->handle{arg})"
+
+
+def _records_buffer_c(
+    ret_disp: str,
+    c_fn: str,
+    doc_blocks: "dict | None",
+    count: "str | None",
+    max_results: int,
+    who: str,
+    release: str,
+) -> "tuple[str, str, str]":
+    """``(declare, capacity, free)`` for a list-of-records result buffer.
+
+    gh-2184. The kernel's contract is ``(..., T *result, size_t
+    max_results) -> count``: it fills at most *max_results* records and has
+    no way to say there were more. So the buffer's size IS the most a call
+    can ever return, and a fixed one silently dropped whatever the C still
+    had to report -- doppler's detectors lost every result past the 64th.
+
+    Without a declared capacity the buffer is what it always was: a stack
+    array of the manifest's ``max_results`` (default 64), byte-identical to
+    every wrapper rendered before this. When the header declares
+    ``<c_fn>_max_out`` -- the ``variable_output`` capacity function, same
+    name, same arity rules, called through :func:`_max_out_call_c` -- the
+    wrapper asks it, heap-allocates that many records, and hands the kernel
+    exactly that capacity. A function that can bound its output then never
+    saturates. The bound is trusted as given, as ``pass_capacity`` trusts a
+    ``variable_output`` one: the kernel is told it, so a capacity of 0 is
+    an empty result, not an overrun. ``PyMem_Malloc(0)`` returns a distinct
+    non-NULL pointer, so that case needs no branch of its own.
+
+    *release* drops what the wrapper already holds (parsed input arrays)
+    on the two failure paths before the kernel runs. The product
+    ``capacity * sizeof(T)`` is bounded first (gh-1710's emitter), so a huge
+    capacity raises ``OverflowError`` instead of allocating a short buffer.
+
+    Returns
+    -------
+    tuple of str
+        The C that declares ``results`` (and, with a capacity, ``_cap``);
+        the capacity expression to pass as ``max_results`` and to bound the
+        returned count with; and the statement that frees ``results``,
+        empty for the stack array.
+    """
+    if not max_out_is_declared(doc_blocks, f"{c_fn}_max_out"):
+        return (
+            f"    {ret_disp} results[{max_results}];\n",
+            str(max_results),
+            "",
+        )
+    rel = release.replace("\n    ", " ").strip()
+    rel_line = f"        {rel}\n" if rel else ""
+    return (
+        _coerce.output_size_c(
+            "_cap",
+            _max_out_call_c(c_fn, doc_blocks, count),
+            who,
+            rel,
+            ctype="size_t",
+            limit=f"(PY_SSIZE_T_MAX / sizeof({ret_disp}))",
+        )
+        + f"    {ret_disp} *results ="
+        f" ({ret_disp} *)PyMem_Malloc(_cap * sizeof({ret_disp}));\n"
+        "    if (!results) {\n"
+        f"{rel_line}"
+        "        return PyErr_NoMemory();\n"
+        "    }\n",
+        "_cap",
+        "PyMem_Free(results);",
+    )
 
 
 def _capacity_exprs(
@@ -1362,11 +1585,12 @@ def make_methods_ctx(
     codecs: dict | None = None,
     builtin_members: "frozenset[str]" = frozenset(),
     enums: dict[str, list[str]] | None = None,
-    module: str = "",
+    module_dir: str = "",
     records: "list[dict] | None" = None,
     properties: "list[dict] | None" = None,
     *,
     csym: str,
+    extra_methods: "list[dict] | None" = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1381,10 +1605,13 @@ def make_methods_ctx(
 
     pkg and py_create_args are used in the generated PyMethodDef docstrings
     to produce working doctests; omitting them produces functional but
-    package-anonymous examples. *module* is the manifest module id when the
-    component lives in one — without it the synthesized example says
+    package-anonymous examples. *module_dir* is
+    `_config.module_package_resolved`'s answer when the component lives in a
+    module — without it the synthesized example says
     ``from <pkg> import <Component>``, which is right for a standalone object
-    and does not import for a module one (gh-1208).
+    and does not import for a module one (gh-1208). It is not the module id,
+    which names the wrong package once the module declares ``package``
+    (gh-2054).
 
     enums (gh-1021) is the ``[[enum]]`` SSOT, read only to write a REAL choice
     into a generated doctest for an enum parameter. The C those parameters
@@ -1399,6 +1626,17 @@ def make_methods_ctx(
     tree by :func:`just_makeit._builtins.builtin_owned_members`; the default
     empty set is right for every caller with no methods to place, and for a
     project where no method names a built-in.
+
+    extra_methods (gh-1997) are the object's ``[[<obj>.extra_methods]]``
+    rows: methods whose CPython function the author writes in the object's
+    ``_extra.c``. Each gets its ``PyMethodDef`` row after the declared
+    methods' and its ``.pyi`` member, both from :mod:`._extramethods` (the
+    emitter gh-1190's composer rows use), and the forward prototypes come
+    back in ``extra_method_protos`` -- placed by the caller above the type,
+    since a module declares them in its aggregator, before the fragment, so
+    a SACRED fragment's table can name the function too. A ``manual_stub``
+    method of the same name keeps its hand-owned ``.pyi`` text; the row's
+    member replaces only its placeholder.
     """
 
     _EMPTY: dict = {
@@ -1418,9 +1656,12 @@ def make_methods_ctx(
         "bench_timer_decls": "",
         "bench_todo": _bench_todo(component, [], csym=csym),
         "varargs_binding_files": [],
+        "extra_method_protos": "",
     }
-    if not methods and not serializable:
+    if not methods and not serializable and not extra_methods:
         return _EMPTY
+    # gh-1997: the rows the author's `_extra.c` implements, by Python name.
+    _extra_names = {str(r.get("name") or "") for r in extra_methods or ()}
 
     wrapper_prefix = f"{Component}Obj" if no_state else Component
 
@@ -1577,6 +1818,12 @@ def make_methods_ctx(
         # C-side; only a placeholder .pyi entry the splice engine preserves
         # verbatim across regen — gh-428) ─────────────────────────────────
         if m.get("manual_stub"):
+            # gh-1997: an `extra_methods` row of the same name registers the
+            # binding and declares its signature, so its member stands in
+            # for the placeholder -- one member, not two. The text stays
+            # hand-owned: the splice still carries a written stub over it.
+            if name in _extra_names:
+                continue
             pyi_lines.append(
                 f"    def {name}(self, *args: Any, **kwargs: Any)"
                 f" -> Any:\n"
@@ -1630,7 +1877,12 @@ def make_methods_ctx(
         # (`record_module`, the qualifier for the structseq's __module__) are
         # both read straight off `m` by `_record`, which the .pyi writers share
         # — see the descriptor emit below.
-        none_on_empty: bool = m.get("none_on_empty", False)
+        # gh-2183: read through the one predicate the annotations and both
+        # doc faces ask, not off the key -- so every `Py_RETURN_NONE` this
+        # loop emits for an empty result is one an annotation says `| None`
+        # for. Inside the variable-output and borrow branches, its only
+        # readers, it is the key itself.
+        none_on_empty: bool = empty_is_none(m)
         # gh-1426 B: refuse a wrong-dtype / non-1-D / strided INPUT rather
         # than casting, copying and flattening it. The scalar path was the
         # only array surface still converting silently -- `out=` (gh-581)
@@ -1809,6 +2061,24 @@ def make_methods_ctx(
             out_type=out_type or "",
             return_type=return_type,
         )
+        # gh-1885: `void` has no dtype, so the variable-output NPY-enum list
+        # and the batch dtype string below would die on
+        # `_CTYPE_META["void"]`. Both front doors refuse such a row
+        # before writing it; this is where one ALREADY in a manifest (an
+        # older jm wrote it) or built without one (`jm bind`, whose parser
+        # spells every variable-output return `void`: gh-1894) meets the
+        # render -- as the same refusal, not a traceback.
+        _element_why = _outbuf.element_why_not(
+            f"method '{component}.{name}'",
+            variable_output=variable_output,
+            batch=batch,
+            record_dtype=record_dtype,
+            borrow=borrow,
+            out_type=out_type or "",
+            return_type=return_type,
+        )
+        if _element_why:
+            raise Refusal(_element_why)
         _vo_out_disp = _vo_out_elem
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
         _vo_out_np = (
@@ -1818,6 +2088,25 @@ def make_methods_ctx(
         )
         has_params = bool(params)
         has_arg = arg_type != "void"
+        # gh-1996: the unit every variable-output count is in -- the sizing
+        # array's `elements_per_sample`. Read once, here, for the binding,
+        # its `<m>_max_out` and both doc faces; refused before anything
+        # renders when the output cannot be counted in it.
+        _vo_e = 1
+        if variable_output:
+            _what = f"method '{component}.{name}'"
+            _interleave_why = _outbuf.interleave_why_not(
+                _what,
+                has_arg=has_arg,
+                params=params,
+                out_elems=[_vo_out_elem]
+                + [
+                    rt[:-2] if rt.endswith("[]") else rt for rt in multi_output
+                ],
+            )
+            if _interleave_why:
+                raise Refusal(_interleave_why)
+            _vo_e = _outbuf.interleave(has_arg, params, _what)
         # gh-642: the Python-facing argument list, resolved once here so the
         # runtime PyMethodDef literal each shape branch emits below and the
         # .pyi stub built at the end of this loop document the same arguments
@@ -1843,9 +2132,12 @@ def make_methods_ctx(
             # view is optional and the stub must say so -- a caller that
             # cannot see `| None` writes `peek(n).mean()` and the checker
             # agrees with them right up until it returns None.
-            _ret_ann = _pyi_ndarray(
-                _borrow.element_type(record_dtype, return_type)
-            ) + (" | None" if none_on_empty else "")
+            # gh-2183: through `optional_ann`, which the variable-output
+            # branch below and the module-aggregated peer ask too.
+            _ret_ann = optional_ann(
+                m,
+                _pyi_ndarray(_borrow.element_type(record_dtype, return_type)),
+            )
         elif status_return:
             # gh-432: status returns bind as None (raise on failure).
             _ret_ann = "None"
@@ -1880,10 +2172,16 @@ def make_methods_ctx(
             # not this issue's.
             _all_rts = [record_dtype or return_type] + list(multi_output)
             _ndarrays = [_pyi_ndarray(rt) for rt in _all_rts]
-            _ret_ann = (
-                f"tuple[{', '.join(_ndarrays)}]"
-                if len(_ndarrays) > 1
-                else _ndarrays[0]
+            # gh-2183: `none_on_empty` returns None on both of this shape's
+            # routes, and the stub said the array was always there -- the
+            # borrow branch above was the only one asking.
+            _ret_ann = optional_ann(
+                m,
+                (
+                    f"tuple[{', '.join(_ndarrays)}]"
+                    if len(_ndarrays) > 1
+                    else _ndarrays[0]
+                ),
             )
         elif out_type:
             # gh-529: `out_type` on a method allocates a fresh output array
@@ -1951,25 +2249,16 @@ def make_methods_ctx(
                 _ret_ann,
                 _brief or default_summary,
                 raises=_raises_doc,
+                none_when=empty_is_none_doc(m),
                 param_defaults=_gluedoc.binding_param_docs(
-                    _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                    _count_kw,
+                    count=_stub_count_arg,
+                    out=_stub_enable_out,
+                    out_cols=bool(m.get("out_cols")),
                 ),
                 authored_doc=m.get("doc") or "",
                 param_docs=authored_param_docs(m),
             )
-
-        # gh-219 follow-up: a method's primary array input is sometimes
-        # declared as the sole entry in `params` (arg_type="void" +
-        # params=[{array}]) rather than via `arg_type` directly -- doppler's
-        # universal idiom for this shape. That's functionally the same as
-        # `has_arg` for the purposes of the optional `out=` buffer feature;
-        # only genuine *extra* params (e.g. Farrow.delay(x, mu)) should stay
-        # ineligible (gh-412 kept those positional-or-keyword, no `out=`).
-        # gh-1079: one accessor for both halves of the question. Three
-        # copies of this predicate decided whether the binding parses `out=`
-        # and whether either `.pyi` publishes it, and a stub advertising an
-        # `out=` the binding rejects is the same defect as the reverse.
-        _single_array_param = _outbuf.single_array_param(has_arg, params)
 
         # gh-1042: the binding's own arguments, decided ONCE and read by both
         # faces. They were decided several hundred lines below, where only the
@@ -2079,13 +2368,13 @@ def make_methods_ctx(
             _in_dtype_str = "np.float32"
             _in_example = "x"
         _from_line = (
-            ["    >>> " + class_import_line(pkg, Component, module)]
+            ["    >>> " + class_import_line(pkg, Component, module_dir)]
             if pkg
             else []
         )
         _obj_line = f"    >>> obj = {Component}({py_create_args})"
 
-        def _demo_call_args() -> str:
+        def _demo_call_args(block_input: bool = False) -> str:
             """The argument list for this method's synthesized doctest.
 
             One builder for every shape, because the example is executable
@@ -2094,10 +2383,21 @@ def make_methods_ctx(
             reports) in the fixed-output branch, which was then the only
             caller — a second copy would have shipped that bug again the day
             a record method declared an enum param.
+
+            gh-2001: the variable-output and list-of-records examples did not
+            call it, and each spelled its input alone -- ``delay(x, mu)``
+            was shown as ``obj.delay(np.zeros(4))``, a TypeError for the
+            missing ``mu``. *block_input* keeps the list-of-records input
+            spelled as the block it is (``np.zeros(4, dtype=...)``) where
+            the other shapes show one element.
             """
             parts: list[str] = []
             if has_arg:
-                parts.append(_in_example if _in_example else "x")
+                parts.append(
+                    f"np.zeros(4, dtype={_in_dtype_str})"
+                    if block_input
+                    else (_in_example if _in_example else "x")
+                )
             for _p in params:
                 _pt = _p["type"]
                 # gh-1426 A: a release's count resolves 0 to "the outstanding
@@ -2131,6 +2431,22 @@ def make_methods_ctx(
                 else:
                     parts.append("0")
             return ", ".join(parts)
+
+        def _block_params() -> list[dict]:
+            """``x`` as the block it is, then every declared param.
+
+            A record or variable-output method's ``arg_type`` is a BLOCK
+            input -- ``const T *in, size_t n_in`` in its prototype -- so it
+            joins the param list in its array form whether or not the
+            manifest spelled the ``[]``, under the Python name ``x``. The one
+            list the single-record (gh-594), list-of-records (gh-1961) and
+            variable-output (gh-1960) parses hand `_build_params_parse`, so
+            the three read a declared param the way every other shape does.
+            """
+            _x_type = arg_type if arg_type.endswith("[]") else f"{arg_type}[]"
+            return ([{"name": "x", "type": _x_type}] if has_arg else []) + [
+                dict(_p) for _p in params
+            ]
 
         # gh-581: every `out=` branch below requires the exact output dtype
         # before marshaling, so FROM_OTF cannot cast the caller's buffer into a
@@ -2348,13 +2664,23 @@ def make_methods_ctx(
             # rewrites the author's prototype out from under their code.
             if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                 _moc_decl = ""
+            # gh-2012: the kernel returns its count in `count_type`, which
+            # `_method._build_method_prototype` and the `_core.c` stub read
+            # through the same accessor. `_max_out` stays `size_t`: it is a
+            # capacity, never a refusal.
+            _count_t = count_type_of(m)
             if has_arg:
+                # gh-1960: the params follow the block input, as they do in
+                # a record method's prototype. They were dropped here, in
+                # `_method._build_method_prototype` and in the `_core.c` stub
+                # alike, so the three agreed with each other and with no stub.
+                _vp_in = "".join(f", {_p}" for _p in c_param_parts(params))
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
-                    f"size_t {c_fn}"
+                    f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,"
-                    f" const {arg_disp} *in, size_t n_in,"
+                    f" const {arg_disp} *in, size_t n_in{_vp_in},"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             elif has_params:
@@ -2364,7 +2690,7 @@ def make_methods_ctx(
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
-                    f"size_t {c_fn}"
+                    f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,"
                     f" {', '.join(_vp_parts)},"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
@@ -2373,7 +2699,7 @@ def make_methods_ctx(
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
-                    f"size_t {c_fn}"
+                    f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state, size_t n,"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
@@ -2438,8 +2764,8 @@ def make_methods_ctx(
         # ── Python wrapper in ext.c ──────────────────────────────────────
         # gh-219: single-output variable_output methods accept an optional
         # `out=` buffer (zero-alloc, caller-owned, safe to retain) — parity
-        # with blockwise steps(x, out=).  Multi-output and multi-param execute
-        # keep their positional-only signatures for now.
+        # with blockwise steps(x, out=). Multi-output keeps its signature
+        # without one; which shapes get it is `_outbuf.why_not`'s answer.
         # gh-805 §E: a structured result gets `out=` too. Three places in
         # this branch spoke in scalar NPY_ enums -- the guard, the
         # acquisition, and the trimmed view -- and each has a record form
@@ -2466,7 +2792,7 @@ def make_methods_ctx(
         # mu=0.3)` raised TypeError despite the stub advertising the keyword.
         _enable_kw = _enable_out or (variable_output and has_params)
         if variable_output:
-            if has_arg:
+            if has_arg and not has_params:
                 if _enable_out:
                     _kwlist_decl = (
                         '    static char *_kwlist[] = {"x", "out", NULL};\n'
@@ -2503,6 +2829,23 @@ def make_methods_ctx(
                 # gh-607: the count `*_max_out()` is called with — the same
                 # value about to be passed to the kernel as n_in.
                 _moc_arg: str | None = _lazy_fallback
+            elif has_arg:
+                # gh-1960: an input AND params. This shape parsed the input
+                # alone ("O") and called the kernel without the params, while
+                # both `.pyi` writers and the runtime doc advertised them and
+                # a keyword one was accepted and dropped. The input and the
+                # params now go through the parse every other params shape
+                # uses -- the single-record shape's route since gh-594 -- with
+                # the input first, as the block (`x`, `x_len`) the prototype
+                # takes as `in, n_in`. No `out=` yet (`_outbuf.why_not`).
+                parse_block, _p_call, decref_in = _build_params_parse(
+                    _block_params(), Component, enums, records, _sid, strict_in
+                )
+                call_data = f"self->handle, {_p_call}, {_VO_BUF_TOKEN}"
+                # The input sizes the output, as without params: `x_len` is
+                # the `n_in` the kernel and `*_max_out()` are both handed.
+                _lazy_fallback = "x_len"
+                _moc_arg = _lazy_fallback
             elif has_params:
                 _pb_lines: list[str] = []
                 _cd_parts: list[str] = ["self->handle"]
@@ -2531,7 +2874,14 @@ def make_methods_ctx(
                         _cd_parts.append(
                             f"({_pe_q}{_pe_disp} *)PyArray_DATA({_pn}_arr)"
                         )
-                        _cd_parts.append(f"(size_t)PyArray_SIZE({_pn}_arr)")
+                        # gh-1996: in the unit the kernel counts, through the
+                        # one division every array param's length takes.
+                        _cd_parts.append(
+                            _coerce.array_count_c(
+                                f"{_pn}_arr",
+                                _coerce.elements_per_sample(_p, _what),
+                            )
+                        )
                         _dr_lines.append(f"    Py_DECREF({_pn}_arr);")
                         if _first_arr is None:
                             _first_arr = _pn
@@ -2576,12 +2926,12 @@ def make_methods_ctx(
                 # call its own stub advertised.
                 _fmt = _join_fmt_with_optional(_fmt_chars, params)
                 if _enable_out:
-                    # gh-219 follow-up: the single-array-param case is
-                    # otherwise identical to the has_arg out= branch below —
-                    # extend the same optional out= kwarg. _fmt is exactly
-                    # "O" here (one required array param, nothing else, by
-                    # the _single_array_param definition), so "|O" makes
-                    # `out` the first optional argument.
+                    # gh-219 follow-up, widened by gh-1998: the same optional
+                    # out= kwarg as the has_arg branch, after every declared
+                    # param -- `delay(x, mu, out=None)`. It is the first
+                    # optional argument unless a param's `default` already
+                    # opened the optional group (gh-802), in which case it
+                    # joins it.
                     _pb_lines.append("    PyObject *out_obj = NULL;")
                     _fmt += "O" if "|" in _fmt else "|O"
                     _fmt_args.append("&out_obj")
@@ -2632,6 +2982,19 @@ def make_methods_ctx(
                             if _release
                             else f"    if (!{_pn}_arr) return NULL;",
                         ]
+                        # gh-805 §C, as the method-param builder emits it:
+                        # this acquisition is that builder's peer, and the
+                        # `rank` it was never taught was accepted and dropped
+                        # here, so a 2-D array flattened into the kernel.
+                        if _coerce.array_rank(_p):
+                            _conv_lines.append(
+                                _coerce.array_rank_guard(
+                                    _pn,
+                                    f"{_pn}_arr",
+                                    _coerce.array_rank(_p),
+                                    _release,
+                                ).rstrip("\n")
+                            )
                         _held.append(f"{_pn}_arr")
                     elif "parse_type" in _CTYPE_META.get(_pt, {}):
                         _pm = _CTYPE_META[_pt]
@@ -2650,8 +3013,9 @@ def make_methods_ctx(
                 # raw value -- casting it as one silently mis-sizes the
                 # buffer. Fall back to the method's own <name>_max_out(),
                 # always available per the standard variable_output triplet.
+                # gh-1996: in samples, as the kernel is handed it above.
                 _lazy_fallback = (
-                    f"(size_t)PyArray_SIZE({_first_arr}_arr)"
+                    _coerce.array_count_c(f"{_first_arr}_arr", _vo_e)
                     if _first_arr is not None
                     else f"{c_fn}_max_out(self->handle)"
                 )
@@ -2700,12 +3064,12 @@ def make_methods_ctx(
             # the text it was created with, and `refresh_glue_bindings`
             # repairs the `*_max_out` row specifically, not this wrapper. Only
             # a newly added method or a `jm regenerate` renders it fresh.
+            # gh-2184: one spelling, `_max_out_call_c`, shared with the
+            # list-of-records wrapper that now asks the same function.
             _moc_state_only = max_out_is_state_only(
                 doc_blocks, f"{c_fn}_max_out"
             )
-            _moc_call_arg = (
-                f", {_moc_arg}" if (_moc_arg and not _moc_state_only) else ""
-            )
+            _moc_call = _max_out_call_c(c_fn, doc_blocks, _moc_arg)
 
             # gh-604: NumPy owns every variable-output result, for one
             # output or many. Each call allocates its arrays at
@@ -2762,6 +3126,51 @@ def make_methods_ctx(
                 if decref_in.strip()
                 else ""
             )
+            # gh-1996: the kernel counts samples of `_vo_e` elements, numpy
+            # counts elements. `_cap` and `n_out` stay in the kernel's unit
+            # throughout -- so `max_out`, the zero-bound guard and the
+            # returned-count guard compare like with like -- and these are
+            # the places a count becomes a numpy length again. `_cap_unit`
+            # is what every message counting `_cap` / `n_out` calls them.
+            _odim_c = "n_out" if _vo_e == 1 else f"(n_out * {_vo_e})"
+            _cap_unit = (
+                "elements" if _vo_e == 1 else f"samples of {_vo_e} elements"
+            )
+
+            # gh-2115: `out_cols` makes the single flat result a matrix. The
+            # kernel's contract is unchanged -- it fills a flat buffer and
+            # returns an element count -- so everything above this line, and
+            # `_max_out`, still speak elements; the binding only changes the
+            # SHAPE it hands back, and the shape it accepts for `out=`.
+            #
+            # `_out_cols` is a C expression over the object, evaluated once
+            # per call after the arguments parse (so it sees the object as it
+            # is NOW, not as it was constructed). `state` is aliased to
+            # `self->handle` when mentioned, exactly as `count_default` does;
+            # when that method already declared the alias, it is reused, as
+            # two declarations of `state` do not compile.
+            _out_cols = str(m.get("out_cols", "") or "").strip()
+            _cols_block = ""
+            if _out_cols:
+                _cols_alias = (
+                    ""
+                    if _count_alias
+                    else (
+                        f"    {csym}_state_t *state = self->handle;\n"
+                        if re.search(r"\bstate\b", _out_cols)
+                        else ""
+                    )
+                )
+                _cols_block = (
+                    f"{_cols_alias}"
+                    f"    size_t _cols = (size_t)({_out_cols});\n"
+                    f"    if (_cols == 0) {{\n"
+                    f"        PyErr_SetString(PyExc_RuntimeError,\n"
+                    f'            "{Component}.{name}: out_cols evaluated'
+                    f' to 0");\n'
+                    f"        {_decref_early_vo}return NULL;\n"
+                    f"    }}\n"
+                )
 
             # ── optional out= buffer (single output only) ────────────────
             if _enable_out:
@@ -2778,6 +3187,7 @@ def make_methods_ctx(
                     _kernel_call_block(
                         f"{c_fn}({_out_call_data}{_out_cap_arg})",
                         nogil,
+                        m,
                     )
                 )
                 _out_decref = _reindent(decref_in) if decref_in else ""
@@ -2849,19 +3259,45 @@ def make_methods_ctx(
                     )
                     if record_dtype
                     else (
-                        f"        PyObject *_oview ="
-                        f" PyArray_SimpleNewFromData(\n"
-                        f"            1, &_odim, {_vo_out_np},"
-                        f" PyArray_DATA(out_arr));\n"
+                        "        PyObject *_oview ="
+                        " PyArray_SimpleNewFromData(\n"
+                        + (
+                            f"            2, _odims, {_vo_out_np},"
+                            if _out_cols
+                            else f"            1, &_odim, {_vo_out_np},"
+                        )
+                        + " PyArray_DATA(out_arr));\n"
                     )
+                )
+                # gh-2115: a matrix result takes a matrix `out=`. The view
+                # returned over it is (rows, cols), so a 1-D buffer or one of
+                # another width would hand back a shape the caller did not
+                # allocate -- refused with the shape that was expected.
+                _vo_out_shape = (
+                    (
+                        f"        if (PyArray_NDIM(out_arr) != 2 ||\n"
+                        f"            (size_t)PyArray_DIM(out_arr, 1)"
+                        f" != _cols) {{\n"
+                        f"            PyErr_Format(PyExc_ValueError,\n"
+                        f'                "out must be a 2-D array with'
+                        f' %zu columns, shape (rows, %zu)",\n'
+                        f"                _cols, _cols);\n"
+                        f"            Py_DECREF(out_arr);"
+                        f" {_decref_early_vo}return NULL;\n"
+                        f"        }}\n"
+                    )
+                    if _out_cols
+                    else ""
                 )
                 _out_branch = (
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_vo_out_guard}"
                     f"{_vo_acquire}"
-                    f"        size_t _cap = (size_t)PyArray_SIZE(out_arr);\n"
+                    f"{_vo_out_shape}"
+                    f"        size_t _cap ="
+                    f" {_coerce.array_count_c('out_arr', _vo_e)};\n"
                     f"        size_t _omax ="
-                    f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
+                    f" {_moc_call};\n"
                     # Without pass_capacity, max_out() alone is not always a
                     # true call-independent upper bound — a generator's
                     # steps(count) writes exactly the caller's requested
@@ -2903,7 +3339,7 @@ def make_methods_ctx(
                     )
                     + f"        if (_cap < _min_cap) {{\n"
                     f"            PyErr_Format(PyExc_ValueError,\n"
-                    f'                "out has %zu elements,'
+                    f'                "out has %zu {_cap_unit},'
                     f' need >= %zu",\n'
                     f"                _cap, _min_cap);\n"
                     f"            Py_DECREF(out_arr);"
@@ -2911,6 +3347,10 @@ def make_methods_ctx(
                     f"        }}\n"
                     f"{_out_kernel}"
                     f"{_out_decref}"
+                    # gh-2012: a declared refusal value, read before the
+                    # guard below -- which would otherwise report it as an
+                    # overrun. This path holds `out_arr`.
+                    + _count_refusal_c(m, name, "Py_DECREF(out_arr);", " " * 8)
                     # gh-1716: `n_out` becomes the length of a view over the
                     # caller's `_cap`-element buffer; past it, the view reads
                     # beyond the caller's allocation.
@@ -2920,10 +3360,30 @@ def make_methods_ctx(
                         f"{Component}.{name}",
                         "Py_DECREF(out_arr);",
                         indent=" " * 8,
+                        unit=_cap_unit,
                     )
                     + f"{_out_none}"
-                    f"        npy_intp _odim = (npy_intp)n_out;\n"
-                    f"{_vo_view}"
+                    f"        npy_intp _odim = (npy_intp){_odim_c};\n"
+                    + (
+                        # gh-2115: whole rows only. A kernel that returns a
+                        # count that is not a multiple of the width has broken
+                        # the contract the declaration made, and a ragged
+                        # last row would be a silently wrong shape.
+                        f"        if ((size_t)_odim % _cols != 0) {{\n"
+                        f"            PyErr_Format(PyExc_RuntimeError,\n"
+                        f'                "{Component}.{name}: kernel returned'
+                        f" %zu elements, not a whole number of %zu-wide"
+                        f' rows",\n'
+                        f"                (size_t)_odim, _cols);\n"
+                        f"            Py_DECREF(out_arr); return NULL;\n"
+                        f"        }}\n"
+                        f"        npy_intp _odims[2] = {{\n"
+                        f"            _odim / (npy_intp)_cols,"
+                        f" (npy_intp)_cols}};\n"
+                        if _out_cols
+                        else ""
+                    )
+                    + f"{_vo_view}"
                     f"        if (!_oview)"
                     f" {{ Py_DECREF(out_arr); return NULL; }}\n"
                     # gh-1312: checked, like every other SetBaseObject jm
@@ -2947,9 +3407,9 @@ def make_methods_ctx(
                 _out_branch = ""
             # Every parse above reads `args` (an output count is optional,
             # never absent). gh-412: params methods take kwds (keyword
-            # parsing) even without the out= buffer branch -- though with an
-            # input as well the parse drops the params and never reads kwds
-            # (gh-1960), which the unused `kwds` is the one diagnostic for.
+            # parsing) even without the out= buffer branch -- and with an
+            # input as well since gh-1960, whose parse dropped the params and
+            # left `kwds` unread.
             _vo_cc = call_convention(Component, args=True, kwds=_enable_kw)
 
             # ── allocate the outputs, call, trim, return ─────────────────
@@ -2959,7 +3419,7 @@ def make_methods_ctx(
             _vo_alloc = (
                 f"    size_t _need = {_lazy_fallback};\n"
                 f"    size_t _cap ="
-                f" {c_fn}_max_out(self->handle{_moc_call_arg});\n"
+                f" {_moc_call};\n"
                 # gh-607: without pass_capacity, the kernel is never told its
                 # capacity, so max_out() is only a sizing HINT and the alloc
                 # is clamped to at least what the call needs — a mechanically
@@ -2992,8 +3452,21 @@ def make_methods_ctx(
                 # gh-1710: `_cap` is `max_out()`'s size_t; past NPY_MAX_INTP
                 # it wrapped to a negative dimension.
                 + _coerce.output_size_c(
-                    "_adim", "_cap", f"{Component}.{name}", _decref_early_vo
+                    "_adim",
+                    "_cap",
+                    f"{Component}.{name}",
+                    _decref_early_vo,
+                    # gh-1996: `_cap` is in samples and the arrays hold
+                    # elements, so the bound is the quotient and the product
+                    # is taken after it -- it cannot wrap.
+                    limit=(
+                        "NPY_MAX_INTP"
+                        if _vo_e == 1
+                        else f"(NPY_MAX_INTP / {_vo_e})"
+                    ),
+                    unit=_cap_unit,
                 )
+                + ("" if _vo_e == 1 else f"    _adim *= {_vo_e};\n")
                 + "".join(
                     (
                         # gh-788: the structured output. `_get_dtype()` hands
@@ -3046,6 +3519,7 @@ def make_methods_ctx(
             _kernel_vo = _kernel_call_block(
                 f"{c_fn}({_vo_call_data}{_vo_call_extra}{_vo_cap_arg})",
                 nogil,
+                m,
             )
             if error_on_empty:
                 # The same test, the opposite verdict. Rendered from
@@ -3080,14 +3554,33 @@ def make_methods_ctx(
             # retention proportional to the data instead of the cap. See
             # gh-607 for making max_out() a per-call bound, which removes the
             # over-allocation itself rather than just its retention.
-            _vo_views = "    npy_intp _odim = (npy_intp)n_out;\n" + "".join(
-                f"    PyArray_Dims _rs{i} = {{&_odim, 1}};\n"
-                f"    PyObject *v{i} = PyArray_Resize(\n"
-                f"        (PyArrayObject *)arr{i}, &_rs{i}, 0,"
-                f" NPY_CORDER);\n"
-                f"    if (!v{i}) {{ {_decref_arrs} return NULL; }}\n"
-                f"    Py_DECREF(v{i});\n"
-                for i in _idx
+            _vo_views = (
+                f"    npy_intp _odim = (npy_intp){_odim_c};\n"
+                + (
+                    f"    if ((size_t)_odim % _cols != 0) {{\n"
+                    f"        PyErr_Format(PyExc_RuntimeError,\n"
+                    f'            "{Component}.{name}: kernel returned'
+                    f" %zu elements, not a whole number of %zu-wide"
+                    f' rows",\n'
+                    f"            (size_t)_odim, _cols);\n"
+                    f"        {_decref_arrs} return NULL;\n"
+                    f"    }}\n"
+                    f"    npy_intp _odims[2] = {{\n"
+                    f"        _odim / (npy_intp)_cols, (npy_intp)_cols}};\n"
+                    if _out_cols
+                    else ""
+                )
+                + "".join(
+                    f"    PyArray_Dims _rs{i} = "
+                    + ("{_odims, 2}" if _out_cols else "{&_odim, 1}")
+                    + ";\n"
+                    f"    PyObject *v{i} = PyArray_Resize(\n"
+                    f"        (PyArrayObject *)arr{i}, &_rs{i}, 0,"
+                    f" NPY_CORDER);\n"
+                    f"    if (!v{i}) {{ {_decref_arrs} return NULL; }}\n"
+                    f"    Py_DECREF(v{i});\n"
+                    for i in _idx
+                )
             )
             if _n_out_arrays == 1:
                 _vo_exact_return = "        return arr0;\n"
@@ -3115,9 +3608,13 @@ def make_methods_ctx(
             # for a generator shape (steps(n) returns exactly n), and without
             # it the trim view is pure overhead on the hot path.
             _vo_exact = (
-                f"    if ((size_t)n_out == _cap) {{\n"
-                f"{_vo_exact_return}"
-                f"    }}\n"
+                ""
+                if _out_cols
+                else (
+                    f"    if ((size_t)n_out == _cap) {{\n"
+                    f"{_vo_exact_return}"
+                    f"    }}\n"
+                )
             )
             # gh-788: the cached descr builder is file-scope, so it is
             # prepended to the wrapper the way the structseq descriptor is —
@@ -3139,14 +3636,22 @@ def make_methods_ctx(
                     f"{{\n"
                     f"{guard}"
                     f"{parse_block}"
+                    f"{_cols_block}"
                     f"{_out_branch}"
                     f"{_vo_alloc}"
                     f"{_kernel_vo}"
                     f"{decref_in}"
+                    # gh-2012: the same refusal, before the same guard. This
+                    # path holds the arrays it allocated, not `out_arr`.
+                    + _count_refusal_c(m, name, _decref_arrs, " " * 4)
                     # gh-1716: past `_cap`, PyArray_Resize below GREW the
                     # result into memory the kernel never wrote.
                     + _coerce.returned_count_c(
-                        "n_out", "_cap", f"{Component}.{name}", _decref_arrs
+                        "n_out",
+                        "_cap",
+                        f"{Component}.{name}",
+                        _decref_arrs,
+                        unit=_cap_unit,
                     )
                     + f"{_vo_empty}"
                     f"{_vo_exact}"
@@ -3169,19 +3674,24 @@ def make_methods_ctx(
                 ].replace("np.", "")
                 for i, rt in enumerate(_all_rts_vo)
             ]
-            _ret_hint_vo = (
-                f"tuple[{', '.join('ndarray' for _ in _all_rts_vo)}]"
-                if len(_all_rts_vo) > 1
-                else "ndarray"
+            # gh-2183: the synopsis line is the runtime face's annotation.
+            _ret_hint_vo = optional_ann(
+                m,
+                (
+                    f"tuple[{', '.join('ndarray' for _ in _all_rts_vo)}]"
+                    if len(_all_rts_vo) > 1
+                    else "ndarray"
+                ),
             )
-            if has_arg:
-                _vo_sig_arg = ", ".join(_doc_names)
-                _vo_call_example = f"obj.{name}({_in_example})"
-            elif has_params:
+            if has_arg or has_params:
                 # Every declared param, not just the first array one: the
                 # signature line has to match what the binding accepts.
-                _vo_sig_arg = ", ".join(_doc_names) if _doc_names else "n=1"
-                _vo_call_example = f"obj.{name}(np.zeros(4))"
+                _vo_sig_arg = ", ".join(_doc_names)
+                # gh-2001: and so does the example's call. It passed ONE
+                # argument whatever the params -- `obj.delay(np.zeros(4))`
+                # for `delay(x, mu)`, a TypeError the moment it runs -- and
+                # with an input it passed the input alone (gh-1960).
+                _vo_call_example = f"obj.{name}({_demo_call_args()})"
             else:
                 # gh-657: the kwlist binds this as `count`; the doc said
                 # `n`, which is what sent the reporter looking for a rename
@@ -3298,6 +3808,11 @@ def make_methods_ctx(
                 # stub that disagrees with the binding beside it.
                 if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                     _pymo_decl, _pymo_name = "", None
+                # gh-1996: the caller passes `len(x)` and allocates `out=`
+                # from the answer, both in elements; the C function takes
+                # and returns samples. Converted on both sides, so the
+                # sentence above still holds under an interleave.
+                _mo_per = f" / {_vo_e}" if _vo_e != 1 else ""
                 if _pymo_name:
                     _mo_doc = _build_ml_doc(
                         [f"{name}_max_out({_pymo_name}) -> int", ""]
@@ -3309,6 +3824,7 @@ def make_methods_ctx(
                             lambda k: (doc_blocks or {}).get(k),
                             c_fn=c_fn,
                             csym=csym,
+                            elements_per_sample=_vo_e,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -3321,10 +3837,13 @@ def make_methods_ctx(
                         f'    if (!PyArg_ParseTuple(args, "n",'
                         f" &{_pymo_name}))\n"
                         f"        return NULL;\n"
-                        f"    return PyLong_FromSize_t(\n"
-                        f"        {c_fn}_max_out(self->handle,"
-                        f" (size_t){_pymo_name}));\n"
-                        f"}}"
+                        + _max_out_return_c(
+                            f"{c_fn}_max_out(self->handle,"
+                            f" (size_t){_pymo_name}{_mo_per})",
+                            _vo_e,
+                            f"{Component}.{name}_max_out",
+                        )
+                        + "}"
                     )
                     pmd_lines.append(
                         f'    {{"{name}_max_out",'
@@ -3342,6 +3861,7 @@ def make_methods_ctx(
                             lambda k: (doc_blocks or {}).get(k),
                             c_fn=c_fn,
                             csym=csym,
+                            elements_per_sample=_vo_e,
                         ).c_doc_lines()
                     )
                     method_c_parts.append(
@@ -3351,9 +3871,12 @@ def make_methods_ctx(
                         f" PyObject *Py_UNUSED(ignored))\n"
                         f"{{\n"
                         f"{guard}"
-                        f"    return PyLong_FromSize_t(\n"
-                        f"        {c_fn}_max_out(self->handle));\n"
-                        f"}}"
+                        + _max_out_return_c(
+                            f"{c_fn}_max_out(self->handle)",
+                            _vo_e,
+                            f"{Component}.{name}_max_out",
+                        )
+                        + "}"
                     )
                     pmd_lines.append(
                         f'    {{"{name}_max_out",'
@@ -3397,16 +3920,9 @@ def make_methods_ctx(
                 # A record method's `arg_type` is always the block input
                 # (`const T *in, size_t n_in` in the prototype -- see
                 # _method._methods_c_stub_result_single), so the primary arg
-                # joins the param list in its array form regardless of whether
-                # the manifest spelled the `[]`.
-                _x_type = (
-                    arg_type if arg_type.endswith("[]") else f"{arg_type}[]"
-                )
-                _pp_params = (
-                    [{"name": "x", "type": _x_type}] if has_arg else []
-                ) + [dict(_p) for _p in params]
+                # joins the param list in its array form: `_block_params`.
                 _s_parse, _p_call, _p_cleanup = _build_params_parse(
-                    _pp_params, Component, enums, records, _sid, strict_in
+                    _block_params(), Component, enums, records, _sid, strict_in
                 )
                 # Any array acquired above must be released on the structseq
                 # type-creation failure path too, not just after the call.
@@ -3547,7 +4063,52 @@ def make_methods_ctx(
             # through record_tuple_build so a field type converts via
             # _CTYPE_META's to_py rather than a cast-less "i" fallback.
             _bv = record_tuple_build(result_fields, "results[i]")
-            if has_arg:
+
+            # gh-2184: where the records go, and how many the kernel may
+            # write -- a fixed stack array, or the capacity the header's
+            # `<c_fn>_max_out` reports for this call. *count* is the length
+            # the kernel is about to be handed, as a `variable_output`
+            # wrapper passes its own (gh-607); *release* what the wrapper
+            # holds before the kernel runs.
+            def _rf_buffer(
+                count: "str | None", release: str
+            ) -> "tuple[str, str, str]":
+                return _records_buffer_c(
+                    ret_disp,
+                    c_fn,
+                    doc_blocks,
+                    count,
+                    max_results,
+                    f"{Component}.{name}",
+                    release,
+                )
+
+            if has_params:
+                # gh-1961: the params, through the parse the single-record
+                # branch above uses (gh-594), the input first as its block.
+                # Parsed by neither path before, so the kernel was called
+                # without them against a prototype that takes them, and the
+                # wrapper did not compile.
+                _rf_parse, _p_call, _p_cleanup = _build_params_parse(
+                    _block_params(), Component, enums, records, _sid, strict_in
+                )
+                # The block input is `x` here; without one, the first array
+                # param is the count, as `_max_out_count_param_ctx` declares.
+                _rf_count = "x_len" if has_arg else None
+                for _p in [] if has_arg else params:
+                    if is_array_param_type(_p["type"]):
+                        _rf_count = f"{_p['name']}_len"
+                        break
+                _rf_decl, _rf_cap, _rf_free = _rf_buffer(_rf_count, _p_cleanup)
+                _rf_call = (
+                    _rf_decl
+                    + _kernel_call_block(
+                        f"{c_fn}(self->handle, {_p_call}, results, {_rf_cap})",
+                        nogil,
+                    )
+                    + _p_cleanup
+                )
+            elif has_arg:
                 _rf_parse = (
                     f"    PyObject *in_obj = NULL;\n"
                     f'    if (!PyArg_ParseTuple(args, "O", &in_obj))\n'
@@ -3556,30 +4117,35 @@ def make_methods_ctx(
                     f"    size_t n_in ="
                     f" (size_t)PyArray_SIZE(in_arr);\n"
                 )
+                _rf_decl, _rf_cap, _rf_free = _rf_buffer(
+                    "n_in", "Py_DECREF(in_arr);"
+                )
                 _rf_call = (
-                    f"    {ret_disp} results[{max_results}];\n"
+                    _rf_decl
                     + _kernel_call_block(
                         f"{c_fn}(self->handle, "
                         f"(const {arg_disp} *)PyArray_DATA(in_arr), n_in, "
-                        f"results, {max_results})",
+                        f"results, {_rf_cap})",
                         nogil,
                     )
                     + "    Py_DECREF(in_arr);\n"
                 )
             else:
                 _rf_parse = ""
-                _rf_call = (
-                    f"    {ret_disp} results[{max_results}];\n"
-                    + _kernel_call_block(
-                        f"{c_fn}(self->handle, results, {max_results})",
-                        nogil,
-                    )
+                _rf_decl, _rf_cap, _rf_free = _rf_buffer(None, "")
+                _rf_call = _rf_decl + _kernel_call_block(
+                    f"{c_fn}(self->handle, results, {_rf_cap})",
+                    nogil,
                 )
+            # The stack array needs no release; a heap buffer is freed on
+            # every way out once the kernel has filled it.
+            _rf_rel = f" {_rf_free}" if _rf_free else ""
             # gh-1959: the single-record shape's twin -- with no input the
             # body parses nothing, so the wrapper is METH_NOARGS. A declared
-            # param still asks for `args`: this branch drops params (gh-1961)
-            # and the fix for that is parsing them, not marking them unread.
-            _rf_cc = call_convention(Component, args=has_arg or has_params)
+            # param is parsed with keywords (gh-1961), as in that shape.
+            _rf_cc = call_convention(
+                Component, args=has_arg or has_params, kwds=has_params
+            )
             wrapper = (
                 _in_dtype_helper
                 + (
@@ -3592,26 +4158,32 @@ def make_methods_ctx(
                     f"{_rf_call}"
                     # gh-1716: `n_out` records are read from `results[]`.
                     + _coerce.returned_count_c(
-                        "n_out", str(max_results), f"{Component}.{name}"
+                        "n_out", _rf_cap, f"{Component}.{name}", _rf_free
                     )
-                    + f"    PyObject *lst ="
-                    f" PyList_New((Py_ssize_t)n_out);\n"
-                    f"    if (!lst) return NULL;\n"
-                    f"    for (size_t i = 0; i < n_out; i++) {{\n"
+                    + "    PyObject *lst ="
+                    " PyList_New((Py_ssize_t)n_out);\n"
+                    + (
+                        f"    if (!lst) {{{_rf_rel} return NULL; }}\n"
+                        if _rf_free
+                        else "    if (!lst) return NULL;\n"
+                    )
+                    + f"    for (size_t i = 0; i < n_out; i++) {{\n"
                     f"        PyObject *tup ="
                     f" Py_BuildValue({_bv});\n"
                     f"        if (!tup)"
-                    f" {{ Py_DECREF(lst); return NULL; }}\n"
+                    f" {{{_rf_rel} Py_DECREF(lst); return NULL; }}\n"
                     f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
                     f"    }}\n"
-                    f"    return lst;\n"
-                    f"}}"
+                    + (f"    {_rf_free}\n" if _rf_free else "")
+                    + "    return lst;\n"
+                    "}"
                 )
             )
             _rf_field_names = ", ".join(f["name"] for f in result_fields)
-            _rf_call_arg = (
-                f"np.zeros(4, dtype={_in_dtype_str})" if has_arg else ""
-            )
+            # gh-1961 / gh-2001: every argument the binding takes, from the
+            # one builder -- the input alone was a TypeError once the params
+            # were parsed.
+            _rf_call_arg = _demo_call_args(block_input=True)
             _rf_doc_lines = [
                 f"{name}({', '.join(_doc_names)}) -> list[tuple]",
                 "",
@@ -3646,17 +4218,23 @@ def make_methods_ctx(
             # entry is METH_VARARGS | METH_KEYWORDS. The bare scalar `step`-shape
             # arg (no params) and the no-arg case stay positional / NOARGS --
             # `call_convention` (gh-1959) spells each.
+            # gh-2191: the names the parse's `_kwlist` holds, in its order --
+            # a release asks whether its count was PASSED, and where to look
+            # is this list, not a re-derivation of it.
+            _parsed_names: list[str] = []
             if has_params and has_arg:
                 _x_param = {"name": "x", "type": arg_type}
                 _combined = [_x_param] + list(params)
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     _combined, Component, enums, records, _sid, strict_in
                 )
+                _parsed_names = [p["name"] for p in _combined]
                 call_args_c = f"self->handle, {_p_call}"
             elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     params, Component, enums, records, _sid, strict_in
                 )
+                _parsed_names = [p["name"] for p in params]
                 call_args_c = f"self->handle, {_p_call}"
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
@@ -3826,33 +4404,28 @@ def make_methods_ctx(
             elif out_type:
                 out_disp = out_type
                 out_npy = _CTYPE_TO_NPY[out_type]
-                first_arr = next(
-                    (
-                        p["name"]
-                        for p in params
-                        if is_array_param_type(p["type"])
-                    ),
-                    None,
-                )
-                # Buffer size: prefer the length of the first array param.
-                # If there is no array param, fall back to the first scalar
-                # integer param so methods like ``foo(n: int) -> ndarray`` (n
-                # samples requested) allocate an n-sized output rather than
-                # an empty one (gh-65).
-                if first_arr:
-                    raw_len = f"{first_arr}_len"
-                else:
-                    first_int = next(
-                        (
-                            p["name"]
-                            for p in params
-                            if not is_array_param_type(p["type"])
-                            and _CTYPE_META.get(p["type"], {}).get("kind")
-                            == "int"
-                        ),
-                        None,
+                # Buffer size: `_outbuf.length`, the rule a module function's
+                # output is sized by too (gh-1888). The first array the call
+                # parses -- an array `arg_type` input first, as the `x` it is
+                # parsed as above; it was left out, so `--arg-type 'T[]'`
+                # allocated nothing and a kernel filling `x_len` wrote past
+                # it. Else the first integer param, so ``foo(n: int) ->
+                # ndarray`` (n samples requested) allocates n (gh-65).
+                _sizing = (
+                    [{"name": "x", "type": arg_type}]
+                    if has_arg and arg_type.endswith("[]")
+                    else []
+                ) + list(params)
+                # With neither, still an empty output: refusing the row
+                # would stop `apply` on projects that declare one -- the
+                # frozen `stale_project` example's `shape` among them --
+                # so that call is left open in gh-2109.
+                raw_len = (
+                    _outbuf.length(
+                        _sizing, out_type=out_type, count_fallback=True
                     )
-                    raw_len = first_int if first_int else "0"
+                    or "0"
+                )
                 if out_divisor > 1:
                     len_expr = f"({raw_len} / {out_divisor})"
                 else:
@@ -3914,7 +4487,7 @@ def make_methods_ctx(
                     f"{guard}"
                     f"{parse_block}"
                     # gh-1426 A: after the args exist, before the call.
-                    f"{_borrow.release_resolve_c(m)}"
+                    f"{_borrow.release_resolve_c(m, kwlist=_parsed_names)}"
                     f"{ret_body}"
                     f"}}"
                 )
@@ -3933,8 +4506,9 @@ def make_methods_ctx(
                 # body that hands back an array -- the same "doc face
                 # describing a different function" defect the comment above
                 # is about.
+                # gh-2183: and optional when a NULL borrow answers None.
                 else (
-                    "ndarray"
+                    optional_ann(m, "ndarray")
                     if out_type or multi_output or borrow
                     else _pyi_scalar(return_type)
                 )
@@ -3995,9 +4569,9 @@ def make_methods_ctx(
         param_parts = list(_sig_parts)
         ret_ann = _ret_ann
         # gh-219: single-output variable_output methods take an optional
-        # `out=` buffer and expose a <verb>_max_out() sibling. A
-        # single-array-param method (params=[{array}], no other params) is
-        # eligible too -- see _single_array_param above.
+        # `out=` buffer and expose a <verb>_max_out() sibling. A method whose
+        # params carry an array is eligible too, beside other params since
+        # gh-1998 -- see `_outbuf.why_not`.
         # gh-805 §E: mirrors `_enable_out` above, which now offers the
         # buffer for a structured result too. Kept adjacent and kept in
         # step: a stub advertising an out= the binding rejects, or a
@@ -4047,8 +4621,12 @@ def make_methods_ctx(
                     indent=8,
                     skeleton_fallback=True,
                     raises=_raises_doc,
+                    none_when=empty_is_none_doc(m),
                     param_defaults=_gluedoc.binding_param_docs(
-                        _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                        _count_kw,
+                        count=_stub_count_arg,
+                        out=_stub_enable_out,
+                        out_cols=bool(m.get("out_cols")),
                     ),
                     authored_doc=m.get("doc") or "",
                     param_docs=authored_param_docs(m),
@@ -4081,6 +4659,7 @@ def make_methods_ctx(
                 lambda k: (doc_blocks or {}).get(k),
                 c_fn=c_fn,
                 csym=csym,
+                elements_per_sample=_vo_e,
             ).pyi_doc()
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
@@ -4107,6 +4686,18 @@ def make_methods_ctx(
         method_c_parts.extend(_c_funcs)
         pmd_lines.append(_pmd)
         pyi_lines.append(_pyi)
+
+    # ── extra_methods: rows for functions the author wrote (gh-1997) ────────
+    # After every generated row, in declared order. The C is the author's, in
+    # the object's `_extra.c`; the prototypes go to the caller, which puts
+    # them above the type (`extra_method_protos`).
+    for _row in extra_methods or ():
+        # The whole entry from the shared emitter, whose doc is the
+        # manifest's through `authored_c_doc` (gh-1039's rule).
+        _extra_pmd = _extramethods.method_def_row(_row)
+        pmd_lines.append(_extra_pmd)
+        pyi_lines.append("\n".join(_extramethods.pyi_member(_row)) + "\n")
+    _protos = _extramethods.prototypes(list(extra_methods or ()), "_extra.c")
 
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
@@ -4151,6 +4742,12 @@ def make_methods_ctx(
             "" if _has_timing else _bench_todo(component, methods, csym=csym)
         ),
         "varargs_binding_files": varargs_binding_files,
+        # gh-1997: the block ends in a blank line, ready to sit above the
+        # type banner in a standalone `_ext.c`; the module aggregator strips
+        # it to sit above the fragment's `#include`.
+        "extra_method_protos": (
+            _protos.strip("\n") + "\n\n" if _protos else ""
+        ),
         **(
             {
                 "builtin_reset_c": "",
@@ -4374,6 +4971,76 @@ def _property_lookup_enum(
     if not p.get("writable", False):
         return ""
     return _property_enum(component, Component, p, enums)
+
+
+def validate_property_error(
+    component: str,
+    p: dict,
+    state_var_names: "frozenset[str]" = frozenset(),
+    *,
+    csym: str,
+) -> None:
+    """Refuse an ``error`` / ``error_message`` the setter cannot honour.
+
+    gh-2182. ``error`` declares that a non-zero return from the property's C
+    setter refuses the value, and the binding raises it. That needs a C
+    setter call whose return the binding can test, so every shape without
+    one is refused, naming the way out, before anything is written:
+
+    - a read-only property has no setter at all;
+    - ``field = true`` assigns the member directly -- there is no C call;
+    - a property named for a state field calls that field's accessor, which
+      jm declares returning ``void``, so testing it would not compile;
+    - ``error_message`` without ``error`` is the text of an exception
+      nothing raises.
+
+    The exception name is checked against `_config.ERROR_CATEGORIES`, the
+    list a method's ``error`` is checked against, because ``PyExc_<name>``
+    is emitted verbatim into C.
+
+    Shared by `make_properties_ctx`, which every render of the binding goes
+    through, and `_property.run`, so `jm property` refuses before the
+    manifest is written.
+
+    Raises
+    ------
+    Refusal
+        Naming the property and what to change.
+    """
+    category = p.get("error") or ""
+    if not category and not p.get("error_message"):
+        return
+    where = f"{component}.{p['name']}"
+    setter = CSYM.property_setter(csym, p["name"])
+    if not category:
+        raise Refusal(
+            f"{where}: error_message is the text a refused assignment raises "
+            f'with, so it needs error as well (e.g. error = "ValueError").'
+        )
+    if category not in C.ERROR_CATEGORIES:
+        raise Refusal(
+            f"{where}: error {category!r} is not a known exception category. "
+            f"Choose one of: {', '.join(sorted(C.ERROR_CATEGORIES))}."
+        )
+    if not p.get("writable"):
+        raise Refusal(
+            f"{where}: error is raised when the setter refuses a value, and "
+            f"a read-only property has no setter. Add writable = true, or "
+            f"drop error."
+        )
+    if p.get("field"):
+        raise Refusal(
+            f"{where}: error needs a C setter whose return jm can test, and "
+            f"field = true assigns the struct member directly. Drop field "
+            f"and declare {setter} returning int."
+        )
+    if p["name"] in state_var_names:
+        raise Refusal(
+            f"{where}: the setter this property calls, {setter}, is the "
+            f"accessor of the state field '{p['name']}', which jm declares "
+            f"returning void, so there is no status to test. Give the "
+            f"property its own name and declare its setter returning int."
+        )
 
 
 def validate_container_property(component: str, p: dict) -> None:
@@ -4631,6 +5298,13 @@ def make_properties_ctx(
     ordered string instead of the raw int. ``None`` (the default) means the
     caller has no registry to offer, in which case ``enum`` is ignored and the
     output is byte-identical to the pre-gh-519 render.
+
+    gh-2182: a writable property may declare ``error`` / ``error_message``.
+    Its setter then tests the C setter's ``int`` return and raises on a
+    non-zero one, the setter's prototype says ``int``, and both doc faces
+    carry a ``Raises`` section. `validate_property_error` refuses the key
+    wherever there is no C setter call to test. Without it the setter
+    discards the return, as it always has.
     """
     _EMPTY: dict[str, str] = {
         "getset_def": "",
@@ -4680,6 +5354,11 @@ def make_properties_ctx(
         # the user never wrote.
         if container:
             validate_container_property(component, p)
+        validate_property_error(component, p, state_var_names, csym=csym)
+        # gh-2182: what a refused assignment raises, or None; read once, by
+        # the setter's binding, its prototype and both doc faces.
+        setter_fn = CSYM.property_setter(csym, pname)
+        setter_raise = property_declared_raise(p, setter_fn)
 
         # gh-519: an `enum`-decorated property stores the SSOT int in C but
         # presents the value as its string on the Python side.
@@ -4904,34 +5583,47 @@ def make_properties_ctx(
                     + "\n"
                     f"    {disp} v = ({disp})v_idx;\n"
                 )
-            elif "parse_type" in meta:
-                parse_block = (
-                    f"    {meta['parse_type']} v_raw ="
-                    f" {meta['parse_zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v_raw))'
-                    f" return -1;\n"
-                    f"    {disp} v = {meta['to_c']('v')};\n"
-                )
             else:
-                parse_block = (
-                    f"    {disp} v = {meta['zero']};\n"
-                    f'    if (!PyArg_Parse(value, "{meta["fmt"]}", &v))'
-                    f" return -1;\n"
+                # gh-2035: the one PyObject -> C scalar conversion, which a
+                # composer's settings and fields call too.
+                parse_block = _scalar_parse_c(
+                    disp, "value", "v", "return -1;", meta=meta
                 )
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"
+            elif setter_raise is not None:
+                # gh-2182: the C setter may refuse the value. Its return is
+                # tested the way a `status_return` method's is, through the
+                # one raise emitter -- `return -1;` because a setter slot
+                # returns int, not a PyObject *.
+                assign_line = (
+                    f"    int _rc = {setter_fn}(self->handle, v);\n"
+                    f"    if (_rc != 0) {{\n"
+                    + _rc_raise_c(*setter_raise, fail="return -1;")
+                    + "    }\n"
+                )
             else:
-                assign_line = f"    {csym}_set_{pname}(self->handle, v);\n"
-                if pname not in state_var_names:
-                    decl_lines.append(
-                        f"/**\n"
-                        f" * @brief Set {pname}.\n"
-                        f" * @param state  Must be non-NULL.\n"
-                        f" * @param val    New value ({disp}).\n"
-                        f" */\n"
-                        f"void {csym}_set_{pname}"
-                        f"({csym}_state_t *state, {disp} val);"
-                    )
+                assign_line = f"    {setter_fn}(self->handle, v);\n"
+            if not field and pname not in state_var_names:
+                _set_ret = setter_return_type(p)
+                _set_doc = (
+                    f" * @return 0 to accept the value; non-zero refuses"
+                    f" it,\n"
+                    f" *         which Python raises as"
+                    f" {setter_raise[0]}.\n"
+                    if setter_raise is not None
+                    else ""
+                )
+                decl_lines.append(
+                    f"/**\n"
+                    f" * @brief Set {pname}.\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @param val    New value ({disp}).\n"
+                    f"{_set_doc}"
+                    f" */\n"
+                    f"{_set_ret} {setter_fn}"
+                    f"({csym}_state_t *state, {disp} val);"
+                )
             setter = (
                 f"static int\n"
                 f"{Component}_setprop_{pname}"
@@ -4963,9 +5655,27 @@ def make_properties_ctx(
         # gh-1394: the one chain, shared with `jm status --docs`, which
         # reports whichever properties it answers with a name stub.
         _pdoc = property_doc(component, p, doc_blocks, csym=csym)[0]
+        # gh-2182: a setter that may refuse documents what it raises, on
+        # both faces, through the renderer a method's Raises goes through --
+        # so the runtime text is the stub's text without its indent. A
+        # property declaring no `error` keeps its one-line summary.
+        _raises = property_raises_doc(p, setter_fn)
+        _rt_doc = (
+            render_runtime_doc(
+                None,
+                pname,
+                [],
+                "None",
+                _pdoc,
+                authored_doc=p.get("doc", ""),
+                raises=_raises,
+            )
+            if _raises
+            else [_pdoc]
+        )
         getset_entries.append(
             f'    {{ "{pname}", (getter){Component}_getprop_{pname},'
-            f" {setter_name}, {_build_ml_doc([_pdoc])}, NULL }},"
+            f" {setter_name}, {_build_ml_doc(_rt_doc)}, NULL }},"
         )
 
         # gh-446: standalone .pyi stubs for a manifest property (PyGetSetDef
@@ -5009,7 +5719,18 @@ def make_properties_ctx(
             # this already kept it whole, so the two disagreed. A header or
             # struct-field doc is still a summary for jm to wrap.
             *(
-                authored_docstring(authored_doc_lines(p["doc"]), 8)
+                render_numpy_doc(
+                    None,
+                    pname,
+                    [],
+                    "None",
+                    _pdoc,
+                    indent=8,
+                    authored_doc=p.get("doc", ""),
+                    raises=_raises,
+                )
+                if _raises
+                else authored_docstring(authored_doc_lines(p["doc"]), 8)
                 if p.get("doc")
                 else summary_docstring(_pdoc, indent=8)
             ),

@@ -11,7 +11,6 @@ it composes with the gh-353 ``path``/``enum`` args. Mirrors
 from __future__ import annotations
 
 import importlib.util
-import shutil
 import subprocess
 import sys
 import sysconfig
@@ -19,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -74,7 +74,7 @@ def test_check_return_composes_with_path_and_enum():
 
 # ── compile + run ────────────────────────────────────────────────────────────
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 _BACKING = """
 #include <stddef.h>

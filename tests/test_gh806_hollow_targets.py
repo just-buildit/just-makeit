@@ -30,12 +30,12 @@ from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 import contextlib
 import io
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -48,7 +48,7 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc")
+_CC = default_cc()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 #: The generated CMake asks for C99 with GNU extensions on (it never sets

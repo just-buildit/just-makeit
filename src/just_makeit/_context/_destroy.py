@@ -67,6 +67,7 @@ from .. import _config as C
 from .._gluedoc import glue_methods
 from ._diagnostics import _c_string_literal
 from ._parse import _build_ml_doc
+from .._report import Refusal
 
 # A method name is interpolated straight into a C string literal *and* into
 # Python stub source, so it is held to the Python identifier grammar.
@@ -79,6 +80,12 @@ _DEFAULT_MSG = "{component}_destroy reported failure"
 # the undeclared-create_error spirit: a generic runtime failure, not a guess at
 # something more specific.
 _DEFAULT_CATEGORY = "RuntimeError"
+
+#: The binding-side field a lending object's teardown parks its state in, for
+#: ``tp_dealloc`` to free (gh-2187). Named once: the struct, the teardown and
+#: the dealloc spell it here, and `_docsync`'s ``deferred-free`` marker and
+#: `_object.jm_owned_functions` read a fragment for it.
+PARK_FIELD = "_jm_parked"
 
 
 def c_fn(csym: str, spec: dict, create_fn: str = "") -> str:
@@ -200,6 +207,7 @@ def validate_destroy_spec(
         "error_message",
         "exit",
         "fn",
+        "wake",
     }
     unknown = sorted(set(spec) - known)
     if unknown:
@@ -311,25 +319,23 @@ def _inherited_error(spec: dict, exit_method: dict) -> tuple[str, str]:
     ``RuntimeError: <comp>_destroy reported failure`` from collection. Not a
     drift risk — the out-of-the-box result.
 
-    So an unstated pair is inherited from the named finalizer. Both keys or
-    neither: a half-inherited pair would pin someone else's message under the
-    author's own category, which is a third message rather than one fewer.
-    Declaring either key keeps both explicit, so saying something different
-    on purpose stays possible.
+    So each unstated key is inherited from the named finalizer, on its own
+    (gh-864): declaring ``error`` alone keeps the finalizer's
+    ``error_message``, and declaring ``error_message`` alone keeps its
+    ``error``. The message describes the *condition* ("the capture has a
+    hole"), not the exception class, so it stays accurate under a category
+    the author chose. This first shipped as a pair, so as not to pin one
+    declaration's message under another's category — and that left no
+    setting where every surface was right: declaring ``error`` to correct
+    the stub silently dropped the message, which is the entire content of
+    the diagnostic gh-541 exists to preserve. A declared key is always the
+    author's, so saying something different on purpose stays possible.
 
     doppler maintains this identity **by hand today** — the same
     180-character ``error_message`` copied verbatim into the ``close`` method
     and the ``destroy`` table — which is the duplication this key removes
     everywhere else.
     """
-    # gh-864: INDEPENDENTLY, not both-or-neither. This shipped as a pair
-    # because a half-inherited pair "pins one declaration's message under the
-    # other's category" — but that reasoning was wrong twice over. The message
-    # describes the CONDITION ("the capture has a hole"), not the exception
-    # class, so it stays accurate under a different class. And pairing left no
-    # setting where all three surfaces were right: declaring `error` to fix
-    # the stub silently dropped the message, which is the entire content of
-    # the diagnostic gh-541 exists to preserve.
     return (
         spec.get("error") or exit_method.get("error") or _DEFAULT_CATEGORY,
         spec.get("error_message") or exit_method.get("error_message") or "",
@@ -370,6 +376,42 @@ def _teardown_body(
         component=component
     )
     return _teardown_int_body(component, category, message, dfn)
+
+
+def _park_body(wake_call: str) -> str:
+    """The teardown of an object that lends views (gh-2187).
+
+    Not a free: every view the object handed out points into the state and
+    pins the object, not the state, so freeing here left them dangling, and
+    a GIL-free call still running on another thread freed under its feet.
+    The state moves to ``_jm_parked`` and ``tp_dealloc`` frees it, which
+    runs only once the last view and in-flight call have let go of self.
+    With the handle NULL, every method refuses through its existing guard.
+    *wake_call*, when declared, first ends a blocking call that would
+    otherwise wait on the parked state for ever.
+
+    Examples
+    --------
+    >>> print(_park_body(""), end="")
+    ... # doctest: +ELLIPSIS
+        if (self->handle) {
+    ...
+            self->_jm_parked = self->handle;
+            self->handle = NULL;
+        }
+        Py_RETURN_NONE;
+    """
+    return (
+        "    if (self->handle) {\n"
+        f"{wake_call}"
+        "        /* gh-2187: the views this object lent point into the\n"
+        "           state; the free waits for tp_dealloc, and every method\n"
+        "           refuses from here on. */\n"
+        f"        self->{PARK_FIELD} = self->handle;\n"
+        "        self->handle = NULL;\n"
+        "    }\n"
+        "    Py_RETURN_NONE;\n"
+    )
 
 
 def _teardown_int_body(
@@ -519,6 +561,7 @@ def make_destroy_ctx(
     create_fn: str = "",
     *,
     csym: str,
+    lends: bool,
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -573,7 +616,8 @@ def make_destroy_ctx(
 
     Examples
     --------
-    >>> ctx = make_destroy_ctx("acq", "AcqObj", None, [], csym="acq")
+    >>> ctx = make_destroy_ctx("acq", "AcqObj", None, [], csym="acq",
+    ...                        lends=False)
     >>> print(ctx["destroy_dealloc_call"], end="")
         if (self->handle)
             acq_destroy(self->handle);
@@ -581,7 +625,7 @@ def make_destroy_ctx(
     ('void', '')
     >>> ctx = make_destroy_ctx("w", "WObj", {"name": "close",
     ...                                      "aliases": ["destroy"]}, [],
-    ...                        csym="w")
+    ...                        csym="w", lends=False)
     >>> [ln for ln in ctx["destroy_pymethoddef"].splitlines()
     ...  if "PyCFunction" in ln]
     ['    {"close",  (PyCFunction)WObj_destroy,  METH_NOARGS,', \
@@ -617,6 +661,73 @@ def make_destroy_ctx(
     else:
         dealloc = f"    if (self->handle)\n        {dfn}(self->handle);\n"
 
+    # gh-2187: an object that LENDS views (`_borrow.lends`) must not free
+    # under them. Each view pins this object, not its memory, so an explicit
+    # destroy()/__exit__ that freed left every outstanding view dangling.
+    # Its teardown parks the state instead and tp_dealloc frees it, once the
+    # last view and in-flight call have let go of self. A status has no
+    # caller in tp_dealloc, so a fallible destroy cannot be deferred: that
+    # pair is refused, pointing at the finalizer that can report one.
+    if lends and fallible:
+        raise Refusal(
+            f"object '{component}': [{component}.destroy] returns = \"int\" "
+            f"on an object that lends views (gh-2187). Its destroy() defers "
+            f"the free to tp_dealloc, where a status has no caller to reach. "
+            f"Report the failure from a finalizer instead: declare it as a "
+            f"method and name it with `exit` (gh-805 §H)."
+        )
+    wake_name = str(spec.get("wake") or "")
+    wake_call = ""
+    if wake_name:
+        if not lends:
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' on an object that lends no views. A wake "
+                f"exists for a deferred free (gh-2187): it ends a blocking "
+                f"call that still holds the object. This destroy() frees "
+                f"at once, so nothing is left to wake."
+            )
+        if methods is None:
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' was declared, but this render path did not "
+                f"supply the method list. Pass methods= to make_destroy_ctx."
+            )
+        wake_m = next((m for m in methods if m.get("name") == wake_name), None)
+        if wake_m is None:
+            declared = ", ".join(
+                sorted(m.get("name", "") for m in methods if m.get("name"))
+            )
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' is not a declared method. "
+                f"Declared: {declared or 'none'}."
+            )
+        if (
+            wake_m.get("arg_type", "void") != "void"
+            or wake_m.get("return_type", "void") != "void"
+            or wake_m.get("params")
+        ):
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' must take the state alone and return "
+                f'nothing (arg_type and return_type "void", no params): '
+                f"destroy() calls it with the handle and no arguments."
+            )
+        wake_call = (
+            f"        {C.method_c_symbol(csym, wake_m)}(self->handle);"
+            "  /* gh-2187: wake */\n"
+        )
+    if lends:
+        dealloc = (
+            "    /* gh-2187: destroy() parks the state here instead of\n"
+            "       freeing it under the views this object lent; they are\n"
+            "       gone now, so the free is now. */\n"
+            f"    if (self->handle)\n        {dfn}(self->handle);\n"
+            f"    if (self->{PARK_FIELD})\n"
+            f"        {dfn}(self->{PARK_FIELD});\n"
+        )
+
     # gh-805 §H: `exit` redirects __exit__ at a finalizing method. Resolved
     # BEFORE the teardown body, because the destructor inherits the
     # finalizer's error/message when it states none of its own — the two are
@@ -645,7 +756,11 @@ def make_destroy_ctx(
                 f"Declared: {declared or 'none'}."
             )
 
-    body = _teardown_body(component, spec, exit_method or None, dfn)
+    body = (
+        _park_body(wake_call)
+        if lends
+        else _teardown_body(component, spec, exit_method or None, dfn)
+    )
 
     names = destroy_py_names(spec)
     # gh-647: one definition of the teardown prose, rendered to both faces.
@@ -688,7 +803,7 @@ def make_destroy_ctx(
 
     def _doc_for(n: str) -> tuple[str, str]:
         """``(pyi_docstring, c_string_literal)`` for teardown name *n*."""
-        gm = glue_methods(Component, close_name=n)[n]
+        gm = glue_methods(Component, close_name=n, lends=lends)[n]
         return (
             "\n".join(gm.pyi_doc(raises=_raises)) + "\n",
             _build_ml_doc(gm.c_doc_lines(raises=_raises)),
@@ -758,6 +873,13 @@ def make_destroy_ctx(
         ),
         "pyi_exit_sig": _exit_sig,
         "destroy_dealloc_call": dealloc,
+        # gh-2187: where a lending object's teardown parks its state.
+        "destroy_fields": (
+            f"    {csym}_state_t *{PARK_FIELD};"
+            "  /* gh-2187: freed by tp_dealloc */\n"
+            if lends
+            else ""
+        ),
         "destroy_method_body": body,
         # gh-805 §H: the two were one string on purpose (gh-541 — the explicit
         # call and the context manager must agree about raising). They still

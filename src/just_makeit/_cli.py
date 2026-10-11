@@ -54,6 +54,11 @@ Commands:
                                 docstring on the re-export __init__.py.
     --functions-in-core         Keep this module's functions in <module>_core.c (one TU,
                                 shared static helpers) instead of one .c per function.
+    --package DIR               Put the module's Python in src/<pkg>/DIR/ (`[module.X]
+                                package`), e.g. beside an existing package's classes;
+                                they import from <pkg>.DIR. DIR is identifiers
+                                separated by / (dsp/io), or . for the package itself.
+                                The C side keeps the module's own name.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
     --preset NAME               Named shorthand for a common shape:
@@ -135,6 +140,16 @@ Commands:
                                 result: raise instead of returning an
                                 empty array. Pairs with --error /
                                 --error-message.
+    --count-type TYPE           The C type a --variable-output kernel
+                                returns its count in (default size_t). A
+                                signed one (int64_t, ...) goes with
+                                --error-negative: a negative count raises,
+                                with (rc=N) appended, and 0 stays a normal
+                                empty result.
+    --error-sentinel EXPR       A C constant (e.g. SIZE_MAX) a size_t count
+                                returns to REFUSE: it raises --error with
+                                --error-message, and 0 stays a normal empty
+                                result.
     --none-on-empty             The opposite reading: nothing yet is a
                                 NORMAL answer, so the call returns None.
                                 On a --borrow, a NULL view means "not
@@ -144,9 +159,11 @@ Commands:
                                 casting, copying and flattening it.
                                 TypeError for dtype, ValueError for shape.
     --releases A[,B]            This method RELEASES the named --borrow
-                                method(s). Its count param then defaults
-                                to the outstanding borrow's count; with
-                                no count param it just clears the record.
+                                method(s). Its count param then defaults,
+                                when omitted, to the outstanding borrow's
+                                count; an explicit 0 is passed through.
+                                With no count param it just clears the
+                                record.
     --release-count NAME        Which param carries that count, when the
                                 method has more than one. Must be last.
     --status-fn NAME            C function saying WHY a --borrow returned
@@ -181,10 +198,12 @@ Commands:
                                 in which case it is an error code and the method
                                 raises. Distinct from a status return, where the
                                 int carries nothing but status. Signed integer
-                                return types only.
-    --error EXC                 Exception --error-negative raises (default
+                                return types only; on --variable-output the
+                                value is the count, typed by --count-type.
+    --error EXC                 Exception a declared refusal raises (default
                                 ValueError); one of jm's error categories.
-    --error-message TEXT        Text for that exception; jm appends (rc=%d).
+    --error-message TEXT        Text for that exception; jm appends (rc=%d)
+                                where there is a code to append.
     --count-default EXPR        C expression seeding the synthesized leading count
                                 argument of a void-input --variable-output method,
                                 e.g. "state->num_taps". Its default IS the zero-arg
@@ -193,6 +212,13 @@ Commands:
                                 "count"). Say it when your C API names the quantity
                                 something else -- the paired <comp>_<name>_max_out()
                                 already takes its name from the C signature.
+    --out-cols EXPR             Make a --variable-output result a MATRIX: the
+                                kernel still fills a flat buffer and returns an
+                                element count, and the binding returns
+                                (count / EXPR, EXPR). EXPR is an integer or a C
+                                expression over the object ("state->nfft").
+                                A caller-supplied out= must then be 2-D with
+                                that many columns.
     --varargs                   Generate a *args/**kwargs binding. Mutually
                                 exclusive with --arg-type, --param and
                                 --variable-output.
@@ -220,7 +246,9 @@ Commands:
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.
-    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
+    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor,
+                                in_len being the first array input's length, else the
+                                first integer --param.
     --out-divisor N             Divide input length by N for output array (default: 1).
     --result-field name:type    Append a field to a returned record list; repeatable.
     --record-dtype STRUCT       With --variable-output: return ONE numpy structured
@@ -283,6 +311,10 @@ Commands:
     --count-fn name             Entry count accessor  (default <stem>_num_<name>).
     --key-fn name               Key accessor, dict only (default <stem>_<name>_key).
     --value-fn name             Value accessor      (default <stem>_<name>_value).
+    --error EXC                 With --writable: the setter's C function returns
+                                int, and a non-zero return refuses the value and
+                                raises EXC (e.g. ValueError). Not with --field.
+    --error-message text        Text for that exception (rc appended).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a
@@ -313,8 +345,10 @@ Commands:
     --param name:type           Input parameter; repeatable.
     --out-param name:type[]     Writable output array param (drops const); repeatable.
     --return-type TYPE          Return type (default: void).
-    --out-type TYPE             Return a fresh ndarray of TYPE; size from first array
-                                param's length, or the first integer scalar param.
+    --out-type TYPE[N]          Return a fresh ndarray of TYPE, as long as the
+                                integer param N says ('float[n]'); without [N],
+                                as long as the first array param. One of the two
+                                is required.
     --out-size EXPR             Length of that output, as a verbatim C expression
                                 over the function's own arguments — each array
                                 param's generated <name>_len included
@@ -346,18 +380,19 @@ Commands:
     --force, -f                 Skip the rebuild confirmation.
 
   remove <kind> <name> [OPTIONS]  Delete a scaffolded object/module/method/etc.
-    kind is object|module|method|property|function.
+    kind is object|module|state|method|property|warning|error|function|app.
     --object name               Object the method/property lives on (required for those).
     --module name               Module the function lives in (required for function).
     --force, -f                 Skip the confirmation prompt.
 
-  app [OPTIONS]                 Scaffold a shippable standalone application from an object.
+  app [OPTIONS]                 Add a shippable standalone application ([[app]] row).
     --target c|console|pep723   Output target (default: c).
     --object name               Component to scaffold from (default: first object).
     --function name             Bind the app to a module-level function
                                 instead of an object.
     --module name               Module the object or function lives in.
-    --name name                 App/script name (default: project name).
+    --name name                 App/script name, unique per project (default:
+                                the function's, else the project's name).
     --flag name:type[:default[:help]]
                                 Extra CLI flag wired into both the C and
                                 Python parsers ([[app.flags]]); repeatable.
@@ -380,7 +415,9 @@ Commands:
                                 hand-written <component>_core.h (the "port an
                                 existing C API" path). --check exits 1 if the
                                 generated binding differs from the file on disk
-                                (a CI drift gate; nothing is written).
+                                (a CI drift gate; nothing is written). Refuses
+                                a component the manifest declares: `regenerate`
+                                and `apply` render that one from the manifest.
   ci [--provider NAME]          Generate a CI workflow (make && make test). NAME is
                                 github (default, .github/workflows/ci.yml) or woodpecker
                                 (.woodpecker.yml). --force overwrites an existing file.
@@ -467,7 +504,7 @@ Commands:
   build [dir]                   Build C extensions and package a wheel (default: dist/).
   test                          Build then run CTest + pytest.
   dry-run                       Show what would be compiled without building.
-  install-deps [OPTIONS] [path] Install cmake, C compiler, numpy, and create a venv.
+  install-deps [OPTIONS] [path] Install the C build toolchain and create a venv.
     --check                     Report status only; exit 1 if anything is missing.
     -h, --help                  Show detailed help for this command.
   example [name]                Run a bundled end-to-end example (omit name to list).
@@ -540,10 +577,10 @@ Examples:
   jm app --target c --object engine --name dsp_tool
 
   # scaffold a Python console script (updates pyproject.toml [project.scripts])
-  jm app --target console --object engine --name dsp_tool
+  jm app --target console --object engine --name dsp_tool_py
 
   # scaffold a PEP 723 inline script (runnable via uv run, no install needed)
-  jm app --target pep723 --object engine --name dsp_tool
+  jm app --target pep723 --object engine --name dsp_tool_script
 
   # config, build, test
   jm config
@@ -735,17 +772,41 @@ def main() -> None:
     Only that subclass is caught. A plain ``ValueError`` -- or anything else
     jm did not raise deliberately -- is a bug, and still tracebacks. With
     ``JM_DEBUG=1`` a refusal tracebacks too.
+
+    A command that changes the project (`COMMANDS`, MUTATING) and does not
+    return leaves the tree as it found it, whatever it had written by then:
+    a refusal, an exit, a crash (gh-1867, gh-2040). `_undo` holds the
+    record, and returning is what commits it.
     """
     from ._report import Refusal
+    from . import _undo
 
-    try:
-        _main()
-    except Refusal as exc:
-        if _debug():
-            raise
-        sys.stdout.flush()
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    with _undo.guard(_project_changed_by(sys.argv[1:])):
+        try:
+            _main()
+            _undo.commit()
+        except Refusal as exc:
+            if _debug():
+                raise
+            sys.stdout.flush()
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+
+def _project_changed_by(args: "list[str]") -> "Path | None":
+    """The project *args* would change, if they name a MUTATING command.
+
+    The working directory, when it holds a manifest: every mutating
+    command reads its project there. Without one there is no project to
+    protect, and a walk of an arbitrary directory (a home directory, say)
+    is not one to take; the command refuses for want of a manifest anyway.
+    """
+    from . import _config as C
+
+    if not args or COMMANDS.get(args[0]) != MUTATING:
+        return None
+    root = Path.cwd()
+    return root if (root / C.FILENAME).is_file() else None
 
 
 def _main() -> None:
@@ -785,6 +846,7 @@ def _main() -> None:
         mod_extra_types: list[str] = []
         mod_functions_in_core = False
         mod_doc = ""
+        mod_package = ""
         rest = args[2:]
         j = 0
         while j < len(rest):
@@ -832,6 +894,21 @@ def _main() -> None:
                     sys.exit(1)
                 mod_doc = rest[j]
                 j += 1
+            elif tok == "--package":
+                # gh-2064: `[module.X] package` (gh-523), declared before
+                # anything is written. Set by hand after `jm module`, the
+                # key came too late: the module id's directory was already
+                # on disk, and nothing owns it once the module lives
+                # elsewhere.
+                j += 1
+                if j >= len(rest):
+                    print(
+                        "error: --package requires a package directory",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                mod_package = rest[j]
+                j += 1
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -842,6 +919,7 @@ def _main() -> None:
             extra_link_libs=mod_extra_libs or None,
             extra_types=mod_extra_types or None,
             functions_in_core=mod_functions_in_core,
+            package=mod_package,
             doc=mod_doc,
         )
 
@@ -898,6 +976,8 @@ def _main() -> None:
         value_fn = ""
         capsule = ""  # gh-788
         capsule_type = ""  # gh-1235
+        error = ""  # gh-2182
+        error_message = ""
 
         remaining = args[3:]
         i = 0
@@ -967,6 +1047,9 @@ def _main() -> None:
                 # gh-1235: and what that pointer IS, so a consumer naming
                 # this producer with `object` can line up against it.
                 "--capsule-type",
+                # gh-2182: the exception a refused assignment raises.
+                "--error",
+                "--error-message",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -993,6 +1076,10 @@ def _main() -> None:
                     capsule = val  # gh-788
                 elif tok == "--capsule-type":
                     capsule_type = val  # gh-1235
+                elif tok == "--error":
+                    error = val  # gh-2182
+                elif tok == "--error-message":
+                    error_message = val
                 else:
                     expr = val
                 i += 1
@@ -1043,6 +1130,8 @@ def _main() -> None:
             value_fn=value_fn,
             capsule=capsule,
             capsule_type=capsule_type,
+            error=error,
+            error_message=error_message,
         )
 
     elif cmd == "warning":
@@ -1233,6 +1322,7 @@ def _main() -> None:
         # not default to "everything".
         from . import _adopt
         from . import _config as _C
+        from . import _undo
 
         _usage = (
             "Usage: just-makeit adopt --check [--module <id> | --all]\n"
@@ -1302,11 +1392,13 @@ def _main() -> None:
                 + " — jm owns cmake/'s packaging templates where nothing"
                 " is lost"
             )
-            sys.exit(
-                _adopt.adopt_packaging(
-                    _root, _cfg, check=_chk, accept=frozenset(_accept)
-                )
+            _code = _adopt.adopt_packaging(
+                _root, _cfg, check=_chk, accept=frozenset(_accept)
             )
+            # gh-1867: a template refused is reported in the exit status,
+            # and the ones written beside it are kept.
+            _undo.commit()
+            sys.exit(_code)
         if _mod is not None and _mod not in _C.modules(_cfg):
             print(f"error: --module: no module '{_mod}'.", file=sys.stderr)
             sys.exit(2)
@@ -1331,15 +1423,17 @@ def _main() -> None:
             )
             sys.exit(2)
         print('adopt — `fragment = "generated"` where it is safe')
-        sys.exit(
-            _adopt.adopt(
-                _root,
-                _objs,
-                only_mod=_mod,
-                accept=frozenset(_accept),
-                accept_additions="--accept-additions" in args,
-            )
+        _code = _adopt.adopt(
+            _root,
+            _objs,
+            only_mod=_mod,
+            accept=frozenset(_accept),
+            accept_additions="--accept-additions" in args,
         )
+        # gh-1867: all or nothing per OBJECT. One that did not flip is
+        # reported in the exit status; the ones that did keep their files.
+        _undo.commit()
+        sys.exit(_code)
 
     elif cmd == "record":
         from . import _recorddecl
@@ -1485,9 +1579,25 @@ def _main() -> None:
         elif len(args) == 3:
             key, value = args[1], args[2]
             if key == "version":
+                # gh-2069: the author declares the version, so every copy
+                # follows -- the generated ones `_projversion` owns, and the
+                # app `apply` re-renders (a PEP 723 script carries it).
+                # Reported by the bytes each write leaves, as `apply` does.
+                from . import _apply, _app, _projversion
+                from . import _report
+
+                before = _apply._tree_digests(root)
                 cfg.setdefault("project", {})["version"] = value
                 C.save(root, cfg)
+                written, unwritable = _projversion.sync(root, cfg)
+                app_written = _app.replay(root, cfg)
                 print(f"version = {value!r}")
+                for verb, rel in _apply._changed_report(
+                    root, before, [C.FILENAME, *written, *app_written]
+                ):
+                    print(f"  {verb:<6}  {rel}")
+                for msg in unwritable:
+                    _report.warn(msg, gates=True)
             else:
                 print(f"error: unknown config key '{key}'", file=sys.stderr)
                 sys.exit(1)
@@ -1604,14 +1714,9 @@ def _main() -> None:
             )
             sys.exit(1)
         if check:
-            rendered = _bind.run(Path.cwd(), comp, write=False)
-            existing = (
-                Path.cwd() / "native" / "src" / comp / f"{comp}_ext.c"
-            ).read_text(encoding="utf-8")
-            if rendered != existing:
-                print(f"error: {comp}_ext.c is out of date with {comp}_core.h")
-                sys.exit(1)
-            print(f"  ok  {comp}_ext.c matches {comp}_core.h")
+            code = _bind.check(Path.cwd(), comp)
+            if code:
+                sys.exit(code)
         else:
             _bind.run(Path.cwd(), comp)
 
@@ -1842,10 +1947,10 @@ def _main() -> None:
         sys.exit(1)
 
     # gh-265: optional house-style pass over the generated C. No-op unless the
-    # manifest opts in via [project] c_style. `new` formats its own freshly
-    # created tree (its root is a subdir, not cwd), so it is handled in
-    # _new.run and excluded here. Only commands that emit/regenerate native C
-    # are swept; query/build commands leave the tree alone.
+    # manifest opts in via [project] c_style. Every command that changes the
+    # project in cwd is swept (`COMMANDS`, gh-2057); `new` formats its own
+    # freshly created tree (its root is a subdir, not cwd) in _new.run, and
+    # query/build commands leave the tree alone.
     if cmd in _C_EMITTING_COMMANDS:
         from . import _cfmt
         from . import _config as C
@@ -1861,25 +1966,82 @@ def _main() -> None:
             _pyfmt.format_project(root, _cfg)
 
 
-# Commands that write or regenerate native C/H and should trigger the optional
-# clang-format pass (gh-265). `new` self-formats; query/build/bench do not emit.
+# ── What each command does to the project tree (gh-2057) ──────────────────────
+#
+# One classification of every command `_main` dispatches, held complete
+# against the dispatch by `tests/test_gh2057_verb_leaves_what_apply_writes.py`
+# (an unclassified command fails it). Everything that asks "which commands
+# change the tree" reads this table: the post-command format pass below,
+# `_project_changed_by` (whose answer `main` records, to put back if the
+# command fails: gh-1867), and that gate, which requires every MUTATING
+# command to leave the tree `jm apply` would write -- or, failing, the tree
+# it found. A second, hand-kept list of the same answer had already lost
+# `record` and `app`.
+
+#: Writes a NEW project, in a subdirectory of the working directory. Not
+#: swept by the format pass, whose root is the working directory: `_new.run`
+#: formats its own tree.
+CREATES = "creates"
+
+#: Changes the project in the working directory. After one, the tree is the
+#: one `jm apply` would write -- `status --check` exits 0 and `apply` changes
+#: nothing -- and the format pass runs over it. One that fails leaves the
+#: tree it found (`_undo`, gh-1867). A read-only MODE of one
+#: (`adopt --check`, `bind --check`, a bare `config`) does not change what
+#: the command is.
+MUTATING = "mutating"
+
+#: Reads the project and writes nothing.
+READ_ONLY = "read-only"
+
+#: Builds, tests, benchmarks or installs: writes build output, a scratch
+#: project or an environment, never a file `apply` owns.
+BUILD = "build"
+
+COMMANDS: "dict[str, str]" = {
+    "new": CREATES,
+    "adopt": MUTATING,
+    "add": MUTATING,
+    "app": MUTATING,
+    "apply": MUTATING,
+    "bind": MUTATING,
+    "ci": MUTATING,
+    "config": MUTATING,
+    "error": MUTATING,
+    "function": MUTATING,
+    "method": MUTATING,
+    "migrate-to-fragments": MUTATING,
+    "module": MUTATING,
+    "object": MUTATING,
+    "perf": MUTATING,
+    "property": MUTATING,
+    "record": MUTATING,
+    "regenerate": MUTATING,
+    "remove": MUTATING,
+    "split-objects": MUTATING,
+    "upgrade": MUTATING,
+    "view": MUTATING,
+    "warning": MUTATING,
+    "dry-run": READ_ONLY,
+    "script": READ_ONLY,
+    "status": READ_ONLY,
+    "version": READ_ONLY,
+    "bench": BUILD,
+    "build": BUILD,
+    "example": BUILD,
+    "install-deps": BUILD,
+    "test": BUILD,
+}
+
+# The commands the optional house-style pass sweeps (gh-265): every one that
+# changes the project in the working directory. Derived, never listed. The
+# pass is a no-op unless the project opts in, and idempotent when it does, so
+# running it after a command that wrote no C costs a manifest read; skipping
+# it after one that did leaves the glue in jm's style while `apply` writes the
+# project's, which `status --check` then reports. `adopt` never reaches the
+# pass -- it ends in `sys.exit` -- and does not need it: it hands a fragment
+# to `apply`, which formats what it writes (gh-917), and its packaging
+# templates are not C.
 _C_EMITTING_COMMANDS = frozenset(
-    {
-        "module",
-        "object",
-        "method",
-        "view",
-        "property",
-        "warning",
-        "error",
-        "function",
-        "add",
-        "perf",
-        "apply",
-        "regenerate",
-        "remove",
-        "upgrade",
-        "split-objects",
-        "bind",
-    }
+    cmd for cmd, kind in COMMANDS.items() if kind == MUTATING
 )

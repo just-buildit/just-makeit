@@ -43,7 +43,8 @@ The split is therefore by what is observable, not by a flag:
 
 - **Always** -- the input face. That the declared dtype is accepted and a
   foreign one is REFUSED is a property of the binding (gh-1405's
-  ``PyArray_EquivTypes`` guard), true whatever the kernel does.
+  ``PyArray_EquivTypes`` guard for a struct, numpy's safe-casting rule for
+  a scalar -- see `_foreign_dtype`), true whatever the kernel does.
 - **Once the kernel is real** -- the round trip, which needs a working
   kernel to say anything at all. It is not generated with a ``skipif``: a
   test that reports success while covering nothing is the failure mode
@@ -200,32 +201,68 @@ def declared_dtype_expr(rec: dict) -> str:
 
 
 def _foreign_dtype(rec: dict) -> str:
-    """A dtype the element is NOT, for the refusal check.
+    """A dtype the element's writer must REFUSE, for the refusal check.
 
-    Chosen to differ in *itemsize* as well as kind wherever possible: numpy
-    accepts a same-itemsize structured dtype with its fields in the other
-    order and hands C the bytes unchanged (gh-1405 measured exactly that),
-    so a near-miss is the interesting negative, not a wild one.
+    A scalar element's writer converts its argument with numpy's "safe"
+    casting rule, so a dtype that safe-casts INTO the element is not
+    foreign at all: the write succeeds and the test fails with ``DID NOT
+    RAISE``. That is what gh-2067 was -- ``int8`` picked for ``double``,
+    ``float64`` for ``double _Complex``, each a lossless widening numpy
+    performs without asking. So the choice is one rule over the element's
+    numpy KIND, the property safe casting is decided by, never its C
+    spelling:
+
+    - a real element (integer, boolean, floating) gets ``complex128``:
+      numpy never safe-casts a complex value into a real type, and at 16
+      bytes it is wider than every real scalar jm registers, so it differs
+      in itemsize too;
+    - a complex element gets a string dtype: every numeric dtype
+      safe-casts into ``complex128``, and into ``clongdouble``, which IS
+      ``complex128`` where ``long double`` is ``double`` (MSVC ABI, Apple
+      arm64), so no numeric choice is foreign on every platform.
+
+    ``tests/test_gh2067_element_dtypes.py`` asks numpy's own ``can_cast``
+    about every registered scalar, so a new type this rule mishandles is
+    named there rather than in a generated suite.
+
+    A struct element is guarded by ``PyArray_EquivTypes`` (gh-1405), which
+    refuses any dtype not equivalent to the binding's own; ``float64`` is
+    one.
+
+    Examples
+    --------
+    >>> _foreign_dtype({"name": "s", "type": "double"})
+    'np.complex128'
+    >>> _foreign_dtype({"name": "s", "type": "double _Complex"})
+    'np.str_'
+    >>> _foreign_dtype({"name": "iq_t", "fields": [{"name": "i"}]})
+    'np.float64'
     """
-    if _record.is_scalar_element(rec):
-        ct = str(rec.get("type") or "")
-        return "np.float64" if ct != "double" else "np.int8"
-    return "np.float64"
+    if not _record.is_scalar_element(rec):
+        return "np.float64"
+    meta = T._CTYPE_META.get(str(rec.get("type") or ""), {})
+    return "np.str_" if meta.get("kind") == "complex" else "np.complex128"
 
 
-def file_for(root: Path, pkg: str, comp: str, module: str = "") -> Path:
-    """Where the generated invariants live for *comp*.
+def file_for(root: Path, cfg: dict, comp: str, module: str = "") -> Path:
+    """Where the generated invariants live for *comp*, in module *module*.
 
     Beside the user-owned ``test_<comp>.py``, which for an object in a
     module is the MODULE's tests directory -- not the package's. Written
     to the package root the file also imported from the wrong place, and
     the two were the same mistake: an object in a module lives in the
     module, on both faces (gh-1432).
+
+    "The module's directory" is `_config.module_package_resolved`'s, the
+    one `_object` writes ``test_<comp>.py`` into. This read the module id's
+    path, so a module declaring ``package`` (gh-523) got its contract in a
+    directory nothing else uses, importing from a module that does not hold
+    the class (gh-2054). It takes *cfg* so that no caller can hand it the
+    id in place of the answer.
     """
-    pypath = C.module_paths(module).pypath if module else ""
-    base = root / "src" / pkg
-    if pypath:
-        for part in pypath.split("/"):
+    base = root / "src" / C.project_name(cfg)
+    for part in C.module_package_resolved(cfg, module).split("/"):
+        if part:
             base = base / part
     return base / "tests" / f"test_{comp}_invariants.py"
 
@@ -312,7 +349,12 @@ def render(
         # use, so this file cannot disagree with them about where the class
         # is importable from. `from <pkg> import <cls>` is simply wrong for
         # an object in a module, and doppler met it as an ImportError.
-        _class_import_line(pkg, cls, C.module_of(cfg, comp) or ""),
+        # gh-2054: from the module's package, not its id.
+        _class_import_line(
+            pkg,
+            cls,
+            C.module_package_resolved(cfg, C.module_of(cfg, comp)),
+        ),
         "",
         "",
     ]
@@ -508,7 +550,7 @@ def write(root: Path, cfg: dict, comp: str, pkg: str) -> bool:
     )
     core_c = core.read_text(encoding="utf-8") if core.exists() else ""
     text = render(cfg, comp, pkg, found, core_c, root)
-    out = file_for(root, pkg, comp, C.module_of(cfg, comp) or "")
+    out = file_for(root, cfg, comp, C.module_of(cfg, comp))
     if not text:
         if out.exists():
             out.unlink()
@@ -519,3 +561,23 @@ def write(root: Path, cfg: dict, comp: str, pkg: str) -> bool:
     out.parent.mkdir(parents=True, exist_ok=True)
     _textio.write_text(out, text)
     return True
+
+
+def sync(root: Path, cfg: dict, comp: str, pkg: str) -> None:
+    """:func:`write`, announced the way a verb announces its other files.
+
+    For the verbs, which print one ``  <verb>  <path>`` line per file they
+    touch. `apply` reports by the bytes a file ends with instead, so it
+    calls :func:`write` and collects the path. One place decides the verb,
+    so a contract that a command created, rewrote or deleted reads the same
+    whichever command did it (gh-1984).
+    """
+    out = file_for(root, cfg, comp, C.module_of(cfg, comp))
+    existed = out.exists()
+    if not write(root, cfg, comp, pkg):
+        return
+    if not out.exists():
+        verb = "remove"
+    else:
+        verb = "update" if existed else "create"
+    print(f"  {verb}  {out}")

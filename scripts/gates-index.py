@@ -19,10 +19,19 @@ instead declares its own obligation in its module docstring::
 
     GATE: every src/ change carries a CHANGELOG entry.
 
-and `make gate-docs-check` fails any repo-wide gate that carries none, so
-the list cannot silently shrink. `make gates-index` prints what is there
-now; `~/.claude/hooks/maintainer-role.sh` calls it at session start, which
-is the one moment it can still change what someone does.
+and `make gates-declared-check` refuses a branch that drops one, so the list
+cannot silently shrink. `make gates-index` prints what is there now;
+`~/.claude/hooks/maintainer-role.sh` calls it at session start, which is the
+one moment it can still change what someone does.
+
+The floor that check holds the list to is DERIVED too (gh-2038): it is the
+list at the branch's merge base, read by this same parse from git's copy of
+the base. It used to be a committed file, one sorted line per gate, and
+every two PRs adding a gate conflicted there -- four hand rebases in one
+batch over a file that held no decision. Now a new gate is protected the
+moment it merges, with no second file to touch, and a branch that retires
+one on purpose says so where a reviewer reads it: a ``Gate-Retired:``
+trailer on one of its commits.
 
 Deliberately ONE line each. This is an index, not documentation -- the
 reason lives in the gate's own docstring, where the person who trips it is
@@ -31,14 +40,30 @@ already looking.
 
 from __future__ import annotations
 
+import argparse
 import ast
+import io
 import re
+import subprocess
 import sys
-from pathlib import Path
+import tarfile
+import tempfile
+from fnmatch import fnmatch
+from pathlib import Path, PurePosixPath
 
 #: The declaration. Indented continuations belong to it, so a wrapped
 #: obligation stays one entry.
 _GATE = re.compile(r"^GATE:\s*(.+)$")
+
+#: What may declare a gate: a test module directly under ``tests/``, and a
+#: ``# GATE:`` comment in one of these makefiles. Read from the working tree
+#: and, for the floor, from git's copy of the base -- one list for both.
+TESTS_GLOB = "test_*.py"
+MAKEFILES = ("Makefile", "local.mk")
+
+#: How a branch retires a gate on purpose: a trailer on one of its commits,
+#: naming the gate as the refusal prints it.
+RETIRED = re.compile(r"^Gate-Retired:[ \t]*(\S.*?)[ \t]*$", re.M)
 
 
 def obligation(source: str) -> str:
@@ -99,16 +124,17 @@ def declared_gates(tests: Path) -> "list[str]":
     """
     names = [
         path.stem
-        for path in tests.glob("test_*.py")
+        for path in tests.glob(TESTS_GLOB)
         if obligation(path.read_text(encoding="utf-8"))
     ]
     # Makefile gates ride the same ratchet. Leaving them out would have
     # left `changelog-check` -- the first rule this index was written for --
     # free to lose its declaration silently.
     # The whole text, stripped. A truncated key cut mid-word left a
-    # trailing space that the floor file's own parser then stripped, so the
+    # trailing space that the old floor file's parser then stripped, so the
     # set never matched itself across one write/read -- a key has to
-    # survive the round trip it is stored through.
+    # survive the round trip it is named through, now a `Gate-Retired:`
+    # trailer, whose parse strips it too.
     names += [
         f"{where}:{what}".strip()
         for where, what in makefile_obligations(tests.parent)
@@ -126,7 +152,7 @@ def makefile_obligations(root: Path) -> "list[tuple[str, str]]":
     makefile declares one, on the same terms.
     """
     out: list[tuple[str, str]] = []
-    for name in ("Makefile", "local.mk"):
+    for name in MAKEFILES:
         path = root / name
         if not path.exists():
             continue
@@ -153,7 +179,7 @@ def makefile_obligations(root: Path) -> "list[tuple[str, str]]":
 def collect(tests: Path) -> "list[tuple[str, str]]":
     """Every (gate, obligation) pair, in the order they should be read."""
     out: list[tuple[str, str]] = []
-    for path in sorted(tests.glob("test_*.py")):
+    for path in sorted(tests.glob(TESTS_GLOB)):
         text = path.read_text(encoding="utf-8")
         got = obligation(text)
         if got:
@@ -162,32 +188,99 @@ def collect(tests: Path) -> "list[tuple[str, str]]":
     return out
 
 
-def ratchet_path(root: Path) -> Path:
-    """Where the floor lives."""
-    return root / "tests" / "gates-declared.txt"
+# ── The ratchet ──────────────────────────────────────────────────────────────
 
 
-def check(root: Path) -> int:
-    """Fail when the recorded set and the declared set differ at all.
+def _git(root: Path, *args: str) -> "subprocess.CompletedProcess[bytes]":
+    return subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, check=False
+    )
 
-    A declared gate that lost its obligation, or vanished, is refused: that
-    is the ratchet. A NEW gate that is not recorded is refused too. It was
-    free once -- "adding one must not need a second commit" -- and 37 gates
-    then sat unrecorded for weeks, the whole c_prefix series among them, so
-    the ratchet protected none of them. Recording costs no second commit:
-    `make gates-index-update` in the same one.
+
+def merge_base(root: Path, ref: str) -> str:
+    """Where this branch left *ref*: the floor is the gates declared there.
+
+    Fails closed, as `changelog-check` does with the same question: a check
+    that cannot reach its reference has not passed. CI's Lint job fetches
+    the whole history (``fetch-depth: 0``) and passes the PR's base SHA.
     """
-    tests = root / "tests"
-    now = set(declared_gates(tests))
-    floor_file = ratchet_path(root)
-    floor = set()
-    if floor_file.exists():
-        floor = {
-            line.strip()
-            for line in floor_file.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.startswith("#")
-        }
-    lost = sorted(floor - now)
+    r = _git(root, "merge-base", "HEAD", ref)
+    if r.returncode:
+        raise SystemExit(
+            f"gates-declared-check: no merge base with {ref} -- fetch it"
+            " (CI needs fetch-depth: 0) or set GATES_BASE."
+        )
+    return r.stdout.decode().strip()
+
+
+def gates_at(root: Path, rev: str) -> "list[str]":
+    """`declared_gates` over the tree at *rev*.
+
+    The same parse, over git's copy of the files it reads, so the floor and
+    the tree it is compared with cannot be read two ways -- the old
+    committed floor was written by whatever parser last ran the update.
+    """
+    listed = _git(root, "ls-tree", "-r", "--name-only", rev).stdout.decode()
+    paths = [
+        p
+        for p in listed.splitlines()
+        if p in MAKEFILES
+        or (
+            str(PurePosixPath(p).parent) == "tests"
+            and fnmatch(PurePosixPath(p).name, TESTS_GLOB)
+        )
+    ]
+    if not paths:  # `git archive` with no path archives everything
+        return []
+    tar = _git(root, "archive", "--format=tar", rev, "--", *paths).stdout
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        (base / "tests").mkdir()
+        with tarfile.open(fileobj=io.BytesIO(tar)) as members:
+            for member in members.getmembers():
+                data = members.extractfile(member)
+                if data is not None:
+                    (base / member.name).write_bytes(data.read())
+        return declared_gates(base / "tests")
+
+
+def retired(root: Path, base: str) -> "set[str]":
+    """The gates this branch's commits retire, one ``Gate-Retired:``
+    trailer each.
+
+    >>> sorted(RETIRED.findall("fix: x\\n\\nGate-Retired: test_a \\n"))
+    ['test_a']
+    """
+    log = _git(root, "log", "--format=%B", f"{base}..HEAD").stdout.decode()
+    return set(RETIRED.findall(log))
+
+
+def _where(name: str) -> str:
+    """The file a gate is declared in, from its name."""
+    if ":" in name:  # a makefile gate, keyed by its text
+        return name.split(":", 1)[0]
+    return f"tests/{name}.py"
+
+
+def check(root: Path, base_ref: str) -> int:
+    """Refuse a gate declared at the merge base that the tree no longer
+    declares, unless a commit on this branch retires it.
+
+    Both sides are derived, so a new gate needs nothing but its own file:
+    it is in the floor the moment it merges. That is what the committed
+    floor got wrong twice over -- every two gate PRs conflicted on it, and
+    a new gate had to be recorded in it or the ratchet protected nothing
+    (37 sat unrecorded for weeks before that was refused).
+
+    The tree, not HEAD: an uncommitted drop is refused before it is
+    committed. On a push to main the merge base is HEAD itself, so only
+    such a drop can fail there; the PR run, against its base, is the one
+    that stops a committed one -- as with `changelog-check`.
+    """
+    base = merge_base(root, base_ref)
+    now = set(declared_gates(root / "tests"))
+    floor = set(gates_at(root, base))
+    lost = sorted(floor - now - retired(root, base))
     if lost:
         print(
             "error: these gates no longer declare what they enforce, so"
@@ -195,57 +288,41 @@ def check(root: Path) -> int:
             file=sys.stderr,
         )
         for name in lost:
-            print(f"  {name}", file=sys.stderr)
+            print(f"  {name}  (declared in {_where(name)})", file=sys.stderr)
         print(
-            "\nEither restore the `GATE:` line in the module docstring, or --"
-            "\nif the gate is genuinely gone -- run"
-            " `make gates-index-update`\nand commit the result, so the"
-            " removal is reviewed rather than silent.\n",
+            "\nEither restore the `GATE:` line where it was declared, or --"
+            "\nif the gate is genuinely gone -- say so in a commit on this"
+            "\nbranch, one trailer line per gate, so the removal is reviewed"
+            "\nrather than silent:\n",
             file=sys.stderr,
         )
+        for name in lost:
+            print(f"  Gate-Retired: {name}", file=sys.stderr)
+        print(file=sys.stderr)
         return 1
-    gained = sorted(now - floor)
-    if gained:
-        print(
-            "error: these gates declare an obligation but are not recorded,"
-            "\nso nothing refuses it if one later drops its `GATE:` line:\n",
-            file=sys.stderr,
-        )
-        for name in gained:
-            print(f"  {name}", file=sys.stderr)
-        print(
-            "\nRun `make gates-index-update` and commit the result with the"
-            " gate.\n",
-            file=sys.stderr,
-        )
-        return 1
-    print(f"gates-check: {len(now)} declared, all recorded, none lost")
-    return 0
-
-
-def update(root: Path) -> int:
-    """Record the current set as the new floor."""
-    tests = root / "tests"
-    names = declared_gates(tests)
-    ratchet_path(root).write_text(
-        "# Gates declaring an obligation, via a `GATE:` line in their\n"
-        "# module docstring. `make gates-index` prints them; this file is\n"
-        "# the ratchet that keeps one from quietly dropping out.\n"
-        "# Regenerate with `make gates-index-update`.\n"
-        + "\n".join(names)
-        + "\n",
-        encoding="utf-8",
+    print(
+        f"gates-declared-check: {len(now)} declared, none lost since"
+        f" {base[:12]}"
     )
-    print(f"gates-index: recorded {len(names)} declared gate(s)")
     return 0
 
 
 def main(argv: "list[str]") -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="refuse a gate the merge base declares and the tree does not",
+    )
+    parser.add_argument(
+        "--base",
+        default="origin/main",
+        help="what the branch is measured against (default: origin/main)",
+    )
+    args = parser.parse_args(argv)
     root = Path(__file__).resolve().parent.parent
-    if "--check" in argv:
-        return check(root)
-    if "--update" in argv:
-        return update(root)
+    if args.check:
+        return check(root, args.base)
 
     found = collect(root / "tests")
     if not found:

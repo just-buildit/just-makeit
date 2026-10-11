@@ -40,6 +40,7 @@ import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -53,9 +54,7 @@ from test_composer_codegen import (  # noqa: E402
 
 _SRC = Path(__file__).parent.parent / "src" / "just_makeit"
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
 # -- the source: no generator converts an argument around the helper ---------

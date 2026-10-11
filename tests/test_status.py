@@ -1,6 +1,7 @@
 """Integration tests for `just-makeit status`."""
 
 from _jminc import INC_ROOT  # noqa: E402
+import re
 import sys
 from pathlib import Path
 
@@ -8,6 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit import _config as C
+from just_makeit._apply import run as apply_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._status import run as status_run
@@ -81,12 +84,40 @@ class TestStatus:
         err = capsys.readouterr().err
         assert "just-makeit.toml" in err
 
-    def test_empty_manifest_is_noop(self, tmp_path, capsys):
+    def test_empty_manifest_is_checked(self, tmp_path, capsys):
+        """gh-2076: a manifest declaring no component still owns the
+        project's own files -- the root CMakeLists, the version copies --
+        so `status` checks them and `apply` writes them. Both stopped early
+        on one, and a bare project read clean because nothing was looked
+        at."""
         dest = tmp_path / "empty"
         new_run("empty", dest)
-        # `jm new` without --object produces a manifest with no
-        # components; status should not crash.
-        drift = status_run(dest)
+        capsys.readouterr()
+        # Clean on its merits: files were compared, not skipped.
+        assert status_run(dest) == 0
         out = capsys.readouterr().out
-        assert drift == 0
-        assert "nothing to status" in out
+        assert re.search(r"up to date; [1-9]\d* manifest-owned", out), out
+
+        # A [project] key whose wiring `apply` writes is drift `status`
+        # sees and `apply` clears, with no component declared.
+        cfg = C.load(dest)
+        cfg["project"]["c_deps"] = ["vend"]
+        C.save(dest, cfg)
+        assert status_run(dest) == 1
+        assert "~ CMakeLists.txt" in capsys.readouterr().out
+        apply_run(dest)
+        cmake = (dest / "CMakeLists.txt").read_text(encoding="utf-8")
+        assert "add_subdirectory(native/src/vend)\n" in cmake
+        capsys.readouterr()
+        assert status_run(dest) == 0
+
+        # And a version copy that disagrees with the manifest gates.
+        pyproject = dest / "pyproject.toml"
+        pyproject.write_text(
+            pyproject.read_text(encoding="utf-8").replace(
+                'version = "0.1.0"', 'version = "0.2.0"', 1
+            ),
+            encoding="utf-8",
+        )
+        assert status_run(dest) == 1
+        assert "! pyproject.toml" in capsys.readouterr().out

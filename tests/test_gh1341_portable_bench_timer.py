@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
+from _jm_bench import materialize_bench
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -71,6 +73,8 @@ def benched(tmp_path) -> Path:
     _silent(
         method_run, root, "fir", "tweak", None, "float", "float", False, []
     )
+    # gh-1987: `jm method` no longer renders the bench; `apply` does.
+    materialize_bench(root, "fir")
     return root
 
 
@@ -192,8 +196,7 @@ class TestTheWindowsScalingIsExactAndCannotOverflow:
 
 
 @pytest.mark.skipif(
-    not shutil.which("cmake")
-    or not any(shutil.which(c) for c in ("cc", "gcc", "clang")),
+    not shutil.which("cmake") or default_cc() is None,
     reason="no C toolchain",
 )
 class TestItStillBuildsAndMeasures:

@@ -27,9 +27,11 @@ from __future__ import annotations
 
 from . import _textio
 
+import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -249,6 +251,7 @@ def _collect_c(
     optional: "frozenset[str]" = frozenset(),
     timeout: "float | None" = C.DEFAULT_BENCH_TIMEOUT,
     timed_out: "list[str] | None" = None,
+    failed: "list[str] | None" = None,
 ) -> dict | None:
     """Build + run each component's bench binary; return one merged report.
 
@@ -266,6 +269,21 @@ def _collect_c(
     partial sections are lost with it: `jm_bench_write_json` writes once, at
     the end of ``main``.
 
+    A binary that fails costs that binary the same way (gh-2189): it is
+    reported as ``failed`` with its exit status and its stderr, appended to
+    *failed* for the caller to fail on, and the loop moves on. Failing is a
+    non-zero exit, or an exit 0 with no JSON, or with a JSON that does not
+    parse. Before this the exit status was never read and a missing JSON was
+    skipped without a word, so a bench that crashed, or one that refused to
+    write a short set, was simply absent from a run that exited 0. A JSON a
+    failed binary did write is not read: the binary said its run is not
+    good. A target that built but whose binary cannot be found is a failure
+    too, for the same reason: it was skipped without a word.
+
+    A binary's stderr is captured so a failure can quote it, and is passed
+    on to ours after every run, so a run that did not fail shows what it
+    always showed.
+
     A binary that ran and recorded nothing is reported as ``silent``, read
     from the JSON it wrote rather than predicted from its source (gh-1691):
     the artifact is the one place where whether it measured anything is a
@@ -281,14 +299,35 @@ def _collect_c(
                 continue
             binary = _find_bench_binary(build_dir, comp)
             if binary is None:
+                # The target built, so this is not a bad guess to skip: the
+                # benchmark exists and jm cannot run it.
+                _report_failed(
+                    f"bench_{comp}_core (no binary found)",
+                    [
+                        f"the target built, but no bench_{comp}_core is"
+                        f" under {build_dir}"
+                    ],
+                    failed,
+                )
                 continue
             print(f"  run        bench_{comp}_core", flush=True)
             jf = tmpd / f"bench_{comp}_core.json"
+            ef = tmpd / f"bench_{comp}_core.stderr"
+            rc: "int | None"
             try:
-                subprocess.run(
-                    [str(binary.resolve())], cwd=tmp, timeout=timeout
-                )
+                with open(ef, "wb") as err:
+                    rc = subprocess.run(
+                        [str(binary.resolve())],
+                        cwd=tmp,
+                        timeout=timeout,
+                        stderr=err,
+                    ).returncode
             except subprocess.TimeoutExpired:
+                rc = None
+            stderr = ef.read_text(encoding="utf-8", errors="replace")
+            ef.unlink()
+            if rc is None:
+                sys.stderr.write(stderr)
                 print(
                     f"  timeout    bench_{comp}_core (over {timeout:g} s;"
                     " skipped, the other benchmarks still run)",
@@ -301,13 +340,29 @@ def _collect_c(
                 if jf.exists():
                     jf.unlink()
                 continue
-            if not jf.exists():
-                continue
-            try:
-                data = json.loads(jf.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
+            data: dict = {}
+            why: "str | None" = None
+            if rc != 0:
+                why = _exit_status(rc)
+            elif not jf.exists():
+                why = "exit 0, wrote no JSON"
+            else:
+                try:
+                    data = json.loads(jf.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    why = "exit 0, its JSON does not parse"
+            if jf.exists():
                 jf.unlink()
+            if why is not None:
+                quoted = stderr.rstrip("\n").splitlines()
+                _report_failed(
+                    f"bench_{comp}_core ({why})",
+                    quoted or ["(nothing on stderr)"],
+                    failed,
+                )
                 continue
+            sys.stderr.write(stderr)
+            sys.stderr.flush()
             if not data.get("benchmarks"):
                 print(
                     f"  silent     bench_{comp}_core (ran, and recorded no"
@@ -317,7 +372,6 @@ def _collect_c(
             for entry in data.get("benchmarks", []):
                 entry["name"] = f"{comp}::{entry.get('name', '')}"
                 benchmarks.append(entry)
-            jf.unlink()
 
     if not benchmarks:
         return None
@@ -327,6 +381,36 @@ def _collect_c(
         "commit_info": _commit_info(),
         "benchmarks": benchmarks,
     }
+
+
+def _exit_status(rc: int) -> str:
+    """``exit N``, or ``signal N`` for a process a signal ended.
+
+    Negative on POSIX: the process died of a signal (a crash or an abort),
+    which no exit code was ever written for.
+    """
+    return f"signal {-rc}" if rc < 0 else f"exit {rc}"
+
+
+def _report_failed(
+    run: str, detail: list[str], failed: "list[str] | None"
+) -> None:
+    """Name a benchmark run that failed, say why, and record it (gh-2189).
+
+    *run* is ``bench_<comp>_core (<why>)`` or ``pytest <target> (<why>)``,
+    which is also what *failed* carries and what the snapshot and the closing
+    summary name. *detail* is printed indented under it, so it reads as that
+    run's, not as jm's: a binary's stderr, or where the rest is to be found.
+    """
+    print(
+        f"  failed     {run}; the other benchmarks still run",
+        file=sys.stderr,
+    )
+    for line in detail:
+        print(f"    {line}", file=sys.stderr)
+    sys.stderr.flush()
+    if failed is not None:
+        failed.append(run)
 
 
 # ── run: Python ────────────────────────────────────────────────────────────────
@@ -366,21 +450,164 @@ def _has_pytest_benchmark(python: str) -> bool:
     )
 
 
+# gh-1915. pytest's own default collects only `test_*.py`, so the `bench_*.py`
+# a generated project writes was never run and `jm bench` reported no Python
+# benchmarks. These are doppler's `python_files`, the set a bench file needs.
+# Passed on the command line, so the run does not depend on the project's own
+# pyproject carrying them (and overrides one that sets others).
+_PYTHON_BENCH_FILES = "python_files=test_*.py bench_*.py"
+
+
+def _python_bench_files(
+    root: Path, python: str, timeout: "float | None" = None
+) -> list[str]:
+    """Return the test modules pytest collects under ``src/``, in order.
+
+    gh-1841. The list is asked of pytest (``--collect-only``), not guessed
+    from file names: pytest decides what it collects, so it says what runs.
+    Each file is returned once, in the order pytest first reached it.
+
+    gh-2135. The listing imports every file, so one slow import would hold it
+    past any budget. Bounded by *timeout*; when it runs out, the files are the
+    ones jm's own ``python_files`` pattern names, each of which then gets its
+    own budgeted run. A file that is not a benchmark produces no JSON and is
+    skipped as before, so only the listing's cost changes, not the result.
+    """
+    try:
+        r = subprocess.run(
+            [
+                python,
+                "-m",
+                "pytest",
+                "src/",
+                "--collect-only",
+                "-q",
+                "-o",
+                _PYTHON_BENCH_FILES,
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            env=child_pytest_env(),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            "  listing    pytest --collect-only src/ ran over its budget; "
+            "running each bench_/test_ file under its own",
+            file=sys.stderr,
+            flush=True,
+        )
+        # The same patterns pytest is told to use, read from the one place they
+        # are declared, so this fallback cannot disagree with the listing.
+        names = _PYTHON_BENCH_FILES.split("=", 1)[1].split()
+        found = sorted(p for pat in names for p in (root / "src").rglob(pat))
+        return [p.relative_to(root).as_posix() for p in found]
+    # gh-1950's exit 5: pytest collected nothing, which is a project with no
+    # Python benchmarks, not a failure. Any other non-zero exit means a file
+    # did not collect (an import or syntax error), and the listing above
+    # holds only the files that did. Returning it would drop that file's
+    # results with no error; the failure is the precedent a manifest
+    # component's failed build sets: name it and stop.
+    if r.returncode not in (0, 5):
+        broken = sorted(set(_COLLECT_ERROR_RE.findall(r.stdout + r.stderr)))
+        names = ", ".join(broken) or "a file under src/"
+        print(
+            f"error: pytest could not collect {names}; jm bench would drop "
+            "its results, so it stops here.",
+            file=sys.stderr,
+        )
+        sys.stderr.write(r.stdout + r.stderr)
+        sys.exit(1)
+    files: list[str] = []
+    for line in r.stdout.splitlines():
+        # A collected item is `path::name`; the summary lines have no `::`.
+        path, sep, _ = line.partition("::")
+        if sep and path not in files:
+            files.append(path)
+    return files
+
+
+#: The file a collection error names: pytest prints ``ERROR <path>.py`` or
+#: ``ERROR collecting <path>.py`` for each file it could not import.
+_COLLECT_ERROR_RE = re.compile(r"^ERROR (?:collecting )?(\S+\.py)", re.M)
+
+
+def _file_nodes(
+    root: Path, python: str, path: str, timeout: "float | None"
+) -> "list[str] | None":
+    """The benchmark node ids pytest collects in one file (gh-2135).
+
+    Asked of pytest for the same reason the file list is (`_python_bench_files`):
+    pytest decides what a benchmark is, so this names what a per-benchmark run
+    would run. A node id is ``path::name``, and a parametrised case keeps its
+    brackets, so each id is one benchmark.
+
+    The collection imports the file, so a file whose import is slow times out
+    here too. It is bounded by the same *timeout* as the runs, because an
+    unbounded collect would hang where the run it replaces would not; None is
+    returned when it does not finish in time.
+    """
+    try:
+        r = subprocess.run(
+            [
+                python,
+                "-m",
+                "pytest",
+                path,
+                "--collect-only",
+                "-q",
+                "-o",
+                _PYTHON_BENCH_FILES,
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            env=child_pytest_env(),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    return [
+        line.strip()
+        for line in r.stdout.splitlines()
+        if line.strip().startswith(path + "::")
+    ]
+
+
 def _run_python(
     root: Path,
     python: str,
     timeout: "float | None" = C.DEFAULT_BENCH_TIMEOUT,
     timed_out: "list[str] | None" = None,
+    failed: "list[str] | None" = None,
 ) -> dict | None:
-    """Run pytest-benchmark over ``src/``; return its (untrimmed) report.
+    """Run pytest-benchmark over each benchmark file; return one report.
 
     Returns None when the pytest-benchmark plugin or any benchmark is
-    absent — a project may legitimately ship only C benchmarks.
+    absent -- a project may legitimately ship only C benchmarks.
 
-    The whole suite is one run under one *timeout* (``None``: no limit),
-    because pytest-benchmark writes its JSON once, at the end. Past it the
-    Python side is reported as ``timeout`` and appended to *timed_out*; the C
-    side, already collected, is unaffected (gh-1687).
+    gh-1841. pytest-benchmark writes its JSON once, at the end of a session,
+    so one session for the whole tree meant one slow benchmark's timeout
+    discarded every Python result of the run. Each file is its own pytest run
+    under its own *timeout* (``None``: no limit).
+
+    gh-2135. A file past its budget used to lose every benchmark in it, the
+    fast ones too, since pytest-benchmark writes its JSON once per run. Now a
+    file that times out is listed, then run again one benchmark at a time, each
+    under the same budget. The fast ones keep their results; a slow one is named
+    in *timed_out* as ``pytest <node id>``, the C side's convention with the
+    benchmark rather than the file. A file that cannot be listed, because its
+    collection timed out or failed, is named as ``pytest <file>``.
+
+    The cost of a file that times out is one budget for the file, then one
+    budget for each of its k slow benchmarks: 1 + k budgets, plus one more when
+    the listing itself runs out. The common path is unchanged: one run per file,
+    and the extra work only where the first run timed out.
+
+    gh-2189. A run that fails -- a benchmark that raised or whose test failed,
+    or a run that broke -- is named in *failed*, as the C side names a failed
+    binary, and its JSON is not read. See `_run_one`.
     """
     if not _has_pytest_benchmark(python):
         print(
@@ -388,41 +615,135 @@ def _run_python(
             "in the project venv."
         )
         return None
+    merged: dict | None = None
+    for path in _python_bench_files(root, python, timeout):
+        data = _run_one(
+            root, python, [path], timeout, timed_out=None, failed=failed
+        )
+        if data is _TIMED_OUT:
+            print(
+                f"  timeout    pytest --benchmark-only {path} (over"
+                f" {timeout:g} s); running its benchmarks one at a time",
+                file=sys.stderr,
+                flush=True,
+            )
+            nodes = _file_nodes(root, python, path, timeout)
+            if not nodes:
+                # No benchmark could be listed: the collection timed out or
+                # failed. The file's timeout is then the only record of it, so
+                # it is named, as the file-level run always was.
+                print(
+                    f"  timeout    pytest --benchmark-only {path} (no"
+                    " benchmarks could be listed in its budget)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if timed_out is not None:
+                    timed_out.append(f"pytest {path}")
+                continue
+            data = None
+            for node in nodes:
+                one = _run_one(
+                    root, python, [node], timeout, timed_out, failed=failed
+                )
+                if one is _TIMED_OUT or one is None:
+                    continue
+                if data is None:
+                    data = one
+                else:
+                    data.setdefault("benchmarks", []).extend(
+                        one.get("benchmarks", [])
+                    )
+        if data is None or data is _TIMED_OUT:
+            continue
+        if merged is None:
+            merged = data
+        else:
+            merged.setdefault("benchmarks", []).extend(
+                data.get("benchmarks", [])
+            )
+    if merged is not None:
+        _qualify_python_names(merged)
+    return merged
+
+
+#: Returned by `_run_one` when the budget ran out, so a caller can tell it
+#: from a run that produced no benchmarks (None).
+_TIMED_OUT = object()
+
+
+def _run_one(
+    root: Path,
+    python: str,
+    targets: list[str],
+    timeout: "float | None",
+    timed_out: "list[str] | None",
+    failed: "list[str] | None" = None,
+):
+    """One pytest-benchmark run over *targets*; its report, None, or _TIMED_OUT.
+
+    A run that exceeds *timeout* appends each target to *timed_out* and returns
+    _TIMED_OUT. The file-level call passes None, so a file that is then retried
+    one benchmark at a time is not named before its benchmarks have been tried.
+
+    gh-2189. pytest's exit status is read. 0 is every benchmark passed and 5
+    is nothing collected (gh-1950's "no Python benchmarks"); anything else is
+    a benchmark that raised, a test that failed after its benchmark ran, or a
+    run that broke. That run is reported as ``failed`` and appended to
+    *failed*, and None is returned without reading its JSON: pytest-benchmark
+    keeps the timing of a test that failed after its benchmark ran, so a
+    failed run's JSON can hold a number for code whose test says it is
+    wrong. pytest's own report, printed above it, names the test.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "py.json"
         cmd = [
             python,
             "-m",
             "pytest",
-            "src/",
+            *targets,
             "--benchmark-only",
             f"--benchmark-json={report}",
             "-q",
+            "-o",
+            _PYTHON_BENCH_FILES,
         ]
-        print("  run        pytest --benchmark-only", flush=True)
+        print(
+            f"  run        pytest --benchmark-only {' '.join(targets)}",
+            flush=True,
+        )
         try:
-            subprocess.run(
-                cmd, cwd=str(root), timeout=timeout, env=child_pytest_env()
-            )
+            rc = subprocess.run(
+                cmd,
+                cwd=str(root),
+                timeout=timeout,
+                env=child_pytest_env(),
+            ).returncode
         except subprocess.TimeoutExpired:
-            print(
-                f"  timeout    pytest --benchmark-only (over {timeout:g} s;"
-                " no Python results)",
-                file=sys.stderr,
-                flush=True,
-            )
             if timed_out is not None:
-                timed_out.append("pytest --benchmark-only")
+                for target in targets:
+                    print(
+                        f"  timeout    pytest --benchmark-only {target} (over"
+                        f" {timeout:g} s; no results for it)",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    timed_out.append(f"pytest {target}")
+            return _TIMED_OUT
+        if rc not in (0, 5):
+            _report_failed(
+                f"pytest {' '.join(targets)} ({_exit_status(rc)})",
+                ["pytest's own report, above, names what failed"],
+                failed,
+            )
             return None
-        # No JSON => no pytest-benchmark plugin, or no benchmarks collected.
+        # No JSON, or an empty one => these targets collected no benchmark.
         if not report.exists():
             return None
         try:
-            data = json.loads(report.read_text(encoding="utf-8"))
+            return json.loads(report.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return None
-        _qualify_python_names(data)
-        return data
 
 
 def _qualify_python_names(data: dict) -> None:
@@ -814,6 +1135,37 @@ def runnable_comps(root: Path, cfg: dict) -> tuple[list[str], list[str], bool]:
     return all_comps + extra, extra, globbed
 
 
+@contextlib.contextmanager
+def _status_to_stderr(enabled: bool):
+    """Send what is written to stdout inside the block to stderr instead.
+
+    gh-1833. ``jm bench --check --json`` owns stdout for its one JSON
+    document, but the build's progress lines, cmake's own output and each
+    benchmark binary's banner all reached the same stream first, so the
+    document did not parse. There are two writers, so two redirects:
+
+    * Python's ``print`` writes through ``sys.stdout``, which is pointed at
+      ``sys.stderr`` for the block;
+    * a child process inherits file descriptor 1 and writes to it directly,
+      so fd 1 is pointed at fd 2 for the block and restored after.
+
+    Does nothing when *enabled* is False, so an ordinary run is untouched.
+    """
+    if not enabled:
+        yield
+        return
+    sys.stdout.flush()
+    saved = os.dup(1)
+    os.dup2(2, 1)
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            yield
+    finally:
+        sys.stdout.flush()
+        os.dup2(saved, 1)
+        os.close(saved)
+
+
 def run(
     root: Path,
     components: list[str] | None = None,
@@ -868,6 +1220,7 @@ def run(
     # the first second rather than after a twenty-minute build.
     budget = C.bench_timeout(cfg, timeout)
     timed_out: list[str] = []
+    failed: list[str] = []
 
     runnable, extra, globbed = runnable_comps(root, cfg)
     if globbed:
@@ -910,16 +1263,19 @@ def run(
             # Name them. A snapshot that silently omits a benchmark looks
             # exactly like one that includes it, which is how four of
             # doppler's went unnoticed for the life of the files.
-            print(f"  extra      {', '.join(extra)}", flush=True)
+            with _status_to_stderr(as_json and check):
+                print(f"  extra      {', '.join(extra)}", flush=True)
 
     bdir = build_dir or (root / "build")
     tag = tag or _tag()
     hdir = _history_dir(root)
     python = _project_python(root)
 
-    # One build covers the C bench binaries and the Python extension.
-    print("  build      project", flush=True)
-    _ensure_built(root, bdir, python)
+    # One build covers the C bench binaries and the Python extension. Its
+    # output is progress, not the result, when the result is the JSON.
+    with _status_to_stderr(as_json and check):
+        print("  build      project", flush=True)
+        _ensure_built(root, bdir, python)
 
     if check:
         _run_check(
@@ -947,6 +1303,7 @@ def run(
             optional=frozenset(extra),
             timeout=budget,
             timed_out=timed_out,
+            failed=failed,
         )
         if creport:
             _trim(creport)
@@ -955,6 +1312,9 @@ def run(
                 # says itself that it is partial: a later reader comparing
                 # against it should not have to guess why a component is gone.
                 creport["timed_out"] = list(timed_out)
+            if failed:
+                # gh-2189: the same marker, for a binary that failed.
+                creport["failed"] = list(failed)
             prev = _prev_snapshot(hdir, tag, is_c=True)
             _save_snapshot(root, hdir, tag, creport, is_c=True)
             _display_table("C benchmarks", creport, prev)
@@ -962,38 +1322,67 @@ def run(
             print("  C benchmarks: none found.")
 
     if do_python:
+        py_timed: list[str] = []
+        py_failed: list[str] = []
         preport = _run_python(
-            root, python, timeout=budget, timed_out=timed_out
+            root,
+            python,
+            timeout=budget,
+            timed_out=py_timed,
+            failed=py_failed,
         )
+        timed_out.extend(py_timed)
+        failed.extend(py_failed)
         if preport and preport.get("benchmarks"):
             _trim(preport)
+            if py_timed:
+                # gh-1841. The same marker the C snapshot carries: the
+                # snapshot says it is partial and names what was skipped.
+                preport["timed_out"] = list(py_timed)
+            if py_failed:
+                # gh-2189: and what failed.
+                preport["failed"] = list(py_failed)
             prev = _prev_snapshot(hdir, tag, is_c=False)
             _save_snapshot(root, hdir, tag, preport, is_c=False)
             _display_table("Python benchmarks", preport, prev)
         else:
             print("  Python benchmarks: none found.")
 
-    _fail_on_timeouts(timed_out, budget)
+    _fail_on_lost_runs(timed_out, failed, budget)
 
 
-def _fail_on_timeouts(timed_out: list[str], budget: float | None) -> None:
-    """Exit 1 naming every benchmark run that hit the budget (gh-1687).
+def _fail_on_lost_runs(
+    timed_out: list[str], failed: list[str], budget: float | None
+) -> None:
+    """Exit 1 naming every benchmark run whose results this run lacks.
+
+    Two causes, each with its own message because each has its own fix: a
+    run that hit the budget (gh-1687), and a benchmark run that failed --
+    a C bench binary or a pytest run (gh-2189). Both are said before the one
+    exit, so a run with both names both.
 
     Called last, after everything that DID finish has been saved: the other
-    benchmarks' numbers are kept, and the failure is still loud. A timeout
-    is not a pass -- the run measured less than it was asked to.
+    benchmarks' numbers are kept, and the failure is still loud. Neither is
+    a pass -- the run measured less than it was asked to.
     """
-    if not timed_out:
-        return
-    print(
-        f"TIMEOUT — {len(timed_out)} benchmark run(s) took longer than"
-        f" {budget:g} s and were skipped: {', '.join(timed_out)}.\n"
-        "  Raise the budget with `jm bench --timeout S` for one run, or"
-        " `[project.bench] timeout = S`\n"
-        "  in just-makeit.toml for every run (0 = no limit).",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    if timed_out:
+        print(
+            f"TIMEOUT — {len(timed_out)} benchmark run(s) took longer than"
+            f" {budget:g} s and were skipped: {', '.join(timed_out)}.\n"
+            "  Raise the budget with `jm bench --timeout S` for one run, or"
+            " `[project.bench] timeout = S`\n"
+            "  in just-makeit.toml for every run (0 = no limit).",
+            file=sys.stderr,
+        )
+    if failed:
+        print(
+            f"FAILED — {len(failed)} benchmark run(s) failed, so their"
+            f" results are not in this run: {', '.join(failed)}.\n"
+            "  Each is reported above, under `failed`.",
+            file=sys.stderr,
+        )
+    if timed_out or failed:
+        sys.exit(1)
 
 
 def _run_check(
@@ -1016,29 +1405,44 @@ def _run_check(
 
     A benchmark run past *budget* fails the gate too, after the comparison
     of everything that did finish is printed: its baseline entries are
-    already ``missing`` (gh-1029), and `_fail_on_timeouts` says why.
+    already ``missing`` (gh-1029), and `_fail_on_lost_runs` says why. A
+    benchmark run that failed (gh-2189) fails it the same way, and the JSON
+    document names it under ``failed``.
     """
     timed_out: list[str] = []
+    failed: list[str] = []
     sides: list[tuple[str, dict | None, dict | None]] = []
-    if do_c:
-        cur = _collect_c(
-            root,
-            bdir,
-            target_comps,
-            optional=optional,
-            timeout=budget,
-            timed_out=timed_out,
-        )
-        if cur:
-            _trim(cur)
-            sides.append(("C", cur, _baseline_snapshot(hdir, True, baseline)))
-    if do_python:
-        cur = _run_python(root, python, timeout=budget, timed_out=timed_out)
-        if cur and cur.get("benchmarks"):
-            _trim(cur)
-            sides.append(
-                ("Python", cur, _baseline_snapshot(hdir, False, baseline))
+    # gh-1833. The benchmarks' own output is progress; the JSON document
+    # printed below is the result, so it is the only thing left on stdout.
+    with _status_to_stderr(as_json):
+        if do_c:
+            cur = _collect_c(
+                root,
+                bdir,
+                target_comps,
+                optional=optional,
+                timeout=budget,
+                timed_out=timed_out,
+                failed=failed,
             )
+            if cur:
+                _trim(cur)
+                sides.append(
+                    ("C", cur, _baseline_snapshot(hdir, True, baseline))
+                )
+        if do_python:
+            cur = _run_python(
+                root,
+                python,
+                timeout=budget,
+                timed_out=timed_out,
+                failed=failed,
+            )
+            if cur and cur.get("benchmarks"):
+                _trim(cur)
+                sides.append(
+                    ("Python", cur, _baseline_snapshot(hdir, False, baseline))
+                )
 
     rows: list[dict] = []
     missing_baseline: list[str] = []
@@ -1058,6 +1462,7 @@ def _run_check(
                     "baseline": baseline or "latest",
                     "missing_baseline": missing_baseline,
                     "timed_out": timed_out,
+                    "failed": failed,
                     "results": rows,
                 },
                 indent=2,
@@ -1108,7 +1513,7 @@ def _run_check(
                     " --allow <name>."
                 )
 
-    _fail_on_timeouts(timed_out, budget)
+    _fail_on_lost_runs(timed_out, failed, budget)
     # gh-1029: `missing` fails alongside `regressed`. See `_compare_reports`
     # for why the gate treats a vanished benchmark as a failure rather than
     # as a note, and why `--allow` is the whole escape hatch it needs.

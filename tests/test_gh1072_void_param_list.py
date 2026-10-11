@@ -54,6 +54,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -63,9 +64,7 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._types import c_param_list  # noqa: E402
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
 def _quiet(fn, *a, **kw):
@@ -354,9 +353,22 @@ class TestThroughTheCliInterface:
         `out_type` appends `<T> *out` into a freshly built list, so the list
         is never empty while the shape is in play. Asserted so the claim in
         this module's docstring cannot quietly stop being true.
+
+        gh-1888: with no params the output's length has to be declared --
+        a fixed `out_type` has nothing to size from and is refused -- so
+        the zero-param shape is the self-sizing one, `out_size` a constant.
         """
         root = self._project(tmp_path)
-        _quiet(function_run, root, "taps", "dsp", params=[], out_type="double")
+        _quiet(
+            function_run,
+            root,
+            "taps",
+            "dsp",
+            params=[],
+            out_type="double",
+            variable_output=True,
+            out_size="64",
+        )
         header = self._header(root)
         assert offending(header) == [], header
         assert "void taps(double *out);" in header
@@ -405,7 +417,7 @@ class TestItActuallyCompiles:
             f'#include "{header.name}"\n',
             encoding="utf-8",
         )
-        cc = shutil.which("cc") or shutil.which("gcc")
+        cc = default_cc()
         inc = root / INC_DIR
         proc = subprocess.run(
             [

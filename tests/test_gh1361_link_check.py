@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -44,9 +45,7 @@ from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
 from just_makeit._remove import run as remove_run  # noqa: E402
 
-_HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and any(
-    shutil.which(c) for c in ("cc", "gcc", "clang")
-)
+_HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
 
 def _quiet(fn, *a, **kw):

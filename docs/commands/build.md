@@ -165,6 +165,24 @@ The builds `jm bench` drives are **not** timed: a cold build on the same board
 took 603 s, and a build that is slow has not failed. Bound a CI job's wall
 clock with the job's own `timeout-minutes:`.
 
+**A benchmark that fails (gh-2189).** A `bench_<comp>_core` that exits
+non-zero, dies of a signal, or exits 0 without writing its JSON (or writing one
+that does not parse) is reported as `failed bench_<comp>_core (<why>)`, with
+its stderr quoted beneath. So is a target that built but whose binary jm cannot
+find. On the Python side, a `pytest` run that exits other than 0 (or 5,
+nothing collected) is reported as `failed pytest <file> (exit N)`: a benchmark
+that raised, or whose test failed after it ran. pytest's own report, printed
+above it, names the test. Like a timeout, a failure costs that benchmark and
+nothing else. The remaining benchmarks still run, the ones that finished are
+saved (the snapshot lists the failure under `"failed"`), and the command then
+exits 1 naming it. A JSON that a failed run did write is not read, since the
+run said it is not good; pytest-benchmark keeps the timing of a test that
+failed after its benchmark ran. Under `--check` the failed benchmark's
+baseline entries are `missing`, the JSON document lists it under `"failed"`,
+and the gate fails. There is no flag that skips a failure; to leave the C
+benchmarks out of a run, name the components you want, or pass
+`--python-only`.
+
 **`silent` from the artifact (gh-1691).** A benchmark that runs and writes an
 empty `"benchmarks": []` is named as `silent bench_<comp>_core`. That is
 read from the JSON the binary wrote, so it holds however the source records —
@@ -401,9 +419,26 @@ regenerated ones, by function name. A signature change (e.g. from `jm add`
 growing a lifecycle function's parameter list) is detected and skipped in
 favor of the fresh body rather than force an incompatible splice. Pass
 `--discard` for the old behavior — a clean reset back to the template
-scaffold, with no preservation attempt. Either way, `git stash` or commit
+scaffold, with no preservation attempt. On a module object `--discard` also
+rebuilds the binding fragments that call into its core, its own
+`<module>_ext_<obj>.c` and each view's, so a constructor change reaches all
+of them (gh-965, gh-2073); a hand-written `*_extra.c` is kept. `jm add` and
+`jm remove state` rebuild this way. Either way, `git stash` or commit
 first — the splice is best-effort text matching, not a guarantee. A single
 confirmation guards the deletion; `--force` skips it.
+
+A regenerate that fails does not cost you the component. When the rebuild's
+`apply` refuses after the delete — over another component's manifest row,
+say — jm puts back every file it had deleted or written and says so. An
+`impl_file` naming a file inside the component is refused before anything
+is deleted, since the rebuild could not read the body back from a file it
+had just removed (gh-1867).
+
+An object in a [`no_generate`](../configuration.md#no_generate-hand-written-extension-modules)
+module is refused, by `regenerate` and by every command that rebuilds through
+it, before anything is asked or written: `jm apply` writes none of that
+module back, so the deletion would be all that happened (gh-2087). Its C is
+yours; edit it by hand.
 
 | Flag        | Description                                                                |
 | ----------- | -------------------------------------------------------------------------- |
@@ -462,9 +497,9 @@ parser:
 
 **Supported keys**
 
-| Key       | Description                                          |
-| --------- | ---------------------------------------------------- |
-| `version` | Project version string stored in `just-makeit.toml`. |
+| Key       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version` | The project version. Writes `[project] version` and every generated copy `status` checks for it (`pyproject.toml`, `bootstrap.toml`, the root `CMakeLists.txt`'s `project(VERSION)`, the `Doxyfile`, `<pkg>_version()`), replacing only the value, and re-renders a `pep723` app (gh-2069). A copy the build derives is left alone; a copy that cannot hold the value (CMake takes integers only, so a pre-release) is named and left, and stays a `VERSION` finding. |
 
 ______________________________________________________________________
 
@@ -472,7 +507,8 @@ ______________________________________________________________________
 
 Synthesise `<comp>_ext.c` and `<comp>.pyi` by reading `<comp>_core.h` directly,
 without consulting `just-makeit.toml`. This is the "point at your C and get
-Python" path. Must be run from the project root.
+Python" path, for a header the manifest does not declare. Must be run from the
+project root.
 
 ```sh
 just-makeit bind engine          # synthesise engine_ext.c from engine_core.h
@@ -485,6 +521,21 @@ field defaults from the reset body) and renders the binding from the same
 context builders the manifest-driven flow uses — so a bound `_ext.c` is
 byte-identical to a scaffolded one.
 
+**A component the manifest declares is refused**, `--check` included: its
+binding is `jm apply`'s, rendered from the manifest, and a warning, a
+`create()` error or a record type is nothing a header says, so a render from
+the header alone would drop it. `jm bind` exits 1 naming `jm regenerate <comp>`
+and `jm apply`, and writes nothing (gh-2072).
+
+**With no `just-makeit.toml`** -- a bare `native/` tree beside a
+`pyproject.toml` -- `jm bind` reads the project off the tree (gh-1895). The
+header layout is where the header is: `native/inc/<pkg>/<comp>/<comp>_core.h`
+(what `jm new` writes) or the older `native/inc/<comp>/<comp>_core.h`, and the
+binding's `#include`s are spelled for that layout. The C prefix is the one the
+header's `_state_t` declares: `<prefix>_<comp>_state_t` binds as
+`c_prefix = "<prefix>"`, a bare `<comp>_state_t` as none. When neither layout
+holds the header, or both do, it exits 1 naming both paths and writes nothing.
+
 **Current scope:** a state struct with scalar and opaque-pointer fields, or
 a forward-declared (opaque) one; a `<pkg>_<comp>_create()` taking the state
 fields in order, where a parameter that matches no field becomes an init
@@ -494,11 +545,14 @@ param; a scalar-in / scalar-out inline `step()`; getters and setters
 scalar argument parse, as a method; and a verb with a
 `<pkg>_<comp>_<verb>_max_out` sibling, as a variable-output method. A
 declaration it finds but cannot parse is skipped with a warning rather than
-failing the run — add that method through the manifest with `jm method`.
+failing the run. A method the header cannot express needs the manifest, and
+once the manifest declares the component its binding is `jm apply`'s.
 
 **`--check` as a CI gate:** run `jm bind <comp> --check` in CI to ensure
 the committed `_ext.c` never silently drifts from the header it was generated
 from. Green means byte-identical; non-zero exit means regenerate and commit.
+A binding that is not on disk at all is a finding too: `--check` exits 1 on
+one line naming the `_ext.c` `jm bind <comp>` would write (gh-2101).
 
 Not yet supported (see [roadmap](../roadmap.md#now-write-it-in-c-get-python-jm-bind)):
 methods with more than one parameter or with an array parameter, and
@@ -541,7 +595,7 @@ Prints a table of files, each in one of these states:
 | `DRIFT`               | An init-param default in the manifest disagrees with the default documented in the component's `_core.h` (gh-442). jm can't tell which side is stale — fix one to match. Also never suppressible.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | yes       |
 | `VERSION`             | A generated file's copy of `[project] version` disagrees with it (gh-1141) — `pyproject.toml`, the top `CMakeLists.txt`'s `project(... VERSION)`, `bootstrap.toml`, the `Doxyfile`'s `PROJECT_NUMBER`, or `<pkg>_version()` in `native/src/<pkg>_lib.c`. All five are create-only, so `apply` rewrites none of them and a bump reaches none of them. jm can't tell which side is stale — a release bumps `pyproject.toml` and never the manifest, so it is often the manifest — so it names both and rewrites neither. Suppressible per file with `status_allow`. Omitting `[project] version` from `just-makeit.toml` makes jm read it from `pyproject.toml` instead, which removes that file from this check entirely (gh-1283) — see [configuration](../configuration.md).                                                                                         | yes       |
 | `ORPHAN`              | A `native/inc/<pkg>/<comp>/<comp>_procglobal.h` on disk for a component that no longer declares `process_global` (gh-1142). The same `apply` that dropped the key stripped the rendezvous from every generated `PyInit_`, so the header — stamped `DO NOT EDIT` — now describes one that is not generated and names a publisher that does not publish. It still compiles; what breaks is a hand-written binding that follows it. jm deletes nothing: remove the file, or re-declare the key.                                                                                                                                                                                                                                                                                                                                                                          | yes       |
-| `DOC`                 | A manifest `doc` carries a numpy section heading (`Parameters` / `----------`) (gh-1154, gh-1493). A `doc` renders **verbatim** on every face, so the heading lays out correctly -- and jm then appends the section it generates itself, so the docstring has two. Write the prose in `doc` and let jm generate the sections, or put the full docstring as Doxygen above the declaration in the component's `_core.h`. Suppressible per entry with `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                    | yes       |
+| `DOC`                 | A manifest `doc` carries a numpy section heading (`Parameters` / `----------`) (gh-1154, gh-1493). A `doc` renders **verbatim** on every face, so the heading lays out correctly -- and jm then appends the section it generates itself, so the docstring has two. Write the prose in `doc` and let jm generate the sections, or put the full docstring as Doxygen above the declaration in the component's `_core.h`. Never reported where the `doc` is the member's whole docstring and jm generates nothing beside it: an `extra_methods` row, a property, a capsule's methods (gh-2059). Suppressible per entry with `status_allow`.                                                                                                                                                                                                                              | yes       |
 | `UNBUILT`             | A `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no build file compiles (gh-806) — usually a renamed component's real suite, left behind while a fresh scaffold took over its target.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | yes       |
 | `CTOR`                | The `<pkg>_<obj>_create()` declaration in the sacred `native/inc/<pkg>/<obj>/<obj>_core.h` takes different parameters from the ones the manifest renders (gh-1076). jm **injects** that declaration, so this is jm verifying what it wrote. It cannot tell which side is stale — fix one to match. Never suppressible: while they disagree, `jm regenerate <obj>` emits a `create()` that does not compile against your `_core.c`.                                                                                                                                                                                                                                                                                                                                                                                                                                    | yes       |
 | `UNCHECKED`           | The `UNBUILT` scan above did not run (gh-1033): a build file enumerates its sources by wildcard, so "is this compiled?" cannot be answered by reading. Reported because the absence of an `UNBUILT` section otherwise means "not checked" and "checked and clean" indistinguishably. Not a gate — no `jm apply` clears a wildcard; name your sources explicitly to put the tree back under the gate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | no        |
@@ -552,7 +606,7 @@ Prints a table of files, each in one of these states:
 | `ROOT CMAKE`          | A fix jm's root `CMakeLists.txt` template carries outside its marked blocks and the project's root file lacks (gh-1459, gh-1471): the combined library's `libm` link (gh-1452), and the Windows build's static library name, DLL exports, default build type, release CRT, complex-range flag and CRT/math defines (gh-1368), and `install-block`: the install section is not jm's managed block, so no packaging fix reaches it (gh-1589; `jm adopt --packaging`). Outside those blocks the file is yours, so `apply` never adds them; each line says what breaks without the fix and where, and `--diff` prints the file against today's render to merge from. Read as CMake commands rather than text, so a formatter's layout or your own equivalent spelling is not reported. Suppress one fix with `CMakeLists.txt:<fix>` in `status_allow`.                    | no        |
 | `LINE ENDINGS`        | A file that differs from jm's render **only** in CRLF versus LF (gh-1641) -- what a Windows checkout without the project's `.gitattributes` gives every file. No compiler, CMake, Python or formatter reads the two differently, so it is neither `STALE` nor `OUTDATED`; `--check` prints the count, the full report the files. `apply` rewrites the files it regenerates as LF and lists them as `eol`. See [Windows](../windows.md#line-endings).                                                                                                                                                                                                                                                                                                                                                                                                                  | no        |
 | `UNANCHORED`          | The top `CMakeLists.txt` has lost a sentinel jm splices against — `# ── Components` or `# ── Modules` (gh-975). Every splice treats a missing anchor as nothing to do, so the wiring was never written and a module with no `add_subdirectory()` is not built at all. Put the line back, or keep that wiring yourself and name the file in `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | yes       |
-| `UNWIRED`             | A component declares a `<X>_core` OBJECT library that the top `CMakeLists.txt` folds into no combined C library (gh-984), so its symbols ship in neither `lib<pkg>.so` nor `lib<pkg>.a` while its header installs anyway. Python is unaffected — the extension links each core directly — which is why this hides. For a core jm generates, `jm apply` writes the missing `target_sources()` line; for one it does not -- a `no_generate` module's or a c_dep's, which get only an `add_subdirectory()` -- the listing says `jm apply` writes no line and prints the lines to add to the root `CMakeLists.txt` yourself (gh-1626). Which applies is read from the replay `status` runs, so the advice is what `apply` actually does. Suppressible per component with `CMakeLists.txt:<core>`, or wholesale with `CMakeLists.txt` if you link your cores your own way. | yes       |
+| `UNWIRED`             | A component declares an OBJECT library (in its CMakeLists, or its `<dir>_extra.cmake` hook) that no `CMakeLists.txt` folds into a combined C library (gh-984), so its symbols ship in neither `lib<pkg>.so` nor `lib<pkg>.a` while its header installs anyway. Python is unaffected — the extension links each core directly — which is why this hides. For a core jm generates, `jm apply` writes the missing `target_sources()` line; for any other -- a `no_generate` module's, a c_dep's, your own -- the listing says `jm apply` writes no line and prints the lines to add to the root `CMakeLists.txt` (gh-1626). Which applies is read from the replay `status` runs: a core that replay still declares and wires (gh-1840). Suppressible per component with `CMakeLists.txt:<core>`, or wholesale with `CMakeLists.txt` if you link your cores your own way. | yes       |
 | `DANGLING`            | The top `CMakeLists.txt` wires a `<X>_core` that no component declares (gh-984) — an interrupted removal or a bad merge. cmake resolves `$<TARGET_OBJECTS:>` at **configure** time, so the project does not build at all. `jm apply` drops the line. Never suppressible.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | yes       |
 | `KWARGS`              | A binding fragment's constructor keywords disagree with the manifest, so the `.pyi` advertises a signature the compiled object rejects (gh-612, gh-823). jm regenerates a kwlist only with the body it belongs to: reconcile the manifest with the binding, or move the hand-written constructor into an `_extra.c`. Suppressible per file with `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | yes       |
 | `RECORDS`             | A record's fields disagree with the manifest: the `.pyi` documents a field the extension does not have, so `.field` raises `AttributeError` on a name a type checker accepts (gh-1290). Delete the record's wrapper and its row and re-run `jm apply`, or keep the binding in an `_extra.c`. Suppressible with `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | yes       |
@@ -932,6 +986,11 @@ and every `[module.X]` into `modules/<name>.toml`, leaving the manifest with
 today. The merged manifest is unchanged, and running it again is a no-op. Must
 be run from the project root.
 
+Fragments load sorted by file name, so the order the manifest lists
+components in can change. The root `CMakeLists.txt` wiring and the umbrella
+header's includes are re-sorted to match — the order `jm apply` writes — and
+nothing in them is added or removed.
+
 ```sh
 just-makeit migrate-to-fragments
 ```
@@ -945,7 +1004,8 @@ ______________________________________________________________________
 
 The objects-only subset of `migrate-to-fragments`: each `[<obj>]` section
 moves to `objects/<obj>.toml` and every `[module.X]` stays inline. Prefer
-`migrate-to-fragments` unless you want the modules to stay put.
+`migrate-to-fragments` unless you want the modules to stay put. It re-sorts
+the root `CMakeLists.txt` wiring and the umbrella header the same way.
 
 ```sh
 just-makeit split-objects
@@ -976,10 +1036,11 @@ ______________________________________________________________________
 
 ## `just-makeit install-deps [path]`
 
-Install the build dependencies: cmake, a C compiler and pkg-config through the
-system package manager when cmake or a C compiler is missing, then numpy and
-just-makeit into a Python venv at `path` (default `/tmp/jm-venv`). It prints
-the `source <path>/bin/activate` line to run. See [Get it](../index.md#get-it).
+Install the build dependencies: cmake, a C compiler, pkg-config and, on Linux,
+patchelf through the system package manager when one of them is missing, then
+numpy and just-makeit into a Python venv at `path` (default `/tmp/jm-venv`).
+It prints the `source <path>/bin/activate` line to run. See
+[Get it](../index.md#get-it).
 
 ```sh
 just-makeit install-deps             # venv at /tmp/jm-venv

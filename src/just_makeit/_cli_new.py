@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from ._cli_parse import parse_state_flag
+from ._report import Refusal
 
 
 def run(args: list[str]) -> None:
@@ -194,31 +195,17 @@ def run(args: list[str]) -> None:
                 print(f"error: {tok} requires a type", file=sys.stderr)
                 sys.exit(1)
             val = remaining[i]
-            if val.endswith("[]"):
-                if tok == "--return-type":
-                    print(
-                        "error: --return-type cannot be an array type.\n"
-                        "Use a scalar type or void.",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                elem = val[:-2]
-                if elem not in T._CTYPE_META:
-                    print(
-                        f"error: --arg-type array element type '{elem}' "
-                        "is not supported.\n"
-                        f"Supported element types: "
-                        f"{', '.join(sorted(T._CTYPE_META))}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-            elif val != "void" and val not in T._CTYPE_META:
+            if val.endswith("[]") and tok == "--return-type":
                 print(
-                    f"error: {tok} '{val}' is not a supported scalar type.\n"
-                    f"Supported: void, {', '.join(sorted(T._CTYPE_META))}",
+                    "error: --return-type cannot be an array type.\n"
+                    "Use a scalar type or void.",
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            # gh-1884: the one answer `jm object` and the manifest ask too.
+            why = T.step_type_error(tok, val)
+            if why:
+                raise Refusal(why)
             if tok == "--arg-type":
                 arg_type = val
             else:

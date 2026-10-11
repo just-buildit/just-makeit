@@ -36,6 +36,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -73,7 +74,10 @@ class TestTheKeyIsPartOfTheManifest:
             "coerce": "bit_pattern",
             "coerce_str_fn": HOST,
         }
-        assert f'coerce_str_fn = "{HOST}"' in _config._inline_field(f)
+        cfg = {
+            "module": {"w": {"kind": "composer", "source": {"fields": [f]}}}
+        }
+        assert f'coerce_str_fn = "{HOST}"' in _config._dump(cfg)
 
     def test_refused_on_a_field_that_does_not_coerce(self) -> None:
         """Read by nobody would be a silent no-op, so it is refused."""
@@ -145,7 +149,7 @@ class TestTheGeneratedBinding:
 def _no_toolchain() -> str | None:
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     return None
 

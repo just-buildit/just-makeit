@@ -88,6 +88,29 @@ def stem(owner: INC.Owner, name: str) -> str:
     return f"{p}_{name}"
 
 
+def implied_prefix(declared: str, name: str) -> "str | None":
+    """The ``c_prefix`` a stem *declared* for *name* carries: :func:`stem`
+    read backwards, from a symbol jm derived.
+
+    ``""`` when *declared* carries none, and None when no prefix derives it
+    (*declared* does not end in ``_<name>``). The answer is only a reading:
+    the caller holds it to :func:`stem` before trusting it, because a *name*
+    that already starts with the prefix is used as is. It is how a header
+    with no manifest beside it says its prefix (`jm bind`, gh-1895), and how
+    :func:`stray_prefixes` reads an include guard.
+
+    >>> implied_prefix("fir", "fir"), implied_prefix("dp_fir", "fir")
+    ('', 'dp')
+    >>> implied_prefix("other", "fir") is None
+    True
+    """
+    if declared == name:
+        return ""
+    if declared.endswith(f"_{name}"):
+        return declared[: -len(name) - 1]
+    return None
+
+
 def backing_stem(owner: INC.Owner, backing: str) -> str:
     """The C stem a capsule / composer module's ``backing`` spells the
     backing API from: ``<stem>_create``, ``<stem>_state_t``, ... (gh-1685).
@@ -194,6 +217,18 @@ def property_getter(stem_: str, prop: str) -> str:
     'dp_fir_get_num_taps'
     """
     return f"{stem_}_get_{prop}"
+
+
+def property_setter(stem_: str, prop: str) -> str:
+    """The derived setter of writable property *prop* on the component whose
+    stem is *stem_*: ``<stem>_set_<prop>`` -- what its binding calls, what
+    jm declares for it, and what a refused assignment's default message
+    names (gh-2182).
+
+    >>> property_setter("dp_acc_trace", "alpha")
+    'dp_acc_trace_set_alpha'
+    """
+    return f"{stem_}_set_{prop}"
 
 
 def container_accessors(stem_: str, p: dict) -> "dict[str, str]":
@@ -1239,13 +1274,13 @@ def stray_prefixes(root: Path, cfg: dict) -> "dict[str, str]":
         if not m:
             continue
         guard, name = m.group(1), comp.upper()
-        expect = upper(cfg, comp)
-        if guard == expect or guard == name:
+        if guard == upper(cfg, comp):
             continue
-        if guard.endswith("_" + name):
-            had = guard[: -len(name) - 1].lower()
-            if had != (want or ""):
-                out[comp] = had
+        # "" is a bare guard and None another component's: neither is a
+        # prefix this tree carries.
+        had = implied_prefix(guard, name)
+        if had and had.lower() != (want or ""):
+            out[comp] = had.lower()
     return out
 
 
@@ -1260,7 +1295,9 @@ IMPL_KEYS = ("impl", "create_impl", "reset_impl", "destroy_impl")
 #: `count_default` (`_context/_methods._count_default_parts`); an object's
 #: `init_post_parse` (`_context/_state`); a handle `create_post`'s `arg`
 #: and its `when` guard (`_handle`); an init-param's `default_raw`, the key
-#: that says "this default is C, not a literal" (`_context/_state`, gh-1671).
+#: that says "this default is C, not a literal" (`_context/_state`, gh-1671);
+#: a variable_output method's `error_sentinel`, the constant its count is
+#: compared with (`_context/_methods._count_refusal_c`, gh-2012).
 #: Any of them can call a derived function -- doppler's
 #: ``out_size = "kaiser_num_taps(...) | 1"`` -- or name a derived type.
 #: `default` is not here: it is C only on an entry that names no enum
@@ -1273,6 +1310,7 @@ C_EXPR_KEYS = (
     "arg",
     "when",
     "default_raw",
+    "error_sentinel",
 )
 
 #: The manifest keys whose value is a free-form C TYPE -- never checked

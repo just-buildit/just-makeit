@@ -515,11 +515,13 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
     #
     # Conditional on `_outbuf.enabled`, like five of the sources above, and
     # for the same reason a hardcoded list would be wrong in both directions:
-    # a gh-412-excluded shape (an array beside other params) generates no
-    # bound at all, and doppler still carries hand-written
-    # `Farrow.delay_max_out` / `Resampler.execute_ctrl_max_out` entries that
-    # are correct and must keep working. Reserving every `*_max_out` name
-    # would refuse exactly those.
+    # a shape it excludes (params beside an `arg_type` input, multi_output)
+    # generates no bound at all, so a hand-written `<m>_max_out` entry there
+    # is correct and must keep working. Reserving every `*_max_out` name
+    # would refuse exactly those. gh-1998 widened `enabled` to an array
+    # beside other params, so doppler's hand-written `Farrow.delay_max_out` /
+    # `Resampler.execute_ctrl_max_out` entries are now jm's to emit, and are
+    # refused here with the instruction to drop them.
     for m in C.methods(cfg, component):
         if not _outbuf.enabled(
             variable_output=bool(m.get("variable_output")),
@@ -530,8 +532,9 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
             continue
         taken[f"{m.get('name', '')}_max_out"] = (
             f"the output bound jm generates for {m.get('name', '')}()",
-            "jm has emitted this since gh-1079, so drop the entry — the"
-            " stub it declared is now jm's own.",
+            "jm has emitted this since gh-1079 (for an array beside other"
+            " params since gh-1998), so drop the entry — the stub it"
+            " declared is now jm's own.",
         )
 
     # The absorbable six come out last, so a source above can never

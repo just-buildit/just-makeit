@@ -12,12 +12,12 @@ import re
 import sys
 from pathlib import Path
 
+from . import _borrow
 from . import _config as C
 from . import _procglobal
 from . import _report
 from . import _context as Ctx
 from . import _render as R
-from . import _types as T
 from ._docstring import class_import_line
 from ._builtins import overridden_builtin_slots, require_param_names
 from . import _docstring
@@ -36,6 +36,7 @@ from ._libwiring import (  # noqa: F401
     component_core_libs,
     declared_cores,
     dep_core_libs,
+    order_sections,
     splice_cmake_component,
 )
 
@@ -121,7 +122,9 @@ def _to_title(snake: str) -> str:
     return C.default_class_name(snake)
 
 
-def standalone_extra_include(root: Path, component: str) -> str:
+def standalone_extra_include(
+    root: Path, component: str, extra_methods: "list[dict]" = ()
+) -> str:
     """``#include`` for a standalone object's hand-written extra (gh-543).
 
     Mirrors what the module aggregator has always done for
@@ -129,11 +132,18 @@ def standalone_extra_include(root: Path, component: str) -> str:
     jm never creates or modifies the file; it only wires it in when it exists,
     so hand-written code survives every regeneration of the glue around it.
 
-    Returns ``""`` when there is no such file, which is the overwhelmingly
-    common case and renders byte-identically to before this slot existed.
+    gh-1997: or when *extra_methods* -- the object's
+    ``[[<obj>.extra_methods]]`` rows -- declares a function the file must
+    define, whether or not it is written yet (gh-1516's rule for a
+    composer): the build fails without it either way, and ``No such file``
+    names the fix, where an undefined function named only the symbol.
+
+    Returns ``""`` when there is no such file and no row, which is the
+    overwhelmingly common case and renders byte-identically to before this
+    slot existed.
     """
     extra = f"{component}_ext_extra.c"
-    if (root / "native" / "src" / component / extra).exists():
+    if extra_methods or (root / "native" / "src" / component / extra).exists():
         return (
             f'#include "{extra}"  /* hand-written — jm never modifies */\n\n'
         )
@@ -207,6 +217,10 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # Seeded here, the one place every component render path passes
         # through, so the five COMPONENT_EXT_C call sites resolve it unchanged.
         "extra_include": "",
+        # gh-1997: the prototypes of the object's `[[<obj>.extra_methods]]`
+        # functions, above the type whose method table names them. Seeded
+        # for the reason `extra_include` is; `make_methods_ctx` fills it.
+        "extra_method_protos": "",
         # gh-1117: the process-global rendezvous. Seeded here for the same
         # reason `extra_include` is -- the five COMPONENT_EXT_C call sites
         # each build their own ctx, and an unset slot would leave a literal
@@ -235,7 +249,7 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # gh-856: [] not None — this seed runs before any manifest is read
         # and never carries a spec, so there is no `exit` to resolve.
         **Ctx.make_destroy_ctx(
-            component, _to_title(component), None, [], csym=csym
+            component, _to_title(component), None, [], csym=csym, lends=False
         ),
         # gh-542: the slots that wrap a reset body — the sacred _core.c
         # function and the generated test defs. Seeded here for the same
@@ -251,9 +265,9 @@ def _write(path: Path, content: str, verb: str = "create") -> None:
 
     gh-1199. `render` leaves an unmatched `<<key>>` as literal text, which is
     right for it — rendering is layered and a slot filled a pass later is
-    normal. It is not right for a FILE. `CMAKE_LISTS_MODULE` has two render
-    sites and one supplied neither `extra_ext_sources` nor `module_comment`,
-    so a module declared `objects = []` was written as
+    normal. It is not right for a FILE. `CMAKE_LISTS_MODULE` had two render
+    sites (one since gh-2070) and one supplied neither `extra_ext_sources`
+    nor `module_comment`, so a module declared `objects = []` was written as
 
         Python3_add_library(mod MODULE WITH_SOABI mod_ext.c<<extra_ext_sources>>)
 
@@ -926,7 +940,70 @@ def _core_h_decl_lines(text: str) -> "list[str]":
     ]
 
 
-def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
+def order_umbrella_includes(text: str, cfg: dict) -> str:
+    """*text*, the umbrella header of the project *cfg* describes, with its
+    component includes in :func:`_config.object_order` (gh-1985).
+
+    The include lines are sorted among the lines they already occupy, so the
+    blank line after each and everything around them stay put; a line the
+    order does not name keeps its place. `apply` sorts the replay's umbrella
+    with this before writing it, and :func:`insert_umbrella_include` sorts
+    what it inserted, so the two cannot disagree on where an include goes.
+
+    >>> cfg = {"project": {"name": "p", "schema": "8"}, "o": {}, "q": {}}
+    >>> text = '#include "p/q/q_core.h"\\n\\n#include "p/o/o_core.h"\\n'
+    >>> print(order_umbrella_includes(text, cfg), end="")
+    #include "p/o/o_core.h"
+    <BLANKLINE>
+    #include "p/q/q_core.h"
+    """
+    rank: dict[str, int] = {}
+    for i, comp in enumerate(C.object_order(cfg)):
+        rank.setdefault(f'#include "{INC.core_include(comp, cfg)}"', i)
+    lines = text.splitlines(keepends=True)
+    slots = [i for i, ln in enumerate(lines) if ln.rstrip("\r\n") in rank]
+    for i, ln in zip(
+        slots,
+        sorted(
+            (lines[i] for i in slots), key=lambda s: rank[s.rstrip("\r\n")]
+        ),
+    ):
+        lines[i] = ln
+    return "".join(lines)
+
+
+def settle_aggregate_order(root: "Path") -> "list[Path]":
+    """Re-sort the root CMakeLists' wiring and the umbrella header's includes
+    into the order the manifest on disk gives them; return what changed.
+
+    For a command that changes that order without adding anything (gh-1985):
+    ``migrate-to-fragments`` and ``split-objects`` move sections into
+    fragments, and a split layout loads its fragments sorted by path, so the
+    manifest's order -- and with it the order `apply` writes both files in --
+    is no longer the one the files were written in. Without this, the
+    command that promises an unchanged project left ``status --check`` red
+    on two files it never mentioned.
+
+    Only the order moves (:func:`_libwiring.order_sections`,
+    :func:`order_umbrella_includes`): no line is added or dropped.
+    """
+    cfg = C.load(root)
+    changed = []
+    for path, order in (
+        (root / "CMakeLists.txt", order_sections),
+        (INC.path(root, f"{C.project_name(cfg)}.h"), order_umbrella_includes),
+    ):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        new = order(text, cfg)
+        if new != text:
+            _textio.write_text(path, new)
+            changed.append(path)
+    return changed
+
+
+def insert_umbrella_include(root: "Path", comp: str) -> bool:
     """Add ``#include "<comp>/<comp>_core.h"`` to the umbrella header.
 
     One inserter for every caller, because there were three and they agreed
@@ -947,8 +1024,16 @@ def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
     did, and it depends on the include guard rather than on a block that
     turned out to be removable.
 
+    gh-1985: and then sorted into :func:`order_umbrella_includes`, the order
+    `apply` writes, read from the manifest on disk -- so the caller saves
+    *comp*'s manifest entry FIRST. Appending alone listed the includes in
+    the order the commands ran, which `apply` rewrote whenever that was not
+    the manifest's (a split layout loads its fragments sorted).
+
     Returns True when the file was written.
     """
+    cfg = C.load(root)
+    umbrella = INC.path(root, f"{C.project_name(cfg)}.h")
     if not umbrella.exists():
         return False
     text = umbrella.read_text(encoding="utf-8")
@@ -959,7 +1044,10 @@ def insert_umbrella_include(umbrella: "Path", comp: str) -> bool:
     if last_endif == -1:
         return False
     _textio.write_text(
-        umbrella, text[:last_endif] + include_line + "\n" + text[last_endif:]
+        umbrella,
+        order_umbrella_includes(
+            text[:last_endif] + include_line + "\n" + text[last_endif:], cfg
+        ),
     )
     return True
 
@@ -1181,6 +1269,16 @@ def run(
     # for every non-replay caller.
     _hint: bool = True,
     declared_methods: "list[dict] | None" = None,
+    # gh-1997: the object's `[[<obj>.extra_methods]]` rows. Manifest-only, so
+    # only `jm apply`'s replay passes them (`_apply._object_kwargs`), for the
+    # reason it passes `destroy`: the binding rendered here is the replay's
+    # final one for an object with no other members.
+    extra_methods: "list[dict] | None" = None,
+    # gh-1882: the manifest's own `reset_impl` / `reset_impl_file`, as
+    # written. Only the replay passes them, so every later render of its
+    # scratch tree reads that reset() is the author's; *reset_impl_body*
+    # is what this render reads.
+    reset_impl_decl: "dict[str, str] | None" = None,
 ) -> None:
     C.require_name(component, "component")
     # gh-910: every OTHER name this object declares, checked here because the
@@ -1303,6 +1401,8 @@ def run(
             # argument, not the manifest: at creation (and in a replay) the
             # component is not in `cfg` until `add_component` below.
             str_hints=state_str_hints,
+            # gh-1882: the argument too, for the same reason.
+            reset_impl=reset_impl_body is not None,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -1336,6 +1436,7 @@ def run(
             no_state=no_state,
             serializable=serializable,
             csym=ctx["csym"],
+            extra_methods=extra_methods,  # gh-1997
         )
     )
     # gh-1509: the C triplet that binding calls, declared in the sacred
@@ -1377,6 +1478,11 @@ def run(
     # that also stamps the SACRED _core.h/_core.c signature, so a fresh
     # scaffold of a fallible destructor gets `int <comp>_destroy(...)` and a
     # `return 0;` stub without any hand edit.
+    _methods_now = (
+        declared_methods
+        if declared_methods is not None
+        else C.methods(cfg, component)
+    )
     ctx.update(
         # gh-856: the replay path this comment already described. C.methods
         # is right for BOTH creation (component absent -> []) and replay.
@@ -1384,13 +1490,15 @@ def run(
             ctx["component"],
             ctx["ComponentW"],
             destroy,
-            declared_methods
-            if declared_methods is not None
-            else C.methods(cfg, component),
+            _methods_now,
             class_name=class_name or "",
             # gh-1326: the standalone creation path dropped it too.
             create_fn=create_fn or "",
             csym=ctx["csym"],
+            # gh-2187: from the state this render holds, as in _object.
+            lends=_borrow.lends_from(
+                _methods_now, C.properties(cfg, component), vars_
+            ),
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
@@ -1413,37 +1521,11 @@ def run(
             ),
         )
     )
-    # Re-generate pyi_examples with the actual package name (not placeholder).
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in (vars_ or [])
-            if not T.parse_array_type(ct)
-        ]
-        if not no_state
-        else []
-    )
     # No module argument: `_init.run` is the standalone-object path (see the
     # note on `doc` above); `_object.py` renders module objects and passes
     # the module id there. The helper is still used so the spelling is
     # shared rather than re-typed (gh-1208).
     import_line = class_import_line(pkg, ctx["Component"])
-    # gh-273: suppress the construction doctest when a required init-param has
-    # no default — there is no valid seed and a validating ctor would reject the
-    # type's zero under `pytest --doctest-glob='*.pyi'`.
-    ctx["pyi_examples"] = (
-        Ctx._pyi_examples_block(
-            scalar_state,
-            bool(array_args),
-            import_line,
-            ctx.get("py_create_args", ""),
-            ctx["Component"],
-            no_reset=no_reset,
-            init_params=init_params,
-        )
-        if scalar_state and not Ctx._unseedable_required(init_params)
-        else ""
-    )
     # Class docstring via the one shared builder (same as the module .pyi path),
     # so the summary/Parameters can never drift between the two generators. The
     # scaffold/create path has only jm's own boilerplate Doxygen in the header,
@@ -1460,7 +1542,11 @@ def run(
         import_line,
         ctx.get("py_create_args", ""),
         doc_blocks=None,
-        custom_reset=bool(init_params) or no_reset,
+        custom_reset=Ctx.reset_is_authors(
+            reset_impl=reset_impl_body is not None,
+            init_params=init_params,
+            no_reset=no_reset,
+        ),
         csym=ctx["csym"],
     )
 
@@ -1612,7 +1698,9 @@ def run(
     # keeps the hook, and rebuilding the binding without the include would
     # leave the file present, preserved, and still compiling into nothing,
     # which is the same silence gh-1202 reports.
-    ctx["extra_include"] = standalone_extra_include(root, comp)
+    ctx["extra_include"] = standalone_extra_include(
+        root, comp, extra_methods or ()
+    )
     bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
     pytest_tmpl = R.PYTEST_TEST_PURE if C.is_pytest(cfg) else R.PYTEST_TEST
     bench_py_tmpl = (
@@ -1754,31 +1842,11 @@ def run(
                 R.owned_packaging(R.render(R.CMAKE_PC_IN, ctx), pc_in.name),
             )
 
-        # Write or update the umbrella header
+        # The umbrella header. Its include line, and the root CMakeLists
+        # wiring, are written after the manifest is saved below (gh-1985).
         umbrella = INC.path(root, f"{pkg}.h")
         if not umbrella.exists():
             _write(umbrella, R.render(R.UMBRELLA_H, ctx))
-        if insert_umbrella_include(umbrella, comp):
-            print(f"  update  {umbrella}")
-
-        # Insert add_subdirectory + target_sources into the `# ── Components`
-        # sentinel section — matches `_object.run`'s placement so a project
-        # built via `jm new --object` and one built via `jm new` + `jm object`
-        # have identical CMakeLists, and so `jm apply`'s aggregate reconcile
-        # is a no-op on either.
-        # gh-1311: a header-only core is an INTERFACE library, which has no
-        # objects to fold into lib<pkg>. Wiring one in is a CONFIGURE error
-        # -- `$<TARGET_OBJECTS:>` is resolved then -- so the project would
-        # not build at all. `_libwiring`'s detector already reaches the same
-        # answer from the tree (it matches `add_library(... OBJECT`); this is
-        # the creation-time half, which emits rather than detects.
-        splice_cmake_component(
-            root,
-            pkg,
-            comp,
-            dep_core_libs(depends_on)
-            + ([] if header_only else [f"{comp}_core"]),
-        )
     else:
         # Patch TARGETS and C_TESTS lists, insert compile rules into Makefile
         mf_path = root / "Makefile"
@@ -1851,8 +1919,40 @@ def run(
     # manifest round-trip. `jm apply` replays through this path, and a key
     # apply silently drops is the second defect gh-519 shipped.
     C.set_destroy_spec(cfg, comp, destroy or {})
+    # gh-1997: and the extra-method rows, for the same reason.
+    C.set_extra_methods(cfg, comp, extra_methods or [])
+    # gh-1882: and the declared reset body, which every later render reads
+    # through `Ctx.manifest_reset_is_authors`.
+    cfg[comp].update(reset_impl_decl or {})
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
+
+    if build == "cmake":
+        # gh-1985: AFTER the save. Both writers place *comp* where `apply`
+        # does, by the order of the manifest on disk, and until it is saved
+        # that manifest has no *comp* to place -- the include went to the
+        # bottom and the block to the top, so a split layout (fragments load
+        # sorted) got the order the commands ran in, which `apply` rewrote.
+        if insert_umbrella_include(root, comp):
+            print(f"  update  {umbrella}")
+        # The add_subdirectory + target_sources, in the `# ── Components`
+        # section -- the same writer `_object.run` uses, so a project built
+        # via `jm new --object` and one built via `jm new` + `jm object` have
+        # identical CMakeLists, and `jm apply`'s aggregate reconcile is a
+        # no-op on either.
+        # gh-1311: a header-only core is an INTERFACE library, which has no
+        # objects to fold into lib<pkg>. Wiring one in is a CONFIGURE error
+        # -- `$<TARGET_OBJECTS:>` is resolved then -- so the project would
+        # not build at all. `_libwiring`'s detector already reaches the same
+        # answer from the tree (it matches `add_library(... OBJECT`); this is
+        # the creation-time half, which emits rather than detects.
+        splice_cmake_component(
+            root,
+            pkg,
+            comp,
+            dep_core_libs(depends_on)
+            + ([] if header_only else [f"{comp}_core"]),
+        )
 
     print()
     if _hint:

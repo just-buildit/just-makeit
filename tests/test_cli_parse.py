@@ -1,6 +1,7 @@
 """Unit tests for just_makeit._cli_parse."""
 
 import pytest
+from _jmrun import warning_lines
 
 
 def _parse_state(tokens, i=0):
@@ -49,7 +50,7 @@ class TestParseStateFlag:
         assert name == "buf"
         assert ctype == "float[64]"
         assert default == ""
-        assert "warning" in capsys.readouterr().err.lower()
+        assert warning_lines(capsys.readouterr().err)
 
     def test_array_type_no_default(self):
         (name, ctype, default), new_i = _parse_state(

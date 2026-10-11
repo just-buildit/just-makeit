@@ -28,6 +28,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import run_cli
 from test_gh1109_seeded_construction_is_attempted import _pytest_counts
@@ -57,9 +58,7 @@ _DEFINES = (
     f"#define {_INT_C} 20\n#define {_FLOAT_C} 2.5\n#define {_BOOL_C} 1\n"
 )
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
 def _scaffold(tmp_path: Path, shape: str) -> Path:

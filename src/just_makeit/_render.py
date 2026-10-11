@@ -28,6 +28,7 @@ from . import _config as C
 from . import _types as T
 from . import _record
 from . import _borrow
+from . import _outbuf
 from . import _incpath as INC
 from . import _csym as CSYM
 from ._report import Refusal
@@ -516,7 +517,6 @@ GITATTRIBUTES = _load("misc/.gitattributes")
 CLANG_TIDY = _load("misc/.clang-tidy")
 CMAKE_PRESETS_JSON = _load("misc/CMakePresets.json")
 # ── Python ───────────────────────────────────────────────────────────────────
-MODULE_INIT_PY = _load("py/module_init.py")
 MODULE_INIT_PY_EMPTY = _load("py/module_init_empty.py")
 SUBPACKAGE_INIT_PY = _load("py/subpackage_init.py")
 PACKAGE_INIT_PY = _load("py/package_init.py")
@@ -806,10 +806,10 @@ def render_component_test_c(ctx: dict) -> str:
 # A "module" is a single .so that hosts multiple Python types ("objects").
 # COMPONENT_TYPE_SECTION (loaded above, shared with the standalone
 # `_ext.c`) is the per-object block (struct + methods + PyTypeObject) without
-# file headers or PyMODINIT_FUNC; `render_type_section` renders it for a
-# module. MODULE_EXT_C is the full file: header + one section per object +
-# PyMODINIT_FUNC. render_module_ext_c() assembles them from a list of
-# component contexts.
+# file headers or PyMODINIT_FUNC; `render_type_section` renders it into each
+# object's `<module>_ext_<obj>.c` fragment. The module's own `<module>_ext.c`
+# is `render_module_ext_aggregator`: header, an #include per fragment, and
+# PyMODINIT_FUNC -- the one render of it, whatever the module holds (gh-2070).
 #
 # <<module>> must be in the ctx passed to COMPONENT_TYPE_SECTION; it equals
 # the component name for standalone components, or the module name otherwise.
@@ -1452,18 +1452,18 @@ def _build_params_parse(
             # length out — this pair is already the documented peer shape, and
             # an interleave factor applied to only one of them is exactly the
             # drift that costs a buffer overrun in whichever face was missed.
-            _rank = p.get("rank")
+            _rank = _coerce.array_rank(p)
             if _rank:
                 arr_acq.append(
                     _coerce.array_rank_guard(
-                        pname, arr_var, int(_rank), prior_decrefs.strip()
+                        pname, arr_var, _rank, prior_decrefs.strip()
                     ).rstrip("\n")
                 )
             arr_acq.append(
                 f"    {const_qual}{elem_disp} *{pname} = "
                 f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
                 + _coerce.array_len_c(
-                    pname, arr_var, int(p.get("elements_per_sample", 1) or 1)
+                    pname, arr_var, _coerce.elements_per_sample(p)
                 )
             )
             arr_names.append(arr_var)
@@ -1675,6 +1675,59 @@ def status_errors_why_not(fn: dict) -> str:
     )
 
 
+def _out_length_keys(fn: dict) -> dict:
+    """What a function's allocated output reads its length from (gh-1888).
+
+    The keys :func:`_outbuf.length` takes, as this face reads them: a
+    ``result_fields`` function's records are sized by ``max_results`` and
+    read no ``out_type``, and ``out_size`` is the capacity of a
+    variable-output result only -- a fixed one never read it.
+    """
+    if not fn.get("out_type") or fn.get("result_fields"):
+        return {}
+    vo = bool(fn.get("variable_output"))
+    return {
+        "out_type": str(fn["out_type"]),
+        "out_size": str(fn.get("out_size", "")) if vo else "",
+    }
+
+
+def out_length_why_not(fn: dict) -> str:
+    """Why a function's allocated output has no length, or ``""``.
+
+    gh-1888: ``_outbuf.length_why_not`` over the row, read as this face
+    reads it. ``jm function`` asks before it writes anything -- ``apply``
+    replays through it, and ``status`` runs ``apply`` -- and the binding
+    asks again before it renders, so every face meets one refusal.
+
+    Examples
+    --------
+    >>> out_length_why_not({"name": "f", "out_type": "float[n]",
+    ...     "params": [{"name": "n", "type": "size_t"}]})
+    ''
+    >>> out_length_why_not({"name": "f", "out_type": "float",
+    ...     "params": [{"name": "n", "type": "size_t"}]}).split(",")[0]
+    "function 'f' returns a fresh out_type 'float'"
+    """
+    keys = _out_length_keys(fn)
+    if not keys:
+        return ""
+    return _outbuf.length_why_not(
+        f"function '{fn.get('name', '<function>')}'",
+        list(fn.get("params") or []),
+        variable_output=bool(fn.get("variable_output")),
+        **keys,
+    )
+
+
+def _out_length(fn: dict) -> str:
+    """The C length of a function's allocated output, or the refusal."""
+    why = out_length_why_not(fn)
+    if why:
+        raise Refusal(why)
+    return _outbuf.length(list(fn.get("params") or []), **_out_length_keys(fn))
+
+
 def _status_cases(
     fn_name: str, c_name: str, params: list[dict], rows: list[dict], why: bool
 ) -> str:
@@ -1753,11 +1806,13 @@ def _py_wrapper_for_function(
     function's C symbol (``_csym.stem``, gh-1591); *fn_name* is its
     manifest name, which names the static ``_bind_<fn_name>`` binder.
 
-    out_type: if set, allocates a 1-D ndarray of this type (length = first
-    array param's length) and passes it after the array args, before scalars.
+    out_type: if set, allocates a 1-D ndarray of this type and passes it
+    after the array args, before scalars. Its length is `_outbuf.length`'s:
+    the `[n]` of ``"T[n]"``, else the first array param's length; a row
+    with neither is refused (gh-1888).
 
-    result_fields: if set, calls C with a stack-allocated array of structs,
-    builds and returns list[tuple] from the fields. max_results_param names
+    result_fields: if set, calls C with a malloc'd array of structs, builds
+    and returns list[tuple] from the fields. max_results_param names
     an existing param that already carries the capacity (already embedded in
     call_args, so it is not passed again); when empty (the common case),
     fn_c_decl appended a bare trailing `size_t max_results` param instead, so
@@ -1765,6 +1820,16 @@ def _py_wrapper_for_function(
     """
     result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
+    # gh-1888: the row as `out_length_why_not` reads it, for each branch
+    # below that allocates the output.
+    _out_row = {
+        "name": fn_name,
+        "params": params,
+        "out_type": out_type,
+        "out_size": out_size,
+        "variable_output": variable_output,
+        "result_fields": result_fields,
+    }
     if why and (not check_return or result_fields):
         raise ValueError(_why_unreadable(fn_name))
     status_errors = status_errors or []
@@ -1861,14 +1926,10 @@ def _py_wrapper_for_function(
         # it a legal scalar type everywhere and silently retire the hint that
         # steers `char` to `int8_t` for its platform-dependent signedness.
         # This is one output shape, not a new type.
-        if out_size:
-            len_expr = out_size
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        #
+        # gh-1888: `out_size`, else the first array's length -- refused
+        # when neither answers, where this allocated one character.
+        len_expr = _out_length(_out_row)
         _call_with_out = f"{call_args}, _buf" if call_args else "_buf"
         _call_with_out += _why_call_arg(why)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
@@ -1927,14 +1988,9 @@ def _py_wrapper_for_function(
         _base_ctype, _ = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
         out_disp = _base_ctype
-        if out_size:
-            len_expr = out_size
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        # gh-1888: `out_size`, else `[n]`, else the first array's length --
+        # refused when none answers, where this allocated one element.
+        len_expr = _out_length(_out_row)
         _out_ptr = f"({out_disp} *)PyArray_DATA((PyArrayObject *)_out)"
         _call_with_out = f"{call_args}, {_out_ptr}" if call_args else _out_ptr
         _call_with_out += _why_call_arg(why)
@@ -1982,17 +2038,13 @@ def _py_wrapper_for_function(
         # Allocate output array, insert after array args, before scalars.
         # out_type may carry a [param_name] suffix naming the scalar that
         # holds the output length (e.g. "float64[M]").
-        _base_ctype, _scalar_len_param = parse_out_type(out_type)
+        _base_ctype, _ = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
         out_disp = _base_ctype
-        if _scalar_len_param:
-            len_expr = _scalar_len_param
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        # gh-1888: the `[n]` the row names, else the first array's length.
+        # A scalar-only function allocated ONE element here, and a kernel
+        # filling the `n` it was called with wrote past it.
+        len_expr = _out_length(_out_row)
         # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
         # Insert `out` after the last (ptr, len) pair.
         _arr_count = sum(1 for p in params if is_array_param_type(p["type"]))
@@ -2136,7 +2188,7 @@ def make_functions_ctx(
 ) -> dict:
     """Return template context keys for module-level Python wrapper functions.
 
-    Returns keys consumed by render_module_ext_c:
+    Returns keys consumed by render_module_ext_aggregator:
       function_wrappers  — static _bind_<fn> functions (inserted after header)
       module_methods_def — static PyMethodDef array block, or ''
       module_m_methods   — '{module}_module_methods' or 'NULL'
@@ -2341,129 +2393,6 @@ def record_registration_c(
             f"    }}"
         )
     return ready, add
-
-
-def render_module_ext_c(
-    module: str,
-    comp_ctxs: list[dict],
-    functions: list[dict] = (),
-    enums: "dict[str, list[str]] | None" = None,
-    module_doc_c: str = "",
-    fn_doc_blocks: "dict | None" = None,
-    procglobal: str = "",
-    layout: "dict | None" = None,
-    *,
-    owner: "INC.Owner",
-) -> str:
-    """Render a multi-object module _ext.c from a list of component contexts.
-
-    Each ctx must contain 'module' = module_name and 'Component' = the type name.
-    Pass functions (from config module_functions()) to wire up module-level
-    PyMethodDef entries; Python wrappers are emitted inline (not via #include).
-    Pass enums (from ``C.enums(cfg)``) so a function's ``enum`` param emits the
-    SSOT ``_enum_index`` helper + per-enum tables (gh-353).
-
-    ``module`` may be a dotted id (``dsp.filters``); the C identifiers /
-    file-name prefixes use the cname form (``dsp_filters``) while the
-    ``PyInit_``/``.m_name`` use the leaf (``filters``). For a dotless id all
-    three coincide, so flat modules render unchanged.
-    """
-    mp = C.module_paths(module)
-    leaf = mp.leaf
-    module = mp.cname
-    Module = "".join(w.title() for w in module.split("_"))
-    object_list = ", ".join(ctx["Component"] for ctx in comp_ctxs)
-
-    fn_ctx = make_functions_ctx(
-        module,
-        Module,
-        list(functions),
-        enums,
-        fn_doc_blocks,
-        owner=owner,
-    )
-    # Only include the module-level core header when there are module functions
-    # that use it.  Objects have their own per-component includes in
-    # COMPONENT_TYPE_SECTION; the module_core.h is only needed when module-
-    # level C functions (declared in module_core.h) are wired into the ext.c.
-    has_module_fns = bool(functions)
-    module_core_include = (
-        f'#include "<<inc_prefix>>{module}/{module}_core.h"\n'
-        if has_module_fns
-        else ""
-    )
-    header_ctx = {
-        # gh-1583: the project's header layout (`_incpath.ctx_slots`);
-        # render() refuses the header without it.
-        **(layout or {}),
-        "module": module,
-        "Module": Module,
-        "object_list": object_list,
-        "module_core_include": module_core_include,
-        # gh-353: an enum param's _enum_index uses strcmp.
-        "module_extra_includes": (
-            "#include <string.h>\n" if fn_ctx.get("function_uses_enum") else ""
-        ),
-    }
-    parts = [render(MODULE_EXT_C_HEADER, header_ctx)]
-
-    if fn_ctx.get("function_enum_tables"):
-        parts.append(fn_ctx["function_enum_tables"] + "\n")
-    if fn_ctx["function_wrappers"]:
-        parts.append(fn_ctx["function_wrappers"] + "\n")
-
-    for ctx in comp_ctxs:
-        parts.append(render_type_section(ctx))
-
-    type_ready_lines: list[str] = []
-    add_object_calls_lines: list[str] = []
-    # gh-1268: ONE public-name namespace for the whole module, so a view and
-    # its parent sharing a record_name publish one type object rather than
-    # two, the second of which frees the first.
-    _rec_seen: dict[str, _record.RecordReg] = {}
-    for ctx in comp_ctxs:
-        type_ready_lines.append(
-            f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
-        )
-        # gh-203: a streamable object also readies its iterator type.
-        if ctx.get("stream_module_ready"):
-            type_ready_lines.append(ctx["stream_module_ready"])
-        # gh-1264: a single=true method's structseq, created and registered
-        # here instead of lazily inside the method (which never told the
-        # module it existed).
-        _rec_ready, _rec_add = record_registration_c(
-            ctx.get("record_registrations") or [], _rec_seen
-        )
-        type_ready_lines += _rec_ready
-        C_ = ctx["Component"]
-        CW_ = ctx["ComponentW"]
-        add_object_calls_lines += [
-            f"    Py_INCREF(&{CW_}Type);",
-            f'    if (PyModule_AddObject(m, "{C_}", (PyObject *)&{CW_}Type) < 0) {{',
-            f"        Py_DECREF(&{CW_}Type); Py_DECREF(m); return NULL;",
-            "    }",
-        ]
-        add_object_calls_lines += _rec_add
-    type_ready_checks = "\n".join(type_ready_lines)
-    add_object_calls = "\n".join(add_object_calls_lines)
-
-    footer_ctx = {
-        "module": module,
-        "module_leaf": leaf,
-        "Module": Module,
-        "type_ready_checks": type_ready_checks,
-        "add_object_calls": add_object_calls,
-        # gh-645: m_doc. Defaulted here so no render path can leak a literal
-        # <<module_doc_c>> into generated C; the caller passes the manifest
-        # string when the module declares one.
-        "module_doc_c": module_doc_c or f'"{Module} module."',
-        # gh-1117: empty unless a linked core declares `process_global`, so
-        # every existing project renders byte-identically.
-        "procglobal": procglobal,
-        **fn_ctx,
-    }
-    parts.append(render(MODULE_EXT_C_FOOTER, footer_ctx))
-    return "".join(parts)
 
 
 _FRAGMENT_FILE_HEADER = """\
@@ -2742,9 +2671,19 @@ def render_module_ext_aggregator(
         # gh-504: a view's fragment is keyed on its frag_id, not the shared
         # parent component; real objects have frag_id == component.
         comp = ctx.get("frag_id", ctx["component"])
+        # gh-1997: the object's `extra_methods` prototypes go HERE, above the
+        # fragment, rather than in it: a sacred fragment is never rendered
+        # whole, so its table could name a function it had no declaration
+        # for. `PyObject *` is the only type they use, so nothing the
+        # fragment defines is needed first.
+        protos = ctx.get("extra_method_protos", "")
+        if protos:
+            include_parts.append(protos.strip("\n"))
         include_parts.append(f'#include "{module}_ext_{comp}.c"')
         obj_extra = f"{module}_ext_{comp}_extra.c"
-        if obj_extra in extra_files:
+        # ...and a declared row includes the file whether or not it is
+        # written yet (gh-1516's rule): its function is defined nowhere else.
+        if obj_extra in extra_files or protos:
             include_parts.append(
                 f'#include "{obj_extra}"  /* hand-written — jm never modifies */'
             )
@@ -2762,8 +2701,9 @@ def render_module_ext_aggregator(
     _extra_types = extra_types or []
     type_ready_lines: list[str] = []
     add_object_calls_lines: list[str] = []
-    # gh-1268: see the peer loop in render_module_ext_c — one namespace per
-    # module, not per component.
+    # gh-1268: ONE public-name namespace for the whole module, not one per
+    # component, so a view and its parent sharing a record_name publish one
+    # type object rather than two, the second of which frees the first.
     _rec_seen: dict[str, _record.RecordReg] = {}
     for ctx in comp_ctxs:
         type_ready_lines.append(

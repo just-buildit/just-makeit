@@ -86,14 +86,21 @@ stay in a single flat dir (`native/src/dsp_filters/`). Objects are added the
 same way: `just-makeit object fir --module dsp.filters`.
 
 A module can also land its Python artifacts **inside an existing package**
-instead of one named after itself, via the manifest-only `package` key
-(there is no CLI flag — add it to `just-makeit.toml` and run `just-makeit apply`):
+instead of one named after itself, with `--package` (the `package` key):
+
+```sh
+just-makeit module wfm_reader --package wfm
+```
 
 ```toml
 [module.wfm_reader]
 objects = ["wfm_reader"]
 package = "wfm"          # .so, .pyi, tests/ and benchmarks/ go to src/<pkg>/wfm/
 ```
+
+Declare it when you create the module. Added to the manifest later, the key
+moves the module but leaves what `jm module` already wrote in
+`src/<pkg>/wfm_reader/` behind, and `status` does not report it (gh-2081).
 
 `from <pkg>.wfm import Reader` then works alongside whatever `wfm` already
 exports — the package's `__init__.py` gains the re-export rather than being
@@ -128,6 +135,7 @@ and records `[module.<name>]` with an empty `objects` list in
 | `--extra-include-dirs DIR` | CMake include path for the module (e.g. `${DOPPLER_INCLUDE_DIR}`). Repeatable.                                                    |
 | `--extra-link-libs TARGET` | CMake link target for the module (e.g. `PkgConfig::DOPPLER`). Repeatable.                                                         |
 | `--extra-types NAME`       | A hand-written Python type, defined in `<name>_ext_extra.c`, to register in `PyInit_`. Repeatable.                                |
+| `--package DIR`            | Land the module's Python in `src/<pkg>/DIR/` (`[module.<name>] package`), above. `DIR` is `/`-separated identifiers, or `.`.      |
 
 Types are added with `just-makeit object`. Module-level functions are added
 with `just-makeit function`.
@@ -235,7 +243,7 @@ The module `_ext.c` is always fully regenerated from the complete object list
 | `--array-arg name:dtype`           | Fixed-size array constructor argument. `dtype` is a NumPy name (`float32`, `complex64`, …); C spellings are accepted and normalised. Repeatable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `--serializable`                   | Generate `state_bytes()` / `get_state()` / `set_state()` over a C triplet scaffolded in `_core.c`: a byte copy of the declared state when every field is plain, else a stub whose `set_state()` raises.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `--step-delegates-to-steps`        | Generate `step()` as a thin delegator to `steps()`, so the algorithm lives in one place. Scalar or `void` input only: refused with `--no-step`, `--variable-output` or an array type.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--variable-output`                | Generate no `step()`; give the object one self-sizing output method instead (see [`jm method --variable-output`](extend.md#just-makeit-method)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `--variable-output`                | Generate no `step()`; give the object one self-sizing output method instead (see [`jm method --variable-output`](extend.md#just-makeit-method)). Its element type is `--return-type`, else `--arg-type`, and a `void` one is refused (gh-1885): a `consumer` or `generator` preset needs `--return-type T` with it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--method-name NAME`               | Name of that `--variable-output` method (default `run`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `--max-out N`                      | With `--variable-output`: the worst-case count the method's `_max_out()` returns, so that function needs no implementing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `--multi-output TYPE`              | With `--variable-output`: add a parallel output array of this type, making the return a tuple. Repeatable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -327,10 +335,13 @@ shot.
 Because the rebuild deletes and re-stubs the sacred `_core.c`, any
 hand-written `steps()`/lifecycle body is **discarded** unless it lives in the
 TOML `impl`/`create_impl` (which the rebuild re-asserts) — keep your algorithm
-there, or `git stash` first. `add` prompts for one confirmation before
-rebuilding; `--force` skips it.
+there, or `git stash` first. `add` asks once, before it writes anything:
+declining leaves every file as it was and exits 1, and `--force` skips the
+question. The rows already in the manifest are kept as written, every key on
+them (`doc`, `opaque`, `no_ctor`, ...); the new ones are appended.
 
 **Constraints**
 
-- Each new variable name must be unique within the object's state list.
+- Each new variable name must be unique within the object's state list,
+    opaque fields included.
 - Requires a `just-makeit.toml` — run `just-makeit new` first.

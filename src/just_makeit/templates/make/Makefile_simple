@@ -23,6 +23,17 @@ PY_INC := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_path('incl
 EXT    := $(shell $(PYTHON) -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
 INC     = -I$(PY_INC) -I<<inc_dir>>
 
+# gh-2169. A Mach-O bundle resolves the interpreter's symbols (_PyCapsule_*)
+# when it is loaded, not when it is linked, so on macOS the link must say so:
+# `-shared` alone leaves them undefined and the link fails. Linux resolves
+# them lazily and needs nothing. The flag is chosen by `uname -s`, not read
+# from sysconfig's LDSHARED, which can name a compiler that a
+# python-build-standalone interpreter does not ship.
+UNAME_S := $(shell uname -s 2>/dev/null)
+ifeq ($(UNAME_S),Darwin)
+EXT_LDFLAGS := -undefined dynamic_lookup
+endif
+
 # The compile rules below pass -I$(numpy.get_include()), so an importable
 # numpy whose header tree is absent produces `numpy/arrayobject.h: No such
 # file` rather than anything naming numpy (gh-824). Test the directory, and

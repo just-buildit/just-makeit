@@ -20,6 +20,10 @@ to preserve hand-patched module ``_ext.c`` glue. Pass ``--discard`` for a
 truly clean reset back to the template scaffold. Always ``git stash`` (or
 commit) first regardless — the splice is best-effort text matching, not a
 guarantee.
+
+An object in a ``no_generate`` module is refused, before anything is
+deleted: ``jm apply`` writes none of that module, so nothing would rebuild
+what this deletes (:func:`refuse_hand_written`, gh-2087).
 """
 
 from __future__ import annotations
@@ -33,8 +37,121 @@ from pathlib import Path
 from . import _config as C
 from . import _incpath as INC
 from ._docstring import max_out_prototypes, restore_max_out_prototypes
+from ._keys import METHOD_KEYS, OBJECT_KEYS
+from ._linkcheck import binding_sources
 from ._object import _extract_c_function_bodies, _restore_c_function_bodies
 from ._remove import _confirm, _object_paths, _rm
+from ._report import Refusal
+
+
+def deleted_impl_sources(
+    root: Path, cfg: dict, component: str, paths: "list[Path]"
+) -> "list[str]":
+    """Each ``*_impl_file`` of *component* that names a file in *paths*.
+
+    gh-1867. A rebuild deletes *paths* and has `apply` write the component
+    again, and `apply` lifts a body from every ``*_impl_file`` as it does
+    -- from a file the delete has just removed, when one names a file
+    inside the component. That refusal came after the delete, which lost
+    the component; `_undo` now puts it back, but the refusal would still
+    say "file not found" of a file that is there. Asked here, before
+    anything is deleted, it can say what is wrong.
+
+    The keys are read from `_keys`: every ``*impl_file`` key an object
+    table or one of its methods may carry, so a new one is covered.
+
+    Returns
+    -------
+    list of str
+        ``<table>.<key> = '<value>'`` for each: the object's own keys,
+        then each method's, in the order the manifest lists the methods.
+
+    Examples
+    --------
+    >>> root = Path("/p")
+    >>> cfg = {"o": {"impl_file": "native/src/o/o_core.c::o_step",
+    ...              "methods": [{"name": "m", "impl_file": "ref.c::k"}]}}
+    >>> deleted_impl_sources(root, cfg, "o", [root / "native/src/o"])
+    ["o.impl_file = 'native/src/o/o_core.c::o_step'"]
+    >>> deleted_impl_sources(root, cfg, "o", [root / "ref.c"])
+    ["o.methods.m.impl_file = 'ref.c::k'"]
+    """
+    doomed = [p.resolve() for p in paths]
+    tables = [(component, cfg.get(component) or {}, OBJECT_KEYS)] + [
+        (f"{component}.methods.{m.get('name', '?')}", m, METHOD_KEYS)
+        for m in C.methods(cfg, component)
+    ]
+    found = []
+    for label, table, keys in tables:
+        for key in sorted(k for k in keys if k.endswith("impl_file")):
+            ref = table.get(key)
+            if not isinstance(ref, str):
+                continue
+            src = (root / ref.partition("::")[0]).resolve()
+            if any(src == d or d in src.parents for d in doomed):
+                found.append(f"{label}.{key} = {ref!r}")
+    return found
+
+
+def refuse_hand_written(cfg: dict, component: str, action: str) -> None:
+    """Refuse to rebuild *component* when `apply` would not write it back.
+
+    A rebuild deletes the component's files -- its ``_core.c``, ``_core.h``,
+    CMakeLists, binding fragment, C test and bench -- and has ``jm apply``
+    write them again from the manifest. An object in a ``no_generate``
+    module is the author's by declaration, and ``apply`` writes none of it,
+    so on one the delete was the whole of the rebuild (gh-2087): ``jm add
+    --state`` removed ``_core.c`` with the author's edits in it, and the
+    rest, and exited 0; ``apply`` then had nothing to do.
+
+    :func:`run` calls this first, so every rebuild passes it before
+    anything is deleted -- ``jm regenerate`` with or without ``--discard``,
+    and any caller added later. A caller that edits the manifest calls it
+    as well, before it asks or saves, so a refusal leaves the tree exactly
+    as it found it. ``tests/test_gh2087_no_generate_rebuild_refused.py``
+    reads the callers of :func:`run` from the source and holds each to that.
+
+    Parameters
+    ----------
+    cfg : dict
+        The loaded manifest.
+    component : str
+        The component the command would rebuild.
+    action : str
+        What the command was asked to do, as the refusal opens with it:
+        ``"add state (y) to 'o'"``.
+
+    Raises
+    ------
+    Refusal
+        When *component* belongs to a ``no_generate`` module. It names the
+        route instead: edit the C by hand.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"mod": {"objects": ["o"], "no_generate": True}}}
+    >>> try:
+    ...     refuse_hand_written(cfg, "o", "regenerate 'o'")
+    ... except Refusal as exc:
+    ...     print(str(exc).split(":")[0])
+    cannot regenerate 'o'
+
+    An object `apply` writes, standalone or in a generated module, passes:
+
+    >>> refuse_hand_written({"o": {}}, "o", "regenerate 'o'")
+    >>> cfg = {"module": {"mod": {"objects": ["o"]}}}
+    >>> refuse_hand_written(cfg, "o", "regenerate 'o'")
+    """
+    module = C.component_module(cfg, component)
+    if module is None or not C.is_no_generate_module(cfg, module):
+        return
+    raise Refusal(
+        f"cannot {action}: module '{module}' is `no_generate`, so"
+        f" '{component}' is yours and `jm apply` writes none of it. A"
+        " rebuild deletes its files -- _core.c with your edits, the header,"
+        " binding and tests -- and nothing writes them back. Edit the C by"
+        " hand instead."
+    )
 
 
 def _stale_ext_modules(
@@ -61,7 +178,7 @@ def _stale_ext_modules(
     if module:
         # Module objects share a single .so named after the module's leaf.
         mp = C.module_paths(module)
-        out_pkg = C.module_package(cfg, module) or mp.pypath
+        out_pkg = C.module_package_resolved(cfg, module)
         so = root / "src" / pkg / out_pkg / f"{mp.leaf}{suffix}"
     else:
         so = root / "src" / pkg / f"{component}{suffix}"
@@ -89,6 +206,10 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # gh-2087: before the first delete. A caller that edits the manifest
+    # asks this itself too, before it saves.
+    refuse_hand_written(cfg, component, f"rebuild '{component}'")
 
     pkg = C.project_name(cfg)
     module = C.component_module(cfg, component)
@@ -118,16 +239,33 @@ def run(
     # given up with the same warning and the same confirmation as a
     # hand-written `_core.c` body. Plain `jm regenerate` preserves, and is
     # unchanged — it does not touch the fragment at all.
+    #
+    # gh-2073: and every VIEW's fragment over the same core (gh-504). A view
+    # without its own `init_params` takes the parent's (`C.view_init_params`),
+    # so a state change moves its `kwlist` too, and `apply` re-scaffolds its
+    # `create_fn` in the rebuilt core at the new arity. Only the object's
+    # fragment was deleted here, so the view's `<View>_init` kept the old
+    # kwlist and called the new `create_fn` with the old arguments: KWARGS
+    # drift in `status`, and a module that did not compile. The set is
+    # `_linkcheck.binding_sources`, the one list of "the fragments that call
+    # into this core", as it is for the link-check table.
     if discard and module:
-        _frag = (
-            root
-            / "native"
-            / "src"
-            / C.module_paths(module).cname
-            / f"{C.module_paths(module).cname}_ext_{component}.c"
+        paths += [
+            p for p in binding_sources(root, cfg, component) if p.exists()
+        ]
+
+    # gh-1867: before anything is deleted. `_undo` would put the files back
+    # after `apply`'s "file not found", but this can say why.
+    _lost = deleted_impl_sources(root, cfg, component, paths)
+    if _lost:
+        raise Refusal(
+            f"cannot regenerate '{component}': {'; '.join(_lost)} names a"
+            " file regenerate deletes, so the rebuild could not read the"
+            " body back from it. Point it at a file outside the"
+            " component, or remove the key -- without --discard,"
+            " regenerate keeps the hand-written bodies in _core.c/_core.h"
+            " itself."
         )
-        if _frag.exists():
-            paths.append(_frag)
 
     core_h = INC.core_h(root, component)
     core_c = root / "native" / "src" / component / f"{component}_core.c"

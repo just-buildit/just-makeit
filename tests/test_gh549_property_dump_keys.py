@@ -1,4 +1,4 @@
-"""gh-549: ``_property_dump_lines`` silently dropped a property's ``enum``.
+"""gh-549: the property writer silently dropped a property's ``enum``.
 
 The dumper emitted every property key except ``enum``. That was invisible on an
 ordinary save, because ``C.save`` -> ``_write_doc`` round-trips an *existing*
@@ -38,8 +38,8 @@ tomllib = C.tomllib
 
 
 def _round_trip(prop: dict) -> dict:
-    """Dump *prop* and parse it back, as ``jm split-objects`` effectively does."""
-    text = "\n".join(C._property_dump_lines(prop, "[[o.properties]]"))
+    """Dump *prop* and parse it back, as ``jm split-objects`` does."""
+    text = C._dump({"o": {"properties": [prop]}})
     return tomllib.loads(text)["o"]["properties"][0]
 
 
@@ -115,6 +115,17 @@ class TestEveryKeyRoundTrips:
         "ctype": "double",
     }
 
+    # gh-2182: a setter that refuses a value. Its own shape, because `error`
+    # is refused beside `field`, which SCALAR_PROP carries.
+    REFUSING_PROP = {
+        "name": "alpha",
+        "type": "double",
+        "writable": True,
+        "expr": "self->handle->alpha",
+        "error": "ValueError",
+        "error_message": "alpha must lie in (0, 1]",
+    }
+
     SHAPES = {
         "enum": ENUM_PROP,
         "buf_field": BUF_PROP,
@@ -122,6 +133,7 @@ class TestEveryKeyRoundTrips:
         "container": CONTAINER_PROP,
         "capsule": CAPSULE_PROP,
         "scalar": SCALAR_PROP,
+        "refusing": REFUSING_PROP,
     }
 
     @pytest.mark.parametrize("prop", list(SHAPES.values()), ids=list(SHAPES))

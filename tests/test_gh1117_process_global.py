@@ -32,13 +32,13 @@ Two gates, because they answer different questions:
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
-import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -69,7 +69,7 @@ _LINK = (
     else ["-shared"]
 )
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 
 def _cfg(pkg="pgdemo"):
@@ -315,21 +315,11 @@ class TestEveryEmitterSplicesIt:
         )
 
     def test_object_module_aggregator(self):
+        """An object module's `_ext.c`, with members or with none: since
+        gh-2070 an empty module is this same render, not one of its own."""
         cfg = _cfg()
         block = _procglobal.rendezvous_c(cfg, "own")
         out = R.render_module_ext_aggregator(
-            "own",
-            [],
-            procglobal=block,
-            layout=INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
-            owner={"project": {"name": "p"}},
-        )
-        assert "PyCapsule_New(flag_state_ptr()" in out
-
-    def test_object_module_empty_scaffold(self):
-        cfg = _cfg()
-        block = _procglobal.rendezvous_c(cfg, "own")
-        out = R.render_module_ext_c(
             "own",
             [],
             procglobal=block,

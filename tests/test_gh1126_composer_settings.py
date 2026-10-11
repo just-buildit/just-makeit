@@ -26,19 +26,19 @@ building a narrow TU from the emitted fragment rather than the whole
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _composer
 from just_makeit import _config as C
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 _SETTING = {
     "name": "seed_advance",

@@ -4,7 +4,9 @@ _bind.py — ``just-makeit bind`` command.
 Reads ``<comp>_core.h`` and synthesises ``<comp>_ext.c`` (plus the
 matching ``.pyi``) without consulting ``just-makeit.toml``.  Designed
 as the header-driven path described in
-``docs/developers/bind-design.md``.
+``docs/developers/bind-design.md``: a header the manifest does not
+declare. A component it does declare is refused (gh-2072) -- its binding
+is ``jm apply``'s, rendered from the manifest.
 
 Supported shapes (Phase 3b)
 ---------------------------
@@ -25,7 +27,9 @@ When a declaration is found but cannot be parsed (unknown type, complex
 multi-param signature), it is skipped with a warning rather than a hard
 error — the user can add those methods via TOML.
 
-Package name comes from ``pyproject.toml`` in the project root.
+Package name comes from ``pyproject.toml`` in the project root. The
+header layout and the C prefix come from ``just-makeit.toml`` when there is
+one, and from the tree when there is not (gh-1895): see :func:`run`.
 """
 
 from __future__ import annotations
@@ -466,6 +470,17 @@ def _build_ctx(
         (name, ct, defaults.get(name, T._CTYPE_META[ct]["zero"]))
         for name, ct in parsed["fields"]
     ]
+    # gh-1882: whose reset() this is, the question every other path reads
+    # off the manifest's `reset_impl`. bind has no manifest, so it reads the
+    # body itself: a field `<comp>_reset` does not assign is one it keeps
+    # (or one jm could not parse), and "reset restores defaults" would be a
+    # claim about it. jm's own body assigns every field, so a project it
+    # scaffolded answers exactly as `jm apply` does. `no_reset` is a
+    # manifest key bind has never read, so it is not an input here.
+    reset_keeps = any(name not in defaults for name, _ in parsed["fields"])
+    authors_reset = Ctx.reset_is_authors(
+        reset_impl=reset_keeps, init_params=init_params, no_reset=False
+    )
 
     ctx.update(Ctx.make_sample_ctx(arg_type, return_type))
     ctx.update(
@@ -475,6 +490,7 @@ def _build_ctx(
             state_vars,
             no_state=is_opaque,
             init_params=init_params,
+            reset_impl=reset_keeps,  # gh-1882, derived above
             # gh-676/gh-644: bind reflects the header, so the built-ins'
             # documentation is exactly what it should be reading -- and it
             # writes the same _ext.c apply does, so anything it does not
@@ -539,40 +555,22 @@ def _build_ctx(
     # `exit` to resolve and [] is the truth rather than a stand-in.
     ctx.update(
         Ctx.make_destroy_ctx(
-            ctx["component"], ctx["ComponentW"], None, [], csym=ctx["csym"]
+            ctx["component"],
+            ctx["ComponentW"],
+            None,
+            [],
+            csym=ctx["csym"],
+            lends=False,
         )
     )
 
-    # Re-seed pyi_examples with the real package name. make_state_ctx seeds this
-    # slot with the <<package>>/<<Component>> placeholder that only _init.run and
-    # _glue resolve; _build_ctx claims to produce "the same context dict
-    # _init.run produces" but skipped this step, so `jm bind` wrote a literal
-    # `>>> from <<package>> import <<Component>>` into the regenerated .pyi. That
-    # went unnoticed because the placeholder scan covers .py/.c/.h/.toml/.txt but
-    # not .pyi — the one file it corrupts.
-    # gh-1208 left these three `from {pkg} import` lines BARE on purpose.
+    # gh-1208 left these two `from {pkg} import` lines BARE on purpose.
     # `bind` writes the standalone layout unconditionally --
     # `native/src/<comp>/<comp>_ext.c` and `src/<pkg>/<comp>.pyi`, see `run()`
     # below -- so within the files it emits, the bare form is the one that
     # imports. It does not consult module membership at all, which is a
     # separate limitation and not something a module segment here would fix:
     # adding one would name a path whose `.so` bind never wrote.
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in state_vars
-            if not T.parse_array_type(ct)
-        ]
-        if not is_opaque
-        else []
-    )
-    ctx["pyi_examples"] = Ctx._pyi_examples_block(
-        scalar_state,
-        False,
-        f"from {pkg} import {ctx['Component']}",
-        ctx.get("py_create_args", ""),
-        ctx["Component"],
-    )
     # Class docstring via the one shared builder (identical to _init.run and the
     # module path), enriched from the header's create() @brief/@param when
     # doc_blocks are supplied.
@@ -585,7 +583,7 @@ def _build_ctx(
         f"from {pkg} import {ctx['Component']}",
         ctx.get("py_create_args", ""),
         doc_blocks=doc_blocks,
-        custom_reset=bool(init_params),
+        custom_reset=authors_reset,
         csym=ctx["csym"],
     )
     # gh-676/gh-644: the runtime class docstring, on the same precedence
@@ -607,23 +605,136 @@ def _build_ctx(
                 f"from {pkg} import {ctx['Component']}",
                 ctx.get("py_create_args", ""),
                 doc_blocks=doc_blocks,
-                custom_reset=bool(init_params),
+                custom_reset=authors_reset,
                 csym=ctx["csym"],
             )
         )
     return ctx
 
 
+def refuse_declared(root: Path, component: str) -> None:
+    """Refuse *component* when the project's manifest declares it (gh-2072).
+
+    `bind` renders ``<comp>_ext.c`` and the ``.pyi`` from the header alone.
+    A component the manifest declares already has a binding, and an owner
+    for it: `jm apply`, which renders it from the manifest. Much of what the
+    manifest declares -- a warning, a ``create()`` error, a record type --
+    is nothing a header says, so a second render from the header drops it,
+    and the next `apply` rewrites both files back. This names the two
+    commands that render it from the manifest instead.
+
+    One predicate for both modes: ``--check`` would otherwise compare the
+    file on disk with a render nothing ships. A header the manifest does
+    not declare -- or one in a project with no manifest at all -- is what
+    `bind` is for, and passes.
+
+    Raises
+    ------
+    Refusal
+        When the manifest declares *component*: before `run` reads anything
+        else, so nothing is written.
+    """
+    from ._report import Refusal
+
+    # The project `run` renders for is *root*'s manifest, or none (`owner`
+    # there). Read fresh, not through `_incpath`'s cache: that is keyed on
+    # just-makeit.toml alone, and a component lives in a fragment.
+    manifest = root / C.FILENAME
+    if manifest.is_file() and component in C.components(C.load(root)):
+        raise Refusal(
+            f"the manifest declares '{component}', so `jm apply` owns its"
+            " binding: `jm bind` renders from the header alone and would drop"
+            " what only the manifest says (warnings, errors, records). Run"
+            f" `jm regenerate {component}` to rebuild it from the manifest,"
+            " or `jm apply`."
+        )
+
+
+def ext_c(root: Path, component: str) -> Path:
+    """The ``_ext.c`` `bind` writes for *component*, and ``--check`` reads.
+
+    One spelling for both modes: the standalone layout, which `bind` writes
+    unconditionally (see :func:`_build_ctx`).
+    """
+    return root / "native" / "src" / component / f"{component}_ext.c"
+
+
+def _layout(root: Path, component: str, pkg: str) -> "INC.Owner":
+    """The project *component*'s header is bound into, as its header
+    layout knows it (gh-1583, gh-1895).
+
+    *root* itself when it holds a manifest: its schema says the layout. A
+    tree with none -- a bare ``native/`` -- is in the layout its header is
+    found in, so each layout `_incpath` knows is asked where the header
+    would be, and the one that holds it answers. Reading no manifest as
+    the legacy layout (what `_incpath.manifest` does with ``{}``) looked
+    for a header no current `jm new` writes there, and the render then
+    spelled the other layout's ``#include``.
+
+    Raises
+    ------
+    Refusal
+        When no layout holds the header, or both do: then nothing says which
+        header is *component*'s.
+    """
+    from ._report import Refusal
+
+    if (root / C.FILENAME).is_file():
+        if not INC.core_h(root, component).is_file():
+            raise Refusal(f"header not found: {INC.core_rel(component, root)}")
+        return root
+    owners = INC.layouts(pkg)
+    held = [o for o in owners if INC.core_h(root, component, o).is_file()]
+    if len(held) == 1:
+        return held[0]
+    paths = " and ".join(INC.core_rel(component, o) for o in owners)
+    if not held:
+        raise Refusal(f"header not found: neither of {paths} exists")
+    raise Refusal(
+        f"both {paths} exist, and with no {C.FILENAME} to say which header"
+        f" layout this tree is in, `jm bind` cannot tell which is"
+        f" '{component}'s: remove the stale one."
+    )
+
+
+def _stem_owner(
+    owner: "INC.Owner", component: str, declared: str
+) -> "INC.Owner":
+    """*owner*, carrying the ``c_prefix`` a header with no manifest beside
+    it declares (gh-1895).
+
+    A manifest says its own prefix, so *owner* is returned as is when it is
+    one. With none, the header's ``<stem>_state_t`` is the only word on it:
+    `_csym.implied_prefix` reads *declared* back to a prefix, which the
+    caller then holds to `_csym.stem` like any other. A stem no prefix
+    derives leaves *owner* bare, and that check refuses it.
+    """
+    if not isinstance(owner, dict):
+        return owner
+    p = CSYM.implied_prefix(declared, component)
+    if not p:
+        return owner
+    return {**owner, "project": {**owner["project"], "c_prefix": p}}
+
+
 def run(root: Path, component: str, *, write: bool = True) -> str:
     """Reflect ``<component>_core.h`` and (optionally) write ``_ext.c``.
 
     Returns the rendered text either way so tests and ``--check`` mode
-    can compare without touching the filesystem.
+    can compare without touching the filesystem. A component the manifest
+    declares is refused first, in both modes (:func:`refuse_declared`).
+
+    With no manifest the project is read off the tree (gh-1895): the header
+    layout from where the header is (:func:`_layout`), the ``c_prefix`` from
+    the stem it declares (:func:`_stem_owner`). One owner then answers the
+    header's path, the symbol-stem check and the render.
     """
-    header = INC.core_h(root, component)
-    if not header.exists():
-        print(f"error: header not found: {header}", file=sys.stderr)
-        sys.exit(1)
+    from ._report import Refusal
+
+    refuse_declared(root, component)
+    pkg = _read_pkg(root)
+    owner = _layout(root, component, pkg)
+    header = INC.core_h(root, component, owner)
 
     try:
         parsed = parse_header(header)
@@ -641,51 +752,44 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
     # The header spells its symbols with the SYMBOL stem (gh-1591): under a
     # c_prefix, `running_stats`'s are `my_stats_running_stats_*`. Comparing
     # against the bare name refused every prefixed project's own header.
-    want = CSYM.stem(root, component)
+    owner = _stem_owner(owner, component, parsed["component"])
+    want = CSYM.stem(owner, component)
     if parsed["component"] != want:
-        print(
-            f"error: header declares component '{parsed['component']}',"
+        raise Refusal(
+            f"header declares component '{parsed['component']}',"
             f" but you asked for '{component}'"
-            + (f" (symbols `{want}_*`)." if want != component else "."),
-            file=sys.stderr,
+            + (f" (symbols `{want}_*`)." if want != component else ".")
         )
-        sys.exit(1)
 
-    pkg = _read_pkg(root)
     core_c = root / "native" / "src" / component / f"{component}_core.c"
     defaults = parse_reset_defaults(core_c)
     # The header's create() Doxygen (filtered of scaffold boilerplate) enriches
-    # the class docstring on bind, matching every other regeneration path.
+    # the class docstring on bind, matching every other regeneration path --
+    # read through the same owner, so its stem is the header's (gh-1895).
     from ._object import _load_doc_blocks
 
-    doc_blocks = _load_doc_blocks(root, component)
-    # gh-1583: the layout of the project the header is bound into; a
-    # header bound where no manifest exists yet gets a new project's. The
-    # same owner answers the C symbol stem (gh-1591).
-    owner = (
-        root
-        if (root / C.FILENAME).is_file()
-        else {"project": {"name": pkg, "schema": str(C.CURRENT_SCHEMA)}}
-    )
+    doc_blocks = _load_doc_blocks(root, component, owner=owner)
     ctx = _build_ctx(component, parsed, pkg, owner, defaults, doc_blocks)
     ctx.update(INC.ctx_slots(owner))
     text = R.render(R.COMPONENT_EXT_C, ctx)
 
     if write:
-        ext_c = root / "native" / "src" / component / f"{component}_ext.c"
-        ext_c.parent.mkdir(parents=True, exist_ok=True)
-        verb = "update" if ext_c.exists() else "create"
-        _textio.write_text(ext_c, text)
-        print(f"  {verb}  {ext_c}")
+        out = ext_c(root, component)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        verb = "update" if out.exists() else "create"
+        _textio.write_text(out, text)
+        print(f"  {verb}  {out}")
 
         pyi = root / "src" / pkg / f"{component}.pyi"
         if pyi.exists() or (root / "src" / pkg).is_dir():
             pyi_text = R.render_component_pyi(ctx)
-            # gh-428: bind derives its output purely from the header and
-            # otherwise never consults just-makeit.toml, but a manual_stub
-            # method's hand-written .pyi text has no header declaration for
-            # bind to reconstruct. Read the manifest (if any) only to learn
-            # which symbols to preserve verbatim across this regen.
+            # gh-428: a hand-written .pyi member has no header declaration
+            # for bind to reconstruct, so the splice carries it across. The
+            # component is undeclared (`refuse_declared`), so no
+            # `manual_stub` row names its class: what survives is each
+            # `# jm:hand` member, which needs no manifest. The splice still
+            # takes one -- it is the one entry point every stub writer
+            # shares, gh-765's check included.
             if pyi.exists():
                 cfg_path = root / C.FILENAME
                 old_cfg = C.load(root) if cfg_path.exists() else {}
@@ -700,3 +804,39 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
             _textio.write_text(pyi, pyi_text)
             print(f"  {verb}  {pyi}")
     return text
+
+
+def check(root: Path, component: str) -> int:
+    """``jm bind <component> --check``: is the ``_ext.c`` on disk the one
+    `bind` would write? Returns the exit code; writes nothing.
+
+    A binding that is not there at all is a finding like a stale one, not a
+    crash (gh-2101): each prints one ``error:`` line naming what `jm bind`
+    would do about it. Everything :func:`run` refuses -- a declared
+    component, a header it cannot find or read -- it refuses here too,
+    before the file on disk is looked at.
+
+    Returns
+    -------
+    int
+        0 when the file matches the render, 1 when it is absent or differs.
+    """
+    rendered = run(root, component, write=False)
+    path = ext_c(root, component)
+    rel = path.relative_to(root).as_posix()
+    if not path.is_file():
+        print(
+            f"error: {rel} does not exist: `jm bind {component}` would write"
+            f" it from {component}_core.h",
+            file=sys.stderr,
+        )
+        return 1
+    if path.read_text(encoding="utf-8") != rendered:
+        print(
+            f"error: {rel} is out of date with {component}_core.h: run"
+            f" `jm bind {component}` to rewrite it",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"  ok  {path.name} matches {component}_core.h")
+    return 0

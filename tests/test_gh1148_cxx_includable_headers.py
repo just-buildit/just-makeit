@@ -57,17 +57,17 @@ from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc, default_cxx
 
 from _jmrun import JmRun, run_cli
 
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
-_CXX = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+_CC = default_cc()
+_CXX = default_cxx()
 _needs_cxx = pytest.mark.skipif(_CXX is None, reason="no C++ compiler on PATH")
 
 

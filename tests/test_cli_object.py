@@ -3,6 +3,8 @@
 import pytest
 from unittest.mock import patch
 
+from just_makeit._report import Refusal
+
 
 def _run(args):
     from just_makeit import _cli_object
@@ -28,7 +30,9 @@ class TestCliObject:
             _run(["fir", "--return-type", "float[]"])
 
     def test_arg_type_bad_exits(self):
-        with pytest.raises(SystemExit):
+        # gh-1884: a step-type refusal is a Refusal, which the CLI
+        # boundary prints as one `error:` line and exits 1.
+        with pytest.raises(Refusal):
             _run(["fir", "--arg-type", "notatype"])
 
     def test_array_arg_missing_value_exits(self):
@@ -144,7 +148,9 @@ class TestCliObject:
             _run(["fir", "--return-type"])
 
     def test_arg_type_bad_array_elem_exits(self):
-        with pytest.raises(SystemExit):
+        # gh-1884: a step-type refusal is a Refusal, which the CLI
+        # boundary prints as one `error:` line and exits 1.
+        with pytest.raises(Refusal):
             _run(["fir", "--arg-type", "notatype[]"])
 
     def test_arg_type_array_valid(self):

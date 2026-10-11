@@ -51,6 +51,7 @@ import shutil
 import subprocess
 
 import pytest
+from _compilers import default_cc, default_cxx
 
 from just_makeit import _cli_object
 from just_makeit._new import run as new_run
@@ -59,15 +60,15 @@ from just_makeit._new import run as new_run
 def _skip_reason() -> str | None:
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
-    if not any(shutil.which(c) for c in ("c++", "g++", "clang++")):
+    if default_cxx() is None:
         return "no C++ compiler found"
     return None
 
 
 _SKIP = _skip_reason()
-_CXX = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+_CXX = default_cxx()
 
 # jm's header first, then <complex> -- the macro poisons what follows.
 _JM_FIRST = '#include "<<P>>cplx/cplx_core.h"\n#include <complex>\n'

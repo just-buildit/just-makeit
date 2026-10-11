@@ -45,18 +45,18 @@ from just_makeit import _incpath as INC  # noqa: E402
 
 import ast
 import importlib.util
-import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import run_cli
 from test_gh1493_verbatim_doc import _contains_block, _doc, _expected
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 pytestmark = pytest.mark.skipif(_CC is None, reason="no C compiler available")
 
 

@@ -49,12 +49,12 @@ a measurement instead of a claim.
 from __future__ import annotations
 
 import copy
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -62,7 +62,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from just_makeit import _composer  # noqa: E402
 from test_composer_codegen import _cfg  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 
 
 def _with_bits(**changes) -> dict:

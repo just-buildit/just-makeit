@@ -42,6 +42,7 @@ import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -49,9 +50,7 @@ from _jmrun import run_cli  # noqa: E402
 from just_makeit import _coerce, _docsync  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 INIT_HINT = "build bits from text with field_bits()"
 METHOD_HINT = "pass peek() an array; parse text with bits()"

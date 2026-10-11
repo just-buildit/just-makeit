@@ -25,6 +25,7 @@ block, so type mapping stays in ``_stubs``/``_context`` where it already lives.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field, replace as dc_replace
 from typing import NamedTuple, Sequence
 
@@ -128,14 +129,20 @@ class DoxyBlock:
 _HEADER_DEFAULT_RE = re.compile(r"\(default:\s*([^)]+?)\)\.?\s*$")
 
 
-def class_import_path(pkg: str, module: str = "") -> str:
+def class_import_path(pkg: str, module_dir: str = "") -> str:
     """The dotted, importable path a generated class lives at.
 
     A **standalone** object lands at ``<pkg>/<obj>.so`` and imports as
-    ``from <pkg> import <Component>``; a **module** object lands at
-    ``<pkg>/<module>/<module>.so`` and needs the module segment. *module* is
-    the manifest's module **id**, which is already dotted for a nested one
-    (``dsp.filters``), so it concatenates directly.
+    ``from <pkg> import <Component>``; a **module** object is re-exported by
+    its module's package and needs that segment. *module_dir* is that
+    package's directory below ``src/<pkg>/`` -- always
+    `_config.module_package_resolved`'s answer, ``""`` for a standalone
+    object -- and ``/`` separates a nested one (``dsp/filters``).
+
+    Never pass the module **id**. It names the class's package only while
+    the module declares no ``package`` (gh-523); with one, every import jm
+    wrote from the id named a module that does not hold the class
+    (gh-2054).
 
     This exists because thirteen call sites built the line inline and only
     one of them asked the question (gh-1208): every synthesized doctest in a
@@ -148,22 +155,23 @@ def class_import_path(pkg: str, module: str = "") -> str:
     'commz'
     >>> class_import_path("commz", "dsp")
     'commz.dsp'
-    >>> class_import_path("commz", "dsp.filters")
+    >>> class_import_path("commz", "dsp/filters")
     'commz.dsp.filters'
-    >>> class_import_path("", "dsp")
-    'dsp'
+    >>> class_import_path("", "dsp/filters")
+    'dsp.filters'
     """
-    seg = (module or "").strip(".")
+    seg = (module_dir or "").replace("/", ".").strip(".")
     if pkg and seg:
         return f"{pkg}.{seg}"
     return pkg or seg
 
 
-def class_import_line(pkg: str, Component: str, module: str = "") -> str:
+def class_import_line(pkg: str, Component: str, module_dir: str = "") -> str:
     """``from <path> import <Component>`` — a synthesized doctest's first line.
 
     The one spelling, so the ``.pyi`` and the runtime ``__doc__`` faces of the
     same method cannot disagree about where the class is importable from.
+    *module_dir* is as for :func:`class_import_path`.
 
     Examples
     --------
@@ -172,7 +180,7 @@ def class_import_line(pkg: str, Component: str, module: str = "") -> str:
     >>> class_import_line("commz", "Counter", "dsp")
     'from commz.dsp import Counter'
     """
-    return f"from {class_import_path(pkg, module)} import {Component}"
+    return f"from {class_import_path(pkg, module_dir)} import {Component}"
 
 
 def header_default(desc: str | None) -> str | None:
@@ -1107,6 +1115,20 @@ def max_out_arity_key() -> str:
     return _MAX_OUT_KEY
 
 
+# gh-2184: every `*_max_out` the header declares, whatever its arity -- the
+# `declared_max_outs` set, riding the same map as the arity set above and
+# for the same reason. A `variable_output` method always has one (jm declares
+# it), so for that shape the arity is the only question. A list-of-records
+# method has none unless the AUTHOR declared it, and whether they did is
+# what decides how its binding sizes the result buffer.
+_MAX_OUT_DECLARED_KEY = "<max_out_declared>"
+
+
+def max_out_declared_key() -> str:
+    """The reserved key `declared_max_outs`'s result rides under (gh-2184)."""
+    return _MAX_OUT_DECLARED_KEY
+
+
 def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     """True when *c_name*'s declaration takes only the state (gh-761).
 
@@ -1115,6 +1137,33 @@ def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     prototype to read, and keeps gh-607's count-bearing default.
     """
     return c_name in ((doc_blocks or {}).get(_MAX_OUT_KEY) or frozenset())
+
+
+def max_out_is_declared(doc_blocks: "dict | None", c_name: str) -> bool:
+    """True when the header declares *c_name* at all, at any arity (gh-2184).
+
+    The question a list-of-records method asks before sizing its result
+    buffer: jm declares no ``<c>_<m>_max_out`` for that shape, so one in the
+    header is the author's statement that the method's capacity is known
+    before the call. :func:`max_out_is_state_only` then answers which of the
+    two spellings to call, exactly as it does for ``variable_output``.
+
+    False with no header read (a method being scaffolded for the first time),
+    which keeps the fixed ``max_results`` buffer.
+
+    Examples
+    --------
+    >>> max_out_is_declared(None, "w_push_max_out")
+    False
+    >>> blocks = {max_out_declared_key(): frozenset({"w_push_max_out"})}
+    >>> max_out_is_declared(blocks, "w_push_max_out")
+    True
+    >>> max_out_is_declared(blocks, "w_pull_max_out")
+    False
+    """
+    return c_name in (
+        (doc_blocks or {}).get(_MAX_OUT_DECLARED_KEY) or frozenset()
+    )
 
 
 def _strip_comment(raw: str) -> list[str]:
@@ -1250,6 +1299,81 @@ _STEP_SCAFFOLD_BRIEFS = frozenset(
 )
 
 
+def delegator_note(csym: str, *, returns: bool) -> "list[str]":
+    """The body paragraph of jm's gh-208 delegating ``step()`` scaffold.
+
+    ``--step-delegates-to-steps`` scaffolds a ``step()`` that forwards to
+    ``steps()``, and its Doxygen block carries one sentence of body prose
+    saying so -- the only jm scaffold that writes any. It is returned as the
+    lines the header lays it out in, so the emitter (``_context._step``)
+    writes it from here and :func:`scaffold_bodies` recognises the same
+    text: what jm emits and what it refuses to derive are one definition
+    (gh-666), and this sentence was the one that escaped it (gh-2071).
+
+    Parameters
+    ----------
+    csym : str
+        The object's C symbol stem; the sentence names its ``steps()``.
+    returns : bool
+        Whether ``step()`` returns a value. The value-returning shapes say
+        why the delegation exists; the ``void`` ones only that it does.
+
+    Returns
+    -------
+    list of str
+        The paragraph's lines, without the `` * `` comment prefix.
+
+    Examples
+    --------
+    >>> delegator_note("fir", returns=False)
+    ['Thin delegator to fir_steps() (gh-208).']
+    >>> for line in delegator_note("fir", returns=True):
+    ...     print(line)
+    Thin delegator to fir_steps() so the per-sample algorithm
+    exists once and step() == steps(.., 1) byte-for-byte (gh-208).
+    """
+    if not returns:
+        return [f"Thin delegator to {csym}_steps() (gh-208)."]
+    return [
+        f"Thin delegator to {csym}_steps() so the per-sample algorithm",
+        "exists once and step() == steps(.., 1) byte-for-byte (gh-208).",
+    ]
+
+
+def scaffold_bodies(member: str, csym: str = "") -> "set[str]":
+    """Folded body paragraphs jm itself scaffolds for *member* (gh-2071).
+
+    The counterpart of :func:`scaffold_briefs` for the body. Only the
+    delegating ``step()`` has one (:func:`delegator_note`), and it names the
+    object's ``steps()`` symbol, so without *csym* nothing can match.
+
+    Parameters
+    ----------
+    member : str
+        Bare member name, as it appears after the ``<owner>_`` prefix.
+    csym : str, optional
+        The object's C symbol stem.
+
+    Returns
+    -------
+    set of str
+        Every body jm could have written here, folded by :func:`_fold`.
+
+    Examples
+    --------
+    >>> note = " ".join(delegator_note("fir", returns=True))
+    >>> _fold(note) in scaffold_bodies("step", "fir")
+    True
+    >>> scaffold_bodies("step"), scaffold_bodies("steps", "fir")
+    (set(), set())
+    """
+    if member != "step" or not csym:
+        return set()
+    return {
+        _fold(" ".join(delegator_note(csym, returns=r))) for r in (False, True)
+    }
+
+
 def scaffold_briefs(member: str, owner: str = "", cls: str = "") -> set[str]:
     """Normalized briefs jm itself scaffolds for *member* of *owner*.
 
@@ -1317,7 +1441,12 @@ def scaffold_briefs(member: str, owner: str = "", cls: str = "") -> set[str]:
 
 
 def is_scaffold_doc(
-    block: DoxyBlock, member: str = "", owner: str = "", cls: str = ""
+    block: DoxyBlock,
+    member: str = "",
+    owner: str = "",
+    cls: str = "",
+    *,
+    csym: str = "",
 ) -> bool:
     """True when *block* is jm's own scaffold boilerplate, not authored doc.
 
@@ -1343,9 +1472,14 @@ def is_scaffold_doc(
     written) keeps the prose the author did write instead of discarding it.
 
     Body prose and ``@code`` examples are the escape hatch in both strengths:
-    no jm scaffold emits either (the skeleton deliberately carries no runnable
-    example — a placeholder ``>>> TODO`` would be executed by the generated
-    project's doctest gate), so their presence proves an author has been here.
+    no jm scaffold emits an example (the skeleton deliberately carries no
+    runnable one — a placeholder ``>>> TODO`` would be executed by the
+    generated project's doctest gate), and one emits body prose -- the
+    delegating ``step()``'s sentence, :func:`scaffold_bodies` -- so anything
+    else there proves an author has been here. That one sentence used to
+    count as authorship too, so `apply` derived jm's own note into the
+    ``step()`` docstring that `jm object` had just rendered without it
+    (gh-2071).
 
     Parameters
     ----------
@@ -1355,6 +1489,12 @@ def is_scaffold_doc(
         Bare member name. Without it nothing can match.
     owner : str, optional
         Component/module name, for the lifecycle templates.
+    cls : str, optional
+        The class name the header was rendered with (gh-1651).
+    csym : str, optional
+        The owner's C symbol stem, for the body jm scaffolds
+        (:func:`scaffold_bodies`). Without it a body always counts as
+        authored, which is the safe direction.
 
     Returns
     -------
@@ -1372,8 +1512,17 @@ def is_scaffold_doc(
     >>> tmpl = parse_doxygen_block("@brief Get current g.\\n@param state  X.")
     >>> is_scaffold_doc(tmpl, "get_g")
     True
+    >>> note = "\\n".join(delegator_note("fir", returns=False))
+    >>> dlg = parse_doxygen_block(
+    ...     "@brief Process one input sample.\\n\\n" + note)
+    >>> is_scaffold_doc(dlg, "step"), is_scaffold_doc(dlg, "step", csym="fir")
+    (False, True)
     """
-    if block.body or block.examples:
+    if block.examples:
+        return False
+    if block.body and _fold(" ".join(block.body)) not in scaffold_bodies(
+        member, csym
+    ):
         return False
     brief = _norm_brief(block.brief)
     if not brief or not member:
@@ -2037,12 +2186,23 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     ``doc`` renders exactly as it did -- but is never wrapped, because an
     authored line's width is its author's.
 
+    The one line jm adds is a blank one before the closing quotes, and only
+    when the text ends inside a doctest (gh-2176). A text-mode ``.pyi``
+    doctest reads an example's expected output up to the next blank line, so
+    without it the last example swallows the closing quotes and the
+    declaration after them, and can never match: gh-691's failure, which
+    jm fixed for a class's authored ``@code`` and which an ``extra_methods``
+    row's numpy ``doc`` reached once gh-2059 allowed one. The author cannot
+    write the line: `authored_doc_lines` drops trailing blank lines.
+
     Examples
     --------
     >>> authored_docstring(["One."], 4)
     ['    \"\"\"One.\"\"\"']
     >>> authored_docstring(["One.", "", "Two."], 4)
     ['    \"\"\"One.', '', '    Two.', '    \"\"\"']
+    >>> authored_docstring(["Two.", "", ">>> 1 + 1", "2"], 4)[-2:]
+    ['', '    \"\"\"']
     """
     pad = " " * indent
     if len(lines) == 1:
@@ -2050,8 +2210,26 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     return (
         [f'{pad}"""{lines[0]}']
         + [f"{pad}{ln}" if ln else "" for ln in lines[1:]]
+        + ([""] if _ends_in_doctest(lines) else [])
         + [f'{pad}"""']
     )
+
+
+def _ends_in_doctest(lines: "Sequence[str]") -> bool:
+    """Whether *lines* end inside a doctest: no blank line after the last
+    ``>>>`` prompt, so its example runs to the end of the text.
+
+    >>> _ends_in_doctest([">>> 1 + 1", "2"])
+    True
+    >>> _ends_in_doctest([">>> 1 + 1", "2", "", "Prose after it."])
+    False
+    >>> _ends_in_doctest(["No example."])
+    False
+    """
+    prompts = [
+        i for i, ln in enumerate(lines) if ln.lstrip().startswith(">>>")
+    ]
+    return bool(prompts) and all(ln.strip() for ln in lines[prompts[-1] :])
 
 
 def docstring_body(lines: "Sequence[str]", indent: int) -> "list[str]":
@@ -2567,6 +2745,7 @@ def render_numpy_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return `.pyi` numpy-docstring lines for one method or free function.
 
@@ -2616,6 +2795,10 @@ def render_numpy_doc(
         raises, rendered as a numpy ``Raises`` section (gh-869). Distinct from
         a header ``@throws``, which the block carries and which is merged with
         these; both end up in the one section.
+    none_when : str, optional
+        The sentence saying when an optional return is ``None``, appended
+        to the ``Returns`` description -- `_diagnostics.empty_is_none_doc`
+        for a method (gh-2183). Both faces take it, as they take *raises*.
 
     Returns
     -------
@@ -2646,6 +2829,7 @@ def render_numpy_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     # gh-652: a backslash in a plain triple-quoted string is an invalid escape
     # sequence — `\l` in `:math:`20\log_{10}(g)`` is the common case — and
@@ -2684,9 +2868,13 @@ def render_numpy_doc(
     if examples:  # @code ... @endcode -> runnable doctest
         out += ["", f"{pad}Examples", f"{pad}--------"]
         out += [f"{pad}{ex}".rstrip() for ex in examples]
-        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
-        # text file, where expected output runs until a blank line — without
-        # this the closing `"""` is swallowed into the last example's output.
+    # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
+    # text file, where expected output runs until a blank line — without
+    # this the closing `"""` is swallowed into the last example's output.
+    # Whether the example came from `@code` or is the end of an authored
+    # `doc` (a handle method's, gh-2176): `_ends_in_doctest` is the one rule
+    # `authored_docstring` applies too.
+    if examples or _ends_in_doctest(lines):
         out.append("")
     out.append(f'{pad}"""')
     return out
@@ -2893,6 +3081,7 @@ def _numpy_sections(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> tuple[list[str], list[str]]:
     """Unindented numpy section lines, with ``Examples`` kept separate.
 
@@ -2999,7 +3188,16 @@ def _numpy_sections(
             out += [f"    {w}" for w in _wrap(desc, DESC_WIDTH)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
-        out += [f"    {w}" for w in _wrap(ret or return_fallback, DESC_WIDTH)]
+        _ret_desc = ret or return_fallback
+        if none_when:
+            # gh-2183: WHEN the optional annotation above is None, after
+            # what the value is. A description without a closing stop gets
+            # one, so the two read as two sentences rather than one.
+            _ret_desc = _ret_desc.rstrip()
+            if _ret_desc and _ret_desc[-1] not in ".!?":
+                _ret_desc += "."
+            _ret_desc = f"{_ret_desc} {none_when}".strip()
+        out += [f"    {w}" for w in _wrap(_ret_desc, DESC_WIDTH)]
         # gh-652: `@retval <v> <desc>` rows read as additional Returns entries.
         # A C function returning 0/-1 becomes a Python method that raises or
         # returns a value, and numpy has no other home for the per-value rows.
@@ -3050,6 +3248,7 @@ def render_runtime_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return runtime ``__doc__`` lines for one method, class or property.
 
@@ -3095,6 +3294,9 @@ def render_runtime_doc(
     override : str, optional
         Summary that outranks the header ``@brief`` — the manifest ``doc=``,
         or the caller's own shape-specific default sentence.
+    none_when : str, optional
+        When an optional return is ``None``; see :func:`render_numpy_doc`.
+        Must be the same sentence the stub face is given (gh-2183).
 
     Returns
     -------
@@ -3121,6 +3323,7 @@ def render_runtime_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     if examples:  # @code ... @endcode -> runnable doctest
         lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]
@@ -3215,14 +3418,30 @@ def has_section_rule(text: str) -> bool:
     >>> has_section_rule("A rule with nothing above it.\\n\\n---")
     False
     """
+    return bool(section_headings(text))
+
+
+def section_headings(text: str) -> "list[str]":
+    """The reST section headings in *text*, in order.
+
+    Each is the non-empty, non-rule line immediately above a line of three
+    or more dashes -- the construct :func:`has_section_rule` asks about.
+
+    Examples
+    --------
+    >>> section_headings("Sum.\\n\\nNotes\\n-----\\nA.\\n\\nReturns\\n---\\nB.")
+    ['Notes', 'Returns']
+    >>> section_headings("---\\nA rule with nothing above it.")
+    []
+    """
     lines = text.replace("\r\n", "\n").split("\n")
-    for i in range(1, len(lines)):
-        if not _SECTION_RULE_RE.match(lines[i]):
-            continue
-        above = lines[i - 1].strip()
-        if above and not _SECTION_RULE_RE.match(lines[i - 1]):
-            return True
-    return False
+    return [
+        lines[i - 1].strip()
+        for i in range(1, len(lines))
+        if _SECTION_RULE_RE.match(lines[i])
+        and lines[i - 1].strip()
+        and not _SECTION_RULE_RE.match(lines[i - 1])
+    ]
 
 
 class ManifestDoc(NamedTuple):
@@ -3274,7 +3493,90 @@ _DOC_REMEDIES = {
 }
 
 
-def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
+#: The tables whose ``doc`` is a member's WHOLE docstring, on every face,
+#: keyed by the owner's kind (``"object"`` for a component, else the
+#: module's ``kind``) and then by the table's key path below the owner. Each
+#: renderer here writes the ``doc`` as written and generates no numpy section
+#: beside it (gh-2059), so a ``Parameters`` block in one duplicates nothing:
+#:
+#: - ``extra_methods``: `_extramethods.pyi_member` is the stub body and
+#:   `_extramethods.method_def_row` the ``ml_doc`` -- for an object and a
+#:   composer alike (gh-1997). jm does not know the hand-written function's
+#:   signature (``args`` / ``returns`` are raw text), so it has none to
+#:   document.
+#: - an object's ``properties`` (and a view's): a getset's doc and a bare
+#:   ``@property`` stub, never `render_numpy_doc` (gh-744).
+#: - a capsule's ``methods`` and ``properties``: `_capsule._fn_doc_lines`.
+#: - a handle's ``getters`` and their ``fields``: each field is a getset.
+#: - a composer's ``serializers`` and ``source.computed``: a method row and a
+#:   read-only getset, each carrying the ``doc`` alone.
+#:
+#: A table missing from here is one where jm generates a section beside the
+#: ``doc`` -- or nests the ``doc`` inside one, as a parameter's description.
+#: Tables that generate one only for SOME rows (a module function with no
+#: Doxygen and no documented param, a handle method with no params) are not
+#: here: whether a row gets a section is the renderer's per-row decision,
+#: and a copy of it here would drift -- `_row_docstring` asks the renderer
+#: instead (gh-2103). tests/test_gh2059_doc_stands_alone.py
+#: renders a sectioned ``doc`` in every position and fails when this table
+#: and the artefacts disagree, in either direction.
+DOC_STANDS_ALONE: "dict[str, frozenset[tuple[str, ...]]]" = {
+    "object": frozenset(
+        {("extra_methods",), ("properties",), ("views", "properties")}
+    ),
+    "capsule": frozenset({("methods",), ("properties",)}),
+    "handle": frozenset({("getters",), ("getters", "fields")}),
+    "composer": frozenset(
+        {("extra_methods",), ("serializers",), ("source", "computed")}
+    ),
+}
+
+
+def _row_docstring(
+    cfg: dict, root, owner_kind: str, owner: str, table: tuple, row: dict
+) -> "str | None":
+    """One *row*'s docstring, from the renderer that decides PER ROW.
+
+    gh-2103: four tables generate a numpy section beside a `doc` for some
+    rows and not for others, so neither :data:`DOC_STANDS_ALONE` nor
+    "always" can say which. Each renderer already makes that decision when
+    it writes the row; this asks it to write the row, and the caller reads
+    the answer off the text. Restating each rule here would be a second
+    implementation of it, which drifts. None for every other table: its
+    renderer decides for the whole table.
+
+    The stub face is the one asked. The runtime face of each of these takes
+    the same branch (`_render`'s function table and `_handle.render_ext`
+    each say so where they make it), and tests/test_gh2059_doc_stands_alone
+    .py measures both faces against this answer.
+    """
+    if owner_kind == "module" and table == ("functions",):
+        from ._stubs import function_stub
+
+        return function_stub(cfg, root, owner, row)
+    if owner_kind == "handle" and table == ("methods",):
+        from ._handle import _backing_doc_blocks, method_doc_lines
+
+        blocks = _backing_doc_blocks(cfg, owner, root)
+        return "\n".join(method_doc_lines(row, blocks))
+    if owner_kind == "handle" and table == ("factories",):
+        from ._handle import _factory_doc_lines
+
+        return "\n".join(_factory_doc_lines(cfg, owner, row))
+    if owner_kind == "object" and table == ("methods",):
+        from . import _codec
+        from ._config import codecs
+
+        # The dispatch both method stub writers make: a codec-pack row is
+        # `_codec`'s, every other row the method renderer's, which always
+        # generates sections.
+        cdc = codecs(cfg).get(row.get("codec"))
+        if _codec.is_codec_method(row) and cdc is not None:
+            return "\n".join(_codec.render_method_pyi(row, cdc))
+    return None
+
+
+def manifest_docs_with_sections(cfg: dict, root=None) -> "list[ManifestDoc]":
     """Manifest ``doc`` values carrying a numpy section heading jm duplicates.
 
     History, because it decides what is left to report. gh-1154 gated on a
@@ -3294,6 +3596,16 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
 
     - A **module** doc is never a finding: jm generates no sections for a
       module, so a heading there duplicates nothing.
+    - A doc in a :data:`DOC_STANDS_ALONE` table is never a finding either:
+      it is the member's whole docstring, with nothing generated beside it
+      (gh-2059 -- an ``extra_methods`` row, a property).
+    - A doc in a table whose renderer decides per row is a finding only on
+      a row the renderer writes a section beside (gh-2103): the row is
+      rendered (`_row_docstring`) and its headings compared with the
+      doc's. A module function's answer depends on its header's Doxygen,
+      so *root* -- the project, as both reporters pass it -- is where the
+      header is read from; without one the function is asked as if it had
+      none.
     - Every other ``doc`` is a finding when it carries a **section rule**.
 
     Reporting rather than repairing is unchanged, and so is the remedy: jm
@@ -3319,32 +3631,75 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
     >>> fn = {"module": {"dsp": {"functions": [{"name": "f", "doc": "A.\\n\\nB."}]}}}
     >>> manifest_docs_with_sections(fn)
     []
+
+    A row whose ``doc`` is the whole docstring is not a finding, and the
+    same heading on a generated method still is (gh-2059):
+
+    >>> obj = {"eng": {"extra_methods": [{"name": "h", "doc": mangled}],
+    ...                "methods": [{"name": "m", "doc": mangled}]}}
+    >>> [d.where for d in manifest_docs_with_sections(obj)]
+    ['eng.methods.m.doc']
     """
+    from ._config import RESERVED_SECTIONS, module_kind
+
     found: "list[ManifestDoc]" = []
 
-    def kind_at(path: "tuple[str, ...]") -> str:
-        """Which renderer shape a ``doc`` at *path* belongs to.
+    def owner_at(keys: "tuple[str, ...]") -> "tuple[str, str, tuple] | None":
+        """``(owner kind, owner name, table)`` for a ``doc`` under *keys*.
 
-        ``""`` means the renderer carries the value whole, so there is
-        nothing to report.
+        *keys* is the table path with list rows left out --
+        ``("eng", "extra_methods")`` for any row of that table -- so it
+        names the TABLE. None for a ``doc`` under no component or module.
+        """
+        if keys[:1] == ("module",) and len(keys) >= 2:
+            kind = module_kind(cfg, keys[1]) or "module"
+            return kind, keys[1], keys[2:]
+        if keys and keys[0] not in RESERVED_SECTIONS:
+            return "object", keys[0], keys[1:]
+        return None
+
+    def kind_at(keys: "tuple[str, ...]", row: dict, body: str) -> str:
+        """Which renderer shape the ``doc`` *body* of *row* belongs to.
+
+        ``""`` means the renderer carries the value whole, with nothing
+        generated beside it, so there is nothing to report.
         """
         # A module's own doc: jm generates no sections for a module, so a
-        # heading there duplicates nothing. Everywhere else jm appends its own
-        # Parameters/Returns. (gh-1493 retired the other two shapes: no face
-        # truncates or flattens a `doc` any more.)
-        if path[:1] == ("module",) and len(path) == 2:
+        # heading there duplicates nothing. (gh-1493 retired the other two
+        # shapes: no face truncates or flattens a `doc` any more.)
+        if keys[:1] == ("module",) and len(keys) == 2:
             return ""
+        at = owner_at(keys)
+        if at is None:
+            return "duplicated"
+        kind, owner, table = at
+        # gh-2059: the member's whole docstring -- nothing generated beside.
+        if table in DOC_STANDS_ALONE.get(kind, ()):
+            return ""
+        # gh-2103: a table whose renderer decides per row. A heading in the
+        # row's docstring that the doc does not carry is jm's; none means
+        # the doc stands alone there too.
+        text = _row_docstring(cfg, root, kind, owner, table, row)
+        if text is not None and not (
+            Counter(section_headings(text)) - Counter(section_headings(body))
+        ):
+            return ""
+        # Everywhere else jm appends its own Parameters/Returns/Examples.
         return "duplicated"
 
-    def walk(node: object, path: "tuple[str, ...]") -> None:
+    def walk(
+        node: object, path: "tuple[str, ...]", keys: "tuple[str, ...]"
+    ) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
                 if isinstance(key, str) and key.startswith("_"):
                     continue
                 if key == "doc" and isinstance(value, str):
-                    kind = kind_at(path)
                     body = value.replace("\r\n", "\n").strip("\n")
+                    # The section rule first: asking a renderer to write a
+                    # row costs a render, and almost no `doc` carries one.
                     hit = has_section_rule(body)
+                    kind = kind_at(keys, node, body) if hit else ""
                     if kind and hit:
                         found.append(
                             ManifestDoc(
@@ -3354,7 +3709,7 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
                             )
                         )
                     continue
-                walk(value, path + (str(key),))
+                walk(value, path + (str(key),), keys + (str(key),))
         elif isinstance(node, list):
             for item in node:
                 # Name the entry by its own `name` where it has one — an
@@ -3364,9 +3719,9 @@ def manifest_docs_with_sections(cfg: dict) -> "list[ManifestDoc]":
                     if isinstance(item, dict) and item.get("name")
                     else str(node.index(item))
                 )
-                walk(item, path + (label,))
+                walk(item, path + (label,), keys)
 
-    walk(cfg, ())
+    walk(cfg, (), ())
     return found
 
 

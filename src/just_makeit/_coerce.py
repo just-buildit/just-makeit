@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 
+from ._keys import INIT_PARAM_FIELDS, SHAPE_KEYS
+
 # The C function parameter type a path arg presents to user C code: the callee
 # gets a borrowed C string and must copy it before returning (see path_release).
 PATH_C_TYPE = "const char *"
@@ -347,12 +349,104 @@ def out_buffer_guard(
     )
 
 
+#: Where an init-param tuple (`_config._project_init_params`) carries
+#: gh-805 §C's two array-shape keys (gh-2004): an authored key's slot is its
+#: index in `_keys.INIT_PARAM_FIELDS`, so this is derived rather than
+#: restated. A manifest row is a dict and carries them by name.
+_INIT_PARAM_SLOT = {
+    key: i
+    for i, (key, _is_bool) in enumerate(INIT_PARAM_FIELDS)
+    if key in SHAPE_KEYS
+}
+
+
+def _shape_key(param, key: str):
+    """*param*'s raw *key* value, or ``None`` when it declares none.
+
+    *param* is a manifest row (a dict) or an init-param tuple, whose slot
+    for *key* is `_INIT_PARAM_SLOT`'s and holds ``""`` when undeclared.
+    """
+    if isinstance(param, dict):
+        return param.get(key)
+    slot = _INIT_PARAM_SLOT[key]
+    raw = param[slot] if len(param) > slot else ""
+    return None if raw == "" else raw
+
+
+def _param_name(param) -> str:
+    """*param*'s name: a manifest row's ``name``, a tuple's slot 0."""
+    if isinstance(param, dict):
+        return str(param.get("name", "?"))
+    return str(param[0])
+
+
+def array_rank(param, what: str = "") -> "int | None":
+    """A param's ``rank``, validated: an int of at least 1, or ``None``.
+
+    The one reading of the key (gh-805 §C, gh-2004). Every builder that
+    guards an array's ``PyArray_NDIM`` asks here -- the method-param, the
+    module-function-param and the variable-output builders, and the
+    constructor's (`_context._state`) -- so they cannot read it differently.
+    ``None`` means undeclared, and renders no guard: flattening stays the
+    default, as `array_rank_guard` explains.
+
+    A value that is not a positive integer is refused rather than coerced:
+    ``rank = 0`` was read as "no guard" (it is falsy), ``"1"`` was
+    ``int()``-ed where its sibling ``elements_per_sample`` refuses a string,
+    and ``"x"`` died on that ``int()`` inside the renderer.
+
+    Parameters
+    ----------
+    param : dict or tuple
+        The ``[[...params]]`` / ``[[<obj>.init_params]]`` row, or an
+        init-param tuple from `_config.init_params`.
+    what : str
+        Names the owner in a refusal, e.g. ``"[[hb.init_params]]"``.
+
+    Returns
+    -------
+    int or None
+        The required rank, ``None`` when undeclared.
+
+    Raises
+    ------
+    Refusal
+        When the value is not an integer of at least 1.
+
+    Examples
+    --------
+    >>> array_rank({"name": "h", "type": "float[]"}) is None
+    True
+    >>> array_rank({"name": "h", "rank": 1})
+    1
+    >>> array_rank(("h", "float[]", "") + ("",) * 14 + (2,))
+    2
+    >>> array_rank({"name": "h", "rank": 0}, "f")
+    Traceback (most recent call last):
+    ...
+    just_makeit._report.Refusal: f: param 'h' declares rank = 0; it must be an integer of at least 1.
+    """
+    raw = _shape_key(param, "rank")
+    if raw is None:
+        return None
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+        return raw
+    from ._report import Refusal
+
+    where = f"{what}: " if what else ""
+    raise Refusal(
+        f"{where}param {_param_name(param)!r} declares rank = {raw!r}; it "
+        f"must be an integer of at least 1."
+    )
+
+
 def array_rank_guard(
     pname: str,
     arr_var: str,
     rank: int,
     decrefs: str = "",
     fail: str = "return NULL;",
+    indent: str = "    ",
 ) -> str:
     """A ``PyArray_NDIM`` guard for an array param (gh-805 §C).
 
@@ -385,6 +479,9 @@ def array_rank_guard(
         — the same split `capsule_new_c` draws, and for the same reason: a
         hard-coded ``return NULL`` inside an ``initproc`` compiles and reports
         success.
+    indent : str
+        The guard's own indentation: one level by default, two inside the
+        branch a constructor's omittable array is acquired in (gh-2004).
 
     Examples
     --------
@@ -394,14 +491,25 @@ def array_rank_guard(
                             "h must be a 1-D array");
             Py_DECREF(h_arr); return NULL;
         }
+
+    In a ``tp_init``, inside a branch, with an earlier array already held:
+
+    >>> print(array_rank_guard("h", "h_arr", 1, "Py_DECREF(w_arr);",
+    ...                        fail="return -1;", indent=" " * 8), end="")
+            if (PyArray_NDIM(h_arr) != 1) {
+                PyErr_SetString(PyExc_ValueError,
+                                "h must be a 1-D array");
+                Py_DECREF(w_arr); Py_DECREF(h_arr); return -1;
+            }
     """
+    i = indent
     release = f"{decrefs} " if decrefs else ""
     return (
-        f"    if (PyArray_NDIM({arr_var}) != {rank}) {{\n"
-        f"        PyErr_SetString(PyExc_ValueError,\n"
-        f'                        "{pname} must be a {rank}-D array");\n'
-        f"        {release}Py_DECREF({arr_var}); {fail}\n"
-        f"    }}\n"
+        f"{i}if (PyArray_NDIM({arr_var}) != {rank}) {{\n"
+        f"{i}    PyErr_SetString(PyExc_ValueError,\n"
+        f'{i}                    "{pname} must be a {rank}-D array");\n'
+        f"{i}    {release}Py_DECREF({arr_var}); {fail}\n"
+        f"{i}}}\n"
     )
 
 
@@ -771,6 +879,99 @@ def str_hint_errors(cfg: dict) -> "list[str]":
     return errors
 
 
+#: The `str_hint_rows` tables whose vocabulary names `SHAPE_KEYS`: an
+#: object's and a view's ``init_params`` (`_keys.INIT_PARAM_KEYS`), a
+#: method's ``params`` (`PARAM_KEYS`) and a module function's
+#: (`FUNCTION_PARAM_KEYS`). On a state field or a handle method's arg the
+#: key is not vocabulary, and `_keys.unknown_keys` already reports it.
+_SHAPE_KEY_TABLES = ("init_params]]", ".params]]")
+
+
+def shape_key_errors(cfg: dict) -> "list[str]":
+    """Every ``rank`` / ``elements_per_sample`` jm would not honour (gh-2004).
+
+    Refused at load, like `str_hint_errors`, because each of these would
+    otherwise be accepted and then do nothing -- a shape key set and
+    silently ignored is how a guard goes missing unnoticed (gh-1996):
+
+    - a value that is not an integer of at least 1. Read by the ONE reader
+      of each key (`array_rank`, `elements_per_sample`), so this and every
+      builder agree on what a valid value is.
+    - either key on a parameter that is not an array. Only an array's
+      acquisition reads them.
+    - on a constructor's ``T[][]`` array, a ``rank`` other than 2 (the type
+      already fixes it, and jm guards it), and an ``elements_per_sample``
+      other than 1: a 2-D array passes ``create()`` its two extents, not a
+      length, so there is nothing to divide.
+    - an ``elements_per_sample`` other than 1 on a constructor's
+      dtype-dispatch array (``real_type``): it is acquired as either of two
+      element types, and one interleave factor cannot describe both.
+
+    ``rank = 2`` on a ``T[][]`` and ``elements_per_sample = 1`` anywhere
+    state what jm already does, so they are honoured, not refused.
+
+    Examples
+    --------
+    >>> bad = {"f": {"init_params": [
+    ...     {"name": "n", "type": "int", "rank": 1}]}}
+    >>> shape_key_errors(bad)[0].split(":")[0]
+    '[[f.init_params]] n'
+    >>> bad["f"]["init_params"][0].update(type="float[]", rank=0)
+    >>> "rank = 0; it must be an integer" in shape_key_errors(bad)[0]
+    True
+    >>> bad["f"]["init_params"][0]["rank"] = 1
+    >>> shape_key_errors(bad)
+    []
+    """
+    from ._report import Refusal
+    from ._types import array_param_ndim
+
+    errors: "list[str]" = []
+    for where, p, _pre_empted, is_array in str_hint_rows(cfg):
+        declared = [k for k in SHAPE_KEYS if k in p]
+        if not declared or not where.endswith(_SHAPE_KEY_TABLES):
+            continue
+        name = p.get("name", "?")
+        ptype = str(p.get("type", ""))
+        try:
+            rank = array_rank(p, where)
+            eps = elements_per_sample(p, where)
+        except Refusal as exc:
+            errors.append(str(exc))
+            continue
+        if not is_array:
+            keys = " and ".join(declared)
+            errors.append(
+                f"{where} {name}: {keys} is read only by an array "
+                f"parameter's acquisition, and {name} is {ptype!r}; drop "
+                f"the key"
+            )
+            continue
+        if not where.endswith("init_params]]"):
+            continue
+        if array_param_ndim(ptype) == 2:
+            if rank not in (None, 2):
+                errors.append(
+                    f"{where} {name}: rank = {rank} can never hold on a "
+                    f"{ptype!r}, which is always 2-D -- jm already refuses "
+                    f"any other rank; drop the key"
+                )
+            if eps != 1:
+                errors.append(
+                    f"{where} {name}: a 2-D array passes create() its two "
+                    f"extents, not a length, so elements_per_sample = {eps} "
+                    f"has no count to divide; drop the key"
+                )
+        elif p.get("real_type") and p.get("real_create_fn") and eps != 1:
+            errors.append(
+                f"{where} {name}: a dtype-dispatch array is acquired as "
+                f"{ptype!r} or {p['real_type']!r}, and one "
+                f"elements_per_sample = {eps} cannot describe both; drop "
+                f"the key"
+            )
+    return errors
+
+
 def input_array_acq(
     npy_enum: str = "",
     dtype_fn: str = "",
@@ -986,6 +1187,86 @@ def _strict_acq(
     )
 
 
+def elements_per_sample(param, what: str = "") -> int:
+    """A param's ``elements_per_sample``, validated: an int of at least 1.
+
+    The one reading of the key (gh-805 §C, gh-1996). Every builder that
+    turns an array's element count into the kernel's sample count asks here
+    -- the method-param and module-function-param builders, the
+    variable-output binding, which sizes its output from the same count,
+    and the constructor's `<name>_len` (gh-2004) -- so they cannot read the
+    key differently. Absent means 1, which renders exactly what an
+    undeclared param always did.
+
+    A value that is not a positive integer is refused rather than coerced:
+    ``0`` was read as 1 and a negative one rendered ``/ -2``, which C
+    converts to a huge ``size_t`` and so hands the kernel a length of 0.
+
+    Parameters
+    ----------
+    param : dict or tuple
+        The ``[[...params]]`` row, or an init-param tuple from
+        `_config.init_params`.
+    what : str
+        Names the owner in a refusal, e.g. ``"method 'hb.execute'"``.
+
+    Returns
+    -------
+    int
+        The interleave factor, 1 when undeclared.
+
+    Raises
+    ------
+    Refusal
+        When the value is not an integer of at least 1.
+
+    Examples
+    --------
+    >>> elements_per_sample({"name": "x", "type": "int16_t[]"})
+    1
+    >>> elements_per_sample({"name": "x", "elements_per_sample": 2})
+    2
+    >>> elements_per_sample({"name": "x", "elements_per_sample": 0}, "f")
+    Traceback (most recent call last):
+    ...
+    just_makeit._report.Refusal: f: param 'x' declares elements_per_sample = 0; it must be an integer of at least 1.
+    """
+    raw = _shape_key(param, "elements_per_sample")
+    if raw is None:
+        return 1
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+        return raw
+    from ._report import Refusal
+
+    where = f"{what}: " if what else ""
+    raise Refusal(
+        f"{where}param {_param_name(param)!r} declares "
+        f"elements_per_sample = {raw!r}; it must be an integer of at "
+        f"least 1."
+    )
+
+
+def array_count_c(arr_var: str, elements_per_sample: int = 1) -> str:
+    """An array's length as a C expression, in samples (gh-805 §C, gh-1996).
+
+    ``PyArray_SIZE`` counts **elements**. A kernel taking an interleaved buffer
+    counts **logical samples** — a complex pair in an ``int16_t[]`` is two
+    elements and one sample — so every count crossing the boundary is divided
+    by the interleave factor. This is the division, once: the ``<p>_len``
+    local (:func:`array_len_c`) and every count the variable-output binding
+    passes inline are this expression.
+
+    Examples
+    --------
+    >>> array_count_c("x_arr")
+    '(size_t)PyArray_SIZE(x_arr)'
+    >>> array_count_c("x_arr", 2)
+    '(size_t)PyArray_SIZE(x_arr) / 2'
+    """
+    divisor = f" / {elements_per_sample}" if elements_per_sample != 1 else ""
+    return f"(size_t)PyArray_SIZE({arr_var}){divisor}"
+
+
 def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
     """The ``size_t <p>_len`` line, in the unit the C kernel counts (gh-805 §C).
 
@@ -1009,9 +1290,9 @@ def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
     >>> array_len_c("x", "x_arr", 2)
     '    size_t x_len = (size_t)PyArray_SIZE(x_arr) / 2;'
     """
-    divisor = f" / {elements_per_sample}" if elements_per_sample != 1 else ""
     return (
-        f"    size_t {pname}_len = (size_t)PyArray_SIZE({arr_var}){divisor};"
+        f"    size_t {pname}_len = "
+        f"{array_count_c(arr_var, elements_per_sample)};"
     )
 
 
@@ -1024,6 +1305,7 @@ def output_size_c(
     ctype: str = "npy_intp",
     limit: str = "NPY_MAX_INTP",
     indent: str = "    ",
+    unit: str = "elements",
 ) -> str:
     """Declare ``<ctype> <var>`` from an output SIZE, refusing one too large.
 
@@ -1072,6 +1354,10 @@ def output_size_c(
         ``(PY_SSIZE_T_MAX / sizeof(T))``, so the product cannot wrap.
     indent : str
         Leading whitespace for each emitted line.
+    unit : str
+        What *size_expr* counts, for the message. A variable-output binding
+        under an interleave bounds a count of SAMPLES before scaling it to
+        elements (gh-1996), and says so: ``"samples of 2 elements"``.
 
     Examples
     --------
@@ -1094,7 +1380,7 @@ def output_size_c(
         f"{i}if ({need} > (size_t){limit}) {{\n"
         f"{rel}"
         f"{i}    PyErr_Format(PyExc_OverflowError,\n"
-        f'{i}        "{who}: output of %zu elements is too large", {need});\n'
+        f'{i}        "{who}: output of %zu {unit} is too large", {need});\n'
         f"{i}    return NULL;\n"
         f"{i}}}\n"
         f"{i}{ctype} {var} = ({ctype}){need};\n"
@@ -1108,6 +1394,7 @@ def returned_count_c(
     release: str = "",
     *,
     indent: str = "    ",
+    unit: str = "elements",
 ) -> str:
     """Refuse a COUNT the kernel returned that exceeds the buffer it was given.
 
@@ -1164,6 +1451,9 @@ def returned_count_c(
         output array, a malloc'd buffer), run before ``return NULL``.
     indent : str
         Leading whitespace for each emitted line.
+    unit : str
+        What *count* and *cap* count, for the message: a variable-output
+        kernel under an interleave returns SAMPLES (gh-1996).
 
     Examples
     --------
@@ -1186,7 +1476,7 @@ def returned_count_c(
         f"{i}if ((size_t)({count}) > (size_t)({cap})) {{\n"
         f"{rel}"
         f"{i}    PyErr_Format(PyExc_RuntimeError,\n"
-        f'{i}        "{who}: wrote %zu elements into a buffer of %zu",\n'
+        f'{i}        "{who}: wrote %zu {unit} into a buffer of %zu",\n'
         f"{i}        (size_t)({count}), (size_t)({cap}));\n"
         f"{i}    return NULL;\n"
         f"{i}}}\n"

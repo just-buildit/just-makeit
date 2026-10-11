@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -303,11 +304,7 @@ class TestConvergence:
 
 
 @pytest.mark.skipif(
-    not (
-        _HAS_CF
-        and shutil.which("cmake")
-        and any(shutil.which(c) for c in ("cc", "gcc", "clang"))
-    ),
+    not (_HAS_CF and shutil.which("cmake") and default_cc() is not None),
     reason="needs clang-format + cmake + C compiler",
 )
 def test_formatted_project_builds(tmp_path):

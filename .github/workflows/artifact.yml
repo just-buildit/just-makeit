@@ -55,7 +55,7 @@ jobs:
         # gh-1632: `quick` is ci.yml's per-PR leg. Outside a workflow_call
         # the input is null, which reads as the full matrix.
         os: ${{ fromJSON(inputs.quick && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
-        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]') }}
+        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
 
     steps:
       - name: Set up Python
@@ -718,7 +718,7 @@ jobs:
         # The bounds jm supports plus the middle: every leg is a full Windows
         # build, so the POSIX job's six versions would be six times the cost
         # for the part of the matrix this job adds nothing to.
-        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.12", "3.14"]') }}
+        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.12", "3.15"]') }}
     defaults:
       run:
         shell: bash

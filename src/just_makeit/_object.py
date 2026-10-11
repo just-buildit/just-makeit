@@ -25,9 +25,10 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _color as Color
+from . import _borrow
 from . import _config as C
 from . import _csym as CSYM
-from ._docstring import class_import_line
+from ._docstring import class_import_line, class_import_path
 from . import _modplatforms
 from . import _procglobal
 from . import _context as Ctx
@@ -37,7 +38,6 @@ from . import _render as R
 from . import _report
 from . import _targets
 from . import _stubs as S
-from . import _types as T
 from . import _incpath as INC
 from ._builtins import (
     builtin_owned_members,
@@ -64,12 +64,15 @@ from ._docstring import (
     authored_class_brief,
     inherit_ctor_params,
     is_scaffold_doc,
+    declared_max_outs,
     max_out_arity_key,
+    max_out_declared_key,
     max_out_is_state_only,
     parse_doxygen_block,
     scan_max_out_arity,
 )
 from ._context._parse import _build_ml_doc
+from ._context._destroy import PARK_FIELD
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
 # temp tree whose headers carry only template Doxygen. Docstring derivation
@@ -165,18 +168,30 @@ def _included_member_docs(
     return out, structs
 
 
-def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
+def _load_doc_blocks(
+    root: Path,
+    obj: str,
+    cfg: "dict | None" = None,
+    *,
+    owner: "INC.Owner | None" = None,
+) -> dict:
     """Parse Doxygen comments from the sacred ``<obj>_core.h``.
 
     Returns ``{c_function_name: DoxyBlock}`` for every documented declaration,
     or ``{}`` when the header is absent or carries no usable comments. The
     header is the single source of truth for docstrings; generators derive
     Python docs from these blocks and fall back to name-based stubs otherwise.
+
+    *owner* is the project the header's TREE is in -- its layout and its
+    symbol stem -- when no manifest at *root* says so: `jm bind` on a bare
+    ``native/`` reads them off the tree (gh-1895). By default the manifest
+    at the doc root answers.
     """
     doc_root = _DOC_ROOT_OVERRIDE or root
+    tree = doc_root if owner is None else owner
     # Includes inside the header resolve from the -I directory.
     inc_root = INC.inc_dir(doc_root)
-    header = INC.core_h(doc_root, obj)
+    header = INC.core_h(doc_root, obj, tree)
     if not header.exists():
         return {}
     text = header.read_text(encoding="utf-8")
@@ -211,25 +226,32 @@ def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
     if _structs:
         out[struct_members_key()] = _structs
     # gh-1591: a declaration's C name starts with the object's STEM.
-    stem = CSYM.stem(doc_root, obj)
+    stem = CSYM.stem(tree, obj)
     # gh-1651: the class the header was rendered with, so its `reset`
     # boilerplate (which names the CLASS) is recognised under a class_name.
     # From *cfg* when the caller renders from one: at `jm object` time the
     # manifest on disk does not hold the new object yet, and a scaffold that
     # read the brief as authored while `apply` read it as jm's disagreed.
-    cls = C.resolved_class_name(
-        cfg if cfg is not None else INC.manifest(doc_root), obj
-    )
+    manifest = cfg if cfg is not None else INC.manifest(tree)
+    cls = C.resolved_class_name(manifest, obj)
+    members = _method_members(manifest, obj, stem)
     for cname, block_text in raw.items():
-        # strip the stem_ prefix to recover the bare method/verb name for the
-        # triviality check (e.g. ddc_execute -> execute).
-        verb = (
+        # The members a declaration may document, for the triviality check:
+        # the name with the stem_ prefix stripped (e.g. ddc_execute ->
+        # execute), and the manifest's method when one binds this symbol --
+        # a block jm would scaffold for either is jm's.
+        verbs = {
             cname[len(stem) + 1 :] if cname.startswith(stem + "_") else cname
-        )
-        parsed = parse_doxygen_block(block_text, name=verb)
+        }
+        if cname in members:
+            verbs.add(members[cname])
+        parsed = parse_doxygen_block(block_text)
         if parsed is None:
             continue
-        if _is_scaffold_brief(obj, verb, parsed, cls):
+        if any(
+            _is_scaffold_brief(obj, verb, parsed, cls, csym=stem)
+            for verb in verbs
+        ):
             continue
         out[cname] = parsed
     # gh-761: the `_max_out` prototypes' arity, from the same header read.
@@ -243,6 +265,22 @@ def _load_doc_blocks(root: Path, obj: str, cfg: "dict | None" = None) -> dict:
     _arity = scan_max_out_arity(text)
     if _arity:
         out[max_out_arity_key()] = _arity
+    # gh-2184: and which list-of-records methods' `_max_out` it declares,
+    # from the same scan, under the same only-when-non-empty rule. That
+    # capacity is the author's to declare, and this is how the binding sees
+    # that they did. ONLY those: jm declares every `variable_output`
+    # method's `_max_out` itself, nothing reads them from here, and a map
+    # they made non-empty reads as an authored header to `apply`, whose
+    # post-replay re-render it would then trigger for every such project.
+    _lists = {
+        f"{C.method_c_symbol(stem, m)}_max_out"
+        for m in C.methods(manifest, obj)
+        + [m for v in C.views(manifest, obj) for m in C.view_methods(v)]
+        if _record.is_record_list(m)
+    }
+    _declared = declared_max_outs(text) & _lists
+    if _declared:
+        out[max_out_declared_key()] = _declared
     return out
 
 
@@ -371,7 +409,9 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     return out
 
 
-def _is_scaffold_brief(obj: str, verb: str, block, cls: str = "") -> bool:
+def _is_scaffold_brief(
+    obj: str, verb: str, block, cls: str = "", *, csym: str = ""
+) -> bool:
     """True if *block* is just jm's own scaffold-template Doxygen.
 
     Thin owner-aware wrapper over :func:`_docstring.is_scaffold_doc`, which is
@@ -382,7 +422,37 @@ def _is_scaffold_brief(obj: str, verb: str, block, cls: str = "") -> bool:
     ``@param`` at all, so the method skeleton, which does carry generated
     ``@param`` lines, was derived into the ``.pyi`` as if authored.
     """
-    return is_scaffold_doc(block, verb, obj, cls)
+    return is_scaffold_doc(block, verb, obj, cls, csym=csym)
+
+
+def _method_members(cfg: dict, obj: str, stem: str) -> "dict[str, str]":
+    """``{c_symbol: method_name}`` for every method *obj*'s manifest binds.
+
+    The map `jm method` stamps its doc skeleton from: the symbol through
+    :func:`_config.method_c_symbol`, the ``@brief <name>.`` from the
+    method's Python name. Reading a declaration's member back by stripping
+    the stem agrees with it only for a derived symbol; an ``fn`` override
+    (``o_custom_m2`` for ``m2``) left jm's own ``@brief m2.`` judged
+    against ``o_custom_m2`` and derived as authored -- by `apply`, while the
+    verb, rendering before the skeleton existed, used the name fallback
+    (gh-2071). A view's own methods share the object's core, so they are
+    read too (gh-1012's signature override is the same shape).
+
+    Examples
+    --------
+    >>> cfg = {"o": {"methods": [{"name": "m2", "fn": "o_custom_m2"},
+    ...                          {"name": "tune"}]}}
+    >>> _method_members(cfg, "o", "p_o")
+    {'o_custom_m2': 'm2', 'p_o_tune': 'tune'}
+    """
+    entries = C.methods(cfg, obj) + [
+        m for v in C.views(cfg, obj) for m in C.view_methods(v)
+    ]
+    out: "dict[str, str]" = {}
+    for m in entries:
+        if m.get("name"):
+            out.setdefault(C.method_c_symbol(stem, m), str(m["name"]))
+    return out
 
 
 def _indent_body(body: str, indent: str = "    ") -> str:
@@ -426,12 +496,16 @@ def _make_object_ctx(
     create_fn: str | None = None,
     owner: "INC.Owner" = None,
     str_hints: "dict[str, str] | None" = None,
+    reset_impl: bool = False,
 ) -> dict:
     """Build the render ctx for an object (or a view — gh-504).
 
     *str_hints* is `_config.state_str_hints` for the object: each array
     state field's ``set_<name>`` appends its hint to the refusal of a
     ``str`` (gh-1761).
+
+    *reset_impl* says the object's ``reset()`` body is the author's, one
+    input of `Ctx.reset_is_authors` (gh-1882).
 
     A view passes ``class_name`` (its Python-facing name) and ``create_fn``
     (its C constructor) while ``component`` stays the parent's, so the ctx
@@ -447,6 +521,12 @@ def _make_object_ctx(
         {
             "module": module,
             "Module": _to_title(module),
+            # gh-2054: where the class imports from, for the doctests
+            # `make_step_ctx` writes below. `module` is the id, which names
+            # the wrong package once the module declares `package`.
+            "module_dir": C.module_package_resolved(
+                INC.manifest(owner), module
+            ),
             "package": pkg,
             "PACKAGE": pkg.upper(),
             "project": pkg.replace("_", "-"),
@@ -478,6 +558,7 @@ def _make_object_ctx(
             doc_blocks=doc_blocks,
             csym=ctx["csym"],
             str_hints=str_hints,
+            reset_impl=reset_impl,
         )
     )
     ctx.update(Ctx.make_perf_ctx(perf))
@@ -495,32 +576,6 @@ def _make_object_ctx(
             doc_blocks=doc_blocks,
             controllable=controllable,
         )
-    )
-    # Re-generate pyi_examples now that package and Component are in ctx.
-    # make_state_ctx emits placeholder text; we replace it with the real values.
-    scalar_state = (
-        [
-            (n, ct, dflt)
-            for n, ct, dflt in (state_vars or [])
-            if not T.parse_array_type(ct)
-        ]
-        if not no_state
-        else []
-    )
-    has_aa = bool(array_args)
-    import_line = class_import_line(pkg, ctx["Component"], module)
-    ctx["pyi_examples"] = (
-        Ctx._pyi_examples_block(
-            scalar_state,
-            has_aa,
-            import_line,
-            ctx.get("py_create_args", ""),
-            ctx["Component"],
-            no_reset=no_reset,
-            init_params=init_params,
-        )
-        if (scalar_state or has_aa)
-        else ""
     )
     return ctx
 
@@ -671,14 +726,11 @@ def package_siblings(cfg: dict, module: str) -> list[str]:
     :func:`_merge_module_init` recognise the neighbour's exports and leave them
     alone instead of pruning them out of ``__all__`` on every other apply.
     """
-    mp = C.module_paths(module)
-    out_pkg = C.module_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
     return [
         C.module_paths(other).leaf
         for other in C.modules(cfg)
-        if other != module
-        and (C.module_package(cfg, other) or C.module_paths(other).pypath)
-        == out_pkg
+        if other != module and C.module_package_resolved(cfg, other) == out_pkg
     ]
 
 
@@ -686,9 +738,9 @@ def _leading_docstring(text: str) -> str:
     """The module docstring at the top of *text*, trailing blank lines included.
 
     The inverse of :func:`_merge_module_docstring`'s input: it reads back what
-    that function (or the ``MODULE_INIT_PY`` template) wrote, so ``apply`` can
-    carry a freshly rendered docstring onto the real file without re-deriving
-    it from the manifest. Empty when there is none.
+    that function (or the ``MODULE_INIT_PY_EMPTY`` template) wrote, so
+    ``apply`` can carry a freshly rendered docstring onto the real file
+    without re-deriving it from the manifest. Empty when there is none.
 
     >>> _leading_docstring('\"\"\"Filters.\"\"\"\\n\\nimport os\\n')
     '\"\"\"Filters.\"\"\"\\n\\n'
@@ -1171,6 +1223,53 @@ def _view_frag_id(view: dict) -> str:
     return view["class_name"].lower()
 
 
+def fragment_destroy_ctx(
+    cfg: dict, obj: str, ctx: dict, *, lends: bool
+) -> "dict[str, str]":
+    """A module fragment's destructor slots, for one lending status.
+
+    One call for the three renders that must agree on it: a module
+    object's fragment, each of its views' (which share the parent's
+    destructor contract, gh-541), and `jm_owned_functions`, which renders
+    the same teardown with the OTHER lending status to recognise a body jm
+    wrote before the object started or stopped lending views (gh-2187). A
+    second copy of these arguments there could recognise a teardown this
+    render never wrote.
+
+    Parameters
+    ----------
+    cfg : dict
+        The project manifest.
+    obj : str
+        The object the fragment wraps: a view's parent, for a view.
+    ctx : dict
+        The fragment's component context; ``component``, ``ComponentW`` and
+        ``csym`` are read from it.
+    lends : bool
+        Whether the teardown parks the state for ``tp_dealloc`` rather than
+        freeing it (`_borrow.lends`).
+
+    Returns
+    -------
+    dict of str to str
+        `_context.make_destroy_ctx`'s slots.
+    """
+    return Ctx.make_destroy_ctx(
+        ctx["component"],
+        ctx["ComponentW"],
+        C.destroy_spec(cfg, obj),
+        C.methods(cfg, obj),
+        class_name=C.class_name(cfg, obj) or "",
+        # gh-1323: so the destructor is the counterpart of whatever
+        # `create_fn` names, not always `<comp>_destroy`. gh-1326: the
+        # module path dropped it, so it derived nothing here even though
+        # the resolver was right.
+        create_fn=C.object_create_fn(cfg, obj) or "",
+        csym=ctx["csym"],
+        lends=lends,
+    )
+
+
 def _make_view_ctx(
     root: Path,
     cfg: dict,
@@ -1209,6 +1308,8 @@ def _make_view_ctx(
         no_state=C.is_no_state(cfg, obj),
         no_step=C.is_no_step(cfg, obj),
         no_reset=C.is_no_reset(cfg, obj),
+        # gh-1882: a view shares its parent's reset().
+        reset_impl=bool(Ctx.declared_reset_impl(cfg, obj)),
         mutable=C.is_mutable(cfg, obj),
         step_delegates=C.step_delegates(cfg, obj),
         init_params=C.view_init_params(cfg, obj, view),
@@ -1254,7 +1355,7 @@ def _make_view_ctx(
             ctx["Component"],
             merged_methods,
             pkg=pkg,
-            module=module,
+            module_dir=ctx["module_dir"],
             py_create_args=ctx.get("py_create_args", ""),
             no_state=C.is_no_state(cfg, obj),
             serializable=C.is_serializable(cfg, obj),
@@ -1323,17 +1424,7 @@ def _make_view_ctx(
     # failure the parent's reports would be the original bug wearing a
     # different class name.
     ctx.update(
-        Ctx.make_destroy_ctx(
-            ctx["component"],
-            ctx["ComponentW"],
-            C.destroy_spec(cfg, obj),
-            C.methods(cfg, obj),
-            class_name=C.class_name(cfg, obj) or "",
-            # gh-1323: so the destructor is the counterpart of whatever
-            # `create_fn` names, not always `<comp>_destroy`.
-            create_fn=C.object_create_fn(cfg, obj) or "",
-            csym=ctx["csym"],
-        )
+        fragment_destroy_ctx(cfg, obj, ctx, lends=_borrow.lends(cfg, obj))
     )
     ctx.update(
         Ctx.make_stream_ctx(
@@ -1404,12 +1495,15 @@ def _make_view_ctx(
                 state_vars,
                 C.is_no_state(cfg, obj),
                 _vinit,
-                class_import_line(pkg, ctx["Component"], module),
+                class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
                 ctx.get("py_create_args", ""),
                 doc_blocks=doc_blocks,
                 manifest_doc=view.get("doc", ""),
                 state_docs=C.state_docs(cfg, obj),
-                custom_reset=bool(_vinit) or C.is_no_reset(cfg, obj),
+                # gh-1882: the parent's reset(), the view's constructor.
+                custom_reset=Ctx.manifest_reset_is_authors(
+                    cfg, obj, init_params=_vinit
+                ),
                 create_fn=view["create_fn"],
                 csym=ctx["csym"],
             )
@@ -1420,7 +1514,7 @@ def _make_view_ctx(
         Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )
     )
@@ -1494,6 +1588,7 @@ def build_component_ctxs(
             no_state=C.is_no_state(cfg, obj),
             no_step=C.is_no_step(cfg, obj),
             no_reset=C.is_no_reset(cfg, obj),
+            reset_impl=bool(Ctx.declared_reset_impl(cfg, obj)),  # gh-1882
             mutable=C.is_mutable(cfg, obj),
             step_delegates=C.step_delegates(cfg, obj),
             init_params=C.init_params(cfg, obj),
@@ -1518,7 +1613,7 @@ def build_component_ctxs(
                 ctx["Component"],
                 C.methods(cfg, obj),
                 pkg=pkg,
-                module=module,
+                module_dir=ctx["module_dir"],
                 py_create_args=ctx.get("py_create_args", ""),
                 no_state=C.is_no_state(cfg, obj),
                 serializable=C.is_serializable(cfg, obj),
@@ -1529,6 +1624,8 @@ def build_component_ctxs(
                 records=C.records(cfg, obj),  # gh-1405
                 properties=C.properties(cfg, obj),  # gh-1426
                 csym=ctx["csym"],
+                # gh-1997: the object's own; a view (above) has none.
+                extra_methods=C.extra_methods(cfg, obj),
             )
         )
         for _slot in _override_slots:
@@ -1576,17 +1673,7 @@ def build_component_ctxs(
         # gh-541/gh-544: a module object's declared destructor contract,
         # filled into its COMPONENT_TYPE_SECTION slots by the aggregator.
         ctx.update(
-            Ctx.make_destroy_ctx(
-                ctx["component"],
-                ctx["ComponentW"],
-                C.destroy_spec(cfg, obj),
-                C.methods(cfg, obj),
-                class_name=C.class_name(cfg, obj) or "",
-                # gh-1326: this path dropped it, so `create_fn` derived
-                # nothing here even though the resolver was right.
-                create_fn=C.object_create_fn(cfg, obj) or "",
-                csym=ctx["csym"],
-            )
+            fragment_destroy_ctx(cfg, obj, ctx, lends=_borrow.lends(cfg, obj))
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
         # same stream()/__iter__ as a standalone, filled into its
@@ -1630,13 +1717,12 @@ def build_component_ctxs(
                 state_vars,
                 C.is_no_state(cfg, obj),
                 C.init_params(cfg, obj),
-                class_import_line(pkg, ctx["Component"], module),
+                class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
                 ctx.get("py_create_args", ""),
                 doc_blocks=_doc_blocks,
                 manifest_doc=cfg.get(obj, {}).get("doc", ""),
                 state_docs=C.state_docs(cfg, obj),
-                custom_reset=bool(C.init_params(cfg, obj))
-                or C.is_no_reset(cfg, obj),
+                custom_reset=Ctx.manifest_reset_is_authors(cfg, obj),
                 create_fn=C.object_create_fn(cfg, obj),
                 raises=_cls_raises,
                 warns=_cls_warns,
@@ -1656,7 +1742,7 @@ def build_component_ctxs(
             Ctx.make_module_ctx(
                 module,
                 pkg,
-                C.module_package(cfg, module),
+                C.module_package_resolved(cfg, module),
                 C.module_doc(cfg, module),
             )
         )
@@ -1904,7 +1990,7 @@ def render_module_ext_c(
         module_doc_c=Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )["module_doc_c"],
         # gh-643: the module header's Doxygen for its free functions — the
@@ -1917,6 +2003,145 @@ def render_module_ext_c(
     )
 
 
+def jm_owned_functions(
+    cfg: dict,
+    ctx: dict,
+    rendered: str,
+    *,
+    kept: "dict[str, str]",
+    into: str,
+) -> "tuple[str, ...]":
+    """Fragment functions jm regenerates rather than keeps as the author's.
+
+    A module fragment is sacred, so a re-render keeps each function body it
+    finds by name (gh-770). That is right for a wrapper the author may have
+    written, and wrong for one with no authoring path, whose every byte is
+    the manifest. Kept, those go on saying what the manifest USED to say.
+
+    - gh-541: the teardown wrappers of an object that declares
+      ``[<obj>.destroy]``. Whether ``__exit__`` propagates a failed close
+      is the declaration, and a body from before it swallows the status.
+    - gh-2187: a teardown wrapper whose body is jm's own render for the
+      OTHER lending status (`_relent_teardown`). A lending object's
+      ``destroy()`` and ``__exit__`` park the state for ``tp_dealloc``;
+      every other object's free it. Kept, an object that started lending
+      after its fragment was written went on freeing under the views it
+      lends, and one that stopped kept a body parking into a field its
+      struct no longer has, which does not compile. Any other body is the
+      author's: kept, and named by `_docsync`'s ``deferred-free`` marker.
+    - gh-2055: every record dtype builder (`_record.dtype_builders`). It is
+      the declared columns, so a kept one describes the old element while
+      the element contract asserts the new one.
+
+    A teardown that parks is taken from the render only where the text it
+    lands in declares `PARK_FIELD`. *into* is the fresh render for a verb,
+    so that always holds; for `jm apply` it is the fragment on disk, whose
+    struct apply never rewrites, so a manifest edited by hand to lend would
+    have it park into a field the struct lacks. There the body stays as it
+    is and the marker names it.
+
+    One answer for both writers of a fragment: `_regenerate_module_now`
+    regenerates these instead of restoring them, and `jm apply`
+    (`_docsync.refresh_module_fragment_docs`) overwrites them from its
+    reference render. Two lists here would be the gh-541 pair again, with
+    one of them missing the next addition.
+
+    Parameters
+    ----------
+    cfg : dict
+        The project manifest.
+    ctx : dict
+        The fragment's component context (`build_component_ctxs`).
+    rendered : str
+        A FRESH render of the fragment, so the names come from jm's own
+        emission rather than from a file a formatter may have reshaped.
+    kept : dict of str to str
+        The function bodies the restore would keep, by name
+        (`_extract_c_function_bodies` of the fragment on disk).
+    into : str
+        The text the bodies are restored into: the fresh render for a verb
+        (`_regenerate_module_now`), the fragment on disk for `jm apply`.
+
+    Returns
+    -------
+    tuple of str
+        The function names, in the order above.
+    """
+    _w = ctx["ComponentW"]
+    names = (f"{_w}_destroy", f"{_w}_exit")
+    teardown = (
+        names
+        if C.destroy_spec(cfg, ctx["component"])
+        else _relent_teardown(cfg, ctx, rendered, kept, names)
+    )
+    if _declares_park(rendered) and not _declares_park(into):
+        teardown = ()
+    return teardown + _record.dtype_builders(rendered)
+
+
+def _declares_park(text: str) -> bool:
+    """Whether *text*'s object struct declares `PARK_FIELD` (gh-2187).
+
+    Read as code, comments and strings masked, in any layout: the
+    declaration is ``<stem>_state_t *_jm_parked;``, and every use of the
+    field is ``self->_jm_parked``, which never follows a ``*``.
+
+    Examples
+    --------
+    >>> _declares_park("typedef struct {\\n    p_o_state_t * _jm_parked ;")
+    True
+    >>> _declares_park("if (self->_jm_parked) f(self->_jm_parked);")
+    False
+    >>> _declares_park("/* p_o_state_t *_jm_parked; */")
+    False
+    """
+    from ._docsync import _code_mask
+
+    return re.search(rf"\*\s*{PARK_FIELD}\s*;", _code_mask(text)) is not None
+
+
+def _relent_teardown(
+    cfg: dict,
+    ctx: dict,
+    rendered: str,
+    kept: "dict[str, str]",
+    names: "tuple[str, ...]",
+) -> "tuple[str, ...]":
+    """The teardown wrappers in *kept* that jm wrote for the OTHER lending
+    status (gh-2187), and so are jm's to re-render.
+
+    Compared token for token (`_docsync._norm_unit`): a formatter's layout,
+    a comment or a docstring is not an edit, and a body the author changed
+    in any other way is not this. The other render is
+    `fragment_destroy_ctx` with ``lends`` flipped over the same context --
+    the one call the fragment itself was rendered through -- and it is
+    rendered only for a wrapper that differs from *rendered* at all, which
+    on an up-to-date fragment is none.
+    """
+    from ._docsync import _norm_unit
+
+    now = _extract_c_function_bodies(rendered)
+    stale = [
+        n
+        for n in names
+        if n in kept and n in now and _norm_unit(kept[n]) != _norm_unit(now[n])
+    ]
+    if not stale:
+        return ()
+    obj = ctx["component"]
+    flipped = fragment_destroy_ctx(
+        cfg, obj, ctx, lends=not _borrow.lends(cfg, obj)
+    )
+    other = _extract_c_function_bodies(
+        R.render_module_ext_fragment({**ctx, **flipped})
+    )
+    return tuple(
+        n
+        for n in stale
+        if n in other and _norm_unit(kept[n]) == _norm_unit(other[n])
+    )
+
+
 def _regenerate_module_now(
     root: Path,
     cfg: dict,
@@ -1926,15 +2151,26 @@ def _regenerate_module_now(
 ) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
     object_names = C.module_objects(cfg, module)
-    # cname drives the flat native dir / file prefixes; leaf is the .so basename
-    # and the collocated-object name; pypath is the nested Python dir. For a
-    # flat module all three equal `module` (zero churn).
+    # cname drives the flat native dir / file prefixes; leaf is the .so basename;
+    # pypath is the nested Python dir. For a flat module all three equal
+    # `module` (zero churn).
     mp = C.module_paths(module)
     cname = mp.cname
+    # gh-1949: the object whose directory IS the module's -- named for the
+    # cname, never the leaf (an object `filters` in `dsp.filters` lives in
+    # native/src/filters/, a directory of its own).
+    collocated = C.collocated_object(cfg, module)
     Module = _to_title(cname)
     # gh-523: `package` redirects every Python-side artifact (.so output dir,
     # .pyi, __init__ re-exports, tests/, benchmarks/) into a sibling package;
     # unset it collapses to the module's own pypath, so nothing changes.
+    #
+    # Spelled inline ON PURPOSE, the one place outside
+    # `C.module_package_resolved` that may (gh-2065): the `__init__.py`
+    # re-exports written here are the independent oracle gh-2054's gate
+    # checks every generated import path against. Through the owner, a
+    # wrong answer would put the re-exports where the imports look, and the
+    # gate would pass on a tree that does not import.
     out_pkg = C.module_package(cfg, module) or mp.pypath
 
     comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
@@ -2009,13 +2245,12 @@ def _regenerate_module_now(
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
         if preserved:
-            # gh-541: a declared destructor contract owns the teardown
-            # wrappers — see _restore_c_function_bodies' force_regen.
-            _w = ctx["ComponentW"]
-            _force = (
-                (f"{_w}_destroy", f"{_w}_exit")
-                if C.destroy_spec(cfg, ctx["component"])
-                else ()
+            # gh-541 / gh-2055 / gh-2187: functions that are jm's glue for
+            # the OLD manifest, not the author's -- see jm_owned_functions.
+            # The struct here is the render's, so a parking teardown always
+            # finds its field.
+            _force = jm_owned_functions(
+                cfg, ctx, frag, kept=preserved, into=frag
             )
             # gh-1012: same reasoning one feature over — a view's signature
             # override reuses a wrapper name the fragment already has, and
@@ -2082,9 +2317,9 @@ def _regenerate_module_now(
     # <mod>_core; the function sources are appended to that library below.
     # Non-collocated: we define <mod>_core separately so that module-level
     # functions are compiled and linked in.
-    # A collocated object shares the module's leaf name (e.g. module "a.fft",
-    # object "fft"): CMAKE_LISTS_OBJECT_CORE already defines <leaf>_core.
-    has_collocated = mp.leaf in object_names
+    # A collocated object shares the module's cname (e.g. module "a.fft",
+    # object "a_fft"): CMAKE_LISTS_OBJECT_CORE already defines <cname>_core.
+    has_collocated = collocated is not None
     extra_inc_dirs = C.extra_include_dirs(cfg, module)
     inc_dirs_extra = (
         "\n    " + "\n    ".join(extra_inc_dirs) if extra_inc_dirs else ""
@@ -2145,7 +2380,7 @@ def _regenerate_module_now(
     _varargs_srcs: list[str] = []
     for _obj, _ctx_ in zip(object_names, comp_ctxs):
         for _bf in _ctx_.get("varargs_binding_files", []):
-            if _obj == mp.leaf:
+            if _obj == collocated:
                 _varargs_srcs.append(_bf)
             else:
                 _varargs_srcs.append(f"../{_obj}/{_bf}")
@@ -2159,7 +2394,7 @@ def _regenerate_module_now(
         **Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         ),
         "Module": Module,
@@ -2179,7 +2414,7 @@ def _regenerate_module_now(
     # have _methods.c — stubs go in _core.c.
     collocated_cmake = ""
     for obj, ctx_ in zip(object_names, comp_ctxs):
-        if obj == mp.leaf:
+        if obj == collocated:
             # gh-132: inject the module-level extra_link_libs_block so that
             # the collocated object's test/bench targets link against the
             # same extra libraries as the Python extension.
@@ -2275,8 +2510,8 @@ def _regenerate_module_now(
     # find nothing and re-emit the colliding target on every apply. Same
     # override, and the same reason, as the sacred-header lookup above.
     # gh-1055: what the PROJECT claims, and what this module's OWN objects
-    # already emit. A collocated module-object -- a module whose `objects`
-    # list contains its own name -- writes `test_<obj>_core` into the very
+    # already emit. A collocated module-object -- the one named for the
+    # module's cname -- writes `test_<obj>_core` into the very
     # same CMakeLists this module writes to, so gh-1034's identically-named
     # module pair is a second `add_executable` with one name in one file and
     # cmake refuses to configure at all.
@@ -2382,21 +2617,18 @@ def _regenerate_module_now(
     if existed:
         base = init_path.read_text(encoding="utf-8")
     else:
-        # Fresh scaffold: render the template with the module's own exports,
-        # then fold in any reexports through the same idempotent merge path.
+        # Fresh scaffold: the template with no exports, which the merge below
+        # fills -- the one path for a module with members and one without
+        # (gh-2070). With none, the merge writes no import line, since an
+        # empty `from .<leaf> import` is a SyntaxError.
         base = R.render(
-            R.MODULE_INIT_PY,
-            {
-                **Ctx.make_module_ctx(
-                    module,
-                    pkg,
-                    C.module_package(cfg, module),
-                    C.module_doc(cfg, module),
-                ),
-                "Module": Module,
-                "object_imports": ", ".join(all_exports),
-                "object_all": ", ".join(f'"{name}"' for name in all_exports),
-            },
+            R.MODULE_INIT_PY_EMPTY,
+            Ctx.make_module_ctx(
+                module,
+                pkg,
+                C.module_package_resolved(cfg, module),
+                C.module_doc(cfg, module),
+            ),
         )
     # The import line in __init__.py is `from .<leaf> import ...`, so the merge
     # must match/emit against the leaf, not the dotted id.
@@ -2416,7 +2648,7 @@ def _regenerate_module_now(
         Ctx.make_module_ctx(
             module,
             pkg,
-            C.module_package(cfg, module),
+            C.module_package_resolved(cfg, module),
             C.module_doc(cfg, module),
         )["module_docstring_py"],
     )
@@ -2435,10 +2667,18 @@ def _regenerate_module_now(
     )
     # gh-1361: every member's link-check table, from the fragments just
     # written.
+    # gh-1984: and every member's element contract (gh-1404), as `apply`
+    # writes it. Here and not in `jm method`, because every verb that
+    # changes a module member re-renders the module through this function:
+    # declaring the second face of a pair brings the contract into being,
+    # and without this `status --check` reported it MISSING on the tree
+    # `jm method` had just written, until an `apply`.
+    from . import _invariants
     from . import _linkcheck
 
     for _obj in C.module_objects(cfg, module):
         _linkcheck.write(root, cfg, _obj)
+        _invariants.sync(root, cfg, _obj, pkg)
 
 
 def run(
@@ -2502,6 +2742,12 @@ def run(
     # the temp tree has not replayed them yet.
     *,
     declared_methods: "list[dict] | None" = None,
+    # gh-1997: the object's `[[<obj>.extra_methods]]` rows -- manifest-only,
+    # so only `jm apply`'s replay passes them, as it passes `destroy`.
+    extra_methods: "list[dict] | None" = None,
+    # gh-1882: the manifest's `reset_impl` / `reset_impl_file` as written,
+    # from the replay alone -- see `_init.run`, which takes it too.
+    reset_impl_decl: "dict[str, str] | None" = None,
 ) -> None:
     # gh-588: `opaque_state` forward-declares the struct, so anything that
     # dereferences it from the PUBLIC header is incoherent. Say so here rather
@@ -2529,6 +2775,37 @@ def run(
         )
         sys.exit(1)
     C.require_name(object_name, "object")
+    # The element type of the `--variable-output` method this command adds:
+    # the return type, else the ARG type. It is an output ELEMENT, where
+    # `T[]` stays `T[]`, so the step() default `resolve_return_type`
+    # applies is the wrong rule for it.
+    vo_return_type = return_type or arg_type
+    # gh-1885: `_method.run` refuses a variable-output method with no
+    # output element, but this command writes the whole object before it
+    # gets there. Asked up front, by the same predicate, so a refusal
+    # leaves no object behind either.
+    if variable_output:
+        from . import _outbuf
+
+        _element_why = _outbuf.element_why_not(
+            f"method '{object_name}.{method_name}'",
+            variable_output=True,
+            record_dtype="",
+            borrow=None,
+            out_type="",
+            return_type=vo_return_type,
+            remedy=(
+                "`jm object --variable-output` takes it from --return-type, "
+                "else --arg-type:\n"
+                "  pass --return-type <T> (after any --preset), or drop "
+                "--variable-output and\n"
+                f"  add the method with `jm method {object_name} "
+                f"{method_name} --variable-output\n"
+                "  --return-type <T>`."
+            ),
+        )
+        if _element_why:
+            raise _report.Refusal(_element_why)
 
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -2584,18 +2861,19 @@ def run(
             destroy=destroy,
             doc=doc,
             _hint=_hint and not variable_output,
+            extra_methods=extra_methods,  # gh-1997
+            reset_impl_decl=reset_impl_decl,  # gh-1882
         )
         if variable_output:
             from . import _method as _M
 
-            _rt = return_type or arg_type
             _M.run(
                 root,
                 object_name,
                 method_name,
                 module=None,
                 arg_type="void",
-                return_type=_rt,
+                return_type=vo_return_type,
                 variable_output=True,
                 multi_output=list(multi_output),
                 max_out=max_out,
@@ -2673,6 +2951,8 @@ def run(
         # create-only files, never its binding fragment: that is
         # `_regenerate_module`'s, which reads the hint back from the
         # manifest `add_component` below writes it into.
+        # gh-1882: this ctx DOES render the reset tests, from the argument.
+        reset_impl=reset_impl_body is not None,
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -2680,7 +2960,7 @@ def run(
             ctx["Component"],
             [],
             pkg=pkg,
-            module=module,
+            module_dir=ctx["module_dir"],
             py_create_args=ctx.get("py_create_args", ""),
             no_state=no_state,
             serializable=serializable,
@@ -2710,6 +2990,11 @@ def run(
     )
     # gh-541/gh-544: same as the standalone path in _init.run — this render
     # stamps the sacred _core.h/_core.c destroy signature as well as the glue.
+    _methods_now = (
+        declared_methods
+        if declared_methods is not None
+        else C.methods(cfg, ctx["component"])
+    )
     ctx.update(
         # A freshly created object has no extra methods yet, so [] is the
         # truth here rather than "unknown" — and it makes a destroy spec that
@@ -2722,15 +3007,18 @@ def run(
             # gh-856: was a hardcoded []. `jm apply` REPLAYS creation for
             # existing objects, so [] was not "no methods yet" but the
             # opposite of the truth.
-            declared_methods
-            if declared_methods is not None
-            else C.methods(cfg, ctx["component"]),
+            _methods_now,
             class_name=class_name or "",
             # gh-1326: `jm apply` replays creation through here, and this was
             # the site that dropped `create_fn` -- the derivation was correct
             # in isolation and never reached the render.
             create_fn=create_fn or "",
             csym=ctx["csym"],
+            # gh-2187: from the state THIS render holds (`vars_`), not the
+            # manifest, which a fresh `jm object --state` has not written yet.
+            lends=_borrow.lends_from(
+                _methods_now, C.properties(cfg, ctx["component"]), vars_
+            ),
         )
     )
 
@@ -2927,16 +3215,16 @@ def run(
     # pypath (src/<pkg>/dsp/filters/) for a dotted module id.
     # gh-523: honour the module's `package` override so the per-object tests
     # and benchmarks land beside the .so, not in a directory named after the
-    # module that nothing else uses.
-    _mp = C.module_paths(module)
-    _out_pkg = C.module_package(cfg, module) or _mp.pypath
+    # module that nothing else uses. gh-2054: from the one answer, which the
+    # element contract's directory reads too -- it belongs beside this test.
+    _out_pkg = ctx["module_dir"]
     pkg_mod_dir = root / "src" / pkg / _out_pkg
     # The generated test/bench import `from <package>.<module> import <Class>`,
     # which must name the package the .so actually lands in — the `package`
     # override when set, else the module's own pypath as a dotted import path.
     # Without a package override this is exactly the module id (flat or
     # dotted), so unpackaged modules render byte-identically.
-    _py_ctx = {**ctx, "module": _out_pkg.replace("/", ".")}
+    _py_ctx = {**ctx, "module": class_import_path("", _out_pkg)}
 
     def r_py(tmpl):
         return R.render_scaffold_py(tmpl, _py_ctx)
@@ -3034,9 +3322,23 @@ def run(
     # re-render below — _regenerate_module reads it back out of this same
     # in-memory cfg to fill the object's COMPONENT_TYPE_SECTION slots.
     C.set_destroy_spec(cfg, comp, destroy or {})
+    # gh-1997: the extra-method rows, before the same re-render, which
+    # renders their table rows and the aggregator's prototypes from them.
+    C.set_extra_methods(cfg, comp, extra_methods or [])
+    # gh-1882: and the declared reset body, before the same re-render, whose
+    # `.pyi` asks `Ctx.manifest_reset_is_authors` whether to demo reset().
+    cfg[comp].update(reset_impl_decl or {})
 
     # Regenerate module ext.c + CMakeLists + subpackage __init__
     _regenerate_module(root, cfg, module, pkg)
+
+    # Save config -- BEFORE the two root writers below (gh-1985), which place
+    # *comp* by the order of the manifest on disk, as `apply` does. Until the
+    # save that manifest has no *comp*, so the block went to the top and the
+    # include to the bottom whatever the order: a standalone object added
+    # after a module object was then in the wrong place in both files.
+    C.save(root, cfg)
+    print(f"  update  {cfg_path}")
 
     # Root CMakeLists: insert add_subdirectory into Components sentinel section,
     # then wire OBJECT library into both shared and static C library targets.
@@ -3059,24 +3361,19 @@ def run(
     umbrella = INC.path(root, f"{pkg}.h")
     from ._init import insert_umbrella_include
 
-    if insert_umbrella_include(umbrella, comp):
+    if insert_umbrella_include(root, comp):
         print(f"  update  {umbrella}")
-
-    # Save config
-    C.save(root, cfg)
-    print(f"  update  {cfg_path}")
 
     if variable_output:
         from . import _method as _M
 
-        _rt = return_type or arg_type
         _M.run(
             root,
             object_name,
             method_name,
             module=module,
             arg_type="void",
-            return_type=_rt,
+            return_type=vo_return_type,
             variable_output=True,
             multi_output=list(multi_output),
             max_out=max_out,

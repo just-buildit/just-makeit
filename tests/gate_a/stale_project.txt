@@ -1,4 +1,3 @@
-fresh/stale	re-apply	exit 1
 stale	re-apply warns	warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 stale	ruff check	src/stale/dsp/tests/test_fir.py E401
 stale	ruff check	src/stale/dsp/tests/test_fir.py F401

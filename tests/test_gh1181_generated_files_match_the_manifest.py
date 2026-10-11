@@ -162,7 +162,11 @@ def _direct_render_pairs(root: Path) -> list[tuple[Path, str]]:
         if comp in owned:
             continue
         ctx = _glue.component_ctx(cfg, comp, pkg, root)
-        ctx["extra_include"] = _glue.standalone_extra_include(root, comp)
+        # gh-1997: a declared extra-method row includes the hook whether or
+        # not the file exists, which is what `apply` renders too.
+        ctx["extra_include"] = _glue.standalone_extra_include(
+            root, comp, C.extra_methods(cfg, comp)
+        )
         p = root / "src" / pkg / f"{comp}.pyi"
         if p.exists():
             pairs.append((p, R.render_component_pyi(ctx)))
@@ -468,6 +472,20 @@ SWEEP: dict[str, tuple[str, str, str]] = {
         "solo",
         'name = "scale"',
         "none_on_empty = true",
+    ),
+    # [[<obj>.extra_methods]] -- `_object_kwargs` (gh-1997): the row, its
+    # prototype, the hook's `#include` and the stub, on both object shapes.
+    "object.extra_methods": (
+        "o",
+        "[o]",
+        'extra_methods = [{ name = "hand", fn = "O_hand", flags = "METH_O",'
+        ' returns = "int", doc = "HAND marker." }]',
+    ),
+    "solo.extra_methods": (
+        "solo",
+        "[solo]",
+        'extra_methods = [{ name = "hand", fn = "Solo_hand",'
+        ' args = "x: int", doc = "SOLO_HAND marker." }]',
     ),
 }
 

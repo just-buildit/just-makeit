@@ -259,7 +259,10 @@ def _serialization(Component: str) -> list[GlueMethod]:
 
 
 def _lifecycle(
-    Component: str, close_name: str = "destroy", finalizes: bool = False
+    Component: str,
+    close_name: str = "destroy",
+    finalizes: bool = False,
+    lends: bool = False,
 ) -> list[GlueMethod]:
     """``destroy``/``close`` plus the context-manager protocol.
 
@@ -298,22 +301,40 @@ def _lifecycle(
             "propagates normally; this never suppresses one.",
         ]
     )
+    # gh-2187: a lending object's teardown cannot free "immediately" -- the
+    # views it handed out point into the memory -- so its prose says when
+    # the memory does go, rather than promising what the body no longer does.
+    _close = (
+        DoxyBlock(
+            brief="Close the object; the memory goes with its last user.",
+            body=[
+                "Ordinarily unnecessary: the resources are freed when the "
+                "object is garbage-collected. Call this, or use the object "
+                "as a context manager, to end its use at a definite point.",
+                "Views this object handed out keep the memory they point "
+                "into, as does a call still running on another thread: it "
+                "is freed when the last of them, and this object, are gone, "
+                "not here (gh-2187). Idempotent: calling it again does "
+                "nothing. Every other method raises ``RuntimeError`` once "
+                "it has run.",
+            ],
+        )
+        if lends
+        else DoxyBlock(
+            brief="Release the underlying C resources immediately.",
+            body=[
+                "Ordinarily unnecessary: the resources are freed when "
+                "the object is garbage-collected. Call this to release "
+                "them at a definite point instead, or use the object as "
+                "a context manager, which calls it on exit.",
+                "Idempotent: calling it again on an already-released "
+                "object does nothing. Every other method raises "
+                "``RuntimeError`` once it has run.",
+            ],
+        )
+    )
     return [
-        GlueMethod(
-            name=close_name,
-            block=DoxyBlock(
-                brief="Release the underlying C resources immediately.",
-                body=[
-                    "Ordinarily unnecessary: the resources are freed when "
-                    "the object is garbage-collected. Call this to release "
-                    "them at a definite point instead, or use the object as "
-                    "a context manager, which calls it on exit.",
-                    "Idempotent: calling it again on an already-released "
-                    "object does nothing. Every other method raises "
-                    "``RuntimeError`` once it has run.",
-                ],
-            ),
-        ),
+        GlueMethod(name=close_name, block=_close),
         GlueMethod(
             name="__enter__",
             # Unquoted: the forward-reference quoting belongs to the emitted
@@ -375,7 +396,11 @@ def glue_method_names() -> frozenset[str]:
 
 
 def glue_methods(
-    Component: str, *, close_name: str = "destroy", finalizes: bool = False
+    Component: str,
+    *,
+    close_name: str = "destroy",
+    finalizes: bool = False,
+    lends: bool = False,
 ) -> dict[str, GlueMethod]:
     """Every generated glue method for *Component*, keyed by Python name.
 
@@ -390,6 +415,10 @@ def glue_methods(
         gh-805 §H. ``True`` when ``__exit__`` calls a finalizer that leaves
         the object alive, so the context-manager prose promises finalization
         rather than release. Affects ``__enter__``/``__exit__`` only.
+    lends : bool, optional
+        gh-2187. ``True`` for an object that hands out views into its
+        memory, whose teardown defers the free to ``tp_dealloc``; the
+        teardown's prose then says so. Affects ``close_name`` only.
 
     Returns
     -------
@@ -408,14 +437,17 @@ def glue_methods(
     """
     out: dict[str, GlueMethod] = {}
     for gm in _serialization(Component) + _lifecycle(
-        Component, close_name, finalizes
+        Component, close_name, finalizes, lends
     ):
         out[gm.name] = gm
     return out
 
 
 def max_out_method(
-    name: str, count_param: str = "", max_out_const: int = 0
+    name: str,
+    count_param: str = "",
+    max_out_const: int = 0,
+    elements_per_sample: int = 1,
 ) -> GlueMethod:
     """jm's fallback documentation for a ``<name>_max_out`` accessor (gh-684).
 
@@ -439,6 +471,10 @@ def max_out_method(
         The input-count parameter, when this shape takes one.
     max_out_const : int, optional
         The manifest's declared ``max_out``, when there is one.
+    elements_per_sample : int, optional
+        The method's interleave (gh-1996). The binding converts both ways,
+        so this face counts array ELEMENTS where the C function counts
+        samples, and the prose has to say which.
 
     Examples
     --------
@@ -446,27 +482,49 @@ def max_out_method(
     'Largest number of samples execute() can return for n_in inputs.'
     >>> max_out_method("execute", "n_in", 4).block.returns
     'Always 4 -- the declared worst case.'
+    >>> max_out_method("execute", "x_len", 4, 2).block.returns
+    'Always 8 -- the declared worst case of 4 samples.'
     """
+    e = elements_per_sample
+    unit = "samples" if e == 1 else "elements"
     if count_param:
         brief = (
-            f"Largest number of samples {name}() can return for "
+            f"Largest number of {unit} {name}() can return for "
             f"{count_param} inputs."
         )
         params = [
-            (count_param, f"Number of input samples {name}() will be given.")
+            (count_param, f"Number of input {unit} {name}() will be given.")
         ]
     else:
         brief = (
-            f"Largest number of samples {name}() can return in the "
+            f"Largest number of {unit} {name}() can return in the "
             f"current state."
         )
         params = []
     if max_out_const:
-        returns = f"Always {max_out_const} -- the declared worst case."
+        returns = (
+            f"Always {max_out_const} -- the declared worst case."
+            if e == 1
+            else f"Always {max_out_const * e} -- the declared worst case "
+            f"of {max_out_const} samples."
+        )
     else:
         returns = (
             "Upper bound on the output length; the actual call may return "
             "fewer."
+        )
+    body = [
+        f"Size an `out=` buffer with this before calling {name}(), "
+        f"or use it to allocate one up front. The bound is this "
+        f"object's own: "
+        f"what it depends on is a property of the algorithm, so a "
+        f"header block on {name}_max_out() replaces this text."
+    ]
+    if e != 1:
+        body.append(
+            f"Counted in array elements, {e} per sample, as {name}() "
+            f"takes and returns them; the C function this calls counts "
+            f"samples."
         )
     return GlueMethod(
         name=f"{name}_max_out",
@@ -474,13 +532,7 @@ def max_out_method(
         ret_ann="int",
         block=DoxyBlock(
             brief=brief,
-            body=[
-                f"Size an `out=` buffer with this before calling {name}(), "
-                f"or use it to allocate one up front. The bound is this "
-                f"object's own: "
-                f"what it depends on is a property of the algorithm, so a "
-                f"header block on {name}_max_out() replaces this text."
-            ],
+            body=body,
             params=params,
             returns=returns,
         ),
@@ -525,6 +577,17 @@ OUT_PARAM_DOC = (
     "Optional pre-allocated output buffer. When given, the result is "
     "written into it and the returned array is a view of exactly the "
     "samples produced; when omitted, a fresh array is allocated."
+)
+
+#: The same, for a method whose result is a matrix (``out_cols``, gh-2115).
+#: The shape is part of the contract here: a buffer of the wrong width would
+#: hand back a result shaped differently from the one the caller allocated.
+OUT_PARAM_DOC_MATRIX = (
+    "Optional pre-allocated output buffer: a writable, C-contiguous 2-D "
+    "array of shape (rows, cols), where cols is this method's fixed row "
+    "width. When given, the result is written into it and the returned "
+    "array is a (rows, cols) view of exactly the rows produced; when "
+    "omitted, a fresh array is allocated."
 )
 
 
@@ -593,7 +656,11 @@ def count_kwarg_name(count_name: str = "") -> str:
 
 
 def binding_param_docs(
-    count_name: str = "", *, count: bool, out: bool
+    count_name: str = "",
+    *,
+    count: bool,
+    out: bool,
+    out_cols: bool = False,
 ) -> dict[str, str]:
     """jm's default description for each binding argument it synthesized.
 
@@ -621,12 +688,14 @@ def binding_param_docs(
     ['n']
     >>> binding_param_docs(count=False, out=False)
     {}
+    >>> "2-D" in binding_param_docs(count=False, out=True, out_cols=True)["out"]
+    True
     """
     docs: dict[str, str] = {}
     if count:
         docs[count_kwarg_name(count_name)] = COUNT_PARAM_DOC
     if out:
-        docs["out"] = OUT_PARAM_DOC
+        docs["out"] = OUT_PARAM_DOC_MATRIX if out_cols else OUT_PARAM_DOC
     return docs
 
 

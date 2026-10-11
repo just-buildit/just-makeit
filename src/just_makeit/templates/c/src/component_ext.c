@@ -12,7 +12,7 @@
 
 /*<<jm_array_arg_c>>*/
 
-/*<<component_type_section>>*/
+/*<<extra_method_protos>>*//*<<component_type_section>>*/
 
 /*<<extra_include>>*/
 /* ======================================================== */

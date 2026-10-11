@@ -172,11 +172,12 @@ def test_the_aggregator_still_greens_a_skip():
     # Executed, not string-matched, in test_ci_passed_aggregator.py; this
     # keeps the pointer from the fast path to the rule it depends on.
     # gh-1801: the early exit now also requires the docs build, which a
-    # bump can still run; a skipped or absent one is still green.
+    # bump can still run; a skipped or absent one is still green. gh-2125:
+    # and the test legs a tested tree's PR trimmed, which a bump skips.
     assert 'if [[ "$SRC" == "false" ]]; then' in text, (
         "ci-passed no longer treats a bump-only skip as green"
     )
-    assert 'success | skipped | "") exit 0 ;;' in text, (
+    assert 'success | skipped | "") ;;' in text, (
         "ci-passed no longer treats a bump-only skip as green"
     )
 

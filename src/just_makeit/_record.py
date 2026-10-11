@@ -84,6 +84,37 @@ def is_record(m: dict) -> bool:
     return bool(m.get("single")) and bool(m.get("result_fields"))
 
 
+def is_record_list(m: dict) -> bool:
+    """True when *m* returns a LIST of records, a ``list[tuple]`` (gh-2184).
+
+    The third shape beside :func:`is_record` and :func:`is_record_array`:
+    ``result_fields`` with neither ``single`` nor a record array. Its
+    kernel fills ``rec_t *result`` up to ``max_results`` and returns the
+    count, and it is the one shape whose binding reads a header-declared
+    ``<c>_<m>_max_out`` as the size of that buffer.
+
+    Examples
+    --------
+    >>> rf = [{"name": "i", "type": "int"}]
+    >>> is_record_list({"result_fields": rf})
+    True
+    >>> is_record_list({"result_fields": rf, "single": True})
+    False
+    >>> is_record_list({"result_fields": rf, "variable_output": True,
+    ...                 "record_dtype": "rec_t"})
+    False
+    >>> is_record_list({"variable_output": True})
+    False
+    """
+    return (
+        bool(m.get("result_fields"))
+        and not is_record(m)
+        and not is_record_array(
+            m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+        )
+    )
+
+
 def is_record_array(
     variable_output: object, record_dtype: object, borrow: object
 ) -> bool:
@@ -291,6 +322,129 @@ def resolve_element(spec: str, records: "list[dict] | None") -> str:
     if not is_scalar_element(rec):
         return spec
     return element_ctype(rec) + suffix
+
+
+def speaks(m: dict, element: str) -> bool:
+    """True when member *m* names the declared *element* as a type.
+
+    gh-2055. The keys :func:`resolve_element` substitutes in, ``arg_type``
+    and ``return_type`` with any ``[]``, plus ``record_dtype``, which names
+    a struct element outright. Wider than `_invariants`' writer and reader
+    on purpose: a member that takes or returns ONE element is not half of a
+    pair, but its C prototype still spells the element's type, so a change
+    of that type changes it all the same.
+
+    Examples
+    --------
+    >>> speaks({"arg_type": "sample[]"}, "sample")
+    True
+    >>> speaks({"return_type": "sample"}, "sample")
+    True
+    >>> speaks({"record_dtype": "iq16_t"}, "iq16_t")
+    True
+    >>> speaks({"arg_type": "samples[]"}, "sample")
+    False
+    >>> speaks({"arg_type": "void", "return_type": "double"}, "sample")
+    False
+    """
+    names = {str(m.get("record_dtype") or "")}
+    for key in ("arg_type", "return_type"):
+        spec = str(m.get(key) or "")
+        while spec.endswith("[]"):
+            spec = spec[:-2]
+        names.add(spec)
+    return bool(element) and element in names
+
+
+def spoken_as(name: str, struct: bool) -> str:
+    """How a member speaks element *name*, one spelling per direction.
+
+    The first declaration's ``Done!`` line teaches it, so does a kind
+    switch's route (gh-2055), and so does the refusal of a struct's
+    spelling on a scalar (gh-2068): one text, so no two of them can teach
+    different spellings.
+
+    Examples
+    --------
+    >>> spoken_as("sample", False)
+    "--arg-type 'sample[]' (in) or --return-type sample (out)"
+    >>> spoken_as("iq16_t", True)
+    "--arg-type 'iq16_t[]' (rows in) or --record-dtype iq16_t (rows out)"
+    """
+    if struct:
+        return (
+            f"--arg-type '{name}[]' (rows in) or --record-dtype {name} "
+            "(rows out)"
+        )
+    return f"--arg-type '{name}[]' (in) or --return-type {name} (out)"
+
+
+def record_dtype_why_not(
+    what: str, record_dtype: str, records: "list[dict] | None"
+) -> str:
+    """Why *record_dtype* cannot name the element it names, or ``""``.
+
+    gh-2068. ``record_dtype`` is a STRUCT's spelling: the kernel fills
+    ``<record_dtype> *out`` and the binding builds the dtype from the
+    struct's ``offsetof`` / ``sizeof``. A declared SCALAR element's name is
+    a jm-level alias that no C type carries, so a prototype spelled with
+    it -- ``s *p_o_read(...)`` -- does not compile (``unknown type name``),
+    and nothing said so: the command exited 0, ``status --check`` too.
+    A scalar element is read back through ``return_type``, which
+    :func:`resolve_element` turns into its C type; :func:`spoken_as` says
+    so in the refusal.
+
+    One answer for every face that can declare it: ``jm method`` asks before
+    it writes anything; ``apply`` and ``status`` ask through it, because
+    their replay runs ``_method.run`` over each manifest row after the
+    records (gh-1411), in a scratch tree; and ``jm record`` asks when a
+    scalar declaration would land under a member that already reads its
+    name as a struct.
+
+    Parameters
+    ----------
+    what : str
+        Names the member in the message, e.g. ``"method 'o.read'"``.
+    record_dtype : str
+        The member's ``record_dtype``; empty for a member without one.
+    records : list of dict or None
+        The component's ``[[<obj>.records]]`` declarations.
+
+    Returns
+    -------
+    str
+        The refusal's text, without the ``error:`` prefix the CLI adds, or
+        ``""`` when *record_dtype* names no scalar element.
+
+    Examples
+    --------
+    >>> recs = [{"name": "s", "type": "double"},
+    ...         {"name": "iq_t", "fields": [{"name": "i", "type": "int"}]}]
+    >>> record_dtype_why_not("method 'o.read'", "iq_t", recs)
+    ''
+    >>> record_dtype_why_not("method 'o.read'", "undeclared_t", recs)
+    ''
+    >>> print(record_dtype_why_not("method 'o.read'", "s", recs))
+    method 'o.read': --record-dtype s names a SCALAR element (double).
+      --record-dtype is a struct's spelling: the kernel fills `s *out`,
+      and no C type is called `s` -- the name is jm's alias for double.
+      A scalar element is spoken as
+      --arg-type 's[]' (in) or --return-type s (out).
+    """
+    rec = declared(records, record_dtype) if record_dtype else {}
+    if not is_scalar_element(rec):
+        return ""
+    ctype = element_ctype(rec)
+    return (
+        f"{what}: --record-dtype {record_dtype} names a SCALAR element "
+        f"({ctype}).\n"
+        f"  --record-dtype is a struct's spelling: the kernel fills "
+        f"`{record_dtype} *out`,\n"
+        f"  and no C type is called `{record_dtype}` -- the name is jm's "
+        f"alias for {ctype}.\n"
+        "  A scalar element is spoken as\n"
+        f"  {spoken_as(record_dtype, False)}."
+    )
 
 
 def input_record(arg_type: str, records: "list[dict] | None") -> dict:
@@ -652,6 +806,46 @@ def find_dtype(text: str, sid: str) -> str:
     return m.group(0) if m else ""
 
 
+def dtype_builders(text: str) -> "tuple[str, ...]":
+    """The name of every dtype builder :func:`dtype_c` wrote into *text*.
+
+    gh-2055. A builder is jm's glue, not the author's: every byte of it is
+    the declared columns, and nothing in it can be authored. gh-770 keeps a
+    fragment's function bodies as the author's, and was wrong about these
+    both ways round:
+
+    - a re-render RESTORED the old builder by name, so the binding kept the
+      old columns while the element contract asserted the new ones; the
+      regenerating callers ask this of the fresh render
+      (`_object.jm_owned_functions`);
+    - a remove CARRIED a removed member's builder as hand-written, without
+      its cache static (a file-scope declaration, which the carry does not
+      take), so the module stopped compiling;
+      `_docsync.transplant_hand_written` asks this of the file on disk.
+
+    The second reads a fragment the project's formatter may have reshaped,
+    so the shape allows any whitespace between its tokens rather than
+    jm's own layout: GNU style's ``name (void)`` is the same builder.
+
+    Examples
+    --------
+    >>> c = dtype_c("W_read", "rec_t", [RecordField("n", "uint64_t", "")])
+    >>> dtype_builders("/* head */\\n" + c)
+    ('W_read_get_dtype',)
+    >>> dtype_builders("static PyArray_Descr *\\nW_x_get_dtype (void)\\n{")
+    ('W_x_get_dtype',)
+    >>> dtype_builders("static int other = 0;")
+    ()
+    """
+    return tuple(
+        re.findall(
+            r"^static\s+PyArray_Descr\s*\*\s*(\w+_get_dtype)\s*\(\s*void\s*\)",
+            text,
+            re.MULTILINE,
+        )
+    )
+
+
 # ── the Python face ─────────────────────────────────────────────────────────
 
 
@@ -669,19 +863,26 @@ def pyi_class(name: str, doc: str, flds: list[RecordField]) -> str:
     adds the two things it could not express: ``r.enob`` is typed, and both the
     record and each field carry their documentation.
     """
-    lines = ["@final", f"class {name}({annotation(flds)}):", '    """' + doc]
-    documented = [f for f in flds if f.doc]
+    from ._docstring import authored_doc_lines, authored_docstring
+
+    # gh-2104: every doc here is laid out as written, through the helpers
+    # every other face uses (gh-1493). The type doc and each field doc were
+    # pasted raw, so a multi-line one put its later lines in column 0.
+    body = authored_doc_lines(doc) or [doc]
+    fdoc = {f.name: authored_doc_lines(f.doc) for f in flds}
+    documented = [f for f in flds if fdoc[f.name]]
     if documented:
-        lines += ["", "    Attributes", "    ----------"]
+        body += ["", "Attributes", "----------"]
         for f in documented:
-            lines.append(f"    {f.name} : {T.scalar_py_annotation(f.ctype)}")
-            lines.append(f"        {f.doc}")
-    if documented or "\n" in doc:
-        lines.append('    """')
-    else:
-        # A one-line docstring closes on its own line; ruff joins it
-        # otherwise (gh-1478).
-        lines[-1] += '"""'
+            body.append(f"{f.name} : {T.scalar_py_annotation(f.ctype)}")
+            body += [f"    {ln}" if ln else "" for ln in fdoc[f.name]]
+    # A one-line docstring stays on one line, quotes and all; ruff joins a
+    # one-liner split across lines otherwise (gh-1478).
+    lines = [
+        "@final",
+        f"class {name}({annotation(flds)}):",
+        *authored_docstring(body, 4),
+    ]
     for f in flds:
         ann = T.scalar_py_annotation(f.ctype)
         lines.append("")
@@ -689,9 +890,9 @@ def pyi_class(name: str, doc: str, flds: list[RecordField]) -> str:
         # An undocumented field gets the plain stub body rather than prose
         # synthesised from its own name: "sfdr dbc" reads as documentation and
         # says nothing, which is worse for the reader than an honest gap.
-        if f.doc:
+        if fdoc[f.name]:
             lines.append(f"    def {f.name}(self) -> {ann}:")
-            lines.append(f'        """{f.doc}"""')
+            lines += authored_docstring(fdoc[f.name], 8)
         else:
             lines.append(f"    def {f.name}(self) -> {ann}: ...")
     return "\n".join(lines) + "\n"

@@ -76,6 +76,8 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     {g}ok{/g}  Python 3.12
     {g}ok{/g}  cmake 4.2.3  (already installed)
     {g}ok{/g}  C compiler (/usr/bin/gcc)  (already installed)
+    {g}ok{/g}  pkg-config (/usr/bin/pkg-config)  (already installed)
+    {g}ok{/g}  patchelf (/usr/bin/patchelf)  (already installed)
   {y}-->{/y}   just-makeit  (/tmp/jm-venv)
 {b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
     {g}ok{/g}  numpy 2.4.6
@@ -88,11 +90,12 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 
 !!! note
 
-    `install-deps` installs cmake, a C compiler and pkg-config through your
-    system package manager (only when cmake or a C compiler is missing), then
-    numpy and just-makeit into a Python venv. The curl installer also activates
-    the venv in your shell; `just-makeit install-deps` prints the
-    `source <venv>/bin/activate` line to run. The venv is created at
+    `install-deps` installs cmake, a C compiler, pkg-config and, on Linux,
+    patchelf (auditwheel needs it to repair a wheel) through your system
+    package manager (only when one of them is missing),
+    then numpy and just-makeit into a Python venv. The curl installer does the
+    same, and also activates the venv in your shell; `just-makeit install-deps`
+    prints the `source <venv>/bin/activate` line to run. The venv is created at
     `/tmp/jm-venv` by default. To put it elsewhere, append the path to any of the
     commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`. Both take
     `--check` to report what is missing without installing anything; the curl
@@ -112,8 +115,8 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     | **Linux** | apk             | alpine                                 |
     | **macOS** | Homebrew        | —                                      |
 
-    On any other distro it installs no system packages and asks you to install
-    cmake and a C compiler yourself.
+    On any other distro it installs no system packages and names the missing
+    ones for you to install yourself.
 
 ______________________________________________________________________
 

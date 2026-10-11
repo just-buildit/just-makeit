@@ -12,9 +12,11 @@ regenerate path (delete + apply) — the new field reaches the struct, the
 constructor, the getter/setter, and reset in one shot. The rebuild **discards
 hand-written `_core.c` bodies and the inline `step()` body in `_core.h`**,
 so keep your algorithm in the TOML `impl`/`create_impl` (the rebuild
-re-asserts it) or `git stash` first. `add` prompts for one confirmation before
-rebuilding; `--force` skips it. When the project has a single standalone
-object, `--object` may be omitted.
+re-asserts it) or `git stash` first. `add` asks once, before it writes
+anything: declining leaves every file as it was and exits 1, and `--force`
+skips the question. The rows already in the manifest are kept as written,
+every key on them; the new ones are appended. When the project has a single
+standalone object, `--object` may be omitted.
 
 ______________________________________________________________________
 
@@ -33,7 +35,11 @@ jm can only auto-populate the timing loop for a shape it can size: a `step()`,
 or a method that is not `variable_output` / `out_type` / `varargs` / `codec`.
 For anything else the file is a **scaffold with a `TODO:`** naming the
 candidate methods and showing a worked `jm_bench_add` call to copy — fill it in
-and the target measures. `jm status` lists the unfilled ones under `SILENT`. The Python
+and the target measures. `jm status` lists the unfilled ones under `SILENT`.
+Once written, the file is yours: `jm method` does not add a timing loop to it
+and `jm remove method` does not take one out (gh-1987). On a standalone object,
+delete it and run `jm apply` for jm's render with every method the manifest
+declares. The Python
 benchmark script runs as a plain script (`python bench_gain.py`) and reports
 ns/call for `step()` and µs + MSa/s for `steps()`.
 

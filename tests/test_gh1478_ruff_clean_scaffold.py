@@ -111,7 +111,7 @@ SHAPES: "dict[str, list[str]]" = {
         "object gen --no-state --init-param freq:double:0.0 --arg-type void"
         " --return-type 'float _Complex' --mutable",
         "app --target console --object gen --name tool",
-        "app --target pep723 --object gen --name tool",
+        "app --target pep723 --object gen --name tool_script",
     ],
     "app_console_generator": [
         "object s --arg-type void --return-type float",

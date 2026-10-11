@@ -326,7 +326,8 @@ c_deps = ["io", "vendor_dsp"]   # add_subdirectory(native/src/io), …
 
 Each listed dir owns its `CMakeLists.txt` (define `add_library(<name>_core …)`,
 tests, etc.); modules then link it via `extra_link_libs = ["io_core", …]`. CLI:
-`jm new --c-dep DIR` (repeatable; at creation, afterwards edit the manifest).
+`jm new --c-dep DIR` (repeatable; at creation, and it writes the
+`add_subdirectory` itself). Afterwards edit the manifest and run `jm apply`.
 
 ### `no_generate` — hand-written extension modules
 
@@ -341,6 +342,10 @@ no_generate_reason = "free-function API over an opaque capsule; a handle module 
 
 `jm apply` emits the `add_subdirectory(native/src/io)` and otherwise leaves the
 module untouched — `io_ext.c`, `io.pyi`, and its `CMakeLists.txt` are yours.
+So are the files of every object it lists: a command that rebuilds an object
+from the manifest (`jm regenerate`, `jm add --state`, `jm remove state`)
+refuses one here, since `apply` would write none of it back (gh-2087). Change
+its C by hand.
 
 `no_generate_reason` is required: `jm status --check` fails on an opt-out that
 does not say why (gh-1313). Say which kind it is — a shape jm cannot express
@@ -444,11 +449,11 @@ machine.
 !!! note "Turning it on in an existing project needs one `jm apply`"
 
     There is no `jm config` key for this — you add the lines above to
-    `just-makeit.toml` by hand. Formatting happens after a command that emits
-    C, so declaring it changes nothing on its own: the committed `*_ext.c` is
-    still 4-space while the tree `jm status` compares it against is now
-    house-styled, and the next `jm status --check` reports it stale and exits
-    1 on a tree you did not touch.
+    `just-makeit.toml` by hand. Formatting happens after a command that
+    changes the project, so declaring it changes nothing on its own: the
+    committed `*_ext.c` is still 4-space while the tree `jm status` compares
+    it against is now house-styled, and the next `jm status --check` reports
+    it stale and exits 1 on a tree you did not touch.
 
     `jm apply` reconciles it, once, permanently. Nothing is lost — the binding
     is generated glue, not your code. Do it in the same commit as the manifest
@@ -583,6 +588,15 @@ carrying one gets a second copy after it, which `jm status` reports as
 `DOC`. For a full docstring with its own sections and doctests, write it as
 Doxygen above the declaration in the component's `_core.h`.
 
+The exception is a `doc` that is the member's whole docstring, with nothing
+generated beside it. Write the whole numpy docstring, sections and doctests
+included, in the `doc` of an
+[`extra_methods`](#componentextra_methods-entries) row, which has no core
+declaration to put Doxygen on. The same goes for an object's or a view's
+property, a capsule's methods and properties, a handle's getters, and a
+composer's serializers and computed properties. `status` does not report
+these (gh-2059).
+
 ### Generated Python style — `py_format_command`
 
 The Python twin of `c_format_command`. jm emits its own layout for the
@@ -650,6 +664,7 @@ still succeeds, and *neither* tree is formatted, so they still compare equal.
 | `core_macro`, `core_args`, `core_header` | (manifest only)                                   | ✅ (gh-1310) | A template family's one C macro — see [`core_macro`](#one-c-family-core_macro).                                                                                                                |
 | `init_groups`                            | (manifest only)                                   | ✅ (gh-999)  | Instantiate a `[[group]]` of init-params under a prefix — see [below](#group-and-objectinit_groups).                                                                                           |
 | `destroy`                                | (manifest only)                                   | ✅ (gh-541)  | `[<obj>.destroy]`: the destructor's name, aliases, return and error — see [declarative scaffolding](declarative-scaffolding.md).                                                               |
+| `extra_methods`                          | (manifest only)                                   | ✅ (gh-1997) | Rows for methods whose CPython function you write in the object's `_extra.c` — see [below](#componentextra_methods-entries).                                                                   |
 | `module`                                 | (manifest only)                                   | ✅           | In a fragment passed to `jm apply <fragment>`, the module the object joins.                                                                                                                    |
 | `impl`, `create_impl`, …                 | (manifest only)                                   | ✅           | Lifecycle bodies `jm apply` re-stamps — see [below](#component-lifecycle-impl-bodies).                                                                                                         |
 | `depends_on`                             | (manifest only)                                   | ✅           | Objects this one calls into: names, or `{ name, link = true }` / `{ name, test_only = true }` tables — see [`depends_on`](#depends_on-link-and-include-a-dependency). Never set automatically. |
@@ -697,6 +712,8 @@ for the full semantics.
 | `c_type = "<typedef>"` (declare an integer param's C type)             | (TOML only)                                                                  | ✅ (gh-1096)                |
 | `example_value = "<literal>"` (a value generated tests construct with) | (TOML only)                                                                  | ✅ (gh-1105)                |
 | `str_hint = "<text>"` (an array refuses a `str`, with this appended)   | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-1756)                |
+| `rank = N` (refuse an array of any other rank)                         | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-2004)                |
+| `elements_per_sample = N` (`create()` gets the length in samples)      | (TOML only; see [Array parameters](commands/extend.md))                      | ✅ (gh-2004)                |
 | compose with `[[state]]`                                               | `--init-param + --state` together                                            | ✅ (0.13.23) (gate dropped) |
 
 #### `example_value` — constructing a required param in generated tests
@@ -746,24 +763,33 @@ show is declared. The same is true of an init-param with no seed at all — a
 `path`, a `bytes` blob, a `capsule` handle — where there is no call to attempt
 and the generated tests skip unconditionally.
 
-**It takes effect when the object is created.** The generated test files are
-create-only — jm writes them once and never rewrites them — so adding
-`example_value` to an existing project changes nothing already on disk.
+**Adding it later reaches the Python faces, not the C smoke.** The scaffolded
+`tests/test_<comp>.py` and `benchmarks/bench_<comp>.py` are jm's while they
+start `# jm:generated`, so the next `jm apply` rewrites them to construct with
+the value; the `.pyi` and the runtime docstrings, which `apply` always
+regenerates, pick it up as well. The C smoke test,
+`native/tests/test_<comp>_core.c`, is yours from the moment it is written:
+`apply` never rewrites it, so it keeps its zero-seeded call until you edit the
+`create()` arguments yourself. Which files `apply` rewrites, and how one
+becomes yours: [Who owns each file](workflows/edit-lifecycle.md#who-owns-each-file).
 
 **One thing changes with it.** For an init-params constructor the generated
 accessor test asserts the set/get **round-trip only**, not the value a field
 holds after construction. jm generates the state-var constructor whole, so
 there it knows the initial value and still asserts it; with init-params the
 constructor is the author's, and any state it *derives* from its arguments
-makes that assertion a guess. "Reset restores the declared defaults" is still
-asserted by the reset test on both faces, where the code under test is jm's.
+makes that assertion a guess. The reset test is the same guess one step later
+-- `reset()` returns to the post-create state, which that constructor defines
+-- so on both faces it only calls `reset()` (gh-1882), as it does for a
+`reset_impl`.
 
 #### A `default` is a literal; a constant is `default_raw`
 
-`default` is rendered **verbatim** into four places — the C local, both `.pyi`
-writers, and the generated app's `argparse` flags — so it has to be a literal
-of the type declared beside it. jm refuses anything else, naming the type and
-the value:
+`default` is rendered into four places — verbatim into the C local, and as
+the same value spelled in Python into both `.pyi` writers and the generated
+app's `argparse` flags — so it has to be a literal of the type declared beside
+it, and one Python can spell ([Defaults](types.md#defaults)). jm refuses
+anything else, naming the type and the value:
 
 ```toml
 [[det.init_params]]
@@ -1025,6 +1051,8 @@ way.
 | `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                                                          | ✅           |
 | `params … {out = true}` (or `mutable`) | `jm method --out-param name:T[]` (writable, repeatable)                                             | ✅           |
 | `params … {str_hint = "..."}`          | (TOML only) an array refuses a `str`, with this appended                                            | ✅ (gh-1756) |
+| `params … {rank = N}`                  | (TOML only) an array of any other rank is refused                                                   | ✅ (gh-805)  |
+| `params … {elements_per_sample = N}`   | (TOML only) the kernel's counts are in samples of N elements                                        | ✅ (gh-1996) |
 | `varargs = true`                       | `jm method --varargs`                                                                               | ✅           |
 | `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)                                              | ✅ (0.14.2)  |
 | `variable_output = true`               | `jm method --variable-output`                                                                       | ✅           |
@@ -1032,6 +1060,7 @@ way.
 | `exact_max_out = true`                 | `jm method --exact-max-out`                                                                         | ✅ (0.55.0)  |
 | `count_default = "EXPR"`               | `jm method --count-default EXPR`                                                                    | ✅ (0.34.0)  |
 | `count_name = "NAME"`                  | `jm method --count-name NAME`                                                                       | ✅ (gh-1074) |
+| `out_cols = "EXPR"`                    | `jm method --out-cols EXPR`                                                                         | ✅ (gh-2115) |
 | `nogil = true`                         | `jm method --nogil`                                                                                 | ✅ (0.15.2)  |
 | `max_out = N` (sibling stub)           | `jm method --max-out N`                                                                             | ✅ (0.13.23) |
 | `multi_output = ["T", ...]`            | `jm method --multi-output T` (repeatable)                                                           | ✅           |
@@ -1045,9 +1074,11 @@ way.
 | `record_module = "..."`                | `jm method --record-module MOD` (with `--single`)                                                   | ✅ (0.19.14) |
 | `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)                                                   | ✅ (0.41.0)  |
 | `record_dtype = "STRUCT"`              | `jm method --record-dtype STRUCT` (with `--variable-output`)                                        | ✅ (0.47.0)  |
-| `max_results = N`                      | (TOML only; default 64)                                                                             | 🟡           |
+| `max_results = N`                      | (TOML only; default 64. A header-declared `<name>_max_out` sizes it instead, gh-2184)               | 🟡           |
 | `none_on_empty = true`                 | `jm method --none-on-empty` (an empty result is `None`)                                             | ✅ (gh-1418) |
 | `error_on_empty = true`                | `jm method --error-on-empty` (an empty result raises)                                               | ✅ (gh-1159) |
+| `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                    | ✅ (gh-2012) |
+| `error_sentinel = "SIZE_MAX"`          | `jm method --error-sentinel EXPR` (a `size_t` count's refusal value raises)                         | ✅ (gh-2012) |
 | `status_return = true`                 | `jm method --status-return` (the `int` is status only)                                              | ✅ (gh-823)  |
 | `borrow = true`                        | `jm method --borrow` (a zero-copy view of state memory)                                             | ✅ (gh-1312) |
 | `borrow_count = "PARAM"`               | `jm method --borrow-count PARAM`                                                                    | ✅ (gh-1312) |
@@ -1074,12 +1105,76 @@ way.
 | `name`, `type`                                                                  | `jm property <obj> <prop> --type T`                                                              | ✅          |
 | `writable = true`                                                               | `jm property --writable`                                                                         | ✅          |
 | `field = true`                                                                  | `jm property --field`                                                                            | ✅          |
+| `error`, `error_message`                                                        | `jm property --writable --error EXC` / `--error-message TEXT` (a setter that refuses, gh-2182)   | ✅          |
 | `buf_field`, `len_field`, `valid_field`, `expr`                                 | `jm property --buf-field` / `--len-field` / `--valid-field` / `--expr`                           | ✅ (0.30.2) |
 | `doc = "..."`                                                                   | `jm property --doc "text"`                                                                       | ✅          |
 | `enum = "<name>"`                                                               | `jm property --enum NAME` (decode through a top-level `[[enum]]`)                                | ✅          |
 | `value_type`, `count_fn`, `key_fn`, `value_fn`                                  | `jm property --type dict\|list\|tuple --value-type T` / `--count-fn` / `--key-fn` / `--value-fn` | ✅          |
 | `capsule = "<name>"`, `capsule_type = "T *"`                                    | `jm property --type capsule --capsule NAME` / `--capsule-type T`                                 | ✅          |
 | `codec`, `entry_fn`, `entry_type`, `type_field` / `count_field` / `value_field` | (TOML only) see [Variant codecs](#variant-codecs-codecname)                                      | 🟡          |
+
+### `[[<component>.extra_methods]]` entries
+
+A method jm cannot express is written by hand, as a CPython function in the
+object's `_extra.c` — `native/src/<comp>/<comp>_ext_extra.c` for a standalone
+object, `native/src/<cname>/<cname>_ext_<comp>_extra.c` in a module — a file
+jm includes and never modifies. A row here is what makes it reachable: jm
+renders its `PyMethodDef` entry into the object's method table, a prototype
+above the table, the `#include` of the file and the `.pyi` member. It is the
+composer's [`extra_methods`](object-of-objects.md) key, for an ordinary object
+(gh-1997).
+
+```toml
+[[fft.extra_methods]]
+name    = "execute_ci16"                 # the Python method name
+fn      = "FFTObj_execute_ci16"          # the C function you write
+flags   = "METH_VARARGS"                 # default METH_NOARGS
+args    = "iq: NDArray[np.int16]"        # raw Python, for the .pyi
+returns = "NDArray[np.complex64]"        # raw Python; default None
+doc     = "FFT of interleaved int16 I/Q."
+```
+
+| TOML field                                      | CLI flag    | Status       |
+| ----------------------------------------------- | ----------- | ------------ |
+| `name`, `fn`, `flags`, `args`, `returns`, `doc` | (TOML only) | ✅ (gh-1997) |
+
+The `doc` is the method's whole docstring on both faces, the `.pyi` member
+and the runtime `__doc__`, and jm generates nothing beside it. So it can be
+a full numpy docstring with `Parameters`, `Returns` and an `Examples`
+doctest (gh-2059). A `doc` that ends in an example gets a blank line before
+the stub's closing quotes, so a text-mode `.pyi` doctest ends the example
+there (gh-2176).
+
+Write the function with exactly the signature its `flags` imply, `self`
+included as a `PyObject *` (cast it to the object's struct inside):
+`METH_NOARGS`, `METH_O` and `METH_VARARGS` take
+`(PyObject *self, PyObject *arg)`, `METH_KEYWORDS` adds a `PyObject *kwds`,
+and `METH_FASTCALL` rows get CPython's fastcall signature. jm declares it with
+that signature above the table, so a different one does not compile. A
+declared row always includes the file, so it can be written before or after
+the `apply` that declares it; if it is missing, the build fails naming it.
+
+In a module the prototypes go in the aggregator, before the object's
+fragment, so a row works whether the fragment is sacred or `generated` — which
+is what lets a hand-written method survive [`jm adopt`](#who-owns-a-modules-binding-fragment):
+move the function into the `_extra.c`, declare its row, and the fragment's
+table loses nothing on the flip. The core functions it calls stay
+link-checked: the object's `native/tests/test_<obj>_symbols.c` is read from
+the hook as well as the binding (gh-2175).
+
+The rows follow the generated ones in the table, in the order declared. `apply`
+refuses a row whose `name` a member jm generates already holds (`reset`, a
+property, `__enter__`, …) or a `[[<component>.methods]]` entry declares, two
+rows of one name, one `fn` given two different `flags`, an `fn` the object's
+`_core.h` declares (a core function, not a CPython method), and an `fn` the
+binding jm generates already declares — a wrapper such as `Solo_reset`, a
+type's `Solo_dealloc` or `SoloType`, read off jm's own render of the
+`_ext.c` (in a module, of every fragment it includes), since the row's
+prototype would conflict with it (gh-2005). A
+`manual_stub` method of the same name may stand beside the row: the row's stub
+replaces its placeholder, and a stub you wrote by hand stays yours. A view
+does not inherit the rows — each function is written against the parent's
+struct. `jm script` names the rows in a NOTE, since no flag spells them.
 
 ### `[[<component>.views]]` entries
 
@@ -1134,12 +1229,29 @@ ranges error cleanly.
 | `functions`                           | (auto-populated by `jm function --module <mod>`)  | ✅           |
 | `reexports = { sub = ["name", ...] }` | (TOML only)                                       | 🟡 (0.15.1)  |
 | `platforms = ["linux", "macos"]`      | (TOML only)                                       | 🟡           |
+| `package = "<dir>"`                   | `jm module --package DIR`                         | ✅ (gh-2064) |
 
 `reexports` folds names from a *sibling* extension (typically a `no_generate`
 module whose binding/`.pyi` are hand-written) into this module's generated
 `__init__.py` — both the import block and `__all__` — so the re-export glue
 regenerates from the manifest instead of being a hand-edit `jm apply` would
 clobber. Output is single-line, matching the rest of the package.
+
+`package` (gh-523) puts the module's Python in a sibling package's directory
+instead of one named after the module — `package = "io"` lands a `reader`
+module in `src/<pkg>/io/`, beside the classes already there. That package's `__init__.py`
+re-exports the module's classes, so they import from `<pkg>.<package>`, and
+everything jm writes that names one follows it (gh-2054): the `.pyi` and
+runtime doctests, `test_<obj>.py` and the element contract beside it, an
+`object` reference's `.pyi` import, and the `pep723` and `console` apps. The
+extension keeps its own name inside it (`<pkg>/<package>/<module>.so`).
+Declare it with `jm module <name> --package <dir>`: set in the manifest after
+the module exists, the key leaves what `jm module` wrote in the module's own
+directory behind (gh-2081). The value is a directory below `src/<pkg>/`: one
+or more `/`-separated segments, each an ASCII identifier (`io`, `dsp/io`), or
+`"."` for the package itself. Anything else (`../evil`, `a b`, `1x`,
+`Other-Pkg`, or the dotted `a.b`) is refused before anything is written, on
+the flag and when the manifest loads.
 
 #### A module built on some platforms only
 
@@ -1180,8 +1292,11 @@ guard, so guard anything platform-specific in it yourself.
 | `params = [{name, type, out?}]`               | `jm function --param name:T` + `--out-param name:T[]`                             | ✅ (0.13.22) |
 | `params … {mutable = true}`                   | (synonym for `out` — writable array param)                                        | ✅ (0.15.3)  |
 | `params … {str_hint = "..."}`                 | (TOML only) an array refuses a `str`, with this appended                          | ✅ (gh-1756) |
+| `params … {rank = N}`                         | (TOML only) an array of any other rank is refused                                 | ✅ (gh-805)  |
+| `params … {elements_per_sample = N}`          | (TOML only) the C counts samples of N elements                                    | ✅ (gh-805)  |
 | `inline = true`                               | `jm function --inline`                                                            | ✅           |
 | `out_type = "T"`                              | `jm function --out-type T`                                                        | ✅ (0.13.23) |
+| `out_type = "T[n]"`                           | `jm function --out-type 'T[n]'`                                                   | ✅ (gh-1888) |
 | `variable_output = true`, `out_size = "EXPR"` | `jm function --variable-output --out-type T --out-size EXPR`                      | ✅ (gh-335)  |
 | `out_type = "str"`                            | (TOML only)                                                                       | 🟡 (0.71.2)  |
 | `check_return = true`                         | `jm function --check-return`                                                      | ✅ (gh-363)  |
@@ -1294,6 +1409,8 @@ default is still `"0.1.0"`.
 The other copies (`CMakeLists.txt`, the `Doxyfile`, `native/src/<pkg>_lib.c`,
 `bootstrap.toml`) are create-only and still carry their own literal, so they are
 still checked -- see [`status`](commands/build.md#just-makeit-status).
+`just-makeit config version X` writes `X` into `pyproject.toml` and each of
+them, and leaves the manifest without a version (gh-2069).
 
 ### `[<object>]`
 
@@ -1332,6 +1449,12 @@ Fixed-size array constructor arguments added with `--array-arg`.
 | ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name` | string | Argument name                                                                                                                                                 |
 | `type` | string | Stored as NumPy dtype name (`float32`, `float64`, `complex64`, …); C types (`float`, `double`, `float _Complex`, …) are also accepted on input and normalised |
+
+A hand-written row may spell `type` as `dtype`. Those are the row's only keys:
+any other is reported as an unknown key naming the row, and does nothing
+(gh-2008). A constructor array that needs `rank` or `elements_per_sample` is
+declared as an [`[[<object>.init_params]]`](#objectinit_params) row instead,
+typed as a C array such as `"float[]"` (gh-2004).
 
 ### `[[group]]` and `[[<object>.init_groups]]`
 
@@ -1483,22 +1606,25 @@ two extents first, then the pointer) followed by `create()`'s.
 
 One entry per `just-makeit method` call.
 
-| Key               | Type                    | Notes                                                             |
-| ----------------- | ----------------------- | ----------------------------------------------------------------- |
-| `name`            | string                  | Method name                                                       |
-| `arg_type`        | string                  | Array-style input type                                            |
-| `return_type`     | string                  | C return type                                                     |
-| `params`          | array of `{name, type}` | Named scalar / array parameters                                   |
-| `variable_output` | bool                    | `--variable-output`                                               |
-| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)              |
-| `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly |
-| `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)     |
-| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)          |
-| `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432) |
-| `batch`           | bool                    | `--batch`                                                         |
-| `multi_output`    | array of strings        | `--multi-output` types                                            |
-| `out_type`        | string                  | `--out-type`                                                      |
-| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)         |
+| Key               | Type                    | Notes                                                              |
+| ----------------- | ----------------------- | ------------------------------------------------------------------ |
+| `name`            | string                  | Method name                                                        |
+| `arg_type`        | string                  | Array-style input type                                             |
+| `return_type`     | string                  | C return type                                                      |
+| `params`          | array of `{name, type}` | Named scalar / array parameters                                    |
+| `variable_output` | bool                    | `--variable-output`                                                |
+| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)               |
+| `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly  |
+| `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)      |
+| `out_cols`        | string or int           | width of a matrix result: `(count / out_cols, out_cols)` (gh-2115) |
+| `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)      |
+| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                 |
+| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)           |
+| `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432)  |
+| `batch`           | bool                    | `--batch`                                                          |
+| `multi_output`    | array of strings        | `--multi-output` types                                             |
+| `out_type`        | string                  | `--out-type`                                                       |
+| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)          |
 
 `nogil` wraps the pure-C kernel of a `variable_output`, `--single` or
 `--borrow` method in `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy
@@ -1555,20 +1681,21 @@ method param only. A function spells a status return as
 
 One entry per `just-makeit property` call.
 
-| Key                                     | Type   | Notes                                                                                                                                                           |
-| --------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                  | string | Property name                                                                                                                                                   |
-| `type`                                  | string | C type of the value                                                                                                                                             |
-| `writable`                              | bool   | `--writable`                                                                                                                                                    |
-| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                          |
-| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                            |
-| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                       |
-| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                              |
-| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                               |
-| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                            |
-| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`) |
-| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                              |
-| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                    |
+| Key                                     | Type   | Notes                                                                                                                                                                    |
+| --------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                                  | string | Property name                                                                                                                                                            |
+| `type`                                  | string | C type of the value                                                                                                                                                      |
+| `writable`                              | bool   | `--writable`                                                                                                                                                             |
+| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                                   |
+| `error`, `error_message`                | string | `--error` / `--error-message`: the C setter returns `int`, and a non-zero return refuses the value: the assignment raises `error` with `error_message`. Not with `field` |
+| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                                     |
+| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                                |
+| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                                       |
+| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                                        |
+| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                                     |
+| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`)          |
+| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                                       |
+| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                             |
 
 ### `[[<object>.views]]`
 
@@ -1614,17 +1741,18 @@ The nested tables (and the view's `create_error`) are written by
 
 ### `[module.<name>]`
 
-| Key                                                      | Type                    | Notes                                                                   |
-| -------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------- |
-| `objects`                                                | array of strings        | Objects in declaration order                                            |
-| `functions`                                              | array                   | Module-level functions (see below)                                      |
-| `reexports`                                              | table `{sub = [names]}` | Re-export sibling symbols into `__init__.py` (0.15.1)                   |
-| `platforms`                                              | array of strings        | Build the extension on these platforms only (gh-1463)                   |
-| `extra_link_libs` / `extra_include_dirs` / `extra_types` | array                   | Extra CMake wiring                                                      |
-| `no_generate`                                            | string `"true"`         | Hand-written module: `jm apply` only wires the CMake `add_subdirectory` |
-| `no_generate_reason`                                     | string                  | Why the module opts out; required with `no_generate` (gh-1313)          |
-| `functions_in_core`                                      | string `"true"`         | Every function body in `<m>_core.c`, one TU (gh-247)                    |
-| `doc`                                                    | string                  | The module's docstring                                                  |
+| Key                                                      | Type                    | Notes                                                                                              |
+| -------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `objects`                                                | array of strings        | Objects in declaration order                                                                       |
+| `functions`                                              | array                   | Module-level functions (see below)                                                                 |
+| `reexports`                                              | table `{sub = [names]}` | Re-export sibling symbols into `__init__.py` (0.15.1)                                              |
+| `platforms`                                              | array of strings        | Build the extension on these platforms only (gh-1463)                                              |
+| `package`                                                | string                  | Package directory the module's Python lands in; its classes import from `<pkg>.<package>` (gh-523) |
+| `extra_link_libs` / `extra_include_dirs` / `extra_types` | array                   | Extra CMake wiring                                                                                 |
+| `no_generate`                                            | string `"true"`         | Hand-written module: `jm apply` only wires the CMake `add_subdirectory`                            |
+| `no_generate_reason`                                     | string                  | Why the module opts out; required with `no_generate` (gh-1313)                                     |
+| `functions_in_core`                                      | string `"true"`         | Every function body in `<m>_core.c`, one TU (gh-247)                                               |
+| `doc`                                                    | string                  | The module's docstring                                                                             |
 
 ### `[[module.<name>.functions]]`
 
@@ -1904,7 +2032,11 @@ A standalone object's `<comp>_ext.c` is **glue**: jm renders it whole on
 every `apply`, and `jm status --check` fails if it drifts. A module
 object's `<mod>_ext_<obj>.c` is the same generated wrapper code, and is
 **sacred** by default: created once, thereafter only ever gaining missing
-members. So where a wrapper lives decides whether it receives fixes.
+members. So where a wrapper lives decides whether it receives fixes. The
+exceptions are the units with nothing in them to author, which jm keeps
+current in place: a `*_max_out` binding's arity, the `[[enum]]` tables, the
+teardown wrappers of an object that declares `[<obj>.destroy]`, and a
+record's dtype builders (gh-2055).
 
 `fragment` on the object changes that:
 
@@ -1915,7 +2047,10 @@ fragment = "generated"   # absent (the default) = "sacred", today's behaviour
 
 With `fragment = "generated"`, that fragment becomes jm's content like any
 other glue file. Anything hand-written belongs in the
-`<mod>_ext_<obj>_extra.c` beside it, which jm already includes.
+`<mod>_ext_<obj>_extra.c` beside it, which jm already includes, and a
+hand-written method is registered by an
+[`[[<obj>.extra_methods]]`](#componentextra_methods-entries) row rather than a
+row typed into the fragment's table.
 
 ### Checking before you flip
 

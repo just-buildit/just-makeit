@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -151,7 +152,7 @@ const gizmo_kw_t *gizmo_kw_entry(const gizmo_state_t *s, size_t i){
 def _skip_build() -> str | None:
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler"
     try:
         import numpy  # noqa: F401

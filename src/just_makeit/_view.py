@@ -183,6 +183,8 @@ def run(
         init_params=view_ip,
         create_fn=create_fn,
         csym=csym,
+        # gh-1882: the parent's reset(); only `create_params` is read here.
+        reset_impl=bool(Ctx.declared_reset_impl(cfg, object_name)),
     )
     create_params = vctx["create_params"]
 

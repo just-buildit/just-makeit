@@ -175,5 +175,10 @@ def test_a_module_functions_doxygen_reaches_its_stub(tmp_path):
 
 
 def test_bind_accepts_the_projects_own_header(tmp_path):
+    from test_bind import undeclare
+
     root = _proj(tmp_path, "--object", "g", "--state", "gain:double:1.0")
+    # bind refuses a declared component (gh-2072); undeclared, its header
+    # still spells the project's stem, and `apply`'s binding is bind's.
+    undeclare(root, "g")
     _ok("bind", "g", "--check", cwd=root)

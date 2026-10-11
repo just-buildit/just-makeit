@@ -6,6 +6,7 @@ Builds the sample-type portion of the template rendering dict.
 from __future__ import annotations
 
 from .. import _types as T
+from .._report import Refusal
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,
@@ -350,6 +351,15 @@ def make_sample_ctx(
                   per-size bench functions.
     """
     return_type = resolve_return_type(arg_type, return_type)
+    # gh-1884: every render of a step passes here, including a mutating
+    # command (`jm method`, `jm property`) over a hand-edited manifest that
+    # `apply`'s check never saw, so a REGISTERED type whose kind a step
+    # cannot carry is refused here too. An unregistered spelling keeps the
+    # refusals below.
+    for key, ctype in (("arg_type", arg_type), ("return_type", return_type)):
+        why = T.step_type_error(key, ctype)
+        if why and ctype.removesuffix("[]") in T.SUPPORTED_TYPES:
+            raise Refusal(why)
     is_void_return = return_type == "void"
     sizes = (
         list(block_sizes) if block_sizes else list(_DEFAULT_BENCH_BLOCK_SIZES)

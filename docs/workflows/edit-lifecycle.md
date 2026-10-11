@@ -6,6 +6,11 @@ hand. Either way, `jm apply` renders the whole project from the manifest into
 a scratch tree and reconciles it into yours — and what it does to each file
 depends on who owns it. That is the **sacred/glue contract**.
 
+Every verb that changes the project does all of it or none of it. One that
+fails partway — a refusal, a crash, Ctrl-C — puts back every file it had
+written or deleted, and says so: the tree is as it was before it ran, your
+edits in `_core.c` included (gh-1867).
+
 ## Who owns each file
 
 | Kind               | What `apply` does                                                                                                                                                            | Examples                                                                                                                                                                                                                                       |
@@ -33,7 +38,8 @@ Five of these have more to them:
     `add_library` or a per-source property leaves the file untouched, and an
     `if(VAR) … endif()` block is carried across. Anything else goes in
     `<dir>_extra.cmake` beside it, which the file includes and jm never
-    writes.
+    writes -- an OBJECT library of your own included: `apply` refuses to
+    rewrite a file that declares one, rather than erase it (gh-1840).
 - **`<comp>_core.c`** is never rewritten by `apply`. A *structural* change
     rebuilds it with `jm regenerate`, which lifts your hand-written bodies out
     and splices them back in by function name (`--discard` for a clean reset

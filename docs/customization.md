@@ -65,6 +65,12 @@ them.
 | `<module>_ext_<obj>_extra.c` | after that object's fragment | a hand-owned binding for one object             |
 | `<module>_ext_extra.c`       | after all fragments          | a hand-written CPython type (see `extra_types`) |
 
+A method you write in `<module>_ext_<obj>_extra.c` (or a standalone object's
+`<comp>_ext_extra.c`) is reachable only through a row in the object's method
+table, and that table is jm's once the fragment is. Declare the row as an
+[`[[<obj>.extra_methods]]`](configuration.md#componentextra_methods-entries)
+entry and jm writes it, a prototype for it and the `.pyi` member (gh-1997).
+
 ### Your own CMake: `<dir>_extra.cmake`
 
 Every `native/src/<dir>/CMakeLists.txt` jm writes is glue too, and ends by
@@ -83,6 +89,25 @@ in the generated file, where the next `jm apply` would drop it (gh-1351).
 the directory, so a module object that shares its module's directory shares its
 hook. `jm regenerate` and `jm remove` keep it, and an apply that is about to
 drop a statement jm itself never writes names it and points here.
+
+An OBJECT library of your own belongs here too, with the statements that
+configure it. `jm apply` refuses to rewrite a generated CMakeLists that
+declares one, writing nothing and naming the hook to move it to: the rewrite
+would erase it, and leave whatever wires it naming a target that is gone
+(gh-1840). Fold it into the C library from the hook or from the root
+`CMakeLists.txt` (not directly beneath an `add_subdirectory()` line, which
+`apply` rewrites):
+
+```cmake
+add_library(engine_helpers OBJECT helpers.c)
+set_target_properties(engine_helpers PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_sources(<pkg>_lib PRIVATE $<TARGET_OBJECTS:engine_helpers>)
+target_sources(<pkg>_lib_static PRIVATE $<TARGET_OBJECTS:engine_helpers>)
+```
+
+`jm status` reads a library declared in the hook like one in a CMakeLists:
+`UNWIRED` names it while nothing folds it in, and a root line wiring it is
+not mistaken for one naming a target that is gone.
 
 The prologue exists because the other two cannot serve the shared case: a
 helper included *after* its callers is not available to them, so two objects
@@ -272,7 +297,9 @@ into `_core.h` and appends a stub to `_core.c` for you to fill in. A
 property: `just-makeit property fir <name> --type float [--writable]`. A
 binding the manifest cannot express belongs in a hook jm never writes —
 `<component>_ext_extra.c` (standalone) or `<module>_ext_<obj>_extra.c`
-(module), with `--manual-stub` and a `# jm:hand` stub member (see above).
+(module), registered by an
+[`[[<component>.extra_methods]]`](configuration.md#componentextra_methods-entries)
+row, which renders its method-table row and its stub.
 
 ______________________________________________________________________
 

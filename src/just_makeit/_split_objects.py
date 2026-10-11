@@ -6,6 +6,9 @@ Move every top-level `[obj]` section out of the manifest into its own
 to the manifest. `[project]` and `[module.X]` stay in the manifest.
 
 Idempotent: a project that already has the split layout is a no-op.
+
+The fragments load sorted by path, so the root CMakeLists wiring and the
+umbrella header's includes are re-sorted to the new order (gh-1985).
 """
 
 from . import _textio
@@ -73,6 +76,12 @@ def run(root: Path) -> None:
     )
     _textio.write_text(cfg_path, manifest_text)
     print(f'  update  {cfg_path}  (include = ["objects/*.toml"])')
+    # gh-1985: as in `migrate-to-fragments` -- the fragments load sorted, so
+    # the order `apply` lists components in changed with the layout.
+    from ._init import settle_aggregate_order
+
+    for path in settle_aggregate_order(root):
+        print(f"  update  {path}  (order)")
 
     print()
     print(f"Done!  {len(components)} object section(s) moved to objects/.")

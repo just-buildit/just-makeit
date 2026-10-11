@@ -11,9 +11,10 @@
 LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 conflict-check \
                 complex-spelling-check code-span-check \
-                coverage-subprocess-check gates-index gates-index-update \
-                gates-declared-check \
-                doppler-pin-check consumer-smoke install-history-update
+                coverage-subprocess-check coverage-shard \
+                gates-index gates-declared-check \
+                doppler-pin-check consumer-smoke install-history-update \
+                ci-test-legs
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -154,10 +155,28 @@ doppler-pin-check: ## Report when the nco_tone doppler pin lags latest (advisory
 #
 # COVERAGE_ENV is passed in rather than defaulted inside the script, so this
 # proves the Makefile's own value works. Break COVERAGE_ENV and this goes red.
-coverage-gate: coverage-subprocess-check
+#
+# gh-2078: in CI the suite runs in `coverage-shard` jobs, so the check runs
+# there, in each environment that produces data. `coverage-gate` with
+# COVERAGE_FROM_SHARDS only combines what they left, and runs no test whose
+# environment the check could vouch for.
+coverage-gate: $(if $(COVERAGE_FROM_SHARDS),,coverage-subprocess-check)
 
 coverage-subprocess-check: ## Prove a CLI-driven test counts toward coverage
 	@$(COVERAGE_ENV) $(DEV_RUN) sh scripts/coverage-subprocess-check.sh
+
+# gh-2078: one shard of the Coverage suite, its data left in
+# COVERAGE_SHARD_DIR for `make coverage-gate COVERAGE_FROM_SHARDS=1` to
+# combine and gate (the Makefile's Coverage section has the design). The
+# junit.xml lands there whatever the outcome, so a red shard still reports
+# its failures; the data moves only from a green run, so the gate can never
+# certify a shard whose tests failed.
+coverage-shard: coverage-subprocess-check ## Run shard COVERAGE_SHARD=K of the Coverage suite (gh-2078)
+	@rm -rf "$(COVERAGE_SHARD_DIR)" && mkdir -p "$(COVERAGE_SHARD_DIR)"
+	$(COVERAGE_SHARD_CMD); rc=$$?; \
+	    if [ -f junit.xml ]; then mv junit.xml "$(COVERAGE_SHARD_DIR)/"; fi; \
+	    if [ $$rc -eq 0 ]; then mv .coverage "$(COVERAGE_SHARD_DIR)/"; fi; \
+	    exit $$rc
 
 # The obligations this repo's gates enforce, printed from the gates.
 #
@@ -174,16 +193,22 @@ coverage-subprocess-check: ## Prove a CLI-driven test counts toward coverage
 # 14 miss four of the five that actually caught something. So a human
 # declares and the RATCHET refuses shrinkage, which is this repo's idiom for
 # a judgement no predicate can make.
+#
+# The ratchet's floor is derived as well: the gates declared at the merge
+# base with GATES_BASE, read by the same parse (gh-2038). It was a committed
+# file, and every two PRs adding a gate conflicted on it. GATES_BASE is
+# CHANGELOG_BASE because the question is the same one -- what did this branch
+# start from -- and CI already passes the PR's base SHA as that, with the
+# full history the merge base needs.
+GATES_BASE ?= $(CHANGELOG_BASE)
+
 lint: gates-declared-check
 
 gates-index: ## The obligations this repo's gates enforce
 	@python3 scripts/gates-index.py
 
-gates-index-update: ## Record the declared gates as the ratchet's new floor
-	@python3 scripts/gates-index.py --update
-
-gates-declared-check: ## Verify every declared gate is recorded and none dropped
-	@python3 scripts/gates-index.py --check
+gates-declared-check: ## Verify no gate declared at the merge base was dropped
+	@python3 scripts/gates-index.py --check --base '$(GATES_BASE)'
 
 # gh-1590: the acceptance test for epic gh-1584 -- jm packages installed the
 # documented way and consumed by the official pkg-config and CMake
@@ -200,3 +225,12 @@ consumer-smoke: ## Install jm packages, consume them by the official instruction
 install-history-update: ## Record the root install section's commands for adopt
 	@python3 scripts/install_history.py
 	@$(RUFF) format -q src/just_makeit/_installhistory.py
+
+# gh-2125: which `test` legs a ci.yml run owes, from the matrix the
+# toolchain job's `legs` step declares (MATRIX, TRIM) and the run's EVENT
+# and TESTED, all read from the environment as that step sets them. A PR
+# runs each TRIM os at its oldest and newest Python only; the push that lands
+# a PR whose tree it tested runs exactly what that PR trimmed; anything else
+# runs every leg. tests/test_own_ci_matrix.py runs it for each event.
+ci-test-legs: ## Print matrix= for ci.yml's test job (MATRIX, TRIM, EVENT, TESTED)
+	@python3 scripts/ci-test-legs.py

@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -330,17 +331,15 @@ def test_the_generated_json_path_refuses_the_keys():
 def test_the_json_table_writer_keeps_the_keys():
     from just_makeit import _config as C
 
-    lines = C._dump_composer_subtables(
-        "x",
-        {
-            "json": {
-                "enabled": True,
-                "to_json_fn": "w",
-                "from_json_why": True,
-                "from_file_why": True,
-            }
-        },
-    )
+    js = {
+        "enabled": True,
+        "to_json_fn": "w",
+        "from_json_why": True,
+        "from_file_why": True,
+    }
+    lines = C._dump(
+        {"module": {"x": {"kind": "composer", "json": js}}}
+    ).splitlines()
     assert "from_json_why = true" in lines
     assert "from_file_why = true" in lines
 
@@ -351,7 +350,7 @@ def test_the_json_table_writer_keeps_the_keys():
 def _skip_reason() -> str | None:
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     try:
         import numpy  # noqa: F401

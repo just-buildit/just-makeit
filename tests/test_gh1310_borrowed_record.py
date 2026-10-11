@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
+from _jm_bench import materialize_bench
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -44,7 +46,7 @@ from just_makeit._object import run as object_run  # noqa: E402
 def _no_toolchain():
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     return None
 
@@ -190,7 +192,8 @@ class TestEveryFaceNamesTheRecord:
         `volatile <T> sink` for a pointer-returning kernel -- a constraint
         violation in the one generated file no test compiles."""
         root = _declare(tmp_path / "p")
-        b = (root / "native/benchmarks/bench_ring_core.c").read_text()
+        # gh-1987: `jm method` no longer renders the bench; `apply` does.
+        b = materialize_bench(root, "ring")
         assert "iq_pair_t *volatile wait_sink;" in b, b
         # and NOT the list-of-records bench, whose kernel does not exist
         assert "wait_results[" not in b, b
@@ -279,7 +282,7 @@ class TestTheLayoutMatchesTheCompiler:
             "    return 0;\n}\n"
         )
         exe = tmp / "layout"
-        cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+        cc = default_cc()
         r = subprocess.run(
             [
                 cc,

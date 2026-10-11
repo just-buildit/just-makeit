@@ -28,19 +28,19 @@ Two things are gated here, and the second is why this file compiles anything:
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _handle
 
-_CC = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+_CC = default_cc()
 _LINK = (
     ["-bundle", "-undefined", "dynamic_lookup"]
     if sys.platform == "darwin"

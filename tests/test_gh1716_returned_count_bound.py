@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -58,7 +59,7 @@ _SRC = Path(__file__).parent.parent / "src" / "just_makeit"
 def _skip_reason() -> "str | None":
     if not shutil.which("cmake"):
         return "cmake not found"
-    if not any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+    if default_cc() is None:
         return "no C compiler found"
     try:
         import numpy  # noqa: F401
@@ -103,7 +104,9 @@ def test_no_generator_bounds_a_count_by_hand():
         if rel.parts[0] == "examples":
             continue
         text = path.read_text("utf-8")
-        n = text.count("elements into a buffer of")
+        # The unit is a parameter since gh-1998 (an interleaved kernel
+        # counts samples), so the needle is the part every spelling shares.
+        n = text.count("into a buffer of %zu")
         if n:
             found[str(rel)] = n
         clamps += [

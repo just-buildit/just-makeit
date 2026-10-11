@@ -29,18 +29,18 @@ the mistake gh-994 already made once.
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _composer  # noqa: E402
 
-_CC = shutil.which("cc") or shutil.which("gcc")
+_CC = default_cc()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 _MODULE = "playlist"

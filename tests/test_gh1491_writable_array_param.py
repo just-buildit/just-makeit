@@ -38,12 +38,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 from _jmrun import run_cli
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or (
-    shutil.which("cc") is None and shutil.which("gcc") is None
-)
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 # The guard's first line, and the message `out_buffer_guard` emits for a
 # param called `buf`. Anchored on the param's own object variable, so a guard

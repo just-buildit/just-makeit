@@ -418,6 +418,11 @@ MANIFEST_ONLY_OBJECT_KEYS = {
     "no_reset": 'no_reset = "true"',
     "extra_link_libs": 'extra_link_libs = ["m"]',
     "extra_include_dirs": 'extra_include_dirs = ["native/inc"]',
+    # gh-1997: a hand-written method's row -- the stub carries its member.
+    "extra_methods": (
+        'extra_methods = [{ name = "hand", fn = "O_hand",'
+        ' returns = "int", doc = "HAND marker." }]'
+    ),
 }
 
 

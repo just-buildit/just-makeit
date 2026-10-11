@@ -195,17 +195,20 @@ jm remove function <name>      --module <mod>
     condition; `error` takes no name of its own, since an object has one.
 - **object / module** — delete what jm generated for it: the header
     directory under `native/inc/<pkg>/`, `native/src/<x>/`, its C test,
-    symbol test and C benchmark under `native/`, and its `.pyi`, pytest and
-    Python benchmark under `src/<pkg>/` (under the module's package, for a
-    module object); strip `add_subdirectory` / `target_sources` from the top
-    `CMakeLists.txt`; drop the TOML section (and the object's file, if
-    split). A hand-written hook file (`*_extra.c`, `*_prologue.c`,
-    `*_extra.cmake`) is never deleted (gh-1216).
+    symbol test and C benchmark under `native/`, and its `.pyi`, pytest,
+    element-contract test and Python benchmark under `src/<pkg>/` (under the
+    module's package, for a module object); strip `add_subdirectory` /
+    `target_sources` from the top `CMakeLists.txt`; drop the TOML section
+    (and the object's file, if split). A hand-written hook file
+    (`*_extra.c`, `*_prologue.c`, `*_extra.cmake`) is never deleted
+    (gh-1216).
 - **method / property / warning / error** — drop the TOML entry and
-    regenerate the glue (`_ext.c`, `.pyi`) only. The sacred files are left
-    alone: a removed method's `<csym>_<name>()` stays in `_core.c`, and a
-    property's field or accessors stay where they were; the command's closing
-    note says what to delete by hand.
+    regenerate the glue (`_ext.c`, `.pyi`) and what jm derives from it: the
+    link-check table and the element contract, each through the call that
+    writes it on the way in (gh-1978). The sacred files are left alone: a
+    removed method's `<csym>_<name>()` stays in `_core.c`, and a property's
+    field or accessors stay where they were; the command's closing note says
+    what to delete by hand.
 - **state** — structural: drop the entry and rebuild the object through
     `jm regenerate`.
 - **function** — drop the entry, delete its `.c` and declaration, and

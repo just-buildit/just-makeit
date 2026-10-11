@@ -44,6 +44,7 @@ from . import _gluedoc
 from . import _record
 from . import _report
 from . import _render as R
+from ._context._destroy import PARK_FIELD
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
 # both ``{name, meth, flags, DOC}`` and ``{name, get, set, DOC, closure}``.
@@ -412,7 +413,8 @@ def _head(field_text: str) -> list[str]:
 
 
 def _same_synopsis(cur_line: str, der_line: str) -> bool:
-    """Two synopsis lines that differ by at most a trailing period.
+    """Two synopsis lines that differ by at most a trailing period, or by
+    an optional return's ``| None``.
 
     jm has spelled the line both ways. gh-1039's canned single-record literal
     was a complete sentence — ``find(x) -> Hit record (found, offset).`` —
@@ -421,14 +423,25 @@ def _same_synopsis(cur_line: str, der_line: str) -> bool:
     another author's writing, which is exactly the misclassification that
     keeps a slot frozen.
 
+    gh-2183: a ``none_on_empty`` method's synopsis gained ``| None``, so the
+    line every earlier jm wrote for it ends without one. Compared literally,
+    that froze the very slot the fix was for: the runtime doc of every
+    existing module object kept saying the array is always there.
+
     Examples
     --------
     >>> _same_synopsis("run(x) -> float.", "run(x) -> float")
     True
     >>> _same_synopsis("run(x) -> float", "run(x, gain) -> float")
     False
+    >>> _same_synopsis("peek(n) -> ndarray", "peek(n) -> ndarray | None")
+    True
     """
-    return cur_line.rstrip(".") == der_line.rstrip(".")
+
+    def _bare(line: str) -> str:
+        return line.rstrip(".").removesuffix(" | None")
+
+    return _bare(cur_line) == _bare(der_line)
 
 
 def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
@@ -489,7 +502,13 @@ def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     if len(cur_head) == 1:
         return True
     fb_head = _head(fb) if fb is not None else []
-    return cur_head == der_head or (bool(fb_head) and cur_head == fb_head)
+    # gh-2183: the synopsis was matched above, by `_same_synopsis`'s rules;
+    # what is left to separate jm's text from an author's is the summary.
+    # Comparing the whole head again re-asked the synopsis literally, and
+    # undid every spelling that function tolerates.
+    return cur_head[1:] == der_head[1:] or (
+        bool(fb_head) and cur_head[1:] == fb_head[1:]
+    )
 
 
 #: jm's generic `tp_doc`, from `_object.py`'s ``[f"{Component} type."]``
@@ -851,9 +870,15 @@ def transplant_state_triplet(
     if '"state_bytes"' in existing[open_brace:close_brace]:
         return existing
     # Insert rows before the {NULL ...} sentinel (scan the mask so a brace
-    # hidden in a string/comment can't be mistaken for it).
+    # hidden in a string/comment can't be mistaken for it). At the start of
+    # its LINE (gh-2006): *pmd_rows* carry their own indent and newline, so
+    # at the `{` they sat at two indents and left the sentinel at none.
     sent = re.search(r"\{\s*NULL", mask[open_brace:close_brace])
-    rows_at = open_brace + sent.start() if sent else open_brace + 1
+    rows_at = (
+        existing.rfind("\n", 0, open_brace + sent.start()) + 1
+        if sent
+        else open_brace + 1
+    )
     funcs_text = "\n\n".join(c_funcs) + "\n\n"
     # Apply right-to-left so the earlier (funcs) offset stays valid.
     out = existing[:rows_at] + pmd_rows + existing[rows_at:]
@@ -882,6 +907,75 @@ def _array_names(
         if name is not None:
             names[name] = (s, e)
     return names
+
+
+def _splice_rows(
+    target: str,
+    array_re: re.Pattern,
+    order: "list[str | None]",
+    rows: "dict[str, str]",
+) -> str:
+    """Insert *rows* into *target*'s *array_re* table where *order* puts them.
+
+    gh-2006. *order* is the entry keys of the table the rows come from, in
+    that table's order -- an entry's name, ``None`` for an unnamed one (the
+    ``{NULL}`` sentinel) -- and *rows* maps each name to splice to its entry
+    text, ``{`` to ``}``. Each row goes immediately before the first entry
+    after it in *order* that *target*'s table holds, at that entry's indent:
+    the table it came from is the one statement of where it goes, so it is
+    read rather than restated as an anchor. A row nothing follows goes
+    before *target*'s sentinel.
+
+    Every splice used to put its rows before the sentinel, as
+    ``"    {row},\\n"`` at the sentinel's ``{`` -- the first row at two
+    indents, the sentinel at none, and a row a render puts ahead of jm's
+    trailing built-ins (``destroy``, ``__enter__``, ``__exit__``) after them.
+    So `jm adopt --check` reported ``differs: table:PyMethodDef`` on a table
+    only jm had touched.
+
+    >>> t = '''static PyMethodDef T_methods[] = {
+    ...     {"a", A, METH_NOARGS, NULL},
+    ...     {"z", Z, METH_NOARGS, NULL},
+    ...     {NULL, NULL, 0, NULL}
+    ... };'''
+    >>> print(_splice_rows(t, _METHODS_RE, ["a", "b", "z", "y", None],
+    ...       {"b": '{"b", B, METH_NOARGS, NULL}',
+    ...        "y": '{"y", Y, METH_NOARGS, NULL}'}))
+    static PyMethodDef T_methods[] = {
+        {"a", A, METH_NOARGS, NULL},
+        {"b", B, METH_NOARGS, NULL},
+        {"z", Z, METH_NOARGS, NULL},
+        {"y", Y, METH_NOARGS, NULL},
+        {NULL, NULL, 0, NULL}
+    };
+    """
+    # Both callers hold a balanced table here: jm's own render, or a
+    # fragment whose table they have already matched.
+    mask = _code_mask(target)
+    open_idx = array_re.search(mask).end() - 1
+    close_idx = _match_brace(mask, open_idx)
+    held: "dict[str | None, int]" = {}
+    for s, e in _entry_spans(mask, open_idx + 1, close_idx):
+        held.setdefault(_entry_name(target, mask, s, e), s)
+    at_rows: "dict[int, list[str]]" = {}
+    for i, key in enumerate(order):
+        if key not in rows:
+            continue
+        # With neither a successor nor a sentinel -- a table CPython would
+        # read past -- the closing brace is all there is to stand before.
+        at = next(
+            (held[k] for k in order[i + 1 :] if k in held),
+            held.get(None, close_idx),
+        )
+        at_rows.setdefault(at, []).append(rows[key])
+    # Right to left, so each offset still names the entry it was read from.
+    out = target
+    for at in sorted(at_rows, reverse=True):
+        lead = out[out.rfind("\n", 0, at) + 1 : at]
+        indent = lead[: len(lead) - len(lead.lstrip())]
+        text = "".join(f"{r},\n{indent}" for r in at_rows[at])
+        out = out[:at] + text + out[at:]
+    return out
 
 
 def _row_fn_names(
@@ -1086,6 +1180,26 @@ _ARRAY_ARG_RE = re.compile(
 #: and a fragment rendered before it lacks.
 _ARRAY_ARG_HINT_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_HINT_FN}\s*\(")
 
+#: A ``variable_output`` count's declared refusal value (gh-2012), as
+#: `_context/_methods._count_refusal_c` tests it: a signed count's
+#: ``_rc < 0``, or ``n_out ==`` an unsigned count's sentinel. The exact-fill
+#: test every such wrapper carries, ``(size_t)n_out == _cap``, is not one,
+#: so ``_cap`` is excluded as the right-hand side. Whitespace anywhere, for
+#: a fragment formatted in the project's own style.
+_REFUSAL_VALUE_RE = re.compile(
+    r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)"
+)
+
+#: A list-of-records result sized by its capacity function (gh-2184): a call
+#: to a ``*_max_out`` and, after it, the ``PyList_New`` only that shape's
+#: wrapper builds among the ``PyMethodDef`` rows. Both halves, because a
+#: ``variable_output`` wrapper calls its ``_max_out`` too and returns an
+#: ndarray -- a hand-written one that sizes some other way must not be told
+#: about records. Code, not text: read on the masked body, in any layout.
+_RECORDS_CAPACITY_RE = re.compile(
+    r"\b\w+_max_out\s*\([\s\S]*\bPyList_New\s*\("
+)
+
 
 class _Feature(NamedTuple):
     """One declared-feature marker: how to see it, and what to say.
@@ -1182,6 +1296,36 @@ _FEATURE_MARKERS = {
         "field and this fragment does not pass it to jm_array_arg, so a "
         "str is converted by numpy rather than refused with the hint",
     ),
+    # gh-2012: a manifest declaration -- `error_negative` over a signed
+    # `count_type`, or `error_sentinel` -- added to a variable_output method
+    # after its sacred fragment was rendered. Named for its consequence.
+    "refusal-value": _Feature(
+        (_REFUSAL_VALUE_RE,),
+        "the manifest declares a refusal value for the count "
+        "(error_negative over a signed count_type, or error_sentinel) and "
+        "this fragment does not test it, so a refusal reaches the overflow "
+        "guard and raises RuntimeError instead of the declared error",
+    ),
+    # gh-2184: not a manifest key -- the AUTHOR's `<c>_<m>_max_out`, declared
+    # in the sacred header after the fragment was rendered. Named for its
+    # consequence, which is silent: the records past the fixed buffer.
+    "records-capacity": _Feature(
+        (_RECORDS_CAPACITY_RE,),
+        "the header declares this method's <name>_max_out capacity and "
+        "this fragment does not ask it, so a call returns at most the "
+        "fixed max_results records and drops the rest",
+    ),
+    # gh-2187: jm's own teardown for an object that lends views, which parks
+    # the state for tp_dealloc. A teardown jm wrote before the object lent is
+    # re-rendered (`_object.jm_owned_functions`). One the author edited is
+    # kept, as is one `apply` finds beside a struct with no park field to
+    # name, and this names both. Named for its consequence.
+    "deferred-free": _Feature(
+        (PARK_FIELD,),
+        "this object lends views and this teardown frees the state at "
+        "once, so a view read after destroy() reads freed memory "
+        "(gh-2187)",
+    ),
 }
 
 #: A `case <IDENT>:` label. The rows of a `status_errors` table ARE its
@@ -1226,6 +1370,13 @@ def _method_feature_symbols(text: str) -> dict:
             )
         }
         found |= {f"case:{m}" for m in _CASE_LABEL_RE.findall(code)}
+        # gh-2184: a capacity-sized records buffer is bounded by jm's
+        # output-size guard, which comes WITH the capacity and has no
+        # existence without it. Read as its own marker, every fragment
+        # predating a declared capacity was also told about "a negative
+        # dimension" -- an ndarray's failure, on a method returning a list.
+        if "records-capacity" in found:
+            found.discard("output-size")
         out[name] = frozenset(found)
     return out
 
@@ -2153,7 +2304,8 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
     *reference* but absent (by name) from *existing* is a genuinely new
     binding — its wrapper function(s) (extracted from *reference* by name,
     brace-matched) are inserted before the ``static`` array declaration, and
-    its row before the array's ``{NULL ...}`` sentinel. An entry already
+    its row where *reference* puts it: before the row that follows it there,
+    at the table's indent (:func:`_splice_rows`, gh-2006). An entry already
     present in *existing* (hand-patched or not) is never touched, matching
     :func:`transplant_state_triplet`'s own idempotence.
 
@@ -2179,13 +2331,17 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         ref_close = _match_brace(ref_mask, ref_open)
         if ref_close == -1:
             continue
-        missing_rows: list[str] = []
+        missing_rows: dict[str, str] = {}
         missing_fn_names: list[str] = []
+        # gh-2006: the reference's row order says where each missing row
+        # goes (`_splice_rows`), so it is kept whole, sentinel included.
+        ref_order: "list[str | None]" = []
         for s, e in _entry_spans(ref_mask, ref_open + 1, ref_close):
             name = _entry_name(reference, ref_mask, s, e)
+            ref_order.append(name)
             if name is None or name in ex_names:
                 continue
-            missing_rows.append(reference[s : e + 1])
+            missing_rows[name] = reference[s : e + 1]
             for fn in _row_fn_names(reference, ref_mask, (s, e)):
                 if fn not in missing_fn_names:
                     missing_fn_names.append(fn)
@@ -2210,9 +2366,6 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         close_idx = _match_brace(ex_mask, open_idx)
         if close_idx == -1:
             continue
-        sent = re.search(r"\{\s*NULL", ex_mask[open_idx:close_idx])
-        rows_at = open_idx + sent.start() if sent else open_idx + 1
-        rows_text = "".join(f"    {r},\n" for r in missing_rows)
         # gh-544: a row may bind a name to a wrapper the fragment ALREADY
         # defines — that is exactly what a destructor alias is
         # (``{"close", ...}`` and ``{"destroy", ...}`` both point at
@@ -2285,10 +2438,9 @@ def transplant_missing_bindings(existing: str, reference: str) -> str:
         )
         if funcs_text:
             funcs_text += "\n\n"
-        # Right-to-left: the rows offset always sits after the decl offset,
-        # so inserting there first leaves decl_m.start() valid for the
-        # second splice.
-        out = out[:rows_at] + rows_text + out[rows_at:]
+        # Rows first: they all land inside the table, after the decl offset,
+        # so decl_m.start() is still valid for the second splice.
+        out = _splice_rows(out, array_re, ref_order, missing_rows)
         out = out[: decl_m.start()] + funcs_text + out[decl_m.start() :]
     return out
 
@@ -2415,8 +2567,9 @@ def transplant_hand_written(
     A row is carried when its *name* is absent from the reference array, which
     also covers the case where a hand-written alias points at a wrapper jm
     does generate. Definitions go in ahead of the first binding array, rows
-    ahead of the array's ``{NULL …}`` sentinel, so both land in the file's
-    normal order.
+    where they stood on disk -- before the row that followed them there
+    (:func:`_splice_rows`, gh-2006) -- so both land in the file's normal
+    order.
 
     Deliberately not covered: a hand-written *file-scope* declaration that is
     not a function — a static lookup table, a typedef, a helper macro. Those
@@ -2455,35 +2608,35 @@ def transplant_hand_written(
     for array_re in (_METHODS_RE, _GETSET_RE):
         out_mask = _code_mask(out)
         ref_names = _array_names(out, out_mask, array_re)
-        rows = []
-        for name, (s, e) in _array_names(existing, ex_mask, array_re).items():
+        rows: dict[str, str] = {}
+        ex_rows = _array_names(existing, ex_mask, array_re)
+        for name, (s, e) in ex_rows.items():
             if name in ref_names:
                 continue
             if _dropped(name):
                 dropped_fns.update(_row_fn_names(existing, ex_mask, (s, e)))
                 continue
-            rows.append(existing[s : e + 1])
+            rows[name] = existing[s : e + 1]
         if not rows:
             continue
-        decl_m = array_re.search(out_mask)
-        if decl_m is None:
+        if array_re.search(out_mask) is None:
             # The reference has no array of this kind to hang the row on.
             # Splicing one in would also need the PyTypeObject slot wired up;
             # leave it to _splice_first_array's path rather than half-doing it.
             continue
-        open_idx = decl_m.end() - 1
-        close_idx = _match_brace(out_mask, open_idx)
-        if close_idx == -1:
-            continue
-        sent = re.search(r"\{\s*NULL", out_mask[open_idx:close_idx])
-        rows_at = open_idx + sent.start() if sent else open_idx + 1
-        out = (
-            out[:rows_at]
-            + "".join(f"    {r},\n" for r in rows)
-            + out[rows_at:]
-        )
+        # gh-2006: a hand row keeps its place -- before the row that followed
+        # it on disk, at the table's indent -- rather than moving behind jm's
+        # trailing built-ins. The sentinel (`None`) closes the order.
+        out = _splice_rows(out, array_re, [*ex_rows, None], rows)
 
-    orphans = [n for n in orphans if n not in dropped_fns]
+    # gh-2055: a record dtype builder is never hand-written -- it is the
+    # declared columns -- and its cache is a file-scope static this does not
+    # carry, so a carried builder cannot even compile. One the reference
+    # lacks belongs to a member that is gone or no longer reads a record.
+    jm_builders = set(_record.dtype_builders(existing))
+    orphans = [
+        n for n in orphans if n not in dropped_fns and n not in jm_builders
+    ]
     if orphans:
         anchor = min(
             (
@@ -2585,7 +2738,12 @@ def refresh_module_fragment_docs(
             continue
         if only_mod is not None and mod != only_mod:
             continue
-        ext_dir = root / "native" / "src" / mod
+        # gh-2088: the directory and the file stem are the CNAME, never the
+        # id. A dotted id (`dsp.filt`) names nothing on disk, so every
+        # fragment was "missing" and skipped: `apply` refreshed no doc in a
+        # dotted module and said nothing.
+        cname = C.module_paths(mod).cname
+        ext_dir = root / "native" / "src" / cname
         derived = O.build_component_ctxs(root, cfg, mod, pkg)
         # gh-504: key by frag_id, not component — a view shares its parent's
         # `component` but owns a distinct fragment (`<mod>_ext_<frag_id>.c`), so
@@ -2599,7 +2757,7 @@ def refresh_module_fragment_docs(
         }
         for ctx in derived:
             comp = ctx.get("frag_id", ctx["component"])
-            frag = ext_dir / f"{mod}_ext_{comp}.c"
+            frag = ext_dir / f"{cname}_ext_{comp}.c"
             if not frag.exists():
                 continue
             existing = frag.read_text(encoding="utf-8")
@@ -2708,16 +2866,31 @@ def refresh_module_fragment_docs(
             # the status — the exact silent revert this feature exists to
             # prevent. Overwrite those two from the reference. Scoped to
             # declaring objects, so every other fragment is untouched.
-            if C.destroy_spec(cfg, ctx["component"]):
-                _w = ctx["ComponentW"]
+            # gh-2055: and every record dtype builder, on the same licence
+            # -- it is the declared columns and nothing else, so a kept one
+            # describes the old element while the contract asserts the new.
+            # The one list is `_object.jm_owned_functions`, which the
+            # regenerate path reads too. gh-2187: a teardown jm wrote for
+            # the other lending status is on it, where this struct -- which
+            # apply never rewrites -- carries what the render's body needs.
+            _was = O._extract_c_function_bodies(updated)
+            _own_names = O.jm_owned_functions(
+                cfg, ctx, reference, kept=_was, into=updated
+            )
+            if _own_names:
                 _ref_funcs = O._extract_c_function_bodies(reference)
                 _own = {
-                    n: _ref_funcs[n]
-                    for n in (f"{_w}_destroy", f"{_w}_exit")
-                    if n in _ref_funcs
+                    n: _ref_funcs[n] for n in _own_names if n in _ref_funcs
                 }
                 if _own:
                     updated = O._restore_c_function_bodies(updated, _own)
+                # Loud, as the enum tables above are: a builder that moves is
+                # a binding that now accepts different rows. Compared as
+                # tokens, so a formatted fragment is not "changed" by layout.
+                for _n in _record.dtype_builders(reference):
+                    if _n in _was and _n in _own:
+                        if _norm_unit(_was[_n]) != _norm_unit(_own[_n]):
+                            print(f"  update  {_rel}: record dtype {_n}")
             # gh-404: a serializable object whose sacred fragment predates the
             # flag (or was hand-written) lacks the state triplet — inject it.
             # (Usually already covered by the general splice above, since the
