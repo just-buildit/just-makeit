@@ -8,4 +8,7 @@
     have let go. `[<obj>.destroy] wake = "<method>"` names a method to call
     first, so a blocking call returns. A fallible destroy on a lending
     object is refused at generation: a finalizer named by `exit` reports
-    the status instead.
+    the status instead. A module object that starts or stops lending after
+    its fragment was written has the teardown jm wrote re-rendered with
+    it, and one the author edited is kept and named by `apply` and
+    `status`.

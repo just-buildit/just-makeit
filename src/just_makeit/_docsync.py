@@ -44,6 +44,7 @@ from . import _gluedoc
 from . import _record
 from . import _report
 from . import _render as R
+from ._context._destroy import PARK_FIELD
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
 # both ``{name, meth, flags, DOC}`` and ``{name, get, set, DOC, closure}``.
@@ -1313,6 +1314,17 @@ _FEATURE_MARKERS = {
         "the header declares this method's <name>_max_out capacity and "
         "this fragment does not ask it, so a call returns at most the "
         "fixed max_results records and drops the rest",
+    ),
+    # gh-2187: jm's own teardown for an object that lends views, which parks
+    # the state for tp_dealloc. A teardown jm wrote before the object lent is
+    # re-rendered (`_object.jm_owned_functions`). One the author edited is
+    # kept, as is one `apply` finds beside a struct with no park field to
+    # name, and this names both. Named for its consequence.
+    "deferred-free": _Feature(
+        (PARK_FIELD,),
+        "this object lends views and this teardown frees the state at "
+        "once, so a view read after destroy() reads freed memory "
+        "(gh-2187)",
     ),
 }
 
@@ -2858,14 +2870,18 @@ def refresh_module_fragment_docs(
             # -- it is the declared columns and nothing else, so a kept one
             # describes the old element while the contract asserts the new.
             # The one list is `_object.jm_owned_functions`, which the
-            # regenerate path reads too.
-            _own_names = O.jm_owned_functions(cfg, ctx, reference)
+            # regenerate path reads too. gh-2187: a teardown jm wrote for
+            # the other lending status is on it, where this struct -- which
+            # apply never rewrites -- carries what the render's body needs.
+            _was = O._extract_c_function_bodies(updated)
+            _own_names = O.jm_owned_functions(
+                cfg, ctx, reference, kept=_was, into=updated
+            )
             if _own_names:
                 _ref_funcs = O._extract_c_function_bodies(reference)
                 _own = {
                     n: _ref_funcs[n] for n in _own_names if n in _ref_funcs
                 }
-                _was = O._extract_c_function_bodies(updated)
                 if _own:
                     updated = O._restore_c_function_bodies(updated, _own)
                 # Loud, as the enum tables above are: a builder that moves is

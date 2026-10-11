@@ -72,6 +72,7 @@ from ._docstring import (
     scan_max_out_arity,
 )
 from ._context._parse import _build_ml_doc
+from ._context._destroy import PARK_FIELD
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
 # temp tree whose headers carry only template Doxygen. Docstring derivation
@@ -1222,6 +1223,53 @@ def _view_frag_id(view: dict) -> str:
     return view["class_name"].lower()
 
 
+def fragment_destroy_ctx(
+    cfg: dict, obj: str, ctx: dict, *, lends: bool
+) -> "dict[str, str]":
+    """A module fragment's destructor slots, for one lending status.
+
+    One call for the three renders that must agree on it: a module
+    object's fragment, each of its views' (which share the parent's
+    destructor contract, gh-541), and `jm_owned_functions`, which renders
+    the same teardown with the OTHER lending status to recognise a body jm
+    wrote before the object started or stopped lending views (gh-2187). A
+    second copy of these arguments there could recognise a teardown this
+    render never wrote.
+
+    Parameters
+    ----------
+    cfg : dict
+        The project manifest.
+    obj : str
+        The object the fragment wraps: a view's parent, for a view.
+    ctx : dict
+        The fragment's component context; ``component``, ``ComponentW`` and
+        ``csym`` are read from it.
+    lends : bool
+        Whether the teardown parks the state for ``tp_dealloc`` rather than
+        freeing it (`_borrow.lends`).
+
+    Returns
+    -------
+    dict of str to str
+        `_context.make_destroy_ctx`'s slots.
+    """
+    return Ctx.make_destroy_ctx(
+        ctx["component"],
+        ctx["ComponentW"],
+        C.destroy_spec(cfg, obj),
+        C.methods(cfg, obj),
+        class_name=C.class_name(cfg, obj) or "",
+        # gh-1323: so the destructor is the counterpart of whatever
+        # `create_fn` names, not always `<comp>_destroy`. gh-1326: the
+        # module path dropped it, so it derived nothing here even though
+        # the resolver was right.
+        create_fn=C.object_create_fn(cfg, obj) or "",
+        csym=ctx["csym"],
+        lends=lends,
+    )
+
+
 def _make_view_ctx(
     root: Path,
     cfg: dict,
@@ -1376,18 +1424,7 @@ def _make_view_ctx(
     # failure the parent's reports would be the original bug wearing a
     # different class name.
     ctx.update(
-        Ctx.make_destroy_ctx(
-            ctx["component"],
-            ctx["ComponentW"],
-            C.destroy_spec(cfg, obj),
-            C.methods(cfg, obj),
-            class_name=C.class_name(cfg, obj) or "",
-            # gh-1323: so the destructor is the counterpart of whatever
-            # `create_fn` names, not always `<comp>_destroy`.
-            create_fn=C.object_create_fn(cfg, obj) or "",
-            csym=ctx["csym"],
-            lends=_borrow.lends(cfg, obj),
-        )
+        fragment_destroy_ctx(cfg, obj, ctx, lends=_borrow.lends(cfg, obj))
     )
     ctx.update(
         Ctx.make_stream_ctx(
@@ -1635,18 +1672,7 @@ def build_component_ctxs(
         # gh-541/gh-544: a module object's declared destructor contract,
         # filled into its COMPONENT_TYPE_SECTION slots by the aggregator.
         ctx.update(
-            Ctx.make_destroy_ctx(
-                ctx["component"],
-                ctx["ComponentW"],
-                C.destroy_spec(cfg, obj),
-                C.methods(cfg, obj),
-                class_name=C.class_name(cfg, obj) or "",
-                # gh-1326: this path dropped it, so `create_fn` derived
-                # nothing here even though the resolver was right.
-                create_fn=C.object_create_fn(cfg, obj) or "",
-                csym=ctx["csym"],
-                lends=_borrow.lends(cfg, obj),
-            )
+            fragment_destroy_ctx(cfg, obj, ctx, lends=_borrow.lends(cfg, obj))
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
         # same stream()/__iter__ as a standalone, filled into its
@@ -1977,7 +2003,12 @@ def render_module_ext_c(
 
 
 def jm_owned_functions(
-    cfg: dict, ctx: dict, rendered: str
+    cfg: dict,
+    ctx: dict,
+    rendered: str,
+    *,
+    kept: "dict[str, str]",
+    into: str,
 ) -> "tuple[str, ...]":
     """Fragment functions jm regenerates rather than keeps as the author's.
 
@@ -1989,9 +2020,24 @@ def jm_owned_functions(
     - gh-541: the teardown wrappers of an object that declares
       ``[<obj>.destroy]``. Whether ``__exit__`` propagates a failed close
       is the declaration, and a body from before it swallows the status.
+    - gh-2187: a teardown wrapper whose body is jm's own render for the
+      OTHER lending status (`_relent_teardown`). A lending object's
+      ``destroy()`` and ``__exit__`` park the state for ``tp_dealloc``;
+      every other object's free it. Kept, an object that started lending
+      after its fragment was written went on freeing under the views it
+      lends, and one that stopped kept a body parking into a field its
+      struct no longer has, which does not compile. Any other body is the
+      author's: kept, and named by `_docsync`'s ``deferred-free`` marker.
     - gh-2055: every record dtype builder (`_record.dtype_builders`). It is
       the declared columns, so a kept one describes the old element while
       the element contract asserts the new one.
+
+    A teardown that parks is taken from the render only where the text it
+    lands in declares `PARK_FIELD`. *into* is the fresh render for a verb,
+    so that always holds; for `jm apply` it is the fragment on disk, whose
+    struct apply never rewrites, so a manifest edited by hand to lend would
+    have it park into a field the struct lacks. There the body stays as it
+    is and the marker names it.
 
     One answer for both writers of a fragment: `_regenerate_module_now`
     regenerates these instead of restoring them, and `jm apply`
@@ -2008,6 +2054,12 @@ def jm_owned_functions(
     rendered : str
         A FRESH render of the fragment, so the names come from jm's own
         emission rather than from a file a formatter may have reshaped.
+    kept : dict of str to str
+        The function bodies the restore would keep, by name
+        (`_extract_c_function_bodies` of the fragment on disk).
+    into : str
+        The text the bodies are restored into: the fresh render for a verb
+        (`_regenerate_module_now`), the fragment on disk for `jm apply`.
 
     Returns
     -------
@@ -2015,12 +2067,78 @@ def jm_owned_functions(
         The function names, in the order above.
     """
     _w = ctx["ComponentW"]
+    names = (f"{_w}_destroy", f"{_w}_exit")
     teardown = (
-        (f"{_w}_destroy", f"{_w}_exit")
+        names
         if C.destroy_spec(cfg, ctx["component"])
-        else ()
+        else _relent_teardown(cfg, ctx, rendered, kept, names)
     )
+    if _declares_park(rendered) and not _declares_park(into):
+        teardown = ()
     return teardown + _record.dtype_builders(rendered)
+
+
+def _declares_park(text: str) -> bool:
+    """Whether *text*'s object struct declares `PARK_FIELD` (gh-2187).
+
+    Read as code, comments and strings masked, in any layout: the
+    declaration is ``<stem>_state_t *_jm_parked;``, and every use of the
+    field is ``self->_jm_parked``, which never follows a ``*``.
+
+    Examples
+    --------
+    >>> _declares_park("typedef struct {\\n    p_o_state_t * _jm_parked ;")
+    True
+    >>> _declares_park("if (self->_jm_parked) f(self->_jm_parked);")
+    False
+    >>> _declares_park("/* p_o_state_t *_jm_parked; */")
+    False
+    """
+    from ._docsync import _code_mask
+
+    return re.search(rf"\*\s*{PARK_FIELD}\s*;", _code_mask(text)) is not None
+
+
+def _relent_teardown(
+    cfg: dict,
+    ctx: dict,
+    rendered: str,
+    kept: "dict[str, str]",
+    names: "tuple[str, ...]",
+) -> "tuple[str, ...]":
+    """The teardown wrappers in *kept* that jm wrote for the OTHER lending
+    status (gh-2187), and so are jm's to re-render.
+
+    Compared token for token (`_docsync._norm_unit`): a formatter's layout,
+    a comment or a docstring is not an edit, and a body the author changed
+    in any other way is not this. The other render is
+    `fragment_destroy_ctx` with ``lends`` flipped over the same context --
+    the one call the fragment itself was rendered through -- and it is
+    rendered only for a wrapper that differs from *rendered* at all, which
+    on an up-to-date fragment is none.
+    """
+    from ._docsync import _norm_unit
+
+    now = _extract_c_function_bodies(rendered)
+    stale = [
+        n
+        for n in names
+        if n in kept and n in now and _norm_unit(kept[n]) != _norm_unit(now[n])
+    ]
+    if not stale:
+        return ()
+    obj = ctx["component"]
+    flipped = fragment_destroy_ctx(
+        cfg, obj, ctx, lends=not _borrow.lends(cfg, obj)
+    )
+    other = _extract_c_function_bodies(
+        R.render_module_ext_fragment({**ctx, **flipped})
+    )
+    return tuple(
+        n
+        for n in stale
+        if n in other and _norm_unit(kept[n]) == _norm_unit(other[n])
+    )
 
 
 def _regenerate_module_now(
@@ -2126,9 +2244,13 @@ def _regenerate_module_now(
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
         if preserved:
-            # gh-541 / gh-2055: functions that are jm's glue for the OLD
-            # manifest, not the author's -- see jm_owned_functions.
-            _force = jm_owned_functions(cfg, ctx, frag)
+            # gh-541 / gh-2055 / gh-2187: functions that are jm's glue for
+            # the OLD manifest, not the author's -- see jm_owned_functions.
+            # The struct here is the render's, so a parking teardown always
+            # finds its field.
+            _force = jm_owned_functions(
+                cfg, ctx, frag, kept=preserved, into=frag
+            )
             # gh-1012: same reasoning one feature over — a view's signature
             # override reuses a wrapper name the fragment already has, and
             # that existing body is jm's own glue for the OLD signature. The

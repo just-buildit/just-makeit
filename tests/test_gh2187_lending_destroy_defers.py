@@ -34,12 +34,17 @@ from pathlib import Path
 
 import pytest
 from _jminc import INC_ROOT  # noqa: E402
+from _jmrun import run_cli  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from just_makeit._context._destroy import make_destroy_ctx  # noqa: E402
+from just_makeit._context._destroy import (  # noqa: E402
+    PARK_FIELD,
+    make_destroy_ctx,
+)
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
+from just_makeit._object import _extract_c_function_bodies  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
 _CLOSE = {
@@ -161,17 +166,102 @@ def _silent(fn, *a, **k):
         return fn(*a, **k)
 
 
-@pytest.mark.skipif(not shutil.which("cmake"), reason="cmake not found")
-class TestItActuallyDefers:
-    """Built and run. A string match cannot see a use-after-free; the C
-    destructor here POISONS the buffer and reports itself on stderr before
-    it frees, so reading a view after destroy() shows the poison, and the
-    order of the markers shows when the free really happened."""
+# -- the built harness, shared by a standalone and a module object -----------
+#
+# A string match cannot see a use-after-free. ``ring_wait`` lends from a
+# buffer of eight, and ``ring_destroy`` POISONS that buffer and says FREED on
+# stderr before it frees, so a view read after the free shows the poison and
+# the order of the markers shows when the free really happened.
 
-    KERNEL = """    if (n > 8) return NULL;
+_KERNEL = """    if (n > 8) return NULL;
     for (size_t i = 0; i < n; i++)
         state->buf[i] = (float)i + 0.0f * I;
     return state->buf;"""
+
+#: A view taken before destroy() reads what the kernel wrote, not the
+#: poison; every method refuses after it; the free waits for the last view.
+_VIEW_OUTLIVES_DESTROY = (
+    "import gc, sys\n"
+    "from {module} import Ring\n"
+    "r = Ring(cap=8)\n"
+    "v = r.wait(4)\n"
+    "r.destroy()\n"
+    "sys.stderr.write('DESTROYED\\n'); sys.stderr.flush()\n"
+    # the view still reads what the kernel wrote, not the poison
+    "assert [complex(z) for z in v[1:4]] == [1, 2, 3], list(v)\n"
+    # every method refuses through the existing guard
+    "try:\n"
+    "    r.wait(1)\n"
+    "    raise SystemExit('a method ran after destroy()')\n"
+    "except RuntimeError:\n"
+    "    pass\n"
+    "r.destroy()  # idempotent\n"
+    "del v, r\n"
+    "gc.collect()\n"
+    "sys.stderr.write('COLLECTED\\n'); sys.stderr.flush()\n"
+    "print('OK')\n"
+)
+
+
+def _poison(root: Path) -> None:
+    """Give ``ring`` its buffer and kernel, and poison its destructor."""
+    h = root / INC_ROOT / "ring/ring_core.h"
+    h.write_text(
+        h.read_text().replace(
+            "    size_t cap;",
+            "    size_t cap;\n    float _Complex buf[8];",
+            1,
+        )
+    )
+    c = root / "native/src/ring/ring_core.c"
+    text = c.read_text()
+    i = text.index("ring_wait(ring_state_t *state, size_t n)")
+    j = text.index("\n}\n", i)
+    body = text.index("{", i) + 1
+    text = text[:body] + "\n" + _KERNEL + text[j:]
+    k = text.index("ring_destroy(ring_state_t *state)")
+    body = text.index("{", k) + 1
+    text = (
+        text[:body] + "\n    if (state) {\n"
+        "        memset(state->buf, 0x7f, sizeof state->buf);\n"
+        '        fputs("FREED\\n", stderr);\n'
+        "    }" + text[body:]
+    )
+    if "#include <string.h>" not in text:
+        text = "#include <string.h>\n#include <stdio.h>\n" + text
+    c.write_text(text)
+
+
+def _build(root: Path, target: str) -> None:
+    for cmd in (
+        ["cmake", "-S", str(root), "-B", str(root / "build")],
+        ["cmake", "--build", str(root / "build"), "--target", target],
+    ):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+
+
+def _probe(root: Path, code: str):
+    probe = root / "probe.py"
+    probe.write_text(code)
+    return subprocess.run(
+        [sys.executable, str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=str(root),
+        env={**os.environ, "PYTHONPATH": str(root / "src")},
+    )
+
+
+def _order(out) -> list:
+    """The harness's markers on stderr, in the order they were written."""
+    return [ln for ln in out.stderr.split() if ln.isupper()]
+
+
+@pytest.mark.skipif(not shutil.which("cmake"), reason="cmake not found")
+class TestItActuallyDefers:
+    """Built and run, on a standalone object: see `_poison`."""
 
     @classmethod
     def _built(cls, root: Path):
@@ -192,88 +282,23 @@ class TestItActuallyDefers:
             params=[("n", "size_t")],
             borrow=True,
         )
-        h = root / INC_ROOT / "ring/ring_core.h"
-        h.write_text(
-            h.read_text().replace(
-                "    size_t cap;",
-                "    size_t cap;\n    float _Complex buf[8];",
-                1,
-            )
-        )
-        c = root / "native/src/ring/ring_core.c"
-        text = c.read_text()
-        i = text.index("ring_wait(ring_state_t *state, size_t n)")
-        j = text.index("\n}\n", i)
-        body = text.index("{", i) + 1
-        text = text[:body] + "\n" + cls.KERNEL + text[j:]
-        k = text.index("ring_destroy(ring_state_t *state)")
-        body = text.index("{", k) + 1
-        text = (
-            text[:body] + "\n    if (state) {\n"
-            "        memset(state->buf, 0x7f, sizeof state->buf);\n"
-            '        fputs("FREED\\n", stderr);\n'
-            "    }" + text[body:]
-        )
-        if "#include <string.h>" not in text:
-            text = "#include <string.h>\n#include <stdio.h>\n" + text
-        c.write_text(text)
-        for cmd in (
-            ["cmake", "-S", str(root), "-B", str(root / "build")],
-            ["cmake", "--build", str(root / "build"), "--target", "ring"],
-        ):
-            r = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=900
-            )
-            assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-
-    def _probe(self, root: Path, code: str):
-        probe = root / "probe.py"
-        probe.write_text(code)
-        return subprocess.run(
-            [sys.executable, str(probe)],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(root),
-            env={**os.environ, "PYTHONPATH": str(root / "src")},
-        )
+        _poison(root)
+        _build(root, "ring")
 
     def test_a_view_outlives_destroy_and_the_free_waits(self, tmp_path):
         root = tmp_path / "p"
         self._built(root)
-        out = self._probe(
-            root,
-            "import gc, sys\n"
-            "from p.ring import Ring\n"
-            "r = Ring(cap=8)\n"
-            "v = r.wait(4)\n"
-            "r.destroy()\n"
-            "sys.stderr.write('DESTROYED\\n'); sys.stderr.flush()\n"
-            # the view still reads what the kernel wrote, not the poison
-            "assert [complex(z) for z in v[1:4]] == [1, 2, 3], list(v)\n"
-            # every method refuses through the existing guard
-            "try:\n"
-            "    r.wait(1)\n"
-            "    raise SystemExit('a method ran after destroy()')\n"
-            "except RuntimeError:\n"
-            "    pass\n"
-            "r.destroy()  # idempotent\n"
-            "del v, r\n"
-            "gc.collect()\n"
-            "sys.stderr.write('COLLECTED\\n'); sys.stderr.flush()\n"
-            "print('OK')\n",
-        )
+        out = _probe(root, _VIEW_OUTLIVES_DESTROY.format(module="p.ring"))
         assert out.returncode == 0, out.stdout + out.stderr
         assert "OK" in out.stdout, out.stdout
-        order = [ln for ln in out.stderr.split() if ln.isupper()]
-        assert order == ["DESTROYED", "FREED", "COLLECTED"], out.stderr
+        assert _order(out) == ["DESTROYED", "FREED", "COLLECTED"], out.stderr
 
     def test_an_exception_in_a_with_block_propagates(self, tmp_path):
         """An __exit__ that refused to close while a view was alive would
         replace this exception -- the reason export counts were rejected."""
         root = tmp_path / "p"
         self._built(root)
-        out = self._probe(
+        out = _probe(
             root,
             "from p.ring import Ring\n"
             "try:\n"
@@ -287,3 +312,196 @@ class TestItActuallyDefers:
         )
         assert out.returncode == 0, out.stdout + out.stderr
         assert "OK" in out.stdout, out.stdout
+
+
+# -- a module object that starts, or stops, lending --------------------------
+#
+# A module object's fragment is sacred: a re-render keeps each function body
+# it finds by name (gh-770). The struct and tp_dealloc come from the render,
+# so a module object that started lending got the park field and a dealloc
+# that frees it -- and kept the destroy() and __exit__ it was written with,
+# which freed under its views. One that stopped kept a body parking into a
+# field its struct no longer had, which does not compile.
+# `_object.jm_owned_functions` re-renders a teardown that is jm's own render
+# for the other lending status, and keeps one the author edited, which
+# `_docsync`'s ``deferred-free`` marker names.
+
+#: The statement a parking teardown makes, as jm renders it.
+_PARK = f"self->{PARK_FIELD} = self->handle;"
+
+#: The marker's consequence, as `apply` and `status` print it.
+_FREED_UNDER = "a view read after destroy() reads freed memory"
+
+_BORROW = (
+    "method", "ring", "wait", "--arg-type", "void",
+    "--return-type", "float _Complex", "--borrow",
+    "--param", "n:size_t", "--module", "mod",
+)  # fmt: skip
+
+_BORROW_TOML = """
+[[ring.methods]]
+name = "wait"
+arg_type = "void"
+return_type = "float _Complex"
+borrow = true
+
+[[ring.methods.params]]
+name = "n"
+type = "size_t"
+"""
+
+
+def _jm(root: Path, *argv: str) -> str:
+    """Run jm in *root*; its output with every run of whitespace one space,
+    so a wrapped warning reads as the sentence it is."""
+    r = run_cli(*argv, cwd=root)
+    assert r.returncode == 0, (argv, (r.stdout + r.stderr)[-3000:])
+    return " ".join((r.stdout + r.stderr).split())
+
+
+def _module_ring(tmp_path: Path) -> Path:
+    """``ring`` in module ``mod``, lending nothing when it is written."""
+    root = tmp_path / "p"
+    _jm(tmp_path, "new", "p", str(root), "--module", "mod", "--no-c-prefix")
+    _jm(root, "object", "ring", "--module", "mod", "--state", "cap:size_t:8")
+    return root
+
+
+def _fragment(root: Path) -> Path:
+    return root / "native/src/mod/mod_ext_ring.c"
+
+
+def _teardown(root: Path) -> dict:
+    """``Ring_destroy`` and ``Ring_exit`` as they are on disk."""
+    funcs = _extract_c_function_bodies(_fragment(root).read_text())
+    return {n: funcs[n] for n in ("Ring_destroy", "Ring_exit")}
+
+
+def _parks(root: Path) -> list:
+    """The teardown wrappers on disk that park."""
+    return sorted(n for n, b in _teardown(root).items() if _PARK in b)
+
+
+_BOTH = ["Ring_destroy", "Ring_exit"]
+
+
+class TestAModuleObjectThatStartsLending:
+    def test_the_verb_re_renders_the_teardown_jm_wrote(self, tmp_path):
+        root = _module_ring(tmp_path)
+        assert _parks(root) == []
+        _jm(root, *_BORROW)
+        assert _parks(root) == _BOTH, _teardown(root)
+        # Nothing in the fragment is left differing from a fresh render.
+        said = _jm(root, "adopt", "--check", "--all")
+        assert "1 of 1 object(s) could flip" in said, said
+
+    def test_a_view_over_it_follows(self, tmp_path):
+        """A view shares its parent's destructor contract (gh-541), so it
+        lends when the parent does, from a sacred fragment of its own."""
+        root = _module_ring(tmp_path)
+        _jm(root, "view", "ring", "Burst", "--module", "mod",
+            "--create-fn", "ring_create_burst")  # fmt: skip
+        _jm(root, *_BORROW)
+        funcs = _extract_c_function_bodies(
+            (root / "native/src/mod/mod_ext_burst.c").read_text()
+        )
+        assert all(
+            _PARK in funcs[n] for n in ("Burst_destroy", "Burst_exit")
+        ), funcs
+
+    def test_a_formatted_teardown_is_still_jms(self, tmp_path):
+        """The formatter is the adversary: GNU style puts a space before
+        every paren and breaks a line where it likes. Layout is not an
+        edit, so the teardown is still jm's to re-render."""
+        root = _module_ring(tmp_path)
+        frag = _fragment(root)
+        text = frag.read_text()
+        old = (
+            "        ring_destroy(self->handle);\n"
+            "        self->handle = NULL;\n"
+        )
+        assert text.count(old) == 2, text
+        frag.write_text(
+            text.replace(
+                old,
+                "        ring_destroy (self->handle);\n"
+                "        self->handle\n            = NULL;\n",
+            )
+        )
+        _jm(root, *_BORROW)
+        assert _parks(root) == _BOTH, _teardown(root)
+
+    def test_an_edited_teardown_is_kept_and_named(self, tmp_path):
+        root = _module_ring(tmp_path)
+        frag = _fragment(root)
+        text = frag.read_text()
+        head = (
+            "Ring_destroy(RingObject *self, PyObject *Py_UNUSED(ignored))\n{\n"
+        )
+        assert text.count(head) == 1, text
+        frag.write_text(text.replace(head, head + "    (void)self;\n"))
+        _jm(root, *_BORROW)
+        kept = _teardown(root)["Ring_destroy"]
+        assert "(void)self;" in kept, kept
+        # The author's stays; the one jm wrote beside it is still jm's.
+        assert _parks(root) == ["Ring_exit"], _teardown(root)
+        for argv in (("apply",), ("status",)):
+            said = _jm(root, *argv)
+            assert "destroy: this object lends views" in said, (argv, said)
+            assert _FREED_UNDER in said, (argv, said)
+            assert "__exit__: this object lends" not in said, (argv, said)
+
+    def test_apply_never_parks_into_a_field_the_struct_lacks(self, tmp_path):
+        """A manifest edited by hand to lend reaches `jm apply`, which never
+        rewrites the struct, so a parking teardown would name a field the
+        struct does not declare. The teardown stays; the marker names it."""
+        root = _module_ring(tmp_path)
+        toml = root / "objects" / "ring.toml"
+        toml.write_text(toml.read_text() + _BORROW_TOML)
+        said = _jm(root, "apply")
+        text = _fragment(root).read_text()
+        assert _PARK not in text or (f"ring_state_t *{PARK_FIELD};" in text), (
+            text
+        )
+        assert _FREED_UNDER in said, said
+
+
+class TestAModuleObjectThatStopsLending:
+    def test_the_verb_re_renders_the_teardown_back(self, tmp_path):
+        root = _module_ring(tmp_path)
+        _jm(root, *_BORROW)
+        assert _parks(root) == _BOTH, _teardown(root)
+        _jm(root, "remove", "method", "wait", "--object", "ring", "--force")
+        # Field, dealloc and teardown alike: a teardown left parking names
+        # a field the re-rendered struct no longer has.
+        assert PARK_FIELD not in _fragment(root).read_text()
+
+
+@pytest.mark.skipif(not shutil.which("cmake"), reason="cmake not found")
+class TestAModuleObjectActuallyDefers:
+    def test_lending_defers_the_free_and_not_lending_frees(self, tmp_path):
+        """Built and run, through both verbs: a borrow added to a module
+        object written without one, then removed again."""
+        root = _module_ring(tmp_path)
+        _jm(root, *_BORROW)
+        _poison(root)
+        _build(root, "mod")
+        out = _probe(root, _VIEW_OUTLIVES_DESTROY.format(module="p.mod"))
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "OK" in out.stdout, out.stdout
+        assert _order(out) == ["DESTROYED", "FREED", "COLLECTED"], out.stderr
+
+        _jm(root, "remove", "method", "wait", "--object", "ring", "--force")
+        _build(root, "mod")
+        out = _probe(
+            root,
+            "import sys\n"
+            "from p.mod import Ring\n"
+            "r = Ring(cap=8)\n"
+            "r.destroy()\n"
+            "sys.stderr.write('DESTROYED\\n'); sys.stderr.flush()\n"
+            "print('OK')\n",
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+        # Nothing lends now, so destroy() frees where it is called.
+        assert _order(out) == ["FREED", "DESTROYED"], out.stderr
