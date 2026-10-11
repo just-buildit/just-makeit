@@ -45,6 +45,7 @@ from ._context._parse import (
     capsule_unwrap_c,
     scalar_arg_c,
     scalar_parse_c,
+    scalar_raw_locals,
 )
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 from ._docstring import (
@@ -1068,18 +1069,9 @@ def _is_plain_scalar(f: dict) -> bool:
 
 
 def _raw_locals(rows) -> "frozenset[str]":
-    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for *rows*.
-
-    gh-2035: a scalar whose format char writes another width -- a
-    ``size_t``, a ``bool``, a complex -- is parsed into ``<name>_raw`` and
-    converted, so a sibling row named that would redeclare it (gh-1525).
-    A type jm does not know declares nothing here; the render refuses it.
-    """
-    return frozenset(
-        f"{r['name']}_raw"
-        for r in rows
-        if "parse_type" in T._CTYPE_META.get(r.get("type", ""), {})
-    )
+    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for the
+    manifest *rows* (`scalar_raw_locals`, gh-2035)."""
+    return scalar_raw_locals((r["name"], r.get("type", "")) for r in rows)
 
 
 def _source_fields(cfg: dict, module: str) -> list[dict]:
@@ -1566,7 +1558,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             # gh-2035: the one tuple-parse slot, whose format char is the
             # one `_field_fmt` put in `fmt` above.
             decl, _fc, addr, convs[n] = scalar_arg_c(
-                n, f["type"], f.get("default") or ""
+                n, f["type"], f.get("default") or "", fail="return -1;"
             )
             decls.append(decl)
             addrs.append(addr)
@@ -2030,7 +2022,7 @@ static int
             meta = _number_meta(ctype, _row(module, "source.fields", n))
             to_py = meta["to_py"](f"self->src.{n}")
             parse = scalar_parse_c(
-                ctype, "value", "_v", "return -1;", meta=meta
+                ctype, "value", "_v", "return -1;", label=n, meta=meta
             )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
@@ -2396,6 +2388,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
                     "_o",
                     "_v",
                     "goto fail;",
+                    label=n,
                     meta=_number_meta(ct, _row(module, "segment.fields", n)),
                     indent=" " * 12,
                 )
@@ -2575,7 +2568,9 @@ static int
         # `int`, and a complex parsed through `PyLong_AsLong`.
         meta = _number_meta(ct, _row(module, "segment.fields", n))
         to_py = meta["to_py"](f"self->{n}")
-        parse = scalar_parse_c(ct, "value", "_v", "return -1;", meta=meta)
+        parse = scalar_parse_c(
+            ct, "value", "_v", "return -1;", label=n, meta=meta
+        )
         getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -2854,6 +2849,7 @@ def render_serializers(
                     pn,
                     pt,
                     "" if default is None else str(default),
+                    fail="return NULL;",
                     meta=scalar_meta(
                         pt,
                         f"composer module '{module}' serializer '{name}' "
@@ -4223,7 +4219,9 @@ def _settings_getset_c(
             got = f"{st['getter_fn']}(self->state)"
             get_body = f"    return {meta['to_py'](got)};\n"
             set_body = (
-                scalar_parse_c(ctype, "value", "_v", "return -1;", meta=meta)
+                scalar_parse_c(
+                    ctype, "value", "_v", "return -1;", label=n, meta=meta
+                )
                 + f"    {st['setter_fn']}(self->state, _v);\n"
                 f"    return 0;\n"
             )
@@ -4308,6 +4306,7 @@ def _settings_pop_c(cfg: dict, module: str) -> str:
                     "_o",
                     "_v",
                     "{ Py_DECREF(kw); return -1; }",
+                    label=n,
                     meta=_number_meta(ctype, _row(module, "settings", n)),
                     indent=" " * 12,
                 )

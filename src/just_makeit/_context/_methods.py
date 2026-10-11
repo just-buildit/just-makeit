@@ -69,6 +69,7 @@ from ._parse import (
     borrow_view_c as _borrow_view_c,
     capsule_new_c as _capsule_new_c,
     enum_symbols as _enum_symbols,
+    scalar_narrow_c as _scalar_narrow_c,
     scalar_parse_c as _scalar_parse_c,
 )
 
@@ -2869,10 +2870,16 @@ def make_methods_ctx(
                             )
                         _held.append(f"{_pn}_arr")
                     elif "parse_type" in _CTYPE_META.get(_pt, {}):
-                        _pm = _CTYPE_META[_pt]
-                        _pt_disp = _pt
+                        # gh-2144: a range refusal releases the arrays this
+                        # loop has acquired so far, as an array's does.
                         _conv_lines.append(
-                            f"    {_pt_disp} {_pn} = {_pm['to_c'](_pn)};"
+                            _scalar_narrow_c(
+                                _pt,
+                                _pn,
+                                "".join(f"Py_DECREF({a}); " for a in _held)
+                                + "return NULL;",
+                                label=_pn,
+                            ).rstrip("\n")
                         )
                 parse_block += (
                     "\n".join(_conv_lines) + "\n" if _conv_lines else ""
@@ -5226,7 +5233,7 @@ def make_properties_ctx(
                 # gh-2035: the one PyObject -> C scalar conversion, which a
                 # composer's settings and fields call too.
                 parse_block = _scalar_parse_c(
-                    disp, "value", "v", "return -1;", meta=meta
+                    disp, "value", "v", "return -1;", label=pname, meta=meta
                 )
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"

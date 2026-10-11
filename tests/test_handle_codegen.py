@@ -344,7 +344,9 @@ class TestBytesReturn:
             }
         )
         s = _handle.render_ext(cfg, "ringbuf")
-        assert "_got = ringbuf_save(self->h, level_raw, _buf);" in s
+        # An `int` parses into its own local (gh-2144: through the
+        # one tuple-parse slot), so the call passes it by name.
+        assert "_got = ringbuf_save(self->h, level, _buf);" in s
         pyi = _handle.render_pyi(cfg, "ringbuf")
         assert "def save(self, level: int) -> bytes:" in pyi
 
@@ -814,7 +816,7 @@ class TestMixedArgMethod:
         assert 'static char *kwlist[] = {"iq", "fs", "fc", NULL};' in s
         assert 'PyArg_ParseTupleAndKeywords(args, kwds, "Odd", kwlist,' in s
         assert "&x_obj, &fs, &fc" in s
-        assert "double fs;" in s and "double fc;" in s
+        assert "double fs = 0.0;" in s and "double fc = 0.0;" in s
         assert "wfm_zmq_sink_send(self->h, in_data, n_in, fs, fc)" in s
 
     def test_array_plus_scalar_default(self):
@@ -1200,10 +1202,13 @@ class TestStringArgAndLenArray:
     def test_at_scalar_fast_path_safe_width(self):
         m = _plan_cfg()["module"]["wfm_plan"]["methods"][1]
         s = _handle._emit_method(_plan_cfg(), "wfm_plan", m)
-        # safe-width parse: uint64_t via unsigned long long _raw + cast; "dK".
-        assert 'PyArg_ParseTuple(args, "dK", &snr_raw, &seed_raw)' in s
-        assert "unsigned long long seed_raw = 0;" in s
-        assert "wfm_plan_at(self->h, snr_raw, (uint64_t)seed_raw, _out)" in s
+        # safe-width parse: uint64_t via unsigned long long _raw, then
+        # narrowed (gh-2144: the one tuple-parse slot); a double parses into
+        # its own local. "dK".
+        assert 'PyArg_ParseTuple(args, "dK", &snr, &seed_raw)' in s
+        assert "unsigned long long seed_raw = 0ULL;" in s
+        assert "uint64_t seed = (uint64_t)seed_raw;" in s
+        assert "wfm_plan_at(self->h, snr, seed, _out)" in s
 
     def test_len_out_method_is_positional(self):
         # shape (e) registers as plain METH_VARARGS (no keywords). The

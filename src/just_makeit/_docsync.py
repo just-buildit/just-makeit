@@ -44,6 +44,7 @@ from . import _gluedoc
 from . import _record
 from . import _report
 from . import _render as R
+from ._context._parse import INT_RANGE_GUARD_RE
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
 # both ``{name, meth, flags, DOC}`` and ``{name, get, set, DOC, closure}``.
@@ -1131,8 +1132,16 @@ _OUT_CONTIG_RE = re.compile(
 #: the manifest asked for, so it is removed before the raise axis is read:
 #: every fragment rendered before gh-1710 lacks it, and reading it as a
 #: raise told each of them "the manifest's result shape needs raises" for
-#: a manifest nobody changed.
+#: a manifest nobody changed. gh-2144's range guard (`INT_RANGE_GUARD_RE`)
+#: raises the same way and is jm's too, so this removes its raise as well.
 _OUT_SIZE_RE = re.compile(r"PyErr_Format\s*\(\s*PyExc_OverflowError\s*,")
+
+#: The output-size guard's own test, ``<var>_need > (size_t)<limit>``: what
+#: says THAT guard is present. The raise above is not enough since gh-2144,
+#: whose range guard raises ``OverflowError`` the same way -- read as this
+#: one, every fragment predating it was told it lacked the output-size
+#: guard it visibly has.
+_OUT_SIZE_GUARD_RE = re.compile(r"\b[A-Za-z_]\w*_need\s*>\s*\(\s*size_t\s*\)")
 
 #: jm's one array-argument converter (gh-1700, `_coerce.ARRAY_ARG_C`), CALLED
 #: for a one-byte element type. Every generated acquisition of an array
@@ -1232,7 +1241,7 @@ _FEATURE_MARKERS = {
     # gh-1710: NOT a manifest declaration either -- jm's own guard, which a
     # fragment rendered before it lacks. Named for its consequence.
     "output-size": _Feature(
-        (_OUT_SIZE_RE,),
+        (_OUT_SIZE_GUARD_RE,),
         "jm's output-size guard refuses a size past NPY_MAX_INTP and this "
         "fragment does not, so an oversized result wraps to a negative "
         "dimension",
@@ -1246,6 +1255,15 @@ _FEATURE_MARKERS = {
         "jm converts a uint8_t[] / int8_t[] argument through jm_array_arg "
         "and this fragment does not, so a bytes, bytearray or memoryview "
         "is parsed as text rather than read as its bytes",
+    ),
+    # gh-2144: jm's own guard as well -- a fragment rendered before it casts
+    # an integer argument to its C type with no range test. Named for its
+    # consequence.
+    "int-range": _Feature(
+        (INT_RANGE_GUARD_RE,),
+        "jm refuses an integer argument outside its C type's range and "
+        "this fragment does not, so an out-of-range value wraps silently "
+        "(an int8_t given 300 arrives as 44)",
     ),
     # gh-1716: jm's own guard, the read-side twin of the output-size one
     # -- a fragment rendered before it trusts the count its kernel returns.
@@ -1341,9 +1359,9 @@ def _method_return_shapes(text: str) -> dict:
             for label, spellings in _RETURN_SHAPE_MARKERS.items()
             if any(s in code for s in spellings)
         }
-        # gh-1710 / gh-1716: jm's output-size and returned-count guards are
-        # reported on the feature axis, so neither is also read here as a
-        # raise the manifest declared.
+        # gh-1710 / gh-1716 / gh-2144: jm's output-size, returned-count and
+        # range guards are reported on the feature axis, so none is also
+        # read here as a raise the manifest declared.
         jm_guards = _coerce.RETURNED_COUNT_BLOCK_RE.sub("", code)
         if _raises(_OUT_SIZE_RE.sub("", jm_guards)):
             found.add(_RAISE_MARKER)

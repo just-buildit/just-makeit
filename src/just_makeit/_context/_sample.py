@@ -463,10 +463,6 @@ def make_sample_ctx(
             "bench_steps_out_arg": " out",
             "bench_free_out": "    free(out);",
             "test_arr_4_init": "{0}",
-            "pure_x_local": "",
-            "pure_x_fmt_char": "",
-            "pure_x_parse_arg": "",
-            "pure_x_to_c": "",
             # steps() returns NDArray — proper type stub
             "pyi_steps_stub": (
                 f"\n    def steps(\n"
@@ -592,11 +588,6 @@ def make_sample_ctx(
             "bench_steps_out_arg": bench_steps_out_arg,
             "bench_free_out": bench_free_out,
             "test_arr_4_init": "{0}",
-            # pure_x_* not used with void arg; provide empty fallbacks
-            "pure_x_local": "",
-            "pure_x_fmt_char": "",
-            "pure_x_parse_arg": "",
-            "pure_x_to_c": "",
             "pyi_steps_stub": _pyi_steps,
             "bench_block_consts": bench_block_consts,
             **dict(
@@ -678,10 +669,6 @@ def make_sample_ctx(
             "bench_steps_out_arg": bench_steps_out_arg,
             "bench_free_out": bench_free_out,
             "test_arr_4_init": "{0}",
-            "pure_x_local": "",
-            "pure_x_fmt_char": "",
-            "pure_x_parse_arg": "",
-            "pure_x_to_c": "",
             "pyi_steps_stub": "",  # no steps() for array arg
             "bench_block_consts": bench_block_consts,
             **dict(
@@ -719,18 +706,7 @@ def make_sample_ctx(
     samp = _CTYPE_META[arg_type]
     in_np_dtype = samp["py_type"]
 
-    # pure_x_* keys: used inside pure-scalar fn() to parse the x argument.
     samp_disp = arg_type
-    if "parse_type" in samp:
-        pure_x_local = (
-            f"    {samp['parse_type']} x_raw = {samp['parse_zero']};"
-        )
-        pure_x_parse_arg = "&x_raw"
-        pure_x_to_c = f"    {samp_disp} x = {samp['to_c']('x')};\n"
-    else:
-        pure_x_local = f"    {samp_disp} x;"
-        pure_x_parse_arg = "&x"
-        pure_x_to_c = ""
 
     return {
         "arg_ctype": arg_type,
@@ -777,10 +753,6 @@ def make_sample_ctx(
         "bench_steps_out_arg": bench_steps_out_arg,
         "bench_free_out": bench_free_out,
         "test_arr_4_init": _test_arr_4_init(arg_type, samp),
-        "pure_x_local": pure_x_local,
-        "pure_x_fmt_char": samp["fmt"],
-        "pure_x_parse_arg": pure_x_parse_arg,
-        "pure_x_to_c": pure_x_to_c,
         "pyi_steps_stub": (
             # gh-1724 (gh-1819): the input and the caller's `out=` buffer
             # are spelled by the one helper.

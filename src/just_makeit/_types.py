@@ -30,9 +30,20 @@ def _TO_PY_ULLONG(v):
     return f"PyLong_FromUnsignedLongLong((unsigned long long){v})"
 
 
-def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
-    """Build a fixed-width integer _CTYPE_META entry."""
-    return {
+def _fwint(
+    ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0", narrow=False
+):
+    """Build a fixed-width integer _CTYPE_META entry.
+
+    *narrow* says the C type holds fewer values than *parse_type*, so a value
+    the parse accepts can still be out of range for *ctype*: the row then
+    carries ``bounds``, the ``<stdint.h>`` macros naming its range, derived
+    from the spelling (``int8_t`` -> ``INT8_MIN`` / ``INT8_MAX``, an unsigned
+    type's floor ``0``). The binding refuses a value outside them before the
+    cast (gh-2144, `_context._parse.scalar_narrow_c`). A cast alone wraps:
+    ``int8_t`` given 300 arrived as 44.
+    """
+    row = {
         "kind": "int",
         "fmt": fmt,
         "zero": zero,
@@ -44,6 +55,11 @@ def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
         "to_c": lambda n, t=ctype: f"({t}){n}_raw",
         "to_py": to_py,
     }
+    if narrow:
+        stem = ctype[: -len("_t")].upper()
+        floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
+        row["bounds"] = (floor, f"{stem}_MAX")
+    return row
 
 
 _CTYPE_META: dict[str, dict] = {
@@ -89,28 +105,57 @@ _CTYPE_META: dict[str, dict] = {
         "to_py": lambda v: f"PyBool_FromLong((long)({v}))",
     },
     # Fixed-width signed
-    "int8_t": _fwint("int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG),
-    "int16_t": _fwint("int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG),
-    "int32_t": _fwint("int32_t", "l", "long", "0L", "np.int32", _TO_PY_LONG),
+    "int8_t": _fwint(
+        "int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG, narrow=True
+    ),
+    "int16_t": _fwint(
+        "int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG, narrow=True
+    ),
+    "int32_t": _fwint(
+        "int32_t", "l", "long", "0L", "np.int32", _TO_PY_LONG, narrow=True
+    ),
     "int64_t": _fwint(
         "int64_t", "L", "long long", "0LL", "np.int64", _TO_PY_LLONG
     ),
-    # Fixed-width unsigned
+    # Fixed-width unsigned. gh-2144: a narrow one parses with a CHECKED
+    # signed format char, never a masking one (`I`, `k`): a mask wraps the
+    # value before any range check can see it, so `uint8_t` given 2**32 + 5
+    # arrived as 5, and `uint32_t` given -1 as 4294967295 on a 32-bit
+    # `long`. `i` keeps the four bytes `I` wrote; `L` holds every
+    # `uint32_t` on every platform, which `l` does not on Windows.
     "uint8_t": _fwint(
-        "uint8_t", "I", "unsigned int", "0U", "np.uint8", _TO_PY_ULONG, "0U"
+        "uint8_t",
+        "i",
+        "int",
+        "0",
+        "np.uint8",
+        _TO_PY_ULONG,
+        "0U",
+        narrow=True,
     ),
     "uint16_t": _fwint(
-        "uint16_t", "I", "unsigned int", "0U", "np.uint16", _TO_PY_ULONG, "0U"
+        "uint16_t",
+        "i",
+        "int",
+        "0",
+        "np.uint16",
+        _TO_PY_ULONG,
+        "0U",
+        narrow=True,
     ),
     "uint32_t": _fwint(
         "uint32_t",
-        "k",
-        "unsigned long",
-        "0UL",
+        "L",
+        "long long",
+        "0LL",
         "np.uint32",
         _TO_PY_ULONG,
         "0U",
+        narrow=True,
     ),
+    # No checked unsigned 64-bit format char exists, so these two still
+    # parse through the masking `K`: a negative value, or one past 2**64,
+    # wraps (gh-2144's carve-out, gh-2220).
     "uint64_t": _fwint(
         "uint64_t",
         "K",
