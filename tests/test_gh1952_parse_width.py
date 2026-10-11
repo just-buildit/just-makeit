@@ -438,15 +438,17 @@ def _backing_h() -> "dict[str, str]":
         ]
     params = ", ".join(f"{t} c_{_slug(t)}" for t in INTS)
     iparams = ", ".join(f"{t} i_{_slug(t)}" for t in INTS)
-    head = (
-        "#include <stddef.h>\n#include <stdint.h>\n"
-        "typedef struct hb hb_t;\ntypedef struct cb_state cb_state_t;\n"
-    )
+    # Each header declares only its own type: both land in one translation
+    # unit, and a repeated typedef is C11, which clang rejects under -Werror
+    # in C99 mode (macOS) where gcc lets it pass.
+    inc = "#include <stddef.h>\n#include <stdint.h>\n"
     return {
-        "hb": f"#ifndef HB_CORE_H\n#define HB_CORE_H\n{head}"
+        "hb": f"#ifndef HB_CORE_H\n#define HB_CORE_H\n{inc}"
+        "typedef struct hb hb_t;\n"
         f"hb_t *hb_open({params});\nvoid hb_close(hb_t *h);\n"
         "size_t hb_len(hb_t *h);\n" + "\n".join(hb) + "\n#endif\n",
-        "cb": f"#ifndef CB_CORE_H\n#define CB_CORE_H\n{head}"
+        "cb": f"#ifndef CB_CORE_H\n#define CB_CORE_H\n{inc}"
+        "typedef struct cb_state cb_state_t;\n"
         f"cb_state_t *cb_create({iparams});\n"
         "void cb_destroy(cb_state_t *st);\n" + "\n".join(cb) + "\n#endif\n",
     }
