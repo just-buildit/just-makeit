@@ -232,7 +232,14 @@ def _poison(root: Path) -> None:
     c.write_text(text)
 
 
-def _build(root: Path, target: str) -> None:
+def _build(root: Path, target: str, clean: bool = False) -> None:
+    """Configure and build *target*. ``clean`` discards the build tree first:
+    a rebuild after an edit made moments after the last build is not
+    reliable where make compares mtimes to the second (macOS ships make
+    3.81), and a stale extension would still park, so the second half of
+    a build-edit-build test starts clean."""
+    if clean:
+        shutil.rmtree(root / "build", ignore_errors=True)
     for cmd in (
         ["cmake", "-S", str(root), "-B", str(root / "build")],
         ["cmake", "--build", str(root / "build"), "--target", target],
@@ -492,7 +499,7 @@ class TestAModuleObjectActuallyDefers:
         assert _order(out) == ["DESTROYED", "FREED", "COLLECTED"], out.stderr
 
         _jm(root, "remove", "method", "wait", "--object", "ring", "--force")
-        _build(root, "mod")
+        _build(root, "mod", clean=True)
         out = _probe(
             root,
             "import sys\n"
