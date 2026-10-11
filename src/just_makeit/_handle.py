@@ -48,20 +48,16 @@ from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
 from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
 from ._context._parse import capsule_new_c as _capsule_new_c
+from ._context._parse import (
+    scalar_arg_c,
+    scalar_parse_c,
+    scalar_raw_locals,
+)
 
 if TYPE_CHECKING:
     from ._docstring import DoxyBlock
 
 # ── small type helpers (reused from _capsule / _types) ───────────────────────
-
-
-def _scalar_fmt(ctype: str, where: str, home: str = "") -> str:
-    """PyArg_ParseTuple format char for a scalar C type (reuses _CTYPE_META).
-
-    *where* names the row in the refusal of a type that is not a scalar jm
-    converts (gh-2009, :func:`_capsule.scalar_meta`).
-    """
-    return _capsule._scalar_fmt(ctype, where, home)
 
 
 def _to_py(ctype: str, expr: str, where: str) -> str:
@@ -169,8 +165,69 @@ def _stash_inits(cfg: dict, module: str) -> list[tuple[str, str]]:
 # ── tp_init (opaque create → handle; mirrors capsule create + composer init) ──
 
 
+def _is_scalar_arg(a: dict) -> bool:
+    """An arg that crosses as one C scalar: not a ``path``, ``bytes``,
+    ``string`` or enum choice, each of which has its own coercion."""
+    return a.get("type") not in ("path", "bytes", "string") and not a.get(
+        "enum"
+    )
+
+
+def _scalar_arg(
+    a: dict, where: str, fail: str, home: str = ""
+) -> "tuple[str, str, str, str]":
+    """``(decl, fmt, &addr, conversion)`` for one arg that crosses as a C
+    scalar.
+
+    Through the method face's one tuple-parse slot,
+    ``_context/_parse.scalar_arg_c``: into the row's ``parse_type`` local,
+    then narrowed after the parse with a range check, *fail* leaving the
+    wrapper on a refusal. gh-1952 / gh-2144: every handle shape parsed a
+    scalar straight into its declared type, so an ``int8_t`` or a ``bool``
+    took the four bytes ``i`` / ``p`` write -- past the local -- and a value
+    the type cannot hold wrapped.
+
+    *where* names the table, ``handle module 'h' create_args``: a type that
+    is not a scalar jm converts is refused naming the row, an array pointed
+    at *home* (gh-2009).
+    """
+    d = a.get("default")
+    meta = _capsule.scalar_meta(a["type"], f"{where} row '{a['name']}'", home)
+    return scalar_arg_c(
+        a["name"], a["type"], "" if d is None else str(d), fail=fail, meta=meta
+    )
+
+
+def _arg_parse(
+    a: dict, where: str, fail: str, home: str = ""
+) -> "tuple[str, str, str, str]":
+    """``(decl, fmt, &addr, conversion)`` for one create-arg or factory
+    param, of any kind: a scalar through :func:`_scalar_arg`, a ``path``,
+    ``bytes``, ``string`` or enum choice through its own coercion, which
+    converts nothing after the parse."""
+    if not _is_scalar_arg(a):
+        return _arg_decl(a), _arg_fmt(a), _arg_addr(a), ""
+    return _scalar_arg(a, where, fail, home)
+
+
+def _parse_fail(args: list[dict], ret: str) -> str:
+    """A range refusal's exit after the parse: release every path borrow
+    the parse made (gh-219), then *ret*."""
+    return (
+        "".join(
+            f"{_coerce.path_release(a['name'])} "
+            for a in args
+            if a.get("type") == "path"
+        )
+        + ret
+    )
+
+
 def _arg_decl(a: dict) -> str:
-    """C local decl for one create-arg, with its manifest default."""
+    """C local decl for one non-scalar create-arg, with its manifest default.
+
+    A scalar's is :func:`_arg_parse`'s.
+    """
     n = a["name"]
     if a.get("type") == "path":
         return "    " + _coerce.path_decl(n)
@@ -183,30 +240,22 @@ def _arg_decl(a: dict) -> str:
         # path but NOT an fspath — an in-memory string (e.g. a JSON spec). The
         # create_fn MUST copy/consume it before returning (borrowed, gh-219).
         return f"    const char *{n} = NULL;"
-    if a.get("enum"):
-        default = a.get("default", "")
-        return f'    const char *{n} = "{default}";'
-    default = a.get("default", "0")
-    return f"    {a['type']} {n} = {default};"
+    # An enum choice: the string, validated to its index after the parse.
+    default = a.get("default", "")
+    return f'    const char *{n} = "{default}";'
 
 
-def _arg_fmt(a: dict, where: str) -> str:
-    """PyArg_ParseTupleAndKeywords format char for one create-arg.
+def _arg_fmt(a: dict) -> str:
+    """PyArg_ParseTupleAndKeywords format char for one non-scalar create-arg.
 
-    *where* names the table (``handle module 'h' create_args``). A type that
-    reaches the scalar branch and is not a scalar jm converts is refused
-    there, naming the row, and an array is pointed at
-    :data:`_capsule.CTOR_ARRAY_HOME` (gh-2009).
+    A scalar's is :func:`_arg_parse`'s, which refuses a type that is not a
+    scalar jm converts, naming the row (gh-2009).
     """
     if a.get("type") == "path":
         return _coerce.path_fmt()
     if a.get("type") == "bytes":
         return _coerce.bytes_fmt()  # gh-565: y#
-    if a.get("enum") or a.get("type") == "string":
-        return "s"
-    return _scalar_fmt(
-        a["type"], f"{where} row '{a['name']}'", _capsule.CTOR_ARRAY_HOME
-    )
+    return "s"  # an enum choice or a string
 
 
 def _arg_addr(a: dict) -> str:
@@ -271,14 +320,25 @@ def render_tp_init(cfg: dict, module: str) -> str:
     # precede optional ones in the manifest, same as a Python signature.
     fmt_parts: list[str] = []
     opt_started = False
-    for a in args:
+    parts = [
+        _arg_parse(
+            a,
+            f"handle module '{module}' create_args",
+            _parse_fail(args, "return -1;"),
+            _capsule.CTOR_ARRAY_HOME,
+        )
+        for a in args
+    ]
+    for a, (_d, f, _a, _c) in zip(args, parts):
         if a.get("default") is not None and not opt_started:
             fmt_parts.append("|")
             opt_started = True
-        fmt_parts.append(_arg_fmt(a, f"handle module '{module}' create_args"))
+        fmt_parts.append(f)
     fmt = "".join(fmt_parts)
-    decls = "\n".join(_arg_decl(a) for a in args)
-    addrs = ", ".join(_arg_addr(a) for a in args)
+    decls = "\n".join(d for d, _f, _a, _c in parts)
+    addrs = ", ".join(ad for _d, _f, ad, _c in parts)
+    # gh-2144: each scalar narrowed once the parse has filled it.
+    narrow = "".join(f"{c}\n" for _d, _f, _a, c in parts if c)
     # gh-1131, the other half: with no args the call rendered as
     # `kwlist,\n            ))`, a dangling comma and an empty argument. The
     # whole parse is pointless for a no-argument constructor, so it collapses
@@ -421,7 +481,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
 {parse_call}
 {parse_fail}
     }}
-{enum_validate_s}
+{narrow}{enum_validate_s}
 {reinit}{construct}
     self->closed = 0;
 {stash_s}
@@ -503,28 +563,22 @@ def _scalar_string_argparse(
     Shared by the two ``out_len_fn`` shapes — (e) array-out and the (f)
     bytes-out below — so the arg marshaling can't drift between them. Returns
     ``(decls, parse, calls)``: C local declarations, the ``PyArg_ParseTuple``
-    block (``(void)args;`` when there are none), and the call-through
-    expressions (``string`` -> ``const char *``; a scalar -> its safe-width
-    ``parse_type`` narrowed by ``to_c``)."""
-    decls, fmt_parts, addrs, calls = "", [], [], []
+    block (``(void)args;`` when there are none) with each scalar narrowed
+    after it (:func:`_arg_parse`), and the names passed to the C call."""
+    decls, fmt_parts, addrs, calls, narrow = "", [], [], [], ""
     for a in margs:
-        an = a["name"]
         if a.get("type") == "string":
-            decls += f"    const char *{an} = NULL;\n"
-            fmt_parts.append("s")
-            addrs.append(f"&{an}")
-            calls.append(an)
+            d, f, ad, conv = _arg_decl(a), "s", _arg_addr(a), ""
         else:
-            meta = _capsule.scalar_meta(a["type"], f"{where} row '{an}'")
-            pt = meta.get("parse_type", a["type"])  # safe-width parse target
-            to_c = meta.get("to_c")
-            decls += f"    {pt} {an}_raw = 0;\n"
-            fmt_parts.append(meta["fmt"])
-            addrs.append(f"&{an}_raw")
-            calls.append(to_c(an) if to_c else f"{an}_raw")
+            d, f, ad, conv = _scalar_arg(a, where, "return NULL;")
+        decls += f"{d}\n"
+        fmt_parts.append(f)
+        addrs.append(ad)
+        calls.append(a["name"])
+        narrow += f"{conv}\n" if conv else ""
     parse = (
         f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
-        f"{', '.join(addrs)}))\n        return NULL;\n"
+        f"{', '.join(addrs)}))\n        return NULL;\n{narrow}"
         if margs
         else "    (void)args;\n"
     )
@@ -651,6 +705,14 @@ def _bytes_len_locals(args: list) -> "frozenset[str]":
     )
 
 
+def _raw_locals(args: list) -> "frozenset[str]":
+    """The ``<n>_raw`` a narrow scalar create-arg or factory param parses
+    into (:func:`_arg_parse`, gh-2144)."""
+    return scalar_raw_locals(
+        (a["name"], a.get("type", "")) for a in args if _is_scalar_arg(a)
+    )
+
+
 def method_locals(m: dict) -> "frozenset[str]":
     """The unprefixed C identifiers :func:`_emit_method` declares beside a
     method's args, for the shape *m* takes (gh-1525).
@@ -675,10 +737,9 @@ def method_locals(m: dict) -> "frozenset[str]":
     returns = m.get("returns")
     ret_arr = bool(returns) and str(returns).endswith("[]")
     array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
-    # (e) and (f) parse each scalar at safe width into `<n>_raw`.
-    raw = frozenset(
-        f"{a['name']}_raw" for a in margs if a.get("type") != "string"
-    )
+    # gh-2144: every shape but (c) parses a narrow scalar into `<n>_raw`
+    # (:func:`_scalar_arg`), an enum arg's declared type included.
+    raw = scalar_raw_locals((a["name"], a.get("type", "")) for a in margs)
     if m.get("out_len_fn") and ret_arr and not array_in:
         return raw | {"arr"}  # (e)
     if m.get("out_len_fn") and returns == "bytes":
@@ -686,7 +747,7 @@ def method_locals(m: dict) -> "frozenset[str]":
     if ret_arr and not array_in:
         return frozenset({"dims", "arr", "out", "got"})  # (c)
     if ret_arr and any(a.get("writable") for a in array_in):
-        return frozenset(  # (d)
+        return raw | frozenset(  # (d)
             {
                 "n_in",
                 "max_out",
@@ -698,10 +759,10 @@ def method_locals(m: dict) -> "frozenset[str]":
                 "view",
             }
         )
-    result = frozenset({"r"}) if returns else frozenset()
+    result = raw | ({"r"} if returns else frozenset())
     if array_in:
         return result | {"x_obj", "x_arr", "n_in", "in_data"}  # (b)
-    return frozenset() if m.get("error") else result  # (a)
+    return raw if m.get("error") else result  # (a)
 
 
 def arg_scopes(
@@ -725,7 +786,7 @@ def arg_scopes(
             f"handle module '{module}' create_args",
             f"{tname}_init",
             args,
-            _bytes_len_locals(args),
+            _bytes_len_locals(args) | _raw_locals(args),
         )
     ]
     for m in C.handle_methods(cfg, module):
@@ -744,7 +805,7 @@ def arg_scopes(
                 f"handle module '{module}' factory '{f['name']}'",
                 f"{leaf}_{f['name']}",
                 ips,
-                _bytes_len_locals(ips),
+                _bytes_len_locals(ips) | _raw_locals(ips),
             )
         )
     return scopes
@@ -946,21 +1007,21 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
             d_decls = ""
             d_fmt = ["O", "O"]  # x, out — both required, both first
             d_inserted = False
+            d_addrs, d_narrow = "", ""
             for s in d_others:
-                dflt = s.get("default")
-                init = f" = {dflt}" if dflt is not None else ""
-                d_decls += f"    {s['type']} {s['name']}{init};\n"
-                if dflt is not None and not d_inserted:
+                # gh-2144: at the row's width, narrowed after the parse.
+                dd, df, da, dc = _scalar_arg(s, args_where, "return NULL;")
+                d_decls += f"{dd}\n"
+                if s.get("default") is not None and not d_inserted:
                     d_fmt.append("|")
                     d_inserted = True
-                d_fmt.append(
-                    _scalar_fmt(s["type"], f"{args_where} row '{s['name']}'")
-                )
+                d_fmt.append(df)
+                d_addrs += f", {da}"
+                d_narrow += f"\n{dc}" if dc else ""
             d_fmt_s = "".join(d_fmt)
             d_kwlist = ", ".join(
                 f'"{n}"' for n in [xn, on] + [s["name"] for s in d_others]
             )
-            d_addrs = "".join(f", &{s['name']}" for s in d_others)
             d_sig = (
                 f"{tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)"
             )
@@ -971,7 +1032,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
                 f' "{d_fmt_s}", kwlist,\n'
                 f"            &{xn}_obj, &{on}_obj{d_addrs}))\n"
-                f"        return NULL;"
+                f"        return NULL;{d_narrow}"
             )
         else:
             d_sig = f"{tname}_{name}({obj} *self, PyObject *args)"
@@ -1060,20 +1121,20 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
             scal_decls = ""
             fmt_parts = ["O"]
             inserted = False
+            scal_addrs, scal_narrow = "", ""
             for s in others:
-                d = s.get("default")
-                init = f" = {d}" if d is not None else ""
-                scal_decls += f"    {s['type']} {s['name']}{init};\n"
-                if d is not None and not inserted:
+                # gh-2144: at the row's width, narrowed after the parse.
+                sd, sf, sa, sc = _scalar_arg(s, args_where, "return NULL;")
+                scal_decls += f"{sd}\n"
+                if s.get("default") is not None and not inserted:
                     fmt_parts.append("|")
                     inserted = True
-                fmt_parts.append(
-                    _scalar_fmt(s["type"], f"{args_where} row '{s['name']}'")
-                )
+                fmt_parts.append(sf)
+                scal_addrs += f", {sa}"
+                scal_narrow += f"{sc}\n" if sc else ""
             fmt_b = "".join(fmt_parts)
             kwnames = [a["name"]] + [s["name"] for s in others]
             kwlist_b = ", ".join(f'"{n}"' for n in kwnames)
-            scal_addrs = "".join(f", &{s['name']}" for s in others)
             return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)
 {{
@@ -1082,7 +1143,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {scal_decls}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt_b}", kwlist,
             &x_obj{scal_addrs}))
         return NULL;
-{body_tail}
+{scal_narrow}{body_tail}
 }}
 """
         return f"""static PyObject *
@@ -1137,25 +1198,28 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         decls = ""
         fmt_parts = []
         addrs_list = []
+        narrow = ""
         inserted = False
         for a in margs:
-            if a.get("type") == "path":
-                # gh-565: the ctor's fspath coercion (O& + FSConverter), a
-                # required positional — no `default`, so it never trips the `|`.
-                decls += _arg_decl(a) + "\n"
-                fmt_parts.append(_arg_fmt(a, args_where))
-                addrs_list.append(_arg_addr(a))
-                continue
-            d = a.get("default")
-            init = f" = {d}" if d is not None else ""
-            decls += f"    {a['type']} {a['name']}{init};\n"
-            if d is not None and not inserted:
+            # gh-565: a path is the ctor's fspath coercion (O& +
+            # FSConverter), a required positional -- no `default`, so it
+            # never trips the `|`. gh-2144: a scalar parses at its row's
+            # width and is narrowed after the parse, releasing any path
+            # borrow on a refusal.
+            d, f, ad, conv = (
+                (_arg_decl(a), _arg_fmt(a), _arg_addr(a), "")
+                if a.get("type") == "path"
+                else _scalar_arg(
+                    a, args_where, _parse_fail(margs, "return NULL;")
+                )
+            )
+            decls += f"{d}\n"
+            if a.get("default") is not None and not inserted:
                 fmt_parts.append("|")  # everything after is optional
                 inserted = True
-            fmt_parts.append(
-                _scalar_fmt(a["type"], f"{args_where} row '{a['name']}'")
-            )
-            addrs_list.append(f"&{a['name']}")
+            fmt_parts.append(f)
+            addrs_list.append(ad)
+            narrow += f"{conv}\n" if conv else ""
         fmt = "".join(fmt_parts)
         kwlist = ", ".join(f'"{a["name"]}"' for a in margs)
         addrs = ", ".join(addrs_list)
@@ -1176,7 +1240,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     static char *kwlist[] = {{{kwlist}, NULL}};
 {decls}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,
             {addrs})){parse_fail}
-{closed_guard}
+{narrow}{closed_guard}
 {ret}
 }}
 """
@@ -1217,16 +1281,24 @@ def _emit_factory(cfg: dict, module: str, f: dict) -> str:
     create_fn = f["create_fn"]
     ips = list(f.get("init_params", []))
 
-    decls = "\n".join(_arg_decl(a) for a in ips)
-    fmt = "".join(
-        _arg_fmt(a, f"handle module '{module}' factory '{fname}' init_params")
+    # gh-2144: each scalar at its row's width, narrowed after the parse.
+    parts = [
+        _arg_parse(
+            a,
+            f"handle module '{module}' factory '{fname}' init_params",
+            _parse_fail(ips, "return NULL;"),
+            _capsule.CTOR_ARRAY_HOME,
+        )
         for a in ips
-    )
-    addrs = ", ".join(_arg_addr(a) for a in ips)
+    ]
+    decls = "\n".join(d for d, _f, _a, _c in parts)
+    fmt = "".join(f for _d, f, _a, _c in parts)
+    addrs = ", ".join(ad for _d, _f, ad, _c in parts)
+    narrow = "".join(f"{c}\n" for _d, _f, _a, c in parts if c)
     call_args = ", ".join(_create_call_arg(a) for a in ips)
     parse = (
         f'    if (!PyArg_ParseTuple(args, "{fmt}", {addrs}))\n'
-        "        return NULL;\n"
+        f"        return NULL;\n{narrow}"
         if ips
         else "    (void)args;\n"
     )
@@ -1493,7 +1565,16 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             # same member. NULL (as before) when none is declared.
             _doc_c = authored_c_doc(_field_doc(cfg, module, g, f))
             if set_fn:
-                fmt = _scalar_fmt(f["type"], f_where)
+                # gh-2144: the setter faces' one conversion -- at the row's
+                # width, range-checked. It parsed straight into the type.
+                parse = scalar_parse_c(
+                    f["type"],
+                    "value",
+                    "v",
+                    "return -1;",
+                    label=n,
+                    meta=_capsule.scalar_meta(f["type"], f_where),
+                )
                 funcs.append(f"""static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
@@ -1507,9 +1588,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             "cannot delete '{n}'");
         return -1;
     }}
-    {f["type"]} v;
-    if (!PyArg_Parse(value, "{fmt}", &v)) return -1;
-    {set_fn}(self->h, v);
+{parse}    {set_fn}(self->h, v);
     return 0;
 }}
 """)

@@ -685,6 +685,28 @@ def scalar_arg_c(
     )
 
 
+def scalar_raw_locals(rows) -> "frozenset[str]":
+    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for *rows*.
+
+    *rows* are ``(name, type)`` pairs. A scalar whose format char writes
+    another width -- an ``int8_t``, a ``size_t``, a ``bool``, a complex -- is
+    parsed into ``<name>_raw`` and narrowed, so a sibling arg named that
+    would redeclare it (gh-1525). A type jm does not know declares nothing
+    here; the render refuses it. gh-2035 wrote this for the composer; the
+    handle and capsule faces declare the same locals since gh-2144.
+
+    Examples
+    --------
+    >>> sorted(scalar_raw_locals([("n", "size_t"), ("g", "double")]))
+    ['n_raw']
+    """
+    return frozenset(
+        f"{name}_raw"
+        for name, ctype in rows
+        if "parse_type" in _CTYPE_META.get(ctype or "", {})
+    )
+
+
 def _build_params_parse(
     params: list[dict],
     Component: str = "",
@@ -994,14 +1016,11 @@ def _step_parse_block(
     per-sample hot path. Each override defaults to the live ``self->handle->``
     field, so omitting it is free and the override is non-persistent. Empty
     ``ctrl`` reproduces the original byte-for-byte (the ``|`` is absent).
+    Each parses at its row's width (:func:`ctrl_parse_c`).
     """
     disp = sample_type
-    ctrl_locals = "".join(
-        f"    {cdisp} {name} = self->handle->{name};\n"
-        for name, cdisp, _ in ctrl
-    )
-    ctrl_fmt = "|" + "".join(f for _, _, f in ctrl) if ctrl else ""
-    ctrl_refs = "".join(f", &{name}" for name, _, _ in ctrl)
+    ctrl_locals, ctrl_fmt, ctrl_refs, ctrl_narrow = ctrl_parse_c(ctrl)
+    ctrl_fmt = "|" + ctrl_fmt if ctrl else ""
     if "parse_type" in samp:
         parse_type = samp["parse_type"]
         parse_zero = samp["parse_zero"]
@@ -1012,15 +1031,70 @@ def _step_parse_block(
             f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
             f" &x_raw{ctrl_refs}))\n"
             f"        return NULL;\n"
-        ) + scalar_narrow_c(
-            disp, "x", "return NULL;", label="x", meta=samp
+            + scalar_narrow_c(disp, "x", "return NULL;", label="x", meta=samp)
+            + ctrl_narrow
         ).rstrip("\n")
-    else:
-        fmt = samp["fmt"]
-        return (
-            f"    {disp} x;\n"
-            f"{ctrl_locals}"
-            f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
-            f" &x{ctrl_refs}))\n"
-            f"        return NULL;"
+    fmt = samp["fmt"]
+    return (
+        f"    {disp} x;\n"
+        f"{ctrl_locals}"
+        f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
+        f" &x{ctrl_refs}))\n"
+        f"        return NULL;\n" + ctrl_narrow
+    ).rstrip("\n")
+
+
+def ctrl_parse_c(
+    ctrl: "list[tuple[str, str, str]]", fail: str = "return NULL;"
+) -> "tuple[str, str, str, str]":
+    """The four pieces of parsing ``step()`` / ``steps()``'s controllable
+    overrides, one per ``(name, ctype, fmt)`` entry of *ctrl* (gh-240).
+
+    Each override defaults to the live ``self->handle-><name>`` field. A row
+    with a ``parse_type`` parses into ``<name>_raw`` at that width and is
+    narrowed after the parse by :func:`scalar_narrow_c`, as every other face
+    is. gh-1952 / gh-2144: these parsed straight into the field's own type,
+    so ``int8_t k`` took the four bytes ``i`` writes -- a write past the
+    local -- and a value it cannot hold wrapped.
+
+    Parameters
+    ----------
+    ctrl : list of tuple of str
+        ``(name, ctype, pyarg_fmt)`` per controllable field.
+    fail : str, optional
+        The statement(s) leaving the wrapper on a range refusal.
+
+    Returns
+    -------
+    tuple of str
+        ``(locals, fmt, refs, narrow)``: the declarations before the parse,
+        the format chars, the ``, &<local>`` addresses, and the statements
+        after it. All empty for an empty *ctrl*.
+
+    Examples
+    --------
+    >>> loc, fmt, refs, narrow = ctrl_parse_c([("g", "float", "f")])
+    >>> print(loc, fmt, refs, repr(narrow), sep="|")
+        float g = self->handle->g;
+    |f|, &g|''
+    >>> loc, fmt, refs, narrow = ctrl_parse_c([("k", "int8_t", "i")])
+    >>> print(loc, refs, sep="|")
+        int k_raw = self->handle->k;
+    |, &k_raw
+    >>> "int8_t k = (int8_t)k_raw;" in narrow
+    True
+    """
+    locals_, fmt, refs, narrow = "", "", "", ""
+    for name, ctype, f in ctrl:
+        meta = _CTYPE_META[ctype]
+        fmt += f
+        if "parse_type" not in meta:
+            locals_ += f"    {ctype} {name} = self->handle->{name};\n"
+            refs += f", &{name}"
+            continue
+        locals_ += (
+            f"    {meta['parse_type']} {name}_raw = self->handle->{name};\n"
         )
+        refs += f", &{name}_raw"
+        narrow += scalar_narrow_c(ctype, name, fail, label=name, meta=meta)
+    return locals_, fmt, refs, narrow

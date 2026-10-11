@@ -19,12 +19,15 @@ The halves:
   ``_CTYPE_META`` scalar on every object, method and function face --
   constructor (state field and init param), ``set_<field>()``, writable
   property, method param, scalar method arg, variable-output param,
-  ``step()``, module function -- builds it ``-Werror`` and sends each its
-  type's ``min``, ``max``, ``min - 1``, ``max + 1`` and ``max + 2**32``
-  (where a masking char lands back inside the range). The range is numpy's
-  (``np.iinfo``), an oracle independent of the C macros, and the refusal's
-  printed bounds are compared to it. ``tests/test_gh2035_composer_typed_rows``
-  sweeps the composer rows one step outside the range the same way.
+  ``step()``, module function, a controllable ``step()`` / ``steps()``
+  override, a codec method's fixed param -- builds it ``-Werror`` and sends
+  each its type's ``min``, ``max``, ``min - 1``, ``max + 1`` and
+  ``max + 2**32`` (where a masking char lands back inside the range). The
+  range is numpy's (``np.iinfo``), an oracle independent of the C macros,
+  and the refusal's printed bounds are compared to it.
+  ``tests/test_gh2035_composer_typed_rows`` sweeps the composer rows one
+  step outside the range the same way, and
+  ``tests/test_gh1952_parse_width`` the handle and capsule kinds.
 * **the placement**: nothing but the primitive calls a row's ``to_c`` cast,
   so a face cannot convert around the check.
 * **the advisory**: a sacred fragment rendered before the guard is told it
@@ -57,6 +60,7 @@ from _compilers import default_cc
 
 from _jmrun import run_cli
 
+from just_makeit import _config as C
 from just_makeit import _types as T
 from just_makeit._context._parse import INT_RANGE_GUARD_RE, scalar_narrow_c
 
@@ -84,10 +88,14 @@ def _slug(ctype: str) -> str:
     return re.sub(r"\W+", "_", ctype).strip("_")
 
 
+def _np_name(ctype: str) -> str:
+    """*ctype*'s numpy dtype, as ``np.<name>`` spells it."""
+    return T._CTYPE_META[ctype]["py_type"].split(".", 1)[1]
+
+
 def int_range(ctype: str) -> "tuple[int, int]":
     """``(min, max)`` of *ctype*, from numpy rather than from jm."""
-    np_t = getattr(np, T._CTYPE_META[ctype]["py_type"].split(".", 1)[1])
-    info = np.iinfo(np_t)
+    info = np.iinfo(getattr(np, _np_name(ctype)))
     return int(info.min), int(info.max)
 
 
@@ -103,18 +111,33 @@ FACES = {
     "variable-output param": ("int(St().emit_{s}({v})[0])", "w_{s}"),
     "step()": ("cls(stp, 'x_{s}')().step({v})", "x"),
     "module function": ("fn.f_{s}({v})", "v_{s}"),
+    # gh-1952: the controllable override, on both of its parses.
+    "step() override": ("cls(stp, 'c_{s}')().step(0, {v})", "k"),
+    "steps() override": (
+        "int(cls(stp, 'c_{s}')().steps(np.zeros(1, np.{dt}), k={v})[0])",
+        "k",
+    ),
+    # gh-1952: a codec method's fixed param, which its sink stores.
+    "codec fixed param": ("pk(St(), '{s}', {v})", "q_{s}"),
+}
+
+#: The variant codec the `pk_*` methods pack through (gh-554).
+CODEC = {
+    "discriminant": "char",
+    "scalar_collapse": True,
+    "entries": [{"code": "D", "ctype": "double"}],
 }
 
 
-def _impl_c() -> str:
+def _impl_c(types: "list[str]") -> str:
     """The bodies ``--impl`` lifts: each face hands its value back.
 
     ``create``'s is spliced between jm's allocation of ``obj`` and its
     ``return obj``, so it only stores each init param in its state field.
     """
-    create = "".join(f"    obj->s_{_slug(t)} = p_{_slug(t)};\n" for t in INTS)
+    create = "".join(f"    obj->s_{_slug(t)} = p_{_slug(t)};\n" for t in types)
     out = [f"void\nip_create(void)\n{{\n{create}}}\n"]
-    for t in INTS:
+    for t in types:
         s = _slug(t)
         out.append(
             f"{t}\necho_{s}(void *state, {t} e_{s})\n{{\n"
@@ -128,12 +151,15 @@ def _impl_c() -> str:
     return "\n".join(out)
 
 
-def _scaffold(root: Path) -> Path:
-    """Declare every face of every integer type, through the CLI."""
+def _scaffold(root: Path, types: "list[str]" = INTS) -> Path:
+    """Declare every face of each of *types*, through the CLI.
+
+    ``tests/test_gh1952_parse_width`` renders it over every numeric scalar.
+    """
     assert run_cli("new", PKG, cwd=root).returncode == 0
     proj = root / PKG
     impl = root / "impl_gh2144.c"
-    impl.write_text(_impl_c(), encoding="utf-8")
+    impl.write_text(_impl_c(types), encoding="utf-8")
 
     def jm(*args: str) -> None:
         r = run_cli(*args, cwd=proj)
@@ -143,20 +169,20 @@ def _scaffold(root: Path) -> Path:
         "object",
         "st",
         "--no-step",
-        *(a for t in INTS for a in ("--state", f"g_{_slug(t)}:{t}:0")),
+        *(a for t in types for a in ("--state", f"g_{_slug(t)}:{t}:0")),
     )
     jm(
         "object",
         "ip",
         "--no-step",
-        *(a for t in INTS for a in ("--state", f"s_{_slug(t)}:{t}:0")),
-        *(a for t in INTS for a in ("--init-param", f"p_{_slug(t)}:{t}:0")),
+        *(a for t in types for a in ("--state", f"s_{_slug(t)}:{t}:0")),
+        *(a for t in types for a in ("--init-param", f"p_{_slug(t)}:{t}:0")),
         "--impl",
         f"create::{impl}::ip_create",
     )
     jm("module", "stp")
     jm("module", "fn")
-    for t in INTS:
+    for t in types:
         s = _slug(t)
         jm("property", "st", f"g_{s}", "--type", t, "--writable", "--field")
         jm(
@@ -180,7 +206,85 @@ def _scaffold(root: Path) -> Path:
             "function", f"f_{s}", "--module", "fn", "--param", f"v_{s}:{t}",
             "--return-type", t, "--impl", f"{impl}::f_{s}",
         )  # fmt: skip
+        jm(
+            "object", f"c_{s}", "--module", "stp", "--state", f"k:{t}:0",
+            "--arg-type", t, "--return-type", t,
+        )  # fmt: skip
+    _controllable_and_codec(proj, jm, types)
     return proj
+
+
+def _controllable_and_codec(proj: Path, jm, types: "list[str]") -> None:
+    """Make each ``c_*`` object's ``k`` a controllable override and give
+    ``st`` a codec method per type (gh-1952).
+
+    Both are manifest-only declarations. A controllable field changes the
+    sacred ``step()`` signature, so each ``c_*`` object's files are removed
+    and materialized again from the manifest. Each ``step()`` then hands its
+    override back, and each codec sink stores its fixed param in the field
+    ``get_g_*()`` reads. Only a real scalar may be controllable.
+    """
+    ctrl = [t for t in types if T._CTYPE_META[t]["kind"] in ("int", "float")]
+    cfg = C.load(proj)
+    cfg["codec"] = {"kw": CODEC}
+    for t in ctrl:
+        for row in cfg[f"c_{_slug(t)}"]["state"]:
+            row["controllable"] = True
+    for t in types:
+        s = _slug(t)
+        cfg["st"].setdefault("methods", []).append(
+            {
+                "name": f"pk_{s}",
+                "codec": "kw",
+                "sink_fn": f"st_pk_{s}",
+                "params": [
+                    {"name": f"q_{s}", "type": t},
+                    {"name": "type", "type": "char", "role": "discriminant"},
+                    {"name": "value", "role": "variant"},
+                ],
+            }
+        )
+    C.save(proj, cfg)
+    inc = proj / "native" / "inc" / PKG
+    src = proj / "native"
+    for t in ctrl:
+        o = f"c_{_slug(t)}"
+        shutil.rmtree(inc / o)
+        shutil.rmtree(src / "src" / o)
+        for f in (
+            src / "src" / "stp" / f"stp_ext_{o}.c",
+            src / "tests" / f"test_{o}_core.c",
+            src / "benchmarks" / f"bench_{o}_core.c",
+        ):
+            f.unlink()
+    jm("apply")
+    for t in ctrl:
+        h = inc / f"c_{_slug(t)}" / f"c_{_slug(t)}_core.h"
+        text, n = re.subn(
+            rf"return \({re.escape(t)}\)x;",
+            "(void)x;\n    return k;",
+            h.read_text("utf-8"),
+        )
+        assert n == 1, f"{h.name}: the step() stub changed shape"
+        h.write_text(text, encoding="utf-8")
+    sig = "int st_pk_{s}({p}_st_state_t *s, {t} q_{s}, char type,"
+    sig += " const void *val, size_t count)"
+    sigs = [sig.format(s=_slug(t), p=PKG, t=t) for t in types]
+    h = inc / "st" / "st_core.h"
+    text = h.read_text("utf-8")
+    at = text.rindex("#endif")
+    decls = "".join(f"{x};\n" for x in sigs)
+    h.write_text(text[:at] + decls + text[at:], encoding="utf-8")
+    core = src / "src" / "st" / "st_core.c"
+    core.write_text(
+        core.read_text("utf-8")
+        + "".join(
+            f"\n{x}\n{{\n    (void)type; (void)val; (void)count;\n"
+            f"    s->g_{_slug(t)} = q_{_slug(t)};\n    return 0;\n}}\n"
+            for t, x in zip(types, sigs)
+        ),
+        encoding="utf-8",
+    )
 
 
 def _run(cmd: list, cwd: Path) -> None:
@@ -193,6 +297,7 @@ def _run(cmd: list, cwd: Path) -> None:
 #: and no other. `PKG` and `CASES` (`{case: expression}`) are prepended.
 _DRIVER = """
 import json, sys
+import numpy as np
 sys.path.insert(0, "src")
 pkg = __import__(PKG, fromlist=["St", "Ip"])
 St, Ip = pkg.St, pkg.Ip
@@ -208,6 +313,11 @@ def setget(o, f, v):
 def attr(o, f, v):
     setattr(o, f, v)
     return getattr(o, f)
+
+
+def pk(o, s, v):
+    getattr(o, "pk_" + s)(v, "D", 1.0)
+    return getattr(o, "get_g_" + s)()
 
 
 def cls(mod, obj):
@@ -240,7 +350,7 @@ def _cases() -> "dict[str, tuple[str, str, str, int]]":
         for face, (expr, label) in FACES.items():
             for v in (lo, hi, lo - 1, hi + 1, hi + MASKED):
                 cases[f"{face} {t} {v}"] = (
-                    expr.format(s=_slug(t), v=v),
+                    expr.format(s=_slug(t), v=v, dt=_np_name(t)),
                     t,
                     label.format(s=_slug(t)),
                     v,
@@ -335,10 +445,6 @@ def test_every_face_refuses_a_value_its_type_cannot_hold(tmp_path):
 
 # ── the placement ────────────────────────────────────────────────────────────
 
-#: Files still casting a row's parse local themselves, each with the issue
-#: that moves it onto the primitive. A ratchet: it may only shrink.
-CASTS_ELSEWHERE = {"_handle.py": "gh-1952"}
-
 
 def _to_c_reads(tree: ast.AST) -> "list[tuple[str, int]]":
     """``(enclosing function, line)`` of each read of a row's ``to_c``."""
@@ -380,7 +486,9 @@ def test_only_the_primitive_casts_a_parse_local():
     assert primitive and all(
         r.startswith("scalar_narrow_c:") for r in primitive
     ), primitive
-    assert set(readers) == set(CASTS_ELSEWHERE), (
+    # gh-1952: `_handle.py` was the last, held here as a ratchet until the
+    # handle shapes routed through the primitive.
+    assert not readers, (
         "casts a parse local outside _context/_parse.scalar_narrow_c "
         f"(route it through the primitive): {readers}"
     )

@@ -45,6 +45,7 @@ from ._context._parse import (
     capsule_unwrap_c,
     scalar_arg_c,
     scalar_parse_c,
+    scalar_raw_locals,
 )
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 from ._docstring import (
@@ -1068,18 +1069,9 @@ def _is_plain_scalar(f: dict) -> bool:
 
 
 def _raw_locals(rows) -> "frozenset[str]":
-    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for *rows*.
-
-    gh-2035: a scalar whose format char writes another width -- a
-    ``size_t``, a ``bool``, a complex -- is parsed into ``<name>_raw`` and
-    converted, so a sibling row named that would redeclare it (gh-1525).
-    A type jm does not know declares nothing here; the render refuses it.
-    """
-    return frozenset(
-        f"{r['name']}_raw"
-        for r in rows
-        if "parse_type" in T._CTYPE_META.get(r.get("type", ""), {})
-    )
+    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for the
+    manifest *rows* (`scalar_raw_locals`, gh-2035)."""
+    return scalar_raw_locals((r["name"], r.get("type", "")) for r in rows)
 
 
 def _source_fields(cfg: dict, module: str) -> list[dict]:

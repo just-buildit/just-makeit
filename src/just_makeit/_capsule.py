@@ -32,7 +32,12 @@ from . import _procglobal
 from . import _types as T
 from . import _incpath as INC
 from ._context._modpath import module_docstring_lines, module_m_doc
-from ._context._parse import _build_ml_doc
+from ._context._parse import (
+    _build_ml_doc,
+    scalar_arg_c,
+    scalar_parse_c,
+    scalar_raw_locals,
+)
 from ._report import Refusal
 
 # ── small type helpers ───────────────────────────────────────────────────────
@@ -48,7 +53,8 @@ CTOR_ARRAY_HOME = (
 def scalar_meta(ptype: str, where: str, home: str = "") -> dict:
     """The ``_CTYPE_META`` row of one scalar a kind module converts.
 
-    The one lookup behind :func:`_scalar_fmt` and :func:`_to_py`, which every
+    The one lookup behind a scalar's parse (gh-2144: through
+    ``_context/_parse.scalar_arg_c``) and :func:`_to_py`, which every
     capsule and handle row that crosses as a single C scalar reaches: a
     capsule's ``init_params`` and ``properties``; a handle's ``create_args``,
     factory ``init_params``, method scalar ``args`` and ``returns``, and
@@ -117,11 +123,6 @@ def scalar_meta(ptype: str, where: str, home: str = "") -> dict:
     raise Refusal(f"{where}: {why}.")
 
 
-def _scalar_fmt(ptype: str, where: str, home: str = "") -> str:
-    """PyArg_ParseTuple format char for a scalar C type; see `scalar_meta`."""
-    return scalar_meta(ptype, where, home)["fmt"]
-
-
 def _to_py(ptype: str, expr: str, where: str) -> str:
     """C expression converting a scalar C value to a new PyObject.
 
@@ -165,12 +166,14 @@ def arg_scopes(
     the manifest, so only ``create`` is here.
     """
     backing = C.capsule_backing(cfg, module)
+    ips = C.module_init_params(cfg, module)
     return [
         (
             f"capsule module '{module}' init_params",
             f"_fn_{backing}_create",
-            C.module_init_params(cfg, module),
-            CREATE_LOCALS,
+            ips,
+            # gh-2144: a narrow param parses into `<name>_raw`.
+            CREATE_LOCALS | scalar_raw_locals((p[0], p[1]) for p in ips),
         )
     ]
 
@@ -179,20 +182,28 @@ def _emit_create(
     backing: str, sym: str, init_params: list[tuple], module: str
 ) -> str:
     names = [p[0] for p in init_params]
-    fmt = "".join(
-        _scalar_fmt(
+    # gh-1952 / gh-2144: each param through the method face's one
+    # tuple-parse slot -- at its row's width, then narrowed with a range
+    # check. It parsed straight into the declared type, so an `int8_t` took
+    # the four bytes `i` writes.
+    decls, fmt, addrs, convs = "", "", [], ""
+    for p in init_params:
+        meta = scalar_meta(
             p[1],
             f"capsule module '{module}' init_params row '{p[0]}'",
             CTOR_ARRAY_HOME,
         )
-        for p in init_params
-    )
-    decls = "".join(f"    {p[1]} {p[0]};\n" for p in init_params)
-    addrs = ", ".join(f"&{n}" for n in names)
+        decl, f, addr, conv = scalar_arg_c(
+            p[0], p[1], fail="return NULL;", meta=meta
+        )
+        decls += f"{decl}\n"
+        fmt += f
+        addrs.append(addr)
+        convs += f"{conv}\n" if conv else ""
     call_args = ", ".join(names)
     parse = (
-        f'    if (!PyArg_ParseTuple(args, "{fmt}", {addrs}))\n'
-        "        return NULL;\n"
+        f'    if (!PyArg_ParseTuple(args, "{fmt}", {", ".join(addrs)}))\n'
+        f"        return NULL;\n{convs}"
         if init_params
         else "    (void)args;\n"
     )
@@ -330,16 +341,25 @@ _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
 }}
 """
     if prop.get("writable"):
-        fmt = _scalar_fmt(ptype, where)
+        # gh-1952 / gh-2144: the value parses as one object and converts
+        # through the setter faces' one conversion, at its row's width and
+        # range-checked. It parsed straight into the declared type.
+        parse = scalar_parse_c(
+            ptype,
+            "value",
+            name,
+            "return NULL;",
+            label=name,
+            meta=scalar_meta(ptype, where),
+        )
         out += f"""
 static PyObject *
 _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
 {{
     (void)mod;
-    PyObject *cap;
-    {ptype} {name};
-    if (!PyArg_ParseTuple(args, "O{fmt}", &cap, &{name})) return NULL;
-    _wrap_t *w = _get_wrap(cap);
+    PyObject *cap, *value;
+    if (!PyArg_ParseTuple(args, "OO", &cap, &value)) return NULL;
+{parse}    _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
     {sym}_set_{name}(w->state, {name});
     Py_RETURN_NONE;

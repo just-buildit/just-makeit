@@ -41,7 +41,7 @@ def test_bytes_primitives():
 
 def test_handle_path_arg_routes_through_coerce():
     a = {"name": "path", "type": "path"}
-    assert _coerce.path_fmt() == _handle._arg_fmt(a, "create_args")
+    assert _coerce.path_fmt() == _handle._arg_fmt(a)
     assert _coerce.path_addr("path") == _handle._arg_addr(a)
     assert _coerce.path_call_expr("path") == _handle._create_call_arg(a)
     assert _coerce.path_decl("path") in _handle._arg_decl(a)

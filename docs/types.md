@@ -143,7 +143,8 @@ Notes:
     (gh-2144). Passing `300` to an `int8_t` raises
     `OverflowError: gain: 300 is out of range for int8_t [-128, 127]`,
     on every face that takes a scalar: a constructor, a setter, a method
-    or function param, `step()`, a composer row. numpy refuses
+    or function param, `step()` and its controllable overrides, a composer
+    row, a handle or capsule module. numpy refuses
     `np.int8(300)` the same way. The exception for now is `uint64_t` and
     `size_t`, where `-1` still arrives as `2**64 - 1` (gh-2220).
     `--state`, `jm add` and a manifest `[[<obj>.state]]` entry all refuse
