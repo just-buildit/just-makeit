@@ -81,6 +81,12 @@ _DEFAULT_MSG = "{component}_destroy reported failure"
 # something more specific.
 _DEFAULT_CATEGORY = "RuntimeError"
 
+#: The binding-side field a lending object's teardown parks its state in, for
+#: ``tp_dealloc`` to free (gh-2187). Named once: the struct, the teardown and
+#: the dealloc spell it here, and `_docsync`'s ``deferred-free`` marker and
+#: `_object.jm_owned_functions` read a fragment for it.
+PARK_FIELD = "_jm_parked"
+
 
 def c_fn(csym: str, spec: dict, create_fn: str = "") -> str:
     """The C function the binding calls to DESTROY the object.
@@ -401,7 +407,7 @@ def _park_body(wake_call: str) -> str:
         "        /* gh-2187: the views this object lent point into the\n"
         "           state; the free waits for tp_dealloc, and every method\n"
         "           refuses from here on. */\n"
-        "        self->_jm_parked = self->handle;\n"
+        f"        self->{PARK_FIELD} = self->handle;\n"
         "        self->handle = NULL;\n"
         "    }\n"
         "    Py_RETURN_NONE;\n"
@@ -718,7 +724,8 @@ def make_destroy_ctx(
             "       freeing it under the views this object lent; they are\n"
             "       gone now, so the free is now. */\n"
             f"    if (self->handle)\n        {dfn}(self->handle);\n"
-            f"    if (self->_jm_parked)\n        {dfn}(self->_jm_parked);\n"
+            f"    if (self->{PARK_FIELD})\n"
+            f"        {dfn}(self->{PARK_FIELD});\n"
         )
 
     # gh-805 §H: `exit` redirects __exit__ at a finalizing method. Resolved
@@ -868,7 +875,7 @@ def make_destroy_ctx(
         "destroy_dealloc_call": dealloc,
         # gh-2187: where a lending object's teardown parks its state.
         "destroy_fields": (
-            f"    {csym}_state_t *_jm_parked;"
+            f"    {csym}_state_t *{PARK_FIELD};"
             "  /* gh-2187: freed by tp_dealloc */\n"
             if lends
             else ""
