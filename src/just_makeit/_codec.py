@@ -228,17 +228,32 @@ def method_fixed_params(m: dict) -> list[dict]:
 _STRING_TYPES = ("const char *", "char *", "string", "path")
 
 
-def _fixed_parse(p: dict) -> tuple[str, str, str, str]:
-    """Return (decl, fmt char, &addr, call-arg) for a fixed passthrough param."""
+def _fixed_parse(p: dict) -> tuple[str, str, str, str, str]:
+    """Return (decl, fmt char, &addr, call-arg, conversion) for a fixed
+    passthrough param.
+
+    A scalar parses through the method face's one tuple-parse slot,
+    ``_context/_parse.scalar_arg_c``: at its row's ``parse_type`` width, then
+    narrowed after the parse with a range check (gh-1952 / gh-2144). It
+    parsed straight into the declared type, so an ``int8_t`` took the four
+    bytes ``i`` writes. The conversion is empty when the type parses into its
+    own local.
+    """
     name, t = p["name"], p.get("type", "const char *")
     if t in _STRING_TYPES:
-        return f"    const char *{name} = NULL;", "s", f"&{name}", name
+        return f"    const char *{name} = NULL;", "s", f"&{name}", name, ""
     meta = T._CTYPE_META.get(t)
     if not meta:
         raise CodecError(
             f"codec method: fixed param '{name}' has bad type '{t}'"
         )
-    return f"    {t} {name} = 0;", meta["fmt"], f"&{name}", name
+    # Deferred: `_context` imports this module.
+    from ._context._parse import scalar_arg_c
+
+    decl, fmt, addr, conv = scalar_arg_c(
+        name, t, fail="return NULL;", meta=meta
+    )
+    return decl, fmt, addr, name, conv
 
 
 def validate_codec_method(component: str, m: dict, cdc: dict) -> None:
@@ -282,13 +297,16 @@ def render_pack(
     dname, vname = disc["name"], var["name"]
 
     # parse: fixed fmts + discriminant "C" (a single char) + variant "O".
-    decls, fmts, addrs, kwl = [], [], [], []
+    decls, fmts, addrs, kwl, calls, convs = [], [], [], [], [], []
     for p in fixed:
-        d, f, a, _ = _fixed_parse(p)
+        d, f, a, c, conv = _fixed_parse(p)
         decls.append(d)
         fmts.append(f)
         addrs.append(a)
         kwl.append(f'"{p["name"]}"')
+        calls.append(c)
+        if conv:
+            convs.append(conv + "\n")
     decls.append(f"    int _{dname}_i = 0;")
     fmts.append("C")
     addrs.append(f"&_{dname}_i")
@@ -319,7 +337,7 @@ def render_pack(
             cast if is_f else cast.replace("_d", "_ll")
         )
 
-    fixed_call = "".join(f"{a[1:]}, " for a in addrs[: len(fixed)])  # strip &
+    fixed_call = "".join(f"{c}, " for c in calls)
     sink_scalar = f"{sink}({state_expr}, {fixed_call}_{dname}, _s, (size_t)_n)"
     sink_buffer = f"{sink}({state_expr}, {fixed_call}_{dname}, _buf, _count)"
     fail = (
@@ -335,7 +353,7 @@ def render_pack(
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "{"".join(fmts)}", _kwlist,
                                      {", ".join(addrs)}))
         return NULL;
-    char _{dname} = (char)_{dname}_i;
+{"".join(convs)}    char _{dname} = (char)_{dname}_i;
 
     size_t _esz = 0;
     int _is_float = 0, _is_bytes = 0;

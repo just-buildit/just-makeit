@@ -21,6 +21,7 @@ from ._parse import (
     _build_ml_doc,
     borrow_view_c as _borrow_view_c,
     capsule_unwrap_c as _capsule_unwrap_c,
+    scalar_narrow_c as _scalar_narrow_c,
 )
 from .. import _types as T
 from .._types import default_type_error as _default_type_error
@@ -926,7 +927,18 @@ def _build_no_state_init_ctx(
             local_lines.append(
                 f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )
-            post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
+            # gh-2144: a range refusal runs after PyArg has made every path
+            # borrow, so it releases them, as the str-enum refusal does.
+            post_lines.append(
+                _scalar_narrow_c(
+                    ct,
+                    name,
+                    "".join(f"{_coerce.path_release(p)} " for p in path_ip)
+                    + "return -1;",
+                    label=name,
+                    meta=meta,
+                ).rstrip("\n")
+            )
             return f"&{name}_raw"
         local_lines.append(
             f"    {ct} {name} = {dflt_raw or dflt or meta['zero']};"
@@ -3205,7 +3217,13 @@ def make_state_ctx(
             local_lines.append(
                 f"    {meta['parse_type']} {name}_raw = {raw_init};"
             )
-            post_lines.append(f"    {ct} {name} = {meta['to_c'](name)};")
+            # gh-2144: before any array argument is acquired, so a range
+            # refusal has nothing to release.
+            post_lines.append(
+                _scalar_narrow_c(
+                    ct, name, "return -1;", label=name, meta=meta
+                ).rstrip("\n")
+            )
             parse_args.append(f"&{name}_raw")
         else:
             local_lines.append(f"    {ct} {name} = {dflt};")
@@ -3313,6 +3331,10 @@ def make_state_ctx(
             f"}}"
         )
         if meta.get("parse_type"):
+            # gh-2144: refused by the field's name, which `set_<name>` says.
+            narrow = _scalar_narrow_c(
+                ct, "v", "return NULL;", label=name, meta=meta
+            )
             setter = (
                 f"static PyObject *\n"
                 f"{Component}_set_{name}(\n"
@@ -3322,7 +3344,7 @@ def make_state_ctx(
                 f"    {meta['parse_type']} v_raw = {meta['parse_zero']};\n"
                 f'    if (!PyArg_ParseTuple(args, "{meta["fmt"]}", &v_raw))\n'
                 f"        return NULL;\n"
-                f"    {ct} v = {meta['to_c']('v')};\n"
+                f"{narrow}"
                 f"    {csym}_set_{name}(self->handle, v);\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
