@@ -17,8 +17,8 @@ Three method shapes read a declared ``param`` differently from their siblings:
 The single-record shape closed the same gap in gh-594 by parsing its params
 through `_build_params_parse`. The two shapes above now take that route, and
 both examples come from `_demo_call_args`, the one builder every other shape's
-example already used. (The second shape is still offered no ``out=``: that
-waits on the header ``@param`` alignment, gh-2028.)
+example already used. (The second shape is offered ``out=`` since gh-2028,
+as its parse's trailing optional argument; tests/test_gh2028_*.py gates it.)
 
 GATE. Every row below is a method whose kernel computes its result FROM its
 params, compiled with ``-Wall -Wextra -Werror`` (binding, ``_core.c`` and
