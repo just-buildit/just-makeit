@@ -344,9 +344,13 @@ _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
         # gh-1952 / gh-2144: the value parses as one object and converts
         # through the setter faces' one conversion, at its row's width and
         # range-checked. It parsed straight into the declared type.
+        # The setter's own locals carry a leading underscore: the converted
+        # local is named for the property (`double value`), so a source
+        # object, handle or wrapper called `value`, `cap` or `w` would be
+        # declared twice and the module would not compile.
         parse = scalar_parse_c(
             ptype,
-            "value",
+            "_value_obj",
             name,
             "return NULL;",
             label=name,
@@ -357,11 +361,11 @@ static PyObject *
 _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
 {{
     (void)mod;
-    PyObject *cap, *value;
-    if (!PyArg_ParseTuple(args, "OO", &cap, &value)) return NULL;
-{parse}    _wrap_t *w = _get_wrap(cap);
-    if (!w) return NULL;
-    {sym}_set_{name}(w->state, {name});
+    PyObject *_cap_obj, *_value_obj;
+    if (!PyArg_ParseTuple(args, "OO", &_cap_obj, &_value_obj)) return NULL;
+{parse}    _wrap_t *_w = _get_wrap(_cap_obj);
+    if (!_w) return NULL;
+    {sym}_set_{name}(_w->state, {name});
     Py_RETURN_NONE;
 }}
 """
