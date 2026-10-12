@@ -657,8 +657,10 @@ With `[module.X.json] enabled = true` the composer gets
     `"18446744073709551615"` past it (gh-2139). `from_json` / `from_file` read either form exactly, and
     refuse with a `ValueError` naming the field a number outside that range
     or with a fraction, a string that is not a decimal integer or is out of
-    the type's range, and a sign on an unsigned field. Round-trips by construction;
-    reusable by any composer with zero hand-written wire code. (Uses cJSON; the
+    the type's range, and a sign on an unsigned field. The JSON face round-trips by
+    construction (a 64-bit ranged field set from Python is already a double
+    before it reaches `to_json`, gh-2224); reusable by any composer with zero
+    hand-written wire code. (Uses cJSON; the
     project provides the header via `json.include_dir` and links its json lib via
     `extra_link_libs`.)
 - **Delegated (escape hatch)** — set `json.to_json_fn` (plus optional

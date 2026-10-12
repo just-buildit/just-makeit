@@ -5,7 +5,10 @@
     `ptrdiff_t` past 2^53 -- came back a different value, with no error. Such
     a field is now a JSON number while its value is within ±(2^53 - 1), the
     range a double holds exactly (I-JSON, RFC 7493), and a decimal string
-    past it, so every small value and every existing record reads as before.
+    past it, so every small value and every record within that range reads
+    as before. A record an older jm wrote with a wider value holds a rounded
+    double, whose true value is already lost, and is now refused rather than
+    loaded as a different number.
     `from_json` / `from_file` read either form exactly, and refuse with a
     `ValueError` naming the field a number outside that range or with a
     fraction, a string that is not a decimal integer or overflows the type,
