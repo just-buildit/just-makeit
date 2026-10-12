@@ -44,6 +44,7 @@ from . import _gluedoc
 from . import _record
 from . import _report
 from . import _render as R
+from ._context._destroy import PARK_FIELD
 from ._context._parse import INT_RANGE_GUARD_RE
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
@@ -413,7 +414,8 @@ def _head(field_text: str) -> list[str]:
 
 
 def _same_synopsis(cur_line: str, der_line: str) -> bool:
-    """Two synopsis lines that differ by at most a trailing period.
+    """Two synopsis lines that differ by at most a trailing period, or by
+    an optional return's ``| None``.
 
     jm has spelled the line both ways. gh-1039's canned single-record literal
     was a complete sentence — ``find(x) -> Hit record (found, offset).`` —
@@ -422,14 +424,25 @@ def _same_synopsis(cur_line: str, der_line: str) -> bool:
     another author's writing, which is exactly the misclassification that
     keeps a slot frozen.
 
+    gh-2183: a ``none_on_empty`` method's synopsis gained ``| None``, so the
+    line every earlier jm wrote for it ends without one. Compared literally,
+    that froze the very slot the fix was for: the runtime doc of every
+    existing module object kept saying the array is always there.
+
     Examples
     --------
     >>> _same_synopsis("run(x) -> float.", "run(x) -> float")
     True
     >>> _same_synopsis("run(x) -> float", "run(x, gain) -> float")
     False
+    >>> _same_synopsis("peek(n) -> ndarray", "peek(n) -> ndarray | None")
+    True
     """
-    return cur_line.rstrip(".") == der_line.rstrip(".")
+
+    def _bare(line: str) -> str:
+        return line.rstrip(".").removesuffix(" | None")
+
+    return _bare(cur_line) == _bare(der_line)
 
 
 def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
@@ -490,7 +503,13 @@ def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     if len(cur_head) == 1:
         return True
     fb_head = _head(fb) if fb is not None else []
-    return cur_head == der_head or (bool(fb_head) and cur_head == fb_head)
+    # gh-2183: the synopsis was matched above, by `_same_synopsis`'s rules;
+    # what is left to separate jm's text from an author's is the summary.
+    # Comparing the whole head again re-asked the synopsis literally, and
+    # undid every spelling that function tolerates.
+    return cur_head[1:] == der_head[1:] or (
+        bool(fb_head) and cur_head[1:] == fb_head[1:]
+    )
 
 
 #: jm's generic `tp_doc`, from `_object.py`'s ``[f"{Component} type."]``
@@ -1180,6 +1199,16 @@ _REFUSAL_VALUE_RE = re.compile(
     r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)"
 )
 
+#: A list-of-records result sized by its capacity function (gh-2184): a call
+#: to a ``*_max_out`` and, after it, the ``PyList_New`` only that shape's
+#: wrapper builds among the ``PyMethodDef`` rows. Both halves, because a
+#: ``variable_output`` wrapper calls its ``_max_out`` too and returns an
+#: ndarray -- a hand-written one that sizes some other way must not be told
+#: about records. Code, not text: read on the masked body, in any layout.
+_RECORDS_CAPACITY_RE = re.compile(
+    r"\b\w+_max_out\s*\([\s\S]*\bPyList_New\s*\("
+)
+
 
 class _Feature(NamedTuple):
     """One declared-feature marker: how to see it, and what to say.
@@ -1295,6 +1324,26 @@ _FEATURE_MARKERS = {
         "this fragment does not test it, so a refusal reaches the overflow "
         "guard and raises RuntimeError instead of the declared error",
     ),
+    # gh-2184: not a manifest key -- the AUTHOR's `<c>_<m>_max_out`, declared
+    # in the sacred header after the fragment was rendered. Named for its
+    # consequence, which is silent: the records past the fixed buffer.
+    "records-capacity": _Feature(
+        (_RECORDS_CAPACITY_RE,),
+        "the header declares this method's <name>_max_out capacity and "
+        "this fragment does not ask it, so a call returns at most the "
+        "fixed max_results records and drops the rest",
+    ),
+    # gh-2187: jm's own teardown for an object that lends views, which parks
+    # the state for tp_dealloc. A teardown jm wrote before the object lent is
+    # re-rendered (`_object.jm_owned_functions`). One the author edited is
+    # kept, as is one `apply` finds beside a struct with no park field to
+    # name, and this names both. Named for its consequence.
+    "deferred-free": _Feature(
+        (PARK_FIELD,),
+        "this object lends views and this teardown frees the state at "
+        "once, so a view read after destroy() reads freed memory "
+        "(gh-2187)",
+    ),
 }
 
 #: A `case <IDENT>:` label. The rows of a `status_errors` table ARE its
@@ -1339,6 +1388,13 @@ def _method_feature_symbols(text: str) -> dict:
             )
         }
         found |= {f"case:{m}" for m in _CASE_LABEL_RE.findall(code)}
+        # gh-2184: a capacity-sized records buffer is bounded by jm's
+        # output-size guard, which comes WITH the capacity and has no
+        # existence without it. Read as its own marker, every fragment
+        # predating a declared capacity was also told about "a negative
+        # dimension" -- an ndarray's failure, on a method returning a list.
+        if "records-capacity" in found:
+            found.discard("output-size")
         out[name] = frozenset(found)
     return out
 
@@ -2832,14 +2888,18 @@ def refresh_module_fragment_docs(
             # -- it is the declared columns and nothing else, so a kept one
             # describes the old element while the contract asserts the new.
             # The one list is `_object.jm_owned_functions`, which the
-            # regenerate path reads too.
-            _own_names = O.jm_owned_functions(cfg, ctx, reference)
+            # regenerate path reads too. gh-2187: a teardown jm wrote for
+            # the other lending status is on it, where this struct -- which
+            # apply never rewrites -- carries what the render's body needs.
+            _was = O._extract_c_function_bodies(updated)
+            _own_names = O.jm_owned_functions(
+                cfg, ctx, reference, kept=_was, into=updated
+            )
             if _own_names:
                 _ref_funcs = O._extract_c_function_bodies(reference)
                 _own = {
                     n: _ref_funcs[n] for n in _own_names if n in _ref_funcs
                 }
-                _was = O._extract_c_function_bodies(updated)
                 if _own:
                     updated = O._restore_c_function_bodies(updated, _own)
                 # Loud, as the enum tables above are: a builder that moves is

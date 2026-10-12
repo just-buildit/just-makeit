@@ -1115,6 +1115,20 @@ def max_out_arity_key() -> str:
     return _MAX_OUT_KEY
 
 
+# gh-2184: every `*_max_out` the header declares, whatever its arity -- the
+# `declared_max_outs` set, riding the same map as the arity set above and
+# for the same reason. A `variable_output` method always has one (jm declares
+# it), so for that shape the arity is the only question. A list-of-records
+# method has none unless the AUTHOR declared it, and whether they did is
+# what decides how its binding sizes the result buffer.
+_MAX_OUT_DECLARED_KEY = "<max_out_declared>"
+
+
+def max_out_declared_key() -> str:
+    """The reserved key `declared_max_outs`'s result rides under (gh-2184)."""
+    return _MAX_OUT_DECLARED_KEY
+
+
 def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     """True when *c_name*'s declaration takes only the state (gh-761).
 
@@ -1123,6 +1137,33 @@ def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     prototype to read, and keeps gh-607's count-bearing default.
     """
     return c_name in ((doc_blocks or {}).get(_MAX_OUT_KEY) or frozenset())
+
+
+def max_out_is_declared(doc_blocks: "dict | None", c_name: str) -> bool:
+    """True when the header declares *c_name* at all, at any arity (gh-2184).
+
+    The question a list-of-records method asks before sizing its result
+    buffer: jm declares no ``<c>_<m>_max_out`` for that shape, so one in the
+    header is the author's statement that the method's capacity is known
+    before the call. :func:`max_out_is_state_only` then answers which of the
+    two spellings to call, exactly as it does for ``variable_output``.
+
+    False with no header read (a method being scaffolded for the first time),
+    which keeps the fixed ``max_results`` buffer.
+
+    Examples
+    --------
+    >>> max_out_is_declared(None, "w_push_max_out")
+    False
+    >>> blocks = {max_out_declared_key(): frozenset({"w_push_max_out"})}
+    >>> max_out_is_declared(blocks, "w_push_max_out")
+    True
+    >>> max_out_is_declared(blocks, "w_pull_max_out")
+    False
+    """
+    return c_name in (
+        (doc_blocks or {}).get(_MAX_OUT_DECLARED_KEY) or frozenset()
+    )
 
 
 def _strip_comment(raw: str) -> list[str]:
@@ -2145,12 +2186,23 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     ``doc`` renders exactly as it did -- but is never wrapped, because an
     authored line's width is its author's.
 
+    The one line jm adds is a blank one before the closing quotes, and only
+    when the text ends inside a doctest (gh-2176). A text-mode ``.pyi``
+    doctest reads an example's expected output up to the next blank line, so
+    without it the last example swallows the closing quotes and the
+    declaration after them, and can never match: gh-691's failure, which
+    jm fixed for a class's authored ``@code`` and which an ``extra_methods``
+    row's numpy ``doc`` reached once gh-2059 allowed one. The author cannot
+    write the line: `authored_doc_lines` drops trailing blank lines.
+
     Examples
     --------
     >>> authored_docstring(["One."], 4)
     ['    \"\"\"One.\"\"\"']
     >>> authored_docstring(["One.", "", "Two."], 4)
     ['    \"\"\"One.', '', '    Two.', '    \"\"\"']
+    >>> authored_docstring(["Two.", "", ">>> 1 + 1", "2"], 4)[-2:]
+    ['', '    \"\"\"']
     """
     pad = " " * indent
     if len(lines) == 1:
@@ -2158,8 +2210,26 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     return (
         [f'{pad}"""{lines[0]}']
         + [f"{pad}{ln}" if ln else "" for ln in lines[1:]]
+        + ([""] if _ends_in_doctest(lines) else [])
         + [f'{pad}"""']
     )
+
+
+def _ends_in_doctest(lines: "Sequence[str]") -> bool:
+    """Whether *lines* end inside a doctest: no blank line after the last
+    ``>>>`` prompt, so its example runs to the end of the text.
+
+    >>> _ends_in_doctest([">>> 1 + 1", "2"])
+    True
+    >>> _ends_in_doctest([">>> 1 + 1", "2", "", "Prose after it."])
+    False
+    >>> _ends_in_doctest(["No example."])
+    False
+    """
+    prompts = [
+        i for i, ln in enumerate(lines) if ln.lstrip().startswith(">>>")
+    ]
+    return bool(prompts) and all(ln.strip() for ln in lines[prompts[-1] :])
 
 
 def docstring_body(lines: "Sequence[str]", indent: int) -> "list[str]":
@@ -2675,6 +2745,7 @@ def render_numpy_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return `.pyi` numpy-docstring lines for one method or free function.
 
@@ -2724,6 +2795,10 @@ def render_numpy_doc(
         raises, rendered as a numpy ``Raises`` section (gh-869). Distinct from
         a header ``@throws``, which the block carries and which is merged with
         these; both end up in the one section.
+    none_when : str, optional
+        The sentence saying when an optional return is ``None``, appended
+        to the ``Returns`` description -- `_diagnostics.empty_is_none_doc`
+        for a method (gh-2183). Both faces take it, as they take *raises*.
 
     Returns
     -------
@@ -2754,6 +2829,7 @@ def render_numpy_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     # gh-652: a backslash in a plain triple-quoted string is an invalid escape
     # sequence — `\l` in `:math:`20\log_{10}(g)`` is the common case — and
@@ -2792,9 +2868,13 @@ def render_numpy_doc(
     if examples:  # @code ... @endcode -> runnable doctest
         out += ["", f"{pad}Examples", f"{pad}--------"]
         out += [f"{pad}{ex}".rstrip() for ex in examples]
-        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
-        # text file, where expected output runs until a blank line — without
-        # this the closing `"""` is swallowed into the last example's output.
+    # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
+    # text file, where expected output runs until a blank line — without
+    # this the closing `"""` is swallowed into the last example's output.
+    # Whether the example came from `@code` or is the end of an authored
+    # `doc` (a handle method's, gh-2176): `_ends_in_doctest` is the one rule
+    # `authored_docstring` applies too.
+    if examples or _ends_in_doctest(lines):
         out.append("")
     out.append(f'{pad}"""')
     return out
@@ -3001,6 +3081,7 @@ def _numpy_sections(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> tuple[list[str], list[str]]:
     """Unindented numpy section lines, with ``Examples`` kept separate.
 
@@ -3107,7 +3188,16 @@ def _numpy_sections(
             out += [f"    {w}" for w in _wrap(desc, DESC_WIDTH)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
-        out += [f"    {w}" for w in _wrap(ret or return_fallback, DESC_WIDTH)]
+        _ret_desc = ret or return_fallback
+        if none_when:
+            # gh-2183: WHEN the optional annotation above is None, after
+            # what the value is. A description without a closing stop gets
+            # one, so the two read as two sentences rather than one.
+            _ret_desc = _ret_desc.rstrip()
+            if _ret_desc and _ret_desc[-1] not in ".!?":
+                _ret_desc += "."
+            _ret_desc = f"{_ret_desc} {none_when}".strip()
+        out += [f"    {w}" for w in _wrap(_ret_desc, DESC_WIDTH)]
         # gh-652: `@retval <v> <desc>` rows read as additional Returns entries.
         # A C function returning 0/-1 becomes a Python method that raises or
         # returns a value, and numpy has no other home for the per-value rows.
@@ -3158,6 +3248,7 @@ def render_runtime_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return runtime ``__doc__`` lines for one method, class or property.
 
@@ -3203,6 +3294,9 @@ def render_runtime_doc(
     override : str, optional
         Summary that outranks the header ``@brief`` — the manifest ``doc=``,
         or the caller's own shape-specific default sentence.
+    none_when : str, optional
+        When an optional return is ``None``; see :func:`render_numpy_doc`.
+        Must be the same sentence the stub face is given (gh-2183).
 
     Returns
     -------
@@ -3229,6 +3323,7 @@ def render_runtime_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     if examples:  # @code ... @endcode -> runnable doctest
         lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]

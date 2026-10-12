@@ -276,6 +276,8 @@ METHOD_KEYS = frozenset(
         # result shape
         "variable_output",
         "multi_output",
+        # gh-2115: a variable_output result that is a matrix, not a vector.
+        "out_cols",
         "out_type",
         "out_divisor",
         "max_out",
@@ -447,6 +449,11 @@ PROPERTY_KEYS = frozenset(
         "capsule_type",
         "default",
         "out",
+        # gh-2182: a writable property's setter may refuse a value -- the C
+        # setter returns int, and a non-zero return raises `error` with
+        # `error_message`, spelled as a method's pair.
+        "error",
+        "error_message",
     }
 )
 
@@ -610,6 +617,8 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
 }
 
 #: A handle method: `args` / `returns`, and the gh-565/gh-1111 status raise.
+#: `status_return` is the object face's key, meaning the same (gh-2186): it
+#: is how an array-argument method says its `int` is a status, not a count.
 HANDLE_METHOD_KEYS = frozenset(
     {
         "name",
@@ -619,6 +628,7 @@ HANDLE_METHOD_KEYS = frozenset(
         "args",
         "error",
         "error_message",
+        "status_return",
         "out_len_fn",
         "doc",
     }
@@ -1013,15 +1023,12 @@ HINTS: dict[tuple[str, str], str] = {
         for _k in SHAPE_KEYS
     },
     # gh-1114. The confusions the two faces invite, each naming the spelling
-    # that works here. `status_return` is the one gh-1111 was reported with:
-    # written beside a working `error`, it read as if it did something.
-    ("handle method", "status_return"): (
-        'this face spells it `error = "<Exception>"` over an `int` '
-        "`returns` — a non-zero return then raises"
-    ),
+    # that works here. `status_return` was the one gh-1111 was reported with,
+    # until gh-2186 made it a handle method key with its object meaning.
     ("handle method", "error_negative"): (
-        "a handle method has one status shape: `error` over an `int` "
-        "`returns`, which treats any non-zero return as the failure"
+        "a handle method has one status shape: `error` or "
+        "`status_return = true` over an `int` `returns`, which treats any "
+        "non-zero return as the failure"
     ),
     ("handle method", "arg_type"): (
         "a handle method declares its arguments as `args = [{ name = ..., "

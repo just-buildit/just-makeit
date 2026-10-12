@@ -12,6 +12,7 @@ import re
 import sys
 from pathlib import Path
 
+from . import _borrow
 from . import _config as C
 from . import _procglobal
 from . import _report
@@ -248,7 +249,7 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # gh-856: [] not None — this seed runs before any manifest is read
         # and never carries a spec, so there is no `exit` to resolve.
         **Ctx.make_destroy_ctx(
-            component, _to_title(component), None, [], csym=csym
+            component, _to_title(component), None, [], csym=csym, lends=False
         ),
         # gh-542: the slots that wrap a reset body — the sacred _core.c
         # function and the generated test defs. Seeded here for the same
@@ -1477,6 +1478,11 @@ def run(
     # that also stamps the SACRED _core.h/_core.c signature, so a fresh
     # scaffold of a fallible destructor gets `int <comp>_destroy(...)` and a
     # `return 0;` stub without any hand edit.
+    _methods_now = (
+        declared_methods
+        if declared_methods is not None
+        else C.methods(cfg, component)
+    )
     ctx.update(
         # gh-856: the replay path this comment already described. C.methods
         # is right for BOTH creation (component absent -> []) and replay.
@@ -1484,13 +1490,15 @@ def run(
             ctx["component"],
             ctx["ComponentW"],
             destroy,
-            declared_methods
-            if declared_methods is not None
-            else C.methods(cfg, component),
+            _methods_now,
             class_name=class_name or "",
             # gh-1326: the standalone creation path dropped it too.
             create_fn=create_fn or "",
             csym=ctx["csym"],
+            # gh-2187: from the state this render holds, as in _object.
+            lends=_borrow.lends_from(
+                _methods_now, C.properties(cfg, component), vars_
+            ),
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so

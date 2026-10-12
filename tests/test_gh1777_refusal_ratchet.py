@@ -46,7 +46,7 @@ BASELINE = {
     "_context/_sample.py": 6,
     "_context/_state.py": 12,
     "_context/_step.py": 2,
-    "_handle.py": 7,
+    "_handle.py": 4,
     "_hollow.py": 1,
     "_init.py": 1,
     "_property.py": 1,

@@ -49,7 +49,7 @@ timing every declared method it can.
 | `--batch`                     | Generate a 1:1-rate array transform. The C stub receives `(state, const in_t *in, size_t n, out_t *out)` (or `(state, size_t n, out_t *out)` for `--arg-type void`). The Python wrapper allocates an output array of length `n` per call and returns it. Use when output length equals input length and is unknown at init time.                                                                                                                                                                                                                                                                                                                                 |
 | `--varargs`                   | Generate a `*args/**kwargs` Python binding. See below. Mutually exclusive with `--arg-type`, `--param`, and `--variable-output`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--error-on-empty`            | Treat a zero count from a `--variable-output` kernel as a REFUSAL and raise, instead of returning an empty array. Its one return value is the length, so it has no status to carry; without this a kernel that validates its input and returns 0 produces a well-formed empty result and the caller carries on. Names the exception with `--error` and the text with `--error-message`. Mutually exclusive with `none_on_empty`, which reads the same zero as "nothing to report".                                                                                                                                                                               |
-| `--none-on-empty`             | The opposite reading of the same emptiness: nothing to report is a NORMAL answer, so the call returns `None`. On a `--borrow` a NULL view means "not yet" — the non-blocking twin of a blocking `wait()` — and without this it raised, while the stub promised a non-optional array (gh-1418). Mutually exclusive with `--error-on-empty`.                                                                                                                                                                                                                                                                                                                       |
+| `--none-on-empty`             | The opposite reading of the same emptiness: nothing to report is a NORMAL answer, so the call returns `None`. On a `--borrow` a NULL view means "not yet" — the non-blocking twin of a blocking `wait()` — and without this it raised, while the stub promised a non-optional array (gh-1418). Read by a `--variable-output` result, on its allocating and `out=` routes alike, and by a `--borrow`; on either, the `.pyi` and `help()` annotate the return \`<array>                                                                                                                                                                                            |
 | `--count-type TYPE`           | The C type a `--variable-output` kernel returns its count in (default `size_t`). A signed one (`int64_t`, `int32_t`, ...) goes with `--error-negative`: a negative count is an error code and raises, and `0` stays an ordinary empty result. Refused without `--error-negative`, since nothing would read the sign. See [Refusing a call when zero is a real answer](#refusing-a-call-when-zero-is-a-real-answer) (gh-2012). Persists as `count_type = "…"`.                                                                                                                                                                                                    |
 | `--error-sentinel EXPR`       | A C constant expression (`SIZE_MAX`, `(size_t)-1`) a `--variable-output` kernel returns in place of its `size_t` count to REFUSE the call: the binding raises `--error` with `--error-message`, and `0` stays an ordinary empty result. For a library that keeps `size_t` counts; refused on a signed `--count-type` and beside `--error-negative` (gh-2012). Persists as `error_sentinel = "…"`.                                                                                                                                                                                                                                                                |
 | `--strict`                    | Refuse an array **input** whose dtype, rank or contiguity is wrong, rather than casting, copying and flattening it. `TypeError` names the dtype it wanted; `ValueError` names the shape, because the type was right and the shape was not. jm already refused rather than reinterpreted for an `out=` buffer (gh-581) and for a record input; this closes the same gap on the scalar input path. Opt-in, because for a DSP `execute()` the coercion is a kindness — for a ring buffer it is a hidden copy per call and a `(4, 2)` array accepted as 8 samples (gh-1426).                                                                                         |
@@ -63,7 +63,8 @@ timing every declared method it can.
 | `--nogil`                     | Release the GIL across the pure-C kernel of a `--variable-output` method (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: sound only when the object is not shared across threads concurrently (one object per stream). See below.                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--count-default EXPR`        | C expression seeding the synthesized leading count argument of a void-input `--variable-output` method, e.g. `"state->num_taps"`. Its value **is** the zero-arg call's behaviour, and jm cannot derive it — it lives in your C (gh-1051).                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--count-name NAME`           | What that synthesized argument is **called** (default `count`). See [Naming the synthesized count](#naming-the-synthesized-count).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646) or `--record-dtype` (gh-788). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet.                                                                                                                                                                       |
+| `--out-cols EXPR`             | Make a `--variable-output` result a **matrix**: the kernel still fills a flat buffer and returns an element count, and the binding returns `(count / EXPR, EXPR)`. `EXPR` is an integer or a C expression over the object (`"state->nfft"`; `state` is `self->handle`). A caller-supplied `out=` must then be 2-D with that many columns. A count that is not a whole number of rows is a `RuntimeError`. `_max_out()` and the kernel keep speaking elements (gh-2115).                                                                                                                                                                                          |
+| `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646) or `--record-dtype` (gh-788). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet — and a header that declares the method's `_max_out()` sizes the result from it instead (see [Record shapes](#record-shapes)).                                         |
 | `--single`                    | With `--result-field`, return **one** named record (a `PyStructSequence`: attribute access + unpacking) instead of a `list[tuple]`. The C kernel returns the `--return-type` record struct by value (gh-244).                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `--record-name NAME`          | With `--single`, the public name of the record type (e.g. `ToneMetrics`), overriding the name derived from the C `--return-type` (gh-257). Also settable per method in the manifest as `record_name = "…"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `--record-module MOD`         | With `--single`, overrides the `__module__` of the record type (e.g. `my_pkg.dsp`). By default it is the module the object is imported from, `<pkg>.<comp>` or `<pkg>.<module>` (gh-1486), so `type(r).__module__` and `repr(r)` already name an importable path. Also settable per method in the manifest as `record_module = "…"` (gh-261).                                                                                                                                                                                                                                                                                                                    |
@@ -219,6 +220,17 @@ there is no single length to divide (a `T[][]`, or a dtype-dispatch array).
 
 `--param` composes with `--arg-type`: the `--arg-type` input comes first (as
 `x`), then each `--param` in order.
+
+______________________________________________________________________
+
+### Releasing a borrow (`--releases`)
+
+A release's count param defaults to the outstanding borrow's count only when
+it is **omitted**: `view = buf.wait(512); buf.consume()` releases 512. An
+explicit count is passed to C as given, `0` included, because a consumer's
+`consume(n_processed)` computes 0 whenever a frame yields nothing, and the C
+release decides what releasing 0 means. Until gh-2191 an explicit `0` was
+read as omitted and released the whole borrow.
 
 ______________________________________________________________________
 
@@ -497,6 +509,28 @@ back depends on which of `--single` / `--record-dtype` you pass:
 | `--single`              | **one** record, a named `PyStructSequence`    | the struct by value               |
 | `--record-dtype STRUCT` | **an array** of records, a structured ndarray | `<STRUCT> *out`                   |
 
+A plain **list** of records (the first row) is filled into a buffer the
+binding owns, and the kernel can report no more of them than `max_results`
+(TOML, default 64). Its signature has no way to say there were more, so a
+call with more to report returns the first `max_results` and the rest are
+gone. When the count is known before the call, declare the method's capacity
+function in the sacred header, beside its kernel -- the same function, name
+and arity a `--variable-output` method's `_max_out()` has:
+
+```c
+size_t <pkg>_<comp>_<name>_max_out(<pkg>_<comp>_state_t *state, size_t n_in);
+```
+
+The binding then asks it for every call, allocates that many records, and
+passes the same number as `max_results`, so a kernel that bounds its output
+exactly never saturates (gh-2184). The count is the one the kernel is handed:
+`n_in`, or `<param>_len` for a method with no input and an array param; with
+neither, or when the bound does not depend on the call, it takes only the
+state. jm reads the declaration, so there is no flag, and without one the
+fixed buffer is unchanged. A **module** object's binding fragment is not
+re-rendered by `apply`: it reports the method instead, and deleting the
+fragment and re-running `apply` picks the capacity up.
+
 `--record-dtype` names the **element type**; who owns the buffer is a separate
 question, answered by `--variable-output` (the kernel fills a buffer sized for
 the call) or `--borrow` (the kernel returns a pointer into memory the state
@@ -588,6 +622,7 @@ just-makeit property <object> <prop_name>
     [--module name]
     [--type TYPE]
     [--writable] [--field] [--enum NAME]
+    [--error EXC [--error-message TEXT]]
     [--buf-field name [--len-field name] [--valid-field name]]
     [--expr "C expr"]
     [--value-type TYPE] [--count-fn FN] [--key-fn FN] [--value-fn FN]
@@ -631,6 +666,8 @@ directly into the state struct and auto-implements the getter as
 | `--len-field name`   | With `--buf-field`: the state member holding the buffer's element count. Default `n`.                                                                                                                                                                                                                                                                                                                |
 | `--valid-field name` | With `--buf-field`: a state member that, while zero, makes the property read `None`.                                                                                                                                                                                                                                                                                                                 |
 | `--expr "C expr"`    | Back the property with an inline C expression, emitted as written. Mutually exclusive with `--buf-field`.                                                                                                                                                                                                                                                                                            |
+| `--error EXC`        | With `--writable`: the C setter returns `int`, and a non-zero return refuses the value — the assignment raises `EXC` (a method's `--error` names, e.g. `ValueError`). Refused with `--field`, which has no C setter to ask. See [A setter that refuses a value](#a-setter-that-refuses-a-value-error). Persists as `error = "EXC"`.                                                                  |
+| `--error-message T`  | With `--error`: the exception's text, with `(rc=N)` appended. Default `"<stem>_set_<prop> failed"`. Persists as `error_message = "…"`.                                                                                                                                                                                                                                                               |
 | `--doc "text"`       | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
 | `--enum NAME`        | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
 | `--value-type TYPE`  | Element type of a `dict`/`list`/`tuple` property (gh-543). A C type means jm emits the conversion and your accessor stays pure C; `object` means `--value-fn` returns a `PyObject *` itself. See [Container properties](#container-properties-dict-list-and-tuple).                                                                                                                                  |
@@ -684,6 +721,60 @@ accessor's return value is decoded exactly as a field's would be:
 ```sh
 just-makeit property rdr file_type --type int --enum ftype   # computed + enum
 ```
+
+### A setter that refuses a value (`--error`)
+
+A writable property's binding calls `<stem>_set_<prop>(state, v)`. Without
+`--error` it discards what that returns, so a value the core rejects is
+dropped silently: the assignment succeeds and the property goes on reading
+its old value. `--error` (manifest `error`, spelled like a method's) makes
+the return a verdict:
+
+```toml
+[[acc.properties]]
+name = "alpha"
+type = "double"
+writable = true
+expr = "self->handle->alpha"
+error = "ValueError"
+error_message = "alpha must lie in (0, 1]"
+```
+
+```c
+int <pkg>_acc_set_alpha(<pkg>_acc_state_t *state, double alpha)
+{
+    if (!(alpha > 0.0 && alpha <= 1.0))
+        return -1;          /* refuse: the state keeps its old value */
+    state->alpha = alpha;
+    return 0;
+}
+```
+
+```python
+>>> acc.alpha = -0.5
+ValueError: alpha must lie in (0, 1] (rc=-1)
+>>> acc.alpha
+0.1
+```
+
+**The setter must return `int`**: 0 accepts, anything else refuses. Where jm
+declares the setter (a computed property) it declares it `int`, with an
+`int` stub. Where you declare it yourself (an `--expr`, `--buf-field` or
+capsule property), declare it `int`; a `void` one does not compile against
+the binding. The `.pyi` and `help()` both document the exception in a
+`Raises` section.
+
+`--error` needs a C setter call whose return jm can test, so it is refused
+on a read-only property, with `--field` (the setter assigns the member
+directly: drop `--field` and declare the setter returning `int`), and on a
+property named for a state field (its setter is that field's accessor, which
+jm declares `void`). `--error-message` without `--error` is refused too.
+
+On a module object whose
+[fragment is sacred](../configuration.md#who-owns-a-modules-binding-fragment)
+(the default), a setter already in the fragment keeps its body, as any
+member's does: declare `error` when you add the property, or let jm own the
+fragment with `fragment = "generated"`, whose setters follow the manifest.
 
 ### Enum-valued properties (`--enum`)
 

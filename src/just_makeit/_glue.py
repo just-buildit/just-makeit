@@ -21,6 +21,7 @@ from . import _textio
 
 from pathlib import Path
 
+from . import _borrow
 from . import _config as C
 from . import _incpath as INC
 from . import _procglobal
@@ -253,6 +254,7 @@ def component_ctx(
             # gh-1323: pair the destructor with the declared creator.
             create_fn=C.object_create_fn(cfg, object_name) or "",
             csym=ctx["csym"],
+            lends=_borrow.lends(cfg, object_name),
         )
     )
     ctx.update(

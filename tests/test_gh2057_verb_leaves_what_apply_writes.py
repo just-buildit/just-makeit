@@ -590,6 +590,10 @@ CASES: "dict[str, dict[str, Case]]" = {
             "method", "o", "m2", "{M}", "--arg-type", "void",
             "--return-type", "double", "--variable-output",
             "--count-default", "16", "--count-name", "n", only=BASE),
+        "out-cols": _case(
+            "method", "o", "m2", "{M}", "--param", "x:float _Complex[]",
+            "--return-type", "float", "--variable-output",
+            "--pass-capacity", "--out-cols", "4", only=BASE),
         "capacity-nogil": _case(
             "method", "o", "m2", "{M}", "--param", "x:float _Complex[]",
             "--variable-output", "--pass-capacity", "--nogil",
@@ -741,6 +745,12 @@ CASES: "dict[str, dict[str, Case]]" = {
         "plain": _case("property", "o", "lvl2", "--type", "double", "{M}"),
         "writable": _case("property", "o", "lvl2", "--type", "double",
                           "--writable", "--doc", "A level.", "{M}",
+                          only=BASE),
+        # gh-2182: a setter that refuses a value -- an `int` prototype and
+        # stub, and a binding that tests the return.
+        "refusing": _case("property", "o", "lvl2", "--type", "double",
+                          "--writable", "--error", "ValueError",
+                          "--error-message", "lvl2 out of range", "{M}",
                           only=BASE),
         "field": _case("property", "o", "x", "--type", "double",
                        "--field", "{M}", needs=("o", "members")),

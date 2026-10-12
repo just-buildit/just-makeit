@@ -1060,6 +1060,7 @@ way.
 | `exact_max_out = true`                 | `jm method --exact-max-out`                                                                         | ✅ (0.55.0)  |
 | `count_default = "EXPR"`               | `jm method --count-default EXPR`                                                                    | ✅ (0.34.0)  |
 | `count_name = "NAME"`                  | `jm method --count-name NAME`                                                                       | ✅ (gh-1074) |
+| `out_cols = "EXPR"`                    | `jm method --out-cols EXPR`                                                                         | ✅ (gh-2115) |
 | `nogil = true`                         | `jm method --nogil`                                                                                 | ✅ (0.15.2)  |
 | `max_out = N` (sibling stub)           | `jm method --max-out N`                                                                             | ✅ (0.13.23) |
 | `multi_output = ["T", ...]`            | `jm method --multi-output T` (repeatable)                                                           | ✅           |
@@ -1073,7 +1074,7 @@ way.
 | `record_module = "..."`                | `jm method --record-module MOD` (with `--single`)                                                   | ✅ (0.19.14) |
 | `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)                                                   | ✅ (0.41.0)  |
 | `record_dtype = "STRUCT"`              | `jm method --record-dtype STRUCT` (with `--variable-output`)                                        | ✅ (0.47.0)  |
-| `max_results = N`                      | (TOML only; default 64)                                                                             | 🟡           |
+| `max_results = N`                      | (TOML only; default 64. A header-declared `<name>_max_out` sizes it instead, gh-2184)               | 🟡           |
 | `none_on_empty = true`                 | `jm method --none-on-empty` (an empty result is `None`)                                             | ✅ (gh-1418) |
 | `error_on_empty = true`                | `jm method --error-on-empty` (an empty result raises)                                               | ✅ (gh-1159) |
 | `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                    | ✅ (gh-2012) |
@@ -1104,6 +1105,7 @@ way.
 | `name`, `type`                                                                  | `jm property <obj> <prop> --type T`                                                              | ✅          |
 | `writable = true`                                                               | `jm property --writable`                                                                         | ✅          |
 | `field = true`                                                                  | `jm property --field`                                                                            | ✅          |
+| `error`, `error_message`                                                        | `jm property --writable --error EXC` / `--error-message TEXT` (a setter that refuses, gh-2182)   | ✅          |
 | `buf_field`, `len_field`, `valid_field`, `expr`                                 | `jm property --buf-field` / `--len-field` / `--valid-field` / `--expr`                           | ✅ (0.30.2) |
 | `doc = "..."`                                                                   | `jm property --doc "text"`                                                                       | ✅          |
 | `enum = "<name>"`                                                               | `jm property --enum NAME` (decode through a top-level `[[enum]]`)                                | ✅          |
@@ -1139,7 +1141,9 @@ doc     = "FFT of interleaved int16 I/Q."
 The `doc` is the method's whole docstring on both faces, the `.pyi` member
 and the runtime `__doc__`, and jm generates nothing beside it. So it can be
 a full numpy docstring with `Parameters`, `Returns` and an `Examples`
-doctest (gh-2059).
+doctest (gh-2059). A `doc` that ends in an example gets a blank line before
+the stub's closing quotes, so a text-mode `.pyi` doctest ends the example
+there (gh-2176).
 
 Write the function with exactly the signature its `flags` imply, `self`
 included as a `PyObject *` (cast it to the object's struct inside):
@@ -1154,7 +1158,9 @@ In a module the prototypes go in the aggregator, before the object's
 fragment, so a row works whether the fragment is sacred or `generated` — which
 is what lets a hand-written method survive [`jm adopt`](#who-owns-a-modules-binding-fragment):
 move the function into the `_extra.c`, declare its row, and the fragment's
-table loses nothing on the flip.
+table loses nothing on the flip. The core functions it calls stay
+link-checked: the object's `native/tests/test_<obj>_symbols.c` is read from
+the hook as well as the binding (gh-2175).
 
 The rows follow the generated ones in the table, in the order declared. `apply`
 refuses a row whose `name` a member jm generates already holds (`reset`, a
@@ -1600,24 +1606,25 @@ two extents first, then the pointer) followed by `create()`'s.
 
 One entry per `just-makeit method` call.
 
-| Key               | Type                    | Notes                                                             |
-| ----------------- | ----------------------- | ----------------------------------------------------------------- |
-| `name`            | string                  | Method name                                                       |
-| `arg_type`        | string                  | Array-style input type                                            |
-| `return_type`     | string                  | C return type                                                     |
-| `params`          | array of `{name, type}` | Named scalar / array parameters                                   |
-| `variable_output` | bool                    | `--variable-output`                                               |
-| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)              |
-| `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly |
-| `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)     |
-| `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)     |
-| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                |
-| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)          |
-| `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432) |
-| `batch`           | bool                    | `--batch`                                                         |
-| `multi_output`    | array of strings        | `--multi-output` types                                            |
-| `out_type`        | string                  | `--out-type`                                                      |
-| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)         |
+| Key               | Type                    | Notes                                                              |
+| ----------------- | ----------------------- | ------------------------------------------------------------------ |
+| `name`            | string                  | Method name                                                        |
+| `arg_type`        | string                  | Array-style input type                                             |
+| `return_type`     | string                  | C return type                                                      |
+| `params`          | array of `{name, type}` | Named scalar / array parameters                                    |
+| `variable_output` | bool                    | `--variable-output`                                                |
+| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)               |
+| `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly  |
+| `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)      |
+| `out_cols`        | string or int           | width of a matrix result: `(count / out_cols, out_cols)` (gh-2115) |
+| `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)      |
+| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                 |
+| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)           |
+| `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432)  |
+| `batch`           | bool                    | `--batch`                                                          |
+| `multi_output`    | array of strings        | `--multi-output` types                                             |
+| `out_type`        | string                  | `--out-type`                                                       |
+| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)          |
 
 `nogil` wraps the pure-C kernel of a `variable_output`, `--single` or
 `--borrow` method in `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy
@@ -1674,20 +1681,21 @@ method param only. A function spells a status return as
 
 One entry per `just-makeit property` call.
 
-| Key                                     | Type   | Notes                                                                                                                                                           |
-| --------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                  | string | Property name                                                                                                                                                   |
-| `type`                                  | string | C type of the value                                                                                                                                             |
-| `writable`                              | bool   | `--writable`                                                                                                                                                    |
-| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                          |
-| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                            |
-| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                       |
-| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                              |
-| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                               |
-| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                            |
-| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`) |
-| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                              |
-| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                    |
+| Key                                     | Type   | Notes                                                                                                                                                                    |
+| --------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                                  | string | Property name                                                                                                                                                            |
+| `type`                                  | string | C type of the value                                                                                                                                                      |
+| `writable`                              | bool   | `--writable`                                                                                                                                                             |
+| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                                   |
+| `error`, `error_message`                | string | `--error` / `--error-message`: the C setter returns `int`, and a non-zero return refuses the value: the assignment raises `error` with `error_message`. Not with `field` |
+| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                                     |
+| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                                |
+| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                                       |
+| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                                        |
+| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                                     |
+| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`)          |
+| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                                       |
+| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                             |
 
 ### `[[<object>.views]]`
 

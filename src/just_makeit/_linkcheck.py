@@ -35,8 +35,10 @@ Three details, each load-bearing:
 The list is derived, never kept: every function the binding calls AND the
 component's own header declares without defining (a body in the header is a
 definition by construction, and a C99 ``inline`` one has no address to take
-from another translation unit). The header half is what keeps
-Python-API calls, and the ``PyObject *`` accessors that live in
+from another translation unit). "The binding" is the generated files and the
+hand-written ``_extra.c`` hooks beside them (gh-2175), where an
+``extra_methods`` row's function calls the core. The header half is what
+keeps Python-API calls, and the ``PyObject *`` accessors that live in
 ``_ext_extra.c`` (the extension, not the core), out of a C executable that
 could not link them.
 """
@@ -85,34 +87,45 @@ def _header_functions(header: str) -> "list[str]":
     return names
 
 
-#: Words that take a parenthesis without being a function -- C keywords and
-#: compiler built-ins. Measured on doppler: a header's ``sizeof(...)`` at file
-#: scope and a binding's ``sizeof(...)`` put ``(jm_any_fn)sizeof`` in a table,
-#: which does not compile.
-_NOT_FUNCTIONS = frozenset(
+#: Every C keyword, C99 through C23. A keyword is never a function, and each
+#: of them can stand before a ``(``: ``sizeof(...)``, ``return (x)``, a
+#: control statement's condition, and a TYPE in a function-pointer cast or
+#: declarator -- ``(void (*)(void))``, ``int (*cb)(int)``. Measured on
+#: doppler, twice: a header's ``sizeof(...)`` at file scope put
+#: ``(jm_any_fn)sizeof`` in a table, and gh-2175's ``(jm_any_fn)void`` came
+#: from jm's own ``extra_methods`` row cast meeting a header's callback
+#: member. Listing the standard's keywords whole, rather than the ones seen,
+#: is what stops the third.
+_C_KEYWORDS = frozenset(
     {
-        "sizeof",
-        "_Alignof",
-        "alignof",
-        "_Static_assert",
-        "static_assert",
-        "_Generic",
-        "_Atomic",
-        "typeof",
+        # C99
+        "auto", "break", "case", "char", "const", "continue", "default",
+        "do", "double", "else", "enum", "extern", "float", "for", "goto",
+        "if", "inline", "int", "long", "register", "restrict", "return",
+        "short", "signed", "sizeof", "static", "struct", "switch",
+        "typedef", "union", "unsigned", "void", "volatile", "while",
+        "_Bool", "_Complex", "_Imaginary",
+        # C11
+        "_Alignas", "_Alignof", "_Atomic", "_Generic", "_Noreturn",
+        "_Static_assert", "_Thread_local",
+        # C23
+        "alignas", "alignof", "bool", "constexpr", "false", "nullptr",
+        "static_assert", "thread_local", "true", "typeof", "typeof_unqual",
+        "_BitInt", "_Decimal32", "_Decimal64", "_Decimal128",
+    }
+)  # fmt: skip
+
+#: Words that take a parenthesis without being a function: the C keywords,
+#: and the compiler built-ins and preprocessor operator a header or binding
+#: uses the same way.
+_NOT_FUNCTIONS = _C_KEYWORDS | frozenset(
+    {
         "__typeof__",
         "__attribute__",
         "__declspec",
         "__has_attribute",
         "__builtin_expect",
         "defined",
-        "return",
-        "if",
-        "while",
-        "for",
-        "switch",
-        "do",
-        "else",
-        "case",
     }
 )
 
@@ -187,6 +200,25 @@ def binding_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":
     return [root / "native" / "src" / comp / f"{comp}_ext.c"]
 
 
+def hook_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":
+    """The hand-written hooks beside *comp*'s binding files.
+
+    Each binding file's ``_extra.c``: ``<cname>_ext_<frag>_extra.c`` for a
+    module object and each of its views, ``<comp>_ext_extra.c`` for a
+    standalone object -- named from :func:`binding_sources`, so the two
+    cannot disagree about which files are the object's. An
+    ``[[<obj>.extra_methods]]`` row's function lives here (gh-1997), so a
+    core call moved into it would otherwise leave the table (gh-2175).
+
+    Kept apart from :func:`binding_sources` on purpose: that list is also
+    what ``jm regenerate --discard`` deletes, and a hook is the author's.
+    """
+    return [
+        p.with_name(f"{p.stem}_extra.c")
+        for p in binding_sources(root, cfg, comp)
+    ]
+
+
 def render_symbols_c(comp: str, names: "list[str]", owner: "INC.Owner") -> str:
     """The table for *comp*, as C."""
     rows = "".join(f"    (jm_any_fn){n},\n" for n in names) or "    0,\n"
@@ -236,11 +268,20 @@ def write(
     the real fragment still makes.
     """
     header = INC.core_h(root, comp)
+    # gh-2175: and the hooks beside them, where an `extra_methods` row's
+    # function calls the core. Only beside a binding: no binding, nothing
+    # includes the hook, so nothing it calls is linked.
     srcs = [
         p
         for p in binding_sources(binding_root or root, cfg, comp)
         if p.exists()
     ]
+    if srcs:
+        srcs += [
+            p
+            for p in hook_sources(binding_root or root, cfg, comp)
+            if p.exists()
+        ]
     # Always written, even before a binding exists: the build files name it,
     # and a source they name but cannot find does not configure.
     names = (
