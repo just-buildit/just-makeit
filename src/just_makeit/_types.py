@@ -800,7 +800,10 @@ def wider_than_double(ctype: str) -> "str | None":
     through (``parse_type``), and that is a ``long long`` exactly when the
     type needs more than 32 bits -- an ``int32_t`` parses through a
     ``long``, an ``int64_t``, a ``size_t`` or a ``ptrdiff_t`` through a
-    ``long long``. No row needs between 33 and 53 bits, which
+    ``long long`` -- except a row that carries ``bounds``, which holds fewer
+    values than it parses through (a ``uint32_t`` parses through a
+    ``long long`` so its whole range survives the parse, gh-2144). No row
+    needs between 33 and 53 bits, which
     ``tests/test_gh2139_composer_json_64bit.py`` holds against numpy's own
     width for every row.
 
@@ -830,7 +833,14 @@ def wider_than_double(ctype: str) -> "str | None":
     """
     meta = _CTYPE_META.get(ctype, {})
     parse_type = meta.get("parse_type", "")
-    if meta.get("kind") == "int" and parse_type.endswith("long long"):
+    # A row with `bounds` holds fewer values than it parses through (gh-2144):
+    # a `uint32_t` parses through a `long long` so the whole range survives
+    # the parse, and is still 32 bits wide.
+    if (
+        meta.get("kind") == "int"
+        and parse_type.endswith("long long")
+        and "bounds" not in meta
+    ):
         return parse_type
     return None
 
