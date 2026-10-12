@@ -1811,8 +1811,8 @@ def _py_wrapper_for_function(
     the `[n]` of ``"T[n]"``, else the first array param's length; a row
     with neither is refused (gh-1888).
 
-    result_fields: if set, calls C with a stack-allocated array of structs,
-    builds and returns list[tuple] from the fields. max_results_param names
+    result_fields: if set, calls C with a malloc'd array of structs, builds
+    and returns list[tuple] from the fields. max_results_param names
     an existing param that already carries the capacity (already embedded in
     call_args, so it is not passed again); when empty (the common case),
     fn_c_decl appended a bare trailing `size_t max_results` param instead, so

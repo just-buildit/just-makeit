@@ -1,5 +1,185 @@
 ## [Unreleased]
 
+## [0.103.0] — 2026-10-11
+
+### Added
+
+- **`out_cols`: a `variable_output` method can return a matrix** (gh-2115). A
+    kernel whose result is fixed-width rows -- a spectrogram's `nfft` bins, a
+    frame of `n` samples -- filled a flat buffer, and every array jm allocated
+    for it was 1-D, so the width had nowhere to be declared and the caller had
+    to reshape. `out_cols = "state->nfft"` (or an integer; `jm method --out-cols`
+    with the expression) now makes the binding return
+    `(count / out_cols, out_cols)` on both the allocating path and `out=`. A
+    caller-supplied `out=` must be 2-D with that many columns, and a kernel
+    count that is not a whole number of rows is a `RuntimeError`. The kernel's
+    contract is
+    unchanged: it still sees a flat buffer and counts in elements, and
+    `_max_out()` still answers in elements. Refused at load where it cannot
+    apply: without `variable_output`, and with `multi_output`, `record_dtype`
+    or `batch`. A method that does not declare it is untouched.
+
+- **A writable property's setter can refuse a value** (gh-2182). A property
+    may declare `error` and `error_message`, spelled as a method's pair
+    (`jm property --writable --error EXC --error-message TEXT`). Its C
+    setter then returns `int`, and a non-zero return raises `EXC` with the
+    message and the return code, so `acc.alpha = -0.5` says the core refused
+    it. Before, the setter discarded whatever `<stem>_set_<prop>` returned:
+    the assignment succeeded and the property went on reading its old
+    value. Where jm declares the setter it declares it `int`, with an `int`
+    stub; the `.pyi` and `help()` document the exception in a `Raises`
+    section; `jm apply` and `jm script` carry both keys. `error` is refused,
+    naming the fix, wherever there is no C setter call to test: a read-only
+    property, `field = true`, and a property named for a state field (whose
+    accessor jm declares `void`). A property declaring no `error` renders
+    exactly as before.
+
+- **A handle method with an array argument can declare its `int` a
+    status, so `error` applies to it** (gh-2186). jm reads such a return as
+    a count, samples taken, and refused `error` there (gh-1118), with no way
+    to say a call such as `send(iq, fs, fc)` returns 0 for a taken block and
+    non-zero for a refused one. `status_return = true` on the method says so:
+    it is the object face's key, with its meaning. A non-zero return raises
+    the method's `error` (`ValueError` when none is named, with
+    `error_message` as on any status method), the binding returns `None`,
+    and the `.pyi` says `-> None` with a `Raises` section. The refusal of a
+    bare `error` on such a method now names `status_return = true`, and the
+    key is refused over a non-integer `returns` or an array or `bytes`
+    result, whose return is the payload length.
+
+### Fixed
+
+- **`jm dry-run` names the build its backend runs** (gh-2128). It always
+    printed a cmake configure, with jm's own interpreter as
+    `Python3_EXECUTABLE`, whatever `[project] build` said. On a `build = "make"`
+    project that described a build the project never runs. A make project now
+    shows `make PYTHON=<project python>`, and a cmake project shows its configure
+    with the project's `.venv` interpreter when one exists.
+
+- **An `extra_methods` row no longer breaks the C test's symbol table, and
+    the core calls it makes are link-checked** (gh-2175). jm renders the
+    row as `(PyCFunction)(void (*) (void))<fn>`, and the gh-1361 scanner
+    read `void (` as a call. A header with any callback member, such as
+    `void (*cb)(void *)`, supplied the other half, so `apply` wrote
+    `(jm_any_fn)void,` into `test_<obj>_symbols.c` and the C test did not
+    compile. The scanner now drops every C keyword, C99 through C23, not
+    only the ones seen so far. The table is also read from the object's
+    `_extra.c` hook as well as its binding, so a core function only the
+    hook calls is still checked at link time.
+
+- **A manifest `doc` that ends in a doctest no longer breaks the stub's
+    doctest run** (gh-2176). A text-mode `.pyi` doctest
+    (`pytest --doctest-glob='*.pyi'`) reads an example's expected output up
+    to the next blank line, and the closing quotes came straight after the
+    last line. The example then swallowed the quotes and the declaration
+    after them: a parse error for the whole file, or an example that could
+    never match. This is gh-691's failure on the path gh-2059 opened, where
+    an `extra_methods` row's numpy `doc` can end in `Examples`. Every
+    layout of an authored `doc` now leaves a blank line before the closing
+    quotes when the text ends inside an example: a member's, a handle
+    method's, and a module's. Every other `doc` renders exactly as before.
+
+- **A `none_on_empty` method's stub says it can return `None`** (gh-2183). A
+    `variable_output` method with `none_on_empty = true` returns `None` when
+    the kernel writes nothing, on its allocating route and its `out=` route,
+    but both `.pyi` producers annotated the bare array, so a type checker
+    rejected `if x.value() is None`. Only the borrow route asked the key. One
+    predicate now decides it, the one the binding's `Py_RETURN_NONE` is
+    emitted from: every face (the standalone and module `.pyi`, and the
+    runtime synopsis) annotates `<array> | None`, a tuple result included,
+    and both `Returns` sections say when the result is `None`. A borrow's
+    `Returns` now says when too, and its runtime synopsis reads
+    `-> ndarray | None`. `jm apply` carries the new runtime doc into an
+    existing module object's sacred `_ext_<obj>.c`: the doc refresh no longer
+    reads a synopsis that gained `| None` as an author's text. Projects
+    without `none_on_empty` regenerate unchanged.
+
+- **A list-of-records method returns every record its C reports when the
+    header declares the method's `_max_out()`** (gh-2184). The binding
+    called the kernel with a fixed stack array, `rec_t results[64]`, and
+    the kernel's `(…, rec_t *result, size_t max_results) -> count` contract
+    has no way to say there were more, so a call due 100 records returned
+    64 and dropped the rest without a word. The only lever was a bigger
+    `max_results`, a bigger stack array on every call. Now a header that
+    declares `<pkg>_<comp>_<name>_max_out(state, n_in)` -- the capacity
+    function a `variable_output` method already has, with the same name
+    and arity rules (`n_in`, `<param>_len`, or state-only) -- is asked on
+    every call; the binding allocates that many records, hands the kernel
+    the same capacity as `max_results`, frees the buffer on every way out,
+    and returns them all. Standalone and module objects alike, for an
+    input, params, or neither. Without a declaration the fixed buffer is
+    byte-identical to before. A module object's fragment rendered before
+    the declaration is not re-rendered by `apply`, which now reports that
+    method as dropping records past `max_results`; delete the fragment and
+    re-run `apply` to pick the capacity up.
+
+- **An object that hands out views no longer frees the memory under them
+    at `destroy()`** (gh-2187). A `borrow = true` method, a `buf_field`
+    property and an array state's `get_<name>_view()` each pin the object,
+    not its memory, so an explicit `destroy()` or `__exit__` left every
+    outstanding view, and a GIL-free call still running, reading freed
+    memory. Such an object's teardown now parks the state and every method
+    refuses as before; `tp_dealloc` frees it once the last view and call
+    have let go. `[<obj>.destroy] wake = "<method>"` names a method to call
+    first, so a blocking call returns. A fallible destroy on a lending
+    object is refused at generation: a finalizer named by `exit` reports
+    the status instead. A module object that starts or stops lending after
+    its fragment was written has the teardown jm wrote re-rendered with
+    it, and one the author edited is kept and named by `apply` and
+    `status`.
+
+- **A C benchmark's JSON holds every row it recorded, past 32** (gh-2188).
+    `jm_bench.h` kept its rows in a fixed array of 32, and `jm_bench_add`
+    dropped every row past it without a word: the benchmark printed every
+    row, exited 0, and wrote a JSON missing the rest, so `jm bench` and
+    `bench-compare` saw fewer rows than were measured. The rows are now a heap
+    array that grows, so there is no cap, and `JM_BENCH_MAX_ENTRIES` is gone.
+    A row the header cannot hold (an allocation that fails) or one with no
+    time in it (fewer than 1 round, whose statistics were read out of an
+    empty array) now stops the run with a message on stderr and a non-zero
+    exit, rather than being dropped or written as garbage.
+    `jm_bench_write_json` now frees the rows once the file is written, so a
+    benchmark built with `-fsanitize=address` exits with nothing leaked. It
+    takes a non-const `jm_bench_t *`, and the bench is empty afterwards.
+    `jm_bench_free` does the same for a benchmark that returns without
+    writing. `jm_bench.h` is create-only: an existing project picks the fix
+    up by re-vendoring it (`jm status` reports it outdated).
+
+- **`jm bench` fails when a benchmark run fails** (gh-2189). A
+    `bench_<comp>_core`'s exit status was never read, and a missing JSON was
+    skipped without a word, so a benchmark that crashed, or one that refused to
+    write a short set, was simply absent from a run that exited 0. A non-zero
+    exit, a death by signal, and an exit 0 with no JSON or with a JSON that does
+    not parse are each now reported as `failed bench_<comp>_core (<why>)`, with
+    the binary's stderr quoted beneath. A target that built but whose binary
+    cannot be found is reported the same way, where it was skipped. The Python
+    side had the same hole: pytest's exit status was never read, so a benchmark
+    that raised dropped out of the snapshot. A `pytest` run that exits other
+    than 0 or 5 (nothing collected) is now `failed pytest <file> (exit N)`. As
+    with a timeout, the other benchmarks still run and are saved, the snapshot
+    lists the failure under `"failed"`, and `jm bench` then exits 1 naming it.
+    `--check` fails on it too, and its JSON document lists it under `"failed"`.
+    A JSON a failed run did write is not read.
+
+- **A release's explicit count of `0` reaches C as `0`, instead of releasing
+    the whole outstanding borrow** (gh-2191). The generated release tested
+    the parsed value, and `0` was both its "omitted" default and a count a
+    caller can mean, so `peek(64); consume(0)` released 64 samples nobody
+    had processed (doppler-dsp/doppler#2014), and `consume(0)` with nothing
+    outstanding raised. Omitted is now decided by whether the argument was
+    passed, positionally or by keyword. A bare `consume()` still takes the
+    borrow's count, and still raises `RuntimeError` with nothing
+    outstanding.
+
+- **A handle method's `.pyi` names its array argument as the manifest
+    does** (gh-2207). The stub called it `x` whatever was declared, while the
+    binding's keyword list and the runtime docstring used the declared name:
+    for `send(iq, fs, fc)` the stub said `send(self, x, fs, fc)`, so
+    `send(x=...)` raised `TypeError` and a type checker refused
+    `send(iq=...)`, the call that works. A count-in method's stub did the same
+    with `n`. The binding and the stub now take each parameter's name and
+    position from one place, `_handle.py_args`.
+
 ## [0.102.0] — 2026-10-10
 
 ### Breaking

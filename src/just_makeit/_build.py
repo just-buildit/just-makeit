@@ -315,10 +315,23 @@ def cmd_dry_run() -> None:
                 print(f"    {f.relative_to(root)}")
     print()
 
+    # #2128: name the commands `jm build` would run for this backend, with the
+    # same interpreter `jm build` uses, so a make project is not shown a cmake
+    # configure it never runs.
+    python = _project_python(root)
+    if _backend(root) == "make":
+        make = shutil.which("make")
+        if make:
+            cmd = [make, f"PYTHON={python}"]
+            print(f"  build:     {shlex.join(cmd)}")
+        else:
+            print("  build:     make not found")
+        print()
+        return
+
     cmake = shutil.which("cmake")
     if cmake:
         build_type = "Release"
-        python = sys.executable
         cmd = [
             cmake,
             "-B",

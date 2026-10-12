@@ -159,9 +159,11 @@ Commands:
                                 casting, copying and flattening it.
                                 TypeError for dtype, ValueError for shape.
     --releases A[,B]            This method RELEASES the named --borrow
-                                method(s). Its count param then defaults
-                                to the outstanding borrow's count; with
-                                no count param it just clears the record.
+                                method(s). Its count param then defaults,
+                                when omitted, to the outstanding borrow's
+                                count; an explicit 0 is passed through.
+                                With no count param it just clears the
+                                record.
     --release-count NAME        Which param carries that count, when the
                                 method has more than one. Must be last.
     --status-fn NAME            C function saying WHY a --borrow returned
@@ -210,6 +212,13 @@ Commands:
                                 "count"). Say it when your C API names the quantity
                                 something else -- the paired <comp>_<name>_max_out()
                                 already takes its name from the C signature.
+    --out-cols EXPR             Make a --variable-output result a MATRIX: the
+                                kernel still fills a flat buffer and returns an
+                                element count, and the binding returns
+                                (count / EXPR, EXPR). EXPR is an integer or a C
+                                expression over the object ("state->nfft").
+                                A caller-supplied out= must then be 2-D with
+                                that many columns.
     --varargs                   Generate a *args/**kwargs binding. Mutually
                                 exclusive with --arg-type, --param and
                                 --variable-output.
@@ -302,6 +311,10 @@ Commands:
     --count-fn name             Entry count accessor  (default <stem>_num_<name>).
     --key-fn name               Key accessor, dict only (default <stem>_<name>_key).
     --value-fn name             Value accessor      (default <stem>_<name>_value).
+    --error EXC                 With --writable: the setter's C function returns
+                                int, and a non-zero return refuses the value and
+                                raises EXC (e.g. ValueError). Not with --field.
+    --error-message text        Text for that exception (rc appended).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a
@@ -963,6 +976,8 @@ def _main() -> None:
         value_fn = ""
         capsule = ""  # gh-788
         capsule_type = ""  # gh-1235
+        error = ""  # gh-2182
+        error_message = ""
 
         remaining = args[3:]
         i = 0
@@ -1032,6 +1047,9 @@ def _main() -> None:
                 # gh-1235: and what that pointer IS, so a consumer naming
                 # this producer with `object` can line up against it.
                 "--capsule-type",
+                # gh-2182: the exception a refused assignment raises.
+                "--error",
+                "--error-message",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -1058,6 +1076,10 @@ def _main() -> None:
                     capsule = val  # gh-788
                 elif tok == "--capsule-type":
                     capsule_type = val  # gh-1235
+                elif tok == "--error":
+                    error = val  # gh-2182
+                elif tok == "--error-message":
+                    error_message = val
                 else:
                     expr = val
                 i += 1
@@ -1108,6 +1130,8 @@ def _main() -> None:
             value_fn=value_fn,
             capsule=capsule,
             capsule_type=capsule_type,
+            error=error,
+            error_message=error_message,
         )
 
     elif cmd == "warning":

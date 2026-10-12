@@ -84,6 +84,37 @@ def is_record(m: dict) -> bool:
     return bool(m.get("single")) and bool(m.get("result_fields"))
 
 
+def is_record_list(m: dict) -> bool:
+    """True when *m* returns a LIST of records, a ``list[tuple]`` (gh-2184).
+
+    The third shape beside :func:`is_record` and :func:`is_record_array`:
+    ``result_fields`` with neither ``single`` nor a record array. Its
+    kernel fills ``rec_t *result`` up to ``max_results`` and returns the
+    count, and it is the one shape whose binding reads a header-declared
+    ``<c>_<m>_max_out`` as the size of that buffer.
+
+    Examples
+    --------
+    >>> rf = [{"name": "i", "type": "int"}]
+    >>> is_record_list({"result_fields": rf})
+    True
+    >>> is_record_list({"result_fields": rf, "single": True})
+    False
+    >>> is_record_list({"result_fields": rf, "variable_output": True,
+    ...                 "record_dtype": "rec_t"})
+    False
+    >>> is_record_list({"variable_output": True})
+    False
+    """
+    return (
+        bool(m.get("result_fields"))
+        and not is_record(m)
+        and not is_record_array(
+            m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+        )
+    )
+
+
 def is_record_array(
     variable_output: object, record_dtype: object, borrow: object
 ) -> bool:

@@ -915,6 +915,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             exact_max_out=bool(m.get("exact_max_out")),
             count_default=m.get("count_default", ""),
             count_name=m.get("count_name", ""),
+            out_cols=str(m.get("out_cols", "") or ""),
             nogil=bool(m.get("nogil")),
             status_return=bool(m.get("status_return")),
             # gh-805 §A2/§B. `apply` enumerates method keys ONE BY ONE, so a
@@ -964,6 +965,10 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             type_field=p.get("type_field", ""),
             count_field=p.get("count_field", ""),
             value_field=p.get("value_field", ""),
+            # gh-2182: a refusing setter. Keys are forwarded one by one, so
+            # one not named here is silently absent from the replay.
+            error=p.get("error", ""),
+            error_message=p.get("error_message", ""),
         )
 
     for comp in all_comps:
@@ -3212,6 +3217,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
     prototype for them would be wrong rather than merely redundant.
     """
     from . import _types as _T
+    from ._context._diagnostics import setter_return_type
     from ._property import plain_accessor_decls
 
     out: list[str] = []
@@ -3237,6 +3243,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             ctype,
             str(p.get("writable", "")).lower() in ("true", "1", "yes"),
             csym=CSYM.stem(cfg, comp),
+            setter_type=setter_return_type(p),  # gh-2182
         )
     return out
 

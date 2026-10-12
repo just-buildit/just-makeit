@@ -219,6 +219,18 @@ def property_getter(stem_: str, prop: str) -> str:
     return f"{stem_}_get_{prop}"
 
 
+def property_setter(stem_: str, prop: str) -> str:
+    """The derived setter of writable property *prop* on the component whose
+    stem is *stem_*: ``<stem>_set_<prop>`` -- what its binding calls, what
+    jm declares for it, and what a refused assignment's default message
+    names (gh-2182).
+
+    >>> property_setter("dp_acc_trace", "alpha")
+    'dp_acc_trace_set_alpha'
+    """
+    return f"{stem_}_set_{prop}"
+
+
 def container_accessors(stem_: str, p: dict) -> "dict[str, str]":
     """The C names container property *p*'s binding calls (gh-543), on the
     component whose stem is *stem_*: each key *p* declares, else the ONE

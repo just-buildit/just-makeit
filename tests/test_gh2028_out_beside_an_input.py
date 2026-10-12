@@ -311,6 +311,22 @@ impl = """(void)state;
     return n;"""
 
 [[amp.methods]]
+name = "rows"
+arg_type = "float"
+return_type = "float"
+variable_output = true
+pass_capacity = true
+out_cols = 2
+max_out = 777
+params = [{ name = "gain", type = "double" }]
+impl = """(void)state;
+    size_t n = n_in < max_out ? n_in : max_out;
+    n -= n % 2;
+    for (size_t i = 0; i < n; i++)
+        out[i] = in[i] * (float)gain;
+    return n;"""
+
+[[amp.methods]]
 name = "run_d"
 arg_type = "float"
 return_type = "float"
@@ -362,6 +378,12 @@ def _into(call):
     return [y.tolist(), bool(np.shares_memory(y, buf)),
             buf[4:].tolist() == [9.0] * 6]
 
+def _into2d(call):
+    buf = np.full((3, 2), 9, np.float32)
+    y = call(buf)
+    return [y.tolist(), bool(np.shares_memory(y, buf)),
+            buf[2:].tolist() == [[9.0, 9.0]]]
+
 calls = CALLS
 for k, src in calls.items():
     res[k] = _try(lambda: _into(eval("lambda buf: " + src)))
@@ -369,6 +391,12 @@ res["undersized"] = _try(
     lambda: a.run(x, 2.0, out=np.zeros(3, np.float32)).tolist())
 res["undersized-blind"] = _try(
     lambda: a.run_d(x, out=np.zeros(3, np.float32)).tolist())
+res["rows-allocating"] = _try(lambda: a.rows(x, 2.0).tolist())
+res["rows-out"] = _try(lambda: _into2d(lambda b: a.rows(x, 2.0, out=b)))
+res["rows-out-1d"] = _try(
+    lambda: a.rows(x, 2.0, out=np.zeros(4, np.float32)).tolist())
+res["rows-out-cols"] = _try(
+    lambda: a.rows(x, 2.0, out=np.zeros((2, 3), np.float32)).tolist())
 res["allocating"] = _try(lambda: a.run(x, 2.0).tolist())
 res["allocating-default"] = _try(lambda: a.run_d(x).tolist())
 res["max_out"] = _try(lambda: a.run_max_out(4))
@@ -392,7 +420,7 @@ def project(tmp_path_factory):
     # `max_out` answers the input's length, so an undersized buffer is one
     # shorter than the call needs.
     stubs = re.findall(r"_max_out\([^)]*size_t n_in\)\s*\{[^}]*?\}", src)
-    assert len(stubs) == 2, f"max_out stubs not where expected:\n{src}"
+    assert len(stubs) == 3, f"max_out stubs not where expected:\n{src}"
     for s in stubs:
         assert s.count("return 777;") == 1, s
         src = src.replace(s, s.replace("return 777;", "return n_in;"))
@@ -464,6 +492,18 @@ def test_out_is_written_in_place_and_not_past(outcome, call):
 def test_an_undersized_out_is_refused(outcome, key):
     """Sized from the input, as the same method without params is."""
     assert outcome[key] == "ERR ValueError: out has 3 elements, need >= 4"
+
+
+def test_out_cols_beside_an_input_and_a_param(outcome):
+    """A matrix result composes with the newly offered `out=` (gh-2115): the
+    allocating call and a 2-D `out` both answer ``(rows, cols)``, written in
+    place and not past, and a 1-D or wrongly wide buffer is refused rather
+    than filled as if it were the matrix."""
+    rows = [[0.0, 2.0], [4.0, 6.0]]
+    assert outcome["rows-allocating"] == rows, outcome["rows-allocating"]
+    assert outcome["rows-out"] == [rows, True, True], outcome["rows-out"]
+    for key in ("rows-out-1d", "rows-out-cols"):
+        assert str(outcome[key]).startswith("ERR ValueError"), outcome[key]
 
 
 def test_the_allocating_call_is_unchanged(outcome):
