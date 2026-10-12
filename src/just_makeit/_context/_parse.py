@@ -568,6 +568,8 @@ def _build_params_parse(
     records: "list[dict] | None" = None,
     sid_prefix: str = "",
     strict: bool = False,
+    *,
+    out_obj: str = "",
 ) -> tuple[str, str, str]:
     """Build parse block + C call args + cleanup for a named multi-param method.
 
@@ -580,6 +582,14 @@ def _build_params_parse(
       Array types end with '[]', e.g. "float _Complex[]"; their element type
       must be in _CTYPE_TO_NPY.  Array params expand to two C args:
       (const elem_t *name, size_t name_len).
+
+    out_obj: the C local a variable-output binding's optional ``out=``
+      buffer is parsed into, after every param (gh-2028). It is the
+      trailing optional argument: it joins the optional group a defaulted
+      param opened, or opens one, and is left ``NULL`` when the caller
+      passes none. The binding validates and acquires the buffer itself, so
+      it adds no call argument and no cleanup here. Empty (the default)
+      parses no ``out=``.
 
     Returns (parse_block, call_args_c, cleanup):
       parse_block  — indented C code: declarations, PyArg_ParseTuple, array
@@ -819,7 +829,18 @@ def _build_params_parse(
     # and constructors). Each param name is a kwarg; a param with a `default`
     # goes after the `|` (optional). The wrapper must take a `PyObject *kwds`.
     kwnames = "".join(f'"{p["name"]}", ' for p in params)
-    fmt_str = _join_fmt_with_optional(fmt_chars, params)
+    joined, joined_fmt = params, fmt_chars
+    if out_obj:
+        # gh-2028: an optional argument after every param, which is the rule
+        # a defaulted param follows -- so it is asked of the same join rather
+        # than spelled again: `|O` when nothing was optional yet, `O` inside
+        # the group a `default` opened (gh-802).
+        decl_lines.append(f"    PyObject *{out_obj} = NULL;")
+        addr_exprs.append(f"&{out_obj}")
+        kwnames += '"out", '
+        joined = [*params, {"name": "out", "default": "NULL"}]
+        joined_fmt = [*fmt_chars, "O"]
+    fmt_str = _join_fmt_with_optional(joined_fmt, joined)
     addr_str = ", ".join(addr_exprs)
     lines = (
         [f"    static char *_kwlist[] = {{{kwnames}NULL}};"]

@@ -18,13 +18,14 @@ it does not check that they call it — it renders all three and compares what
 they say, which is the property, and which stays true through any future
 refactor of how they get the answer.
 
-**The open half is named, not hidden.** The all-scalar-params shape still gets
-no `out=`, and `why_not` says so in words rather than returning a bare False:
-sizing it means reading `<m>_max_out(state)`, which the author's C may legally
-answer `0` for — "unknown", jm's own documented sizing contract. A buffer
-validated against an unknown bound is not validated, so offering `out=` there
-is a decision about what jm does when it cannot bound the write. That is the
-remaining ask of gh-1079, and `test_the_open_half_is_named` keeps it visible.
+**A reason is named, not hidden.** `why_not` answers in words rather than a
+bare False, so "this shape has no single buffer" and "jm cannot size this
+buffer" cannot be read as one thing. The sizing gaps it used to name are
+closed -- the all-scalar-params shape (gh-1079, sized from
+`<m>_max_out(state)`), an array beside other params (gh-1998), and params
+beside an `arg_type` input (gh-2028) -- so what it still answers is a property
+of the shape: not `variable_output`, or `multi_output`.
+`test_the_open_half_is_named` keeps each answer pinned.
 """
 
 from __future__ import annotations
@@ -80,11 +81,18 @@ SHAPES = [
         dict(arg_type="void", params=[("x", "float[]"), ("c", "double[]")]),
         True,
     ),
-    # gh-2028: params beside an `arg_type` input. Parsed since gh-1960,
-    # but an `out=` beside them breaks the header `@param in` -> `x` match.
+    # gh-2028: params beside an `arg_type` input. Parsed since gh-1960, and
+    # sized from the input as the same method without params is.
     (
         "array-plus-scalar",
         dict(arg_type="float", params=[("mu", "double")]),
+        True,
+    ),
+    # Two output arrays would need two buffers; one `out=` cannot say which.
+    # The shape that keeps the matrix answering False as well as True.
+    (
+        "multi-output",
+        dict(arg_type="float", params=[], multi_output=["float"]),
         False,
     ),
 ]
@@ -98,7 +106,7 @@ class TestThePredicate:
         assert (
             _outbuf.enabled(
                 variable_output=True,
-                multi_output=False,
+                multi_output=bool(kw.get("multi_output")),
                 has_arg=kw["arg_type"] != "void",
                 params=[{"name": n, "type": t} for n, t in kw["params"]],
             )
@@ -124,7 +132,8 @@ class TestThePredicate:
 
         "this method allocates per call" and "jm cannot size the buffer" are
         not interchangeable, and a bare False makes them look like one thing.
-        Naming the second is what keeps gh-1079's remaining ask findable.
+        Every sizing gap it named is closed now (gh-1079, gh-1998, gh-2028);
+        the two reasons left are properties of the shape.
         """
         assert (
             _outbuf.why_not(
@@ -135,13 +144,26 @@ class TestThePredicate:
             )
             == "not variable_output"
         )
-        gap = _outbuf.why_not(
-            variable_output=True,
-            multi_output=False,
-            has_arg=True,
-            params=[{"name": "mu", "type": "double"}],
+        assert (
+            _outbuf.why_not(
+                variable_output=True,
+                multi_output=True,
+                has_arg=True,
+                params=[],
+            )
+            == "multi_output"
         )
-        assert "gh-1079" in gap
+        # gh-2028 closed the last sizing gap: params beside an `arg_type`
+        # input are offered `out=` now, so they have no reason to give.
+        assert (
+            _outbuf.why_not(
+                variable_output=True,
+                multi_output=False,
+                has_arg=True,
+                params=[{"name": "mu", "type": "double"}],
+            )
+            == ""
+        )
         # gh-1998 closed the gh-412 carve-out: an array beside other params
         # is offered `out=` now, so it has no reason to give.
         assert (
@@ -188,7 +210,6 @@ class TestTheThreeFacesAgree:
             "dsp",
             return_type="float",
             variable_output=True,
-            multi_output=[],
             **method_kw,
         )
         return root
@@ -225,7 +246,10 @@ class TestTheThreeFacesAgree:
         self, tmp_path, label, kw, expected
     ):
         root = self._module_project(
-            tmp_path, arg_type=kw["arg_type"], params=list(kw["params"])
+            tmp_path,
+            arg_type=kw["arg_type"],
+            params=list(kw["params"]),
+            multi_output=list(kw.get("multi_output", [])),
         )
         binding = self._binding_takes_out(root)
         stub = self._stub_takes_out(root)
