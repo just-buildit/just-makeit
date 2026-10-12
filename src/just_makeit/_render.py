@@ -25,7 +25,6 @@ from ._types import (
 )
 from . import _coerce
 from . import _config as C
-from . import _types as T
 from . import _record
 from . import _borrow
 from . import _outbuf
@@ -1507,35 +1506,30 @@ def _build_params_parse(
             )
             call_args.append(pname)
         else:
-            meta = _CTYPE_META[ptype]
-            disp = ptype
-            # gh-1271: same rule as the method face, one call away.
-            fmt_chars.append(T.param_fmt(ptype, p.get("default") or ""))
+            # gh-2144: the method face's one tuple-parse slot, which this
+            # face had a line-for-line copy of (format char, gh-240 default
+            # seed, gh-1887 complex seed, the cast) -- and so would have had
+            # to learn the range refusal a second time. The refusal runs
+            # after the parse has made every path borrow, before any array
+            # is acquired, so it releases exactly those.
+            from ._context._parse import scalar_arg_c
 
-            if "parse_type" in meta:
-                raw = f"{pname}_raw"
-                # gh-432 drive-by: seed the raw local with the gh-240
-                # default (not parse_zero) so an omitted defaulted arg
-                # yields the default — previously only the non-parse_type
-                # branch honoured `default` (mirrors _context/_parse.py).
-                # gh-1887: through the one seed, as that face is -- a
-                # `Py_complex` default is the struct's `{re, im}`.
-                _raw_init = T.parse_seed(ptype, p.get("default") or "")
-                decl_lines.append(
-                    f"    {meta['parse_type']} {raw} = {_raw_init};"
+            decl, fmt, addr, conv = scalar_arg_c(
+                pname,
+                ptype,
+                p.get("default") or "",
+                fail="".join(
+                    f"{_coerce.path_release(q['name'])} "
+                    for q in params
+                    if q["type"] == "path"
                 )
-                addr_exprs.append(f"&{raw}")
-                conv_lines.append(
-                    f"    {disp} {pname} = {meta['to_c'](pname)};"
-                )
-            else:
-                # gh-240: a scalar with a `default` is optional — its C local is
-                # initialised to the default literal so an omitted arg yields it
-                # (PyArg leaves it untouched). Required scalars init to zero.
-                init = p.get("default") or meta["zero"]
-                decl_lines.append(f"    {disp} {pname} = {init};")
-                addr_exprs.append(f"&{pname}")
-
+                + "return NULL;",
+            )
+            decl_lines.append(decl)
+            fmt_chars.append(fmt)
+            addr_exprs.append(addr)
+            if conv:
+                conv_lines.append(conv)
             call_args.append(pname)
 
     # gh-240: split required vs optional. A param with a `default` is optional;

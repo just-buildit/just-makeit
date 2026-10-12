@@ -17,6 +17,7 @@ from .._docstring import (
     render_runtime_doc,
 )
 from ._parse import _build_ml_doc, _step_parse_block
+from ._parse import ctrl_parse_c as _ctrl_parse_c
 
 
 def make_perf_ctx(perf: bool) -> dict[str, str]:
@@ -387,10 +388,11 @@ def make_step_ctx(
     # steps() keyword-parse bits.
     ctrl_kw_entries = "".join(f'"{n}", ' for n, _, _ in _ctrl)
     ctrl_kw_fmt = "".join(f for _, _, f in _ctrl)
-    ctrl_parse_refs = "".join(f", &{n}" for n, _, _ in _ctrl)
-    ctrl_field_locals = "".join(
-        f"    {disp} {n} = self->handle->{n};\n" for n, disp, _ in _ctrl
-    )
+    # gh-1952 / gh-2144: each override parses at its row's width and is
+    # narrowed (range-checked) after the parse -- `ctrl_narrow`, emitted
+    # right after every parse below. It parsed straight into the field's
+    # type, so `int8_t k` took the four bytes `i` writes.
+    ctrl_field_locals, _, ctrl_parse_refs, ctrl_narrow = _ctrl_parse_c(_ctrl)
     # step() positional-parse list (rebuilt by _step_parse_block per shape).
     _ctrl_parse = list(_ctrl)
     # Every steps() is keyword-capable (docs/arguments.md: the parse amortises
@@ -576,6 +578,7 @@ def make_step_ctx(
             f'            "O|O{ctrl_kw_fmt}", kwlist,\n'
             f"            &x_obj, &out_obj{ctrl_parse_refs}))\n"
             f"        return NULL;\n"
+            f"{ctrl_narrow}"
         )
         # gh-581: reject a wrong-dtype `out=` before FROM_OTF can cast it into
         # a temp — the caller asked for THEIR buffer to be written.
@@ -824,6 +827,7 @@ def make_step_ctx(
                 f'    if (!PyArg_ParseTuple(args, "|{ctrl_kw_fmt}"'
                 f"{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
             )
             _gen_step_flags = "METH_VARARGS"
         else:
@@ -844,6 +848,7 @@ def make_step_ctx(
             f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
             f'            "|n{ctrl_kw_fmt}", kwlist, &n{ctrl_parse_refs}))\n'
             f"        return NULL;\n"
+            f"{ctrl_narrow}"
         )
         if is_void_return:
             if delegate:
@@ -1111,6 +1116,7 @@ def make_step_ctx(
                 f'    if (!PyArg_ParseTuple(args, "{_arr_parse_fmt}",'
                 f" &x_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
                 f"    PyArrayObject *x_arr = (PyArrayObject *)"
                 f"\n"
                 f"        {_coerce.array_arg('x_obj', in_np_enum, 'NPY_ARRAY_C_CONTIGUOUS', 'x')};\n"
@@ -1157,6 +1163,7 @@ def make_step_ctx(
                 f'    if (!PyArg_ParseTuple(args, "{_arr_parse_fmt}",'
                 f" &x_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
                 f"    PyArrayObject *x_arr = (PyArrayObject *)"
                 f"\n"
                 f"        {_coerce.array_arg('x_obj', in_np_enum, 'NPY_ARRAY_C_CONTIGUOUS', 'x')};\n"
@@ -1300,6 +1307,7 @@ def make_step_ctx(
                 f'            "{_sink_fmt}", kwlist,'
                 f" &in_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
             )
             steps_ext_fn = (
                 f"static PyObject *\n"
@@ -1467,6 +1475,7 @@ def make_step_ctx(
                 f'            "O|O{ctrl_kw_fmt}", kwlist,\n'
                 f"            &in_obj, &out_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
                 f"\n"
                 f"    PyArrayObject *in_arr = (PyArrayObject *)"
                 f"\n"

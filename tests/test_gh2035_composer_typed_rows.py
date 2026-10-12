@@ -29,13 +29,17 @@ Two halves:
   is one that type holds and a wrong conversion cannot: a fraction for a
   floating type, both parts for a complex one, the far end of an integer
   type's range, and ``True`` for ``bool`` -- compared by value AND Python
-  type. The cases are derived from the type table, not listed.
+  type. The cases are derived from the type table, not listed. gh-2144: one
+  step OUTSIDE an integer type's range is refused on every face that takes
+  a value, by the ``OverflowError`` and against the ratchet
+  ``tests/test_gh2144_int_range_refused`` holds the object faces to.
 * **the refusal**, through ``jm apply``: each row kind, typed as something it
   cannot convert, exits 1 naming the row, and writes nothing.
 
 GATE: a composer setting, segment field, computed property, source field and
-serializer param round-trips every numeric scalar exactly; a type no face can
-convert is refused by apply, naming the row, with the project unchanged.
+serializer param round-trips every numeric scalar exactly, and refuses an
+integer its type cannot hold, naming the row; a type no face can convert is
+refused by apply, naming the row, with the project unchanged.
 """
 
 from __future__ import annotations
@@ -55,6 +59,7 @@ import pytest
 from _compilers import default_cc
 
 from _jmrun import run_cli
+from test_gh2144_int_range_refused import int_range, refusal_wrong
 
 from just_makeit import _composer
 from just_makeit import _config as C
@@ -370,8 +375,66 @@ record("ranged source field (through C)",
 record("ranged segment field (Python)", lambda: getattr(seg(**{rg: 0.1}), rg))
 record("ranged segment field (through C)",
        lambda: getattr(Mix([seg(**{rg: 0.1})]).segments[0], rg))
+# gh-2144: one step outside an integer type's range, on every face that
+# takes a value from Python.
+for s, vs in OUT.items():
+    st, g = f"s_{s}", f"g_{s}"
+    for v in vs:
+        record(f"setting {s} (constructor) {v}",
+               lambda: getattr(Mix([seg()], **{st: v}), st))
+        record(f"setting {s} (attribute) {v}",
+               lambda: attr(Mix([seg()]), st, v))
+        record(f"segment field {s} (Python) {v}",
+               lambda: getattr(seg(**{g: v}), g))
+        record(f"segment field {s} (attribute) {v}",
+               lambda: attr(seg(), g, v))
+        record(f"serializer param {s} {v}", lambda: sent(s, v))
+for s, vs in SOURCE_OUT.items():
+    f = f"f_{s}"
+    for v in vs:
+        record(f"source field {s} (constructor) {v}",
+               lambda: getattr(Src(**{f: v}), f))
+        record(f"source field {s} (attribute) {v}",
+               lambda: attr(Src(), f, v))
 print(json.dumps(out))
 """
+
+
+def _ints(types) -> "list[str]":
+    """The integer scalars of *types*, whose range a value can leave."""
+    return [
+        t for t in types if T._CTYPE_META[t]["kind"] == "int" and t != "bool"
+    ]
+
+
+def _out(types) -> dict:
+    """``{slug: [min - 1, max + 1]}`` for the integer scalars of *types*."""
+    return {
+        _slug(t): [int_range(t)[0] - 1, int_range(t)[1] + 1]
+        for t in _ints(types)
+    }
+
+
+def _refusals() -> dict:
+    """``{case: (ctype, the name its refusal leads with, value)}``."""
+    want = {}
+    for t in _ints(SCALARS):
+        s = _slug(t)
+        for v in _out([t])[s]:
+            for face, label in (
+                ("setting {} (constructor)", f"s_{s}"),
+                ("setting {} (attribute)", f"s_{s}"),
+                ("segment field {} (Python)", f"g_{s}"),
+                ("segment field {} (attribute)", f"g_{s}"),
+                ("serializer param {}", f"p_{s}"),
+            ):
+                want[f"{face.format(s)} {v}"] = (t, label, v)
+    for t in _ints(SOURCE_SCALARS):
+        s = _slug(t)
+        for v in _out([t])[s]:
+            for face in ("constructor", "attribute"):
+                want[f"source field {s} ({face}) {v}"] = (t, f"f_{s}", v)
+    return want
 
 
 def _expected() -> dict:
@@ -484,7 +547,8 @@ def test_every_row_round_trips_every_scalar(tmp_path):
     driver.write_text(
         f"PKG = {pkg!r}\nCASES = {cases!r}\nZERO = {zero!r}\n"
         f"KIND = {kinds!r}\nSOURCE_CASES = {source_cases!r}\n"
-        f"RANGED = {RANGED!r}\n{_DRIVER}",
+        f"RANGED = {RANGED!r}\nOUT = {_out(SCALARS)!r}\n"
+        f"SOURCE_OUT = {_out(SOURCE_SCALARS)!r}\n{_DRIVER}",
         encoding="utf-8",
     )
     r = subprocess.run(
@@ -493,11 +557,20 @@ def test_every_row_round_trips_every_scalar(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     got = json.loads(r.stdout)
     want = _expected()
-    assert set(got) == set(want), sorted(set(want) ^ set(got))
+    refusals = _refusals()
+    assert set(got) == set(want) | set(refusals), sorted(
+        (set(want) | set(refusals)) ^ set(got)
+    )
     wrong = [
         f"{case}: sent {want[case][0]} ({want[case][1]}), got {got[case]}"
         for case in sorted(want)
         if got[case] != want[case]
+    ]
+    # gh-2144: refused naming the row, as every object face is.
+    wrong += [
+        w
+        for case, (ct, label, v) in sorted(refusals.items())
+        if (w := refusal_wrong(case, ct, label, v, got[case]))
     ]
     assert not wrong, "\n".join(wrong)
 
