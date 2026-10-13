@@ -548,6 +548,14 @@ def _index_c(
     *label*, the value and the type's range, in the words
     :func:`scalar_narrow_c` refuses a narrow row with.
 
+    gh-2258: the converter checks the value against its own return type,
+    ``unsigned long long``, not against *ctype*. Where ``size_t`` is 32 bits
+    a value between ``SIZE_MAX`` and ``2**64`` passed it and wrapped on the
+    cast, so the converted value is also compared with the maximum the row's
+    ``limits`` names, before the cast, and refused with the same sentence.
+    Where *ctype* is as wide as *parse_type* the comparison is always false
+    and the compiler drops it.
+
     Parameters
     ----------
     src : str
@@ -582,7 +590,8 @@ def _index_c(
                 return -1;
             }
             n_raw = PyLong_AsUnsignedLongLong(_ix);
-            if (n_raw == (unsigned long long)-1 && PyErr_Occurred()) {
+            if ((n_raw == (unsigned long long)-1 && PyErr_Occurred())
+                || n_raw > (unsigned long long)SIZE_MAX) {
                 PyErr_Format(PyExc_OverflowError,
                     "n: %S is out of range for size_t [0, %llu]",
                     _ix, (unsigned long long)SIZE_MAX);
@@ -592,7 +601,7 @@ def _index_c(
             Py_DECREF(_ix);
         }
     """
-    fn, hi = meta["index"]
+    fn, hi = meta["index"], meta["limits"][1]
     pt, raw, i = meta["parse_type"], f"{var}_raw", indent
     # `PyErr_Format` clears the converter's exception before formatting, so
     # `%S` may run `str()` on the index. Every `index` row is unsigned: its
@@ -605,7 +614,8 @@ def _index_c(
         f"{i}        {fail}\n"
         f"{i}    }}\n"
         f"{i}    {raw} = {fn}(_ix);\n"
-        f"{i}    if ({raw} == ({pt})-1 && PyErr_Occurred()) {{\n"
+        f"{i}    if (({raw} == ({pt})-1 && PyErr_Occurred())\n"
+        f"{i}        || {raw} > ({pt}){hi}) {{\n"
         f"{i}        PyErr_Format(PyExc_OverflowError,\n"
         f'{i}            "{msg}",\n'
         f"{i}            _ix, ({pt}){hi});\n"
