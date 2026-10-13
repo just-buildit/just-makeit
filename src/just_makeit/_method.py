@@ -1091,6 +1091,7 @@ _SIGNATURE_COERCIONS: dict = {
     "manual_stub": (bool, False),
     "pass_capacity": (bool, False),
     "exact_max_out": (bool, False),
+    "short_out": (bool, False),
     "count_default": (str, ""),
     "count_name": (str, ""),
     "out_cols": (str, ""),
@@ -1226,6 +1227,7 @@ def run(
     count_default: str = "",
     count_name: str = "",
     out_cols: str = "",
+    short_out: bool = False,
     nogil: bool = False,
     status_return: bool = False,
     fn: str = "",
@@ -2291,6 +2293,9 @@ def run(
     # for a matrix result.
     if out_cols:
         method_entry["out_cols"] = out_cols
+    # gh-2230: written only when set, like `out_cols` above.
+    if short_out:
+        method_entry["short_out"] = True
     # gh-1074: written only when set, like `count_default` beside it, so
     # an existing manifest gains no key and `jm status --check` sees no
     # drift on a project that never asked for the rename.

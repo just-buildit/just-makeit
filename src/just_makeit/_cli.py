@@ -184,6 +184,11 @@ Commands:
                                 call-independent -- a `max_out(state)` that
                                 never sees the count cannot claim it, and is
                                 clamped without this flag (gh-920).
+    --short-out                 Accept an out= SMALLER than max_out(), any
+                                size down to empty (whole rows, with
+                                --out-cols), for a backpressure kernel: it
+                                writes what fits and the object reports the
+                                input it took. Needs --pass-capacity.
     --nogil                     Release the GIL across the pure-C kernel so a
                                 thread-per-shard worker scales across cores.
                                 Numpy accessors are hoisted out first. Sound

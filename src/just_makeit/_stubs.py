@@ -2332,6 +2332,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 count=_stub_count_arg,
                 out=_stub_enable_out,
                 out_cols=bool(m.get("out_cols")),
+                short_out=bool(m.get("short_out")),
             ),
         )
         header = (

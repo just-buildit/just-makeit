@@ -350,12 +350,37 @@ more loosely would accept a buffer the internal path considers too small:
 | `pass_capacity`, count-bearing max_out | `max_out(state, n)`                 |
 | `pass_capacity`, `max_out(state)` only | `max(max_out(state), n)`            |
 | `exact_max_out`                        | `max_out(...)`, or `n` if it is `0` |
+| `pass_capacity` + `short_out`          | `0` — no minimum, only the shape    |
 
 So a buffer sized to the request is accepted exactly when the author has said
 the bound is a per-call one. Where `out=` demands more than the call could
 possibly produce, the answer is on the C side — give `max_out` the count, or
 assert `exact_max_out` — not a looser check here, which would only move the
 silent truncation from the allocation into the caller's own buffer.
+
+**A backpressure kernel declares the opposite contract**, and says so with
+`short_out = true`
+([gh-2230](https://github.com/just-buildit/just-makeit/issues/2230)). Its
+short buffer is not a truncation but a request for less: the kernel writes
+what fits, takes only the input that produced it, and the object reports how
+much — so the caller resumes where it stopped and no input is lost:
+
+```python
+buf = np.empty((4, s.nfft), np.float32)
+while x.size:
+    rows = s.push(x, out=buf)   # at most 4 rows, a view of buf
+    sink(rows)
+    x = x[s.consumed:]          # the input push did not take
+```
+
+The key needs `pass_capacity`, because only a kernel told the buffer's real
+size can stop at it, and jm refuses it at load otherwise. The buffer is then
+held to its shape alone: any length, `0` included; under `out_cols` a 2-D
+array of that many columns and any number of rows. A wrong dtype is still
+refused, and under `out_cols` so is a wrong rank or width. How much input was
+taken is the object's to report —
+a read-only property over its state, as `consumed` is above — since the
+method returns only what it wrote.
 
 ## Who owns what, by shape
 
