@@ -5324,6 +5324,46 @@ def _multi_output_errors(entry: dict, what: str) -> list[str]:
     return errors
 
 
+#: The method shapes whose CPython function jm does not write, so no ``nogil``
+#: can reach a generated kernel call (gh-2259): ``varargs`` registers a
+#: function the author writes; ``manual_stub`` leaves the binding whole.
+NOGIL_UNWRITTEN_SHAPES = ("varargs", "manual_stub")
+
+
+def _nogil_errors(entry: dict, what: str) -> list[str]:
+    """Refuse ``nogil`` on a method whose binding jm does not write.
+
+    gh-2259. ``nogil`` releases the GIL around the kernel call jm
+    generates, and every shape jm writes now honours it -- the emitter is
+    `_context._methods._nogil_call`. A :data:`NOGIL_UNWRITTEN_SHAPES`
+    method has no generated call: the key was accepted and ignored, so the
+    author believed the GIL released around a kernel that ran holding it.
+    The release belongs in the binding the author writes.
+
+    The ONE answer, asked by ``jm method --nogil`` before it writes and by
+    :func:`manifest_type_errors` before ``apply`` does.
+
+    Examples
+    --------
+    >>> _nogil_errors({"nogil": True, "variable_output": True}, "m")
+    []
+    >>> print(_nogil_errors({"nogil": True, "varargs": True}, "m")[0])
+    m: nogil releases the GIL around a kernel call jm writes, and a varargs
+      method's CPython function is yours. Release it there
+      (Py_BEGIN_ALLOW_THREADS ... Py_END_ALLOW_THREADS) and drop nogil.
+    """
+    if not entry.get("nogil"):
+        return []
+    return [
+        f"{what}: nogil releases the GIL around a kernel call jm writes, "
+        f"and a {shape}\n  method's CPython function is yours. Release it "
+        "there\n  (Py_BEGIN_ALLOW_THREADS ... Py_END_ALLOW_THREADS) and drop "
+        "nogil."
+        for shape in NOGIL_UNWRITTEN_SHAPES
+        if entry.get(shape)
+    ][:1]
+
+
 def _out_cols_errors(entry: dict, what: str) -> list[str]:
     """Validate one method's ``out_cols``; [] when absent or usable.
 
@@ -5676,6 +5716,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
             if err:
                 errors.append(err)
         if outputs == "method":
+            errors.extend(_nogil_errors(entry, what))
             errors.extend(_multi_output_errors(entry, what))
             errors.extend(_out_cols_errors(entry, what))
             errors.extend(_short_out_errors(entry, what))

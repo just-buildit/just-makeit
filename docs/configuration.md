@@ -1632,12 +1632,16 @@ One entry per `just-makeit method` call.
 | `out_type`        | string                  | `--out-type`                                                       |
 | `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)          |
 
-`nogil` wraps the pure-C kernel of a `variable_output`, `--single` or
-`--borrow` method in `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy
-accessors hoisted out first), so a thread-per-shard worker — one object +
-output buffer per thread — scales across cores instead of serialising on the
-GIL. Opt-in: it is sound only when the object is not shared across threads
-concurrently (one object per stream).
+`nogil` wraps the pure-C kernel call of every method whose binding jm writes
+— `variable_output`, `batch`, `--single`, a list of records, `--borrow`, a
+codec-pack method, and a fixed-size result (a scalar, `void`,
+`status_return`, `error_negative`, `multi_output`, `out_type`) — in
+`Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy accessors hoisted
+out first), so a thread-per-shard worker — one object + output buffer per
+thread — scales across cores instead of serialising on the GIL. Opt-in: it
+is sound only when the object is not shared across threads concurrently (one
+object per stream). On a `varargs` or `manual_stub` method, whose CPython
+function is yours, it is refused: release the GIL in that function (gh-2259).
 
 #### Capsule-typed params (gh-432)
 

@@ -595,6 +595,20 @@ OUT_PARAM_DOC = (
     "samples produced; when omitted, a fresh array is allocated."
 )
 
+#: The two above, for a ``batch`` method (gh-2259). Its result is exactly as
+#: long as its input -- or as the count it was asked for -- so there is no
+#: worst case to size for and no ``_max_out()`` to size it with, and an
+#: ``out=`` of any other length is refused rather than trimmed.
+BATCH_COUNT_PARAM_DOC = (
+    "How many output samples to produce. The result has exactly this length."
+)
+BATCH_OUT_PARAM_DOC = (
+    "Optional pre-allocated output buffer, exactly as long as the result: "
+    "one element per input sample, or the count asked for. When given, "
+    "the result is written into it and that same array is returned; when "
+    "omitted, a fresh array is allocated."
+)
+
 #: The same, for a method whose result is a matrix (``out_cols``, gh-2115).
 #: The shape is part of the contract here: a buffer of the wrong width would
 #: hand back a result shaped differently from the one the caller allocated.
@@ -743,6 +757,7 @@ def synthesizes_count(
 def binding_param_docs(
     count_name: str = "",
     *,
+    batch: bool = False,
     count: bool,
     out: bool,
     out_cols: bool = False,
@@ -766,6 +781,14 @@ def binding_param_docs(
     parameter — a plain ``int`` on a method with no buffer — as jm's
     generator length and ``out=`` buffer, on both faces.
 
+    gh-2259: *batch* is a ``batch`` method's pair, whose result length is
+    exact rather than a bound -- the ``variable_output`` text would point
+    the reader at a ``_max_out()`` the method does not have.
+
+    >>> docs = binding_param_docs(batch=True, count=True, out=True)
+    >>> sorted(docs), "_max_out" in docs["count"]
+    (['count', 'out'], False)
+
     Examples
     --------
     >>> sorted(binding_param_docs(count=True, out=True))
@@ -783,6 +806,15 @@ def binding_param_docs(
     ...     count=False, out=True, out_cols=True, short_out=True)["out"]
     True
     """
+    if batch:
+        return {
+            name: text
+            for name, text, on in (
+                (count_kwarg_name(count_name), BATCH_COUNT_PARAM_DOC, count),
+                ("out", BATCH_OUT_PARAM_DOC, out),
+            )
+            if on
+        }
     docs: dict[str, str] = {}
     if count:
         docs[count_kwarg_name(count_name)] = COUNT_PARAM_DOC
