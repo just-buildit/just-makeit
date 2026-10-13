@@ -367,8 +367,10 @@ Commands:
     --out-size EXPR             Length of that output, as a verbatim C expression
                                 over the function's own arguments — each array
                                 param's generated <name>_len included
-                                (e.g. "x_len * factor").
-    --check-return              Treat a non-zero int return as failure: raise
+                                (e.g. "x_len * factor"). With --result-field,
+                                the number of records the C is handed room
+                                for (default: max_results, 64).
+    --check-return             Treat a non-zero int return as failure: raise
                                 RuntimeError(rc), return None on success.
                                 Requires an integer --return-type.
     --why                       The C function takes a trailing

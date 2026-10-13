@@ -65,7 +65,8 @@ def test_str_count_zero_raises_and_frees_the_buffer():
         variable_output=True, out_type="str", out_size="n", check_return=True
     )
     i_check = src.index("if (_n == 0) {")
-    assert "free(_buf);" in src[i_check : src.index("return NULL;", i_check)]
+    block = src[i_check : src.index("return NULL;", i_check)]
+    assert "PyMem_Free(_buf);" in block
     assert '"fb failed (returned 0)"' in src
 
 
