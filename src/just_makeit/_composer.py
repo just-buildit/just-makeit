@@ -957,43 +957,36 @@ def _has_ranged(cfg: dict, module: str) -> bool:
     )
 
 
-# Shared scalar-or-(lo, hi) parser for ranged composer fields. Returns lo/hi as
-# doubles + a flag; the caller casts to the field's C type. A scalar leaves
-# *is_range 0; a 2-sequence (not str/bytes) sets it. Reproducible draws happen
-# in the composer core — this only records the bounds the user passed.
+# Shared scalar-or-(lo, hi) splitter for ranged composer fields. It returns
+# the bound OBJECTS, never their values: each converts at the call site by
+# its field's own type row (`_range_parse_c`). -1 is an error; 0 a scalar,
+# in *lo; 1 a 2-sequence (not str/bytes), in *lo and *hi. Every bound it
+# hands back is a new reference. Reproducible draws happen in the composer
+# core -- this only records the bounds the user passed.
 _RANGE_PARSE_FN = "\n".join(
     [
         "static int",
-        "_jm_parse_range(PyObject *o, double *lo, double *hi, int *is_range)",
+        "_jm_parse_range(PyObject *o, PyObject **lo, PyObject **hi)",
         "{",
         "    if (PySequence_Check(o) && !PyUnicode_Check(o)",
         "        && !PyBytes_Check(o)) {",
         "        if (PySequence_Size(o) != 2) {",
         "            PyErr_SetString(PyExc_ValueError,",
         '                            "range must be a (low, high) pair");',
-        "            return 0;",
+        "            return -1;",
         "        }",
-        "        PyObject *a = PySequence_GetItem(o, 0);",
-        "        PyObject *b = PySequence_GetItem(o, 1);",
-        "        double dlo = a ? PyFloat_AsDouble(a) : -1.0;",
-        "        double dhi = b ? PyFloat_AsDouble(b) : -1.0;",
-        "        Py_XDECREF(a);",
-        "        Py_XDECREF(b);",
-        "        if (PyErr_Occurred())",
-        "            return 0;",
-        "        *lo = dlo;",
-        "        *hi = dhi;",
-        "        *is_range = 1;",
+        "        *lo = PySequence_GetItem(o, 0);",
+        "        *hi = *lo ? PySequence_GetItem(o, 1) : NULL;",
+        "        if (!*hi) {",
+        "            Py_XDECREF(*lo);",
+        "            return -1;",
+        "        }",
         "        return 1;",
         "    }",
-        "    {",
-        "        double v = PyFloat_AsDouble(o);",
-        "        if (PyErr_Occurred())",
-        "            return 0;",
-        "        *lo = v;",
-        "        *is_range = 0;",
-        "    }",
-        "    return 1;",
+        "    Py_INCREF(o);",
+        "    *lo = o;",
+        "    *hi = NULL;",
+        "    return 0;",
         "}",
         "",
     ]
@@ -1003,6 +996,110 @@ _RANGE_PARSE_FN = "\n".join(
 def render_range_helper(cfg: dict, module: str) -> str:
     """Emit the shared ranged-field parser once, when the module uses ranges."""
     return _RANGE_PARSE_FN if _has_ranged(cfg, module) else ""
+
+
+def _range_parse_c(
+    f: dict,
+    meta: dict,
+    src: str,
+    dst: str,
+    mask: str,
+    fail: str,
+    indent: str = "    ",
+) -> str:
+    """Statements storing ranged field *f* from the ``PyObject *`` *src*.
+
+    gh-2224: each bound converts by the field's own ``_CTYPE_META`` row,
+    through :func:`~just_makeit._context._parse.scalar_parse_c` -- the parse
+    a plain field of that type takes, so an integer keeps every bit and one
+    its type cannot hold is refused (gh-2144). This read both bounds as
+    doubles and cast them, so a 64-bit value past 2**53 changed and an
+    ``int8_t`` given 300 wrapped. Nothing is stored until both bounds have
+    converted, so a refused pair leaves the field as it was.
+
+    Parameters
+    ----------
+    f : dict
+        The field row, annotated ``_ranged`` with its flag macro.
+    meta : dict
+        Its ``_CTYPE_META`` row (:func:`_number_meta`).
+    src : str
+        The C expression naming the value: a scalar or a ``(lo, hi)`` pair.
+    dst : str
+        The field's lvalue; its companion is ``<dst>_hi``.
+    mask : str
+        The ``ranged`` bitmask lvalue the field's flag is set in.
+    fail : str
+        The C statement leaving the wrapper once an exception is set.
+    indent : str, optional
+        Prefixed to every line. The statements declare locals, so the
+        caller puts them in a block of their own.
+
+    Returns
+    -------
+    str
+        The statements, each line ending in a newline.
+    """
+    n, flag, i = f["name"], f["_ranged"], indent
+    j = i + "    "
+    lo = scalar_parse_c(
+        f["type"],
+        "_a",
+        "_lo",
+        f"{{ Py_DECREF(_a); Py_XDECREF(_b); {fail} }}",
+        label=n,
+        meta=meta,
+        indent=i,
+    )
+    hi = scalar_parse_c(
+        f["type"],
+        "_b",
+        "_hi",
+        f"{{ Py_DECREF(_b); {fail} }}",
+        label=n,
+        meta=meta,
+        indent=j,
+    )
+    return (
+        f"{i}PyObject *_a = NULL, *_b = NULL;\n"
+        f"{i}int _r = _jm_parse_range({src}, &_a, &_b);\n"
+        f"{i}if (_r < 0)\n"
+        f"{i}    {fail}\n"
+        f"{lo}"
+        f"{i}Py_DECREF(_a);\n"
+        f"{i}if (_r) {{\n"
+        f"{hi}"
+        f"{j}Py_DECREF(_b);\n"
+        f"{j}{dst}_hi = _hi;\n"
+        f"{j}{mask} |= {flag};\n"
+        f"{i}}} else {{\n"
+        f"{j}{mask} &= ~(unsigned){flag};\n"
+        f"{i}}}\n"
+        f"{i}{dst} = _lo;\n"
+    )
+
+
+def _range_return_c(meta: dict, dst: str, indent: str = "        ") -> str:
+    """The statement returning ranged field *dst* as its ``(lo, hi)`` tuple.
+
+    gh-2224: each bound by its type's own ``to_py``. ``"(dd)"`` on a source
+    and ``"(nn)"`` on a segment changed a 64-bit value past 2**53, read an
+    integer source pair back as floats and truncated a ``double`` segment
+    pair. ``N`` hands the new references to the tuple, which releases them
+    if either conversion failed.
+
+    >>> from just_makeit._types import _CTYPE_META
+    >>> print(_range_return_c(_CTYPE_META["int64_t"], "s->f", ""))
+    return Py_BuildValue("(NN)",
+                         PyLong_FromLongLong((long long)s->f),
+                         PyLong_FromLongLong((long long)s->f_hi));
+    """
+    cont = indent + " " * len("return Py_BuildValue(")
+    return (
+        f'{indent}return Py_BuildValue("(NN)",\n'
+        f"{cont}{meta['to_py'](dst)},\n"
+        f"{cont}{meta['to_py'](dst + '_hi')});"
+    )
 
 
 #: gh-1525: what the source type's ``tp_init`` declares beside the source
@@ -1595,22 +1692,20 @@ def render_source_type(cfg: dict, module: str) -> str:
             assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
         return -1;""")
         elif f.get("_ranged"):
-            flag = f["_ranged"]
             ct = f["type"]
             default = f.get("default", "0")
+            # gh-2224: each bound by the field's own type row.
+            parse = _range_parse_c(
+                f,
+                _number_meta(ct, _row(module, "source.fields", n)),
+                n,
+                f"self->src.{n}",
+                "self->src.ranged",
+                "return -1;",
+                indent="        ",
+            )
             assign.append(f"""    if ({n} != NULL) {{
-        double _lo, _hi;
-        int    _r;
-        if (!_jm_parse_range({n}, &_lo, &_hi, &_r))
-            return -1;
-        self->src.{n} = ({ct})_lo;
-        if (_r) {{
-            self->src.{n}_hi = ({ct})_hi;
-            self->src.ranged |= {flag};
-        }} else {{
-            self->src.ranged &= ~(unsigned){flag};
-        }}
-    }} else {{
+{parse}    }} else {{
         self->src.{n} = ({ct}){default};
     }}""")
         else:
@@ -1977,37 +2072,28 @@ static int
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         elif f.get("_ranged"):
-            # scalar, or (lo, hi) when the field's ranged bit is set.
+            # scalar, or (lo, hi) when the field's ranged bit is set; each
+            # bound by the field's own type row (gh-2224).
             flag = f["_ranged"]
-            ct = f["type"]
-            to_py = _number_meta(ct, _row(module, "source.fields", n))[
-                "to_py"
-            ](f"self->src.{n}")
+            meta = _number_meta(f["type"], _row(module, "source.fields", n))
+            dst = f"self->src.{n}"
+            pair = _range_return_c(meta, dst)
+            parse = _range_parse_c(
+                f, meta, "value", dst, "self->src.ranged", "return -1;"
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
     if (self->src.ranged & {flag})
-        return Py_BuildValue("(dd)", (double)self->src.{n},
-                             (double)self->src.{n}_hi);
-    return {to_py};
+{pair}
+    return {meta["to_py"](dst)};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    double _lo, _hi;
-    int    _r;
-    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
-        return -1;
-    self->src.{n} = ({ct})_lo;
-    if (_r) {{
-        self->src.{n}_hi = ({ct})_hi;
-        self->src.ranged |= {flag};
-    }} else {{
-        self->src.ranged &= ~(unsigned){flag};
-    }}
-    return 0;
+{parse}    return 0;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -2369,16 +2455,15 @@ def render_segment_type(cfg: dict, module: str) -> str:
                 f"            self->{n} = _i;\n"
             )
         elif f.get("_ranged"):
-            flag = f["_ranged"]
-            body = (
-                "            double _lo, _hi;\n"
-                "            int    _r;\n"
-                "            if (!_jm_parse_range(_o, &_lo, &_hi, &_r))\n"
-                "                goto fail;\n"
-                f"            self->{n} = ({ct})_lo;\n"
-                f"            if (_r) {{ self->{n}_hi = ({ct})_hi;"
-                f" self->ranged |= {flag}; }}\n"
-                f"            else {{ self->ranged &= ~(unsigned){flag}; }}\n"
+            # gh-2224: each bound by the field's own type row.
+            body = _range_parse_c(
+                f,
+                _number_meta(ct, _row(module, "segment.fields", n)),
+                "_o",
+                f"self->{n}",
+                "self->ranged",
+                "goto fail;",
+                indent=" " * 12,
             )
         else:
             # gh-2035: by the declared type, the setter's conversion below.
@@ -2491,37 +2576,29 @@ fail:
     for f in fields:
         n, ct = f["name"], f["type"]
         if f.get("_ranged"):
-            # scalar, or (lo, hi) when the field's ranged bit is set. Segment
-            # ranged fields are integer counts → build/parse via Py_ssize_t.
+            # scalar, or (lo, hi) when the field's ranged bit is set; each
+            # bound by the field's own type row (gh-2224: this built the pair
+            # through Py_ssize_t, so a `double` pair read back truncated).
             flag = f["_ranged"]
-            to_py = _number_meta(ct, _row(module, "segment.fields", n))[
-                "to_py"
-            ](f"self->{n}")
+            meta = _number_meta(ct, _row(module, "segment.fields", n))
+            dst = f"self->{n}"
+            pair = _range_return_c(meta, dst)
+            parse = _range_parse_c(
+                f, meta, "value", dst, "self->ranged", "return -1;"
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
     if (self->ranged & {flag})
-        return Py_BuildValue("(nn)", (Py_ssize_t)self->{n},
-                             (Py_ssize_t)self->{n}_hi);
-    return {to_py};
+{pair}
+    return {meta["to_py"](dst)};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    double _lo, _hi;
-    int    _r;
-    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
-        return -1;
-    self->{n} = ({ct})_lo;
-    if (_r) {{
-        self->{n}_hi = ({ct})_hi;
-        self->ranged |= {flag};
-    }} else {{
-        self->ranged &= ~(unsigned){flag};
-    }}
-    return 0;
+{parse}    return 0;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '

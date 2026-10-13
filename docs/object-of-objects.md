@@ -658,8 +658,9 @@ With `[module.X.json] enabled = true` the composer gets
     refuse with a `ValueError` naming the field a number outside that range
     or with a fraction, a string that is not a decimal integer or is out of
     the type's range, and a sign on an unsigned field. The JSON face round-trips by
-    construction (a 64-bit ranged field set from Python is already a double
-    before it reaches `to_json`, gh-2224); reusable by any composer with zero
+    construction, as the Python face does: a ranged field's bounds parse and
+    read back at the field's own type, so a 64-bit pair is exact there too
+    (gh-2224); reusable by any composer with zero
     hand-written wire code. (Uses cJSON; the
     project provides the header via `json.include_dir` and links its json lib via
     `extra_link_libs`.)
@@ -1032,7 +1033,7 @@ number.
 | `create_why`        | the create takes a trailing `const char **why`; every face that creates raises or prints its reason (gh-1755)                                                                                                                                                                                                                                    |
 | `[X.source]`        | `object`, `struct`, `type_name`, `fields[]`; optional `computed[]` and `generates` (the straight-C seams, §4.3) and `ranged`                                                                                                                                                                                                                     |
 | `[X.segment]`       | `type_name`, `struct`, `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`), `flat_sources` (a one-source segment proxies that source's fields as read-only attributes), `ranged`                                                                                                                                |
-| `ranged`            | on `[X.source]` / `[X.segment]`: `[{name, flag}, …]`, fields that also take a `(lo, hi)` pair, redrawn uniformly each repeat; the struct carries a `<name>_hi` companion                                                                                                                                                                         |
+| `ranged`            | on `[X.source]` / `[X.segment]`: `[{name, flag}, …]`, fields that also take a `(lo, hi)` pair, redrawn uniformly each repeat; the struct carries a `<name>_hi` companion. Each bound converts at the field's own type, so an integer one keeps every bit and is refused out of range (gh-2224)                                                   |
 | `[X.timeline]`      | `type_name` (the `Timeline` type is emitted only when it is set)                                                                                                                                                                                                                                                                                 |
 | `[X.oo]`            | `factories[]`, `discriminant`, `composer_type_name`                                                                                                                                                                                                                                                                                              |
 | `[[X.serializers]]` | an extra delegated serializer `{name, fn, returns?, params?[], header?}`: a `<Composer>.<name>(<params>)` method calling the project's C `fn(<params>, segs, n)` over the resolved segments, for a domain wire format jm does not generate (gh-317)                                                                                              |
