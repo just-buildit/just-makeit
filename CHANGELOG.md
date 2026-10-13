@@ -1,5 +1,307 @@
 ## [Unreleased]
 
+## [0.105.0] — 2026-10-13
+
+### Added
+
+- **`consumed_fn`: a list-of-records method re-offers the input its kernel
+    left** (gh-2204). A kernel whose output cannot be bounded before the call
+    -- a detector's hit count depends on the data -- stops when its `result`
+    buffer is full, and the binding called it once: `push(np.ones(100))`
+    into a kernel that stops at 64 returned 64 records, and elements 64..99
+    were never seen by the C. Declare `consumed_fn = "<fn>"` (or
+    `jm method --consumed-fn <fn>`), naming the author's
+    `size_t <fn>(const <state> *)` -- the input the last call took -- and
+    the binding calls the kernel, appends its records, and offers it the
+    rest of the input block until none is left, returning every record in
+    one list, in call order, as before. Params ride along unchanged on every
+    call. With a header-declared `_max_out()` as well (gh-2184), each call
+    is sized from it for the input still left. A call that takes none of
+    the input left raises `RuntimeError` naming the method rather than
+    spinning, and so does one claiming more than it was given. The name is
+    the author's and spelled as written under a `c_prefix`. The key is
+    refused at load, and by `jm method` before it writes, on a method with
+    no array input or one that does not return a list of records. A module
+    object's fragment rendered before the key is declared is reported by
+    `apply`; delete it and re-run `apply` to pick the loop up.
+
+- **`short_out`: a backpressure kernel takes an `out=` smaller than
+    `max_out()`** (gh-2230). A `variable_output` method's `out=` had to hold at
+    least what the binding would have allocated, so a short buffer raised
+    `out has N elements, need >= M` -- right for a kernel that merely clamps,
+    and fatal for one whose contract is backpressure: it writes the rows that
+    fit, takes only the input that produced them and reports how much, and no
+    caller could ever present it a short buffer. `short_out = true`
+    (`jm method --short-out`) declares that contract: the buffer is then held
+    to its shape alone -- any length, `0` included; under `out_cols` any number
+    of rows of that width -- the kernel is handed its true size, and the result
+    is shaped to what it wrote. How much input was taken stays the object's
+    own property, so the caller resumes with
+    `rows = s.push(x, out=buf); x = x[s.consumed:]`. It requires
+    `pass_capacity` and is refused at load without it (and without
+    `variable_output`); a method that does not declare it keeps the minimum,
+    word for word. Both `.pyi` faces and the runtime `__doc__` say the buffer
+    has no minimum.
+
+- **`no_count`: a void-input `variable_output` method can be `f()`**
+    (gh-2233). A `variable_output` method with `arg_type = "void"` and no
+    params always got a synthesized Python `count` and a `size_t n` in its
+    kernel, and no key removed them, so a kernel that writes at most one
+    result sized by the object alone -- a spectrogram's `flush`, a PSD
+    readout -- carried a keyword its callers had to pass for nothing and a
+    slot its C had to `(void)`. `no_count = true` (`jm method --no-count`)
+    drops both: the kernel is `fn(state, out[, max_out])`, its
+    `<fn>_max_out(state)` takes the state alone and sizes every call, and
+    the binding, both `.pyi` writers and the runtime `__doc__` offer no
+    `count` -- only the optional `out=`, checked against that bound as
+    before; the generated element round trip (gh-1404) calls such a reader
+    `()`. `pass_capacity` keeps its exact allocation there (the bound
+    cannot miss a count the call does not have), and the key composes with
+    `out_cols`, `none_on_empty`, `count_type` with `error_negative`,
+    `exact_max_out` and `multi_output`. It is refused at load where there is
+    no synthesized count to drop -- without `variable_output`, with an
+    input, with params, beside `count_default` or `count_name` -- and by
+    `apply` when the header's `_max_out` still takes a count. A method that
+    does not declare it is untouched.
+
+- **A composer's generating source can expose its generator's methods**
+    (gh-2259). `[module.X.source.generates] methods = ["prod"]` binds each
+    named method of the generator object on the source type, so
+    `Synth(...).prod(x)` works without building the generator by hand. The
+    method runs against the generator `steps()` uses. The first call builds
+    it through `bridge_fn` and refuses as `steps()` does. Later calls, from
+    either method, continue the same state. The binding, its runtime
+    docstring and its `.pyi` member are the generator's, written by the same
+    emitter. Their `Raises` also lists what that first build can raise, as
+    `steps()`'s does, and an error the binding raises names the source
+    (`Synth.prod: ...`). Only the listed names are delegated. A name is
+    refused when the manifest loads if the generator does not declare it or
+    the source already has that member (a field, `fs`, a computed property,
+    `steps`, `step`, `reset`). It is also refused if the source cannot carry
+    the method: a built-in member of the generator, a `varargs` or
+    `manual_stub` method, a borrow or its release, a `single` record, or a
+    `codec` method.
+
+### Fixed
+
+- **A `variable_output` method with params and no input parses them as
+    every other method does** (gh-2023). That shape parsed its params with
+    its own copy of the method parse, which knew scalars and plain arrays
+    only. A `path` param did not compile, and an `enum` param was parsed as
+    an `int` while both stubs said `str`, so the choice string the stub
+    advertised was refused. A `bytes` or `capsule` param, a record-row
+    array and `strict` never reached it either. The params now go through
+    the method parse, with `out=` as its trailing argument, as the shape
+    with an input has since gh-1960.
+
+- **A composer CLI reads an enum segment field as a choice, not a
+    number** (gh-2140). The generated CLI's segment-field loop had no enum
+    branch, so doppler's `gap_noise` shape (`type = "int"`,
+    `enum = "gap_noise"`, `default = "auto"`) rendered
+    `int gap_noise = (int)auto;`, which does not compile, and with a
+    default that did compile, `--gap_noise off` read as the number `0`
+    whatever choice was named. A source and a segment enum field now share
+    one treatment: the flag starts at the default's C value and is looked
+    up in the `[[enum]]` table, and an unknown choice prints
+    `<prog>: --gap_noise: invalid choice 'x' (choices: auto, off)` and
+    exits 2. An enum that binds `enumerators` now reaches C as its
+    constant on the source field too, where the CLI had stored the
+    choice's position.
+
+- **The `get_state` / `set_state` docstrings no longer say construction
+    parameters never travel** (gh-2185, gh-2234). Every `serializable`
+    object's `get_state` said "Construction parameters are not included",
+    and its `set_state` said "the object keeps the parameters it was
+    constructed with". That was on the runtime `__doc__` and both `.pyi`
+    writers. Both claims are false for a core whose blob carries a setter's
+    value as state, which `set_state` then replaces, and for one that
+    writes configuration as reject keys and refuses a blob built
+    differently. jm renders one text for every object and cannot tell
+    which kind a core is, so the text now says what holds for all of them.
+    It captures the state that evolves as the object runs, including any
+    value a setter changed after construction. Construction parameters are
+    not restored, so restore into an object built the same way. A core may
+    check some of them and refuse a blob built differently. `apply`
+    refreshes the text in an existing project, a module object's binding
+    included. `tests/test_gh2185_state_triplet_prose.py` walks a generated
+    project for every face of the two methods and refuses the old claims on
+    each.
+
+- **A list-of-records module function, and the generated benchmark of a
+    list-of-records method, size the result from a declared capacity**
+    (gh-2205). gh-2184 left two faces handing the C a fixed `max_results`
+    (64): a `jm function --result-field` binding mallocked 64 records even
+    when `out_size` was declared, so a call due more returned the first 64,
+    and the benchmark timed a kernel that stops at a full buffer over 64
+    records rather than its whole call. A records function now sizes its
+    buffer from `out_size` -- the capacity key a `variable_output` function
+    already declares, a C expression over its params -- and hands the C
+    that count; `jm function --out-size` is accepted with `--result-field`.
+    Undeclared, `max_results` stands. `out_size` beside
+    `max_results_param`, two capacities for one buffer, is refused. An
+    empty input then asks for 0 records, and `malloc(0)` may return NULL,
+    a `MemoryError` for an empty call: the function face's buffers (the
+    records and the `str` output) now come from `PyMem_Malloc` /
+    `PyMem_Free`, as the method face's do, and an empty call returns `[]`. The
+    benchmark asks the method's header-declared `_max_out()` when the header
+    declares it at render time and allocates that many records; it stays
+    create-only, so delete it and re-run `apply` to pick a later
+    declaration up.
+
+- **A `uint64_t` or `size_t` argument outside its range raises
+    `OverflowError` instead of wrapping into C, and takes a numpy integer**
+    (gh-2220). Both parsed through PyArg's `K`, which masks, so `-1`
+    arrived as `2**64 - 1` and `2**64` as `0` before any range check could
+    see them: a `size_t` count given `-1` became `SIZE_MAX`. `K` also
+    refused a numpy integer before Python 3.14, so `np.uint64(5)` raised
+    `TypeError`. Both now parse an object and convert it through
+    `__index__` and the checked `PyLong_AsUnsignedLongLong`, so a value
+    outside the range raises
+    `OverflowError: n: -1 is out of range for size_t [0, 18446744073709551615]`,
+    in the words every other integer type uses, and any integer with
+    `__index__` is accepted. A `float` is refused with `TypeError`, as for
+    every integer type. This holds on every face: constructors,
+    `set_<field>()`, writable properties, method and module-function params,
+    `step()` and its controllable overrides, composer rows, and handle and
+    capsule modules. The constructor, `set_<field>()`, `step()`, override
+    and `variable_output` parses now go through the one conversion every
+    other face uses instead of spelling their own. A parameter named
+    `<x>_raw` or `<x>_obj` beside a scalar `x` that the conversion declares
+    such a local for is refused when it is declared, where it used to
+    produce C that did not compile. A module object's fragment rendered
+    before this fix still parses through `K`, and `jm apply` names each
+    member whose format no longer matches.
+
+- **A composer's ranged field crosses the Python face at its own type**
+    (gh-2224). A ranged source or segment field -- a scalar or a
+    `(lo, hi)` pair -- parsed each bound as a `double` and cast it, and read
+    the pair back through `"(dd)"` on a source and `Py_ssize_t` on a
+    segment. So a `uint64_t`, `int64_t`, `size_t` or `ptrdiff_t` bound past
+    2^53 changed when set and again when read, an integer source pair read
+    back as two floats, a `double` segment pair read back truncated to
+    integers, and an `int8_t` given 300 wrapped to 44, all with no error.
+    Each bound now parses through the field's own `_CTYPE_META` row
+    (`scalar_parse_c`, the parse a plain field of that type takes) and the
+    pair is built from its `to_py`, on the constructor, the attribute and
+    `Segment.sum`. So every value round-trips exactly, a bound the type
+    cannot hold is refused with an `OverflowError` naming the field
+    (gh-2144), and an integer field's bound is an `int`, as its `.pyi`
+    always said: a `float` there is now a `TypeError`, as it already was for
+    a plain integer field -- and, until gh-2220, so is a numpy integer for a
+    `uint64_t` or `size_t` field on Python before 3.14, as for a plain one.
+    `_jm_parse_range` now only splits the value into its bound objects.
+
+- **A generated C command line refuses a bad numeric flag instead of
+    running with a wrong value** (gh-2225). A composer's c-face CLI read
+    each numeric flag with `strtoull` (or `strtod`) and a cast, and a
+    `jm app` C executable with `strtol` and a cast. Neither checked the end
+    pointer, `errno` or the declared type's range, so `--count abc` ran
+    with `0`, an overflowing count with `ULLONG_MAX`, `--gain 300` on an
+    `int8_t` with `44` and `--n -1` on a `uint8_t` with `255`, all with
+    exit status 0 and no message. Both faces now read every numeric flag
+    through one generated parser: the whole argument at its declared type,
+    held to the type's `<stdint.h>` / `<limits.h>` range (a `float` read at
+    its own precision), or the tool prints
+    `<prog>: --gain: '300' is out of range for int8_t [-128, 127]` and
+    exits 2. A valid argument reads exactly as before, in the same grammar
+    (decimal for an app, `0x` hex and `0` octal too for a composer). The
+    parser is emitted only into a file whose flags call it.
+
+- **A property getter's binding no longer carries an `<<IMPLEMENT>>`
+    marker** (gh-2231). A property backed by a C getter call rendered
+    `/* <<IMPLEMENT: return the computed or stored value>> */` in the
+    generated binding, directly above the finished
+    `return ...(<comp>_get_<prop>(self->handle));`. That was in a standalone
+    object's `_ext.c`, a module object's `_ext_<obj>.c` fragment and a
+    view's fragment. The marker tells the author which body to write, and
+    there it pointed at nothing: the stub the author fills in is the C
+    getter in `_core.c`, which keeps its own. `apply` drops the line from an
+    `_ext.c`. A fragment is not rewritten wholesale, so `status` reports one
+    rendered before this as UNEXPLAINED with every unit identical until it
+    is regenerated. `tests/test_gh2231_no_implement_marker_in_glue.py`
+    builds the broad fixture tree and refuses the marker in every file jm's
+    ownership table calls jm's content.
+
+- **A method that declares a way to refuse claims no result in its runtime
+    example** (gh-2232). The doctest jm writes into a method's `__doc__`
+    printed the return type's zero as the call's output, and a
+    `variable_output` result's dtype after it. Both are true of the
+    scaffold's stub and a guess about any real kernel. For a method that
+    declares `error_negative`, `error_sentinel` or `error_on_empty`, that
+    guess is exactly what the declaration says may not happen: doppler's
+    `flush(np.zeros(4))` showed `0` over a kernel that refuses a zero row.
+    Under `error_on_empty` the scaffold's own stub refused it too. gh-869
+    already stopped the guess for `status_return`. Every refusal
+    `declared_raise` reads now gets that treatment: the example shows the
+    call and expects no output, so `>>> y = obj.flush(...)` with no line
+    after it. A value is bound to `y` rather than echoed, so the line still
+    passes whenever the call does. A method that cannot refuse keeps its
+    result. The `.pyi` synthesizes no method example, so the two faces
+    agree. `tests/test_gh2232_refusing_example.py` reads the refusal keys
+    from `declared_raise` and refuses a claimed result in each shape one
+    can be declared on.
+
+- **A composer's JSON reader refuses a value its field's C type cannot
+    hold** (gh-2236). The exact reader #2221 added for a 64-bit field
+    (gh-2139) parses into an `unsigned long long` / `long long` and then
+    cast that to the field's type. A `size_t` or `ptrdiff_t` parses through
+    a `long long` on every target and is 32 bits on a 32-bit one, so there
+    `"4294967296"` -- or the number 4294967296 -- passed the reader and the
+    cast dropped its high bits, with no error. The value is now converted
+    back and compared before it is stored, and one the cast would change is
+    refused with the reader's own `ValueError`, naming the field and saying
+    it is out of range. Nothing changes on a 64-bit target, where the cast
+    loses nothing.
+
+- **A composer's JSON reader refuses a number its integer field cannot
+    hold** (gh-2247). `from_json` / `from_file` read every field a double
+    holds through `_json_num` and cast it, so an integer field took `1.5`
+    as `1`, and a value past its type -- `4294967296`, `-1` or `1e30` into
+    a `uint32_t` -- arrived wrapped (`0`, `4294967295`, `0`), a cast that
+    is undefined behaviour in C. A `bytes` field's elements were cast into a
+    byte the same way, so `256` arrived as `0`. Nothing raised. Every
+    integer field narrower than 64 bits, plain or ranged, and every `bytes`
+    element now reads only a whole number within its type's range
+    (`_types.int_limits`, from the type row) and refuses anything else with
+    the reader's `ValueError`, naming the field and saying the value is out
+    of range. The factory keeps that exception for every composer, not only
+    one with a 64-bit field.
+
+- **A `size_t` argument above `SIZE_MAX` raises `OverflowError` on a
+    target where `size_t` is 32 bits** (gh-2258). The checked parse gh-2220
+    added converts a `uint64_t` / `size_t` through
+    `PyLong_AsUnsignedLongLong`, which refuses only what an
+    `unsigned long long` cannot hold, so on such a target a value between
+    `SIZE_MAX` and `2**64` passed it and wrapped on the cast with no error.
+    The converted value is now compared with the type's maximum before the
+    cast and refused in the same words. Nothing changes where `size_t` is
+    64 bits: the comparison is always false there, and the compiler drops
+    it. The maximum is read from the type's one range declaration, which
+    the generated command line and a composer's JSON reader read too.
+
+- **A `batch` method has a `.pyi` member and an array-typed `__doc__`, and
+    `nogil` releases the GIL on every method whose binding jm writes**
+    (gh-2259). A `batch` method (`jm method --batch`) is jm's elementwise
+    block method: an array in, an array of the same length out, an optional
+    `out=`. The standalone `.pyi` had no member for it, the module one typed
+    it `prod(self, x: complex) -> complex`, and the runtime `__doc__` said
+    `x : complex` and `Returns complex`. Both stubs and the `__doc__` now
+    read `prod(x, out=None) -> NDArray[...]`, or `fill(count=1, out=None)`
+    with no input, and agree. Their sections come from the same builder.
+    `nogil = true` was accepted and ignored on a `batch` method, and on
+    every other shape that spelled its kernel call inline: a scalar,
+    `void`, `status_return`, `error_negative`, `multi_output` or `out_type`
+    result, a codec-pack method's sink, and a capsule module's bare
+    `(state)` method. doppler had nine such methods that it believed
+    released the GIL. Every call jm writes now goes through one emitter, so
+    the GIL is released on both of a batch method's paths, with the arrays
+    acquired and the result allocated first. A method without `nogil`
+    generates the same code as before. A `varargs` or `manual_stub` method
+    has no generated call, so jm refuses `nogil` there and asks you to
+    release the GIL in your own binding. A module object's fragment
+    rendered before this fix keeps its old call, and `jm apply` and
+    `jm status` name each `nogil` member in it that holds the GIL.
+
 ## [0.104.0] — 2026-10-13
 
 ### Added
