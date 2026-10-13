@@ -3772,11 +3772,19 @@ def make_methods_ctx(
                         *_from_line,
                         _obj_line,
                         f"    >>> y = {_vo_call_example}",
+                        # gh-2232: a declared refusal (`error_on_empty`,
+                        # `error_sentinel`, a signed count's
+                        # `error_negative`) claims no result, as on the
+                        # fixed-output demo: the kernel may refuse this input
+                        # -- the scaffold's own stub does, under
+                        # `error_on_empty`.
                         # A structured row has no scalar dtype to print, and
                         # the full repr is long and numpy-version-sensitive;
                         # the field names are the stable, useful answer.
                         *(
-                            [
+                            []
+                            if _raise_pair is not None
+                            else [
                                 "    >>> y.dtype.names",
                                 # Python's own repr, so the one-field case
                                 # keeps its trailing comma and the doctest is
@@ -4535,7 +4543,21 @@ def make_methods_ctx(
                 _fix_demo.append("")
             _fix_demo += [*_from_line, _obj_line]
             _call_str = _demo_call_args()
-            if out_type or multi_output or borrow:
+            if _raise_pair is not None:
+                # gh-869: a `status_return` demo showed the status code as
+                # the call's output; it has none (`-> None` above).
+                # gh-2232: the same rule for every way to refuse, read from
+                # `declared_raise` as the binding's raise is. A method that
+                # declares one says its kernel may refuse the demo's input,
+                # so the demo shows the call and claims no result -- the
+                # stub's zero is a guess about a kernel jm has not seen. A
+                # value is bound rather than echoed, so the line stays a
+                # doctest that passes whenever the call does.
+                _fix_demo.append(
+                    f"    >>> {'' if _fix_ret_hint == 'None' else 'y = '}"
+                    f"obj.{name}({_call_str})"
+                )
+            elif out_type or multi_output or borrow:
                 # gh-1312: a borrow demos like every other array-returning
                 # shape. Without this it fell to the scalar branch below and
                 # printed `0j` as the expected output of a call that returns
@@ -4543,14 +4565,7 @@ def make_methods_ctx(
                 _fix_demo.append(f"    >>> y = obj.{name}({_call_str})")
                 _fix_demo.append("    >>> y.ndim")
                 _fix_demo.append("    1")
-            elif (
-                return_type != "void"
-                and return_type in _CTYPE_META
-                # gh-869: ...and so the demo showed the status code as the
-                # call's output. It has none; the expected-output line made
-                # the doctest wrong as well as the signature.
-                and not status_return
-            ):
+            elif return_type != "void" and return_type in _CTYPE_META:
                 _py_z = _CTYPE_META[return_type].get("py_zero", "0")
                 _fix_demo.append(f"    >>> obj.{name}({_call_str})")
                 _fix_demo.append(f"    {_py_z}")
