@@ -552,6 +552,19 @@ A source can hand work back to the project as plain C, with no CPython in it:
     unless the optional `bridge_error_fn`,
     `const char *fn(const <struct> *, double fs)`, returns a reason, which is
     raised as `ValueError(reason)` (gh-1307).
+- **`methods = ["prod", ...]`** in the same table (gh-2259) puts named
+    methods of the generator object on the source type too:
+    `Synth(...).prod(x)` instead of building the generator yourself. Each
+    runs against the same generator `steps()` uses, built on the first call
+    (with the same refusal) and continued after, so the two interleave on
+    one state. The binding, its docstring and its `.pyi` member are the
+    generator's own, written by the same emitter. Only the names listed are
+    delegated. A name is refused at load when the generator does not
+    declare it, when it is already a source member (a field, `fs`, a
+    computed property, `steps`, `step`, `reset`), or when the source cannot
+    carry it: a built-in member of the generator, a `varargs` or
+    `manual_stub` method (hand-written bindings), a borrow or its release
+    (they lend the generator's memory), or a `single` record.
 - **`[[module.X.source.computed]]`** (`name`, `type`, `fn`, `doc`) is a
     read-only property computed in C on every read:
     `<type> fn(const <struct> *)`.

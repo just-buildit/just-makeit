@@ -1118,6 +1118,11 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
                      same inputs -- a sample rate too low for the config is a
                      reason too.
 
+    ``methods``      optional (gh-2259): names of the generator's declared
+                     methods the source exposes too, each bound against the
+                     generator ``steps`` builds (:func:`_source_delegated`).
+                     Only the names listed: nothing is inherited implicitly.
+
     Defaults (overridable): ``state_type = <generator>_state_t``,
     ``steps_fn/step_fn/reset_fn/destroy_fn = <generator>_{steps,step,reset,
     destroy}``, ``header = <generator>/<generator>_core.h``,
@@ -1141,6 +1146,7 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
         "destroy_fn": g.get("destroy_fn", f"{sym}_destroy"),
         "header": g.get("header", INC.core_include(gen, cfg)),
         "output_type": g.get("output_type", "float _Complex"),
+        "methods": list(g.get("methods") or []),
     }
 
 
@@ -1269,6 +1275,199 @@ def _source_gen_method_rows(tname: str, gen: dict) -> str:
             f"{m['flags']},\n     {doc}}},"
         )
     return "\n".join(rows)
+
+
+def _source_delegated(cfg: dict, module: str) -> dict:
+    """The generator methods a generating source delegates, rendered.
+
+    gh-2259. ``[module.X.source.generates] methods`` names methods the
+    generator object declares; each is bound on the source type too, so a
+    caller holding a ``Synth`` reaches ``prod`` without building a
+    ``WfmSynth`` themselves. The binding is not re-written here: it is
+    `make_methods_ctx`'s, the emitter that binds the method on the generator,
+    called with the generator's own arguments and a
+    :class:`~._context._methods.MethodHost` that moves only the C it is
+    built around -- ``self`` is the source, the state is the generator
+    ``steps`` builds and caches, and the guard builds it on first call
+    through ``ensure_gen``, with ``steps``'s refusal. Its docs and ``.pyi``
+    member are therefore the generator's, word for word.
+
+    Returns the emitter's context (``extra_methods_c``,
+    ``extra_methods_pymethoddef``, ``pyi_extra_methods``, ...) plus
+    ``enum_tables`` for the lookups an enum parameter calls; ``{}`` when the
+    source delegates nothing. What may be delegated is
+    :func:`delegated_method_errors`'s to decide, at load.
+    """
+    gen = _source_generates(cfg, module)
+    if not gen or not gen["methods"]:
+        return {}
+    from ._context import make_enum_tables_ctx, make_methods_ctx
+    from ._context._methods import MethodHost
+    from ._glue import component_ctx
+
+    gname = gen["generator"]
+    pkg = C.project_name(cfg)
+    # The generator's class name, C stem, package and constructor example,
+    # from the one builder its own binding renders from.
+    gctx = component_ctx(cfg, gname, pkg)
+    declared = {m["name"]: m for m in C.methods(cfg, gname)}
+    methods = [declared[n] for n in gen["methods"]]
+    tname = C.composer_source(cfg, module)["type_name"]
+    host = MethodHost(
+        prefix=f"{tname}_gen",
+        self_class=tname,
+        state="self->_gen",
+        guard=(
+            f"    if ({tname}_ensure_gen(self) < 0)\n        return NULL;\n"
+        ),
+    )
+    out = make_methods_ctx(
+        gname,
+        gctx["Component"],
+        methods,
+        pkg=pkg,
+        module_dir=gctx["module_dir"],
+        py_create_args=gctx.get("py_create_args", ""),
+        no_state=C.is_no_state(cfg, gname),
+        doc_blocks=cfg.get(gname, {}).get("_doc_blocks", {}),
+        codecs=C.codecs(cfg),
+        enums=C.enums(cfg),
+        records=C.records(cfg, gname),
+        properties=C.properties(cfg, gname),
+        csym=gctx["csym"],
+        host=host,
+    )
+    out.update(
+        make_enum_tables_ctx(
+            gname, gctx["Component"], methods, enums=C.enums(cfg)
+        )
+    )
+    return out
+
+
+def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
+    """Why a source cannot bind its generator's method *m*, or ``""``.
+
+    The source carries the generator's wrapper and its state, nothing more,
+    so a method needing anything else from the generator's own type is
+    refused rather than bound to half of it.
+    """
+    from . import _borrow
+    from . import _record
+    from ._builtins import absorbable_members
+
+    if m["name"] in absorbable_members(cfg, gname):
+        return (
+            "it is one of the generator's built-in members, which the source "
+            "does not delegate"
+        )
+    if m.get("varargs") or m.get("manual_stub"):
+        return (
+            "its binding is hand-written in the generator's own extension, "
+            "so jm has none to render onto the source"
+        )
+    if _borrow.is_borrow(m) or _borrow.is_release(m):
+        return (
+            "it lends memory the generator owns, and the source destroys its "
+            "generator when it is re-initialised"
+        )
+    if _record.is_record(m):
+        return (
+            "it returns a record type the generator's module publishes, "
+            "which a second module cannot publish as the same type"
+        )
+    return ""
+
+
+def delegated_method_errors(cfg: dict) -> "list[str]":
+    """Every ``[module.X.source.generates] methods`` entry jm cannot bind.
+
+    gh-2259. Asked at load (`_config.load`), so a wrong name stops before
+    anything is written. Each refusal names the entry:
+
+    - ``methods`` that is not an array of strings, or names one twice;
+    - a name the generator does not declare (``[[<generator>.methods]]``) --
+      only a declared method has a binding to delegate;
+    - a name that is already the source's own member: a field, ``fs``, a
+      computed property, or the ``steps``/``step``/``reset`` generation
+      binds -- two ``PyMethodDef`` rows or a row over a getset under one key,
+      the second silently shadowing the first;
+    - a declared method whose binding the source cannot carry
+      (:func:`_delegation_refusal`).
+
+    Examples
+    --------
+    >>> cfg = {"g": {"methods": [{"name": "prod", "batch": True}]},
+    ...        "module": {"m": {"kind": "composer", "source": {
+    ...            "type_name": "S", "fields": [{"name": "gain"}],
+    ...            "generates": {"generator": "g", "bridge_fn": "b",
+    ...                          "methods": ["prod", "gain", "nope"]}}}}}
+    >>> for e in delegated_method_errors(cfg):
+    ...     print(e.splitlines()[0])
+    [module.m.source.generates] methods: 'gain' is already the source's field.
+    [module.m.source.generates] methods: generator 'g' declares no method 'nope'.
+    """
+    errors: list[str] = []
+    for mod in C.modules(cfg):
+        if not C.is_composer_module(cfg, mod):
+            continue
+        src = C.composer_source(cfg, mod)
+        g = src.get("generates")
+        if not isinstance(g, dict) or "methods" not in g:
+            continue
+        where = f"[module.{mod}.source.generates] methods"
+        names = g["methods"]
+        if not isinstance(names, list) or not all(
+            isinstance(n, str) for n in names
+        ):
+            errors.append(
+                f"{where} = {names!r} must be an array of the generator's "
+                "method names."
+            )
+            continue
+        gname = str(g.get("generator") or "")
+        declared = {
+            str(m.get("name")): m
+            for m in C.methods(cfg, gname)
+            if isinstance(m, dict)
+        }
+        own = dict.fromkeys(
+            (str(f.get("name")) for f in src.get("fields", []) or []),
+            "field",
+        )
+        own["fs"] = "field"
+        for c in src.get("computed", []) or []:
+            own[str(c.get("name"))] = "computed property"
+        # The names only: what each says does not depend on the bridge.
+        for m in _source_gen_members({"bridge_fn": ""}):
+            own[m["name"]] = "generation method"
+        seen: set[str] = set()
+        for n in names:
+            if n in seen:
+                errors.append(f"{where}: {n!r} is listed twice.")
+                continue
+            seen.add(n)
+            if n in own:
+                errors.append(
+                    f"{where}: {n!r} is already the source's {own[n]}.\n"
+                    "  Delegating it would bind a second member under that "
+                    "name; drop it from the list."
+                )
+            elif n not in declared:
+                errors.append(
+                    f"{where}: generator {gname!r} declares no method {n!r}."
+                    "\n  Only a [[" + gname + ".methods]] entry has a "
+                    "binding to delegate; declared: "
+                    + (", ".join(sorted(declared)) or "none")
+                    + "."
+                )
+            else:
+                why = _delegation_refusal(cfg, gname, declared[n])
+                if why:
+                    errors.append(
+                        f"{where}: {n!r} cannot be delegated: {why}."
+                    )
+    return errors
 
 
 def _bridge_refusal_c(gen: dict) -> str:
@@ -2101,6 +2300,14 @@ static PyGetSetDef {tname}_getset[] = {{
     tp_methods_slot = ""
     if gen:
         out_t = gen["output_type"]
+        # gh-2259: the generator's own methods the source names, bound by
+        # the generator's emitter against the generator built just below.
+        dlg = _source_delegated(cfg, module)
+        dlg_c = "".join(
+            f"\n{dlg[k]}\n"
+            for k in ("enum_tables", "extra_methods_c")
+            if dlg.get(k)
+        )
         parts.append(f"""/* Lazily build the composed generator from this source's config. */
 static int
 {tname}_ensure_gen({obj} *self)
@@ -2153,10 +2360,10 @@ static PyObject *
         {gen["reset_fn"]}(self->_gen);
     Py_RETURN_NONE;
 }}
-
+{dlg_c}
 static PyMethodDef {tname}_methods[] = {{
 {_source_gen_method_rows(tname, gen)}
-    {{NULL, NULL, 0, NULL}}
+{dlg.get("extra_methods_pymethoddef", "")}    {{NULL, NULL, 0, NULL}}
 }};
 """)
         tp_methods_slot = f"\n    .tp_methods   = {tname}_methods,"
@@ -4784,6 +4991,10 @@ def render_pyi(cfg: dict, module: str) -> str:
                 indent=8,
                 raises=m["raises"],
             )
+        # gh-2259: a delegated method's member, as the generator's emitter
+        # writes it for the generator.
+        _dlg = _source_delegated(cfg, module).get("pyi_extra_methods", "")
+        lines += _dlg.strip("\n").split("\n") if _dlg.strip() else []
     # Feature 6 — computed read-only properties (derived in C; never stale).
     for c in _source_computed(cfg, module):
         pytype = T.scalar_py_annotation(c["type"])  # gh-2035
@@ -5252,6 +5463,15 @@ def materialize(
     # gh-1703: a field's doc is its struct member's, read from the real
     # project's headers -- the replay tree holds no hand-written backing.
     cfg = resolve_field_docs(cfg, module, project_root or root)
+    # gh-2259: a delegated method is documented where the generator's own
+    # binding reads it, the generator's sacred header -- the real project's.
+    _gen = _source_generates(cfg, module)
+    if _gen and _gen["methods"]:
+        from ._object import _load_doc_blocks
+
+        _g = _gen["generator"]
+        _blocks = _load_doc_blocks(project_root or root, _g, cfg)
+        cfg = {**cfg, _g: {**cfg.get(_g, {}), "_doc_blocks": _blocks}}
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
     out_pkg = C.module_package_resolved(cfg, module)
