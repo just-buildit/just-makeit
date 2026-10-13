@@ -529,6 +529,22 @@ def test_a_narrow_row_parses_signed():
             assert INT_RANGE_GUARD_RE.search(guard), t
 
 
+def test_no_integer_row_parses_through_a_masking_char():
+    """gh-2220: a masking char (``K``, ``k``, ``I``, ``B``, ``H``) wraps
+    before any check can see the value, so no row may parse with one. A
+    row no checked char parses converts an object through ``__index__``
+    instead (``index``): unsigned, since its refusal prints a floor of 0
+    and a ``%llu`` maximum, and with no narrowing guard of its own."""
+    for t, meta in T._CTYPE_META.items():
+        if meta["kind"] != "int":
+            continue
+        assert meta["fmt"] not in "KkIBH", (t, meta["fmt"])
+        if "index" in meta:
+            assert meta["fmt"] == "O", t
+            assert meta["parse_type"] == "unsigned long long", t
+            assert "bounds" not in meta, t
+
+
 # ── the advisory ─────────────────────────────────────────────────────────────
 
 FRAG = ("native", "src", "m", "m_ext_r.c")
