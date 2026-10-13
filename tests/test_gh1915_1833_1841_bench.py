@@ -216,10 +216,12 @@ def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
     assert "bench_broken.py" in r.stderr, r.stderr
 
 
-IMPORT_SLEEP_BENCH = """\
+IMPORT_SLEEP_S = 60
+
+IMPORT_SLEEP_BENCH = f"""\
 import time
 
-time.sleep(60)
+time.sleep({IMPORT_SLEEP_S})
 
 
 def test_never_reached(benchmark):
@@ -256,10 +258,16 @@ def test_2135_a_file_slow_to_import_is_named_within_three_budgets(tmp_path):
     elapsed = _time.monotonic() - t0
 
     assert r.returncode == 1, r.stdout + r.stderr
-    # Three budgets: the whole-tree listing, the file's run, and the file's own
-    # listing, each at most 8 s. Without the bounds it waits out the 60 s import.
-    assert elapsed < 4 * 8, (
-        f"took {elapsed:.0f} s, more than three 8 s budgets"
+    # jm stops after three budgets (the whole-tree listing, the file's run and
+    # the file's own listing, each at most 8 s: about 24 s here). Without a
+    # listing's bound it waits out the import instead, so a broken run takes
+    # at least IMPORT_SLEEP_S plus two budgets. The bound sits at the import
+    # itself, the line between the two outcomes, not just above the good
+    # one: a slack of one budget over three was spent by runner overhead
+    # alone on macOS (38 s against 32, CI run 38387484640).
+    assert elapsed < IMPORT_SLEEP_S, (
+        f"took {elapsed:.0f} s: jm waited out the {IMPORT_SLEEP_S} s import"
+        " instead of stopping at its budgets"
     )
     # No benchmark is ever listed, so no snapshot is written; the file is named
     # on the output, as every timed-out run is.
