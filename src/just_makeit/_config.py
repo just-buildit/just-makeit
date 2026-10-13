@@ -266,6 +266,14 @@ def load(root: Path) -> dict:
     why_errors = _why_key_errors(cfg)
     if why_errors:
         _refuse(why_errors)
+    # gh-2259: a generating source's delegated generator methods, asked
+    # only of a manifest with a composer to ask about.
+    if any(is_composer_module(cfg, m) for m in modules(cfg)):
+        from ._composer import delegated_method_errors
+
+        delegated_errors = delegated_method_errors(cfg)
+        if delegated_errors:
+            _refuse(delegated_errors)
     _expand_init_groups(cfg)
     # gh-1756: a `str_hint` that would be accepted and never shown. After the
     # group expansion, so the init params it makes are checked too.

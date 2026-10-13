@@ -860,6 +860,8 @@ COMPOSER_GENERATES_KEYS = frozenset(
         "destroy_fn",
         "header",
         "output_type",
+        # gh-2259: generator methods the source delegates.
+        "methods",
     }
 )
 COMPOSER_SEGMENT_KEYS = frozenset(
