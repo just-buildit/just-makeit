@@ -651,7 +651,10 @@ With `[module.X.json] enabled = true` the composer gets
 - **Generated (default)** — a generic, SSOT-driven ser/de built from
     `source.fields`/`segment.fields`. One uniform schema:
     `{version, repeat, continuous, segments: [ {<scalar fields>, sources: [{<source fields>}]} ]}`; enum fields serialize as their SSOT string, a `bytes` field as
-    a JSON int array, everything else numeric. A field of a 64-bit integer
+    a JSON int array, everything else numeric. `from_json` / `from_file`
+    read an integer field narrower than 64 bits only as a whole number
+    within its type's range, and a `bytes` element only from 0 to 255; anything else is
+    refused with a `ValueError` naming the field (gh-2247). A field of a 64-bit integer
     type is a JSON number while its value is within ±(2^53 - 1), the range a
     double holds exactly (I-JSON, RFC 7493), and a decimal string such as
     `"18446744073709551615"` past it (gh-2139). `from_json` / `from_file` read either form exactly, and

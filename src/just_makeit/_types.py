@@ -56,10 +56,26 @@ def _fwint(
         "to_py": to_py,
     }
     if narrow:
-        stem = ctype[: -len("_t")].upper()
-        floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
-        row["bounds"] = (floor, f"{stem}_MAX")
+        row["bounds"] = _limit_macros(ctype, np_type)
     return row
+
+
+def _limit_macros(ctype: str, np_type: str) -> "tuple[str, str]":
+    """The C macros naming integer *ctype*'s range, from its spelling.
+
+    ``int8_t`` -> ``INT8_MIN`` / ``INT8_MAX`` (``<stdint.h>``), ``int`` ->
+    ``INT_MIN`` / ``INT_MAX`` (``<limits.h>``); an unsigned type's floor is
+    the literal ``0``, which *np_type* (the row's numpy dtype) says.
+
+    >>> _limit_macros("uint16_t", "np.uint16")
+    ('0', 'UINT16_MAX')
+    >>> _limit_macros("int", "np.int32")
+    ('INT_MIN', 'INT_MAX')
+    """
+    stem = ctype[: -len("_t")] if ctype.endswith("_t") else ctype
+    stem = stem.upper()
+    floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
+    return floor, f"{stem}_MAX"
 
 
 _CTYPE_META: dict[str, dict] = {
@@ -843,6 +859,43 @@ def wider_than_double(ctype: str) -> "str | None":
     ):
         return parse_type
     return None
+
+
+def int_limits(ctype: str) -> "tuple[str, str] | None":
+    """The C expressions naming integer *ctype*'s range, read off its row.
+
+    gh-2247. A row that carries ``bounds`` (gh-2144) answers with them; any
+    other integer row with the same derivation from its spelling, so
+    ``int`` answers ``INT_MIN`` / ``INT_MAX``. The compiler states the
+    range, not jm. ``bool`` is not a range -- converting any number to it
+    is defined -- and a non-integer row has none.
+
+    Parameters
+    ----------
+    ctype : str
+        A C type spelling; one with no ``_CTYPE_META`` row has no range.
+
+    Returns
+    -------
+    tuple of str or None
+        ``(floor, ceiling)``: ``<limits.h>`` / ``<stdint.h>`` macros, an
+        unsigned type's floor the literal ``0``; or ``None``.
+
+    Examples
+    --------
+    >>> int_limits("int8_t")
+    ('INT8_MIN', 'INT8_MAX')
+    >>> int_limits("uint32_t")
+    ('0', 'UINT32_MAX')
+    >>> int_limits("int")
+    ('INT_MIN', 'INT_MAX')
+    >>> int_limits("bool") is None, int_limits("double") is None
+    (True, True)
+    """
+    meta = _CTYPE_META.get(ctype, {})
+    if meta.get("kind") != "int" or ctype == "bool":
+        return None
+    return meta.get("bounds") or _limit_macros(ctype, meta["py_type"])
 
 
 def string_default_literal(default: str) -> str:

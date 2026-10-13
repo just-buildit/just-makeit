@@ -231,7 +231,9 @@ def test_a_composer_of_only_64bit_numbers_drops_the_double_reader():
 
 
 #: What a 64-bit field brings into the extension, and nothing else does.
-_WIDE_ONLY = ("_json_ull", "_json_ll", "<errno.h>", "the reader refused")
+#: gh-2247: not the factory keeping the reader's exception ("the reader
+#: refused"), which every integer field's read now raises.
+_WIDE_ONLY = ("_json_ull", "_json_ll", "<errno.h>")
 
 
 def test_a_composer_without_one_renders_no_new_helper():

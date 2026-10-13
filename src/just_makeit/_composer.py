@@ -5509,11 +5509,34 @@ def _json_get(
     own range sentence (:func:`_json_out_of_range_c`). Without it
     ``"4294967296"`` passed the reader and lost its high bits in the cast.
 
+    gh-2247: an integer type a double holds -- every one narrower than 64
+    bits -- must read a whole number within its range
+    (:func:`~just_makeit._types.int_limits`) before the cast, or it is
+    refused with that same sentence. The cast alone accepted ``1.5`` as
+    ``1``, and a value past the type is undefined behaviour in C:
+    ``4294967296`` arrived in a ``uint32_t`` as ``0``. Each test is exact
+    in a double: a bound of a type this narrow is, and so is the ceiling
+    plus one.
+
     Examples
     --------
     >>> used = set()
     >>> _json_get("so", "gain", "double", "src->gain", "1.0", "", "", used)
     'src->gain = (double)_json_num(so, "gain", 1.0);'
+    >>> print(_json_get("so", "k", "int8_t", "src->k", "0",
+    ...                 "source field 'k' (int8_t)", "return -1;", used))
+    {
+        double _d = _json_num(so, "k", 0);
+        if (!(_d >= (double)INT8_MIN && _d < (double)INT8_MAX + 1.0)
+            || (double)(int8_t)_d != _d) {
+            char _txt[32];
+            snprintf(_txt, sizeof _txt, "%.17g", _d);
+            PyErr_Format(PyExc_ValueError, "%s: \\"%s\\" is out of range",
+                         "source field 'k' (int8_t)", _txt);
+            return -1;
+        }
+        src->k = (int8_t)_d;
+    }
     >>> print(_json_get("so", "n", "int64_t", "src->n", "0",
     ...                 "source field 'n' (int64_t)", "return -1;", used))
     {
@@ -5531,9 +5554,31 @@ def _json_get(
     """
     pt = T.wider_than_double(ctype)
     if pt is None:
-        if name is None:
-            return f"{dest} = ({ctype})cJSON_GetNumberValue({src});"
-        return f'{dest} = ({ctype})_json_num({src}, "{name}", {default});'
+        num = (
+            f"cJSON_GetNumberValue({src})"
+            if name is None
+            else f'_json_num({src}, "{name}", {default})'
+        )
+        limits = T.int_limits(ctype)
+        if limits is None:
+            return f"{dest} = ({ctype}){num};"
+        # The range first: only then is the cast in the whole-number test
+        # defined. A NaN -- a pair element that is not a number -- fails it.
+        lo, hi = limits
+        refuse = _json_out_of_range_c("%s", f'"{what}"', "_txt", " " * 8)
+        return (
+            "{\n"
+            f"    double _d = {num};\n"
+            f"    if (!(_d >= (double){lo} && _d < (double){hi} + 1.0)\n"
+            f"        || (double)({ctype})_d != _d) {{\n"
+            "        char _txt[32];\n"
+            '        snprintf(_txt, sizeof _txt, "%.17g", _d);\n'
+            f"{refuse}\n"
+            f"        {fail}\n"
+            "    }\n"
+            f"    {dest} = ({ctype})_d;\n"
+            "}"
+        )
     wide.add(pt)
     reader = _json_wide_names(pt)[1]
     item = (
@@ -5790,6 +5835,23 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             # the store half did, so a round trip through JSON wrote one
             # field's array back into another's members.
             _bp, _bl = buffer_members(f)
+            # gh-2247: each element by the one integer read, so 256 or 1.5
+            # is refused naming the field rather than cast into a byte.
+            elem = textwrap.indent(
+                _json_get(
+                    "_e",
+                    None,
+                    "uint8_t",
+                    "_buf[_k]",
+                    "0",
+                    _json_what(
+                        "source", {**f, "type": f.get("type", "bytes")}
+                    ),
+                    "{ free(_buf); return -1; }",
+                    wide,
+                ),
+                " " * 20,
+            )
             src_parse.append(f"""        {{
             const cJSON *_b = cJSON_GetObjectItemCaseSensitive(so, "{n}");
             if (cJSON_IsArray(_b) && cJSON_GetArraySize(_b) > 0) {{
@@ -5798,8 +5860,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 if (!_buf) return -1;
                 size_t _k = 0;
                 const cJSON *_e = NULL;
-                cJSON_ArrayForEach(_e, _b)
-                    _buf[_k++] = (uint8_t)cJSON_GetNumberValue(_e);
+                cJSON_ArrayForEach(_e, _b) {{
+{elem}
+                    _k++;
+                }}
                 src->{_bp} = _buf;
                 src->{_bl} = _nb;
             }}
@@ -5901,17 +5965,18 @@ def render_json_funcs(cfg: dict, module: str) -> str:
 
     # gh-2139: a 64-bit field's reader raises the ValueError that names it,
     # so the factory keeps that exception rather than replacing it with the
-    # generic one. Emitted only with such a field, as the helpers are.
+    # generic one. gh-2247: so does every integer read (`_json_get`), and a
+    # bytes element, so it is kept whatever the fields; the 64-bit helpers
+    # are still emitted only with such a field.
     wide_c = ""
-    keep_raised = ""
     if wide:
         wide_c = "\n#include <errno.h>\n\n" + "\n".join(
             _json_wide_c(pt) for pt in sorted(wide, reverse=True)
         )
-        keep_raised = (
-            "        if (PyErr_Occurred()) /* a field the reader refused */\n"
-            "            return NULL;\n"
-        )
+    keep_raised = (
+        "        if (PyErr_Occurred()) /* a field the reader refused */\n"
+        "            return NULL;\n"
+    )
 
     text = f"""/* ── generic SSOT-driven JSON (de)serialization ── */
 {_JSON_NUM_C}{wide_c}
