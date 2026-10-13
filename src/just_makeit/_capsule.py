@@ -290,8 +290,19 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 """
 
 
-def _emit_void_method(backing: str, sym: str, name: str) -> str:
-    """A bare ``(state) -> None`` method (e.g. reset)."""
+def _emit_void_method(backing: str, sym: str, method: dict) -> str:
+    """A bare ``(state) -> None`` method (e.g. reset).
+
+    gh-2259: ``nogil`` releases the GIL around the call, as it does for
+    :func:`_emit_execute`; it was accepted here and ignored. Through the
+    emitter an object method's kernel call uses.
+    """
+    from ._context._methods import _nogil_call
+
+    name = method["name"]
+    call = _nogil_call(
+        "", "", f"{sym}_{name}(w->state)", bool(method.get("nogil"))
+    )
     return f"""static PyObject *
 _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 {{
@@ -300,8 +311,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    {sym}_{name}(w->state);
-    Py_RETURN_NONE;
+{call}    Py_RETURN_NONE;
 }}
 """
 
@@ -459,7 +469,7 @@ _get_wrap(PyObject *cap)
         if m.get("caller_out") or m.get("arg_type"):
             parts.append(_emit_execute(backing, sym, m))
         else:
-            parts.append(_emit_void_method(backing, sym, m["name"]))
+            parts.append(_emit_void_method(backing, sym, m))
     parts.append(_emit_destroy(backing, sym))
     for p in C.module_properties(cfg, module):
         parts.append(_emit_getset(backing, sym, p, module))

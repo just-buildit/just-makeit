@@ -340,6 +340,15 @@ def render_pack(
     fixed_call = "".join(f"{c}, " for c in calls)
     sink_scalar = f"{sink}({state_expr}, {fixed_call}_{dname}, _s, (size_t)_n)"
     sink_buffer = f"{sink}({state_expr}, {fixed_call}_{dname}, _buf, _count)"
+    # gh-2259: both sink calls go through the emitter every other object
+    # method's kernel call does, so `nogil` is honoured here too; it was
+    # accepted and ignored. The value is packed into `_buf` (or borrowed as
+    # `_s`) above the released block, under the GIL.
+    from ._context._methods import _nogil_call, _reindent
+
+    nogil = bool(m.get("nogil"))
+    call_scalar = _reindent(_nogil_call("int", "_rc", sink_scalar, nogil))
+    call_buffer = _nogil_call("int", "_rc", sink_buffer, nogil)
     fail = (
         f'        PyErr_SetString(PyExc_ValueError, "{name} failed");\n'
         "        return NULL;"
@@ -373,7 +382,7 @@ def render_pack(
         const char *_s = PyUnicode_AsUTF8AndSize({vname}, &_n);
         if (!_s)
             return NULL;
-        if ({sink_scalar} != 0) {{
+{call_scalar}        if (_rc != 0) {{
 {fail}
         }}
         Py_RETURN_NONE;
@@ -424,8 +433,7 @@ def render_pack(
         Py_XDECREF(_seq);
         return NULL;
     }}
-    int _rc = {sink_buffer};
-    free(_buf);
+{call_buffer}    free(_buf);
     Py_XDECREF(_seq);
     if (_rc != 0) {{
 {fail}

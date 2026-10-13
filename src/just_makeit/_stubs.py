@@ -2080,6 +2080,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         m_multi = m.get("multi_output", [])
         m_result_fields = m.get("result_fields", [])
         m_py_return_type = m.get("py_return_type", "")
+        # gh-2259: peer of the batch reading in `make_methods_ctx` -- a batch
+        # binding reads a BLOCK and parses `x` (or a count) and `out=` and no
+        # declared param, so this stub describes exactly that.
+        m_batch = bool(m.get("batch"))
+        if m_batch:
+            m_params = []
 
         param_parts: list[str] = []
         # gh-385: a variable_output method consumes a *block* of arg_type
@@ -2092,7 +2098,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # gh-1724: an array `x` is spelled by the one helper.
             _x_ann = (
                 T.array_param_annotation(m_arg)
-                if (m_var or m_arg.endswith("[]"))
+                if (m_var or m_batch or m_arg.endswith("[]"))
                 else _py(m_arg)
             )
             param_parts.append(f"x: {_x_ann}")
@@ -2139,7 +2145,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 pann += f" = {repr(p['default']) if p.get('enum') else _py_default_stub(p['type'], _pdflt)}"
             param_parts.append(pann)
 
-        if _borrow.is_borrow(m):
+        if m_batch:
+            # gh-2259: peer of the batch branch in `make_methods_ctx`'s
+            # annotation chain, and first for the same reason: the binding
+            # renders a batch method ahead of every other shape. This said
+            # `complex` for an array of them.
+            ret_ann = f"NDArray[{_np(m_ret)}]"
+        elif _borrow.is_borrow(m):
             # gh-1312: peer of the borrow branch in `make_methods_ctx`'s
             # annotation chain -- a borrowed view is an ndarray of the
             # element type, not one element of it.
@@ -2253,6 +2265,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # binding arguments twice (gh-1042, gh-1051), so the name gets the
         # same treatment as the default did rather than a third local copy.
         _count_kw = _gluedoc.count_kwarg_name(m.get("count_name", ""))
+        if m_batch:
+            # gh-2259: peer of the same override in `make_methods_ctx` -- a
+            # batch binding takes `out=` always and a leading count when it
+            # has no input (gh-222).
+            _stub_count_arg, _stub_enable_out = m_arg == "void", True
         if _stub_count_arg:
             # gh-1051: `1` was hard-coded here while the comment above
             # described `count_default` and the standalone generator honoured
@@ -2335,6 +2352,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             skeleton_fallback=True,
             param_defaults=_gluedoc.binding_param_docs(
                 _count_kw,
+                batch=m_batch,
                 count=_stub_count_arg,
                 out=_stub_enable_out,
                 out_cols=bool(m.get("out_cols")),
@@ -2347,7 +2365,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             else f"    def {m_name}(self) -> {ret_ann}:"
         )
         lines += ["", header, *_doc]
-        if _stub_enable_out:
+        # gh-2259: no `_max_out()` sibling for a batch method's `out=`.
+        if _stub_enable_out and not m_batch:
             # gh-607: mirror make_methods_ctx's `_max_out_count_param_ctx` —
             # `*_max_out()` now takes the same count the binding is about to
             # pass to the kernel; the all-scalar-params shape has none to

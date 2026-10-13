@@ -236,8 +236,13 @@ def _stub_params(
 # A cast-prefixed numpy buffer accessor inside a kernel call argument, e.g.
 # ``(const float *)PyArray_DATA(x_arr)`` or ``(size_t)PyArray_SIZE(x_arr)``.
 # The leading cast carries the C type, so it doubles as the hoisted-local type.
+# gh-2259: the accessor's own argument may be cast too --
+# ``(float *)PyArray_DATA((PyArrayObject *)out)``, how a binding reads an
+# array it allocated as a ``PyObject *``. Unmatched, that accessor stayed in
+# the call and ran inside the released block.
 _NOGIL_PYARRAY_RE = re.compile(
-    r"\((?P<cast>[^()]+?)\)\s*PyArray_(?:DATA|SIZE)\(\w+\)"
+    r"\((?P<cast>[^()]+?)\)\s*PyArray_(?:DATA|SIZE)"
+    r"\((?:\([^()]+\)\s*)?\w+\)"
 )
 
 
@@ -275,15 +280,39 @@ def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
     blocking ``wait()`` ran with the GIL held and a threaded producer could
     not make progress. It did not fail; it hung.
 
-    Three callers, one answer, so the next shape cannot forget again.
+    gh-2259: and it was still not every caller. A ``batch`` method and
+    every fixed-output shape (a scalar, ``void``, ``status_return``,
+    ``error_negative``, ``multi_output`` or ``out_type`` result) spelled
+    their call inline, so ``nogil`` was accepted and ignored on all of
+    them. Every kernel call in ``make_methods_ctx`` is now built inside a
+    call to this function (or to the two wrappers over it), and
+    ``tests/test_gh2259_batch_method_faces.py`` refuses one that is not.
+
+    An empty *var* (with an empty *decl*) emits the bare call, for a kernel
+    whose return the binding does not keep -- a ``void`` kernel.
 
     With *nogil* the numpy accessors are hoisted above the
     ``Py_BEGIN_ALLOW_THREADS`` block (:func:`_hoist_for_nogil`) and *var* is
     declared outside it, so it survives to the code below. Sound only when
     the object is not shared across threads concurrently.
+
+    Examples
+    --------
+    >>> print(_nogil_call("int", "_rc", "k(self->handle)", False), end="")
+        int _rc = k(self->handle);
+    >>> print(_nogil_call("", "", "k(self->handle)", False), end="")
+        k(self->handle);
+    >>> body = _nogil_call("", "", "k((float *)PyArray_DATA(a))", True)
+    >>> print(body[body.index("    float *"):], end="")
+        float * _ng0 = (float *)PyArray_DATA(a);
+        Py_BEGIN_ALLOW_THREADS
+        k(_ng0);
+        Py_END_ALLOW_THREADS
     """
     if not nogil:
-        return f"    {decl} {var} = {call_expr};\n"
+        lead = f"{decl} {var} = " if var else ""
+        return f"    {lead}{call_expr};\n"
+    stmt = f"{var} = " if var else ""
     hoist, rewritten = _hoist_for_nogil(call_expr)
     return (
         "    /* nogil: GIL released across the pure-C kernel — sound only when\n"
@@ -291,10 +320,26 @@ def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
         "     * object per stream); the kernel touches only this object's\n"
         "     * state/buffers and the caller's input. */\n"
         f"{hoist}"
-        f"    {decl} {var};\n"
-        "    Py_BEGIN_ALLOW_THREADS\n"
-        f"    {var} = {rewritten};\n"
+        + (f"    {decl} {var};\n" if var else "")
+        + "    Py_BEGIN_ALLOW_THREADS\n"
+        f"    {stmt}{rewritten};\n"
         "    Py_END_ALLOW_THREADS\n"
+    )
+
+
+def _reindent(blk: str) -> str:
+    """*blk* one level (four spaces) deeper; a blank line stays blank.
+
+    :func:`_nogil_call` emits at function-body depth, and a binding's
+    ``out=`` path places that block inside ``if (out_obj ...) {`` -- a
+    ``variable_output`` method's (gh-219) and a ``batch`` method's (gh-222).
+    One helper for both, so the two paths indent the same block one way.
+
+    >>> _reindent("    k();\\n\\n    r();\\n")
+    '        k();\\n\\n        r();\\n'
+    """
+    return "".join(
+        (("    " + ln) if ln.strip() else ln) + "\n" for ln in blk.splitlines()
     )
 
 
@@ -1344,7 +1389,6 @@ def _records_consumed_c(
     consumed_fn: str,
     who: str,
     build: str,
-    nogil: bool,
 ) -> str:
     """A list-of-records body that re-offers its input until none is left.
 
@@ -1362,7 +1406,7 @@ def _records_consumed_c(
     method's ``_records_buffer_c``): the fixed ``max_results`` stack array,
     or, when the header declares ``<c>_<m>_max_out``, that many records
     allocated for the remainder. The params ride along unchanged in *call*,
-    which spells the kernel call over a capacity. A call offered nothing
+    which emits the kernel call over a capacity. A call offered nothing
     still runs once, as it always has. ``_coerce.consumed_guard_c`` raises
     rather than spinning on a call that took none of what is left, or
     stepping past the input's end on one claiming more.
@@ -1372,7 +1416,10 @@ def _records_consumed_c(
     buffer : callable
         ``(count, release) -> (declare, capacity, free)`` for one call.
     call : callable
-        The kernel call expression for a capacity expression.
+        The kernel call's C block for a capacity expression, built by the
+        caller inside :func:`_kernel_call_block` -- the one ``nogil``
+        emitter, which ``tests/test_gh2259_batch_method_faces.py`` requires
+        every kernel call in ``make_methods_ctx`` to be spelled inside.
     ptr, count : str
         The input block's pointer and element count: mutable locals, which
         the loop advances.
@@ -1385,8 +1432,6 @@ def _records_consumed_c(
         ``Class.method``, for the messages.
     build : str
         The ``Py_BuildValue`` arguments for ``results[i]``.
-    nogil : bool
-        Release the GIL around each kernel call.
 
     Returns
     -------
@@ -1398,7 +1443,7 @@ def _records_consumed_c(
     rel_all = f"{free} {rel_lst}".strip()
     body = (
         decl
-        + _kernel_call_block(call(cap), nogil)
+        + call(cap)
         # gh-1716: `n_out` records are read from `results[]`.
         + _coerce.returned_count_c("n_out", cap, who, rel_all)
         + "    for (size_t i = 0; i < n_out; i++) {\n"
@@ -2301,12 +2346,22 @@ def make_methods_ctx(
         # .pyi stub built at the end of this loop document the same arguments
         # with the same annotations. It used to be built only at the stub, so
         # the runtime face had nothing to share and carried the @brief alone.
+        # gh-2259: a `batch` binding reads a BLOCK too, and parses `x` (or a
+        # count) and `out=` and nothing else, so both faces describe exactly
+        # that. A declared param never reaches it: whether it should, or be
+        # refused, is gh-2021's.
         _sig_parts, _doc_params = _stub_params(
-            arg_type, params, variable_output
+            arg_type, [] if batch else params, variable_output or batch
         )
         # ...and the return annotation with it, for the same reason: it is the
         # type line of the `Returns` section on both faces.
-        if borrow:
+        if batch:
+            # gh-2259: an ndarray of the return element, one per input. First
+            # because the binding renders a batch method ahead of every other
+            # shape (`_outbuf.element_why_not`); it read `complex` here, and
+            # the `.pyi` had no member at all.
+            _ret_ann = _pyi_ndarray(return_type)
+        elif borrow:
             # gh-1312: a borrow returns an ndarray VIEW of the element type,
             # not one element of it. Ahead of every other branch because the
             # shape owns its whole return; falling through annotated the
@@ -2441,6 +2496,7 @@ def make_methods_ctx(
                 none_when=empty_is_none_doc(m),
                 param_defaults=_gluedoc.binding_param_docs(
                     _count_kw,
+                    batch=batch,
                     count=_stub_count_arg,
                     out=_stub_enable_out,
                     out_cols=bool(m.get("out_cols")),
@@ -2473,6 +2529,11 @@ def make_methods_ctx(
             has_arg=has_arg,
             params=params,
         )
+        if batch:
+            # gh-2259: a batch binding's own arguments (gh-222): `out=`
+            # always, and the leading count when there is no input -- the
+            # generator's `|nO` over {count, out}.
+            _stub_count_arg, _stub_enable_out = not has_arg, True
         if _stub_count_arg:
             _doc_params = _doc_params + [(_count_kw, "int")]
         # gh-1724: the caller's buffer, spelled by the one helper as a
@@ -2657,165 +2718,6 @@ def make_methods_ctx(
             "out_obj", ret_np, indent=" " * 8
         )
 
-        # ── batch method ─────────────────────────────────────────────────
-        if batch:
-            if has_arg:
-                decl_lines.append(
-                    f"void {c_fn}({csym}_state_t *state,"
-                    f" const {arg_disp} *in, size_t n, {ret_disp} *out);"
-                )
-                # gh-222: fixed-size (1:1) batch methods accept an optional
-                # `out=` buffer — write in place and return it, else allocate.
-                # Always available (no knob), matching the built-in steps(x,
-                # out=) path and the variable_output out= sibling.
-                wrapper = _in_dtype_helper + (
-                    f"static PyObject *\n"
-                    f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self,"
-                    f" PyObject *args, PyObject *kwds)\n"
-                    f"{{\n"
-                    f"{guard}"
-                    f'    static char *_kwlist[] = {{"x", "out", NULL}};\n'
-                    f"    PyObject *in_obj = NULL;\n"
-                    f"    PyObject *out_obj = NULL;\n"
-                    f"    if (!PyArg_ParseTupleAndKeywords("
-                    f'args, kwds, "O|O",\n'
-                    f"            _kwlist, &in_obj, &out_obj))\n"
-                    f"        return NULL;\n"
-                    f"{_in_acq}"
-                    f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
-                    f"    if (out_obj && out_obj != Py_None) {{\n"
-                    f"{_out_guard_in}"
-                    f"        PyArrayObject *out_arr ="
-                    f"\n            {_coerce.array_arg('out_obj', ret_np, 'NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE', 'out')};\n"
-                    f"        if (!out_arr)"
-                    f" {{ Py_DECREF(in_arr); return NULL; }}\n"
-                    f"        if (PyArray_SIZE(out_arr) != n) {{\n"
-                    f"            PyErr_Format(PyExc_ValueError,\n"
-                    f'                "out length %zd != input length %zd",\n'
-                    f"                (Py_ssize_t)PyArray_SIZE(out_arr),"
-                    f" (Py_ssize_t)n);\n"
-                    f"            Py_DECREF(out_arr);"
-                    f" Py_DECREF(in_arr); return NULL;\n"
-                    f"        }}\n"
-                    f"        {c_fn}(self->handle,\n"
-                    f"            (const {arg_disp} *)PyArray_DATA(in_arr),\n"
-                    f"            (size_t)n,\n"
-                    f"            ({ret_disp} *)PyArray_DATA(out_arr));\n"
-                    f"        Py_DECREF(in_arr);\n"
-                    f"        return (PyObject *)out_arr;\n"
-                    f"    }}\n"
-                    f"    npy_intp dims[] = {{n}};\n"
-                    f"    PyObject *out ="
-                    f" PyArray_SimpleNew(1, dims, {ret_np});\n"
-                    f"    if (!out) {{ Py_DECREF(in_arr); return NULL; }}\n"
-                    f"    {c_fn}(self->handle,\n"
-                    f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
-                    f"        (size_t)n,\n"
-                    f"        ({ret_disp} *)PyArray_DATA"
-                    f"((PyArrayObject *)out));\n"
-                    f"    Py_DECREF(in_arr);\n"
-                    f"    return out;\n"
-                    f"}}"
-                )
-            else:
-                decl_lines.append(
-                    f"void {c_fn}({csym}_state_t *state,"
-                    f" size_t n, {ret_disp} *out);"
-                )
-                # gh-222: count-driven batch generator with optional `out=`.
-                wrapper = _in_dtype_helper + (
-                    f"static PyObject *\n"
-                    f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self,"
-                    f" PyObject *args, PyObject *kwds)\n"
-                    f"{{\n"
-                    f"{guard}"
-                    f"    static char *_kwlist[] ="
-                    f' {{"{_count_kw}", "out", NULL}};\n'
-                    f"{_count_alias}"
-                    f"    Py_ssize_t n = {_count_init};\n"
-                    f"    PyObject *out_obj = NULL;\n"
-                    f"    if (!PyArg_ParseTupleAndKeywords("
-                    f'args, kwds, "|nO",\n'
-                    f"            _kwlist, &n, &out_obj))\n"
-                    f"        return NULL;\n"
-                    f"    if (out_obj && out_obj != Py_None) {{\n"
-                    f"{_out_guard}"
-                    f"        PyArrayObject *out_arr ="
-                    f"\n            {_coerce.array_arg('out_obj', ret_np, 'NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE', 'out')};\n"
-                    f"        if (!out_arr) return NULL;\n"
-                    f"        if (PyArray_SIZE(out_arr) != n) {{\n"
-                    f"            PyErr_Format(PyExc_ValueError,\n"
-                    f'                "out length %zd != count %zd",\n'
-                    f"                (Py_ssize_t)PyArray_SIZE(out_arr),"
-                    f" (Py_ssize_t)n);\n"
-                    f"            Py_DECREF(out_arr); return NULL;\n"
-                    f"        }}\n"
-                    f"        {c_fn}(self->handle,\n"
-                    f"            (size_t)n,\n"
-                    f"            ({ret_disp} *)PyArray_DATA(out_arr));\n"
-                    f"        return (PyObject *)out_arr;\n"
-                    f"    }}\n"
-                    f"    npy_intp dims[] = {{n}};\n"
-                    f"    PyObject *out ="
-                    f" PyArray_SimpleNew(1, dims, {ret_np});\n"
-                    f"    if (!out) return NULL;\n"
-                    f"    {c_fn}(self->handle,\n"
-                    f"        (size_t)n,\n"
-                    f"        ({ret_disp} *)PyArray_DATA"
-                    f"((PyArrayObject *)out));\n"
-                    f"    return out;\n"
-                    f"}}"
-                )
-            method_c_parts.append(wrapper)
-            _ret_np_str = _CTYPE_META[return_type]["py_type"].replace(
-                "np.", ""
-            )
-            _batch_sig = (
-                f"{name}({', '.join(_doc_names) if _doc_names else 'n'},"
-                f" out=None) -> ndarray"
-            )
-            _batch_demo = [
-                "",
-                "    >>> import numpy as np",
-                *_from_line,
-                _obj_line,
-            ]
-            if has_arg:
-                _batch_demo += [
-                    f"    >>> x = np.zeros(4, dtype={_in_dtype_str})",
-                    f"    >>> y = obj.{name}(x)",
-                ]
-            else:
-                _batch_demo.append(f"    >>> y = obj.{name}(4)")
-            _batch_demo += [
-                "    >>> y.shape",
-                "    (4,)",
-                "    >>> y.dtype",
-                f"    dtype('{_ret_np_str}')",
-            ]
-            _batch_doc_lines = [
-                _batch_sig,
-                "",
-                *_runtime_doc(
-                    f"1:1-rate batch transform. Returns an ndarray of dtype"
-                    f" {_ret_np_str}."
-                ),
-                *_demo(_batch_demo),
-            ]
-            pmd_lines.append(
-                f'    {{"{name}", (PyCFunction)(void (*)(void))'
-                f"{wrapper_prefix}_{name},"
-                f" METH_VARARGS | METH_KEYWORDS,\n"
-                f"     {_build_ml_doc(_batch_doc_lines)}}},\n"
-            )
-            for _j in range(_ndecl, len(decl_lines)):
-                _doc = scaffold_doc_block(decl_lines[_j], name)
-                if _doc:
-                    decl_lines[_j] = _doc + "\n" + decl_lines[_j]
-            continue
-
         # ── declarations for _core.h ─────────────────────────────────────
         # gh-788: `record_dtype` reuses `result_fields` for the dtype's
         # columns, so it must not be captured by the list-of-records
@@ -2824,7 +2726,15 @@ def make_methods_ctx(
         # wrapper chain already prefers `variable_output`; before this the
         # two chains disagreed and the declaration described a kernel the
         # binding never called.
-        if result_fields and not _record.is_record_array(
+        if batch:
+            # gh-179: a 1:1-rate transform -- n elements in, n out, nothing
+            # returned (`_method._build_method_prototype`'s batch branch).
+            decl_lines.append(
+                f"void {c_fn}({csym}_state_t *state,"
+                + (f" const {arg_disp} *in," if has_arg else "")
+                + f" size_t n, {ret_disp} *out);"
+            )
+        elif result_fields and not _record.is_record_array(
             variable_output, record_dtype, borrow
         ):
             # gh-594: this is the peer of _method._build_method_prototype's
@@ -2988,7 +2898,180 @@ def make_methods_ctx(
         # fell through to a positional-only PyArg_ParseTuple, so `delay(x,
         # mu=0.3)` raised TypeError despite the stub advertising the keyword.
         _enable_kw = _enable_out or (variable_output and has_params)
-        if variable_output:
+        # ── batch method ─────────────────────────────────────────────────
+        # gh-179: a 1:1-rate transform. gh-222: it always takes an optional
+        # `out=` -- written in place and returned, else allocated.
+        #
+        # gh-2259: first in this chain, as it was first in the loop, and no
+        # longer a `continue` past the rest of it -- which skipped the `.pyi`
+        # member below, so the method was missing from the stub. Its two
+        # kernel calls go through `_nogil_call`, so `nogil` is honoured on
+        # both paths: the input is acquired, `out=` validated and the result
+        # allocated above the released block, under the GIL.
+        if batch:
+            _b_in = (
+                f"(const {arg_disp} *)PyArray_DATA(in_arr),\n        "
+                if has_arg
+                else ""
+            )
+
+            def _b_call(out_arr: str) -> str:
+                """The kernel call writing into *out_arr*, at body depth."""
+                return _nogil_call(
+                    "",
+                    "",
+                    f"{c_fn}(self->handle,\n        {_b_in}(size_t)n,\n"
+                    f"        ({ret_disp} *)PyArray_DATA({out_arr}))",
+                    nogil,
+                )
+
+            _b_out_kernel = _reindent(_b_call("out_arr"))
+            _b_new_kernel = _b_call("(PyArrayObject *)out")
+            _b_array_arg = _coerce.array_arg(
+                "out_obj",
+                ret_np,
+                "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE",
+                "out",
+            )
+            if has_arg:
+                wrapper = _in_dtype_helper + (
+                    f"static PyObject *\n"
+                    f"{wrapper_prefix}_{name}"
+                    f"({Component}Object *self,"
+                    f" PyObject *args, PyObject *kwds)\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f'    static char *_kwlist[] = {{"x", "out", NULL}};\n'
+                    f"    PyObject *in_obj = NULL;\n"
+                    f"    PyObject *out_obj = NULL;\n"
+                    f"    if (!PyArg_ParseTupleAndKeywords("
+                    f'args, kwds, "O|O",\n'
+                    f"            _kwlist, &in_obj, &out_obj))\n"
+                    f"        return NULL;\n"
+                    f"{_in_acq}"
+                    f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
+                    f"    if (out_obj && out_obj != Py_None) {{\n"
+                    f"{_out_guard_in}"
+                    f"        PyArrayObject *out_arr ="
+                    f"\n            {_b_array_arg};\n"
+                    f"        if (!out_arr)"
+                    f" {{ Py_DECREF(in_arr); return NULL; }}\n"
+                    f"        if (PyArray_SIZE(out_arr) != n) {{\n"
+                    f"            PyErr_Format(PyExc_ValueError,\n"
+                    f'                "out length %zd != input length %zd",\n'
+                    f"                (Py_ssize_t)PyArray_SIZE(out_arr),"
+                    f" (Py_ssize_t)n);\n"
+                    f"            Py_DECREF(out_arr);"
+                    f" Py_DECREF(in_arr); return NULL;\n"
+                    f"        }}\n"
+                    f"{_b_out_kernel}"
+                    f"        Py_DECREF(in_arr);\n"
+                    f"        return (PyObject *)out_arr;\n"
+                    f"    }}\n"
+                    f"    npy_intp dims[] = {{n}};\n"
+                    f"    PyObject *out ="
+                    f" PyArray_SimpleNew(1, dims, {ret_np});\n"
+                    f"    if (!out) {{ Py_DECREF(in_arr); return NULL; }}\n"
+                    f"{_b_new_kernel}"
+                    f"    Py_DECREF(in_arr);\n"
+                    f"    return out;\n"
+                    f"}}"
+                )
+            else:
+                # gh-222: count-driven batch generator with optional `out=`.
+                wrapper = _in_dtype_helper + (
+                    f"static PyObject *\n"
+                    f"{wrapper_prefix}_{name}"
+                    f"({Component}Object *self,"
+                    f" PyObject *args, PyObject *kwds)\n"
+                    f"{{\n"
+                    f"{guard}"
+                    f"    static char *_kwlist[] ="
+                    f' {{"{_count_kw}", "out", NULL}};\n'
+                    f"{_count_alias}"
+                    f"    Py_ssize_t n = {_count_init};\n"
+                    f"    PyObject *out_obj = NULL;\n"
+                    f"    if (!PyArg_ParseTupleAndKeywords("
+                    f'args, kwds, "|nO",\n'
+                    f"            _kwlist, &n, &out_obj))\n"
+                    f"        return NULL;\n"
+                    f"    if (out_obj && out_obj != Py_None) {{\n"
+                    f"{_out_guard}"
+                    f"        PyArrayObject *out_arr ="
+                    f"\n            {_b_array_arg};\n"
+                    f"        if (!out_arr) return NULL;\n"
+                    f"        if (PyArray_SIZE(out_arr) != n) {{\n"
+                    f"            PyErr_Format(PyExc_ValueError,\n"
+                    f'                "out length %zd != count %zd",\n'
+                    f"                (Py_ssize_t)PyArray_SIZE(out_arr),"
+                    f" (Py_ssize_t)n);\n"
+                    f"            Py_DECREF(out_arr); return NULL;\n"
+                    f"        }}\n"
+                    f"{_b_out_kernel}"
+                    f"        return (PyObject *)out_arr;\n"
+                    f"    }}\n"
+                    f"    npy_intp dims[] = {{n}};\n"
+                    f"    PyObject *out ="
+                    f" PyArray_SimpleNew(1, dims, {ret_np});\n"
+                    f"    if (!out) return NULL;\n"
+                    f"{_b_new_kernel}"
+                    f"    return out;\n"
+                    f"}}"
+                )
+            _ret_np_str = _CTYPE_META[_ret_elem]["py_type"].replace("np.", "")
+            # gh-2259: the synopsis names what the Parameters section
+            # documents -- `x`, or the count under its kwlist name (gh-657),
+            # which this line spelled `n` -- each binding argument with its
+            # default.
+            _batch_sig = (
+                f"{name}("
+                + ", ".join(
+                    "out=None"
+                    if _n == "out"
+                    else (
+                        f"{_n}={_gluedoc.count_stub_default(_count_default)}"
+                        if _stub_count_arg and _n == _count_kw
+                        else _n
+                    )
+                    for _n in _doc_names
+                )
+                + ") -> ndarray"
+            )
+            _batch_demo = [
+                "",
+                "    >>> import numpy as np",
+                *_from_line,
+                _obj_line,
+            ]
+            if has_arg:
+                _batch_demo += [
+                    f"    >>> x = np.zeros(4, dtype={_in_dtype_str})",
+                    f"    >>> y = obj.{name}(x)",
+                ]
+            else:
+                _batch_demo.append(f"    >>> y = obj.{name}(4)")
+            _batch_demo += [
+                "    >>> y.shape",
+                "    (4,)",
+                "    >>> y.dtype",
+                f"    dtype('{_ret_np_str}')",
+            ]
+            _batch_doc_lines = [
+                _batch_sig,
+                "",
+                *_runtime_doc(
+                    f"1:1-rate batch transform. Returns an ndarray of dtype"
+                    f" {_ret_np_str}."
+                ),
+                *_demo(_batch_demo),
+            ]
+            pmd_lines.append(
+                f'    {{"{name}", (PyCFunction)(void (*)(void))'
+                f"{wrapper_prefix}_{name},"
+                f" METH_VARARGS | METH_KEYWORDS,\n"
+                f"     {_build_ml_doc(_batch_doc_lines)}}},\n"
+            )
+        elif variable_output:
             if has_arg and not has_params:
                 if _enable_out:
                     _kwlist_decl = (
@@ -3268,10 +3351,6 @@ def make_methods_ctx(
 
             # ── optional out= buffer (single output only) ────────────────
             if _enable_out:
-                _reindent = lambda blk: "".join(  # noqa: E731
-                    (("    " + ln) if ln.strip() else ln) + "\n"
-                    for ln in blk.splitlines()
-                )
                 _out_call_data = call_data.replace(
                     _VO_BUF_TOKEN,
                     f"({_vo_out_disp} *)PyArray_DATA(out_arr)",
@@ -4299,8 +4378,9 @@ def make_methods_ctx(
             if _rf_consumed and has_params:
                 _rf_tail = _records_consumed_c(
                     _rf_buffer,
-                    lambda cap: (
-                        f"{c_fn}(self->handle, {_p_call}, results, {cap})"
+                    lambda cap: _kernel_call_block(
+                        f"{c_fn}(self->handle, {_p_call}, results, {cap})",
+                        nogil,
                     ),
                     ptr="x",
                     count="x_len",
@@ -4308,7 +4388,6 @@ def make_methods_ctx(
                     consumed_fn=_rf_consumed,
                     who=f"{Component}.{name}",
                     build=_bv,
-                    nogil=nogil,
                 )
             elif _rf_consumed:
                 _rf_parse += (
@@ -4317,8 +4396,9 @@ def make_methods_ctx(
                 )
                 _rf_tail = _records_consumed_c(
                     _rf_buffer,
-                    lambda cap: (
-                        f"{c_fn}(self->handle, _in, n_in, results, {cap})"
+                    lambda cap: _kernel_call_block(
+                        f"{c_fn}(self->handle, _in, n_in, results, {cap})",
+                        nogil,
                     ),
                     ptr="_in",
                     count="n_in",
@@ -4326,7 +4406,6 @@ def make_methods_ctx(
                     consumed_fn=_rf_consumed,
                     who=f"{Component}.{name}",
                     build=_bv,
-                    nogil=nogil,
                 )
             # gh-1959: the single-record shape's twin -- with no input the
             # body parses nothing, so the wrapper is METH_NOARGS. A declared
@@ -4508,8 +4587,10 @@ def make_methods_ctx(
                 # The raise itself is `_rc_raise_c` — see there for why the
                 # author's text is an argument and never the format string.
                 ret_body = (
-                    f"    {ret_disp} _rc = {c_fn}({call_args_c});\n"
-                    f"{_p_cleanup}"
+                    _nogil_call(
+                        ret_disp, "_rc", f"{c_fn}({call_args_c})", nogil
+                    )
+                    + f"{_p_cleanup}"
                     f"    if (_rc < 0) {{\n"
                     + _rc_raise_c(*_raise_pair)
                     + f"    }}\n"
@@ -4526,8 +4607,8 @@ def make_methods_ctx(
                 # through the destructor, which can carry a message, explained
                 # itself. Additive: the derived string stays the default.
                 ret_body = (
-                    f"    int _rc = {c_fn}({call_args_c});\n"
-                    f"{_p_cleanup}"
+                    _nogil_call("int", "_rc", f"{c_fn}({call_args_c})", nogil)
+                    + f"{_p_cleanup}"
                     f"    if (_rc != 0) {{\n"
                     + _rc_raise_c(*_raise_pair)
                     + "    }\n"
@@ -4543,14 +4624,17 @@ def make_methods_ctx(
                 )
                 if ret_meta:
                     _res = result_local(params)
-                    call_line = (
-                        f"    {ret_disp} {_res} ="
-                        f" {c_fn}"
-                        f"({call_args_c}{extra_call});\n"
+                    call_line = _nogil_call(
+                        ret_disp,
+                        _res,
+                        f"{c_fn}({call_args_c}{extra_call})",
+                        nogil,
                     )
                     py_primary = ret_meta["to_py"](_res)
                 else:
-                    call_line = f"    {c_fn}({call_args_c}{extra_call});\n"
+                    call_line = _nogil_call(
+                        "", "", f"{c_fn}({call_args_c}{extra_call})", nogil
+                    )
                     py_primary = "Py_None"
                 pack_parts = [py_primary] + [
                     _CTYPE_META[rt]["to_py"](f"out{i + 1}")
@@ -4609,10 +4693,15 @@ def make_methods_ctx(
                     f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
                     f"    if (!_out)"
                     f" {{{cleanup_inline} return NULL; }}\n"
-                    f"    {c_fn}({call_args_c},"
-                    f" ({out_disp} *)PyArray_DATA"
-                    f"((PyArrayObject *)_out));\n"
-                    f"{_p_cleanup}"
+                    + _nogil_call(
+                        "",
+                        "",
+                        f"{c_fn}({call_args_c},"
+                        f" ({out_disp} *)PyArray_DATA"
+                        f"((PyArrayObject *)_out))",
+                        nogil,
+                    )
+                    + f"{_p_cleanup}"
                     f"    return _out;\n"
                 )
             elif ret_meta:
@@ -4620,15 +4709,16 @@ def make_methods_ctx(
                 _res = result_local(params)
                 ret_expr = ret_meta["to_py"](_res)
                 ret_body = (
-                    f"    {ret_disp} {_res} ="
-                    f" {c_fn}({call_args_c});\n"
-                    f"{_p_cleanup}"
+                    _nogil_call(
+                        ret_disp, _res, f"{c_fn}({call_args_c})", nogil
+                    )
+                    + f"{_p_cleanup}"
                     f"    return {ret_expr};\n"
                 )
             else:
                 ret_body = (
-                    f"    {c_fn}({call_args_c});\n"
-                    f"{_p_cleanup}"
+                    _nogil_call("", "", f"{c_fn}({call_args_c})", nogil)
+                    + f"{_p_cleanup}"
                     f"    Py_RETURN_NONE;\n"
                 )
             # gh-1310: same rule as the variable-output record path -- the
@@ -4796,6 +4886,7 @@ def make_methods_ctx(
                     none_when=empty_is_none_doc(m),
                     param_defaults=_gluedoc.binding_param_docs(
                         _count_kw,
+                        batch=batch,
                         count=_stub_count_arg,
                         out=_stub_enable_out,
                         out_cols=bool(m.get("out_cols")),
@@ -4813,7 +4904,9 @@ def make_methods_ctx(
             else f"    def {name}(self) -> {ret_ann}:\n{_pyi_doc}"
         )
         pyi_lines.append(stub)
-        if _stub_enable_out:
+        # gh-2259: a batch method's `out=` has no `_max_out()` sibling -- its
+        # result is exactly as long as its input or count.
+        if _stub_enable_out and not batch:
             # gh-607: mirror the same count parameter as the C wrapper.
             # gh-761: including when the header says there isn't one — the
             # stub must agree with the binding, and the binding follows the
