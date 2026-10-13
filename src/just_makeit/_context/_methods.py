@@ -1240,15 +1240,20 @@ def _count_default_parts(
 
 
 def _max_out_count_param_ctx(
-    has_arg: bool, has_params: bool, params: "list[dict]"
+    has_arg: bool,
+    has_params: bool,
+    params: "list[dict]",
+    no_count: bool = False,
 ) -> "tuple[str, str | None]":
     """gh-607: peer of ``_method._max_out_count_param`` — the same per-shape
     count parameter ``*_max_out()`` takes, adapted for this module's
     dict-shaped ``params`` (vs. ``_method.py``'s ``(name, type)`` tuples).
     Duplicated rather than imported: importing ``_method.py`` here would
     cycle (``_method`` -> ``_object`` -> ``_context`` -> ``_context._methods``).
-    Keep the two in sync.
+    Keep the two in sync. gh-2233: ``no_count`` has no count to mirror.
     """
+    if no_count:
+        return "", None
     if has_arg:
         return ", size_t n_in", "n_in"
     if has_params:
@@ -1933,6 +1938,11 @@ def make_methods_ctx(
         # to the call's own length. See `_capacity_exprs` for why this is an
         # assertion rather than something jm can derive.
         exact_max_out: bool = m.get("exact_max_out", False)
+        # gh-2233: a void-input variable_output method that takes NO count.
+        # The kernel is `fn(state, out[, max_out])`, its `_max_out(state)`
+        # takes the state alone, and the Python call is `f()`. Validated at
+        # load (`_config._no_count_errors`), so here it only selects shapes.
+        no_count: bool = bool(m.get("no_count", False))
         # gh-788 gap 1: the method writes rows of a POD C struct, and the
         # result is a numpy STRUCTURED array whose dtype IS that struct's
         # layout. The key names the struct (`dp_tlm_rec_t`); `result_fields`
@@ -2080,6 +2090,22 @@ def make_methods_ctx(
         )
         if _element_why:
             raise Refusal(_element_why)
+        # gh-2233: `no_count` calls `<fn>_max_out(state)` with the state
+        # alone, so a header still declaring it with a count does not compile
+        # against the binding -- and the count it asks for does not exist.
+        # Only the render reads the header, so this half of the key's rules
+        # is refused here; the manifest half is `_config._no_count_errors`.
+        if (
+            no_count
+            and max_out_is_declared(doc_blocks, f"{c_fn}_max_out")
+            and not max_out_is_state_only(doc_blocks, f"{c_fn}_max_out")
+        ):
+            raise Refusal(
+                f"method '{component}.{name}' declares no_count, but its "
+                f"header declares {c_fn}_max_out() with a count. A no_count "
+                f"method has no count to pass it: declare it as "
+                f"`size_t {c_fn}_max_out({csym}_state_t *state)`."
+            )
         _vo_out_disp = _vo_out_elem
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
         _vo_out_np = (
@@ -2272,7 +2298,12 @@ def make_methods_ctx(
         # list is what filters the header's `@param` entries: a name absent
         # from it is never looked up, so an authored `@param count` was
         # silently discarded and no authoring move could fix the above.
-        _stub_count_arg = variable_output and arg_type == "void" and not params
+        _stub_count_arg = _gluedoc.synthesizes_count(
+            variable_output=variable_output,
+            arg_type=arg_type,
+            params=params,
+            no_count=no_count,
+        )
         _stub_enable_out = _outbuf.enabled(
             variable_output=variable_output,
             multi_output=bool(multi_output),
@@ -2657,7 +2688,7 @@ def make_methods_ctx(
                 f", {rt} *out{i + 1}" for i, rt in enumerate(multi_output)
             )
             _moc_decl, _ = _max_out_count_param_ctx(
-                has_arg, has_params, params
+                has_arg, has_params, params, no_count
             )
             # gh-761: never re-declare a count over a header that says
             # otherwise. jm splices these back into the sacred `_core.h`, so
@@ -2697,11 +2728,13 @@ def make_methods_ctx(
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
             else:
+                # gh-2233: `no_count` drops the `size_t n` the shape takes.
+                _n_param = "" if no_count else " size_t n,"
                 decl_lines.append(
                     f"size_t {c_fn}_max_out"
                     f"({csym}_state_t *state{_moc_decl});\n"
                     f"{_count_t} {c_fn}"
-                    f"({csym}_state_t *state, size_t n,"
+                    f"({csym}_state_t *state,{_n_param}"
                     f" {_vo_out_disp} *out{extra_params}{_cap_param});"
                 )
         else:
@@ -3039,6 +3072,30 @@ def make_methods_ctx(
                 # stays zero-arg for this one shape, matching
                 # `_max_out_count_param`'s design (there is nothing to pass).
                 _moc_arg = _lazy_fallback if _first_arr is not None else None
+            elif no_count:
+                # gh-2233: no input, no params and no count. The one
+                # argument is the optional `out=`; without it (a
+                # multi_output result) the method takes none at all. The
+                # result is sized by `<fn>_max_out(state)` alone, exactly
+                # as the all-scalar-params shape above sizes it -- so the
+                # same `_zero_bound_guard` refuses a bound of 0 that no
+                # `pass_capacity` kernel is told about.
+                parse_block = (
+                    (
+                        '    static char *_kwlist[] = {"out", NULL};\n'
+                        "    PyObject *out_obj = NULL;\n"
+                        "    if (!PyArg_ParseTupleAndKeywords("
+                        'args, kwds, "|O",\n'
+                        "            _kwlist, &out_obj))\n"
+                        "        return NULL;\n"
+                    )
+                    if _enable_out
+                    else ""
+                )
+                call_data = f"self->handle, {_VO_BUF_TOKEN}"
+                decref_in = ""
+                _lazy_fallback = f"{c_fn}_max_out(self->handle)"
+                _moc_arg = None
             else:
                 if _enable_out:
                     parse_block = (
@@ -3081,7 +3138,12 @@ def make_methods_ctx(
             # a newly added method or a `jm regenerate` renders it fresh.
             # gh-2184: one spelling, `_max_out_call_c`, shared with the
             # list-of-records wrapper that now asks the same function.
-            _moc_state_only = max_out_is_state_only(
+            # gh-2233: except under `no_count`, whose `max_out(state)` is
+            # call-independent because the CALL is: there is no count for
+            # the bound to miss, so gh-920's distrust does not apply and
+            # `pass_capacity` keeps its exact allocation. Decided by the key,
+            # not the header, so a first render and a re-render agree.
+            _moc_state_only = not no_count and max_out_is_state_only(
                 doc_blocks, f"{c_fn}_max_out"
             )
             _moc_call = _max_out_call_c(c_fn, doc_blocks, _moc_arg)
@@ -3425,7 +3487,14 @@ def make_methods_ctx(
             # parsing) even without the out= buffer branch -- and with an
             # input as well since gh-1960, whose parse dropped the params and
             # left `kwds` unread.
-            _vo_cc = call_convention(Component, args=True, kwds=_enable_kw)
+            # gh-2233: a `no_count` method without `out=` (multi_output)
+            # reads neither, and is METH_NOARGS like every other no-argument
+            # wrapper.
+            _vo_cc = call_convention(
+                Component,
+                args=not (no_count and not _enable_out),
+                kwds=_enable_kw,
+            )
 
             # ── allocate the outputs, call, trim, return ─────────────────
             _idx = range(_n_out_arrays)
@@ -3698,9 +3767,10 @@ def make_methods_ctx(
                     else "ndarray"
                 ),
             )
-            if has_arg or has_params:
+            if has_arg or has_params or no_count:
                 # Every declared param, not just the first array one: the
                 # signature line has to match what the binding accepts.
+                # gh-2233: for `no_count` that is `out` alone, or nothing.
                 _vo_sig_arg = ", ".join(_doc_names)
                 # gh-2001: and so does the example's call. It passed ONE
                 # argument whatever the params -- `obj.delay(np.zeros(4))`
@@ -3812,7 +3882,7 @@ def make_methods_ctx(
                 # they're about to make. The all-scalar-params shape has no
                 # count to mirror and stays the original zero-arg form.
                 _pymo_decl, _pymo_name = _max_out_count_param_ctx(
-                    has_arg, has_params, params
+                    has_arg, has_params, params, no_count
                 )
                 # gh-761: the header's own prototype wins. jm assumed every
                 # `_max_out` takes a count (gh-607); most kernels bound their
@@ -4661,7 +4731,7 @@ def make_methods_ctx(
             # stub must agree with the binding, and the binding follows the
             # prototype.
             _stub_moc_decl, _stub_moc_name = _max_out_count_param_ctx(
-                has_arg, has_params, params
+                has_arg, has_params, params, no_count
             )
             if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
                 _stub_moc_decl, _stub_moc_name = "", None

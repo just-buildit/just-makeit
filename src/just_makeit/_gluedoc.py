@@ -655,6 +655,63 @@ def count_kwarg_name(count_name: str = "") -> str:
     return (count_name or "").strip() or COUNT_KWARG_DEFAULT
 
 
+def synthesizes_count(
+    *, variable_output: object, arg_type: str, params: object, no_count: object
+) -> bool:
+    """Whether the binding synthesizes a leading count argument.
+
+    gh-527 named the shape: a ``variable_output`` method with ``arg_type =
+    "void"`` and no params has nothing to size its output from, so the
+    binding parses a ``count`` (`count_kwarg_name`) and hands it to the
+    kernel as ``size_t n``. gh-2233 adds the opt-out, ``no_count``, for a
+    kernel whose result is sized by the object alone: that method takes no
+    count anywhere, and is called ``f()``.
+
+    One predicate for every face that asks -- the runtime ``__doc__`` and
+    the standalone ``.pyi`` (`_context._methods`) and the module-aggregated
+    ``.pyi`` (`_stubs`). They spelled the shape test out each, and a key
+    taught to one of them and not the others is the drift gh-1042 and
+    gh-1051 found twice over this same argument.
+
+    Parameters
+    ----------
+    variable_output : bool
+        The method's ``variable_output``.
+    arg_type : str
+        Its input type; ``"void"`` means none.
+    params : list
+        Its declared params; any at all means the shape takes no count.
+    no_count : bool
+        The method's ``no_count`` (gh-2233).
+
+    Returns
+    -------
+    bool
+        True when the binding parses a count and the stub publishes it.
+
+    Examples
+    --------
+    >>> synthesizes_count(
+    ...     variable_output=True, arg_type="void", params=[], no_count=False
+    ... )
+    True
+    >>> synthesizes_count(
+    ...     variable_output=True, arg_type="void", params=[], no_count=True
+    ... )
+    False
+    >>> synthesizes_count(
+    ...     variable_output=True, arg_type="float", params=[], no_count=False
+    ... )
+    False
+    """
+    return (
+        bool(variable_output)
+        and arg_type == "void"
+        and not params
+        and not no_count
+    )
+
+
 def binding_param_docs(
     count_name: str = "",
     *,

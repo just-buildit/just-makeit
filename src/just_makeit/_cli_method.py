@@ -40,6 +40,7 @@ def run(args: list[str]) -> None:
     exact_max_out = False
     count_default = ""
     count_name = ""
+    no_count = False
     out_cols = ""
     nogil = False
     varargs = False
@@ -174,6 +175,12 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             count_default = remaining[i]
+            i += 1
+        elif tok == "--no-count":
+            # gh-2233: a void-input --variable-output method takes NO count:
+            # no Python `count`, no `size_t n` in the kernel, and a
+            # `_max_out(state)` that sizes the result from the object alone.
+            no_count = True
             i += 1
         elif tok == "--out-cols":
             # gh-2115: the width of a matrix result. A --variable-output
@@ -723,6 +730,31 @@ def run(args: list[str]) -> None:
                 print(f"error: {_e}", file=sys.stderr)
             sys.exit(1)
 
+    # gh-2233: `no_count` applies only to the shape that synthesizes a count;
+    # the rules live in `_config._no_count_errors`, which the manifest loader
+    # runs too, and are not restated.
+    if no_count:
+        from ._config import _no_count_errors
+
+        _errs = _no_count_errors(
+            {
+                "no_count": True,
+                "variable_output": variable_output,
+                "arg_type": arg_type,
+                "params": method_params,
+                "count_default": count_default,
+                "count_name": count_name,
+                "batch": batch_method,
+                "result_fields": result_fields,
+                "record_dtype": record_dtype,
+            },
+            f"--no-count on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
     # gh-428: manual_stub's C binding is entirely hand-owned, so combining it
     # with any flag that drives jm's own C-side codegen is nonsensical --
     # silently ignoring the extra flag would be a footgun.
@@ -803,6 +835,7 @@ def run(args: list[str]) -> None:
         exact_max_out=exact_max_out,
         count_default=count_default,
         count_name=count_name,
+        no_count=no_count,
         out_cols=out_cols,
         nogil=nogil,
         fn=fn,

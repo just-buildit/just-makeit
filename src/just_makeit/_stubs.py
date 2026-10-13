@@ -2239,8 +2239,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # the whole behaviour of the zero-arg call. The stub omitted it
         # entirely, so the call that actually works (`obj.run(4)`) failed to
         # type-check while `obj.run(out=...)` passed. `count` precedes `out`
-        # to match the kwlist order.
-        _stub_count_arg = m_var and m_arg == "void" and not m_params
+        # to match the kwlist order. gh-2233: through the one predicate the
+        # binding's faces ask, which `no_count` turns off.
+        _stub_count_arg = _gluedoc.synthesizes_count(
+            variable_output=m_var,
+            arg_type=m_arg,
+            params=m_params,
+            no_count=m.get("no_count"),
+        )
         # gh-1074: and what it is CALLED, from the same accessor the binding
         # and the standalone stub use. This file is the module-aggregated
         # `.pyi`; the pair have already been found disagreeing about jm's own
@@ -2353,7 +2359,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                     if p["type"].endswith("[]"):
                         _stub_moc_name = f"{p['name']}_len"
                         break
-            else:
+            elif not m.get("no_count"):
+                # gh-2233: a `no_count` method's bound is the state's alone.
                 _stub_moc_name = "n"
             # gh-761: the header's prototype overrides all of the above, the
             # same way it does for the binding — a state-only
