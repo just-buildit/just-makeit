@@ -606,6 +606,18 @@ OUT_PARAM_DOC_MATRIX = (
     "omitted, a fresh array is allocated."
 )
 
+#: Appended for a method declaring ``short_out`` (gh-2230). Every other
+#: ``out=`` must hold what the binding would have allocated, so the one thing
+#: a caller of this one needs to know is that a smaller buffer is a request
+#: for less, not an error -- and that the input it did not take is theirs to
+#: offer again.
+OUT_PARAM_DOC_SHORT = (
+    " It has no minimum size: a buffer smaller than the matching "
+    "`_max_out()` asks for, empty included, is accepted. The call writes "
+    "only what fits and may then take less than all of its input; the "
+    "object reports how much it took, so offer the rest again."
+)
+
 
 #: What the synthesized leading count argument is called when the manifest
 #: does not say. Kept as the default rather than derived from the C parameter
@@ -677,6 +689,7 @@ def binding_param_docs(
     count: bool,
     out: bool,
     out_cols: bool = False,
+    short_out: bool = False,
 ) -> dict[str, str]:
     """jm's default description for each binding argument it synthesized.
 
@@ -706,12 +719,20 @@ def binding_param_docs(
     {}
     >>> "2-D" in binding_param_docs(count=False, out=True, out_cols=True)["out"]
     True
+
+    gh-2230: *short_out* says the buffer has no minimum, on either shape.
+
+    >>> "no minimum" in binding_param_docs(
+    ...     count=False, out=True, out_cols=True, short_out=True)["out"]
+    True
     """
     docs: dict[str, str] = {}
     if count:
         docs[count_kwarg_name(count_name)] = COUNT_PARAM_DOC
     if out:
-        docs["out"] = OUT_PARAM_DOC_MATRIX if out_cols else OUT_PARAM_DOC
+        docs["out"] = (OUT_PARAM_DOC_MATRIX if out_cols else OUT_PARAM_DOC) + (
+            OUT_PARAM_DOC_SHORT if short_out else ""
+        )
     return docs
 
 

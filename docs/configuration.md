@@ -1058,6 +1058,7 @@ way.
 | `variable_output = true`               | `jm method --variable-output`                                                                       | ✅           |
 | `pass_capacity = true`                 | `jm method --pass-capacity`                                                                         | ✅ (0.14.4)  |
 | `exact_max_out = true`                 | `jm method --exact-max-out`                                                                         | ✅ (0.55.0)  |
+| `short_out = true`                     | `jm method --short-out`                                                                             | ✅ (gh-2230) |
 | `count_default = "EXPR"`               | `jm method --count-default EXPR`                                                                    | ✅ (0.34.0)  |
 | `count_name = "NAME"`                  | `jm method --count-name NAME`                                                                       | ✅ (gh-1074) |
 | `out_cols = "EXPR"`                    | `jm method --out-cols EXPR`                                                                         | ✅ (gh-2115) |
@@ -1615,6 +1616,7 @@ One entry per `just-makeit method` call.
 | `variable_output` | bool                    | `--variable-output`                                                |
 | `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)               |
 | `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly  |
+| `short_out`       | bool                    | `--short-out`: `out=` has no minimum, for backpressure (gh-2230)   |
 | `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)      |
 | `out_cols`        | string or int           | width of a matrix result: `(count / out_cols, out_cols)` (gh-2115) |
 | `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)      |

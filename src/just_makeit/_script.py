@@ -667,6 +667,8 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_bool_flag("--pass-capacity"))
     if m.get("exact_max_out"):
         parts.append(_bool_flag("--exact-max-out"))
+    if m.get("short_out"):
+        parts.append(_bool_flag("--short-out"))
     # gh-684: the worst-case output count. Dropping it replayed the method
     # with jm's derived default instead of the declared bound.
     if m.get("max_out"):
