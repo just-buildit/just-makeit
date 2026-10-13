@@ -5333,6 +5333,26 @@ def _json_wide_names(parse_type: str) -> "tuple[str, str]":
     return f"_json_{tag}_item", f"_json_{tag}"
 
 
+def _json_out_of_range_c(conv: str, what: str, value: str, indent: str) -> str:
+    """The statement refusing *value* as out of its field's range, unended.
+
+    The one sentence the generated JSON reader refuses a too-wide integer
+    with: the 64-bit reader's, when ``strtoull`` / ``strtoll`` overflows,
+    and :func:`_json_get`'s, when the field's C type cannot hold what that
+    reader parsed (gh-2236). *conv* is the ``printf`` conversion of *value*;
+    *what* is the C expression naming the field.
+
+    >>> print(_json_out_of_range_c("%lld", '"n"', "_w", ""))
+    PyErr_Format(PyExc_ValueError, "%s: \\"%lld\\" is out of range",
+                 "n", _w);
+    """
+    return (
+        f'{indent}PyErr_Format(PyExc_ValueError, "%s: \\"{conv}\\" is out '
+        f'of range",\n'
+        f"{indent}             {what}, {value});"
+    )
+
+
 def _json_wide_c(parse_type: str) -> str:
     """The C writer and reader for one signedness of a 64-bit integer field.
 
@@ -5415,8 +5435,7 @@ static int
             return -1;
         }}
         if (errno == ERANGE) {{
-            PyErr_Format(PyExc_ValueError, "%s: \\"%s\\" is out of range",
-                         what, s);
+{_json_out_of_range_c("%s", "what", "s", " " * 12)}
             return -1;
         }}
         *v = x;
@@ -5483,6 +5502,13 @@ def _json_get(
     names the field (*what*) and runs *fail*, which leaves the function the
     way any other malformed record does.
 
+    gh-2236: the parse type is wider than the field's C type wherever that
+    type is narrower than 64 bits -- a ``size_t`` or a ``ptrdiff_t`` on a
+    32-bit target -- so the value is converted back and compared before it
+    is stored, and one the cast would change is refused with the reader's
+    own range sentence (:func:`_json_out_of_range_c`). Without it
+    ``"4294967296"`` passed the reader and lost its high bits in the cast.
+
     Examples
     --------
     >>> used = set()
@@ -5495,6 +5521,11 @@ def _json_get(
         if (_json_ll(cJSON_GetObjectItemCaseSensitive(so, "n"),
                      "source field 'n' (int64_t)", &_w) != 0)
             return -1;
+        if ((long long)(int64_t)_w != _w) {
+            PyErr_Format(PyExc_ValueError, "%s: \\"%lld\\" is out of range",
+                         "source field 'n' (int64_t)", _w);
+            return -1;
+        }
         src->n = (int64_t)_w;
     }
     """
@@ -5510,12 +5541,18 @@ def _json_get(
         if name is None
         else f'cJSON_GetObjectItemCaseSensitive({src}, "{name}")'
     )
+    conv = "%llu" if pt.startswith("unsigned") else "%lld"
+    refuse = _json_out_of_range_c(conv, f'"{what}"', "_w", " " * 8)
     return (
         "{\n"
         f"    {pt} _w = ({pt}){default};\n"
         f"    if ({reader}({item},\n"
         f'{" " * (len(reader) + 9)}"{what}", &_w) != 0)\n'
         f"        {fail}\n"
+        f"    if (({pt})({ctype})_w != _w) {{\n"
+        f"{refuse}\n"
+        f"        {fail}\n"
+        "    }\n"
         f"    {dest} = ({ctype})_w;\n"
         "}"
     )
