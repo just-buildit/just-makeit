@@ -6,6 +6,7 @@ Contains _bench_method_block, make_methods_ctx, and make_properties_ctx.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import NamedTuple
 
 from .. import _codec as _codec
@@ -1292,6 +1293,104 @@ def _max_out_call_c(
     state_only = max_out_is_state_only(doc_blocks, f"{c_fn}_max_out")
     arg = f", {count}" if (count and not state_only) else ""
     return f"{c_fn}_max_out(self->handle{arg})"
+
+
+def _records_consumed_c(
+    buffer: "Callable[[str, str], tuple[str, str, str]]",
+    call: "Callable[[str], str]",
+    *,
+    ptr: str,
+    count: str,
+    held: str,
+    consumed_fn: str,
+    who: str,
+    build: str,
+    nogil: bool,
+) -> str:
+    """A list-of-records body that re-offers its input until none is left.
+
+    gh-2204. The kernel's contract, ``(..., const T *in, size_t n_in, rec_t
+    *result, size_t max_results) -> count``, lets it stop when ``result`` is
+    full -- a detector's hit count depends on the data, so no capacity can
+    bound it up front. Called once, everything past where it stopped was
+    never seen by the C. With ``consumed_fn`` declared the binding asks it
+    after every call how much of the input that call took, advances *ptr* /
+    *count* past it, and calls again on the rest; the records of every call
+    are appended to one ``list``, in call order -- the shape the method
+    always returned.
+
+    Each call's buffer is *buffer*'s answer for the input still left (the
+    method's ``_records_buffer_c``): the fixed ``max_results`` stack array,
+    or, when the header declares ``<c>_<m>_max_out``, that many records
+    allocated for the remainder. The params ride along unchanged in *call*,
+    which spells the kernel call over a capacity. A call offered nothing
+    still runs once, as it always has. ``_coerce.consumed_guard_c`` raises
+    rather than spinning on a call that took none of what is left, or
+    stepping past the input's end on one claiming more.
+
+    Parameters
+    ----------
+    buffer : callable
+        ``(count, release) -> (declare, capacity, free)`` for one call.
+    call : callable
+        The kernel call expression for a capacity expression.
+    ptr, count : str
+        The input block's pointer and element count: mutable locals, which
+        the loop advances.
+    held : str
+        Statements releasing what the wrapper holds (its parsed arrays), on
+        every way out.
+    consumed_fn : str
+        The author's ``size_t <fn>(const <state> *)``.
+    who : str
+        ``Class.method``, for the messages.
+    build : str
+        The ``Py_BuildValue`` arguments for ``results[i]``.
+    nogil : bool
+        Release the GIL around each kernel call.
+
+    Returns
+    -------
+    str
+        The C from the list's creation to ``return lst;``.
+    """
+    rel_lst = f"{held} Py_DECREF(lst);".strip()
+    decl, cap, free = buffer(count, rel_lst)
+    rel_all = f"{free} {rel_lst}".strip()
+    body = (
+        decl
+        + _kernel_call_block(call(cap), nogil)
+        # gh-1716: `n_out` records are read from `results[]`.
+        + _coerce.returned_count_c("n_out", cap, who, rel_all)
+        + "    for (size_t i = 0; i < n_out; i++) {\n"
+        f"        PyObject *tup = Py_BuildValue({build});\n"
+        "        if (!tup || PyList_Append(lst, tup) < 0) {\n"
+        "            Py_XDECREF(tup);\n"
+        f"            {rel_all}\n"
+        "            return NULL;\n"
+        "        }\n"
+        "        Py_DECREF(tup);\n"
+        "    }\n"
+        + (f"    {free}\n" if free else "")
+        + f"    size_t _consumed = {consumed_fn}(self->handle);\n"
+        + _coerce.consumed_guard_c(
+            "_consumed", count, consumed_fn, who, rel_lst
+        )
+        + f"    {ptr} += _consumed;\n"
+        f"    {count} -= _consumed;\n"
+    )
+    pad = "    "
+    return (
+        "    PyObject *lst = PyList_New(0);\n"
+        f"    if (!lst) {{{f' {held}' if held else ''} return NULL; }}\n"
+        "    do {\n"
+        + "".join(
+            pad + ln if ln.strip() else ln for ln in body.splitlines(True)
+        )
+        + f"    }} while ({count} > 0);\n"
+        + (f"    {held}\n" if held else "")
+        + "    return lst;\n"
+    )
 
 
 def _records_buffer_c(
@@ -4130,44 +4229,81 @@ def make_methods_ctx(
             # The stack array needs no release; a heap buffer is freed on
             # every way out once the kernel has filled it.
             _rf_rel = f" {_rf_free}" if _rf_free else ""
+            _rf_tail = (
+                f"{_rf_call}"
+                # gh-1716: `n_out` records are read from `results[]`.
+                + _coerce.returned_count_c(
+                    "n_out", _rf_cap, f"{Component}.{name}", _rf_free
+                )
+                + "    PyObject *lst ="
+                " PyList_New((Py_ssize_t)n_out);\n"
+                + (
+                    f"    if (!lst) {{{_rf_rel} return NULL; }}\n"
+                    if _rf_free
+                    else "    if (!lst) return NULL;\n"
+                )
+                + f"    for (size_t i = 0; i < n_out; i++) {{\n"
+                f"        PyObject *tup ="
+                f" Py_BuildValue({_bv});\n"
+                f"        if (!tup)"
+                f" {{{_rf_rel} Py_DECREF(lst); return NULL; }}\n"
+                f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
+                f"    }}\n"
+                + (f"    {_rf_free}\n" if _rf_free else "")
+                + "    return lst;\n"
+            )
+            # gh-2204: a kernel that stops at a full buffer, re-offered the
+            # rest of its input block through `consumed_fn`. The loader
+            # refused the key on a method with no block, so the block is
+            # `x` beside params, else `in_arr`.
+            _rf_consumed = _record.consumed_fn(m)
+            if _rf_consumed and has_params:
+                _rf_tail = _records_consumed_c(
+                    _rf_buffer,
+                    lambda cap: (
+                        f"{c_fn}(self->handle, {_p_call}, results, {cap})"
+                    ),
+                    ptr="x",
+                    count="x_len",
+                    held=" ".join(_p_cleanup.split()),
+                    consumed_fn=_rf_consumed,
+                    who=f"{Component}.{name}",
+                    build=_bv,
+                    nogil=nogil,
+                )
+            elif _rf_consumed:
+                _rf_parse += (
+                    f"    const {arg_disp} *_in ="
+                    f" (const {arg_disp} *)PyArray_DATA(in_arr);\n"
+                )
+                _rf_tail = _records_consumed_c(
+                    _rf_buffer,
+                    lambda cap: (
+                        f"{c_fn}(self->handle, _in, n_in, results, {cap})"
+                    ),
+                    ptr="_in",
+                    count="n_in",
+                    held="Py_DECREF(in_arr);",
+                    consumed_fn=_rf_consumed,
+                    who=f"{Component}.{name}",
+                    build=_bv,
+                    nogil=nogil,
+                )
             # gh-1959: the single-record shape's twin -- with no input the
             # body parses nothing, so the wrapper is METH_NOARGS. A declared
             # param is parsed with keywords (gh-1961), as in that shape.
             _rf_cc = call_convention(
                 Component, args=has_arg or has_params, kwds=has_params
             )
-            wrapper = (
-                _in_dtype_helper
-                + (
-                    f"static PyObject *\n"
-                    f"{wrapper_prefix}_{name}"
-                    f"({_rf_cc.params})\n"
-                    f"{{\n"
-                    f"{guard}"
-                    f"{_rf_parse}"
-                    f"{_rf_call}"
-                    # gh-1716: `n_out` records are read from `results[]`.
-                    + _coerce.returned_count_c(
-                        "n_out", _rf_cap, f"{Component}.{name}", _rf_free
-                    )
-                    + "    PyObject *lst ="
-                    " PyList_New((Py_ssize_t)n_out);\n"
-                    + (
-                        f"    if (!lst) {{{_rf_rel} return NULL; }}\n"
-                        if _rf_free
-                        else "    if (!lst) return NULL;\n"
-                    )
-                    + f"    for (size_t i = 0; i < n_out; i++) {{\n"
-                    f"        PyObject *tup ="
-                    f" Py_BuildValue({_bv});\n"
-                    f"        if (!tup)"
-                    f" {{{_rf_rel} Py_DECREF(lst); return NULL; }}\n"
-                    f"        PyList_SET_ITEM(lst, (Py_ssize_t)i, tup);\n"
-                    f"    }}\n"
-                    + (f"    {_rf_free}\n" if _rf_free else "")
-                    + "    return lst;\n"
-                    "}"
-                )
+            wrapper = _in_dtype_helper + (
+                f"static PyObject *\n"
+                f"{wrapper_prefix}_{name}"
+                f"({_rf_cc.params})\n"
+                f"{{\n"
+                f"{guard}"
+                f"{_rf_parse}"
+                f"{_rf_tail}"
+                "}"
             )
             _rf_field_names = ", ".join(f["name"] for f in result_fields)
             # gh-1961 / gh-2001: every argument the binding takes, from the

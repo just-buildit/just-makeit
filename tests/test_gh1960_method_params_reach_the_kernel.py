@@ -361,6 +361,44 @@ ROWS = [
         "    return 1;",
         (("o.bare_in(np.zeros(3, np.float32))", "[(3, 0)]"),),
     ),
+    # -- the same list, re-offered the input a full buffer left (gh-2204):
+    # `rows_used` is the author's, in `_AUTHOR`. 100 elements past a buffer
+    # of 64 come back whole, and `k` reaches the second call too.
+    Row(
+        "rows",
+        "more",
+        f'arg_type = "float"\n{_DIV}\nconsumed_fn = "rows_used"\n{_K}',
+        "(void)state;\n"
+        "    size_t j = 0;\n"
+        "    for (; j < n_in && j < max_results; j++) {\n"
+        "        result[j].quot = (int)in[j];\n"
+        "        result[j].rem = k;\n"
+        "    }\n"
+        "    rows_note_used(j);\n"
+        "    return j;",
+        (
+            ("o.more(np.ones(2, np.float32), 4)", "[(1, 4), (1, 4)]"),
+            (
+                "sorted(set(o.more(np.ones(100, np.float32), 4))),"
+                " len(o.more(np.ones(100, np.float32), k=4))",
+                "([(1, 4)], 100)",
+            ),
+        ),
+    ),
+    Row(
+        "rows",
+        "more_in",
+        f'arg_type = "float"\n{_DIV}\nconsumed_fn = "rows_used"',
+        "(void)state;\n"
+        "    size_t j = 0;\n"
+        "    for (; j < n_in && j < max_results; j++) {\n"
+        "        result[j].quot = (int)in[j];\n"
+        "        result[j].rem = 0;\n"
+        "    }\n"
+        "    rows_note_used(j);\n"
+        "    return j;",
+        (("len(o.more_in(np.ones(100, np.float32)))", "100"),),
+    ),
 ]
 
 #: The objects, in declaration order.
@@ -368,6 +406,20 @@ OBJECTS = list(dict.fromkeys(r.obj for r in ROWS))
 
 #: `[[enum]]` tables a fragment declares, by object.
 _ENUMS = {"rows": '[[enum]]\nname = "mode"\nvalues = ["a", "b"]\n\n'}
+
+#: C the AUTHOR writes beside an object's kernels, by object: declarations
+#: for the sacred header, then definitions for `_core.c` (`{stem}` is the
+#: object's C stem). gh-2204: a `consumed_fn` is the author's function.
+_AUTHOR = {
+    "rows": (
+        "void rows_note_used(size_t n);\n"
+        "size_t rows_used(const {stem}_state_t *state);\n",
+        "\nstatic size_t rows_last_used;\n\n"
+        "void\nrows_note_used(size_t n)\n{{\n    rows_last_used = n;\n}}\n\n"
+        "size_t\nrows_used(const {stem}_state_t *state)\n{{\n"
+        "    (void)state;\n    return rows_last_used;\n}}\n",
+    ),
+}
 
 #: Known breakage, ratcheted: (object, method) -> {check: issue}. A strict
 #: xfail, so a fix turns the check red until the entry is removed.
@@ -422,6 +474,19 @@ def project(tmp_path_factory) -> Path:
         frag.write_text(_fragment(obj), encoding="utf-8")
         r = run_cli("apply", str(frag), cwd=root)
         assert r.returncode == 0, f"apply {obj}:\n{r.stdout}\n{r.stderr}"
+    for obj, (decls, defs) in _AUTHOR.items():
+        stem = CSYM.stem(C.load(root), obj)
+        h = next((root / "native" / "inc").rglob(f"{obj}_core.h"))
+        text = h.read_text(encoding="utf-8")
+        cut = text.rindex("#ifdef __cplusplus")
+        h.write_text(
+            text[:cut] + decls.format(stem=stem) + text[cut:], encoding="utf-8"
+        )
+        c = root / "native" / "src" / obj / f"{obj}_core.c"
+        c.write_text(
+            c.read_text(encoding="utf-8") + defs.format(stem=stem),
+            encoding="utf-8",
+        )
     return root
 
 

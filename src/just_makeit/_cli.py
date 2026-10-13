@@ -261,6 +261,11 @@ Commands:
                                 first integer --param.
     --out-divisor N             Divide input length by N for output array (default: 1).
     --result-field name:type    Append a field to a returned record list; repeatable.
+    --consumed-fn NAME          With --result-field and an --arg-type input: the C
+                                function saying how much input the last call took
+                                (size_t NAME(const state *)). The binding re-offers
+                                the rest until none is left, so a kernel that stops
+                                at a full buffer loses no records.
     --record-dtype STRUCT       With --variable-output: return ONE numpy structured
                                 array whose dtype is that C struct's own layout
                                 (offsetof/sizeof), one row per record. The

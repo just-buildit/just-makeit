@@ -294,6 +294,9 @@ METHOD_KEYS = frozenset(
         "record_module",
         "record_doc",
         "record_dtype",
+        # gh-2204: a list-of-records kernel that stops at a full buffer
+        # says how much input it took; the binding re-offers the rest.
+        "consumed_fn",
         # gh-1312: the method returns a BORROWED view -- a numpy array over
         # memory the C state owns, pinned to `self`. The kernel returns a
         # pointer instead of filling one, which is the shape a fixed-mapping
