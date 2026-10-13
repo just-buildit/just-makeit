@@ -575,7 +575,10 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
 #   rule that also covers a local added later.
 # - An array param `x` is marshalled through `x_obj` / `x_arr` / `x_raw` and
 #   reaches C with a derived `x_len`, so a sibling named one of those is
-#   refused. A scalar param derives nothing.
+#   refused. A scalar param `x` whose format char writes another width is
+#   parsed into `x_raw`, and a `size_t` / `uint64_t` into `x_obj` as well
+#   (gh-2220): those are refused too, as the parse slot's
+#   `scalar_raw_locals` names them.
 # - An out-buffer wrapper (`variable_output` or `out_type`) declares `out`,
 #   `n_out`, `out_obj`, `out_arr`, `arr<N>` and `v<N>`, and a multi-output one
 #   `out1..outN`; those are refused on those shapes ONLY. doppler's
@@ -704,6 +707,19 @@ def param_name_clash(
                     f"'{name}' is {what} for array param '{other}';"
                     f" name it '{other}_nbits' or '{other}_count' instead"
                 )
+    # gh-2220: a scalar derives locals too, on every face -- `<x>_raw` where
+    # its format char writes another width (gh-1952 / gh-2144), and `<x>_obj`
+    # where it parses as an object (`size_t`, `uint64_t`). The parse slot's
+    # own answer, so the rule cannot drift from what it declares. An enum
+    # param parses its choice string instead and derives neither.
+    from ._context._parse import scalar_raw_locals
+
+    for param in params or ():
+        other, otype = _param_name_type(param)
+        if other == name or (isinstance(param, dict) and param.get("enum")):
+            continue
+        if name in scalar_raw_locals([(other, otype)]):
+            return f"'{name}' is a local jm parses scalar param '{other}' into"
     if outbuf and (
         name in OUTBUF_LOCALS
         or any(_numbered(name, stem) for stem in _OUTBUF_NUMBERED)

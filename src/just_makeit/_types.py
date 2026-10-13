@@ -31,7 +31,15 @@ def _TO_PY_ULLONG(v):
 
 
 def _fwint(
-    ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0", narrow=False
+    ctype,
+    fmt,
+    parse_type,
+    parse_zero,
+    np_type,
+    to_py,
+    zero="0",
+    narrow=False,
+    index="",
 ):
     """Build a fixed-width integer _CTYPE_META entry.
 
@@ -42,6 +50,15 @@ def _fwint(
     type's floor ``0``). The binding refuses a value outside them before the
     cast (gh-2144, `_context._parse.scalar_narrow_c`). A cast alone wraps:
     ``int8_t`` given 300 arrived as 44.
+
+    *index* names the CPython function that converts an exact ``int`` into
+    *parse_type*, CHECKED, for a type no checked PyArg format char parses
+    (gh-2220). The row then parses the argument as an object (*fmt* ``O``)
+    and carries ``index``: that function and the ``<stdint.h>`` macro
+    naming the type's maximum, derived from the spelling as ``bounds`` is.
+    The binding converts through ``PyNumber_Index`` and that function, and
+    refuses a value outside ``[0, max]`` with ``OverflowError``
+    (`_context._parse.scalar_parse_c` / ``scalar_arg_c``).
     """
     row = {
         "kind": "int",
@@ -55,10 +72,12 @@ def _fwint(
         "to_c": lambda n, t=ctype: f"({t}){n}_raw",
         "to_py": to_py,
     }
+    stem = ctype[: -len("_t")].upper()
     if narrow:
-        stem = ctype[: -len("_t")].upper()
         floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
         row["bounds"] = (floor, f"{stem}_MAX")
+    if index:
+        row["index"] = (index, f"{stem}_MAX")
     return row
 
 
@@ -153,26 +172,30 @@ _CTYPE_META: dict[str, dict] = {
         "0U",
         narrow=True,
     ),
-    # No checked unsigned 64-bit format char exists, so these two still
-    # parse through the masking `K`: a negative value, or one past 2**64,
-    # wraps (gh-2144's carve-out, gh-2220).
+    # gh-2220: no checked unsigned 64-bit format char exists -- `K` masks,
+    # so -1 arrived as 2**64 - 1 and 2**64 as 0 -- so these two parse an
+    # object (`O`) and convert it through `PyNumber_Index` and the checked
+    # `PyLong_AsUnsignedLongLong`. `__index__` is also what takes a numpy
+    # integer, which `K` refused before Python 3.14.
     "uint64_t": _fwint(
         "uint64_t",
-        "K",
+        "O",
         "unsigned long long",
         "0ULL",
         "np.uint64",
         _TO_PY_ULLONG,
         "0U",
+        index="PyLong_AsUnsignedLongLong",
     ),
     "size_t": _fwint(
         "size_t",
-        "K",
+        "O",
         "unsigned long long",
         "0ULL",
         "np.uintp",
         _TO_PY_ULLONG,
         "0",
+        index="PyLong_AsUnsignedLongLong",
     ),
     "ptrdiff_t": _fwint(
         "ptrdiff_t", "L", "long long", "0LL", "np.intp", _TO_PY_LLONG, "0"

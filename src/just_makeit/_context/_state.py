@@ -21,7 +21,7 @@ from ._parse import (
     _build_ml_doc,
     borrow_view_c as _borrow_view_c,
     capsule_unwrap_c as _capsule_unwrap_c,
-    scalar_narrow_c as _scalar_narrow_c,
+    scalar_arg_c as _scalar_arg_c,
 )
 from .. import _types as T
 from .._types import default_type_error as _default_type_error
@@ -902,16 +902,22 @@ def _build_no_state_init_ctx(
     # in declared order, so parse_args lines up with the format string.
     parse_args: list[str] = [f"&{name}_obj" for name, _ in _aa]
     post_lines: list[str] = []
+    # gh-2220: each scalar's format char, as the parse slot answered it
+    # beside the address it wrote; the format strings below read it here.
+    scalar_fmt: dict[str, str] = {}
 
     def _emit_scalar(name: str, ct: str, dflt: str, dflt_raw: str) -> str:
         """Declare a scalar init-param's C local(s) and return its PyArg ref.
 
-        A ``parse_type`` scalar (e.g. ``size_t`` via the ``K`` intermediate)
-        parses into a ``_raw`` local that a post-parse line narrows to the real
-        type; everything else parses straight into the typed local. Required
-        params carry an empty ``dflt`` — the seed value is irrelevant since
-        PyArg always overwrites it — so fall back to the type's zero to keep the
-        declaration valid C.
+        Through the one tuple-parse slot, ``_parse.scalar_arg_c`` (gh-2220):
+        a ``parse_type`` scalar parses into a ``_raw`` local that a
+        post-parse line narrows to the real type, a ``size_t`` into an object
+        converted through ``__index__``, and everything else straight into
+        the typed local. This spelled the first and last itself, so a
+        ``size_t`` kept the masking ``K`` after the slot dropped it.
+        Required params carry an empty ``dflt`` — the seed value is
+        irrelevant since PyArg always overwrites it — so the slot falls back
+        to the type's zero to keep the declaration valid C.
 
         ``dflt_raw`` (gh-1099) is the C-constant spelling: text jm emits
         unchanged and never tries to render as a Python literal. It was already
@@ -921,29 +927,21 @@ def _build_no_state_init_ctx(
         read it, which is what lets `_types.default_type_error` point an
         author at it for any scalar rather than for some of them.
         """
-        meta = _CTYPE_META[ct]
-        if meta.get("parse_type"):
-            raw_init = T.parse_seed(ct, dflt, dflt_raw)
-            local_lines.append(
-                f"    {meta['parse_type']} {name}_raw = {raw_init};"
-            )
-            # gh-2144: a range refusal runs after PyArg has made every path
-            # borrow, so it releases them, as the str-enum refusal does.
-            post_lines.append(
-                _scalar_narrow_c(
-                    ct,
-                    name,
-                    "".join(f"{_coerce.path_release(p)} " for p in path_ip)
-                    + "return -1;",
-                    label=name,
-                    meta=meta,
-                ).rstrip("\n")
-            )
-            return f"&{name}_raw"
-        local_lines.append(
-            f"    {ct} {name} = {dflt_raw or dflt or meta['zero']};"
+        # gh-2144: a range refusal runs after PyArg has made every path
+        # borrow, so it releases them, as the str-enum refusal does.
+        decl, fmt, addr, conv = _scalar_arg_c(
+            name,
+            ct,
+            dflt,
+            fail="".join(f"{_coerce.path_release(p)} " for p in path_ip)
+            + "return -1;",
+            default_raw=dflt_raw,
         )
-        return f"&{name}"
+        local_lines.append(decl)
+        if conv:
+            post_lines.append(conv)
+        scalar_fmt[name] = fmt
+        return addr
 
     # Required scalars are parsed before the optional kwargs (str-enum, optional
     # array, optional scalar), matching their position ahead of the PyArg `|`
@@ -1095,7 +1093,7 @@ def _build_no_state_init_ctx(
         if kind == "path"
         else _coerce.bytes_fmt()
         if kind == "bytes"
-        else _CTYPE_META[_req_scalar_meta[name][0]]["fmt"]
+        else scalar_fmt[name]
         for kind, name in required_entries
     )
     optional_fmt = "".join(
@@ -1104,8 +1102,9 @@ def _build_no_state_init_ctx(
         else "O"
         if kind in ("opt_arr", "def_arr")
         # gh-1271: an optional `const char *` seeded NULL takes `z`, so a
-        # caller can say None where the manifest said NULL.
-        else T.param_fmt(*_opt_scalar_meta[name][:2])
+        # caller can say None where the manifest said NULL -- the slot's
+        # answer, through `_types.param_fmt`.
+        else scalar_fmt[name]
         for kind, name in optional_entries
     )
     if optional_fmt:
@@ -3206,35 +3205,27 @@ def make_state_ctx(
     local_lines = [f"    PyObject *{name}_obj = NULL;" for name, _ in _aa]
     post_lines = []
     parse_args = [f"&{name}_obj" for name, _ in _aa]
+    scalar_fmts: list[str] = []
     for name, ct, dflt in ctor_scalars:
-        meta = _CTYPE_META[ct]
-        if meta.get("parse_type"):
-            # gh-377: seed the _raw local from dflt. gh-1561: through the one
-            # seed, which spells a Py_complex default as `{re, im}` -- this
-            # copy used to fall back to the struct's zero for EVERY complex
-            # default, so an omitted keyword read 0 whatever was declared.
-            raw_init = T.parse_seed(ct, dflt)
-            local_lines.append(
-                f"    {meta['parse_type']} {name}_raw = {raw_init};"
-            )
-            # gh-2144: before any array argument is acquired, so a range
-            # refusal has nothing to release.
-            post_lines.append(
-                _scalar_narrow_c(
-                    ct, name, "return -1;", label=name, meta=meta
-                ).rstrip("\n")
-            )
-            parse_args.append(f"&{name}_raw")
-        else:
-            local_lines.append(f"    {ct} {name} = {dflt};")
-            parse_args.append(f"&{name}")
+        # gh-2220: through the one tuple-parse slot. This spelled the parse
+        # itself, beside the slot -- gh-377 / gh-1561's seed and gh-2144's
+        # narrowing were already the slot's own -- so a `size_t` field kept
+        # the masking `K` after the slot dropped it. gh-2144: the refusal
+        # runs before any array argument is acquired, so it has nothing to
+        # release.
+        decl, fmt, addr, conv = _scalar_arg_c(
+            name, ct, dflt or "", fail="return -1;"
+        )
+        local_lines.append(decl)
+        if conv:
+            post_lines.append(conv)
+        parse_args.append(addr)
+        scalar_fmts.append(fmt)
     init_locals = "\n".join(local_lines)
     init_post_parse = ("\n".join(post_lines) + "\n") if post_lines else ""
 
     array_fmt = "O" * len(_aa)
-    scalar_fmt_str = "".join(
-        T.param_fmt(ct, dflt or "") for _, ct, dflt in ctor_scalars
-    )
+    scalar_fmt_str = "".join(scalar_fmts)
     if ctor_scalars:
         init_parse_fmt = array_fmt + "|" + scalar_fmt_str
     else:
@@ -3330,39 +3321,26 @@ def make_state_ctx(
             f"    return {to_py};\n"
             f"}}"
         )
-        if meta.get("parse_type"):
-            # gh-2144: refused by the field's name, which `set_<name>` says.
-            narrow = _scalar_narrow_c(
-                ct, "v", "return NULL;", label=name, meta=meta
-            )
-            setter = (
-                f"static PyObject *\n"
-                f"{Component}_set_{name}(\n"
-                f"    {Component}Object *self, PyObject *args)\n"
-                f"{{\n"
-                f"{guard}"
-                f"    {meta['parse_type']} v_raw = {meta['parse_zero']};\n"
-                f'    if (!PyArg_ParseTuple(args, "{meta["fmt"]}", &v_raw))\n'
-                f"        return NULL;\n"
-                f"{narrow}"
-                f"    {csym}_set_{name}(self->handle, v);\n"
-                f"    Py_RETURN_NONE;\n"
-                f"}}"
-            )
-        else:
-            setter = (
-                f"static PyObject *\n"
-                f"{Component}_set_{name}(\n"
-                f"    {Component}Object *self, PyObject *args)\n"
-                f"{{\n"
-                f"{guard}"
-                f"    {ct} v = {meta['zero']};\n"
-                f'    if (!PyArg_ParseTuple(args, "{meta["fmt"]}", &v))\n'
-                f"        return NULL;\n"
-                f"    {csym}_set_{name}(self->handle, v);\n"
-                f"    Py_RETURN_NONE;\n"
-                f"}}"
-            )
+        # gh-2220: through the one tuple-parse slot, which this spelled
+        # beside it (so a `size_t` field kept the masking `K`). gh-2144:
+        # refused by the field's name, which `set_<name>` says.
+        decl, fmt, addr, conv = _scalar_arg_c(
+            "v", ct, fail="return NULL;", meta=meta, label=name
+        )
+        setter = (
+            f"static PyObject *\n"
+            f"{Component}_set_{name}(\n"
+            f"    {Component}Object *self, PyObject *args)\n"
+            f"{{\n"
+            f"{guard}"
+            f"{decl}\n"
+            f'    if (!PyArg_ParseTuple(args, "{fmt}", {addr}))\n'
+            f"        return NULL;\n"
+            + (f"{conv}\n" if conv else "")
+            + f"    {csym}_set_{name}(self->handle, v);\n"
+            f"    Py_RETURN_NONE;\n"
+            f"}}"
+        )
         method_parts.append(getter + "\n\n" + setter)
 
     # gh-1761: the row's `str_hint`, read once by `_config.state_str_hints`

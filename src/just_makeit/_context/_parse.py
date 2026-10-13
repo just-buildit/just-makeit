@@ -525,6 +525,98 @@ def scalar_narrow_c(
     )
 
 
+def _index_c(
+    src: str,
+    var: str,
+    fail: str,
+    opener: str,
+    *,
+    label: str,
+    ctype: str,
+    meta: dict,
+    indent: str = "    ",
+) -> str:
+    """A block converting the object *src* into ``<var>_raw``, checked.
+
+    For a row carrying ``index`` (`_types._fwint`): a type no checked PyArg
+    format char parses. ``uint64_t`` and ``size_t`` parsed through ``K``,
+    which MASKS, so ``-1`` arrived as ``2**64 - 1`` and ``2**64`` as 0 before
+    any check could see them (gh-2220). This takes the object instead:
+    ``PyNumber_Index`` -- which is also what accepts a numpy integer, and
+    refuses a ``float`` as every other integer row does -- then the row's
+    checked converter, whose ``OverflowError`` is replaced by one naming
+    *label*, the value and the type's range, in the words
+    :func:`scalar_narrow_c` refuses a narrow row with.
+
+    Parameters
+    ----------
+    src : str
+        The C expression naming the ``PyObject *`` to convert.
+    var : str
+        The local's name; ``<var>_raw``, declared by the caller, receives
+        the value.
+    fail : str
+        The C statement(s) that leave the wrapper once the exception is set.
+    opener : str
+        The line opening the block, without its indent: ``{`` for an object
+        that is always there, ``if (<obj> != NULL) {`` for an optional
+        argument the parse may leave ``NULL``, keeping its seeded default.
+    label, ctype, meta, indent
+        As for :func:`scalar_narrow_c`.
+
+    Returns
+    -------
+    str
+        The block, each line ending in a newline. Its one local, ``_ix``,
+        is scoped to it, and a parameter cannot be spelled with a leading
+        ``_`` (`_builtins.param_name_clash`).
+
+    Examples
+    --------
+    >>> from just_makeit._types import _CTYPE_META
+    >>> print(_index_c("o", "n", "return -1;", "{", label="n",
+    ...                ctype="size_t", meta=_CTYPE_META["size_t"]), end="")
+        {
+            PyObject *_ix = PyNumber_Index(o);
+            if (_ix == NULL) {
+                return -1;
+            }
+            n_raw = PyLong_AsUnsignedLongLong(_ix);
+            if (n_raw == (unsigned long long)-1 && PyErr_Occurred()) {
+                PyErr_Format(PyExc_OverflowError,
+                    "n: %S is out of range for size_t [0, %llu]",
+                    _ix, (unsigned long long)SIZE_MAX);
+                Py_DECREF(_ix);
+                return -1;
+            }
+            Py_DECREF(_ix);
+        }
+    """
+    fn, hi = meta["index"]
+    pt, raw, i = meta["parse_type"], f"{var}_raw", indent
+    # `PyErr_Format` clears the converter's exception before formatting, so
+    # `%S` may run `str()` on the index. Every `index` row is unsigned: its
+    # floor is 0 and its maximum prints as `%llu`.
+    msg = f"{label}: %S is out of range for {ctype} [0, %llu]"
+    return (
+        f"{i}{opener}\n"
+        f"{i}    PyObject *_ix = PyNumber_Index({src});\n"
+        f"{i}    if (_ix == NULL) {{\n"
+        f"{i}        {fail}\n"
+        f"{i}    }}\n"
+        f"{i}    {raw} = {fn}(_ix);\n"
+        f"{i}    if ({raw} == ({pt})-1 && PyErr_Occurred()) {{\n"
+        f"{i}        PyErr_Format(PyExc_OverflowError,\n"
+        f'{i}            "{msg}",\n'
+        f"{i}            _ix, ({pt}){hi});\n"
+        f"{i}        Py_DECREF(_ix);\n"
+        f"{i}        {fail}\n"
+        f"{i}    }}\n"
+        f"{i}    Py_DECREF(_ix);\n"
+        f"{i}}}\n"
+    )
+
+
 def scalar_parse_c(
     ctype: str,
     src: str,
@@ -545,7 +637,9 @@ def scalar_parse_c(
     ``<var>_raw`` first and converts through :func:`scalar_narrow_c`. So a
     ``double`` keeps its fraction, a ``float _Complex`` its imaginary part, an
     ``int8_t`` local is never written four bytes wide, and a value an
-    ``int8_t`` cannot hold is refused rather than wrapped (gh-2144).
+    ``int8_t`` cannot hold is refused rather than wrapped (gh-2144). A row
+    no checked format char parses (``uint64_t``, ``size_t``) converts
+    through ``__index__`` instead, checked (:func:`_index_c`, gh-2220).
 
     gh-2035: written once, for an object's property setter; a composer's
     settings, segment fields and source fields each converted through
@@ -589,8 +683,32 @@ def scalar_parse_c(
         long long _v_raw = 0LL;
         if (!PyArg_Parse(_o, "L", &_v_raw)) goto fail;
         int64_t _v = (int64_t)_v_raw;
+    >>> got = scalar_parse_c("uint64_t", "value", "v", "return -1;",
+    ...                      label="seed")
+    >>> print(got.splitlines()[0]); print(got.splitlines()[-1])
+        unsigned long long v_raw = 0ULL;
+        uint64_t v = (uint64_t)v_raw;
     """
     meta = _CTYPE_META[ctype] if meta is None else meta
+    if "index" in meta:
+        # gh-2220: no format char parses it checked -- the object is
+        # converted through `__index__`, then cast.
+        return (
+            f"{indent}{meta['parse_type']} {var}_raw = {meta['parse_zero']};\n"
+            + _index_c(
+                src,
+                var,
+                fail,
+                "{",
+                label=label,
+                ctype=ctype,
+                meta=meta,
+                indent=indent,
+            )
+            + scalar_narrow_c(
+                ctype, var, fail, label=label, meta=meta, indent=indent
+            )
+        )
     if "parse_type" in meta:
         return (
             f"{indent}{meta['parse_type']} {var}_raw = {meta['parse_zero']};\n"
@@ -613,6 +731,8 @@ def scalar_arg_c(
     *,
     fail: str,
     meta: "dict | None" = None,
+    default_raw: str = "",
+    label: str = "",
 ) -> "tuple[str, str, str, str]":
     """One scalar a ``PyArg_ParseTuple*`` call fills: its four C pieces.
 
@@ -623,6 +743,13 @@ def scalar_arg_c(
     gh-2035 lifted it out of :func:`_build_params_parse` so a composer's
     serializer params and source fields stop parsing through a peer table
     that wrote an ``int`` into an ``int64_t``.
+
+    gh-2220: a row no checked format char parses (``uint64_t``, ``size_t``:
+    ``K`` masks) is parsed as an object into ``<pname>_obj``, ``NULL`` until
+    the caller passes it, and converted into the seeded ``<pname>_raw``
+    through ``__index__``, checked (:func:`_index_c`). Every tuple parse of a
+    scalar comes here -- the constructor's, ``set_<field>()``'s, ``step()``'s
+    and its overrides' too -- so that conversion is written once.
 
     Parameters
     ----------
@@ -639,46 +766,79 @@ def scalar_arg_c(
         ``tp_init``. Required, because only the caller knows which.
     meta : dict, optional
         The ``_CTYPE_META`` row, as for :func:`scalar_parse_c`.
+    default_raw : str, optional
+        The default as C text emitted verbatim (gh-1099): an init param's
+        ``default_raw``, or the live field a ``step()`` override defaults
+        to. It wins over *default* as the local's seed, as in
+        :func:`~just_makeit._types.parse_seed`.
+    label : str, optional
+        The Python-facing name a refusal leads with, when it is not *pname*:
+        ``set_<field>()`` parses its value into ``v``.
 
     Returns
     -------
     tuple of str
-        ``(decl, fmt, addr, conv)``: the declaration before the parse, the
-        format char, the address the parse writes, and the conversion after
-        it -- empty when the type parses into its own local. A range
-        refusal's message leads with *pname*.
+        ``(decl, fmt, addr, conv)``: the declaration(s) before the parse,
+        the format char, the address the parse writes, and the conversion
+        after it -- empty when the type parses into its own local. A range
+        refusal's message leads with *label*, or *pname*.
 
     Examples
     --------
     >>> scalar_arg_c("gain", "double", "1.0", fail="return NULL;")
     ('    double gain = 1.0;', 'd', '&gain', '')
-    >>> print(*scalar_arg_c("n", "size_t", "16", fail="return NULL;"),
+    >>> print(*scalar_arg_c("k", "int16_t", "16", fail="return NULL;")[:3],
     ...       sep="\\n")
+        int k_raw = 16;
+    i
+    &k_raw
+    >>> decl, fmt, addr, conv = scalar_arg_c("n", "size_t", "16",
+    ...                                      fail="return NULL;")
+    >>> print(decl, fmt, addr, sep="\\n")
+        PyObject *n_obj = NULL;
         unsigned long long n_raw = 16;
-    K
-    &n_raw
+    O
+    &n_obj
+    >>> print(conv.splitlines()[0]); print(conv.splitlines()[-1])
+        if (n_obj != NULL) {
         size_t n = (size_t)n_raw;
     """
     meta = _CTYPE_META[ptype] if meta is None else meta
     fmt = param_fmt(ptype, default)
+    label = label or pname
     if "parse_type" in meta:
         # gh-432 drive-by: seed the raw local with the gh-240 default (not
         # parse_zero) so an omitted defaulted arg yields the default. gh-1887:
         # through the one seed, which spells a `Py_complex` default as the
         # struct's `{re, im}`; verbatim did not compile.
         raw = f"{pname}_raw"
+        decl = (
+            f"    {meta['parse_type']} {raw} = "
+            f"{parse_seed(ptype, default, default_raw)};"
+        )
+        narrow = scalar_narrow_c(ptype, pname, fail, label=label, meta=meta)
+        if "index" not in meta:
+            return decl, fmt, f"&{raw}", narrow.rstrip("\n")
+        obj = f"{pname}_obj"
+        conv = _index_c(
+            obj,
+            pname,
+            fail,
+            f"if ({obj} != NULL) {{",
+            label=label,
+            ctype=ptype,
+            meta=meta,
+        )
         return (
-            f"    {meta['parse_type']} {raw} = {parse_seed(ptype, default)};",
+            f"    PyObject *{obj} = NULL;\n{decl}",
             fmt,
-            f"&{raw}",
-            scalar_narrow_c(ptype, pname, fail, label=pname, meta=meta).rstrip(
-                "\n"
-            ),
+            f"&{obj}",
+            (conv + narrow).rstrip("\n"),
         )
     # gh-240: a scalar with a `default` is optional -- seed its C local with
     # the default literal so an omitted arg yields it.
     return (
-        f"    {ptype} {pname} = {default or meta['zero']};",
+        f"    {ptype} {pname} = {default_raw or default or meta['zero']};",
         fmt,
         f"&{pname}",
         "",
@@ -686,25 +846,31 @@ def scalar_arg_c(
 
 
 def scalar_raw_locals(rows) -> "frozenset[str]":
-    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for *rows*.
+    """The locals :func:`scalar_arg_c` declares beside each of *rows*.
 
     *rows* are ``(name, type)`` pairs. A scalar whose format char writes
     another width -- an ``int8_t``, a ``size_t``, a ``bool``, a complex -- is
     parsed into ``<name>_raw`` and narrowed, so a sibling arg named that
-    would redeclare it (gh-1525). A type jm does not know declares nothing
-    here; the render refuses it. gh-2035 wrote this for the composer; the
-    handle and capsule faces declare the same locals since gh-2144.
+    would redeclare it (gh-1525). A row no checked char parses -- a
+    ``size_t``, a ``uint64_t`` -- is parsed as an object into ``<name>_obj``
+    as well (gh-2220). A type jm does not know declares nothing here; the
+    render refuses it. gh-2035 wrote this for the composer; the handle and
+    capsule faces declare the same locals since gh-2144.
 
     Examples
     --------
-    >>> sorted(scalar_raw_locals([("n", "size_t"), ("g", "double")]))
-    ['n_raw']
+    >>> sorted(scalar_raw_locals([("n", "size_t"), ("g", "double"),
+    ...                           ("k", "int8_t")]))
+    ['k_raw', 'n_obj', 'n_raw']
     """
-    return frozenset(
-        f"{name}_raw"
-        for name, ctype in rows
-        if "parse_type" in _CTYPE_META.get(ctype or "", {})
-    )
+    out = set()
+    for name, ctype in rows:
+        meta = _CTYPE_META.get(ctype or "", {})
+        if "parse_type" in meta:
+            out.add(f"{name}_raw")
+        if "index" in meta:
+            out.add(f"{name}_obj")
+    return frozenset(out)
 
 
 def _build_params_parse(
@@ -1038,30 +1204,23 @@ def _step_parse_block(
     field, so omitting it is free and the override is non-persistent. Empty
     ``ctrl`` reproduces the original byte-for-byte (the ``|`` is absent).
     Each parses at its row's width (:func:`ctrl_parse_c`).
+
+    ``x`` is parsed through the one tuple-parse slot, :func:`scalar_arg_c`
+    (gh-2220): it parsed with its row's format char into a local it declared
+    itself, so a ``size_t`` input took the masking ``K`` after the slot
+    stopped using it, and ``-1`` arrived as ``2**64 - 1``.
     """
-    disp = sample_type
+    decl, fmt, addr, conv = scalar_arg_c(
+        "x", sample_type, fail="return NULL;", meta=samp
+    )
     ctrl_locals, ctrl_fmt, ctrl_refs, ctrl_narrow = ctrl_parse_c(ctrl)
     ctrl_fmt = "|" + ctrl_fmt if ctrl else ""
-    if "parse_type" in samp:
-        parse_type = samp["parse_type"]
-        parse_zero = samp["parse_zero"]
-        fmt = samp["fmt"]
-        return (
-            f"    {parse_type} x_raw = {parse_zero};\n"
-            f"{ctrl_locals}"
-            f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
-            f" &x_raw{ctrl_refs}))\n"
-            f"        return NULL;\n"
-            + scalar_narrow_c(disp, "x", "return NULL;", label="x", meta=samp)
-            + ctrl_narrow
-        ).rstrip("\n")
-    fmt = samp["fmt"]
     return (
-        f"    {disp} x;\n"
+        f"{decl}\n"
         f"{ctrl_locals}"
         f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
-        f" &x{ctrl_refs}))\n"
-        f"        return NULL;\n" + ctrl_narrow
+        f" {addr}{ctrl_refs}))\n"
+        f"        return NULL;\n" + (f"{conv}\n" if conv else "") + ctrl_narrow
     ).rstrip("\n")
 
 
@@ -1071,17 +1230,21 @@ def ctrl_parse_c(
     """The four pieces of parsing ``step()`` / ``steps()``'s controllable
     overrides, one per ``(name, ctype, fmt)`` entry of *ctrl* (gh-240).
 
-    Each override defaults to the live ``self->handle-><name>`` field. A row
+    Each override defaults to the live ``self->handle-><name>`` field. It is
+    parsed through the one tuple-parse slot, :func:`scalar_arg_c`: a row
     with a ``parse_type`` parses into ``<name>_raw`` at that width and is
-    narrowed after the parse by :func:`scalar_narrow_c`, as every other face
-    is. gh-1952 / gh-2144: these parsed straight into the field's own type,
-    so ``int8_t k`` took the four bytes ``i`` writes -- a write past the
-    local -- and a value it cannot hold wrapped.
+    narrowed after the parse, as every other face is. gh-1952 / gh-2144:
+    these parsed straight into the field's own type, so ``int8_t k`` took
+    the four bytes ``i`` writes -- a write past the local -- and a value it
+    cannot hold wrapped. gh-2220: then into a local of their own beside the
+    slot, so a ``size_t`` kept the masking ``K`` the slot had dropped.
 
     Parameters
     ----------
     ctrl : list of tuple of str
-        ``(name, ctype, pyarg_fmt)`` per controllable field.
+        ``(name, ctype, pyarg_fmt)`` per controllable field. The format char
+        is the slot's, :func:`scalar_arg_c`, whatever the tuple says, so it
+        always matches the address beside it.
     fail : str, optional
         The statement(s) leaving the wrapper on a range refusal.
 
@@ -1104,18 +1267,16 @@ def ctrl_parse_c(
     |, &k_raw
     >>> "int8_t k = (int8_t)k_raw;" in narrow
     True
+    >>> ctrl_parse_c([("n", "size_t", "O")])[1:3]
+    ('O', ', &n_obj')
     """
     locals_, fmt, refs, narrow = "", "", "", ""
-    for name, ctype, f in ctrl:
-        meta = _CTYPE_META[ctype]
-        fmt += f
-        if "parse_type" not in meta:
-            locals_ += f"    {ctype} {name} = self->handle->{name};\n"
-            refs += f", &{name}"
-            continue
-        locals_ += (
-            f"    {meta['parse_type']} {name}_raw = self->handle->{name};\n"
+    for name, ctype, _f in ctrl:
+        decl, f, addr, conv = scalar_arg_c(
+            name, ctype, fail=fail, default_raw=f"self->handle->{name}"
         )
-        refs += f", &{name}_raw"
-        narrow += scalar_narrow_c(ctype, name, fail, label=name, meta=meta)
+        locals_ += f"{decl}\n"
+        fmt += f
+        refs += f", {addr}"
+        narrow += f"{conv}\n" if conv else ""
     return locals_, fmt, refs, narrow

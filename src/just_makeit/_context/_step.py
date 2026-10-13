@@ -387,12 +387,14 @@ def make_step_ctx(
     ctrl_obj_args = "".join(f", obj->{n}" for n, _, _ in _ctrl)
     # steps() keyword-parse bits.
     ctrl_kw_entries = "".join(f'"{n}", ' for n, _, _ in _ctrl)
-    ctrl_kw_fmt = "".join(f for _, _, f in _ctrl)
     # gh-1952 / gh-2144: each override parses at its row's width and is
     # narrowed (range-checked) after the parse -- `ctrl_narrow`, emitted
     # right after every parse below. It parsed straight into the field's
-    # type, so `int8_t k` took the four bytes `i` writes.
-    ctrl_field_locals, _, ctrl_parse_refs, ctrl_narrow = _ctrl_parse_c(_ctrl)
+    # type, so `int8_t k` took the four bytes `i` writes. gh-2220: the
+    # format chars are the parse slot's own, beside the addresses it wrote.
+    ctrl_field_locals, ctrl_kw_fmt, ctrl_parse_refs, ctrl_narrow = (
+        _ctrl_parse_c(_ctrl)
+    )
     # step() positional-parse list (rebuilt by _step_parse_block per shape).
     _ctrl_parse = list(_ctrl)
     # Every steps() is keyword-capable (docs/arguments.md: the parse amortises

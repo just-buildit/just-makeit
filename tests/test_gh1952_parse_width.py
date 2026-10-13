@@ -27,7 +27,7 @@ Two halves:
   and a writable property. A capsule has it on a create param and a writable
   property. Both are built ``-Werror`` and driven from Python: ``min`` and
   ``max`` round-trip, and one step outside raises ``OverflowError`` naming
-  the arg -- against the same refusal and ``STILL_WRAPS`` ratchet as
+  the arg -- against the same refusal as
   ``tests/test_gh2144_int_range_refused``.
 
 An AddressSanitizer run cannot replace the width gate. The write past the
@@ -77,27 +77,36 @@ def _fmt_writes() -> "dict[str, str]":
     Derived from ``_CTYPE_META``: a row parses with ``fmt`` into its
     ``parse_type`` local, or into a local of its own type. Each char must
     name ONE type across the table, or a row could be parsed into a
-    variable another row's char sizes differently. ``z`` is a nullable
-    string's (``_types.param_fmt``). ``n`` and ``C`` are CPython's, for the
-    two scalars jm parses outside the table: a count (``Py_ssize_t``) and a
+    variable another row's char sizes differently. A row carrying ``index``
+    (``size_t``, ``uint64_t``, gh-2220) parses an OBJECT -- ``O`` writes a
+    ``PyObject *`` -- and converts it after the parse, so ``O`` is read as
+    every other scalar char is: a converted scalar, never skipped, whose
+    target must be that object. ``z`` is a nullable string's
+    (``_types.param_fmt``). ``n`` and ``C`` are CPython's, for the two
+    scalars jm parses outside the table: a count (``Py_ssize_t``) and a
     codec discriminant (``int``).
     """
     seen: "dict[str, set]" = {}
     for ct, meta in T._CTYPE_META.items():
-        seen.setdefault(meta["fmt"], set()).add(meta.get("parse_type", ct))
+        writes = (
+            "PyObject *" if "index" in meta else meta.get("parse_type", ct)
+        )
+        seen.setdefault(meta["fmt"], set()).add(writes)
     seen.setdefault(T.param_fmt("const char *", "NULL"), set()).add(
         "const char *"
     )
     split = {f: ts for f, ts in seen.items() if len(ts) != 1}
     assert not split, f"a format char names two C types: {split}"
     out = {f: next(iter(ts)) for f, ts in seen.items()}
-    out.update({"n": "Py_ssize_t", "C": "int"})
+    out.update({"n": "Py_ssize_t", "C": "int", "O": "PyObject *"})
     return out
 
 
-#: Format units that fill no scalar: an object, a converter or a buffer.
-#: Their targets are not read here.
-_NOT_SCALAR = ("O", "O&", "O!", "y#", "s#", "z#", "y*", "s*", "w*")
+#: Format units that fill no scalar: a converter or a buffer. Their targets
+#: are not read here. ``O`` is not one of them since gh-2220: a ``size_t``
+#: parses as an object, so an ``O`` filling an integer local is the masking
+#: ``K`` peer this gate exists to catch.
+_NOT_SCALAR = ("O&", "O!", "y#", "s#", "z#", "y*", "s*", "w*")
 
 _CALL = re.compile(r"\bPyArg_Parse(TupleAndKeywords|Tuple)?\s*\(")
 
@@ -154,16 +163,25 @@ def _declared_type(text: str, at: int, name: str) -> "str | None":
     """The type *name* is declared with in the function holding *at*.
 
     The function starts at the last column-0 ``{`` line before *at*; the
-    LAST declaration of *name* in it before *at* is the one in scope.
+    LAST declaration of *name* in it before *at* is the one in scope. The
+    name may be a later declarator of a list -- ``PyObject *x_obj = NULL,
+    *out_obj = NULL;`` -- whose type is the list's base type and its own
+    stars: since gh-2220 an ``O`` target is read, and several wrappers
+    declare their objects that way.
     """
     body = text[text.rfind("\n{\n", 0, at) : at]
     decl = re.compile(
-        rf"^[ \t]+(?!return\b)([A-Za-z_][\w \t]*?[ \t*]+){re.escape(name)}"
-        r"[ \t]*(?:=[^;]*)?;",
+        r"^[ \t]+(?!return\b)([A-Za-z_][\w \t]*?)([ \t*]+)"
+        r"((?:[A-Za-z_]\w*[ \t]*(?:=[^,;]*)?,[ \t]*\**[ \t]*)*?)"
+        rf"{re.escape(name)}[ \t]*(?:[=,][^;]*)?;",
         re.M,
     )
     found = decl.findall(body)
-    return found[-1] if found else None
+    if not found:
+        return None
+    base, stars, earlier = found[-1]
+    own = stars if not earlier else earlier[earlier.rfind(",") + 1 :]
+    return base + own
 
 
 def _norm(ctype: str) -> str:
@@ -224,6 +242,21 @@ def test_the_width_reader_reads():
     good = bad.replace("int8_t k", "int k")
     assert parse_width_violations(good) == []
     assert parse_width_violations(good.replace('"id"', '"iq"'))
+    # gh-2220: an object parse is read too. A `size_t` parsed as `O` into
+    # its integer local is the half-routed peer: PyArg writes a pointer
+    # where an integer was declared.
+    obj = (
+        "static PyObject *\nf(PyObject *self, PyObject *args)\n{\n"
+        "    unsigned long long n_raw = 0ULL;\n"
+        '    if (!PyArg_ParseTuple(args, "O", &n_raw))\n'
+        "        return NULL;\n}\n"
+    )
+    assert parse_width_violations(obj) == [
+        "line 5: 'O' writes a PyObject * into n_raw, declared "
+        "'unsigned long long '"
+    ]
+    fixed = obj.replace("unsigned long long n_raw = 0ULL", "PyObject *n_obj")
+    assert parse_width_violations(fixed.replace("&n_raw", "&n_obj")) == []
 
 
 def _handle_module(types: "list[str]") -> dict:

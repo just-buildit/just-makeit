@@ -28,11 +28,9 @@ from .._types import (
     _CTYPE_TO_NPY,
     _KIND_PY_TEST_VAL,
     record_tuple_build,
-    _join_fmt_with_optional,
     is_array_param_type,
     array_elem_ctype,
     c_param_parts,
-    param_writable,
 )
 from .._docstring import (
     method_doc,
@@ -76,7 +74,6 @@ from ._parse import (
     borrow_view_c as _borrow_view_c,
     capsule_new_c as _capsule_new_c,
     enum_symbols as _enum_symbols,
-    scalar_narrow_c as _scalar_narrow_c,
     scalar_parse_c as _scalar_parse_c,
 )
 
@@ -2856,172 +2853,26 @@ def make_methods_ctx(
                 _lazy_fallback = "x_len"
                 _moc_arg = _lazy_fallback
             elif has_params:
-                _pb_lines: list[str] = []
-                _cd_parts: list[str] = ["self->handle"]
-                _dr_lines: list[str] = []
-                _fmt_chars: list[str] = []
-                _fmt_args: list[str] = []
-                _first_arr: str | None = None
-                for _p in params:
-                    _pn = _p["name"]
-                    _pt = _p["type"]
-                    if is_array_param_type(_pt):
-                        _pe = array_elem_ctype(_pt)
-                        _pe_np = _NP_ENUM[_CTYPE_META[_pe]["py_type"]]
-                        _pe_disp = _pe
-                        _pb_lines += [
-                            f"    PyObject *{_pn}_obj = NULL;",
-                        ]
-                        _fmt_chars.append("O")
-                        _fmt_args.append(f"&{_pn}_obj")
-                        _pb_lines += [
-                            f"    PyArrayObject *{_pn}_arr = NULL;",
-                        ]
-                        # gh-1491: the cast matches the prototype, which
-                        # `c_param_parts` makes non-const for an `out` param.
-                        _pe_q = "" if param_writable(_p) else "const "
-                        _cd_parts.append(
-                            f"({_pe_q}{_pe_disp} *)PyArray_DATA({_pn}_arr)"
-                        )
-                        # gh-1996: in the unit the kernel counts, through the
-                        # one division every array param's length takes.
-                        _cd_parts.append(
-                            _coerce.array_count_c(
-                                f"{_pn}_arr",
-                                _coerce.elements_per_sample(_p, _what),
-                            )
-                        )
-                        _dr_lines.append(f"    Py_DECREF({_pn}_arr);")
-                        if _first_arr is None:
-                            _first_arr = _pn
-                    else:
-                        _pt_meta = _CTYPE_META.get(_pt, {})
-                        _fmt_char = _pt_meta.get("fmt", "d")
-                        _has_parse = "parse_type" in _pt_meta
-                        _parse_t = _pt_meta.get("parse_type", _pt)
-                        # gh-802: seed the local with the param's `default`
-                        # (falling back to the type's zero), exactly as
-                        # `_build_params_parse` does — an omitted optional arg
-                        # is left untouched by PyArg_ParseTupleAndKeywords, so
-                        # its declared default IS whatever this local holds.
-                        # gh-1887: a `_raw` local through the one seed, the
-                        # same call: a `Py_complex` default is the struct's
-                        # `{re, im}`, and this copy emitted it verbatim.
-                        _dflt = _p.get("default") or ""
-                        if _has_parse:
-                            _raw = f"{_pn}_raw"
-                            _pb_lines.append(
-                                f"    {_parse_t} {_raw} = "
-                                f"{T.parse_seed(_pt, _dflt)};"
-                            )
-                            _fmt_chars.append(_fmt_char)
-                            _fmt_args.append(f"&{_raw}")
-                        else:
-                            _pb_lines.append(
-                                f"    {_parse_t} {_pn} = {_dflt or '0'};"
-                            )
-                            _fmt_chars.append(_fmt_char)
-                            _fmt_args.append(f"&{_pn}")
-                        _cd_parts.append(_pn)
-                _cd_parts.append(_VO_BUF_TOKEN)
-                # gh-412: positional-OR-keyword (kwlist from the param names),
-                # so `obj.method(x, mu=…)` works and matches the .pyi.
-                _kwnames = "".join(f'"{_p["name"]}", ' for _p in params)
-                # gh-802: the `|` goes in through the same helper every other
-                # parse path uses. Concatenating the format chars (what this
-                # branch used to do) silently dropped it, so a param declaring
-                # a `default` — optional in the manifest and in the generated
-                # .pyi — was parsed as required and the extension rejected the
-                # call its own stub advertised.
-                _fmt = _join_fmt_with_optional(_fmt_chars, params)
-                if _enable_out:
-                    # gh-219 follow-up, widened by gh-1998: the same optional
-                    # out= kwarg as the has_arg branch, after every declared
-                    # param -- `delay(x, mu, out=None)`. It is the first
-                    # optional argument unless a param's `default` already
-                    # opened the optional group (gh-802), in which case it
-                    # joins it.
-                    _pb_lines.append("    PyObject *out_obj = NULL;")
-                    _fmt += "O" if "|" in _fmt else "|O"
-                    _fmt_args.append("&out_obj")
-                    _kwnames += '"out", '
-                parse_block = (
-                    f"    static char *_kwlist[] = {{{_kwnames}NULL}};\n"
-                    + "\n".join(_pb_lines)
-                    + "\n"
-                    + "    if (!PyArg_ParseTupleAndKeywords(args, kwds, "
-                    + f'"{_fmt}",\n'
-                    + "            _kwlist, "
-                    + ", ".join(_fmt_args)
-                    + "))\n"
-                    "        return NULL;\n"
+                # gh-2023 / gh-2220: the params go through the parse every
+                # other params shape uses -- the input-and-params shape's
+                # route since gh-1960 -- with the optional `out=` last, as
+                # that parse's trailing argument (gh-2028). This was a
+                # second copy of `_build_params_parse` that knew scalars and
+                # plain arrays only: a `path` param did not compile, an
+                # `enum` one parsed as an int while both stubs said `str`,
+                # and a `size_t` kept the masking `K` after the one
+                # tuple-parse slot dropped it.
+                parse_block, _p_call, decref_in = _build_params_parse(
+                    params,
+                    Component,
+                    enums,
+                    records,
+                    _sid,
+                    strict_in,
+                    out_obj="out_obj" if _enable_out else "",
                 )
-                _conv_lines: list[str] = []
-                # Arrays acquired so far, released on every early return --
-                # the second array's failure used to leak the first.
-                _held: list[str] = []
-                for _p in params:
-                    _pn = _p["name"]
-                    _pt = _p["type"]
-                    if is_array_param_type(_pt):
-                        _pe = array_elem_ctype(_pt)
-                        _pe_np = _NP_ENUM[_CTYPE_META[_pe]["py_type"]]
-                        _release = " ".join(f"Py_DECREF({a});" for a in _held)
-                        _flags = "NPY_ARRAY_C_CONTIGUOUS"
-                        if param_writable(_p):
-                            # gh-1491: the caller's buffer, so it must be
-                            # handed over as-is. Without the guard numpy
-                            # substitutes a cast / contiguous / writable copy,
-                            # the kernel fills that, and the caller's array is
-                            # never touched -- the gh-581 shape, on the one
-                            # array-param path that never learned `out`.
-                            _conv_lines.append(
-                                _coerce.out_buffer_guard(
-                                    f"{_pn}_obj",
-                                    _pe_np,
-                                    label=_pn,
-                                    decrefs=_release,
-                                ).rstrip("\n")
-                            )
-                            _flags += " | NPY_ARRAY_WRITEABLE"
-                        _conv_lines += [
-                            f"    {_pn}_arr =",
-                            f"        {_coerce.array_arg(f'{_pn}_obj', _pe_np, _flags, _pn, _coerce.str_hint(_p))};",
-                            f"    if (!{_pn}_arr) {{ {_release} return NULL; }}"
-                            if _release
-                            else f"    if (!{_pn}_arr) return NULL;",
-                        ]
-                        # gh-805 §C, as the method-param builder emits it:
-                        # this acquisition is that builder's peer, and the
-                        # `rank` it was never taught was accepted and dropped
-                        # here, so a 2-D array flattened into the kernel.
-                        if _coerce.array_rank(_p):
-                            _conv_lines.append(
-                                _coerce.array_rank_guard(
-                                    _pn,
-                                    f"{_pn}_arr",
-                                    _coerce.array_rank(_p),
-                                    _release,
-                                ).rstrip("\n")
-                            )
-                        _held.append(f"{_pn}_arr")
-                    elif "parse_type" in _CTYPE_META.get(_pt, {}):
-                        # gh-2144: a range refusal releases the arrays this
-                        # loop has acquired so far, as an array's does.
-                        _conv_lines.append(
-                            _scalar_narrow_c(
-                                _pt,
-                                _pn,
-                                "".join(f"Py_DECREF({a}); " for a in _held)
-                                + "return NULL;",
-                                label=_pn,
-                            ).rstrip("\n")
-                        )
-                parse_block += (
-                    "\n".join(_conv_lines) + "\n" if _conv_lines else ""
-                )
-                call_data = ", ".join(_cd_parts)
-                decref_in = "\n".join(_dr_lines) + "\n" if _dr_lines else ""
+                call_data = f"self->handle, {_p_call}, {_VO_BUF_TOKEN}"
+                _sizing = _outbuf.sizing_param(has_arg, params)
                 # gh-421: with no array param to size from, a scalar param
                 # (e.g. Delay.push_ptr(x), where x is the value being pushed,
                 # not a count) has no "count" semantics jm can derive from its
@@ -3030,15 +2881,15 @@ def make_methods_ctx(
                 # always available per the standard variable_output triplet.
                 # gh-1996: in samples, as the kernel is handed it above.
                 _lazy_fallback = (
-                    _coerce.array_count_c(f"{_first_arr}_arr", _vo_e)
-                    if _first_arr is not None
+                    _coerce.array_count_c(f"{_sizing['name']}_arr", _vo_e)
+                    if _sizing is not None
                     else f"{c_fn}_max_out(self->handle)"
                 )
                 # gh-607: an all-scalar params shape (no array to size from)
                 # has no count for the kernel to take either — max_out()
                 # stays zero-arg for this one shape, matching
                 # `_max_out_count_param`'s design (there is nothing to pass).
-                _moc_arg = _lazy_fallback if _first_arr is not None else None
+                _moc_arg = _lazy_fallback if _sizing is not None else None
             else:
                 if _enable_out:
                     parse_block = (
