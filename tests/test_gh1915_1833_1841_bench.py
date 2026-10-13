@@ -242,6 +242,14 @@ def test_2135_a_file_slow_to_import_is_named_within_three_budgets(tmp_path):
     )
     with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
         f.write("\n[project.bench]\ntimeout = 8\n")
+    # Build before the clock starts. `jm bench` builds the project first, and
+    # that build is untimed by design (gh-1687), so it is no budget of the
+    # three this test bounds. Left inside the window, a cold build on a loaded
+    # macOS runner put the run at 33 s against the 32 s bound (CI run
+    # 38131413484); built here, the CLI's own build is a no-op.
+    from just_makeit._bench import _ensure_built, _project_python
+
+    _ensure_built(proj, proj / "build", _project_python(proj))
 
     t0 = _time.monotonic()
     r = run_cli("bench", "--python-only", "--tag", "slowimport", cwd=proj)
