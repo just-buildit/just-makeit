@@ -1206,8 +1206,10 @@ class TestStringArgAndLenArray:
         s = _handle._emit_method(_plan_cfg(), "wfm_plan", m)
         # safe-width parse: uint64_t via unsigned long long _raw, then
         # narrowed (gh-2144: the one tuple-parse slot); a double parses into
-        # its own local. "dK".
-        assert 'PyArg_ParseTuple(args, "dK", &snr, &seed_raw)' in s
+        # its own local. "dO": gh-2220 parses a uint64_t as an object
+        # and converts it through __index__ into seed_raw.
+        assert 'PyArg_ParseTuple(args, "dO", &snr, &seed_obj)' in s
+        assert "seed_raw = PyLong_AsUnsignedLongLong(_ix);" in s
         assert "unsigned long long seed_raw = 0ULL;" in s
         assert "uint64_t seed = (uint64_t)seed_raw;" in s
         assert "wfm_plan_at(self->h, snr, seed, _out)" in s

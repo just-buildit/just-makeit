@@ -362,8 +362,9 @@ def release_resolve_c(m: dict, *, kwlist: list[str]) -> str:
     means (a ring's is a no-op). Testing the parsed local instead made an
     explicit 0 take the outstanding count: ``peek(64); consume(0)``
     released 64 samples nobody had processed. A sentinel default cannot
-    stand in for presence either: ``K`` does not range-check, so
-    ``consume(-1)`` would alias it. So the count is looked for where the
+    stand in for presence either: every value of the count's type is one a
+    caller may pass (and until gh-2220 ``K`` did not range-check, so
+    ``consume(-1)`` aliased ``SIZE_MAX``). So the count is looked for where the
     parse found it: positionally at its index in ``kwlist`` -- the parse
     block's own ``_kwlist``, in its order, handed over by the caller that
     built it -- or by name in ``kwds``.

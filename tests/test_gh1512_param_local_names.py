@@ -41,6 +41,11 @@ _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 #: other identifier a wrapper declares is jm's own.
 _ARR, _SCA = "zqa", "zqb"
 
+#: gh-2220: a scalar the parse slot converts derives locals of its own --
+#: ``<x>_raw``, and ``<x>_obj`` for one parsed as an object -- so the
+#: sentinels include one whose row derives both.
+_IDX = "zqd"
+
 #: ``(method name, extra argv, out-buffer shape, multi-output shape)``.
 #: Every method carries an array and a scalar sentinel unless its shape
 #: says otherwise; the flags mirror what `jm method` passes to the rule.
@@ -71,7 +76,14 @@ _FUNCTIONS = (
     ("f_out", ("--out-param", "zqc:float[]"), False),
     ("f_vo", ("--out-type", "float", "--variable-output"), True),
 )
-_SENTINEL_PARAMS = ("--param", f"{_ARR}:float[]", "--param", f"{_SCA}:double")
+_SENTINEL_PARAMS = (
+    "--param",
+    f"{_ARR}:float[]",
+    "--param",
+    f"{_SCA}:double",
+    "--param",
+    f"{_IDX}:size_t",
+)
 
 
 def _ok(*args: str, cwd: Path) -> None:
@@ -91,6 +103,8 @@ def sentinel_tree(tmp_path_factory) -> Path:
         "--no-step",
         "--init-param",
         f"{_SCA}:int:0",
+        "--init-param",
+        f"{_IDX}:size_t:0",
         cwd=root,
     )
     for name, extra, _, _ in _METHODS:
@@ -104,6 +118,8 @@ def sentinel_tree(tmp_path_factory) -> Path:
         "--no-step",
         "--init-param",
         f"{_SCA}:int:0",
+        "--init-param",
+        f"{_IDX}:size_t:0",
         cwd=root,
     )
     _ok(
@@ -191,13 +207,20 @@ def test_every_local_a_wrapper_declares_is_reserved(sentinel_tree: Path):
         "args",
         "kwds",
         f"{_ARR}_obj",
+        f"{_IDX}_obj",
+        f"{_IDX}_raw",
         "y",
         "n_out",
     ):
         assert known in seen, (known, sorted(seen))
 
-    sentinels = {_ARR, _SCA, "zqc"}
-    params = [(_ARR, "float[]"), (_SCA, "double"), ("zqc", "float[]")]
+    sentinels = {_ARR, _SCA, _IDX, "zqc"}
+    params = [
+        (_ARR, "float[]"),
+        (_SCA, "double"),
+        (_IDX, "size_t"),
+        ("zqc", "float[]"),
+    ]
     unclaimed = []
     for wrapper, declared in sorted(wrappers.items()):
         outbuf, multi = _shape_of(wrapper)
@@ -248,6 +271,15 @@ _REFUSED = [
             "x_obj:double",
         ),
         "a local jm marshals for array param 'x'",
+    ),
+    # gh-2220: a scalar's derived locals, both kinds.
+    (
+        ("method", "w", "d2", "--param", "n:size_t", "--param", "n_obj:int"),
+        "a local jm parses scalar param 'n' into",
+    ),
+    (
+        ("method", "w", "d3", "--param", "k:int8_t", "--param", "k_raw:int"),
+        "a local jm parses scalar param 'k' into",
     ),
     (
         (

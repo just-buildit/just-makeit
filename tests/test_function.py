@@ -631,8 +631,8 @@ class TestFunctionTyped:
         text = (typed_fn / "native/src/fft/fft_ext.c").read_text(
             encoding="utf-8"
         )
-        # size_t -> "K", float -> "f"
-        assert '"Kf"' in text
+        # size_t -> "O" (converted through __index__, gh-2220), float -> "f"
+        assert '"Of"' in text
 
     def test_ext_c_wrapper_calls_fn(self, typed_fn):
         text = (typed_fn / "native/src/fft/fft_ext.c").read_text(

@@ -158,8 +158,9 @@ class TestTheBinding:
         ext = _ext(_project(tmp_path))
         assert 'kwlist[] = {"tlm", "block_samples", NULL}' in ext
         assert "PyObject *tlm_obj = NULL;" in ext
-        # "O" for the capsule, then "|K" for the defaulted size_t.
-        assert '"O|K", kwlist' in ext
+        # "O" for the capsule, then "|O" for the defaulted size_t
+        # (gh-2220: converted through __index__ after the parse).
+        assert '"O|O", kwlist' in ext
 
     def test_it_name_checks_the_capsule(self, tmp_path):
         """The check that stops one module's pointer being accepted by
@@ -307,10 +308,10 @@ class TestDeclaredAfterADefaultedParam:
     def test_the_kwlist_hoists_the_required_param(self, tmp_path):
         ext = _ext(self._root(tmp_path))
         assert 'kwlist[] = {"tlm", "block_samples", NULL}' in ext
-        assert '"O|K", kwlist' in ext
+        assert '"O|O", kwlist' in ext
         # Hoisted, but assigned into NAMED locals — which is exactly why the
         # C order and the Python order are free to differ.
-        assert "&tlm_obj, &block_samples_raw" in ext
+        assert "&tlm_obj, &block_samples_obj" in ext
 
     def test_the_stub_agrees_with_the_kwlist(self, tmp_path):
         assert (
