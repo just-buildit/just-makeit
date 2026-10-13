@@ -12,17 +12,21 @@ generator (`make_methods_ctx`), with a `MethodHost` moving only the C it is
 built around: ``self`` is the source, the state is the generator ``steps``
 builds through ``bridge_fn`` and caches, and the first call builds it with
 ``steps``'s refusal. Its runtime doc and ``.pyi`` member are the
-generator's. A name is refused at load when the generator does not declare
-it, when the source already has the member, or when the source cannot carry
-the method's binding.
+generator's, plus the ``Raises`` entries for that build -- the ones ``steps``
+documents, from the one place they are said (`_composer._bridge_refused`);
+its error messages name the source, the class the caller called. A name is
+refused at load when the generator does not declare it, when the source
+already has the member, or when the source cannot carry the method's
+binding.
 
 GATE: built and driven, ``Src(...).prod(x)`` builds the generator on its
 first call and returns the kernel's result, and continues the generator
 ``steps`` uses (and the reverse); a refused build raises the bridge's
 ``ValueError`` / ``RuntimeError``; every delegated wrapper is rebound (no
 ``self->handle``, no generator object type) and compiles under ``-Werror``;
-the runtime doc and ``.pyi`` member equal the generator's; each refusal
-stops ``load``; the key survives ``apply`` in a split layout.
+a kernel's broken contract is reported as ``Src.<m>: ...``; the runtime doc
+and ``.pyi`` member are the generator's plus exactly the build refusal; each
+refusal stops ``load``; the key survives ``apply`` in a split layout.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -268,6 +273,14 @@ def _scaffold(
             "    (void)state; (void)x;\n    return (double)0.0;\n",
             "    return x + state->phase;\n",
         ),
+        # Breaks its contract: reports one more sample than it was given
+        # room for, so the binding's refusal -- and the class it names --
+        # can be seen.
+        "pull": (
+            "    (void)in; (void)n_in;\n    (void)out;\n"
+            "    return 0; /* placeholder */\n",
+            "    (void)in; (void)out;\n    return n_in + 1;\n",
+        ),
     }
     for name, (old, new) in kernels.items():
         if name in shapes:
@@ -351,26 +364,105 @@ def test_every_delegated_wrapper_is_bound_to_the_source(applied):
         assert max(table, lookup) < ext.index(f"\nSrc_gen_{name}(SrcObject")
 
 
-def test_the_runtime_doc_is_the_generators(applied):
-    """The row's doc text, byte for byte, as the generator's row has it."""
+def _refusal(proj: Path) -> "list[tuple[str, str]]":
+    """What building the generator raises, from the one place it is said."""
+    gen = _composer._source_generates(C.load(proj), "mix")
+    return [
+        (e, " ".join(w.split())) for e, w in _composer._bridge_refused(gen)
+    ]
+
+
+def _split_raises(doc: str) -> "tuple[str, list[tuple[str, str]]]":
+    """*doc* without its numpy ``Raises`` section, and that section's entries.
+
+    Each entry is ``(exception, condition)``, the condition's wrapped lines
+    joined, so two renderings that wrap one sentence differently agree.
+    """
+    lines = doc.split("\n")
+    if "Raises" not in lines:
+        return doc, []
+    at = lines.index("Raises")
+    assert lines[at + 1] == "------" and lines[at - 1] == "", doc
+    end = at + 2
+    entries: "list[tuple[str, list[str]]]" = []
+    while end < len(lines) and lines[end].strip():
+        if lines[end].startswith(" "):
+            entries[-1][1].append(lines[end].strip())
+        else:
+            entries.append((lines[end], []))
+        end += 1
+    rest = "\n".join(lines[: at - 1] + lines[end:])
+    return rest, [(e, " ".join(w)) for e, w in entries]
+
+
+def _plus_refusal(ours: str, theirs: str, refusal: list, what: str) -> None:
+    """*ours* is *theirs* with exactly *refusal* after its own ``Raises``."""
+    ours_rest, ours_raises = _split_raises(ours)
+    their_rest, their_raises = _split_raises(theirs)
+    assert ours_rest == their_rest, what
+    assert ours_raises == their_raises + refusal, what
+
+
+def _rows(c: str, prefix: str) -> "dict[str, str]":
+    """Each ``PyMethodDef`` row whose wrapper starts *prefix*: name -> the
+    row's doc, as the C string literals it is spelled in."""
+    out = {}
+    for m in re.finditer(rf'\{{"(\w+)", [^\n]*?{prefix}(\w+),', c):
+        # A method's wrapper is `<prefix><name>`; jm's own (`__enter__`
+        # bound to `Gen_enter`) are not methods anything delegates.
+        if m.group(1) == m.group(2):
+            out[m.group(1)] = c[m.end() : c.index("},\n", m.end())]
+    return out
+
+
+def _decode(row: str) -> str:
+    """The doc a row's C string literals spell (their escapes are Python's)."""
+    return ast.literal_eval("(" + row[row.index('"') :] + ")")
+
+
+def _docs(pyi: Path, cls: str) -> "dict[str, tuple[str, str]]":
+    """Each method of *cls* in the stub: name -> (signature, docstring)."""
+    text = pyi.read_text(encoding="utf-8")
+    out = {}
+    for node in ast.parse(text).body:
+        if isinstance(node, ast.ClassDef) and node.name == cls:
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef):
+                    src = ast.get_source_segment(text, item) or ""
+                    out[item.name] = (
+                        src.split('"""')[0],
+                        ast.get_docstring(item) or "",
+                    )
+    return out
+
+
+#: The source's own members, which delegate nothing.
+_OWN = {"__init__"} | {
+    m["name"] for m in _composer._source_gen_members({"bridge_fn": ""})
+}
+
+
+def test_the_runtime_doc_is_the_generators_plus_the_build(applied):
+    """Every delegated row: the generator's doc and the build's refusal."""
     gen_c = "".join(
         p.read_text(encoding="utf-8")
         for p in (applied / "native" / "src" / "sig").glob("*.c")
     )
-    ext = _ext(applied)
-
-    def doc(text: str, fn: str) -> str:
-        at = text.index(f"{fn},")
-        return text[at : text.index("},\n", at)].split("\n", 1)[1]
-
-    assert GAIN_BRIEF in doc(ext, "Src_gen_gain")
-    for name in SHAPES:
-        assert doc(ext, f"Src_gen_{name}") == doc(gen_c, f"Gen_{name}"), name
+    ours = _rows(_ext(applied), "Src_gen_")
+    theirs = _rows(gen_c, "Gen_")
+    # Every shape's row, and the `_max_out` rows beside them.
+    assert set(SHAPES) < set(ours), sorted(ours)
+    assert GAIN_BRIEF in _decode(ours["gain"])
+    refusal = _refusal(applied)
+    assert refusal
+    for name, row in ours.items():
+        _plus_refusal(_decode(row), _decode(theirs[name]), refusal, name)
 
 
 @pytest.mark.parametrize("module", [True, False], ids=["module", "standalone"])
-def test_the_pyi_member_is_the_generators(tmp_path, module):
-    """Each delegated member, as the generator's own stub writes it.
+def test_the_pyi_member_is_the_generators_plus_the_build(tmp_path, module):
+    """Each delegated member, as the generator's own stub writes it, with
+    the build's refusal after its own ``Raises``.
 
     A `batch` method's `.pyi` member is gh-2259 part 1's: the emitter
     writes none yet, while the module stub writes a scalar-typed one. It
@@ -379,15 +471,17 @@ def test_the_pyi_member_is_the_generators(tmp_path, module):
     """
     proj = _scaffold(tmp_path, module=module)
     _ok(run_cli("apply", cwd=proj))
-    mix = proj / "src" / PKG / "mix" / "mix.pyi"
-    gen = _gen_pyi(proj, module)
-    assert GAIN_BRIEF in (_member(mix, "Src", "gain") or "")
-    for name, flags in SHAPES.items():
-        ours = _member(mix, "Src", name)
-        if "--batch" in flags and ours is None:
+    ours = _docs(proj / "src" / PKG / "mix" / "mix.pyi", "Src")
+    theirs = _docs(_gen_pyi(proj, module), "Gen")
+    refusal = _refusal(proj)
+    assert GAIN_BRIEF in ours["gain"][1]
+    batch = {n for n, flags in SHAPES.items() if "--batch" in flags}
+    assert set(SHAPES) - batch <= set(ours), sorted(ours)
+    for name, (sig, doc) in ours.items():
+        if name in _OWN:
             continue
-        assert ours is not None, name
-        assert ours == _member(gen, "Gen", name), name
+        assert sig == theirs[name][0], name
+        _plus_refusal(doc, theirs[name][1], refusal, name)
 
 
 # ── the refusals, at load ─────────────────────────────────────────────────
@@ -413,6 +507,7 @@ def _base() -> dict:
                     "result_fields": [{"name": "i", "type": "int"}],
                 },
                 {"name": "get_phase"},
+                {"name": "pack", "codec": "msg"},
             ],
         },
         "module": {"mix": _composer_table(["prod"])},
@@ -433,6 +528,7 @@ REFUSED = {
     "release": ("done", "lends memory the generator owns"),
     "single": ("peak", "returns a record type"),
     "builtin": ("get_phase", "built-in members"),
+    "codec": ("pack", "no Raises section"),
 }
 
 
@@ -573,13 +669,21 @@ try:
 except ValueError:
     pass
 
-# The generator's own document, on both faces of the delegated member.
-for name in ("prod", "gain"):
-    check(
-        getattr(Src, name).__doc__ == getattr(Gen, name).__doc__,
-        f"Src.{name}.__doc__ is not Gen.{name}.__doc__",
-    )
-print(json.dumps(problems))
+# A kernel that breaks its contract is reported under the class the caller
+# called; the generator's own binding still names the generator.
+for who, obj in (("Src", Src()), ("Gen", Gen(phase=0.0))):
+    try:
+        obj.pull(one[:2])
+        problems.append(f"{who}.pull accepted an overrun")
+    except RuntimeError as e:
+        check(str(e).startswith(f"{who}.pull: "), f"{who}.pull said {e}")
+
+# Both runtime docs of each delegated member, for the test to compare.
+docs = {
+    n: [getattr(Src, n).__doc__, getattr(Gen, n).__doc__]
+    for n in ("prod", "gain", "pull")
+}
+print(json.dumps({"problems": problems, "docs": docs}))
 """
 
 
@@ -613,5 +717,8 @@ def test_the_source_runs_its_generators_methods(tmp_path):
         [sys.executable, str(driver)], cwd=proj, capture_output=True, text=True
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    problems = json.loads(r.stdout)
-    assert not problems, "\n".join(problems)
+    got = json.loads(r.stdout)
+    assert not got["problems"], "\n".join(got["problems"])
+    refusal = _refusal(proj)
+    for name, (ours, theirs) in got["docs"].items():
+        _plus_refusal(ours, theirs, refusal, name)

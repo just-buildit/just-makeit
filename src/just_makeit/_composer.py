@@ -1150,6 +1150,44 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
     }
 
 
+def _bridge_refused(gen: dict) -> "list[tuple[str, str]]":
+    """What a call that builds the generator raises when ``bridge_fn`` refuses.
+
+    The ``Raises`` entries of every source member that builds the generator
+    on its first call: ``steps`` and ``step`` (gh-1356), and each method the
+    source delegates (gh-2259), whose own entries these join. They follow
+    the generated C exactly: with ``bridge_error_fn`` declared (gh-1307) a
+    refusal with a reason is ``ValueError`` carrying it and one without is
+    ``RuntimeError``; without it every refusal is ``RuntimeError``.
+
+    >>> [e for e, _ in _bridge_refused({"bridge_fn": "b"})]
+    ['RuntimeError']
+    >>> for e, why in _bridge_refused({"bridge_fn": "b", "bridge_error_fn": 1}):
+    ...     print(e, "--", why)
+    ValueError -- If `b` refuses this configuration; the message is its reason.
+    RuntimeError -- If `b` fails and gives no reason.
+    """
+    if gen.get("bridge_error_fn"):
+        return [
+            (
+                "ValueError",
+                f"If `{gen['bridge_fn']}` refuses this configuration; the "
+                "message is its reason.",
+            ),
+            (
+                "RuntimeError",
+                f"If `{gen['bridge_fn']}` fails and gives no reason.",
+            ),
+        ]
+    return [
+        (
+            "RuntimeError",
+            f"If `{gen['bridge_fn']}` cannot build the generator from "
+            "this configuration.",
+        )
+    ]
+
+
 def _source_gen_members(gen: dict) -> "list[dict]":
     """``steps`` / ``step`` / ``reset`` on a generating source, declared once.
 
@@ -1173,26 +1211,7 @@ def _source_gen_members(gen: dict) -> "list[dict]":
         f"The first call builds the generator from this configuration, "
         f"through `{gen['bridge_fn']}`; later calls continue it."
     )
-    if gen.get("bridge_error_fn"):
-        refused = [
-            (
-                "ValueError",
-                f"If `{gen['bridge_fn']}` refuses this configuration; the "
-                "message is its reason.",
-            ),
-            (
-                "RuntimeError",
-                f"If `{gen['bridge_fn']}` fails and gives no reason.",
-            ),
-        ]
-    else:
-        refused = [
-            (
-                "RuntimeError",
-                f"If `{gen['bridge_fn']}` cannot build the generator from "
-                "this configuration.",
-            )
-        ]
+    refused = _bridge_refused(gen)
     return [
         {
             "name": "steps",
@@ -1320,6 +1339,11 @@ def _source_delegated(cfg: dict, module: str) -> dict:
         guard=(
             f"    if ({tname}_ensure_gen(self) < 0)\n        return NULL;\n"
         ),
+        # The caller called the source, so its errors name the source; and
+        # its first call builds the generator, so it can raise what that
+        # build raises (the entries `steps` documents).
+        who=tname,
+        raises=tuple(_bridge_refused(gen)),
     )
     out = make_methods_ctx(
         gname,
@@ -1353,6 +1377,7 @@ def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
     refused rather than bound to half of it.
     """
     from . import _borrow
+    from . import _codec
     from . import _record
     from ._builtins import absorbable_members
 
@@ -1375,6 +1400,11 @@ def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
         return (
             "it returns a record type the generator's module publishes, "
             "which a second module cannot publish as the same type"
+        )
+    if _codec.is_codec_method(m):
+        return (
+            "its docstring is the author's text alone, with no Raises "
+            "section for what building the generator raises"
         )
     return ""
 

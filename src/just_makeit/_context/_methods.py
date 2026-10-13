@@ -393,9 +393,11 @@ class MethodHost(NamedTuple):
     ``self`` is a ``<Component>Object *``, the state is ``self->handle``,
     and a wrapper first refuses a destroyed object. A composer's generating
     source delegates a method of its generator, so the same wrapper is
-    rendered onto the source type instead: these four say how, and nothing
-    else about the binding changes -- its parse, kernel call, docs and
-    ``.pyi`` member stay the generator's.
+    rendered onto the source type instead: these fields say how, and
+    nothing else about the binding changes -- its parse and kernel call
+    stay the generator's, and so do its docs and ``.pyi`` member, which
+    still name the generator's class (`make_methods_ctx`'s *Component*)
+    and gain only what *guard* can raise.
     """
 
     #: The function-name prefix of every wrapper and file-scope static.
@@ -406,6 +408,12 @@ class MethodHost(NamedTuple):
     state: str
     #: C each wrapper runs first: makes *state* valid or returns NULL.
     guard: str
+    #: The class a wrapper's error messages name -- the one the caller
+    #: called (``Synth.prod: ...``), where the docs name *Component*.
+    who: str
+    #: ``(exception, condition)`` entries *guard* can raise, appended to
+    #: every wrapper's documented ``Raises`` on both faces.
+    raises: "tuple[tuple[str, str], ...]" = ()
 
 
 def call_convention(
@@ -1672,10 +1680,11 @@ def make_methods_ctx(
 
     host (gh-2259) renders the wrappers onto another type -- a composer's
     generating source delegating its generator's methods -- through
-    :class:`MethodHost`. ``None`` is the object itself. Only the C a
-    wrapper is built around moves; *Component* still names the class in
-    every doc, ``.pyi`` member and message, so a delegated method reads
-    exactly as the generator's own.
+    :class:`MethodHost`. ``None`` is the object itself. The C a wrapper is
+    built around moves, and its error messages name ``host.who``;
+    *Component* still names the class in every doc and ``.pyi`` member,
+    whose ``Raises`` gain ``host.raises``, so a delegated method reads as
+    the generator's own plus what building the generator can raise.
     """
 
     _EMPTY: dict = {
@@ -1712,10 +1721,18 @@ def make_methods_ctx(
     )
     # gh-2259: `self` and its state, spelled once for every wrapper below.
     # `_self_C` is what `<x>Object *self` is built from; `_st` is the state
-    # pointer each kernel call is handed.
-    _self_C, _st = Component, "self->handle"
+    # pointer each kernel call is handed; `_who` leads every error message;
+    # `_host_raises` is what the guard adds to each documented `Raises`.
+    _self_C, _st, _who = Component, "self->handle", Component
+    _host_raises: "list[tuple[str, str]]" = []
     if host is not None:
-        wrapper_prefix, _self_C, _st, guard = host
+        wrapper_prefix, _self_C, _st, guard = (
+            host.prefix,
+            host.self_class,
+            host.state,
+            host.guard,
+        )
+        _who, _host_raises = host.who, list(host.raises)
 
     decl_lines: list[str] = []
     buf_fields: list[str] = []
@@ -1967,7 +1984,7 @@ def make_methods_ctx(
         # ...)` and one that documented nothing at all, so the two doc faces
         # agreed there was no exception over a binding that raises one.
         _raise_pair = declared_raise(m)
-        _raises_doc = raises_doc(m)
+        _raises_doc = raises_doc(m) + _host_raises
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
@@ -3226,7 +3243,7 @@ def make_methods_ctx(
                     f"    size_t _cols = (size_t)({_out_cols});\n"
                     f"    if (_cols == 0) {{\n"
                     f"        PyErr_SetString(PyExc_RuntimeError,\n"
-                    f'            "{Component}.{name}: out_cols evaluated'
+                    f'            "{_who}.{name}: out_cols evaluated'
                     f' to 0");\n'
                     f"        {_decref_early_vo}return NULL;\n"
                     f"    }}\n"
@@ -3417,7 +3434,7 @@ def make_methods_ctx(
                     + _coerce.returned_count_c(
                         "n_out",
                         "_cap",
-                        f"{Component}.{name}",
+                        f"{_who}.{name}",
                         "Py_DECREF(out_arr);",
                         indent=" " * 8,
                         unit=_cap_unit,
@@ -3431,7 +3448,7 @@ def make_methods_ctx(
                         # last row would be a silently wrong shape.
                         f"        if ((size_t)_odim % _cols != 0) {{\n"
                         f"            PyErr_Format(PyExc_RuntimeError,\n"
-                        f'                "{Component}.{name}: kernel returned'
+                        f'                "{_who}.{name}: kernel returned'
                         f" %zu elements, not a whole number of %zu-wide"
                         f' rows",\n'
                         f"                (size_t)_odim, _cols);\n"
@@ -3514,7 +3531,7 @@ def make_methods_ctx(
                 + _coerce.output_size_c(
                     "_adim",
                     "_cap",
-                    f"{Component}.{name}",
+                    f"{_who}.{name}",
                     _decref_early_vo,
                     # gh-1996: `_cap` is in samples and the arrays hold
                     # elements, so the bound is the quotient and the product
@@ -3619,7 +3636,7 @@ def make_methods_ctx(
                 + (
                     f"    if ((size_t)_odim % _cols != 0) {{\n"
                     f"        PyErr_Format(PyExc_RuntimeError,\n"
-                    f'            "{Component}.{name}: kernel returned'
+                    f'            "{_who}.{name}: kernel returned'
                     f" %zu elements, not a whole number of %zu-wide"
                     f' rows",\n'
                     f"            (size_t)_odim, _cols);\n"
@@ -3709,7 +3726,7 @@ def make_methods_ctx(
                     + _coerce.returned_count_c(
                         "n_out",
                         "_cap",
-                        f"{Component}.{name}",
+                        f"{_who}.{name}",
                         _decref_arrs,
                         unit=_cap_unit,
                     )
@@ -3885,7 +3902,7 @@ def make_methods_ctx(
                             c_fn=c_fn,
                             csym=csym,
                             elements_per_sample=_vo_e,
-                        ).c_doc_lines()
+                        ).c_doc_lines(raises=_host_raises or None)
                     )
                     method_c_parts.append(
                         f"static PyObject *\n"
@@ -3901,7 +3918,7 @@ def make_methods_ctx(
                             f"{c_fn}_max_out({_st},"
                             f" (size_t){_pymo_name}{_mo_per})",
                             _vo_e,
-                            f"{Component}.{name}_max_out",
+                            f"{_who}.{name}_max_out",
                         )
                         + "}"
                     )
@@ -3922,7 +3939,7 @@ def make_methods_ctx(
                             c_fn=c_fn,
                             csym=csym,
                             elements_per_sample=_vo_e,
-                        ).c_doc_lines()
+                        ).c_doc_lines(raises=_host_raises or None)
                     )
                     method_c_parts.append(
                         f"static PyObject *\n"
@@ -3934,7 +3951,7 @@ def make_methods_ctx(
                         + _max_out_return_c(
                             f"{c_fn}_max_out({_st})",
                             _vo_e,
-                            f"{Component}.{name}_max_out",
+                            f"{_who}.{name}_max_out",
                         )
                         + "}"
                     )
@@ -4139,7 +4156,7 @@ def make_methods_ctx(
                     doc_blocks,
                     count,
                     max_results,
-                    f"{Component}.{name}",
+                    f"{_who}.{name}",
                     release,
                     _st,
                 )
@@ -4219,7 +4236,7 @@ def make_methods_ctx(
                     f"{_rf_call}"
                     # gh-1716: `n_out` records are read from `results[]`.
                     + _coerce.returned_count_c(
-                        "n_out", _rf_cap, f"{Component}.{name}", _rf_free
+                        "n_out", _rf_cap, f"{_who}.{name}", _rf_free
                     )
                     + "    PyObject *lst ="
                     " PyList_New((Py_ssize_t)n_out);\n"
@@ -4383,7 +4400,7 @@ def make_methods_ctx(
                         _borrow_np_enum,
                         descr_fn=_borrow_descr_fn,
                         writeable=borrow_writeable,
-                        who=f"{Component}.{name}",
+                        who=f"{_who}.{name}",
                         arr="_view",
                         indent="    ",
                     )
@@ -4498,7 +4515,7 @@ def make_methods_ctx(
                     _coerce.output_size_c(
                         "_dim",
                         len_expr,
-                        f"{Component}.{name}",
+                        f"{_who}.{name}",
                         cleanup_inline,
                     )
                     + f"    PyObject *_out ="
@@ -4721,7 +4738,7 @@ def make_methods_ctx(
                 c_fn=c_fn,
                 csym=csym,
                 elements_per_sample=_vo_e,
-            ).pyi_doc()
+            ).pyi_doc(raises=_host_raises or None)
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
             )

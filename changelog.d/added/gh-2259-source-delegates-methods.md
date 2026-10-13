@@ -6,9 +6,12 @@
     it through `bridge_fn` and refuses as `steps()` does. Later calls, from
     either method, continue the same state. The binding, its runtime
     docstring and its `.pyi` member are the generator's, written by the same
-    emitter. Only the listed names are delegated. A name is refused when the
-    manifest loads if the generator does not declare it or the source
-    already has that member (a field, `fs`, a computed property, `steps`,
-    `step`, `reset`). It is also refused if the source cannot carry the
-    method: a built-in member of the generator, a `varargs` or
-    `manual_stub` method, a borrow or its release, or a `single` record.
+    emitter. Their `Raises` also lists what that first build can raise, as
+    `steps()`'s does, and an error the binding raises names the source
+    (`Synth.prod: ...`). Only the listed names are delegated. A name is
+    refused when the manifest loads if the generator does not declare it or
+    the source already has that member (a field, `fs`, a computed property,
+    `steps`, `step`, `reset`). It is also refused if the source cannot carry
+    the method: a built-in member of the generator, a `varargs` or
+    `manual_stub` method, a borrow or its release, a `single` record, or a
+    `codec` method.
