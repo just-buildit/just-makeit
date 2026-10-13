@@ -189,7 +189,7 @@ Commands:
                                 --out-cols), for a backpressure kernel: it
                                 writes what fits and the object reports the
                                 input it took. Needs --pass-capacity.
-    --nogil                    Release the GIL across the pure-C kernel so a
+    --nogil                     Release the GIL across the pure-C kernel so a
                                 thread-per-shard worker scales across cores.
                                 Numpy accessors are hoisted out first. Sound
                                 only when the object is not shared across
