@@ -1500,3 +1500,80 @@ RETURNED_COUNT_GUARD_RE = re.compile(
 RETURNED_COUNT_BLOCK_RE = re.compile(
     RETURNED_COUNT_GUARD_RE.pattern + r"[^{}]*\{[^{}]*\}"
 )
+
+
+def consumed_guard_c(
+    consumed: str,
+    left: str,
+    fn: str,
+    who: str,
+    release: str = "",
+    *,
+    indent: str = "    ",
+) -> str:
+    """Refuse a CONSUMED count that cannot advance the input (gh-2204).
+
+    A list-of-records method declaring ``consumed_fn`` re-offers its input
+    block until none is left: after each call it asks *fn* how much the
+    call took and advances by that. Two answers cannot advance it, and both
+    raise ``RuntimeError`` -- the C broke its side of the contract, as for
+    :func:`returned_count_c`:
+
+    - ``0`` with input left. The next call would be offered the same input
+      and, a kernel being deterministic, take none of it again: a loop that
+      never ends. Raised instead of spun.
+    - more than *left*. The remainder would wrap below zero and the next
+      call would be handed memory past the input's end.
+
+    A call offered nothing (an empty input) taking nothing is the one
+    legitimate zero. *consumed* and *left* are ``size_t`` locals the site
+    holds; *release* runs before ``return NULL``.
+
+    Examples
+    --------
+    >>> print(consumed_guard_c("_consumed", "n_in", "h_used", "H.push",
+    ...                        "Py_DECREF(lst);"))
+        if (_consumed > n_in || (_consumed == 0 && n_in > 0)) {
+            Py_DECREF(lst);
+            PyErr_Format(PyExc_RuntimeError,
+                "H.push: h_used() says the last call took %zu of the %zu "
+                "input elements left%s",
+                _consumed, n_in,
+                _consumed ? ", more than it was given"
+                          : ", so it made no progress and the rest can "
+                            "never be offered");
+            return NULL;
+        }
+    <BLANKLINE>
+    >>> bool(CONSUMED_GUARD_RE.search(consumed_guard_c("_consumed", "x_len",
+    ...                                                "f", "F.g")))
+    True
+    """
+    i = indent
+    rel = f"{i}    {release.strip()}\n" if release.strip() else ""
+    return (
+        f"{i}if ({consumed} > {left} || ({consumed} == 0 && {left} > 0)) {{\n"
+        f"{rel}"
+        f"{i}    PyErr_Format(PyExc_RuntimeError,\n"
+        f'{i}        "{who}: {fn}() says the last call took %zu of the %zu "\n'
+        f'{i}        "input elements left%s",\n'
+        f"{i}        {consumed}, {left},\n"
+        f'{i}        {consumed} ? ", more than it was given"\n'
+        f'{i}                  : ", so it made no progress and the rest can "\n'
+        f'{i}                    "never be offered");\n'
+        f"{i}    return NULL;\n"
+        f"{i}}}\n"
+    )
+
+
+#: The opening of the guard :func:`consumed_guard_c` emits over the local the
+#: list-of-records loop names ``_consumed``: what says a binding re-offers its
+#: input (``_docsync``'s feature marker). Code, not text, so a formatter's
+#: layout does not hide it.
+CONSUMED_GUARD_RE = re.compile(r"\bif\s*\(\s*_consumed\s*>")
+
+#: The whole guard block, for ``_docsync`` to remove before it asks whether a
+#: wrapper raises: the raise is jm's guard, not a result shape the manifest
+#: declared. Its condition has parentheses and no brace; its body holds only
+#: statements.
+CONSUMED_BLOCK_RE = re.compile(CONSUMED_GUARD_RE.pattern + r"[^{}]*\{[^{}]*\}")

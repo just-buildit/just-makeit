@@ -1362,6 +1362,7 @@ AUTHOR_NAMED_KEYS = (
     "steps_fn",
     "real_create_fn",
     "status_fn",
+    "consumed_fn",
     "out_len_fn",
     "count_fn",
     "key_fn",

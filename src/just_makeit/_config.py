@@ -281,6 +281,11 @@ def load(root: Path) -> dict:
     shape_errors = shape_key_errors(cfg)
     if shape_errors:
         _refuse(shape_errors)
+    # gh-2204: a `consumed_fn` no binding would call -- on a method that is
+    # not a list of records, or has no input block to re-offer.
+    consumed_errors = _consumed_fn_errors(cfg)
+    if consumed_errors:
+        _refuse(consumed_errors)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
@@ -470,6 +475,45 @@ def _why_key_errors(cfg: dict) -> "list[str]":
                         f"why = {v!r} must be true or false: it marks the "
                         "function as taking a trailing `const char **why`."
                     )
+    return errors
+
+
+def _consumed_fn_errors(cfg: dict) -> "list[str]":
+    """Every method ``consumed_fn`` no binding would call (gh-2204).
+
+    Each row is asked `_record.consumed_fn_why_not`, the predicate ``jm
+    method`` asks before it writes, over an object's methods and its views'
+    -- the two tables whose methods `make_methods_ctx` renders.
+
+    Examples
+    --------
+    >>> bad = {"det": {"methods": [{"name": "scan", "consumed_fn": "f"}]}}
+    >>> _consumed_fn_errors(bad)[0].split(":")[0]
+    "[[det.methods]] 'scan'"
+    >>> _consumed_fn_errors({"det": {"methods": [{"name": "scan"}]}})
+    []
+    """
+    from . import _record
+
+    errors: list[str] = []
+    for comp in components(cfg):
+        if not isinstance(cfg[comp], dict):
+            continue
+        rows = [(f"[[{comp}.methods]]", m) for m in methods(cfg, comp)]
+        rows += [
+            (f"[[{comp}.views]] {v.get('class_name', '?')!r} method", m)
+            for v in views(cfg, comp)
+            if isinstance(v, dict)
+            for m in view_methods(v)
+        ]
+        for where, m in rows:
+            if not isinstance(m, dict):
+                continue
+            why = _record.consumed_fn_why_not(
+                m, f"{where} {m.get('name', '?')!r}"
+            )
+            if why:
+                errors.append(why)
     return errors
 
 

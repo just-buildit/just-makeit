@@ -661,6 +661,11 @@ CASES: "dict[str, dict[str, Case]]" = {
             "method", "o", "m2", "{M}", "--return-type", "peak_t",
             "--result-field", "index:size_t", "--result-field",
             "value:double", only=BASE),
+        # gh-2204: the list re-offered its input through the author's fn.
+        "result-list-consumed": _case(
+            "method", "o", "m2", "{M}", "--arg-type", "float",
+            "--return-type", "peak_t", "--result-field", "index:size_t",
+            "--consumed-fn", "o_m2_used", only=BASE),
         "record-dtype": _case(
             "method", "o", "m2", "{M}", "--arg-type", "void",
             "--return-type", "double", "--variable-output",
