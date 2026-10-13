@@ -57,6 +57,12 @@ PKG = "dlg"
 #: (the second sizing its output from `state`, the alias a host must
 #: rebind), a value-or-negative-error int, and an `[[enum]]` parameter,
 #: whose lookup table the source's file must carry too (`ENUM_PARAMS`).
+#: The 0.105.0 bundle added three shapes this file was written without:
+#: `drain` takes no count at all (`no_count`, gh-2233); `push` is the
+#: params-only variable-output arm (gh-2023) with a short `out=` (gh-2230);
+#: `scan` is a list of records re-offering its input through `consumed_fn`
+#: (gh-2204), which asks the host's state how much each call took, and
+#: `peaks` the same list without it, whose body that change moved.
 #: `prod` and `gain` are driven; the rest are held to compiling,
 #: warning-clean, with nothing left bound to the generator's own type.
 SHAPES = {
@@ -106,6 +112,58 @@ SHAPES = {
         "--param",
         "k:int",
     ],
+    "drain": [
+        "--arg-type",
+        "void",
+        "--return-type",
+        "float _Complex",
+        "--variable-output",
+        "--pass-capacity",
+        "--no-count",
+    ],
+    "push": [
+        "--arg-type",
+        "void",
+        "--return-type",
+        "float _Complex",
+        "--param",
+        "x:float _Complex[]",
+        "--variable-output",
+        "--pass-capacity",
+        "--short-out",
+    ],
+    # `div_t` (<stdlib.h>) is the record, so no header declares a struct.
+    "peaks": [
+        "--arg-type",
+        "float",
+        "--return-type",
+        "div_t",
+        "--result-field",
+        "quot:int",
+        "--result-field",
+        "rem:int",
+    ],
+    "scan": [
+        "--arg-type",
+        "float",
+        "--return-type",
+        "div_t",
+        "--result-field",
+        "quot:int",
+        "--result-field",
+        "rem:int",
+        "--consumed-fn",
+        f"{PKG}_gen_scan_used",
+    ],
+}
+
+#: method -> the C its `consumed_fn` is, written beside the kernel in the
+#: sacred header, as jm says to: it calls the function and declares nothing.
+CONSUMED = {
+    "scan": (
+        f"static inline size_t {PKG}_gen_scan_used(const {PKG}_gen_state_t"
+        " *state)\n{\n    (void)state;\n    return 0; /* not driven */\n}\n"
+    ),
 }
 
 #: method -> (param, enum): the parameters the manifest then binds to an
@@ -260,6 +318,10 @@ def _scaffold(
         "    state->phase += 1.0;\n"
         "    return y;",
     ).replace(brief, f" * @brief {GAIN_BRIEF}\n")
+    for name, fn in CONSUMED.items():
+        if name in shapes:
+            at = text.rindex("#endif")
+            text = text[:at] + fn + "\n" + text[at:]
     hdr.write_text(text, encoding="utf-8")
     core = proj / "native" / "src" / "gen" / "gen_core.c"
     text = core.read_text(encoding="utf-8")
@@ -348,6 +410,9 @@ def test_every_delegated_wrapper_is_bound_to_the_source(applied):
     ext = _ext(applied)
     assert "self->handle" not in ext
     assert "GenObject" not in ext
+    # Every runtime message names the class the caller called (`host.who`).
+    stray = re.findall(r'"Gen\.\w+:', ext)
+    assert not stray, stray
     for name in SHAPES:
         start = ext.index(f"\nSrc_gen_{name}(SrcObject *self")
         body = ext[start : ext.index("\n}\n", start)]
@@ -477,11 +542,39 @@ def test_the_pyi_member_is_the_generators_plus_the_build(tmp_path, module):
     assert GAIN_BRIEF in ours["gain"][1]
     batch = {n for n, flags in SHAPES.items() if "--batch" in flags}
     assert set(SHAPES) - batch <= set(ours), sorted(ours)
+    layout = "module" if module else "standalone"
     for name, (sig, doc) in ours.items():
         if name in _OWN:
             continue
-        assert sig == theirs[name][0], name
-        _plus_refusal(doc, theirs[name][1], refusal, name)
+        their_sig, their_doc = theirs[name]
+        drift = PYI_DRIFT.get((layout, name))
+        if drift:
+            # Ratcheted: red the day the two producers agree, so the entry
+            # is removed with the fix. Until then the member is held to the
+            # generator's in everything but that one annotation.
+            theirs_ann, ours_ann, issue = drift
+            assert sig != their_sig, f"{name}: {issue} is fixed"
+            their_sig = their_sig.replace(theirs_ann, ours_ann)
+            their_doc = their_doc.replace(theirs_ann, ours_ann)
+        assert sig == their_sig, name
+        _plus_refusal(doc, their_doc, refusal, name)
+
+
+#: Known breakage, ratcheted: (layout, method) -> (the generator's
+#: annotation, the source's, issue). The module stub (`_stubs`) annotates
+#: a list of records `list[tuple[int, int]]` and the object emitter -- the
+#: one the source's member comes from -- `list[tuple]`, so a module
+#: generator's member and the source's differ in that annotation alone:
+#: the result_fields half of gh-1905, open on main before delegation
+#: existed.
+PYI_DRIFT = {
+    ("module", name): (
+        "list[tuple[int, int]]",
+        "list[tuple]",
+        "gh-1905 (the two .pyi producers annotate a list of records apart)",
+    )
+    for name in ("peaks", "scan")
+}
 
 
 # ── the refusals, at load ─────────────────────────────────────────────────
