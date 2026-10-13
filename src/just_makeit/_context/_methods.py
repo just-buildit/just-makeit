@@ -5535,13 +5535,11 @@ def make_properties_ctx(
             )
         else:
             _call = f"{CSYM.property_getter(csym, pname)}(self->handle)"
-            implement_cmt = (
-                "    /* <<IMPLEMENT: return the computed or stored value>> */\n"
-                if pname not in state_var_names
-                else ""
-            )
             # gh-519: the enum form binds the call into its own local before
             # the range check, so the C getter is evaluated exactly once.
+            # gh-2231: no `<<IMPLEMENT>>` marker here. This body is finished
+            # glue -- the call IS the implementation; what the author fills
+            # in is the C getter's stub in `_core.c`, which carries its own.
             getter = (
                 f"static PyObject *\n"
                 f"{Component}_getprop_{pname}"
@@ -5549,7 +5547,6 @@ def make_properties_ctx(
                 f" void *Py_UNUSED(closure))\n"
                 f"{{\n"
                 f"{guard}"
-                f"{implement_cmt}"
                 f"{_decode_stmts(_call)}"
                 f"}}"
             )
