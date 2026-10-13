@@ -169,6 +169,26 @@ def _scaffold(
         error="ValueError",
         error_message="the capture has a hole",
     )
+    # gh-2259 (gh-1905's batch half): a 1:1 array method, with an input and
+    # without. The standalone producer skipped it outright and the module
+    # one typed it as a scalar -- and the comparisons below, over the
+    # members both faces SHARE, could see neither: a member one face lacks
+    # is in no intersection.
+    for name, arg_type, return_type in (
+        ("block", "float", "float"),
+        ("burst", "void", "uint32_t"),
+    ):
+        method_run(
+            root,
+            "w",
+            name,
+            module,
+            arg_type,
+            return_type,
+            False,
+            [],
+            batch=True,
+        )
     cfg = C.load(root)
     C.set_destroy_spec(cfg, "w", {"returns": "int", "exit": "close"})
     C.save(root, cfg)
@@ -314,6 +334,24 @@ class TestBothStubProducersAgree:
             f"members have different SIGNATURES depending on whether the "
             f"object is standalone or in a module:\n    "
             + "\n    ".join(divergent)
+        )
+
+    @pytest.mark.parametrize(("arg_type", "return_type"), SHAPES)
+    def test_every_shape_has_the_same_members(
+        self, sigs_by_shape, arg_type, return_type
+    ):
+        """The comparisons above walk the members both faces SHARE.
+
+        So a member one producer never wrote passed all of them: a `batch`
+        method was missing from the standalone stub for its whole life while
+        this file was green (gh-2259; gh-1905 measured it).
+        """
+        standalone, module = sigs_by_shape[(arg_type, return_type)]
+        assert {"block", "burst"} <= set(module), sorted(module)
+        only = sorted(set(standalone) ^ set(module))
+        assert not only, (
+            f"for arg_type={arg_type!r} return_type={return_type!r} these "
+            f"members exist on one face only: {only}"
         )
 
     def test_every_shape_documents_steps_at_all(self, faces_by_shape):

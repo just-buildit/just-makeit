@@ -742,6 +742,21 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-2259: `--nogil` on a method whose binding jm does not write, refused
+    # by the validator `apply` runs -- the shapes live in
+    # `_config._nogil_errors` and are not restated.
+    if nogil:
+        from ._config import _nogil_errors
+
+        _errs = _nogil_errors(
+            {"nogil": nogil, "varargs": varargs, "manual_stub": manual_stub},
+            f"--nogil on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
     # gh-1011: this parser's defaults are values, not intent. `--return-type`
     # alone defaults to `float _Complex`, so
     # `jm method acq configure --view V --doc "..."` against a parent

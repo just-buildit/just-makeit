@@ -1242,6 +1242,15 @@ class _Feature(NamedTuple):
 #: Matched against the body with `_OUT_CONTIG` REMOVED, so a contiguity
 #: test that survives is one applied to something other than `out=`.
 _FEATURE_MARKERS = {
+    # gh-2259: a manifest declaration -- `nogil` -- that every shape jm
+    # writes now honours, and that a batch or fixed-size-result fragment
+    # rendered before it never did. Named for its consequence, which is
+    # silent: the call runs, holding the GIL.
+    "nogil": _Feature(
+        ("Py_BEGIN_ALLOW_THREADS", "PyEval_SaveThread"),
+        "the manifest declares nogil and this fragment calls the kernel "
+        "holding the GIL, so no other thread runs while it does",
+    ),
     # gh-1426 A: the record a release defaults its count from.
     "borrow-release": _Feature(
         ("_jm_borrowed",),

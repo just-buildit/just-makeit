@@ -375,7 +375,6 @@ CARVED = {
     ("batch", name): {
         "prototype": "gh-2021: a batch method's prototype drops its params",
         "call": "gh-2021: a batch method's binding drops its params",
-        "stub": "gh-1905: a standalone batch method has no .pyi member",
     }
     for name in ("block", "count")
 }
