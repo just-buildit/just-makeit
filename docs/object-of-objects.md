@@ -700,7 +700,12 @@ command-line tool** (`render_cli`): a pure-C `main()` — no Python — that
 - streams samples in the chosen wire format, reusing **`jm app`'s output axes**
     verbatim (`--sample_type` / `--file-type` / `--endian`);
 - validates enum flags against the SSOT `_enum_*` tables — no hand-written flag
-    tables.
+    tables;
+- reads a numeric flag whole at its field's declared type (decimal, `0x` hex
+    or leading-`0` octal for an integer), or refuses it: text that is not a
+    number, overflows, or is outside the type's range prints
+    `<prog>: --<field>: <reason>` and exits 2, through the same checked parser
+    as [`jm app`](commands/app.md#just-makeit-app) (gh-2225).
 
 The CMake `add_executable` target is emitted **outside** the `BUILD_PYTHON`
 guard (it is a C tool, not a Python module).
