@@ -274,6 +274,9 @@ METHOD_KEYS = frozenset(
         "short_out",
         "count_default",
         "count_name",
+        # gh-2233: a void-input variable_output method takes NO count: its
+        # result is sized by the object alone, through `max_out(state)`.
+        "no_count",
         "batch",
         "nogil",
         # result shape
