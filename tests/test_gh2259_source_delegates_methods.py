@@ -39,6 +39,7 @@ from _compilers import default_cc
 from _jmrun import run_cli
 
 from just_makeit import _composer
+from just_makeit import _keys
 from just_makeit import _config as C
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
@@ -454,16 +455,35 @@ def test_nothing_is_delegated_unless_named(tmp_path):
 
 
 def test_the_key_survives_apply_in_both_layouts(tmp_path):
-    """Split (the default) keeps it in the fragment; a single-file manifest
-    migrated to fragments carries it there."""
+    """Split (the default) keeps it in the module's fragment; a single-file
+    manifest reads it inline, and `migrate-to-fragments` carries it into the
+    fragment it writes."""
     proj = _scaffold(tmp_path, methods=["prod"], shapes=["prod"])
-    _ok(run_cli("apply", cwd=proj))
-    assert (proj / "modules" / "mix.toml").exists()
-    gen = C.load(proj)["module"]["mix"]["source"]["generates"]
-    assert gen["methods"] == ["prod"]
-    assert "Src_gen_prod" in _ext(proj)
-    r = run_cli("status", cwd=proj)
-    assert "unknown" not in r.stdout + r.stderr, r.stdout + r.stderr
+    frag = proj / "modules" / "mix.toml"
+    manifest = proj / "just-makeit.toml"
+
+    def delegated() -> None:
+        _ok(run_cli("apply", cwd=proj))
+        cfg = C.load(proj)
+        gen = cfg["module"]["mix"]["source"]["generates"]
+        assert gen["methods"] == ["prod"]
+        assert "Src_gen_prod" in _ext(proj)
+        # A key jm reads is one it recognises (gh-816).
+        assert _keys.unknown_keys(cfg) == []
+
+    delegated()
+    assert 'methods = ["prod"]' in frag.read_text(encoding="utf-8")
+    # The same project as ONE file: every fragment folded in, no `include`.
+    single = C._dump(C.load(proj))
+    shutil.rmtree(proj / "objects")
+    shutil.rmtree(proj / "modules")
+    manifest.write_text(single, encoding="utf-8")
+    assert 'methods = ["prod"]' in single
+    delegated()
+    _ok(run_cli("migrate-to-fragments", cwd=proj))
+    assert 'methods = ["prod"]' in frag.read_text(encoding="utf-8")
+    assert "[module.mix" not in manifest.read_text(encoding="utf-8")
+    delegated()
 
 
 # ── built and driven ──────────────────────────────────────────────────────
