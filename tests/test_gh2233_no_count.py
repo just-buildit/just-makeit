@@ -434,6 +434,14 @@ def test_a_module_object_publishes_the_same_face(tmp_path):
     ext = (root / "native/src/dsp/dsp_ext_spec.c").read_text("utf-8")
     assert '"count"' not in ext, ext
     assert "p_spec_flush(self->handle, _d0, _cap)" in ext, ext
+    # The module stub renders after the header is read back, whose
+    # state-only `_max_out` would answer for the key. Rendered here from the
+    # manifest alone -- no `_doc_blocks` -- the key has to answer by itself,
+    # as the binding's own `_max_out_count_param_ctx` does.
+    from just_makeit import _stubs
+
+    bare = _stubs._obj_stub(C.load(root), "spec", "p", "dsp")
+    assert "def flush_max_out(self) -> int:" in bare, bare
 
 
 # -- the manifest -------------------------------------------------------------
