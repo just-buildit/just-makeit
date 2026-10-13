@@ -60,11 +60,16 @@ def _fwint(
     *index* names the CPython function that converts an exact ``int`` into
     *parse_type*, CHECKED, for a type no checked PyArg format char parses
     (gh-2220). The row then parses the argument as an object (*fmt* ``O``)
-    and carries ``index``: that function and the ``<stdint.h>`` macro
-    naming the type's maximum, derived from the spelling as ``bounds`` is.
-    The binding converts through ``PyNumber_Index`` and that function, and
-    refuses a value outside ``[0, max]`` with ``OverflowError``
+    and carries ``index``, that function. The binding converts through
+    ``PyNumber_Index`` and it, then compares the result with the maximum
+    ``limits`` names before the cast -- *parse_type* can be wider than the
+    type, as ``unsigned long long`` is than a 32-bit ``size_t`` (gh-2258)
+    -- and refuses a value outside ``limits`` with ``OverflowError``
     (`_context._parse.scalar_parse_c` / ``scalar_arg_c``).
+
+    ``limits`` is the row's one range declaration: ``bounds``, ``index``'s
+    maximum and :func:`int_limits` all read it, so no reader spells a range
+    from the type's name a second time.
     """
     row = {
         "kind": "int",
@@ -84,26 +89,8 @@ def _fwint(
     if narrow:
         row["bounds"] = row["limits"]
     if index:
-        row["index"] = (index, f"{stem}_MAX")
+        row["index"] = index
     return row
-
-
-def _limit_macros(ctype: str, np_type: str) -> "tuple[str, str]":
-    """The C macros naming integer *ctype*'s range, from its spelling.
-
-    ``int8_t`` -> ``INT8_MIN`` / ``INT8_MAX`` (``<stdint.h>``), ``int`` ->
-    ``INT_MIN`` / ``INT_MAX`` (``<limits.h>``); an unsigned type's floor is
-    the literal ``0``, which *np_type* (the row's numpy dtype) says.
-
-    >>> _limit_macros("uint16_t", "np.uint16")
-    ('0', 'UINT16_MAX')
-    >>> _limit_macros("int", "np.int32")
-    ('INT_MIN', 'INT_MAX')
-    """
-    stem = ctype[: -len("_t")] if ctype.endswith("_t") else ctype
-    stem = stem.upper()
-    floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
-    return floor, f"{stem}_MAX"
 
 
 _CTYPE_META: dict[str, dict] = {
@@ -900,9 +887,10 @@ def wider_than_double(ctype: str) -> "str | None":
 def int_limits(ctype: str) -> "tuple[str, str] | None":
     """The C expressions naming integer *ctype*'s range, read off its row.
 
-    gh-2247. A row that carries ``bounds`` (gh-2144) answers with them; any
-    other integer row with the same derivation from its spelling, so
-    ``int`` answers ``INT_MIN`` / ``INT_MAX``. The compiler states the
+    gh-2247. Every integer row carries ``limits`` (gh-2225): `_fwint`
+    derives it from a fixed-width spelling, and ``int`` declares
+    ``INT_MIN`` / ``INT_MAX``. This reads it, so the JSON reader, the
+    command line and the binding refuse one range. The compiler states the
     range, not jm. ``bool`` is not a range -- converting any number to it
     is defined -- and a non-integer row has none.
 
@@ -931,7 +919,7 @@ def int_limits(ctype: str) -> "tuple[str, str] | None":
     meta = _CTYPE_META.get(ctype, {})
     if meta.get("kind") != "int" or ctype == "bool":
         return None
-    return meta.get("bounds") or _limit_macros(ctype, meta["py_type"])
+    return meta["limits"]
 
 
 def string_default_literal(default: str) -> str:
