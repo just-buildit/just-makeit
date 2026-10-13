@@ -269,6 +269,9 @@ METHOD_KEYS = frozenset(
         # gh-805 §D: trust `max_out` as a true bound; drop the
         # `max(max_out, n)` clamp without changing the kernel signature.
         "exact_max_out",
+        # gh-2230: an `out=` smaller than `max_out()` is accepted, for a
+        # backpressure kernel that clamps and reports what it took.
+        "short_out",
         "count_default",
         "count_name",
         "batch",

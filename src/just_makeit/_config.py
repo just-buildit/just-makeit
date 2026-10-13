@@ -5353,6 +5353,95 @@ def _out_cols_errors(entry: dict, what: str) -> list[str]:
     return errors
 
 
+def _short_out_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``short_out``; [] when absent or usable.
+
+    gh-2230. ``short_out = true`` lifts the minimum an ``out=`` buffer must
+    hold: without it a caller's buffer must be at least what the binding
+    would have allocated itself (``_context._methods._capacity_exprs``),
+    which is what makes a short one an error. A backpressure kernel's
+    contract is the opposite -- a short buffer is how the caller asks for
+    less, the kernel writes what fits and the object reports how much input
+    it took -- and that contract needs two things the key cannot supply:
+
+    * ``pass_capacity``, because only a kernel TOLD the buffer's real size
+      can stop at it. Without it the kernel writes blind, and the minimum is
+      the only thing between a short buffer and an overrun;
+    * an ``out=`` buffer to relax, which is :func:`_outbuf.why_not`'s
+      answer, and not a ``batch`` method, which is rendered as a 1:1
+      transform with no ``out=`` of this kind.
+
+    Each is refused here, at load, rather than rendered into a binding that
+    ignores the key -- or, without ``pass_capacity``, one that overruns.
+
+    Parameters
+    ----------
+    entry : dict
+        One ``[[<component>.methods]]`` entry.
+    what : str
+        How the caller names the entry in a message.
+
+    Returns
+    -------
+    list of str
+        One message per problem.
+
+    Examples
+    --------
+    >>> _short_out_errors({"name": "push"}, "x")
+    []
+    >>> _short_out_errors({"short_out": True, "variable_output": True,
+    ...                    "pass_capacity": True}, "x")
+    []
+    >>> _short_out_errors({"short_out": True, "variable_output": True},
+    ...                   "x")[0][:56]
+    'x: short_out needs pass_capacity = true: only a kernel t'
+    >>> _short_out_errors({"short_out": True, "pass_capacity": True},
+    ...                   "x")[0][:52]
+    'x: short_out needs variable_output = true: only a var'
+    >>> _short_out_errors({"short_out": "yes"}, "x")
+    ["x: short_out must be true or false, got 'yes'."]
+    """
+    if "short_out" not in entry:
+        return []
+    flag = entry["short_out"]
+    if not isinstance(flag, bool):
+        return [f"{what}: short_out must be true or false, got {flag!r}."]
+    if not flag:
+        return []
+    from . import _outbuf
+
+    errors: list[str] = []
+    why = _outbuf.why_not(
+        variable_output=bool(entry.get("variable_output")),
+        multi_output=bool(entry.get("multi_output")),
+        has_arg=str(entry.get("arg_type") or "void") != "void",
+        params=list(entry.get("params") or []),
+    )
+    if not entry.get("variable_output"):
+        errors.append(
+            f"{what}: short_out needs variable_output = true: only a "
+            f"variable_output method takes an out= buffer to relax."
+        )
+    elif why:
+        errors.append(
+            f"{what}: short_out relaxes the out= buffer, and this method "
+            f"has none ({why})."
+        )
+    if entry.get("batch"):
+        errors.append(
+            f"{what}: short_out needs a variable_output method; batch is a "
+            f"1:1 transform whose result has the input's length."
+        )
+    if not entry.get("pass_capacity"):
+        errors.append(
+            f"{what}: short_out needs pass_capacity = true: only a kernel "
+            f"told its buffer's real size can stop at it, and without that "
+            f"a buffer smaller than max_out() is an overrun."
+        )
+    return errors
+
+
 def manifest_type_errors(cfg: dict) -> list[str]:
     """Every unusable type declared anywhere in the manifest.
 
@@ -5456,6 +5545,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         if outputs == "method":
             errors.extend(_multi_output_errors(entry, what))
             errors.extend(_out_cols_errors(entry, what))
+            errors.extend(_short_out_errors(entry, what))
 
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
@@ -7429,7 +7519,7 @@ _METHOD_ORDER = (
     "count_name", "out_cols", "nogil", "none_on_empty", "error_on_empty",
     "batch", "multi_output", "extra_args", "params", "out_type",
     "out_divisor", "bench", "max_results", "result_fields", "single",
-    "py_return_type", "max_out",
+    "py_return_type", "max_out", "short_out",
 )  # fmt: skip
 _PROPERTY_ORDER = (
     "name", "doc", "type", "enum", "writable", "field", "buf_field",

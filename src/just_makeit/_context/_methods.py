@@ -1367,6 +1367,7 @@ def _capacity_exprs(
     exact_max_out: bool,
     fallback: str,
     max_out_state_only: bool = False,
+    short_out: bool = False,
 ) -> "tuple[str, str]":
     """``(alloc_clamp, min_cap_expr)`` for a variable-output method (gh-805 §D).
 
@@ -1410,6 +1411,22 @@ def _capacity_exprs(
     a state-only prototype cannot make on its own. Setting it is how a project
     that really does have a call-independent bound keeps the exact allocation.
 
+    **gh-2230: ``short_out`` asks the second question differently, and only
+    the second.** Everything above makes the ``out=`` minimum the allocation
+    the binding would have made, so a caller's buffer is held to exactly what
+    the kernel would otherwise have been given. That is right for a kernel
+    that merely clamps: a short buffer silently drops output it owed. A
+    *backpressure* kernel's contract is the reverse -- a short buffer is how
+    the caller asks for less, the kernel writes what fits and takes only the
+    input that produced it, and the object reports how much (doppler's
+    Spectrogram, ``rows = s.push(x, out=buf); x = x[s.consumed:]``). Under
+    ``short_out`` there is no minimum at all, so the expression is ``""``
+    and the ``out=`` site checks nothing but the buffer's shape. The key
+    requires ``pass_capacity`` (``_config._short_out_errors``), so the
+    kernel is handed the caller's true ``PyArray_SIZE`` -- the bound it
+    stops at -- and the allocating path, which has no caller buffer, is
+    unchanged.
+
     **Why this is an assertion and not a derivation.** The obvious rule —
     "trust it when the prototype takes ``n_in``, since it was given the input
     size" — is wrong, and jm's own fixtures prove it: ``Nco().steps_ovf(n)``
@@ -1432,6 +1449,9 @@ def _capacity_exprs(
     max_out_state_only : bool
         The header declares ``max_out(state)`` (gh-761), so the bound is
         provably call-independent and *cannot* be trusted as an exact one.
+    short_out : bool
+        The method declares ``short_out`` (gh-2230): an ``out=`` buffer has
+        no minimum, so the second element is ``""``. The first is untouched.
 
     Examples
     --------
@@ -1448,19 +1468,26 @@ def _capacity_exprs(
     '    if (!_cap || _cap < _need) _cap = _need;\\n'
     >>> _capacity_exprs(True, True, "_need", max_out_state_only=True)[0]
     '    if (!_cap) _cap = _need;\\n'
+
+    gh-2230: a backpressure kernel's ``out=`` has no minimum; its
+    allocation is the one ``pass_capacity`` gives it.
+
+    >>> _capacity_exprs(True, False, "_need", short_out=True)
+    ('    (void)_need;\\n', '')
     """
     if pass_capacity and not max_out_state_only:
-        return "    (void)_need;\n", "        size_t _min_cap = _omax;\n"
-    if exact_max_out:
-        return (
-            f"    if (!_cap) _cap = {fallback};\n",
-            f"        size_t _min_cap = _omax ? _omax : ({fallback});\n",
+        alloc = "    (void)_need;\n"
+        min_cap = "        size_t _min_cap = _omax;\n"
+    elif exact_max_out:
+        alloc = f"    if (!_cap) _cap = {fallback};\n"
+        min_cap = f"        size_t _min_cap = _omax ? _omax : ({fallback});\n"
+    else:
+        alloc = f"    if (!_cap || _cap < {fallback}) _cap = {fallback};\n"
+        min_cap = (
+            f"        size_t _min_cap = _omax >"
+            f" {fallback} ? _omax : ({fallback});\n"
         )
-    return (
-        f"    if (!_cap || _cap < {fallback}) _cap = {fallback};\n",
-        f"        size_t _min_cap = _omax >"
-        f" {fallback} ? _omax : ({fallback});\n",
-    )
+    return alloc, ("" if short_out else min_cap)
 
 
 def _zero_bound_guard(
@@ -2256,6 +2283,7 @@ def make_methods_ctx(
                     count=_stub_count_arg,
                     out=_stub_enable_out,
                     out_cols=bool(m.get("out_cols")),
+                    short_out=bool(m.get("short_out")),
                 ),
                 authored_doc=m.get("doc") or "",
                 param_docs=authored_param_docs(m),
@@ -3304,6 +3332,72 @@ def make_methods_ctx(
                     if _out_cols
                     else ""
                 )
+                # Without pass_capacity, max_out() alone is not always a
+                # true call-independent upper bound — a generator's
+                # steps(count) writes exactly the caller's requested
+                # size, which can exceed it. Require capacity for
+                # whichever is larger, matching the internal path's own
+                # `_cap < _need` fallback so the two agree instead of
+                # out= silently under-validating.
+                #
+                # With pass_capacity the kernel is handed `_cap` below
+                # and trusted to respect it exactly -- that is the same
+                # trust already extended on the internal-allocation path
+                # (`_vo_alloc`'s clamp is dropped there under the same
+                # condition). Requiring anything more than _omax here
+                # would reject a caller-owned buffer sized to the exact
+                # bound the binding itself would have allocated.
+                #
+                # gh-805 §D: `exact_max_out` earns the same trust without
+                # changing the kernel signature. `_capacity_exprs` holds
+                # all three cases and also produces `_vo_alloc`'s clamp
+                # below, so the two cannot answer differently.
+                #
+                # gh-920: except when the header's `max_out` takes only the
+                # state, which is a bound that cannot see this call.
+                _out_min_cap = _capacity_exprs(
+                    bool(pass_capacity),
+                    exact_max_out,
+                    _lazy_fallback,
+                    _moc_state_only,
+                    short_out=bool(m.get("short_out")),
+                )[1]
+                _out_zero = _reindent(
+                    _zero_bound_guard(
+                        c_fn,
+                        name,
+                        _lazy_fallback,
+                        f"Py_DECREF(out_arr); {_decref_early_vo}",
+                        bound="_omax",
+                        pass_capacity=bool(pass_capacity),
+                    )
+                )
+                # gh-2230: `short_out` has no minimum, so `_capacity_exprs`
+                # answers "" and there is no bound to read or to check: the
+                # buffer's shape, above, is all an `out=` is held to, and
+                # the kernel is handed its true size below. Every other
+                # method renders the three lines it always did.
+                _out_bound = (
+                    (
+                        f"        size_t _omax = {_moc_call};\n"
+                        + _out_min_cap
+                        + _out_zero
+                        + (
+                            f"        if (_cap < _min_cap) {{\n"
+                            f"            PyErr_Format(PyExc_ValueError,\n"
+                            f'                "out has %zu {_cap_unit},'
+                            f' need >= %zu",\n'
+                            f"                _cap, _min_cap);\n"
+                            f"            Py_DECREF(out_arr);"
+                            f" {_decref_early_vo}return NULL;\n"
+                            f"        }}\n"
+                            if _out_min_cap
+                            else ""
+                        )
+                    )
+                    if (_out_min_cap or _out_zero)
+                    else ""
+                )
                 _out_branch = (
                     f"    if (out_obj && out_obj != Py_None) {{\n"
                     f"{_vo_out_guard}"
@@ -3311,55 +3405,7 @@ def make_methods_ctx(
                     f"{_vo_out_shape}"
                     f"        size_t _cap ="
                     f" {_coerce.array_count_c('out_arr', _vo_e)};\n"
-                    f"        size_t _omax ="
-                    f" {_moc_call};\n"
-                    # Without pass_capacity, max_out() alone is not always a
-                    # true call-independent upper bound — a generator's
-                    # steps(count) writes exactly the caller's requested
-                    # size, which can exceed it. Require capacity for
-                    # whichever is larger, matching the internal path's own
-                    # `_cap < _need` fallback so the two agree instead of
-                    # out= silently under-validating.
-                    #
-                    # With pass_capacity the kernel is handed `_cap` below
-                    # and trusted to respect it exactly -- that is the same
-                    # trust already extended on the internal-allocation path
-                    # (`_vo_alloc`'s clamp is dropped there under the same
-                    # condition). Requiring anything more than _omax here
-                    # would reject a caller-owned buffer sized to the exact
-                    # bound the binding itself would have allocated.
-                    #
-                    # gh-805 §D: `exact_max_out` earns the same trust without
-                    # changing the kernel signature. `_capacity_exprs` holds
-                    # all three cases and also produces `_vo_alloc`'s clamp
-                    # below, so the two cannot answer differently.
-                    #
-                    # gh-920: except when the header's `max_out` takes only the
-                    # state, which is a bound that cannot see this call.
-                    + _capacity_exprs(
-                        bool(pass_capacity),
-                        exact_max_out,
-                        _lazy_fallback,
-                        _moc_state_only,
-                    )[1]
-                    + _reindent(
-                        _zero_bound_guard(
-                            c_fn,
-                            name,
-                            _lazy_fallback,
-                            f"Py_DECREF(out_arr); {_decref_early_vo}",
-                            bound="_omax",
-                            pass_capacity=bool(pass_capacity),
-                        )
-                    )
-                    + f"        if (_cap < _min_cap) {{\n"
-                    f"            PyErr_Format(PyExc_ValueError,\n"
-                    f'                "out has %zu {_cap_unit},'
-                    f' need >= %zu",\n'
-                    f"                _cap, _min_cap);\n"
-                    f"            Py_DECREF(out_arr);"
-                    f" {_decref_early_vo}return NULL;\n"
-                    f"        }}\n"
+                    f"{_out_bound}"
                     f"{_out_kernel}"
                     f"{_out_decref}"
                     # gh-2012: a declared refusal value, read before the
@@ -4642,6 +4688,7 @@ def make_methods_ctx(
                         count=_stub_count_arg,
                         out=_stub_enable_out,
                         out_cols=bool(m.get("out_cols")),
+                        short_out=bool(m.get("short_out")),
                     ),
                     authored_doc=m.get("doc") or "",
                     param_docs=authored_param_docs(m),

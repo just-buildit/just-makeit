@@ -41,6 +41,7 @@ def run(args: list[str]) -> None:
     count_default = ""
     count_name = ""
     out_cols = ""
+    short_out = False
     nogil = False
     varargs = False
     manual_stub = False
@@ -162,6 +163,11 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--exact-max-out":
             exact_max_out = True
+            i += 1
+        elif tok == "--short-out":
+            # gh-2230: accept an `out=` smaller than `max_out()`, for a
+            # backpressure kernel. Checked below with the manifest's rules.
+            short_out = True
             i += 1
         elif tok == "--count-default":
             # gh-657: C expression seeding a void-input variable_output
@@ -723,6 +729,30 @@ def run(args: list[str]) -> None:
                 print(f"error: {_e}", file=sys.stderr)
             sys.exit(1)
 
+    # gh-2230: the same rule as `out_cols` above -- the manifest loader's
+    # validator, asked before anything is written.
+    if short_out:
+        from ._config import _short_out_errors
+
+        _errs = _short_out_errors(
+            {
+                "short_out": True,
+                "variable_output": variable_output,
+                "pass_capacity": pass_capacity,
+                "multi_output": multi_output,
+                "batch": batch_method,
+                "arg_type": arg_type,
+                "params": [
+                    {"name": mp[0], "type": mp[1]} for mp in method_params
+                ],
+            },
+            f"--short-out on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
     # gh-428: manual_stub's C binding is entirely hand-owned, so combining it
     # with any flag that drives jm's own C-side codegen is nonsensical --
     # silently ignoring the extra flag would be a footgun.
@@ -804,6 +834,7 @@ def run(args: list[str]) -> None:
         count_default=count_default,
         count_name=count_name,
         out_cols=out_cols,
+        short_out=short_out,
         nogil=nogil,
         fn=fn,
         error_negative=error_negative,
