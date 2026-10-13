@@ -477,7 +477,8 @@ class TestComposerCli:
         assert "--sample_type" in s and "--file-type" in s and "--endian" in s
         # source-field flags; enum validated via the SSOT table (no hand table)
         assert '"--type"' in s and '"--freq"' in s
-        assert "_enum_index(_enum_wfm_type, type)" in s
+        # gh-2140: the flag's text, looked up where it is read.
+        assert "_enum_index(_enum_wfm_type, _s)" in s
         # segment-field flag + --from-file (backing parser) + build/exec/destroy
         assert '"--num_samples"' in s and '"--from-file"' in s
         assert "wfm_compose_create(&seg, 1, repeat, continuous)" in s
