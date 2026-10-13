@@ -217,11 +217,20 @@ def _serialization(Component: str) -> list[GlueMethod]:
             ret_ann="bytes",
             block=DoxyBlock(
                 brief="Serialize this object's mutable state to bytes.",
+                # gh-2185 / gh-2234: true of every object, because jm cannot
+                # see which kind a core is. A blob may carry a setter's value
+                # (doppler#2022) or configuration as reject keys (doppler's
+                # Spectrogram), so "construction parameters are not
+                # included" was false for both; what holds for all of them
+                # is that they are not RESTORED.
                 body=[
-                    "Captures exactly the state that evolves as the object "
-                    "runs, so a blob taken now and restored later resumes "
-                    "from this point. Construction parameters are not "
-                    "included: restore into an object built the same way.",
+                    "Captures the state that evolves as the object runs, "
+                    "including any value a setter changed after "
+                    "construction, so a blob taken now and restored later "
+                    "resumes from this point. Construction parameters are "
+                    "not restored: restore into an object built the same "
+                    "way. A core may check some of them and refuse a blob "
+                    "built differently.",
                     "The blob is opaque and always `state_bytes()` long. Its "
                     "layout is an implementation detail of the C core and is "
                     "not a stable format across builds.",
@@ -235,11 +244,18 @@ def _serialization(Component: str) -> list[GlueMethod]:
             py_params=[("blob", "bytes")],
             block=DoxyBlock(
                 brief="Restore mutable state from a `get_state()` blob.",
+                # gh-2185 / gh-2234: "the object keeps the parameters it was
+                # constructed with" was false wherever a setter's value
+                # travels in the blob -- set_state replaces it.
                 body=[
-                    "Overwrites the live state in place; the object keeps the "
-                    "parameters it was constructed with. Length is validated "
-                    "against `state_bytes()` before the blob is handed to the "
-                    "C core, and the core may reject it as well.",
+                    "Overwrites the live state in place, including any value "
+                    "a setter changed after construction. Construction "
+                    "parameters are not restored: restore into an object "
+                    "built the same way. Length is validated against "
+                    "`state_bytes()` before the blob is handed to the C "
+                    "core, which may reject it too: a core may check some "
+                    "construction parameters and refuse a blob built "
+                    "differently.",
                     "Raises ``TypeError`` if *blob* is not bytes, "
                     "``ValueError`` if its length differs from "
                     f"`state_bytes()` or the core rejects it, and "
