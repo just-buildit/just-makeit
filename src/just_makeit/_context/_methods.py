@@ -429,6 +429,36 @@ class CallConvention(NamedTuple):
     cast: str
 
 
+class MethodHost(NamedTuple):
+    """The type a declared method's binding is rendered onto (gh-2259).
+
+    `make_methods_ctx` renders an object's methods onto the object itself:
+    ``self`` is a ``<Component>Object *``, the state is ``self->handle``,
+    and a wrapper first refuses a destroyed object. A composer's generating
+    source delegates a method of its generator, so the same wrapper is
+    rendered onto the source type instead: these fields say how, and
+    nothing else about the binding changes -- its parse and kernel call
+    stay the generator's, and so do its docs and ``.pyi`` member, which
+    still name the generator's class (`make_methods_ctx`'s *Component*)
+    and gain only what *guard* can raise.
+    """
+
+    #: The function-name prefix of every wrapper and file-scope static.
+    prefix: str
+    #: ``self`` is a ``<self_class>Object *``.
+    self_class: str
+    #: The C expression of the state pointer the kernel is handed.
+    state: str
+    #: C each wrapper runs first: makes *state* valid or returns NULL.
+    guard: str
+    #: The class a wrapper's error messages name -- the one the caller
+    #: called (``Synth.prod: ...``), where the docs name *Component*.
+    who: str
+    #: ``(exception, condition)`` entries *guard* can raise, appended to
+    #: every wrapper's documented ``Raises`` on both faces.
+    raises: "tuple[tuple[str, str], ...]" = ()
+
+
 def call_convention(
     Component: str, *, args: bool, kwds: bool = False
 ) -> CallConvention:
@@ -1268,7 +1298,7 @@ def _max_out_return_c(call: str, elements_per_sample: int, who: str) -> str:
 
 
 def _count_default_parts(
-    expr: str, component: str, *, csym: str
+    expr: str, component: str, *, csym: str, state: str = "self->handle"
 ) -> tuple[str, str]:
     r"""Return ``(initialiser, state_alias_line)`` for a ``count_default``.
 
@@ -1291,6 +1321,9 @@ def _count_default_parts(
         The manifest's ``count_default``. Empty restores the historical ``1``.
     component : str
         Component name, used to spell the state type for the alias.
+    state : str, optional
+        The state pointer the alias reads: ``self->handle`` on the object,
+        a :class:`MethodHost`'s ``state`` elsewhere (gh-2259).
 
     Returns
     -------
@@ -1311,7 +1344,7 @@ def _count_default_parts(
         return "1", ""
     alias = ""
     if re.search(r"\bstate\b", expr):
-        alias = f"    {csym}_state_t *state = self->handle;\n"
+        alias = f"    {csym}_state_t *state = {state};\n"
     return f"(Py_ssize_t)({expr})", alias
 
 
@@ -1354,6 +1387,8 @@ def _max_out_call_c(
     generated benchmark of that method (gh-2205), whose *state* is its
     ``obj``. *count* is the C expression the kernel is about to be handed as
     its input length, or ``None`` for a shape with no count to mirror.
+    *state* is the state pointer the kernel is handed: ``self->handle``, a
+    :class:`MethodHost`'s (gh-2259), or the benchmark's ``obj``.
 
     gh-761: the header is the source of truth for the arity. A declaration
     that takes only the state is called with only the state, whatever count
@@ -1389,6 +1424,7 @@ def _records_consumed_c(
     consumed_fn: str,
     who: str,
     build: str,
+    state: str = "self->handle",
 ) -> str:
     """A list-of-records body that re-offers its input until none is left.
 
@@ -1432,6 +1468,9 @@ def _records_consumed_c(
         ``Class.method``, for the messages.
     build : str
         The ``Py_BuildValue`` arguments for ``results[i]``.
+    state : str, optional
+        The state pointer *consumed_fn* is asked about: ``self->handle`` on
+        the object, a :class:`MethodHost`'s ``state`` elsewhere (gh-2259).
 
     Returns
     -------
@@ -1456,7 +1495,7 @@ def _records_consumed_c(
         "        Py_DECREF(tup);\n"
         "    }\n"
         + (f"    {free}\n" if free else "")
-        + f"    size_t _consumed = {consumed_fn}(self->handle);\n"
+        + f"    size_t _consumed = {consumed_fn}({state});\n"
         + _coerce.consumed_guard_c(
             "_consumed", count, consumed_fn, who, rel_lst
         )
@@ -1485,6 +1524,7 @@ def _records_buffer_c(
     max_results: int,
     who: str,
     release: str,
+    state: str = "self->handle",
 ) -> "tuple[str, str, str]":
     """``(declare, capacity, free)`` for a list-of-records result buffer.
 
@@ -1530,7 +1570,7 @@ def _records_buffer_c(
     return (
         _coerce.output_size_c(
             "_cap",
-            _max_out_call_c(c_fn, doc_blocks, count),
+            _max_out_call_c(c_fn, doc_blocks, count, state),
             who,
             rel,
             ctype="size_t",
@@ -1804,6 +1844,7 @@ def make_methods_ctx(
     *,
     csym: str,
     extra_methods: "list[dict] | None" = None,
+    host: "MethodHost | None" = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -1850,6 +1891,14 @@ def make_methods_ctx(
     a SACRED fragment's table can name the function too. A ``manual_stub``
     method of the same name keeps its hand-owned ``.pyi`` text; the row's
     member replaces only its placeholder.
+
+    host (gh-2259) renders the wrappers onto another type -- a composer's
+    generating source delegating its generator's methods -- through
+    :class:`MethodHost`. ``None`` is the object itself. The C a wrapper is
+    built around moves, and its error messages name ``host.who``;
+    *Component* still names the class in every doc and ``.pyi`` member,
+    whose ``Raises`` gain ``host.raises``, so a delegated method reads as
+    the generator's own plus what building the generator can raise.
     """
 
     _EMPTY: dict = {
@@ -1884,6 +1933,20 @@ def make_methods_ctx(
         "        return NULL;\n"
         "    }\n"
     )
+    # gh-2259: `self` and its state, spelled once for every wrapper below.
+    # `_self_C` is what `<x>Object *self` is built from; `_st` is the state
+    # pointer each kernel call is handed; `_who` leads every error message;
+    # `_host_raises` is what the guard adds to each documented `Raises`.
+    _self_C, _st, _who = Component, "self->handle", Component
+    _host_raises: "list[tuple[str, str]]" = []
+    if host is not None:
+        wrapper_prefix, _self_C, _st, guard = (
+            host.prefix,
+            host.self_class,
+            host.state,
+            host.guard,
+        )
+        _who, _host_raises = host.who, list(host.raises)
 
     decl_lines: list[str] = []
     buf_fields: list[str] = []
@@ -2058,7 +2121,7 @@ def make_methods_ctx(
                     f"'{m['codec']}', which is not declared in [codec.*]."
                 )
             c_body, pmd, pyi = _codec.render_pack(
-                component, Component, wrapper_prefix, m, cdc, guard
+                component, _self_C, wrapper_prefix, m, cdc, guard, _st
             )
             method_c_parts.append(c_body)
             pmd_lines.append(pmd)
@@ -2135,7 +2198,7 @@ def make_methods_ctx(
         # ...)` and one that documented nothing at all, so the two doc faces
         # agreed there was no exception over a binding that raises one.
         _raise_pair = declared_raise(m)
-        _raises_doc = raises_doc(m)
+        _raises_doc = raises_doc(m) + _host_raises
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
@@ -2228,6 +2291,7 @@ def make_methods_ctx(
             _count_default,
             component,
             csym=csym,
+            state=_st,
         )
         # gh-1074: what that synthesized argument is CALLED. Read once and
         # used at every site below — the name was spelled seven times, which
@@ -2920,7 +2984,7 @@ def make_methods_ctx(
                 return _nogil_call(
                     "",
                     "",
-                    f"{c_fn}(self->handle,\n        {_b_in}(size_t)n,\n"
+                    f"{c_fn}({_st},\n        {_b_in}(size_t)n,\n"
                     f"        ({ret_disp} *)PyArray_DATA({out_arr}))",
                     nogil,
                 )
@@ -2937,7 +3001,7 @@ def make_methods_ctx(
                 wrapper = _in_dtype_helper + (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self,"
+                    f"({_self_C}Object *self,"
                     f" PyObject *args, PyObject *kwds)\n"
                     f"{{\n"
                     f"{guard}"
@@ -2982,7 +3046,7 @@ def make_methods_ctx(
                 wrapper = _in_dtype_helper + (
                     f"static PyObject *\n"
                     f"{wrapper_prefix}_{name}"
-                    f"({Component}Object *self,"
+                    f"({_self_C}Object *self,"
                     f" PyObject *args, PyObject *kwds)\n"
                     f"{{\n"
                     f"{guard}"
@@ -3100,7 +3164,7 @@ def make_methods_ctx(
                     f"    Py_ssize_t n = PyArray_SIZE(in_arr);\n"
                 )
                 call_data = (
-                    f"self->handle,"
+                    f"{_st},"
                     f" (const {arg_disp} *)PyArray_DATA(in_arr),"
                     f" (size_t)n, {_VO_BUF_TOKEN}"
                 )
@@ -3129,7 +3193,7 @@ def make_methods_ctx(
                     strict_in,
                     out_obj="out_obj" if _enable_out else "",
                 )
-                call_data = f"self->handle, {_p_call}, {_VO_BUF_TOKEN}"
+                call_data = f"{_st}, {_p_call}, {_VO_BUF_TOKEN}"
                 # The input sizes the output, as without params: `x_len` is
                 # the `n_in` the kernel and `*_max_out()` are both handed.
                 _lazy_fallback = "x_len"
@@ -3153,7 +3217,7 @@ def make_methods_ctx(
                     strict_in,
                     out_obj="out_obj" if _enable_out else "",
                 )
-                call_data = f"self->handle, {_p_call}, {_VO_BUF_TOKEN}"
+                call_data = f"{_st}, {_p_call}, {_VO_BUF_TOKEN}"
                 _sizing = _outbuf.sizing_param(has_arg, params)
                 # gh-421: with no array param to size from, a scalar param
                 # (e.g. Delay.push_ptr(x), where x is the value being pushed,
@@ -3165,7 +3229,7 @@ def make_methods_ctx(
                 _lazy_fallback = (
                     _coerce.array_count_c(f"{_sizing['name']}_arr", _vo_e)
                     if _sizing is not None
-                    else f"{c_fn}_max_out(self->handle)"
+                    else f"{c_fn}_max_out({_st})"
                 )
                 # gh-607: an all-scalar params shape (no array to size from)
                 # has no count for the kernel to take either — max_out()
@@ -3192,9 +3256,9 @@ def make_methods_ctx(
                     if _enable_out
                     else ""
                 )
-                call_data = f"self->handle, {_VO_BUF_TOKEN}"
+                call_data = f"{_st}, {_VO_BUF_TOKEN}"
                 decref_in = ""
-                _lazy_fallback = f"{c_fn}_max_out(self->handle)"
+                _lazy_fallback = f"{c_fn}_max_out({_st})"
                 _moc_arg = None
             else:
                 if _enable_out:
@@ -3216,7 +3280,7 @@ def make_methods_ctx(
                         '    if (!PyArg_ParseTuple(args, "|n", &n))\n'
                         "        return NULL;\n"
                     )
-                call_data = f"self->handle, (size_t)n, {_VO_BUF_TOKEN}"
+                call_data = f"{_st}, (size_t)n, {_VO_BUF_TOKEN}"
                 decref_in = ""
                 _lazy_fallback = "(size_t)n"
                 # gh-607: same value about to be passed to the kernel as n.
@@ -3246,7 +3310,7 @@ def make_methods_ctx(
             _moc_state_only = not no_count and max_out_is_state_only(
                 doc_blocks, f"{c_fn}_max_out"
             )
-            _moc_call = _max_out_call_c(c_fn, doc_blocks, _moc_arg)
+            _moc_call = _max_out_call_c(c_fn, doc_blocks, _moc_arg, _st)
 
             # gh-604: NumPy owns every variable-output result, for one
             # output or many. Each call allocates its arrays at
@@ -3333,7 +3397,7 @@ def make_methods_ctx(
                     ""
                     if _count_alias
                     else (
-                        f"    {csym}_state_t *state = self->handle;\n"
+                        f"    {csym}_state_t *state = {_st};\n"
                         if re.search(r"\bstate\b", _out_cols)
                         else ""
                     )
@@ -3343,7 +3407,7 @@ def make_methods_ctx(
                     f"    size_t _cols = (size_t)({_out_cols});\n"
                     f"    if (_cols == 0) {{\n"
                     f"        PyErr_SetString(PyExc_RuntimeError,\n"
-                    f'            "{Component}.{name}: out_cols evaluated'
+                    f'            "{_who}.{name}: out_cols evaluated'
                     f' to 0");\n'
                     f"        {_decref_early_vo}return NULL;\n"
                     f"    }}\n"
@@ -3548,7 +3612,7 @@ def make_methods_ctx(
                     + _coerce.returned_count_c(
                         "n_out",
                         "_cap",
-                        f"{Component}.{name}",
+                        f"{_who}.{name}",
                         "Py_DECREF(out_arr);",
                         indent=" " * 8,
                         unit=_cap_unit,
@@ -3562,7 +3626,7 @@ def make_methods_ctx(
                         # last row would be a silently wrong shape.
                         f"        if ((size_t)_odim % _cols != 0) {{\n"
                         f"            PyErr_Format(PyExc_RuntimeError,\n"
-                        f'                "{Component}.{name}: kernel returned'
+                        f'                "{_who}.{name}: kernel returned'
                         f" %zu elements, not a whole number of %zu-wide"
                         f' rows",\n'
                         f"                (size_t)_odim, _cols);\n"
@@ -3605,7 +3669,7 @@ def make_methods_ctx(
             # reads neither, and is METH_NOARGS like every other no-argument
             # wrapper.
             _vo_cc = call_convention(
-                Component,
+                _self_C,
                 args=not (no_count and not _enable_out),
                 kwds=_enable_kw,
             )
@@ -3652,7 +3716,7 @@ def make_methods_ctx(
                 + _coerce.output_size_c(
                     "_adim",
                     "_cap",
-                    f"{Component}.{name}",
+                    f"{_who}.{name}",
                     _decref_early_vo,
                     # gh-1996: `_cap` is in samples and the arrays hold
                     # elements, so the bound is the quotient and the product
@@ -3757,7 +3821,7 @@ def make_methods_ctx(
                 + (
                     f"    if ((size_t)_odim % _cols != 0) {{\n"
                     f"        PyErr_Format(PyExc_RuntimeError,\n"
-                    f'            "{Component}.{name}: kernel returned'
+                    f'            "{_who}.{name}: kernel returned'
                     f" %zu elements, not a whole number of %zu-wide"
                     f' rows",\n'
                     f"            (size_t)_odim, _cols);\n"
@@ -3847,7 +3911,7 @@ def make_methods_ctx(
                     + _coerce.returned_count_c(
                         "n_out",
                         "_cap",
-                        f"{Component}.{name}",
+                        f"{_who}.{name}",
                         _decref_arrs,
                         unit=_cap_unit,
                     )
@@ -4032,12 +4096,12 @@ def make_methods_ctx(
                             c_fn=c_fn,
                             csym=csym,
                             elements_per_sample=_vo_e,
-                        ).c_doc_lines()
+                        ).c_doc_lines(raises=_host_raises or None)
                     )
                     method_c_parts.append(
                         f"static PyObject *\n"
                         f"{wrapper_prefix}_{name}_max_out"
-                        f"({Component}Object *self, PyObject *args)\n"
+                        f"({_self_C}Object *self, PyObject *args)\n"
                         f"{{\n"
                         f"{guard}"
                         f"    Py_ssize_t {_pymo_name} = 0;\n"
@@ -4045,10 +4109,10 @@ def make_methods_ctx(
                         f" &{_pymo_name}))\n"
                         f"        return NULL;\n"
                         + _max_out_return_c(
-                            f"{c_fn}_max_out(self->handle,"
+                            f"{c_fn}_max_out({_st},"
                             f" (size_t){_pymo_name}{_mo_per})",
                             _vo_e,
-                            f"{Component}.{name}_max_out",
+                            f"{_who}.{name}_max_out",
                         )
                         + "}"
                     )
@@ -4069,19 +4133,19 @@ def make_methods_ctx(
                             c_fn=c_fn,
                             csym=csym,
                             elements_per_sample=_vo_e,
-                        ).c_doc_lines()
+                        ).c_doc_lines(raises=_host_raises or None)
                     )
                     method_c_parts.append(
                         f"static PyObject *\n"
                         f"{wrapper_prefix}_{name}_max_out"
-                        f"({Component}Object *self,"
+                        f"({_self_C}Object *self,"
                         f" PyObject *Py_UNUSED(ignored))\n"
                         f"{{\n"
                         f"{guard}"
                         + _max_out_return_c(
-                            f"{c_fn}_max_out(self->handle)",
+                            f"{c_fn}_max_out({_st})",
                             _vo_e,
-                            f"{Component}.{name}_max_out",
+                            f"{_who}.{name}_max_out",
                         )
                         + "}"
                     )
@@ -4145,7 +4209,7 @@ def make_methods_ctx(
                 _s_call = (
                     _single_kernel_block(
                         ret_disp,
-                        f"{c_fn}(self->handle, {_p_call})",
+                        f"{c_fn}({_st}, {_p_call})",
                         nogil,
                     )
                     + _p_cleanup
@@ -4169,7 +4233,7 @@ def make_methods_ctx(
                 _s_call = (
                     _single_kernel_block(
                         ret_disp,
-                        f"{c_fn}(self->handle,\n"
+                        f"{c_fn}({_st},\n"
                         f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
                         f" n_in)",
                         nogil,
@@ -4187,7 +4251,7 @@ def make_methods_ctx(
                 )
                 _s_call = _single_kernel_block(
                     ret_disp,
-                    f"{c_fn}(self->handle)",
+                    f"{c_fn}({_st})",
                     nogil,
                 )
             _set_lines = []
@@ -4200,7 +4264,7 @@ def make_methods_ctx(
             # so the wrapper is METH_NOARGS -- it took `(self, args)`, never
             # read `args`, and dropped whatever the caller passed.
             _s_cc = call_convention(
-                Component, args=has_arg or _has_kw, kwds=_has_kw
+                _self_C, args=has_arg or _has_kw, kwds=_has_kw
             )
             wrapper = (
                 _in_dtype_helper
@@ -4286,8 +4350,9 @@ def make_methods_ctx(
                     doc_blocks,
                     count,
                     max_results,
-                    f"{Component}.{name}",
+                    f"{_who}.{name}",
                     release,
+                    _st,
                 )
 
             if has_params:
@@ -4310,7 +4375,7 @@ def make_methods_ctx(
                 _rf_call = (
                     _rf_decl
                     + _kernel_call_block(
-                        f"{c_fn}(self->handle, {_p_call}, results, {_rf_cap})",
+                        f"{c_fn}({_st}, {_p_call}, results, {_rf_cap})",
                         nogil,
                     )
                     + _p_cleanup
@@ -4330,7 +4395,7 @@ def make_methods_ctx(
                 _rf_call = (
                     _rf_decl
                     + _kernel_call_block(
-                        f"{c_fn}(self->handle, "
+                        f"{c_fn}({_st}, "
                         f"(const {arg_disp} *)PyArray_DATA(in_arr), n_in, "
                         f"results, {_rf_cap})",
                         nogil,
@@ -4341,7 +4406,7 @@ def make_methods_ctx(
                 _rf_parse = ""
                 _rf_decl, _rf_cap, _rf_free = _rf_buffer(None, "")
                 _rf_call = _rf_decl + _kernel_call_block(
-                    f"{c_fn}(self->handle, results, {_rf_cap})",
+                    f"{c_fn}({_st}, results, {_rf_cap})",
                     nogil,
                 )
             # The stack array needs no release; a heap buffer is freed on
@@ -4351,7 +4416,7 @@ def make_methods_ctx(
                 f"{_rf_call}"
                 # gh-1716: `n_out` records are read from `results[]`.
                 + _coerce.returned_count_c(
-                    "n_out", _rf_cap, f"{Component}.{name}", _rf_free
+                    "n_out", _rf_cap, f"{_who}.{name}", _rf_free
                 )
                 + "    PyObject *lst ="
                 " PyList_New((Py_ssize_t)n_out);\n"
@@ -4379,15 +4444,16 @@ def make_methods_ctx(
                 _rf_tail = _records_consumed_c(
                     _rf_buffer,
                     lambda cap: _kernel_call_block(
-                        f"{c_fn}(self->handle, {_p_call}, results, {cap})",
+                        f"{c_fn}({_st}, {_p_call}, results, {cap})",
                         nogil,
                     ),
                     ptr="x",
                     count="x_len",
                     held=" ".join(_p_cleanup.split()),
                     consumed_fn=_rf_consumed,
-                    who=f"{Component}.{name}",
+                    who=f"{_who}.{name}",
                     build=_bv,
+                    state=_st,
                 )
             elif _rf_consumed:
                 _rf_parse += (
@@ -4397,21 +4463,22 @@ def make_methods_ctx(
                 _rf_tail = _records_consumed_c(
                     _rf_buffer,
                     lambda cap: _kernel_call_block(
-                        f"{c_fn}(self->handle, _in, n_in, results, {cap})",
+                        f"{c_fn}({_st}, _in, n_in, results, {cap})",
                         nogil,
                     ),
                     ptr="_in",
                     count="n_in",
                     held="Py_DECREF(in_arr);",
                     consumed_fn=_rf_consumed,
-                    who=f"{Component}.{name}",
+                    who=f"{_who}.{name}",
                     build=_bv,
+                    state=_st,
                 )
             # gh-1959: the single-record shape's twin -- with no input the
             # body parses nothing, so the wrapper is METH_NOARGS. A declared
             # param is parsed with keywords (gh-1961), as in that shape.
             _rf_cc = call_convention(
-                Component, args=has_arg or has_params, kwds=has_params
+                _self_C, args=has_arg or has_params, kwds=has_params
             )
             wrapper = _in_dtype_helper + (
                 f"static PyObject *\n"
@@ -4473,27 +4540,27 @@ def make_methods_ctx(
                     _combined, Component, enums, records, _sid, strict_in
                 )
                 _parsed_names = [p["name"] for p in _combined]
-                call_args_c = f"self->handle, {_p_call}"
+                call_args_c = f"{_st}, {_p_call}"
             elif has_params:
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     params, Component, enums, records, _sid, strict_in
                 )
                 _parsed_names = [p["name"] for p in params]
-                call_args_c = f"self->handle, {_p_call}"
+                call_args_c = f"{_st}, {_p_call}"
             elif has_arg and arg_type.endswith("[]"):
                 _x_param = {"name": "x", "type": arg_type}
                 parse_block, _p_call, _p_cleanup = _build_params_parse(
                     [_x_param], Component, enums, records, _sid, strict_in
                 )
-                call_args_c = f"self->handle, {_p_call}"
+                call_args_c = f"{_st}, {_p_call}"
             elif has_arg:
                 parse_block = _step_parse_block(arg_type, arg_meta) + "\n"
-                call_args_c = "self->handle, x"
+                call_args_c = f"{_st}, x"
             else:
                 parse_block = ""
-                call_args_c = "self->handle"
+                call_args_c = _st
             _fx_cc = call_convention(
-                Component,
+                _self_C,
                 args=has_arg or has_params,
                 kwds=has_params or (has_arg and arg_type.endswith("[]")),
             )
@@ -4566,7 +4633,7 @@ def make_methods_ctx(
                         _borrow_np_enum,
                         descr_fn=_borrow_descr_fn,
                         writeable=borrow_writeable,
-                        who=f"{Component}.{name}",
+                        who=f"{_who}.{name}",
                         arr="_view",
                         indent="    ",
                     )
@@ -4686,7 +4753,7 @@ def make_methods_ctx(
                     _coerce.output_size_c(
                         "_dim",
                         len_expr,
-                        f"{Component}.{name}",
+                        f"{_who}.{name}",
                         cleanup_inline,
                     )
                     + f"    PyObject *_out ="
@@ -4926,7 +4993,7 @@ def make_methods_ctx(
                 c_fn=c_fn,
                 csym=csym,
                 elements_per_sample=_vo_e,
-            ).pyi_doc()
+            ).pyi_doc(raises=_host_raises or None)
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
             )

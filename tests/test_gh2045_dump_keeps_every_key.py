@@ -208,7 +208,12 @@ PLACES = {
     "[module.X.source]": ({"object": "s"}, lambda r: _composer(source=r)),
     "[module.X.source.generates]": (
         {"generator": "nco"},
-        lambda r: _composer(source={"object": "s", "generates": r}),
+        # gh-2259: `methods` names the generator's own methods, so the
+        # generator declares the one the array example names.
+        lambda r: {
+            **_composer(source={"object": "s", "generates": r}),
+            "nco": {**_OBJECT, "methods": [{**_RUN, "name": "linux"}]},
+        },
     ),
     "[module.X.segment]": (
         {"type_name": "Seg"}, lambda r: _composer(segment=r),
