@@ -1213,6 +1213,11 @@ def _step_parse_block(
     decl, fmt, addr, conv = scalar_arg_c(
         "x", sample_type, fail="return NULL;", meta=samp
     )
+    if "parse_type" not in samp:
+        # `x` is required, so PyArg always writes it and the slot's seed is
+        # never read. Left unseeded, as every module object's sacred `step()`
+        # fragment spells it, so routing it here moves no fragment's unit.
+        decl = f"    {sample_type} x;"
     ctrl_locals, ctrl_fmt, ctrl_refs, ctrl_narrow = ctrl_parse_c(ctrl)
     ctrl_fmt = "|" + ctrl_fmt if ctrl else ""
     return (
