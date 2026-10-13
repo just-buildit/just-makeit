@@ -45,7 +45,9 @@ already hands ``<m>_max_out()`` (gh-607) and already allocates from when
 ``max_out()`` answers 0 (gh-421), for every one of these shapes, with or
 without ``out=``. The caller's buffer is validated against exactly what the
 binding would have allocated itself -- ``_capacity_exprs``' invariant -- so an
-``out=`` adds no bound the allocating path did not already trust.
+``out=`` adds no bound the allocating path did not already trust. The one
+exception is declared: a ``short_out`` method's buffer has no minimum, for a
+backpressure kernel that is told its true size and stops at it (gh-2230).
 
 What it is NOT
 --------------

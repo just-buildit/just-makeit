@@ -5393,12 +5393,14 @@ def _short_out_errors(entry: dict, what: str) -> list[str]:
     >>> _short_out_errors({"short_out": True, "variable_output": True,
     ...                    "pass_capacity": True}, "x")
     []
-    >>> _short_out_errors({"short_out": True, "variable_output": True},
-    ...                   "x")[0][:56]
-    'x: short_out needs pass_capacity = true: only a kernel t'
-    >>> _short_out_errors({"short_out": True, "pass_capacity": True},
-    ...                   "x")[0][:52]
-    'x: short_out needs variable_output = true: only a var'
+    >>> errs = _short_out_errors(
+    ...     {"short_out": True, "variable_output": True}, "x")
+    >>> errs[0].startswith("x: short_out needs pass_capacity = true")
+    True
+    >>> errs = _short_out_errors(
+    ...     {"short_out": True, "pass_capacity": True}, "x")
+    >>> errs[0].startswith("x: short_out needs variable_output = true")
+    True
     >>> _short_out_errors({"short_out": "yes"}, "x")
     ["x: short_out must be true or false, got 'yes'."]
     """
