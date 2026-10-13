@@ -322,10 +322,11 @@ def run(args: list[str]) -> None:
 
     # gh-335: --out-size only makes sense for a self-sizing output, and a
     # self-sizing output needs a type to allocate. Reject the half-specified
-    # forms rather than silently ignoring a flag.
-    if fn_out_size and not fn_variable_output:
+    # forms rather than silently ignoring a flag. gh-2205: a list of records
+    # is the other output jm allocates, and --out-size is its capacity too.
+    if fn_out_size and not (fn_variable_output or fn_result_fields):
         print(
-            "error: --out-size requires --variable-output.",
+            "error: --out-size requires --variable-output or --result-field.",
             file=sys.stderr,
         )
         sys.exit(1)

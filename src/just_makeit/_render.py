@@ -1673,9 +1673,10 @@ def _out_length_keys(fn: dict) -> dict:
     """What a function's allocated output reads its length from (gh-1888).
 
     The keys :func:`_outbuf.length` takes, as this face reads them: a
-    ``result_fields`` function's records are sized by ``max_results`` and
-    read no ``out_type``, and ``out_size`` is the capacity of a
-    variable-output result only -- a fixed one never read it.
+    ``result_fields`` function's records are sized in their own branch --
+    by ``out_size`` when declared (gh-2205), else ``max_results`` -- and
+    read no ``out_type``, and of an array output ``out_size`` is the
+    capacity of a variable-output result only -- a fixed one never read it.
     """
     if not fn.get("out_type") or fn.get("result_fields"):
         return {}
@@ -1702,7 +1703,27 @@ def out_length_why_not(fn: dict) -> str:
     >>> out_length_why_not({"name": "f", "out_type": "float",
     ...     "params": [{"name": "n", "type": "size_t"}]}).split(",")[0]
     "function 'f' returns a fresh out_type 'float'"
+    >>> out_length_why_not({"name": "f", "result_fields": [{"name": "a"}],
+    ...     "out_size": "x_len", "max_results_param": "n"}).split(":")[0]
+    "function 'f' declares both out_size and max_results_param"
     """
+    # gh-2205: a list of records has ONE capacity. `max_results_param` names
+    # the param the C reads it from, so jm passes none and allocates that
+    # many; `out_size` is the count jm allocates and hands the C. Both, and
+    # the buffer would be sized one way while the C is told another.
+    if (
+        fn.get("result_fields")
+        and fn.get("out_size")
+        and fn.get("max_results_param")
+    ):
+        return (
+            f"function '{fn.get('name', '<function>')}' declares both "
+            "out_size and max_results_param: two capacities for one list of "
+            "records.\n"
+            "  max_results_param names the param the C reads its capacity "
+            "from; out_size is the\n"
+            "  count jm allocates and hands it. Keep one."
+        )
     keys = _out_length_keys(fn)
     if not keys:
         return ""
@@ -1810,7 +1831,8 @@ def _py_wrapper_for_function(
     an existing param that already carries the capacity (already embedded in
     call_args, so it is not passed again); when empty (the common case),
     fn_c_decl appended a bare trailing `size_t max_results` param instead, so
-    the wrapper passes the literal `max_results` value for it.
+    the wrapper passes the capacity for it: `out_size` when declared
+    (gh-2205), else the literal `max_results` value.
     """
     result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
@@ -1823,6 +1845,7 @@ def _py_wrapper_for_function(
         "out_size": out_size,
         "variable_output": variable_output,
         "result_fields": result_fields,
+        "max_results_param": max_results_param,
     }
     if why and (not check_return or result_fields):
         raise ValueError(_why_unreadable(fn_name))
@@ -1858,14 +1881,22 @@ def _py_wrapper_for_function(
         _bv = record_tuple_build(result_fields, "_results[_i]")
         _rt_disp = return_type
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        _cap_why = out_length_why_not(_out_row)
+        if _cap_why:
+            raise Refusal(_cap_why)
         # max_results_param names an existing param already in call_args (the
         # C signature has no extra trailing param for it); otherwise fn_c_decl
-        # appended a bare `size_t max_results`, so the call passes the literal.
+        # appended a bare `size_t max_results`, so the call passes the count.
         if max_results_param:
             _max_expr = f"(size_t){max_results_param}"
             _call = f"{c_name}({call_args}, _results)"
         else:
-            _max_expr = str(max_results)
+            # gh-2205: `out_size`, the function face's capacity -- a C
+            # expression over its params -- sizes the records and is what the
+            # C is told, as it sizes a `variable_output` array. Undeclared,
+            # the fixed `max_results` stands, and a call due more than that
+            # returns the first `max_results`.
+            _max_expr = out_size or str(max_results)
             _call = (
                 f"{c_name}({call_args}, _results, _max)"
                 if call_args

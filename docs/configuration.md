@@ -1303,6 +1303,7 @@ guard, so guard anything platform-specific in it yourself.
 | `why = true`                                  | `jm function --why` (with `--check-return`)                                       | ✅ (gh-1706) |
 | `status_errors = [{...}]`                     | `jm function --status-error STATUS:Exc[:msg]` (with `--check-return`; repeatable) | ✅ (gh-1614) |
 | `result_fields = [{name, type}]`              | `jm function --result-field name:type` (repeatable)                               | ✅ (0.13.23) |
+| `result_fields`, `out_size = "EXPR"`          | `jm function --result-field name:type --out-size EXPR`                            | ✅ (gh-2205) |
 | `max_results`                                 | (TOML only)                                                                       | 🟡           |
 | `max_results_param`                           | (TOML only)                                                                       | 🟡           |
 | `impl = "..."` body                           | (manifest only; `jm function --impl` lifts once and records nothing)              | ✅           |

@@ -597,6 +597,7 @@ def _bench_method_block(
     records: "list[dict] | None" = None,
     *,
     csym: str,
+    doc_blocks: "dict | None" = None,
 ) -> str:
     """Return a self-contained C bench timing block for method *m*.
 
@@ -624,6 +625,9 @@ def _bench_method_block(
     m : dict
         Method dict with keys: name, arg_type, return_type, variable_output,
         batch, params.  Same shape as the dicts in ``[[comp.methods]]``.
+    doc_blocks : dict, optional
+        The sacred header as `_object._load_doc_blocks` read it: whether it
+        declares a list-of-records method's ``_max_out`` capacity (gh-2205).
 
     Returns
     -------
@@ -725,7 +729,34 @@ def _bench_method_block(
         # from every other shape below, so this is handled first and skips
         # the generic branches entirely.
         rf_disp = return_type
-        lines.append(f"        {rf_disp} {name}_results[{max_results}];")
+        # gh-2205: the capacity the binding asks (gh-2184), when the header
+        # declared it before this file was rendered -- the bench is
+        # create-only, so a later one reaches it only when it is rendered
+        # again. Asked once, for the input the timing loop passes, so a
+        # kernel that stops at a full buffer is timed over its whole call
+        # rather than the fixed buffer's 64 records.
+        rf_heap = max_out_is_declared(doc_blocks, f"{c_fn}_max_out")
+        if rf_heap:
+            # The count the kernel is handed: the block input's, else the
+            # first array param's, which the loop passes empty; with
+            # neither, the capacity takes only the state.
+            rf_count = "BENCH_N" if has_arg else None
+            if not has_arg and any(
+                is_array_param_type(p["type"]) for p in params
+            ):
+                rf_count = "0"
+            rf_cap = f"{name}_cap"
+            lines += [
+                f"        size_t {rf_cap} ="
+                f" {_max_out_call_c(c_fn, doc_blocks, rf_count, 'obj')};",
+                f"        {rf_disp} *{name}_results = ({rf_disp} *)malloc("
+                f"({rf_cap} ? {rf_cap} : 1) * sizeof({rf_disp}));",
+                f"        if (!{name}_results) {{"
+                ' fprintf(stderr, "OOM\\n"); return 1; }',
+            ]
+        else:
+            rf_cap = str(max_results)
+            lines.append(f"        {rf_disp} {name}_results[{max_results}];")
         # gh-1961: the params sit between the input and the results, as in
         # the prototype; this call omitted them, like the binding did.
         if has_arg:
@@ -737,10 +768,10 @@ def _bench_method_block(
             ]
             call = (
                 f"{c_fn}(obj, {name}_in, BENCH_N{param_args},"
-                f" {name}_results, {max_results})"
+                f" {name}_results, {rf_cap})"
             )
         else:
-            call = f"{c_fn}(obj{param_args}, {name}_results, {max_results})"
+            call = f"{c_fn}(obj{param_args}, {name}_results, {rf_cap})"
         lines.append(f"        volatile size_t {name}_sink;")
         has_sink = True
         lines += [
@@ -754,6 +785,8 @@ def _bench_method_block(
         ]
         if has_arg:
             lines.append(f"        free({name}_in);")
+        if rf_heap:
+            lines.append(f"        free({name}_results);")
     elif batch:
         if has_arg:
             # gh-139: the input buffer holds elements; an array arg_type
@@ -1260,15 +1293,19 @@ def _max_out_count_param_ctx(
 
 
 def _max_out_call_c(
-    c_fn: str, doc_blocks: "dict | None", count: "str | None"
+    c_fn: str,
+    doc_blocks: "dict | None",
+    count: "str | None",
+    state: str = "self->handle",
 ) -> str:
     """The ``<c_fn>_max_out(...)`` call a wrapper sizes its output with.
 
     One spelling for every wrapper that asks a method's capacity before
     calling its kernel: the ``variable_output`` shapes (gh-607) and a
-    list-of-records method whose header declares one (gh-2184). *count* is
-    the C expression the kernel is about to be handed as its input length,
-    or ``None`` for a shape with no count to mirror.
+    list-of-records method whose header declares one (gh-2184) -- and the
+    generated benchmark of that method (gh-2205), whose *state* is its
+    ``obj``. *count* is the C expression the kernel is about to be handed as
+    its input length, or ``None`` for a shape with no count to mirror.
 
     gh-761: the header is the source of truth for the arity. A declaration
     that takes only the state is called with only the state, whatever count
@@ -1286,10 +1323,12 @@ def _max_out_call_c(
     ...     "h_push", {max_out_arity_key(): {"h_push_max_out"}}, "n_in"
     ... )
     'h_push_max_out(self->handle)'
+    >>> _max_out_call_c("h_push", None, "BENCH_N", "obj")
+    'h_push_max_out(obj, BENCH_N)'
     """
     state_only = max_out_is_state_only(doc_blocks, f"{c_fn}_max_out")
     arg = f", {count}" if (count and not state_only) else ""
-    return f"{c_fn}_max_out(self->handle{arg})"
+    return f"{c_fn}_max_out({state}{arg})"
 
 
 def _records_buffer_c(
@@ -4717,7 +4756,10 @@ def make_methods_ctx(
     method_decls = "\n\n".join(decl_lines) + "\n" if decl_lines else ""
 
     _method_bench_blocks = [
-        _bench_method_block(component, m, records, csym=csym) for m in methods
+        _bench_method_block(
+            component, m, records, csym=csym, doc_blocks=doc_blocks
+        )
+        for m in methods
     ]
     _filled = [b for b in _method_bench_blocks if b]
     bench_methods_timing_block = "\n" + "\n\n".join(_filled) if _filled else ""
