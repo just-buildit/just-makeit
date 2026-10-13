@@ -145,8 +145,11 @@ Notes:
     on every face that takes a scalar: a constructor, a setter, a method
     or function param, `step()` and its controllable overrides, a composer
     row, a handle or capsule module. numpy refuses
-    `np.int8(300)` the same way. The exception for now is `uint64_t` and
-    `size_t`, where `-1` still arrives as `2**64 - 1` (gh-2220).
+    `np.int8(300)` the same way. `uint64_t` and `size_t` included: `-1`
+    raises `OverflowError` rather than arriving as `2**64 - 1` (gh-2220).
+    Every integer face takes any object with `__index__`, a numpy integer
+    such as `np.uint64(5)` included, and refuses a `float` with
+    `TypeError`.
     A generated C command line -- a `jm app` executable, a composer's CLI --
     refuses a flag the same way, `-1` for a `uint64_t` included: it prints
     `<prog>: --gain: '300' is out of range for int8_t [-128, 127]` and

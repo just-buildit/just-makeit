@@ -121,7 +121,7 @@ class TestTheBindingAcceptsNone:
 
     def test_the_method_parses_with_z(self, project: Path):
         """`s` for the required string, `z` for the one seeded NULL."""
-        assert "s|zK" in _FMT_RE.findall(_ext(project)), _FMT_RE.findall(
+        assert "s|zO" in _FMT_RE.findall(_ext(project)), _FMT_RE.findall(
             _ext(project)
         )
 

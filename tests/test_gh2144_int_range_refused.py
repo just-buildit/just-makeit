@@ -13,6 +13,14 @@ range-checks a narrow row against its ``<stdint.h>`` bounds before the cast
 and raises ``OverflowError`` naming the value's parameter, field or
 property; an unsigned narrow row parses through a checked char instead.
 
+gh-2220: ``uint64_t`` and ``size_t`` were the carve-out. No checked
+unsigned 64-bit char exists, so they parsed through the masking ``K`` and
+``-1`` arrived as ``2**64 - 1`` before any check could see it. They parse
+an object now, converted through ``__index__`` and the checked
+``PyLong_AsUnsignedLongLong``, and refuse in the same words. ``__index__``
+is also what takes a numpy integer, which ``K`` refused before Python 3.14,
+so every face is sent each type's own numpy scalar too.
+
 The halves:
 
 * **the sweep**, compiled: ONE project declares every integer
@@ -22,7 +30,8 @@ The halves:
   ``step()``, module function, a controllable ``step()`` / ``steps()``
   override, a codec method's fixed param -- builds it ``-Werror`` and sends
   each its type's ``min``, ``max``, ``min - 1``, ``max + 1`` and
-  ``max + 2**32`` (where a masking char lands back inside the range). The
+  ``max + 2**32`` (where a masking char lands back inside the range), its
+  ``min`` and ``max`` as the type's own numpy scalar, and a ``float``. The
   range is numpy's (``np.iinfo``), an oracle independent of the C macros,
   and the refusal's printed bounds are compared to it.
   ``tests/test_gh2035_composer_typed_rows`` sweeps the composer rows one
@@ -34,14 +43,10 @@ The halves:
   lacks it, and not that it lacks gh-1710's output-size guard, which raises
   ``OverflowError`` the same way.
 
-``STILL_WRAPS`` is a ratchet. ``uint64_t`` and ``size_t`` parse through
-the masking ``K`` -- no checked unsigned 64-bit char exists -- so an
-out-of-range value wraps before any check sees it (gh-2220). The sweep
-asserts they STILL wrap, so the fix has to take them out.
-
-GATE: every integer scalar round-trips its own range on every face, and
-one step outside it raises ``OverflowError`` naming the argument and the
-type's numpy bounds -- except the types ``STILL_WRAPS`` names.
+GATE: every integer scalar round-trips its own range on every face, as a
+Python ``int`` and as its numpy scalar; one step outside it raises
+``OverflowError`` naming the argument and the type's numpy bounds; and a
+``float`` raises ``TypeError``.
 """
 
 from __future__ import annotations
@@ -75,10 +80,6 @@ INTS = sorted(
     for t, meta in T._CTYPE_META.items()
     if meta["kind"] == "int" and t != "bool"
 )
-
-#: The ratchet: each type whose out-of-range value still wraps, and the
-#: issue that will refuse it. It may only shrink.
-STILL_WRAPS = {"uint64_t": "gh-2220", "size_t": "gh-2220"}
 
 PKG = "rq"
 
@@ -341,16 +342,30 @@ print(json.dumps(out))
 #: ``255`` -- so only a checked parse refuses it.
 MASKED = 2**32
 
+#: The value of a case that sends a ``float``: refused with ``TypeError``,
+#: as CPython's own integer parses refuse one, never truncated.
+FLOAT = None
 
-def _cases() -> "dict[str, tuple[str, str, str, int]]":
-    """``{case: (expression, ctype, label, value)}`` for every face."""
+
+def _cases() -> "dict[str, tuple[str, str, str, int | None]]":
+    """``{case: (expression, ctype, label, value)}`` for every face.
+
+    Each type's edges and the values just past them as Python ints, its
+    edges again as its own numpy scalar -- taken through ``__index__``,
+    which the masking ``K`` refused before Python 3.14 (gh-2220) -- and a
+    ``float``, whose value is :data:`FLOAT`.
+    """
     cases = {}
     for t in INTS:
         lo, hi = int_range(t)
+        dt = _np_name(t)
+        sent = [(str(v), v) for v in (lo, hi, lo - 1, hi + 1, hi + MASKED)]
+        sent += [(f"np.{dt}({v})", v) for v in (lo, hi)]
+        sent.append(("1.5", FLOAT))
         for face, (expr, label) in FACES.items():
-            for v in (lo, hi, lo - 1, hi + 1, hi + MASKED):
-                cases[f"{face} {t} {v}"] = (
-                    expr.format(s=_slug(t), v=v, dt=_np_name(t)),
+            for text, v in sent:
+                cases[f"{face} {t} {text}"] = (
+                    expr.format(s=_slug(t), v=text, dt=dt),
                     t,
                     label.format(s=_slug(t)),
                     v,
@@ -366,22 +381,18 @@ def refusal_wrong(
     *got* is a driver's record: a list for a value that came back, the
     ``"<Exception>: <message>"`` string for a raise. One step outside a
     narrow type is jm's refusal, naming *label* and numpy's bounds; further
-    out, past what the parse type holds, it may be CPython's own. Shared
-    with ``tests/test_gh2035_composer_typed_rows``, so the composer rows
-    answer to the same refusal and the same ratchet.
+    out, past what the parse type holds, it may be CPython's own. A type
+    converted through ``__index__`` (``uint64_t``, ``size_t``, gh-2220) is
+    refused by jm on both sides, in the same words. Shared with
+    ``tests/test_gh2035_composer_typed_rows``, so the composer rows answer
+    to the same refusal.
     """
     lo, hi = int_range(ctype)
     assert not lo <= v <= hi, (case, v)
-    if ctype in STILL_WRAPS:
-        if isinstance(got, list):
-            return None
-        return (
-            f"{case}: {ctype} is refused now ({got}); take it out of "
-            f"STILL_WRAPS ({STILL_WRAPS[ctype]})"
-        )
     if not isinstance(got, str) or not got.startswith("OverflowError: "):
         return f"{case}: want OverflowError, got {got}"
-    if "bounds" not in T._CTYPE_META[ctype] or v not in (lo - 1, hi + 1):
+    meta = T._CTYPE_META[ctype]
+    if not {"bounds", "index"} & set(meta) or v not in (lo - 1, hi + 1):
         return None
     want = f"OverflowError: {label}: {v} is out of range for {ctype}"
     want += f" [{lo}, {hi}]"
@@ -393,7 +404,8 @@ def test_the_sweep_is_not_vacuous():
     assert {"int8_t", "uint8_t", "int32_t", "uint32_t"} <= set(INTS), INTS
     narrow = {t for t in INTS if "bounds" in T._CTYPE_META[t]}
     assert {"int8_t", "int16_t", "int32_t", "uint8_t"} <= narrow, narrow
-    assert set(STILL_WRAPS) <= set(INTS), STILL_WRAPS
+    index = {t for t in INTS if "index" in T._CTYPE_META[t]}
+    assert {"uint64_t", "size_t"} <= index, index
 
 
 @pytest.mark.slow
@@ -435,7 +447,10 @@ def test_every_face_refuses_a_value_its_type_cannot_hold(tmp_path):
     wrong = []
     for case, (_e, ct, label, v) in sorted(cases.items()):
         lo, hi = int_range(ct)
-        if not lo <= v <= hi:
+        if v is FLOAT:
+            if not str(got[case]).startswith("TypeError: "):
+                wrong.append(f"{case}: want TypeError, got {got[case]}")
+        elif not lo <= v <= hi:
             wrong.append(refusal_wrong(case, ct, label, v, got[case]))
         elif got[case] != ["value", repr(v), "int"]:
             wrong.append(f"{case}: sent {v}, got {got[case]}")
@@ -512,6 +527,22 @@ def test_a_narrow_row_parses_signed():
             assert meta["fmt"] in "ilL", (t, meta["fmt"])
             guard = scalar_narrow_c(t, "v", "return NULL;", label="v")
             assert INT_RANGE_GUARD_RE.search(guard), t
+
+
+def test_no_integer_row_parses_through_a_masking_char():
+    """gh-2220: a masking char (``K``, ``k``, ``I``, ``B``, ``H``) wraps
+    before any check can see the value, so no row may parse with one. A
+    row no checked char parses converts an object through ``__index__``
+    instead (``index``): unsigned, since its refusal prints a floor of 0
+    and a ``%llu`` maximum, and with no narrowing guard of its own."""
+    for t, meta in T._CTYPE_META.items():
+        if meta["kind"] != "int":
+            continue
+        assert meta["fmt"] not in "KkIBH", (t, meta["fmt"])
+        if "index" in meta:
+            assert meta["fmt"] == "O", t
+            assert meta["parse_type"] == "unsigned long long", t
+            assert "bounds" not in meta, t
 
 
 # ── the advisory ─────────────────────────────────────────────────────────────

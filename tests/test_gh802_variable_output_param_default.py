@@ -79,7 +79,7 @@ class TestDefaultedParamIsOptional:
         """
         ext = _ext(tmp_path, [("n", "size_t", "4")])
         fmt = _parse_fmt(ext)
-        assert fmt.startswith("|K"), fmt
+        assert fmt.startswith("|O"), fmt
 
     def test_parse_local_seeds_the_declared_default(self, tmp_path):
         # An omitted optional arg is left untouched by PyArg_*, so the
@@ -90,17 +90,18 @@ class TestDefaultedParamIsOptional:
     def test_undefaulted_param_stays_required(self, tmp_path):
         """The control: without a `default` the argument stays mandatory.
 
-        So `K` precedes the marker. `out=` is optional and sits after it
+        So the `size_t`'s `O` (gh-2220) precedes the marker. `out=` is
+        optional and sits after it
         (gh-1079), which is why this is a position check and not the
         absence of `|` it used to be.
         """
         ext = _ext(tmp_path, [("n", "size_t")])
         fmt = _parse_fmt(ext)
-        assert fmt.startswith("K"), fmt
-        assert fmt.index("K") < fmt.index("|"), fmt
+        assert fmt.startswith("O"), fmt
+        assert fmt.index("O") < fmt.index("|"), fmt
         assert "unsigned long long n_raw = 0ULL;" in ext
 
     def test_required_param_may_precede_a_defaulted_one(self, tmp_path):
         ext = _ext(tmp_path, [("lo", "double"), ("n", "size_t", "4")])
         fmt = _parse_fmt(ext)
-        assert fmt.startswith("d|K"), fmt
+        assert fmt.startswith("d|O"), fmt

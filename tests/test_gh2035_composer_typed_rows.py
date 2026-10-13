@@ -31,7 +31,7 @@ Two halves:
   type's range, and ``True`` for ``bool`` -- compared by value AND Python
   type. The cases are derived from the type table, not listed. gh-2144: one
   step OUTSIDE an integer type's range is refused on every face that takes
-  a value, by the ``OverflowError`` and against the ratchet
+  a value, by the ``OverflowError`` and in the words
   ``tests/test_gh2144_int_range_refused`` holds the object faces to.
 * **the refusal**, through ``jm apply``: each row kind, typed as something it
   cannot convert, exits 1 naming the row, and writes nothing.
