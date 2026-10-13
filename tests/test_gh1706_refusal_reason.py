@@ -161,7 +161,7 @@ def test_str_form_passes_and_raises_the_reason():
     assert "p_name(n, _buf, &_why);" in src
     i_check = src.index("if (_n == 0) {")
     block = src[i_check : src.index("return NULL;", i_check)]
-    assert "free(_buf);" in block
+    assert "PyMem_Free(_buf);" in block
     assert "PyErr_SetString(PyExc_ValueError, _why);" in block
 
 

@@ -9,7 +9,11 @@
     already declares, a C expression over its params -- and hands the C
     that count; `jm function --out-size` is accepted with `--result-field`.
     Undeclared, `max_results` stands. `out_size` beside
-    `max_results_param`, two capacities for one buffer, is refused. The
+    `max_results_param`, two capacities for one buffer, is refused. An
+    empty input then asks for 0 records, and `malloc(0)` may return NULL,
+    a `MemoryError` for an empty call: the function face's buffers (the
+    records and the `str` output) now come from `PyMem_Malloc` /
+    `PyMem_Free`, as the method face's do, and an empty call returns `[]`. The
     benchmark asks the method's header-declared `_max_out()` when the header
     declares it at render time and allocates that many records; it stays
     create-only, so delete it and re-run `apply` to pick a later

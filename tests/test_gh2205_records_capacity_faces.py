@@ -26,12 +26,24 @@ GATE, built and run (cmake, ``-Wall -Wextra -Werror``):
 * ``out_size`` beside ``max_results_param`` -- two capacities for one buffer
   -- is refused; ``jm function --out-size`` is accepted with
   ``--result-field`` (and still refused with neither it nor
-  ``--variable-output``), and ``jm script`` re-emits it.
+  ``--variable-output``), and ``jm script`` re-emits it;
+* an EMPTY input under ``out_size`` asks for 0 records and returns ``[]``.
+  ``malloc(0)`` may return NULL -- a ``MemoryError`` for an empty call --
+  so the function face allocates through ``PyMem_Malloc`` / ``PyMem_Free``,
+  as the method face does (gh-2184), and ``PyMem_Malloc(0)`` returns a
+  non-NULL pointer by contract. glibc's ``malloc(0)`` does too, so the call
+  alone cannot fail here: the honest gate is the render's. No wrapper the
+  function face emits calls a bare ``malloc`` / ``free``, read off the
+  emitter's source and off every output shape it renders, and each
+  ``PyMem_Malloc`` is freed on every way out.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +60,7 @@ sys.path.insert(0, str(SRC))
 
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _csym as CSYM  # noqa: E402
+from just_makeit import _render as R  # noqa: E402
 
 _TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
@@ -231,6 +244,10 @@ for fn in ("every", "fixed"):
     for n in (100, 1000):
         r = getattr(m, fn)(np.full(n, 3.0, np.float32))
         out[f"{fn}{n}"] = [len(r), list(r[-1])]
+    try:
+        out[f"{fn}0"] = getattr(m, fn)(np.zeros(0, np.float32))
+    except MemoryError as exc:
+        out[f"{fn}0"] = f"MemoryError: {exc}"
 print(json.dumps(out))
 """
 
@@ -296,6 +313,120 @@ def test_without_out_size_the_default_stands(built, n):
     count, last = built.probe[f"fixed{n}"]
     assert count == FIXED, f"fixed({n}) returned {count}"
     assert last == [FIXED - 1, 3]
+
+
+@pytest.mark.parametrize("fn", list(FUNCTIONS))
+def test_an_empty_input_returns_no_records(built, fn):
+    """`out_size = "x_len"` asks for 0 records here: an empty list, not a
+    MemoryError from a NULL `malloc(0)`."""
+    assert built.probe[f"{fn}0"] == []
+
+
+# -- the function face allocates through PyMem_Malloc / PyMem_Free -----------
+
+#: A bare C allocator call. `PyMem_Malloc` / `PyMem_Free` are not one: the
+#: case differs, and the `\b` will not start inside an identifier.
+_BARE = re.compile(r"\b(?:malloc|free)\s*\(")
+
+_RF = [{"name": "quot", "type": "int"}, {"name": "rem", "type": "int"}]
+_X = {"name": "x", "type": "float[]"}
+
+#: One row per output shape `_py_wrapper_for_function` renders.
+SHAPES = {
+    "records": {"return_type": "div_t", "params": [_X], "result_fields": _RF},
+    "records-out-size": {
+        "return_type": "div_t",
+        "params": [_X],
+        "result_fields": _RF,
+        "out_size": "x_len",
+    },
+    "records-param": {
+        "return_type": "div_t",
+        "params": [_X, {"name": "n", "type": "size_t"}],
+        "result_fields": _RF,
+        "max_results_param": "n",
+    },
+    "str": {
+        "return_type": "size_t",
+        "params": [{"name": "b", "type": "uint8_t[]"}],
+        "variable_output": True,
+        "out_type": "str",
+        "out_size": "b_len * 2",
+    },
+    "str-check": {
+        "return_type": "size_t",
+        "params": [{"name": "b", "type": "uint8_t[]"}],
+        "variable_output": True,
+        "out_type": "str",
+        "out_size": "b_len * 2",
+        "check_return": True,
+    },
+    "array": {
+        "return_type": "size_t",
+        "params": [_X],
+        "variable_output": True,
+        "out_type": "float",
+        "out_size": "x_len",
+    },
+    "fixed-array": {
+        "return_type": "void",
+        "params": [_X],
+        "out_type": "float",
+    },
+    "status": {
+        "return_type": "int",
+        "params": [{"name": "n", "type": "int"}],
+        "check_return": True,
+    },
+    "scalar": {
+        "return_type": "double",
+        "params": [{"name": "v", "type": "double"}],
+    },
+    "void": {"return_type": "void"},
+}
+
+
+def _wrapper(row: dict) -> str:
+    return R.make_functions_ctx(
+        "m", "M", [{"name": "f", **row}], owner={"project": {"name": "p"}}
+    )["function_wrappers"]
+
+
+def test_the_emitter_spells_no_bare_allocator():
+    """Read off the source, so an output shape added later is held too."""
+    tree = ast.parse(inspect.getsource(R._py_wrapper_for_function))
+    texts = [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    assert any("PyMem_Malloc(" in t for t in texts), "armed"
+    bare = [t for t in texts if _BARE.search(t)]
+    assert not bare, f"bare malloc/free in the function face: {bare}"
+
+
+@pytest.mark.parametrize("shape", list(SHAPES))
+def test_every_shape_renders_no_bare_allocator(shape):
+    text = _wrapper(SHAPES[shape])
+    assert not _BARE.findall(text), text
+
+
+@pytest.mark.parametrize(
+    "shape", [s for s in SHAPES if s.startswith(("records", "str"))]
+)
+def test_each_allocation_is_freed_on_every_way_out(shape):
+    """After the allocation's own NULL test, every `return` releases it:
+    the overflow guard, a refused count, a failed list or tuple, and the
+    result."""
+    text = _wrapper(SHAPES[shape])
+    assert text.count("PyMem_Malloc(") == 1, text
+    after = text[
+        text.index("PyErr_NoMemory();", text.index("PyMem_Malloc(")) :
+    ]
+    after = after[after.index("\n") :]
+    returns = re.findall(r"\breturn\b", after)
+    assert returns, text
+    assert after.count("PyMem_Free(") == len(returns), text
 
 
 def test_jm_script_re_emits_out_size(project):

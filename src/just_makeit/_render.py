@@ -1826,8 +1826,8 @@ def _py_wrapper_for_function(
     the `[n]` of ``"T[n]"``, else the first array param's length; a row
     with neither is refused (gh-1888).
 
-    result_fields: if set, calls C with a malloc'd array of structs, builds
-    and returns list[tuple] from the fields. max_results_param names
+    result_fields: if set, calls C with a ``PyMem_Malloc``'d array of
+    structs, builds and returns list[tuple] from the fields. max_results_param names
     an existing param that already carries the capacity (already embedded in
     call_args, so it is not passed again); when empty (the common case),
     fn_c_decl appended a bare trailing `size_t max_results` param instead, so
@@ -1905,6 +1905,12 @@ def _py_wrapper_for_function(
         # gh-1710: `_max` may be the caller's int. `_max * sizeof` below
         # wrapped for a large one, so malloc returned a SHORT buffer the
         # callee then filled `_max` records into; bounded before the product.
+        #
+        # gh-2205: through `PyMem_Malloc` / `PyMem_Free`, the method face's
+        # records buffer (gh-2184). An `out_size` of `x_len` asks for 0
+        # records on an empty input, and `malloc(0)` may return NULL -- a
+        # MemoryError for an empty call -- where `PyMem_Malloc(0)` returns a
+        # distinct non-NULL pointer by contract.
         ret_line = (
             _coerce.output_size_c(
                 "_max",
@@ -1915,22 +1921,23 @@ def _py_wrapper_for_function(
                 limit=f"(PY_SSIZE_T_MAX / sizeof({_rt_disp}))",
             )
             + f"    {_rt_disp} *_results ="
-            f" ({_rt_disp} *)malloc(_max * sizeof({_rt_disp}));\n"
+            f" ({_rt_disp} *)PyMem_Malloc(_max * sizeof({_rt_disp}));\n"
             f"    if (!_results) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             f"    size_t _n = {_call};\n"
             f"{cleanup}"
             # gh-1716: `_n` records were read from a buffer of `_max`.
             + _coerce.returned_count_c(
-                "_n", "_max", fn_name, "free(_results);"
+                "_n", "_max", fn_name, "PyMem_Free(_results);"
             )
             + "    PyObject *_lst = PyList_New((Py_ssize_t)_n);\n"
-            f"    if (!_lst) {{ free(_results); return NULL; }}\n"
+            "    if (!_lst) { PyMem_Free(_results); return NULL; }\n"
             f"    for (size_t _i = 0; _i < _n; _i++) {{\n"
             f"        PyObject *_tup = Py_BuildValue({_bv});\n"
-            f"        if (!_tup) {{ free(_results); Py_DECREF(_lst); return NULL; }}\n"
+            "        if (!_tup) {"
+            " PyMem_Free(_results); Py_DECREF(_lst); return NULL; }\n"
             f"        PyList_SET_ITEM(_lst, (Py_ssize_t)_i, _tup);\n"
             f"    }}\n"
-            f"    free(_results);\n"
+            f"    PyMem_Free(_results);\n"
             f"    return _lst;"
         )
     elif variable_output and out_type == "str":
@@ -1983,22 +1990,25 @@ def _py_wrapper_for_function(
                 ctype="size_t",
                 limit="PY_SSIZE_T_MAX",
             )
-            + f"    char *_buf = (char *)malloc(_cap + 1);\n"
+            # gh-2205: the function face allocates through one primitive.
+            + f"    char *_buf = (char *)PyMem_Malloc(_cap + 1);\n"
             f"    if (!_buf) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             + _why_decl(why)
             + f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
             f"{cleanup}"
             + (
-                _count_refusal(c_name, "free(_buf);", why)
+                _count_refusal(c_name, "PyMem_Free(_buf);", why)
                 if check_return
                 else ""
             )
             # gh-1716: a count past `_cap` was clamped here, silently --
             # hiding a kernel that had already written past the buffer.
-            + _coerce.returned_count_c("_n", "_cap", fn_name, "free(_buf);")
+            + _coerce.returned_count_c(
+                "_n", "_cap", fn_name, "PyMem_Free(_buf);"
+            )
             + "    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
             "(Py_ssize_t)_n);\n"
-            "    free(_buf);\n"
+            "    PyMem_Free(_buf);\n"
             "    return _s;"
         )
     elif variable_output and out_type:
