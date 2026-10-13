@@ -9,7 +9,8 @@
     `<fn>_max_out(state)` takes the state alone and sizes every call, and
     the binding, both `.pyi` writers and the runtime `__doc__` offer no
     `count` -- only the optional `out=`, checked against that bound as
-    before. `pass_capacity` keeps its exact allocation there (the bound
+    before; the generated element round trip (gh-1404) calls such a reader
+    `()`. `pass_capacity` keeps its exact allocation there (the bound
     cannot miss a count the call does not have), and the key composes with
     `out_cols`, `none_on_empty`, `count_type` with `error_negative`,
     `exact_max_out` and `multi_output`. It is refused at load where there is

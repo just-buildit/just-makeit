@@ -451,9 +451,67 @@ def test_the_cli_flag_writes_the_key_and_script_replays_it(tmp_path):
         assert "unknown method key" not in r.stdout + r.stderr
     (m,) = C.methods(C.load(root), "spec")
     assert m.get("no_count") is True, m
+    # The verb writes the C itself -- the sacred header's declarations and
+    # the `_core.c` stubs -- before any `apply` re-renders them, so both are
+    # held here, on the files the author then implements.
+    hdr = (root / "native/inc/p/spec/spec_core.h").read_text("utf-8")
+    assert "size_t p_spec_flush_max_out(p_spec_state_t *state);" in hdr, hdr
+    assert (
+        "size_t p_spec_flush(p_spec_state_t *state, float *out,"
+        " size_t max_out);" in hdr
+    ), hdr
+    core = (root / "native/src/spec/spec_core.c").read_text("utf-8")
+    assert "p_spec_flush_max_out(p_spec_state_t *state)\n{" in core, core
+    assert (
+        "p_spec_flush(p_spec_state_t *state, float *out, size_t max_out)\n{"
+        in core
+    ), core
+    assert "(void)n;" not in core, core
+    # ...and the glue it renders BEFORE the header it just wrote is read
+    # back, which is when only the key can say there is no count.
+    ext = (root / "native/src/spec/spec_ext.c").read_text("utf-8")
+    assert "p_spec_flush_max_out(self->handle))" in ext, ext
+    assert "p_spec_flush_max_out(self->handle," not in ext, ext
+    pyi = (root / "src/p/spec.pyi").read_text("utf-8")
+    assert "def flush_max_out(self) -> int:" in pyi, pyi
     assert "--no-count" in run_cli("script", cwd=root).stdout
     orig, replay = script_round_trip(root, tmp_path / "replay")
     assert orig == replay
+
+
+def test_the_two_prototype_builders_agree(tmp_path):
+    """`make_methods_ctx`'s declarations are the peer of the header's.
+
+    The header gets the prototypes from `_method._build_method_prototype`;
+    `make_methods_ctx` renders the same declarations for a ``_core.h``
+    written whole (gh-594: "must render the identical signature"). A build
+    sees only the one that reaches the header, so the other is held to it
+    here -- the kernel and its `_max_out` both, with no header to read the
+    arity from, so the key alone has to say there is no count.
+    """
+    from just_makeit import _csym
+    from just_makeit._context._methods import make_methods_ctx
+
+    root = _scaffold(tmp_path)
+    for argv in (
+        ("object", "spec", "--no-step"),
+        ("method", "spec", "flush", *_FLUSH_ARGV),
+    ):
+        assert run_cli(*argv, cwd=root).returncode == 0, argv
+    cfg = C.load(root)
+    decls = make_methods_ctx(
+        "spec",
+        "Spec",
+        C.methods(cfg, "spec"),
+        "p",
+        csym=_csym.stem(cfg, "spec"),
+    )["method_decls"]
+    hdr = (root / "native/inc/p/spec/spec_core.h").read_text("utf-8")
+    for sym in ("p_spec_flush_max_out", "p_spec_flush"):
+        pat = rf"^\w+ {sym}\([^)]*\);"
+        (want,) = re.findall(pat, hdr, re.M)
+        (got,) = re.findall(pat, decls, re.M)
+        assert got == want, (got, want)
 
 
 @pytest.mark.parametrize(
@@ -516,6 +574,46 @@ def _declare_no_count(frag: Path) -> None:
     )
 
 
+_GENERATOR = {"no_count": True, "variable_output": True, "arg_type": "void"}
+
+
+@pytest.mark.parametrize(
+    "extra, needle",
+    [
+        ({"no_count": "yes"}, "must be true or false"),
+        ({"variable_output": False}, "needs variable_output"),
+        ({"arg_type": "float[]"}, 'needs arg_type = "void"'),
+        ({"params": [{"name": "k", "type": "int"}]}, "no params"),
+        ({"extra_args": [{"name": "k", "type": "int"}]}, "no params"),
+        ({"count_default": "4"}, "count_default describes"),
+        ({"count_name": "n"}, "count_name describes"),
+        ({"batch": True}, "batch is a 1:1 transform"),
+        (
+            {"result_fields": [{"name": "i", "type": "int"}]},
+            "record or list-of-records",
+        ),
+    ],
+)
+def test_every_load_rule_refuses_its_shape(extra, needle):
+    """One row per rule `_config._no_count_errors` states, each on the
+    generator shape that is otherwise accepted, so a rule that stops firing
+    fails here by name. The CLI and `apply` both ask this function."""
+    assert C._no_count_errors(dict(_GENERATOR), "m") == []
+    errs = C._no_count_errors({**_GENERATOR, **extra}, "m")
+    assert len(errs) == 1 and needle in errs[0], errs
+
+
+def test_a_record_array_result_may_drop_its_count():
+    """`record_dtype` rows are a variable_output ARRAY, which does read the
+    count -- so `no_count` applies to them, and is not refused."""
+    entry = {
+        **_GENERATOR,
+        "result_fields": [{"name": "i", "type": "int"}],
+        "record_dtype": "rec_t",
+    }
+    assert C._no_count_errors(entry, "m") == []
+
+
 def test_a_hand_edited_manifest_is_refused_on_load(tmp_path):
     """The CLI is not the only writer: a manifest edited by hand reaches the
     same validator when it is loaded."""
@@ -574,5 +672,55 @@ def test_pass_capacity_on_a_no_count_method_is_not_inert(tmp_path):
         assert run_cli(*argv, cwd=root).returncode == 0, argv
     cfg = C.load(root)
     assert _object.inert_pass_capacity(cfg, root, "spec") == []
+    # The exact allocation, on the render that READS the header's
+    # state-only `_max_out` -- `apply`'s -- and not only on the verb's,
+    # which renders before that declaration is read back.
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
     ext = (root / "native/src/spec/spec_ext.c").read_text("utf-8")
     assert "(void)_need;" in ext, ext
+    assert "_cap < _need" not in ext, ext
+
+
+# -- the element contract -----------------------------------------------------
+
+
+def test_the_invariant_round_trip_calls_a_no_count_reader_with_nothing(
+    tmp_path,
+):
+    """gh-1404's generated round trip writes 8 elements and reads them back
+    with `obj.<reader>(len(x))`. A no_count reader takes no count -- the 8
+    would be read as its `out=` buffer and refused -- so it is called `()`,
+    and returns what the object holds."""
+    root = _scaffold(tmp_path)
+    for argv in (
+        ("object", "o", "--no-step"),
+        ("record", "o", "sample", "--type", "float"),
+        ("method", "o", "write", "--arg-type", "sample[]",
+         "--return-type", "bool"),
+        ("method", "o", "drain", "--arg-type", "void", "--return-type",
+         "sample", "--variable-output", "--pass-capacity", "--no-count"),
+    ):  # fmt: skip
+        r = run_cli(*argv, cwd=root)
+        assert r.returncode == 0, r.stdout + r.stderr
+    # The round trip is generated only once the reader is real (a scaffold
+    # stub `(void)`s its state, `_invariants.kernel_is_stub`).
+    core = root / "native/src/o/o_core.c"
+    stub = (
+        "    (void)state;\n    (void)out; (void)max_out;\n"
+        "    return 0; /* placeholder */\n}\n"
+    )
+    text = core.read_text("utf-8")
+    assert text.count(stub) == 1, text
+    core.write_text(
+        text.replace(
+            stub,
+            "    out[0] = (float)state->gain; (void)max_out;\n"
+            "    return 1;\n}\n",
+        ),
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    inv = (root / "src/p/tests/test_o_invariants.py").read_text("utf-8")
+    assert "    y = obj.drain()\n" in inv, inv
