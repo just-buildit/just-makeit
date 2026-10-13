@@ -147,6 +147,10 @@ Notes:
     row, a handle or capsule module. numpy refuses
     `np.int8(300)` the same way. The exception for now is `uint64_t` and
     `size_t`, where `-1` still arrives as `2**64 - 1` (gh-2220).
+    A generated C command line -- a `jm app` executable, a composer's CLI --
+    refuses a flag the same way, `-1` for a `uint64_t` included: it prints
+    `<prog>: --gain: '300' is out of range for int8_t [-128, 127]` and
+    exits 2 (gh-2225).
     `--state`, `jm add` and a manifest `[[<obj>.state]]` entry all refuse
     it, as a scalar and as a `T[N]` element, and say so. So do
     `--arg-type` / `--return-type` and a manifest `arg_type` /
