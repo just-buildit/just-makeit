@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 #include "/*<<inc_prefix>>*//*<<module>>*///*<<module>>*/_core.h"
-
+/*<<helpers>>*/
 int
 main(int argc, char *argv[])
 {

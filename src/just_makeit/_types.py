@@ -35,13 +35,19 @@ def _fwint(
 ):
     """Build a fixed-width integer _CTYPE_META entry.
 
+    Every row carries ``limits``, the ``<stdint.h>`` macros naming its
+    range, derived from the spelling (``int8_t`` -> ``INT8_MIN`` /
+    ``INT8_MAX``, ``size_t`` -> ``SIZE_MAX``, an unsigned type's floor
+    ``0``). A generated command line refuses a flag outside them (gh-2225,
+    `_app.cli_number_c`), since it parses every integer through a
+    ``long long``.
+
     *narrow* says the C type holds fewer values than *parse_type*, so a value
     the parse accepts can still be out of range for *ctype*: the row then
-    carries ``bounds``, the ``<stdint.h>`` macros naming its range, derived
-    from the spelling (``int8_t`` -> ``INT8_MIN`` / ``INT8_MAX``, an unsigned
-    type's floor ``0``). The binding refuses a value outside them before the
-    cast (gh-2144, `_context._parse.scalar_narrow_c`). A cast alone wraps:
-    ``int8_t`` given 300 arrived as 44.
+    also carries ``bounds``, the same pair. The binding refuses a value
+    outside them before the cast (gh-2144,
+    `_context._parse.scalar_narrow_c`). A cast alone wraps: ``int8_t`` given
+    300 arrived as 44.
     """
     row = {
         "kind": "int",
@@ -55,10 +61,11 @@ def _fwint(
         "to_c": lambda n, t=ctype: f"({t}){n}_raw",
         "to_py": to_py,
     }
+    stem = ctype[: -len("_t")].upper()
+    floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
+    row["limits"] = (floor, f"{stem}_MAX")
     if narrow:
-        stem = ctype[: -len("_t")].upper()
-        floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
-        row["bounds"] = (floor, f"{stem}_MAX")
+        row["bounds"] = row["limits"]
     return row
 
 
@@ -91,6 +98,9 @@ _CTYPE_META: dict[str, dict] = {
         "py_one": "1",
         "py_type": "np.int32",
         "to_py": _TO_PY_LONG,
+        # gh-2225: what `_fwint` derives for a fixed-width row; `int` is
+        # named by <limits.h> and `bool` holds 0 and 1.
+        "limits": ("INT_MIN", "INT_MAX"),
     },
     "bool": {
         "kind": "int",
@@ -99,6 +109,7 @@ _CTYPE_META: dict[str, dict] = {
         "py_zero": "False",
         "py_one": "True",
         "py_type": "np.bool_",
+        "limits": ("0", "1"),
         "parse_type": "int",
         "parse_zero": "0",
         "to_c": lambda n: f"(int){n}_raw",

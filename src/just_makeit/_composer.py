@@ -6191,11 +6191,8 @@ def render_cli(cfg: dict, module: str) -> str:
             ct = f["type"]
             dflt = f.get("default", "0")
             decls.append(f"    {ct} {n} = ({ct}){dflt};")
-            conv = (
-                f"({ct})strtod(argv[++i], NULL)"
-                if ct in ("double", "float")
-                else f"({ct})strtoull(argv[++i], NULL, 0)"
-            )
+            # gh-2225: read whole and range-checked, or refused (exit 2).
+            conv = _app.cli_number_c(ct, n, "argv[++i]", base=0)
             parse.append(
                 f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = {conv};'
             )
@@ -6208,11 +6205,7 @@ def render_cli(cfg: dict, module: str) -> str:
             _one_real_number(f, module, "generated CLI (`[module.X.cli]`)")
         dflt = f.get("default", "0")
         seg_decls.append(f"    {ct} {n} = ({ct}){dflt};")
-        conv = (
-            f"({ct})strtod(argv[++i], NULL)"
-            if ct in ("double", "float")
-            else f"({ct})strtoull(argv[++i], NULL, 0)"
-        )
+        conv = _app.cli_number_c(ct, n, "argv[++i]", base=0)  # gh-2225
         seg_parse.append(
             f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = {conv};'
         )
@@ -6220,6 +6213,11 @@ def render_cli(cfg: dict, module: str) -> str:
 
     decls_s = "\n".join(decls + seg_decls)
     parse_s = "\n".join(parse + seg_parse)
+    # gh-2225: the checked number parsers those flags call, and only those
+    # -- a composer whose flags are all enums or buffers carries none.
+    number_helpers = _app.cli_number_helpers(parse_s)
+    if number_helpers:
+        number_helpers = "\n" + number_helpers
     assign_s = "\n".join(assign)
     seg_assign_s = "\n".join(seg_assign)
     # The flag path mallocs each bytes field's buffer; <backing>_create
@@ -6292,7 +6290,7 @@ usage(const char *prog)
         "          [--endian le|be] [--out FILE] [--repeat] [--continuous]\\n",
         prog);
 }}
-
+{number_helpers}
 int
 main(int argc, char **argv)
 {{

@@ -95,14 +95,16 @@ def test_pep723_target_is_generated(tmp_path: Path):
     assert "obj.step(x)" in script and "<<IMPLEMENT" not in script
 
 
-def test_int_flag_uses_strtol_and_int_argparse(tmp_path: Path):
+def test_int_flag_uses_checked_parse_and_int_argparse(tmp_path: Path):
     proj = _scaffold(tmp_path)
     taps = [{"name": "taps", "type": "int32_t", "default": "8"}]
     jm_app(proj, target="c", name="tool", object_="gain", flags=taps)
     jm_app(proj, target="console", name="tool-cli", object_="gain", flags=taps)
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
-    assert "int32_t taps = 8;" in c and "strtol(argv[++i]" in c
+    assert "int32_t taps = 8;" in c
+    # gh-2225: through the checked parser, never a bare strtol cast.
+    assert 'jm_cli_int(argv[0], "--taps", argv[++i]' in c
     assert "--taps" in cli and "type=int" in cli
 
 
