@@ -6064,6 +6064,67 @@ def composer_cli(cfg: dict, module: str) -> dict:
     return dict(cfg.get("module", {}).get(module, {}).get("cli", {}))
 
 
+def _cli_enum_flag(f: dict, enums: dict) -> "tuple[str, str]":
+    """An enum field's ``--<name>`` flag on the generated CLI.
+
+    gh-2140: the one treatment for a source and a segment enum field. The
+    segment loop had none and read the field as a number -- ``int gap =
+    (int)auto;`` does not compile, and ``--gap off`` was
+    ``strtoull("off")``, 0 -- while the source branch kept its own copy of
+    the lookup, which stored a constant-bound enum's position (gh-1450) and,
+    for a field with no default, refused every run that named no choice.
+
+    The local holds the field's C value, starting at the manifest default
+    as every face spells it (`_enumc.default_c`). The flag's text is looked
+    up through `_enumc.validate_c`, the one choice-string emitter (gh-1026),
+    whose command-line refusal is ``<prog>: --<name>: invalid choice '<s>'
+    (choices: ...)`` and exit 2. The caller assigns the local to the struct
+    member.
+
+    Parameters
+    ----------
+    f : dict
+        The source or segment field row; it declares ``enum``.
+    enums : dict
+        The ``[[enum]]`` registry, `_config.enums`.
+
+    Returns
+    -------
+    tuple of str
+        The local's declaration and the flag's ``else if`` argv case.
+
+    Examples
+    --------
+    >>> decl, case = _cli_enum_flag(
+    ...     {"name": "gap", "type": "int", "enum": "gap", "default": "off"},
+    ...     {"gap": ["auto", "off"]})
+    >>> decl
+    '    int gap = 1;'
+    >>> "_enum_index(_enum_gap, _s)" in case, "gap = _v;" in case
+    (True, True)
+    """
+    n, e = f["name"], f["enum"]
+    decl = f"    int {n} = {_enumc.default_c(e, f.get('default', ''), enums)};"
+    check = _enumc.validate_c(
+        n,
+        e,
+        enums,
+        src="_s",
+        result="_v",
+        fail="return 2;",
+        cli_flag=n,
+        indent="            ",
+    )
+    case = (
+        f'        else if (!strcmp(a, "--{n}") && i+1<argc) {{\n'
+        "            const char *_s = argv[++i];\n"
+        f"{check}\n"
+        f"            {n} = _v;\n"
+        "        }"
+    )
+    return decl, case
+
+
 def render_cli(cfg: dict, module: str) -> str:
     """Render a generic c-face composer CLI (a `main()`), reusing jm app's
     output-axes machinery (`jm_convert_block`/`jm_write_block`) and the SSOT
@@ -6109,21 +6170,17 @@ def render_cli(cfg: dict, module: str) -> str:
     sample_types = " ".join(_app._SAMPLE_TYPES)
 
     # per-field flag decls (defaults), argv parse cases, struct assembly.
+    enums = C.enums(cfg)
     decls, parse, assign = [], [], []
     for f in src_fields:
         n = f["name"]
         if f.get("complex"):
             continue  # complex streams can't cross a generated CLI flag
-        if f.get("enum"):
-            decls.append(f'    const char *{n} = "{f.get("default", "")}";')
-            parse.append(
-                f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
-            )
-            assign.append(f"""    {{
-        int _v = _enum_index(_enum_{f["enum"]}, {n});
-        if (_v < 0) {{ fprintf(stderr, "bad --{n} %s\\n", {n}); return 2; }}
-        src.{n} = _v;
-    }}""")
+        if _field_is_enum(f):
+            decl, case = _cli_enum_flag(f, enums)  # gh-2140
+            decls.append(decl)
+            parse.append(case)
+            assign.append(f"        src.{n} = {n};")
         elif _field_is_owned_ptr(f):
             # gh-1711: the text form, through the host's parser; freed after
             # create, which deep-copies it like a bytes buffer.
@@ -6204,8 +6261,14 @@ def render_cli(cfg: dict, module: str) -> str:
     seg_decls, seg_parse, seg_assign = [], [], []
     for f in seg_fields:
         n, ct = f["name"], f["type"]
-        if not f.get("enum"):
-            _one_real_number(f, module, "generated CLI (`[module.X.cli]`)")
+        if _field_is_enum(f):
+            # gh-2140: a choice, as a source enum field is -- not a number.
+            decl, case = _cli_enum_flag(f, enums)
+            seg_decls.append(decl)
+            seg_parse.append(case)
+            seg_assign.append(f"        seg.{n} = {n};")
+            continue
+        _one_real_number(f, module, "generated CLI (`[module.X.cli]`)")
         dflt = f.get("default", "0")
         seg_decls.append(f"    {ct} {n} = ({ct}){dflt};")
         conv = (

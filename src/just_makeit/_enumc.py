@@ -15,6 +15,7 @@ result and the reason the gate scans:
 | composer decoded-getter / from-dict     | bare                          |
 | object property setter                  | ``_enum_index_<Component>``   |
 | object method param                     | ``_enum_index_<Component>``   |
+| composer C CLI flag (gh-2140)           | bare                          |
 | (+ the shared lookup body, already one) | —                             |
 
 The lookup *body* was already shared — three of them imported one constant —
@@ -368,6 +369,7 @@ def validate_c(
     fail: str = "return NULL;",
     cleanup: str = "",
     indent: str = "    ",
+    cli_flag: str = "",
 ) -> str:
     """The call site: look the choice up, raise naming the choices, or pass on.
 
@@ -404,11 +406,27 @@ def validate_c(
         as each face already did.
     indent : str, optional
         Leading whitespace for the block.
+    cli_flag : str, optional
+        The flag the choice arrives as on a generated C command line,
+        without its ``--``. A command line has no exception to raise, so the
+        refusal is printed to stderr instead, as ``<prog>: --<flag>:
+        invalid choice '<s>' (choices: ...)`` -- the form a generated C
+        command line refuses any flag in -- and *fail* (``return 2;``) ends
+        the program (gh-2140). ``argv`` must be in scope.
 
     Returns
     -------
     str
         C source, with no trailing newline.
+
+    Examples
+    --------
+    >>> c = validate_c("gap", "gap", {"gap": ["auto", "off"]}, src="_s",
+    ...                result="_v", fail="return 2;", cli_flag="gap")
+    >>> "--gap: invalid choice '%s' (choices: auto, off)" in c
+    True
+    >>> "PyErr_Format" in c, "return 2;" in c
+    (False, True)
     """
     index_fn, table = symbols(prefix, ename)
     var = result or f"_arg_{pname}"
@@ -418,12 +436,21 @@ def validate_c(
     # value, so its -1 cannot collide with a legal constant -- every
     # negative one is reachable. The value is read from the table after.
     idx = f"{var}_i" if constants_of(enums, ename) else var
+    if cli_flag:
+        report = (
+            f'{indent}    fprintf(stderr, "%s: --{cli_flag}: invalid choice'
+            f" '%s'{suffix}\\n\", argv[0], {expr});{cleanup}\n"
+        )
+    else:
+        report = (
+            f"{indent}    PyErr_Format(PyExc_ValueError,\n"
+            f"{indent}        \"invalid {pname} '%s'{suffix}\","
+            f" {expr});{cleanup}\n"
+        )
     out = (
         f"{indent}int {idx} = {index_fn}({table}, {expr});\n"
         f"{indent}if ({idx} < 0) {{\n"
-        f"{indent}    PyErr_Format(PyExc_ValueError,\n"
-        f"{indent}        \"invalid {pname} '%s'{suffix}\","
-        f" {expr});{cleanup}\n"
+        f"{report}"
         f"{indent}    {fail}\n"
         f"{indent}}}"
     )
