@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _jmrun import run_cli, script_round_trip  # noqa: E402
 
 from just_makeit import _config as C  # noqa: E402
+from just_makeit import _keys  # noqa: E402
 
 
 def _skip_reason() -> "str | None":
@@ -495,8 +496,10 @@ def test_the_flag_writes_the_key_and_script_replays_it(tmp_path):
     )
     text = r.stdout + r.stderr
     assert r.returncode == 0, text
-    # The key is vocabulary: jm does not warn that it reads nothing.
-    assert "unknown method key" not in text, text
+    # The key is vocabulary: jm does not warn that it reads nothing. Asked
+    # of the walker itself, since its warning prints once per process.
+    unknown = [u.key for u in _keys.unknown_keys(C.load(root))]
+    assert "short_out" not in unknown, unknown
     frag = (root / "objects/spec.toml").read_text("utf-8")
     assert re.search(r"^short_out = true$", frag, re.M), frag
     ext = (root / "native/src/spec/spec_ext.c").read_text("utf-8")
