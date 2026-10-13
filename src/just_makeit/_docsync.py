@@ -1200,13 +1200,15 @@ _REFUSAL_VALUE_RE = re.compile(
 )
 
 #: A list-of-records result sized by its capacity function (gh-2184): a call
-#: to a ``*_max_out`` and, after it, the ``PyList_New`` only that shape's
-#: wrapper builds among the ``PyMethodDef`` rows. Both halves, because a
+#: to a ``*_max_out`` and the ``PyList_New`` only that shape's wrapper
+#: builds among the ``PyMethodDef`` rows. Both halves, because a
 #: ``variable_output`` wrapper calls its ``_max_out`` too and returns an
 #: ndarray -- a hand-written one that sizes some other way must not be told
 #: about records. Code, not text: read on the masked body, in any layout.
+#: In either order: a body that re-offers its input (gh-2204) creates the
+#: list before the loop that asks the capacity of each call.
 _RECORDS_CAPACITY_RE = re.compile(
-    r"\b\w+_max_out\s*\([\s\S]*\bPyList_New\s*\("
+    r"^(?=[\s\S]*\b\w+_max_out\s*\()(?=[\s\S]*\bPyList_New\s*\()"
 )
 
 
@@ -1333,6 +1335,15 @@ _FEATURE_MARKERS = {
         "this fragment does not ask it, so a call returns at most the "
         "fixed max_results records and drops the rest",
     ),
+    # gh-2204: a manifest declaration -- `consumed_fn`, added to a
+    # list-of-records method after its sacred fragment was rendered. Named
+    # for its consequence, which is the silent loss the key exists to end.
+    "records-consumed": _Feature(
+        (_coerce.CONSUMED_GUARD_RE,),
+        "the manifest declares consumed_fn and this fragment calls the "
+        "kernel once, so the input it leaves when its result buffer fills "
+        "is never offered and those records are lost",
+    ),
     # gh-2187: jm's own teardown for an object that lends views, which parks
     # the state for tp_dealloc. A teardown jm wrote before the object lent is
     # re-rendered (`_object.jm_owned_functions`). One the author edited is
@@ -1419,6 +1430,8 @@ def _method_return_shapes(text: str) -> dict:
         # range guards are reported on the feature axis, so none is also
         # read here as a raise the manifest declared.
         jm_guards = _coerce.RETURNED_COUNT_BLOCK_RE.sub("", code)
+        # gh-2204: so is the guard on a re-offered input's progress.
+        jm_guards = _coerce.CONSUMED_BLOCK_RE.sub("", jm_guards)
         if _raises(_OUT_SIZE_RE.sub("", jm_guards)):
             found.add(_RAISE_MARKER)
         out[name] = frozenset(found)

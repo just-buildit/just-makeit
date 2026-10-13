@@ -410,6 +410,10 @@ def _record_flags(entry: dict) -> list[str]:
     # the two together.
     if entry.get("record_dtype"):
         parts.append(_flag("--record-dtype", str(entry["record_dtype"])))
+    # gh-2204: dropped on replay, the rebuilt method offers its input once and
+    # loses every record past the first full buffer -- exit 0.
+    if entry.get("consumed_fn"):
+        parts.append(_flag("--consumed-fn", str(entry["consumed_fn"])))
     # `_bool_flag`, not a bare append: the raw form emitted the flag with no
     # indent and no continuation, so it ran into whatever followed it on one
     # line. It happened to shell-split correctly and so was never wrong, only

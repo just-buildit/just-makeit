@@ -51,6 +51,7 @@ def run(args: list[str]) -> None:
     record_module = ""
     record_doc = ""
     record_dtype = ""
+    consumed_fn = ""
     borrow = False
     borrow_count = ""
     borrow_writeable = False
@@ -519,6 +520,15 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             status_fn = remaining[i]
             i += 1
+        elif tok == "--consumed-fn":
+            # gh-2204: the C function saying how much input a
+            # list-of-records kernel took before its buffer filled.
+            i += 1
+            if i >= len(remaining):
+                print("error: --consumed-fn requires a name", file=sys.stderr)
+                sys.exit(1)
+            consumed_fn = remaining[i]
+            i += 1
         elif tok == "--status-error":
             # Repeatable, and a colon spec rather than a family of parallel
             # flags -- the `--result-field` precedent, and the division this
@@ -794,6 +804,7 @@ def run(args: list[str]) -> None:
         record_module=record_module,
         record_doc=record_doc,
         record_dtype=record_dtype,
+        consumed_fn=consumed_fn,
         borrow=borrow,
         borrow_count=borrow_count,
         borrow_writeable=borrow_writeable,

@@ -1072,6 +1072,9 @@ _SIGNATURE_COERCIONS: dict = {
     "record_name": (str, ""),
     "record_module": (str, ""),
     "record_dtype": (str, ""),
+    # gh-2204: a second C symbol the binding calls after every kernel call,
+    # and what decides whether the input is offered once or until it is used.
+    "consumed_fn": (str, ""),
     # gh-1312: all three are part of the CALL -- `borrow` decides whether
     # the kernel lends or fills, `borrow_count` which argument sizes the
     # view, `borrow_writeable` what the caller may do with it. Two objects
@@ -1210,6 +1213,7 @@ def run(
     record_module: str = "",
     record_doc: str = "",
     record_dtype: str = "",
+    consumed_fn: str = "",
     borrow: bool = False,
     borrow_count: str = "",
     borrow_writeable: bool = False,
@@ -1710,6 +1714,7 @@ def run(
                     record_name=record_name,
                     record_module=record_module,
                     record_dtype=record_dtype,
+                    consumed_fn=consumed_fn,
                     py_return_type=py_return_type,
                     max_out=max_out,
                     varargs=varargs,
@@ -1855,6 +1860,22 @@ def run(
     )
     if _scalar_why:
         raise _report.Refusal(_scalar_why)
+    # gh-2204: the loader's refusal, asked before this command writes the
+    # row it would refuse on the next load.
+    _consumed_why = _record.consumed_fn_why_not(
+        {
+            "arg_type": arg_type,
+            "result_fields": result_fields or [],
+            "single": single,
+            "variable_output": variable_output,
+            "record_dtype": record_dtype,
+            "borrow": borrow,
+            "consumed_fn": consumed_fn,
+        },
+        f"method '{object_name}.{method_name}'",
+    )
+    if _consumed_why:
+        raise _report.Refusal(_consumed_why)
     _restated = _record.restated_columns(
         {
             "name": method_name,
@@ -2357,6 +2378,10 @@ def run(
         # gh-788: the POD C struct whose layout becomes the returned numpy
         # array's dtype. Paired with `result_fields`, which names its members.
         method_entry["record_dtype"] = record_dtype
+    if consumed_fn:
+        # gh-2204: written whenever declared; a shape that cannot honour it
+        # was refused above rather than dropped here.
+        method_entry["consumed_fn"] = consumed_fn
     if borrow:
         # gh-1312: the kernel lends a pointer into the state's own memory.
         # `borrow_count` is persisted only when it was DECLARED -- it is
@@ -2559,6 +2584,14 @@ def run(
         # and pointing at it sent the author somewhere that cannot work.
         _where = f"{object_name}_core.h" if _hdr_only else core_c.name
         print(f"Done!  Implement {_c_fn}() in {_where}")
+        if consumed_fn:
+            # gh-2204: jm calls it and declares nothing, like `status_fn`.
+            print(
+                f"       and declare size_t {consumed_fn}"
+                f"(const {csym}_state_t *state) in {object_name}_core.h:\n"
+                "       the input the last call took. The binding offers "
+                "the rest until none is left."
+            )
         # gh-1319: printed AFTER the Done! line so it is the last thing on
         # screen -- the failure it prevents is a compile error three files
         # away, and a note scrolled off the top prevents nothing.
