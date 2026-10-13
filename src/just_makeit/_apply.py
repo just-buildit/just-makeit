@@ -915,6 +915,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             exact_max_out=bool(m.get("exact_max_out")),
             count_default=m.get("count_default", ""),
             count_name=m.get("count_name", ""),
+            no_count=bool(m.get("no_count")),  # gh-2233
             out_cols=str(m.get("out_cols", "") or ""),
             short_out=bool(m.get("short_out")),
             nogil=bool(m.get("nogil")),

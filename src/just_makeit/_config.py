@@ -5444,6 +5444,93 @@ def _short_out_errors(entry: dict, what: str) -> list[str]:
     return errors
 
 
+def _no_count_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``no_count``; [] when absent or usable.
+
+    gh-2233. A ``variable_output`` method with a ``void`` input and no
+    ``params`` is the generator shape: jm synthesizes a leading Python
+    ``count`` for it and hands the kernel ``size_t n``. ``no_count = true``
+    removes both, for a kernel whose result is sized by the object alone --
+    the kernel is called ``fn(state, out[, max_out])`` and its
+    ``<fn>_max_out(state)`` takes only the state. That only means something
+    on the one shape that HAS a synthesized count, so every other shape is
+    refused here, at load, rather than rendered into a binding that quietly
+    ignores the key. (A header whose ``_max_out`` still takes a count is the
+    render's refusal, because only the render reads the header.)
+
+    Parameters
+    ----------
+    entry : dict
+        One ``[[<component>.methods]]`` entry.
+    what : str
+        How the caller names the entry in a message.
+
+    Returns
+    -------
+    list of str
+        One message per problem.
+
+    Examples
+    --------
+    >>> _no_count_errors({"name": "flush"}, "x")
+    []
+    >>> _no_count_errors(
+    ...     {"no_count": True, "variable_output": True, "arg_type": "void"},
+    ...     "x",
+    ... )
+    []
+    >>> _no_count_errors({"no_count": "yes"}, "x")[0]
+    "x: no_count must be true or false, got 'yes'."
+    >>> print(_no_count_errors({"no_count": True}, "x")[0])
+    x: no_count needs variable_output = true: a fixed-size result has no count to drop.
+    >>> print(_no_count_errors(
+    ...     {"no_count": True, "variable_output": True, "arg_type": "float"},
+    ...     "x",
+    ... )[0])
+    x: no_count needs arg_type = "void": an input's length is the count, and the kernel is handed it.
+    """
+    if "no_count" not in entry:
+        return []
+    flag = entry["no_count"]
+    if not isinstance(flag, bool):
+        return [f"{what}: no_count must be true or false, got {flag!r}."]
+    if not flag:
+        return []
+    errors: list[str] = []
+    if not entry.get("variable_output"):
+        errors.append(
+            f"{what}: no_count needs variable_output = true: a fixed-size "
+            f"result has no count to drop."
+        )
+    if (entry.get("arg_type") or "void") != "void":
+        errors.append(
+            f'{what}: no_count needs arg_type = "void": an input\'s length '
+            f"is the count, and the kernel is handed it."
+        )
+    if entry.get("params") or entry.get("extra_args"):
+        errors.append(
+            f"{what}: no_count needs a method with no params: with params "
+            f"jm synthesizes no count, so there is nothing to drop."
+        )
+    for key in ("count_default", "count_name"):
+        if entry.get(key):
+            errors.append(
+                f"{what}: {key} describes the synthesized count, which "
+                f"no_count removes; drop one of the two."
+            )
+    if entry.get("batch"):
+        errors.append(
+            f"{what}: no_count needs a variable_output method; batch is a "
+            f"1:1 transform sized by its count."
+        )
+    if entry.get("result_fields") and not entry.get("record_dtype"):
+        errors.append(
+            f"{what}: no_count needs a variable_output array result; a "
+            f"record or list-of-records result takes no count."
+        )
+    return errors
+
+
 def manifest_type_errors(cfg: dict) -> list[str]:
     """Every unusable type declared anywhere in the manifest.
 
@@ -5548,6 +5635,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
             errors.extend(_multi_output_errors(entry, what))
             errors.extend(_out_cols_errors(entry, what))
             errors.extend(_short_out_errors(entry, what))
+            errors.extend(_no_count_errors(entry, what))
 
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):

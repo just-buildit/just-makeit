@@ -272,11 +272,16 @@ def _load_doc_blocks(
     # method's `_max_out` itself, nothing reads them from here, and a map
     # they made non-empty reads as an authored header to `apply`, whose
     # post-replay re-render it would then trigger for every such project.
+    # gh-2233: and every `no_count` method's, whose binding refuses a
+    # declaration that still takes a count -- which the arity set alone
+    # cannot tell from no declaration at all. Its accepted declaration is
+    # state-only, so it is in the arity set already and makes nothing
+    # non-empty that was not.
     _lists = {
         f"{C.method_c_symbol(stem, m)}_max_out"
         for m in C.methods(manifest, obj)
         + [m for v in C.views(manifest, obj) for m in C.view_methods(v)]
-        if _record.is_record_list(m)
+        if _record.is_record_list(m) or m.get("no_count")
     }
     _declared = declared_max_outs(text) & _lists
     if _declared:
@@ -363,6 +368,11 @@ def inert_pass_capacity(
     inert: list[tuple[str, str]] = []
     for m in C.methods(cfg, obj):
         if not m.get("pass_capacity") or m.get("exact_max_out"):
+            continue
+        # gh-2233: a `no_count` method's state-only bound IS its per-call
+        # bound -- the call has no count -- so its `pass_capacity` is live
+        # (`_context._methods`' `_moc_state_only`), not in the seam.
+        if m.get("no_count"):
             continue
         if not m.get("variable_output"):
             continue

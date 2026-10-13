@@ -238,7 +238,7 @@ def _out_elem_disp(return_type: str, out_type: str | None = None) -> str:
 
 
 def _max_out_count_param(
-    arg_type: str, params: list | None
+    arg_type: str, params: list | None, no_count: bool = False
 ) -> "tuple[str, str | None]":
     """gh-607: the count parameter ``*_max_out()`` takes, mirroring the
     shape's own kernel count argument — the same value the binding is about
@@ -247,11 +247,16 @@ def _max_out_count_param(
 
     Returns ``(decl, name)``: ``decl`` is the C parameter text to append
     (``", size_t n_in"``); ``name`` is the identifier the stub body
-    suppresses/uses, or ``None`` only for the all-scalar-params shape, whose
+    suppresses/uses, or ``None`` for the all-scalar-params shape, whose
     kernel has no size-bearing argument to mirror — ``max_out`` stays
-    zero-arg for that one shape (there is nothing to pass).
+    zero-arg for that shape (there is nothing to pass).
+
+    gh-2233: and ``None`` under ``no_count``, for the same reason: that
+    method's kernel takes no count, so its bound is the state's alone.
     """
     params = params or []
+    if no_count:
+        return "", None
     if arg_type != "void":
         return ", size_t n_in", "n_in"
     for p in params:
@@ -280,6 +285,7 @@ def _methods_c_stub_variable(
     csym: str,
     count_type: str = DEFAULT_COUNT_TYPE,
     error_sentinel: str = "",
+    no_count: bool = False,
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -301,6 +307,9 @@ def _methods_c_stub_variable(
     ``_core.h`` declaration names, read from the same key -- and its
     ``IMPLEMENT`` note says how it refuses when the method declares a way:
     a negative code for a signed count, *error_sentinel* for an unsigned one.
+
+    gh-2233: *no_count* drops the void-input shape's ``size_t n`` from the
+    kernel and from ``_max_out``, which then take the state alone.
     """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = _out_elem_disp(return_type, out_type)
@@ -328,6 +337,10 @@ def _methods_c_stub_variable(
         # param loses its `const` here exactly as it does in the header.
         step_param = ", " + ", ".join(T.c_param_parts(params))
         suppress_in = "    " + " ".join(T.c_param_suppress(params))
+    elif no_count:
+        # gh-2233: no count at all; the result is sized by the state.
+        step_param = ""
+        suppress_in = ""
     else:
         step_param = ", size_t n"
         suppress_in = "    (void)n;"
@@ -339,7 +352,7 @@ def _methods_c_stub_variable(
     cap_param = ", size_t max_out" if pass_capacity else ""
     cap_suppress = " (void)max_out;" if pass_capacity else ""
 
-    moc_decl, moc_name = _max_out_count_param(arg_type, params)
+    moc_decl, moc_name = _max_out_count_param(arg_type, params, no_count)
     moc_suppress = f" (void){moc_name};" if moc_name else ""
 
     if max_out > 0:
@@ -369,7 +382,7 @@ def _methods_c_stub_variable(
         f"{step_param}, {ret_disp} *out{extra_out_params}{cap_param})",
         "{",
         "    (void)state;",
-        suppress_in,
+        *([suppress_in] if suppress_in else []),
         # gh-600: the extra multi_output buffers are parameters too — omitting
         # them left a freshly scaffolded stub warning about unused `out1`
         # (an error under -Werror) before a line of user code is written.
@@ -893,6 +906,7 @@ def _build_method_prototype(
     *,
     csym: str,
     count_type: str = DEFAULT_COUNT_TYPE,
+    no_count: bool = False,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline).
 
@@ -913,6 +927,9 @@ def _build_method_prototype(
     gh-2012: a variable-output kernel returns its count as *count_type*
     (``size_t`` unless the method declares a signed one); its ``_max_out``
     sibling stays ``size_t``, a capacity and never a refusal.
+
+    gh-2233: *no_count* declares the void-input kernel and its ``_max_out``
+    without the ``size_t n`` the shape otherwise takes.
     """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
@@ -1003,9 +1020,10 @@ def _build_method_prototype(
             # site at once.
             step_param = ", " + ", ".join(T.c_param_parts(params))
         else:
-            step_param = ", size_t n"
+            # gh-2233: `no_count` takes none; the state sizes the result.
+            step_param = "" if no_count else ", size_t n"
         out_disp = _out_elem_disp(return_type, record_dtype or out_type)
-        moc_decl, _ = _max_out_count_param(arg_type, params)
+        moc_decl, _ = _max_out_count_param(arg_type, params, no_count)
         return "\n".join(
             [
                 f"size_t {c_fn}_max_out({csym}_state_t *state{moc_decl});",
@@ -1094,6 +1112,7 @@ _SIGNATURE_COERCIONS: dict = {
     "short_out": (bool, False),
     "count_default": (str, ""),
     "count_name": (str, ""),
+    "no_count": (bool, False),
     "out_cols": (str, ""),
     "nogil": (bool, False),
     "status_return": (bool, False),
@@ -1226,6 +1245,7 @@ def run(
     exact_max_out: bool = False,
     count_default: str = "",
     count_name: str = "",
+    no_count: bool = False,
     out_cols: str = "",
     short_out: bool = False,
     nogil: bool = False,
@@ -1720,6 +1740,7 @@ def run(
                     exact_max_out=exact_max_out,
                     count_default=count_default,
                     count_name=count_name,
+                    no_count=no_count,
                     nogil=nogil,
                     status_return=status_return,
                     error_negative=error_negative,
@@ -2092,6 +2113,7 @@ def run(
                 csym=csym,
                 count_type=count_type or DEFAULT_COUNT_TYPE,
                 error_sentinel=error_sentinel,
+                no_count=no_count,
             )
         else:
             stub = _methods_c_stub_fixed(
@@ -2172,6 +2194,7 @@ def run(
             c_fn=fn,
             csym=csym,
             count_type=count_type or DEFAULT_COUNT_TYPE,
+            no_count=no_count,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
@@ -2288,6 +2311,9 @@ def run(
         method_entry["exact_max_out"] = True
     if count_default:
         method_entry["count_default"] = count_default
+    # gh-2233: written only when set, like the two count keys beside it.
+    if no_count:
+        method_entry["no_count"] = True
     # gh-2115: written only when set, so an existing manifest gains no key
     # and `jm status --check` sees no drift on a project that never asked
     # for a matrix result.

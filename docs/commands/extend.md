@@ -64,6 +64,7 @@ timing every declared method it can.
 | `--nogil`                     | Release the GIL across the pure-C kernel of a `--variable-output` method (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: sound only when the object is not shared across threads concurrently (one object per stream). See below.                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--count-default EXPR`        | C expression seeding the synthesized leading count argument of a void-input `--variable-output` method, e.g. `"state->num_taps"`. Its value **is** the zero-arg call's behaviour, and jm cannot derive it — it lives in your C (gh-1051).                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--count-name NAME`           | What that synthesized argument is **called** (default `count`). See [Naming the synthesized count](#naming-the-synthesized-count).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `--no-count`                  | Drop that synthesized argument **altogether**, for a kernel whose result is sized by the object alone: the method is `f()` (plus the optional `out=`), the kernel `f(state, out[, max_out])`, and `<pkg>_<comp>_<name>_max_out(state)` takes the state alone. See [A method with no count](#a-method-with-no-count) (gh-2233).                                                                                                                                                                                                                                                                                                                                   |
 | `--out-cols EXPR`             | Make a `--variable-output` result a **matrix**: the kernel still fills a flat buffer and returns an element count, and the binding returns `(count / EXPR, EXPR)`. `EXPR` is an integer or a C expression over the object (`"state->nfft"`; `state` is `self->handle`). A caller-supplied `out=` must then be 2-D with that many columns. A count that is not a whole number of rows is a `RuntimeError`. `_max_out()` and the kernel keep speaking elements (gh-2115).                                                                                                                                                                                          |
 | `--result-field name:T[:doc]` | Declare one field of a returned record struct (repeatable). The method returns a `list` of these record tuples; pair with `--return-type <record_struct>` (the record's C type). The optional third component documents that field — it reaches the `PyStructSequence` field and the record class in the `.pyi`, so it requires `--single` (gh-646) or `--record-dtype` (gh-788). The result-count cap (`max_results`, default 64) is TOML-only for now — no `--max-results` CLI flag yet — and a header that declares the method's `_max_out()` sizes the result from it instead (see [Record shapes](#record-shapes)).                                         |
 | `--single`                    | With `--result-field`, return **one** named record (a `PyStructSequence`: attribute access + unpacking) instead of a `list[tuple]`. The C kernel returns the `--return-type` record struct by value (gh-244).                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -487,6 +488,50 @@ up with a stub advertising one name and a binding parsing another.
 
 Two names are refused: anything that is not a Python identifier, and `out` —
 which is the other slot in the same `_kwlist`.
+
+#### A method with no count
+
+Some generator-shaped kernels write **at most one result sized by the object
+alone** — a spectrogram's `flush`, the one zero-padded row a stream still
+owes. A count means nothing to them, and the synthesized one only gave their
+callers a keyword to ignore and their C a `size_t n` to `(void)`. `--no-count`
+removes it on every face (gh-2233):
+
+```sh
+just-makeit method spec flush \
+    --arg-type void --return-type float --variable-output \
+    --pass-capacity --no-count \
+    --out-cols "state->nfft" --none-on-empty \
+    --count-type int64_t --error-negative
+```
+
+```c
+size_t  p_spec_flush_max_out(p_spec_state_t *state);
+int64_t p_spec_flush(p_spec_state_t *state, float *out, size_t max_out);
+```
+
+```python
+spec.flush()                # (1, nfft) row, or None when nothing is owed
+spec.flush(out=buf)         # into your own (rows, nfft) buffer
+spec.flush_max_out()        # the bound, from the state alone
+```
+
+`<name>_max_out(state)` sizes every call, and `out=` must hold at least that
+much, exactly as for any other `--variable-output` method. Its bound cannot
+miss a count the call does not have, so `--pass-capacity` keeps the exact
+allocation here, where a state-only `max_out` beside a count would not
+(gh-920). Without `--pass-capacity` the kernel is `f(state, out)`, and a
+`max_out` that returns `0` is refused at the call, as it is for an
+all-`--param` method: there is nothing else to size the result from.
+
+It composes with `--out-cols`, `--none-on-empty`, `--count-type` with
+`--error-negative`, `--exact-max-out` and `--multi-output` (which offers no
+`out=`, so the method then takes no argument at all). It is refused where
+there is no synthesized count to drop: without `--variable-output`, with an
+input (`--arg-type` other than `void`), with any `--param`, and beside
+`--count-default` or `--count-name`, which describe the count it removes. A
+header whose `_max_out` still takes a count — a method scaffolded before it
+gained the key — is refused by `jm apply` with the declaration to write.
 
 ______________________________________________________________________
 

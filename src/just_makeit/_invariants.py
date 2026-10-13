@@ -74,13 +74,27 @@ from . import _incpath as INC
 
 
 class Pair:
-    """One element, the member that writes it and the one that reads it."""
+    """One element, the member that writes it and the one that reads it.
 
-    def __init__(self, element: str, ctype: str, writer: str, reader: str):
+    ``read_args`` is the Python argument list the round trip calls the
+    reader with: how many to read back, ``len(x)``, unless the reader takes
+    no count at all (``no_count``, gh-2233) and returns what the object
+    holds.
+    """
+
+    def __init__(
+        self,
+        element: str,
+        ctype: str,
+        writer: str,
+        reader: str,
+        read_args: str = "len(x)",
+    ):
         self.element = element
         self.ctype = ctype
         self.writer = writer
         self.reader = reader
+        self.read_args = read_args
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return (
@@ -147,10 +161,13 @@ def pairs(cfg: dict, comp: str) -> "list[Pair]":
             continue
         ctype = _record.element_ctype(rec)
         writers = [m["name"] for m in members if _writes(m, name)]
-        readers = [m["name"] for m in members if _reads(m, name)]
+        readers = [m for m in members if _reads(m, name)]
         for w in writers:
             for r in readers:
-                out.append(Pair(name, ctype, w, r))
+                # gh-2233: a `no_count` reader is `f()`; a count passed to
+                # it would be read as its `out=` buffer and refused.
+                args = "" if r.get("no_count") else "len(x)"
+                out.append(Pair(name, ctype, w, r["name"], args))
     return out
 
 
@@ -518,7 +535,7 @@ def round_trip_block(p: "Pair", cls: str, create: str, dt: str) -> "list[str]":
         f"    obj = {cls}({create})",
         f"    x = np.arange(8, dtype={dt})",
         f"    obj.{p.writer}(x)",
-        f"    y = obj.{p.reader}(len(x))",
+        f"    y = obj.{p.reader}({p.read_args})",
         "",
         "    assert y.dtype == x.dtype",
         "    assert y.ndim == x.ndim",

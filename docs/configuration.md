@@ -1061,6 +1061,7 @@ way.
 | `short_out = true`                     | `jm method --short-out`                                                                             | ✅ (gh-2230) |
 | `count_default = "EXPR"`               | `jm method --count-default EXPR`                                                                    | ✅ (0.34.0)  |
 | `count_name = "NAME"`                  | `jm method --count-name NAME`                                                                       | ✅ (gh-1074) |
+| `no_count = true`                      | `jm method --no-count`                                                                              | ✅ (gh-2233) |
 | `out_cols = "EXPR"`                    | `jm method --out-cols EXPR`                                                                         | ✅ (gh-2115) |
 | `nogil = true`                         | `jm method --nogil`                                                                                 | ✅ (0.15.2)  |
 | `max_out = N` (sibling stub)           | `jm method --max-out N`                                                                             | ✅ (0.13.23) |
@@ -1618,6 +1619,7 @@ One entry per `just-makeit method` call.
 | `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly  |
 | `short_out`       | bool                    | `--short-out`: `out=` has no minimum, for backpressure (gh-2230)   |
 | `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)      |
+| `no_count`        | bool                    | drop the void-input `count`; `max_out(state)` sizes it (gh-2233)   |
 | `out_cols`        | string or int           | width of a matrix result: `(count / out_cols, out_cols)` (gh-2115) |
 | `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)      |
 | `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                 |

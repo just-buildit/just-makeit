@@ -217,6 +217,11 @@ Commands:
                                 "count"). Say it when your C API names the quantity
                                 something else -- the paired <comp>_<name>_max_out()
                                 already takes its name from the C signature.
+    --no-count                  Drop that synthesized argument altogether: the
+                                method is called f(), the kernel f(state, out
+                                [, max_out]), and <comp>_<name>_max_out(state)
+                                alone sizes the result. For a kernel that
+                                writes one result sized by the object (gh-2233).
     --out-cols EXPR             Make a --variable-output result a MATRIX: the
                                 kernel still fills a flat buffer and returns an
                                 element count, and the binding returns

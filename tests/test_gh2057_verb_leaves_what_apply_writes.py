@@ -598,6 +598,12 @@ CASES: "dict[str, dict[str, Case]]" = {
             "method", "o", "m2", "{M}", "--param", "x:float _Complex[]",
             "--return-type", "float", "--variable-output",
             "--pass-capacity", "--short-out", only=BASE),
+        # gh-2233: the generator shape with its count dropped -- the
+        # kernel and `_max_out` both take the state alone.
+        "no-count": _case(
+            "method", "o", "m2", "{M}", "--arg-type", "void",
+            "--return-type", "float", "--variable-output",
+            "--pass-capacity", "--no-count", only=BASE),
         "capacity-nogil": _case(
             "method", "o", "m2", "{M}", "--param", "x:float _Complex[]",
             "--variable-output", "--pass-capacity", "--nogil",
