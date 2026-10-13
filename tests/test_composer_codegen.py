@@ -1646,14 +1646,18 @@ class TestRangedFields:
         s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
         # freq crosses as an object (O) and is decoded post-parse.
         assert "PyObject *freq = NULL;" in s
-        assert "_jm_parse_range(freq, &_lo, &_hi, &_r)" in s
+        # gh-2224: the helper splits the bounds; each parses by its type.
+        assert "_jm_parse_range(freq, &_a, &_b)" in s
+        assert 'PyArg_Parse(_b, "d", &_hi)' in s
         assert "self->src.ranged |= WFM_RANGE_FREQ;" in s
-        assert "self->src.freq_hi = (double)_hi;" in s
+        assert "self->src.freq_hi = _hi;" in s
 
     def test_source_getset_round_trips_range(self):
         s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
         assert "if (self->src.ranged & WFM_RANGE_FREQ)" in s
-        assert 'Py_BuildValue("(dd)"' in s
+        # gh-2224: the pair by the field's own to_py, not "(dd)".
+        assert 'Py_BuildValue("(NN)"' in s
+        assert "PyFloat_FromDouble(self->src.freq_hi)" in s
 
     def test_non_ranged_field_unchanged(self):
         s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
@@ -1664,9 +1668,14 @@ class TestRangedFields:
         s = _composer.render_segment_type(_ranged_cfg(), "wfm_compose")
         assert "unsigned ranged;" in s
         assert "size_t off_samples_hi;" in s
-        assert "_jm_parse_range(_o, &_lo, &_hi, &_r)" in s
+        assert "_jm_parse_range(_o, &_a, &_b)" in s
         assert "self->ranged |= WFM_RANGE_OFF_SAMPLES;" in s
-        assert 'Py_BuildValue("(nn)"' in s
+        # gh-2224: the pair by the field's own to_py, not "(nn)".
+        assert 'Py_BuildValue("(NN)"' in s
+        assert (
+            "PyLong_FromUnsignedLongLong((unsigned long long)"
+            "self->off_samples_hi)"
+        ) in s
 
     def test_pyi_uses_union_type(self):
         pyi = _composer.render_pyi(_ranged_cfg(), "wfm_compose")
