@@ -28,6 +28,7 @@ stops ``load``; the key survives ``apply`` in a split layout.
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import shutil
 import subprocess
@@ -49,9 +50,10 @@ PKG = "dlg"
 #: One method per wrapper shape the emitter renders differently: a scalar,
 #: both `batch` forms, a variable-output method with and without an input
 #: (the second sizing its output from `state`, the alias a host must
-#: rebind), and a value-or-negative-error int. `prod` and `gain` are driven;
-#: the rest are held to compiling, warning-clean, with nothing left bound to
-#: the generator's own type.
+#: rebind), a value-or-negative-error int, and an `[[enum]]` parameter,
+#: whose lookup table the source's file must carry too (`ENUM_PARAMS`).
+#: `prod` and `gain` are driven; the rest are held to compiling,
+#: warning-clean, with nothing left bound to the generator's own type.
 SHAPES = {
     "gain": ["--arg-type", "double", "--return-type", "double"],
     "prod": [
@@ -91,7 +93,20 @@ SHAPES = {
         "int",
         "--error-negative",
     ],
+    "mode": [
+        "--arg-type",
+        "void",
+        "--return-type",
+        "int",
+        "--param",
+        "k:int",
+    ],
 }
+
+#: method -> (param, enum): the parameters the manifest then binds to an
+#: `[[enum]]` -- the CLI declares the C `int`, the manifest the choices.
+ENUM_PARAMS = {"mode": ("k", "kindE")}
+ENUMS = [{"name": "kindE", "values": ["lo", "hi"]}]
 
 #: The authored brief `gain` carries, so doc parity compares a document.
 GAIN_BRIEF = "Offset x by the generator's current phase."
@@ -270,6 +285,12 @@ def _scaffold(
     (backing / "CMakeLists.txt").write_text(BACKING_CMAKE, encoding="utf-8")
     cfg = C.load(proj)
     cfg["project"]["c_deps"] = ["backing"]
+    for m in cfg["gen"].get("methods", []):
+        if m["name"] in ENUM_PARAMS:
+            pname, enum = ENUM_PARAMS[m["name"]]
+            (param,) = [p for p in m["params"] if p["name"] == pname]
+            param["enum"] = enum
+            cfg["enum"] = copy.deepcopy(ENUMS)
     cfg.setdefault("module", {})["mix"] = _composer_table(methods)
     C.save(proj, cfg)
     return proj
@@ -322,6 +343,12 @@ def test_every_delegated_wrapper_is_bound_to_the_source(applied):
             body
         ), body
         assert f'{{"{name}", ' in ext and f"Src_gen_{name}," in ext
+    # An enum parameter's lookup and table, defined before the wrapper that
+    # calls them -- in the generator's namespace, as its own file has them.
+    for name, (_param, enum) in ENUM_PARAMS.items():
+        table = ext.index(f"static const char *const _enum_Gen_{enum}[]")
+        lookup = ext.index("_enum_index_Gen(const char")
+        assert max(table, lookup) < ext.index(f"\nSrc_gen_{name}(SrcObject")
 
 
 def test_the_runtime_doc_is_the_generators(applied):
@@ -537,6 +564,14 @@ try:
     problems.append("a reasonless refusal did not raise")
 except RuntimeError as e:
     check("src_to_gen returned NULL" in str(e), f"RuntimeError said {e}")
+
+# An enum parameter goes through the generator's own lookup table.
+check(Src().mode("hi") == 0, "mode('hi') did not reach the kernel stub")
+try:
+    Src().mode("nope")
+    problems.append("an unknown enum choice was accepted")
+except ValueError:
+    pass
 
 # The generator's own document, on both faces of the delegated member.
 for name in ("prod", "gain"):
