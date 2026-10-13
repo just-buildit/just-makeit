@@ -1,5 +1,99 @@
 ## [Unreleased]
 
+## [0.104.0] — 2026-10-13
+
+### Added
+
+- **`out=` and `<m>_max_out` for a `variable_output` method with an input
+    and params** (gh-2028). `run(x, gain)` -- an `arg_type` input with params
+    beside it -- was the one single-output shape offered no `out=` buffer:
+    its parse dropped the params until gh-1960, and after that `out` joining
+    the Python arguments broke the header's `@param in` -> `x` match in the
+    doc. Both are generated now, in the binding and both `.pyi` faces: `out`
+    is the parse's trailing optional argument (`run(x, gain, out=None)`,
+    positional or keyword, after a defaulted param's group too), sized from
+    the input exactly as the same method without params is, and
+    `<m>_max_out(len(x))` sizes it. An undersized buffer is refused before
+    the kernel runs. A `manual_stub` entry for that `<m>_max_out` is now
+    refused, with the instruction to drop it: the stub it declared is jm's
+    own. `multi_output` is the one `variable_output` shape left without
+    `out=`.
+
+### Fixed
+
+- **No generated binding parses a scalar into a variable narrower than PyArg
+    writes** (gh-1952). Five faces parsed a scalar straight into its
+    declared C type: every `kind = "handle"` shape (create args, factory
+    params, method args, writable properties), a `kind = "capsule"` create
+    param and writable property, a controllable `step()` / `steps()`
+    override, and a codec method's fixed param. PyArg writes the width of
+    its format char, so an `int8_t` or `bool` took the four bytes `i` / `p`
+    write and a `float _Complex` took a 16-byte `Py_complex`. Each was a
+    write past a local on the stack. A handle's `out_len_fn` methods parsed
+    into a wider local, but seeded a complex one with `= 0`, which does not
+    compile. Every one of these faces now parses into the row's wider local
+    through the one tuple-parse slot (`scalar_arg_c` / `scalar_narrow_c`),
+    seeds a default the way every other face does, and range-checks the
+    value before narrowing it (gh-2144). A handle or capsule scalar local is
+    now initialised, so `double fs;` reads `double fs = 0.0;`.
+    `tests/test_gh1952_parse_width.py` reads every `PyArg_Parse*` call in a
+    render of every face. It refuses any scalar parsed into a variable of
+    another type than its format char writes, with the char-to-type map
+    derived from `_CTYPE_META`.
+
+- **A header's `@param in` documents `x` on a method that takes `out=`**
+    (gh-2028). The header names the block input by its C name, and the doc
+    matched it to the Python `x` by position among the arguments no
+    `@param` named -- counting jm's own `count` and `out` among them. So
+    every input-only `variable_output` method, which has taken `out=` since
+    gh-219, documented `x` as `Input.` unless the header also spelled
+    `@param out`, on both `.pyi` faces and the runtime `__doc__`. The
+    binding's own arguments now take no positional slot: an authored
+    `@param out` or `@param count` still documents one by name, and jm's
+    default text the rest. So a generator's `count` is no longer filled by
+    position from a `@param` of another name (its C `n`); `@param count`
+    documents it, as gh-1042 established.
+
+- **A composer's JSON face carries a 64-bit integer field exactly**
+    (gh-2139). The generated `to_json` wrote every numeric source and segment
+    field through a `double` and `from_json` read it back through one, so a
+    `uint64_t` such as `0x8000000000000001` -- or an `int64_t`, `size_t` or
+    `ptrdiff_t` past 2^53 -- came back a different value, with no error. Such
+    a field is now a JSON number while its value is within ±(2^53 - 1), the
+    range a double holds exactly (I-JSON, RFC 7493), and a decimal string
+    past it, so every small value and every record within that range reads
+    as before. A record an older jm wrote with a wider value holds a rounded
+    double, whose true value is already lost, and is now refused rather than
+    loaded as a different number.
+    `from_json` / `from_file` read either form exactly, and refuse with a
+    `ValueError` naming the field a number outside that range or with a
+    fraction, a string that is not a decimal integer or overflows the type,
+    and a sign on an unsigned field. A composer with no 64-bit field
+    generates the same code as before; the double reader `_json_num` is now
+    defined only where some field calls it, as gh-1863 does for the other
+    helpers, so one whose every number is 64-bit builds under `-Werror`.
+
+- **An integer outside its C type's range raises `OverflowError` instead
+    of wrapping silently into C** (gh-2144). A narrow integer parses into a
+    wider local (an `int8_t` into an `int`), and the binding cast it with no
+    range test, so `int8_t` given `300` arrived as `44`. This happened on
+    every face that takes a scalar: constructors, `set_<field>()`, writable
+    properties, method params, `step()`, module functions, composer rows,
+    and handle and capsule modules. `uint8_t` and `uint16_t` parsed through
+    PyArg's masking `I`, so even `2**32 + 5` arrived as `5`. `uint32_t`
+    parsed through `k`, so on Windows `-1` arrived as `4294967295`. Every
+    `int8_t`, `int16_t`, `int32_t`, `uint8_t`, `uint16_t` and `uint32_t`
+    value is now tested against its `<stdint.h>` bounds before the cast. The
+    unsigned ones parse through a checked format char. A value outside the
+    bounds raises
+    `OverflowError: gain: 300 is out of range for int8_t [-128, 127]`, as
+    numpy 2 refuses `np.int8(300)`. On the object, function and composer
+    faces, the code generated for every other type is unchanged. A module
+    object's fragment rendered before this fix has no range test, and
+    `jm apply` names each member that lacks one. Still open: `uint64_t` and
+    `size_t` parse through the masking `K`, so `-1` still arrives as
+    `2**64 - 1` (gh-2220).
+
 ## [0.103.0] — 2026-10-11
 
 ### Added
