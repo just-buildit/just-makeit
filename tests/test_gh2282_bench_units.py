@@ -8,13 +8,16 @@ published exactly that, and a private `MSa_s` line it had added to its copy
 was lost to a re-vendor for 25 releases. `jm bench` labelled every row's
 throughput `Sa/s` whatever it counted.
 
-Now one table in the header, `JM_BENCH_UNITS`, declares each unit: the enum
-a benchmark passes to `jm_bench_add_unit`, the `extra_info.unit` and
-`rate_unit` the JSON states, and so the label `jm bench` prints. These tests
-read that table, build a driver recording one row of EVERY unit in it plus
-one through the old five-argument `jm_bench_add`, and check the JSON it
-writes against the timings the driver fed in -- so a unit added to the table
-is checked without touching this file, and the claim is checked where it
+Now a row names its unit as a word, `jm_bench_add_unit(..., "bin")`: the
+header defines the words jm's generated benchmarks use (`JM_BENCH_SAMPLE`,
+...), and a project passes its own without editing the vendored header --
+which is what doppler#2314 was. One function, `jm_bench_rate_label`, names
+the rate; the JSON states both and `jm bench` prints what it reads. These
+tests read the header's unit constants, build a driver recording one row of
+EVERY one of them, rows of units the header has never heard of, and one
+through the old five-argument `jm_bench_add`, and check the JSON it writes
+against the timings the driver fed in -- so a unit added to the header is
+checked without touching this file, and the claim is checked where it
 lands: in the file.
 """
 
@@ -45,24 +48,54 @@ _ROUND_MS = (1.0, 2.0, 6.0)
 _ITERS = 1000
 
 
-def _units() -> list[tuple[str, str, str]]:
-    """``(enum, name, rate)`` for each unit the header declares."""
+#: Units a project counts that jm's header does not define, passed from
+#: the driver's own source as a downstream's benchmark passes them: doppler
+#: counts FFT bins and filter taps (gh-2282 review).
+_PROJECT_UNITS = ("bin", "tap")
+
+#: The rate label each unit must carry, spelled here rather than derived, so
+#: a wrong rule in the header is caught; a header constant added later
+#: falls back to the documented "<unit>s/s".
+_RATE = {
+    "sample": "Sa/s",
+    "call": "calls/s",
+    "frame": "frames/s",
+    "bin": "bins/s",
+    "tap": "taps/s",
+}
+
+
+def _rate(unit: str) -> str:
+    return _RATE.get(unit, f"{unit}s/s")
+
+
+def _header_units() -> list[tuple[str, str]]:
+    """``(constant, word)`` for each unit constant the header defines."""
     text = HEADER.read_text(encoding="utf-8")
-    table = text[text.index("#define JM_BENCH_UNITS(X)") :]
-    table = table[: table.index("\n\n")]
-    found = re.findall(r'X\((JM_BENCH_\w+), "([^"]+)", "([^"]+)"\)', table)
-    assert len(found) >= 3, f"JM_BENCH_UNITS not where expected:\n{table}"
+    block = text[
+        text.index("/* gh-2282: what one of a row's") : text.index(
+            "#define JM_BENCH_UNIT_LEN"
+        )
+    ]
+    found = re.findall(r'#define (JM_BENCH_\w+)\s+"([a-z0-9_]+)"', block)
+    assert len(found) >= 3, f"unit constants not where expected:\n{block}"
     return found
 
 
-def _driver(units: list[tuple[str, str, str]]) -> str:
+def _units() -> list[tuple[str, str]]:
+    """``(C expression, word)`` for every row the driver records with a
+    unit: the header's constants, then the project's literals."""
+    return _header_units() + [(f'"{u}"', u) for u in _PROJECT_UNITS]
+
+
+def _driver(units: list[tuple[str, str]]) -> str:
     """A benchmark recording row k of unit k, and one legacy row last."""
     rows = []
-    for k, (enum, name, _) in enumerate(units + [("", "legacy", "")]):
+    for k, (expr, name) in enumerate(units + [("", "legacy")]):
         times = ", ".join(f"{(k + 1) * ms * 1e-3!r}" for ms in _ROUND_MS)
         add = (
-            f'jm_bench_add_unit(&b, "{name}", t{k}, 3, {_ITERS}, {enum});'
-            if enum
+            f'jm_bench_add_unit(&b, "{name}", t{k}, 3, {_ITERS}, {expr});'
+            if expr
             else f'jm_bench_add(&b, "{name}", t{k}, 3, {_ITERS});'
         )
         rows.append(f"    double t{k}[3] = {{{times}}};\n    {add}")
@@ -77,13 +110,11 @@ def _driver(units: list[tuple[str, str, str]]) -> str:
     )
 
 
-@pytest.fixture(scope="module")
-def written(tmp_path_factory) -> list[dict]:
-    """The rows the driver's JSON holds, built as a `-Werror` project
-    builds its benchmarks."""
-    d = tmp_path_factory.mktemp("gh2282")
+def _build(d: Path, source: str) -> Path:
+    """*source* compiled against the vendored header, as a `-Werror`
+    project builds its benchmarks."""
     src = d / "driver.c"
-    src.write_text(_driver(_units()), encoding="utf-8")
+    src.write_text(source, encoding="utf-8")
     exe = d / "driver"
     built = subprocess.run(
         [
@@ -103,6 +134,14 @@ def written(tmp_path_factory) -> list[dict]:
         text=True,
     )
     assert built.returncode == 0, built.stdout + built.stderr
+    return exe
+
+
+@pytest.fixture(scope="module")
+def written(tmp_path_factory) -> list[dict]:
+    """The rows the driver's JSON holds."""
+    d = tmp_path_factory.mktemp("gh2282")
+    exe = _build(d, _driver(_units()))
     ran = subprocess.run([str(exe)], cwd=d, capture_output=True, text=True)
     assert ran.returncode == 0, ran.stdout + ran.stderr
     data = json.loads((d / "bench_units_core.json").read_text("utf-8"))
@@ -118,12 +157,37 @@ def _expected(k: int) -> dict[str, float]:
 @_needs_cc
 def test_every_row_names_its_unit(written):
     units = _units()
-    assert [b["name"] for b in written] == [n for _, n, _ in units] + [
-        "legacy"
-    ]
-    for b, (_, name, rate) in zip(written, units):
+    assert [b["name"] for b in written] == [n for _, n in units] + ["legacy"]
+    for b, (_, name) in zip(written, units):
         assert b["extra_info"]["unit"] == name, b["extra_info"]
-        assert b["extra_info"]["rate_unit"] == rate, b["extra_info"]
+        assert b["extra_info"]["rate_unit"] == _rate(name), b["extra_info"]
+
+
+@_needs_cc
+def test_a_project_unit_needs_no_header_edit(tmp_path):
+    """A unit the header never defines, passed from the benchmark's own
+    source, is written like any other: named, labelled, timed per unit.
+
+    Its own driver, of project units alone, so a header that refused one --
+    a closed set again -- fails HERE, naming the run, rather than erroring
+    every test that shares the module fixture."""
+    units = [(f'"{u}"', u) for u in _PROJECT_UNITS]
+    exe = _build(tmp_path, _driver(units))
+    ran = subprocess.run(
+        [str(exe)], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert ran.returncode == 0, f"a project unit was refused:\n{ran.stderr}"
+    rows = json.loads((tmp_path / "bench_units_core.json").read_text("utf-8"))[
+        "benchmarks"
+    ]
+    assert [b["name"] for b in rows] == [*_PROJECT_UNITS, "legacy"]
+    for k, name in enumerate(_PROJECT_UNITS):
+        b = rows[k]
+        assert b["extra_info"] == {"unit": name, "rate_unit": _rate(name)}
+        for key, per_round in _expected(k).items():
+            assert b["stats"][f"{key}_per_unit"] == pytest.approx(
+                per_round / _ITERS
+            ), (name, key)
 
 
 @_needs_cc
@@ -131,9 +195,30 @@ def test_the_five_argument_call_records_calls(written):
     """The old `jm_bench_add` keeps compiling, and means what `iters` was
     always documented to count."""
     legacy = written[-1]
-    call = dict((enum, (n, r)) for enum, n, r in _units())["JM_BENCH_CALL"]
-    assert legacy["extra_info"]["unit"] == call[0]
-    assert legacy["extra_info"]["rate_unit"] == call[1]
+    assert legacy["extra_info"] == {"unit": "call", "rate_unit": "calls/s"}
+
+
+#: Units the header must refuse, and why: a unit the JSON could not carry
+#: as written, or one that truncating would relabel.
+_BAD_UNITS = {
+    '""': "unit must be 1 to 31 characters",
+    '"' + "u" * 32 + '"': "unit must be 1 to 31 characters",
+    "NULL": "unit must be 1 to 31 characters",
+    '"Bins"': "unit must be [a-z0-9_]",
+    '"bin\\"s"': "unit must be [a-z0-9_]",
+}
+
+
+@_needs_cc
+@pytest.mark.parametrize("expr", sorted(_BAD_UNITS))
+def test_a_unit_the_json_cannot_carry_is_refused(tmp_path, expr):
+    exe = _build(tmp_path, _driver([(expr, "bad")]))
+    ran = subprocess.run(
+        [str(exe)], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert ran.returncode != 0, ran.stdout
+    assert f'jm_bench: row "bad": {_BAD_UNITS[expr]}' in ran.stderr
+    assert not (tmp_path / "bench_units_core.json").exists()
 
 
 @_needs_cc
@@ -252,6 +337,31 @@ name = "n"
 type = "int"
 """
 
+#: The other shapes the method bench times over a BENCH_N-element block,
+#: each its own branch of `_bench_method_block`: a batch method, an array
+#: input, and records computed from an input -- all BENCH_N samples a round.
+_BLOCK_METHODS = """
+[[gain.methods]]
+name = "block"
+arg_type = "float"
+return_type = "float"
+batch = true
+
+[[gain.methods]]
+name = "energy"
+arg_type = "float[]"
+return_type = "float"
+
+[[gain.methods]]
+name = "peaks"
+arg_type = "float"
+return_type = "gain_peak_t"
+
+[[gain.methods.result_fields]]
+name = "at"
+type = "int"
+"""
+
 
 def test_generated_benchmarks_name_the_unit_they_count(tmp_path):
     """What each generated row truly counts, traced from its timing loop:
@@ -271,7 +381,8 @@ def test_generated_benchmarks_name_the_unit_they_count(tmp_path):
         assert r.returncode == 0, r.stdout + r.stderr
     frag = root / "objects" / "gain.toml"
     frag.write_text(
-        frag.read_text(encoding="utf-8") + _RECORDS_METHOD, encoding="utf-8"
+        frag.read_text(encoding="utf-8") + _RECORDS_METHOD + _BLOCK_METHODS,
+        encoding="utf-8",
     )
     src = materialize_bench(root, "gain")
     rows = {
@@ -288,5 +399,8 @@ def test_generated_benchmarks_name_the_unit_they_count(tmp_path):
         "scaled": ("BENCH_N", "JM_BENCH_SAMPLE"),
         "level": ("BENCH_N", "JM_BENCH_CALL"),
         "events": ("1", "JM_BENCH_CALL"),
+        "block": ("BENCH_N", "JM_BENCH_SAMPLE"),
+        "energy": ("BENCH_N", "JM_BENCH_SAMPLE"),
+        "peaks": ("BENCH_N", "JM_BENCH_SAMPLE"),
     }, src
     assert "jm_bench_add(" not in src.replace("jm_bench_add_unit(", "")

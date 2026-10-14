@@ -1013,8 +1013,9 @@ def _fmt_ops(ops: float, rate: str) -> str:
     """*ops* per second with an SI prefix on the row's own *rate* label.
 
     gh-2282: the label was always ``Sa/s``, whatever the row counted. It is
-    now the row's -- ``rate_unit`` from the JSON, which ``jm_bench.h`` writes
-    from its one ``JM_BENCH_UNITS`` table -- so no unit is spelled here.
+    now the row's -- ``rate_unit`` from the JSON, which ``jm_bench.h`` names
+    in one place (``jm_bench_rate_label``) for any unit a benchmark passes,
+    jm's or the project's own -- so no unit is spelled here.
 
     >>> _fmt_ops(2.5e9, "Sa/s")
     '2.50 GSa/s'
@@ -1574,7 +1575,7 @@ def _run_check(
                     "  disappears from the harness is indistinguishable from"
                     " one that stayed fast,\n"
                     "  so this fails. Check the target still builds and still"
-                    " calls jm_bench_add();\n"
+                    " records it (jm_bench_add_unit);\n"
                     "  if the benchmark was deleted on purpose, pass"
                     " --allow <name>."
                 )

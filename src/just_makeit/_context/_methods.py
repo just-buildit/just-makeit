@@ -586,10 +586,10 @@ def bench_record_c(
     gh-2282: the row states what one of its ``iters`` counts. Before, every
     row went through ``jm_bench_add`` with no unit, and every printed rate
     said ``MSa/s`` whatever the row counted -- including a row of a single
-    call per round that claimed ``BENCH_N`` of them. The unit is a
-    ``JM_BENCH_UNITS`` constant from ``jm_bench.h``, and the printed label is
-    that header's ``jm_bench_unit_rate``, so the stdout, the JSON and
-    ``jm bench``'s table all say the unit one table declares.
+    call per round that claimed ``BENCH_N`` of them. The unit is one of the
+    unit constants ``jm_bench.h`` defines for jm's generated shapes, and the
+    printed label is that header's ``jm_bench_rate_label`` -- the one place a
+    rate is named -- so the stdout, the JSON and ``jm bench``'s table agree.
 
     Parameters
     ----------
@@ -599,8 +599,8 @@ def bench_record_c(
         The stdout label, padded as the caller aligns its rows
         (``"step()  "``).
     unit : str
-        The ``jm_bench_unit_t`` constant: ``JM_BENCH_SAMPLE`` for a round
-        over ``BENCH_N`` samples, ``JM_BENCH_CALL`` for a round of calls.
+        The C unit expression: ``JM_BENCH_SAMPLE`` for a round over
+        ``BENCH_N`` samples, ``JM_BENCH_CALL`` for a round of calls.
     iters : str
         The C expression for the units in one round.
     indent : str
@@ -618,10 +618,12 @@ def bench_record_c(
                           BENCH_N, JM_BENCH_SAMPLE);
         {
             double _s = 0.0;
+            char   _rate[JM_BENCH_RATE_LEN];
             for (int r = 0; r < ITERATIONS; r++) _s += _times_steps[r];
             printf("  steps()  %8.1f M%s\\n",
                    (double)BENCH_N / (_s / ITERATIONS) / 1e6,
-                   jm_bench_unit_rate(JM_BENCH_SAMPLE));
+                   jm_bench_rate_label(JM_BENCH_SAMPLE, _rate,
+                                       sizeof(_rate)));
         }
     """
     i = indent
@@ -632,10 +634,12 @@ def bench_record_c(
             f"{i}                  {iters}, {unit});",
             f"{i}{{",
             f"{i}    double _s = 0.0;",
+            f"{i}    char   _rate[JM_BENCH_RATE_LEN];",
             f"{i}    for (int r = 0; r < ITERATIONS; r++) _s += {t}[r];",
             f'{i}    printf("  {label} %8.1f M%s\\n",',
             f"{i}           (double){iters} / (_s / ITERATIONS) / 1e6,",
-            f"{i}           jm_bench_unit_rate({unit}));",
+            f"{i}           jm_bench_rate_label({unit}, _rate,",
+            f"{i}                               sizeof(_rate)));",
             f"{i}}}",
         ]
     )
@@ -665,8 +669,8 @@ _BENCH_TODO_TAIL = [
     "                    JM_BENCH_CALL);",
     "",
     "The last argument says what one of BENCH_N is: JM_BENCH_CALL for",
-    "BENCH_N calls, JM_BENCH_SAMPLE for a call over BENCH_N samples, or",
-    "JM_BENCH_FRAME (gh-2282).",
+    "BENCH_N calls, JM_BENCH_SAMPLE for a call over BENCH_N samples,",
+    'JM_BENCH_FRAME, or a word of your own such as "bin" (gh-2282).',
 ]
 
 
