@@ -567,6 +567,80 @@ _BENCH_ELAPSED_HELPER = ""
 _BENCH_TIMER_DECLS = "    uint64_t t0, t1;\n"
 
 
+def bench_record_c(
+    name: str,
+    label: str,
+    unit: str,
+    *,
+    iters: str = "BENCH_N",
+    indent: str = "    ",
+) -> str:
+    """The C that records one timed benchmark row and prints its rate.
+
+    Every generated benchmark times ``ITERATIONS`` rounds into
+    ``_times_<name>`` and then does two things with them: hands them to
+    ``jm_bench_add_unit`` -- the row ``jm_bench_write_json`` writes -- and
+    prints the mean rate to stdout. This is the one spelling of both, for
+    the ``step()``, ``steps()`` and method benchmarks alike.
+
+    gh-2282: the row states what one of its ``iters`` counts. Before, every
+    row went through ``jm_bench_add`` with no unit, and every printed rate
+    said ``MSa/s`` whatever the row counted -- including a row of a single
+    call per round that claimed ``BENCH_N`` of them. The unit is a
+    ``JM_BENCH_UNITS`` constant from ``jm_bench.h``, and the printed label is
+    that header's ``jm_bench_unit_rate``, so the stdout, the JSON and
+    ``jm bench``'s table all say the unit one table declares.
+
+    Parameters
+    ----------
+    name : str
+        The row's name in the JSON; ``_times_<name>`` holds its timings.
+    label : str
+        The stdout label, padded as the caller aligns its rows
+        (``"step()  "``).
+    unit : str
+        The ``jm_bench_unit_t`` constant: ``JM_BENCH_SAMPLE`` for a round
+        over ``BENCH_N`` samples, ``JM_BENCH_CALL`` for a round of calls.
+    iters : str
+        The C expression for the units in one round.
+    indent : str
+        The indentation of the emitted statements.
+
+    Returns
+    -------
+    str
+        The statements, without a trailing newline.
+
+    Examples
+    --------
+    >>> print(bench_record_c("steps", "steps() ", "JM_BENCH_SAMPLE"))
+        jm_bench_add_unit(&_bench, "steps", _times_steps, ITERATIONS,
+                          BENCH_N, JM_BENCH_SAMPLE);
+        {
+            double _s = 0.0;
+            for (int r = 0; r < ITERATIONS; r++) _s += _times_steps[r];
+            printf("  steps()  %8.1f M%s\\n",
+                   (double)BENCH_N / (_s / ITERATIONS) / 1e6,
+                   jm_bench_unit_rate(JM_BENCH_SAMPLE));
+        }
+    """
+    i = indent
+    t = f"_times_{name}"
+    return "\n".join(
+        [
+            f'{i}jm_bench_add_unit(&_bench, "{name}", {t}, ITERATIONS,',
+            f"{i}                  {iters}, {unit});",
+            f"{i}{{",
+            f"{i}    double _s = 0.0;",
+            f"{i}    for (int r = 0; r < ITERATIONS; r++) _s += {t}[r];",
+            f'{i}    printf("  {label} %8.1f M%s\\n",',
+            f"{i}           (double){iters} / (_s / ITERATIONS) / 1e6,",
+            f"{i}           jm_bench_unit_rate({unit}));",
+            f"{i}}}",
+        ]
+    )
+
+
 #: The worked `jm_bench_add` example every unfinished benchmark carries.
 #: One copy: gh-1034 gave it a second caller (a function-only module) and
 #: a second copy of a paste-and-run block is a copy that stops running.
@@ -587,7 +661,12 @@ _BENCH_TODO_TAIL = [
     "      t1 = jm_bench_now_ns();",
     "      times[r] = jm_bench_elapsed_sec(t0, t1);",
     "  }",
-    '  jm_bench_add(&_bench, "<name>", times, ITERATIONS, BENCH_N);',
+    '  jm_bench_add_unit(&_bench, "<name>", times, ITERATIONS, BENCH_N,',
+    "                    JM_BENCH_CALL);",
+    "",
+    "The last argument says what one of BENCH_N is: JM_BENCH_CALL for",
+    "BENCH_N calls, JM_BENCH_SAMPLE for a call over BENCH_N samples, or",
+    "JM_BENCH_FRAME (gh-2282).",
 ]
 
 
@@ -806,6 +885,10 @@ def _bench_method_block(
 
     lines: list[str] = [f"    /* bench: {name}() */", "    {"]
     has_sink = False
+    # gh-2282: what one round's work is, per branch below. A round over a
+    # BENCH_N-element input (or output) is BENCH_N samples; a round of
+    # BENCH_N calls with no input is BENCH_N calls.
+    unit, iters = "JM_BENCH_SAMPLE", "BENCH_N"
     lines.append(f"        double _times_{name}[ITERATIONS];")
 
     if result_fields and not single_record and not borrow_m:
@@ -857,6 +940,9 @@ def _bench_method_block(
             )
         else:
             call = f"{c_fn}(obj{param_args}, {name}_results, {rf_cap})"
+            # gh-2282: ONE call per round, with no input to count -- the
+            # row said BENCH_N, so its rate was BENCH_N times too high.
+            unit, iters = "JM_BENCH_CALL", "1"
         lines.append(f"        volatile size_t {name}_sink;")
         has_sink = True
         lines += [
@@ -953,6 +1039,10 @@ def _bench_method_block(
         sink = f"{name}_sink = " if has_ret else ""
         lines += mo_decls
         in_arg = f", {arg_zero}" if has_arg else ""
+        # BENCH_N calls a round: each takes one sample when the method has
+        # an input, and is just a call when it has none.
+        if not has_arg:
+            unit = "JM_BENCH_CALL"
         call = f"{c_fn}(obj{in_arg}{param_args}{mo_args})"
         lines += [
             f"        for (int i = 0; i < 16; i++) {sink}{call};",
@@ -971,16 +1061,9 @@ def _bench_method_block(
     # declaration sets `has_sink`, so no branch can declare one and miss it.
     if has_sink:
         lines.append(f"        (void){name}_sink;")
-    add_line = f'        jm_bench_add(&_bench, "{name}", _times_{name}, ITERATIONS, BENCH_N);'
-    lines += [
-        add_line,
-        "        {",
-        "            double _s = 0.0;",
-        f"            for (int r = 0; r < ITERATIONS; r++) _s += _times_{name}[r];",
-        f'            printf("  {name}()  %8.1f MSa/s\\n",',
-        "                   (double)BENCH_N / (_s / ITERATIONS) / 1e6);",
-        "        }",
-    ]
+    lines.append(
+        bench_record_c(name, f"{name}() ", unit, iters=iters, indent=" " * 8)
+    )
 
     lines.append("    }")
     return "\n".join(lines)

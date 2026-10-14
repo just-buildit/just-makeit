@@ -1,12 +1,19 @@
 /* jm_bench.h — header-only benchmark stats and JSON output.
  *
  * Include in bench_*_core.c.  After timing each section, call
- * jm_bench_add().  At the end of main() call jm_bench_write_json(),
- * which writes bench_<component>_core.json in the current directory and
- * then frees the rows, leaving the bench empty.
- * The JSON format is compatible with pytest-benchmark so C and Python
- * results can be compared directly.  All times are in seconds;
- * ops = iterations / mean (samples per second).
+ * jm_bench_add_unit() (or jm_bench_add(), which records calls).  At the end
+ * of main() call jm_bench_write_json(), which writes
+ * bench_<component>_core.json in the current directory and then frees the
+ * rows, leaving the bench empty.
+ *
+ * A row is `rounds` timings, each of one round of `iters` units of work, and
+ * the row names its unit: a sample, a call or a frame (JM_BENCH_UNITS).  The
+ * JSON keeps pytest-benchmark's layout, so C and Python results can be
+ * compared directly.  All times are in seconds.  `stats` min/max/mean/...
+ * are per ROUND; `stats` *_per_unit are the same divided by `iterations`;
+ * ops = iterations / mean, in units per second.  `extra_info` names the unit
+ * and its rate label, and a sample row also carries MSa_s = ops / 1e6
+ * (gh-2282).
  */
 #ifndef JM_BENCH_H
 #define JM_BENCH_H
@@ -77,11 +84,66 @@ jm_bench_elapsed_sec(uint64_t t0, uint64_t t1)
 
 #define JM_BENCH_NAME_LEN 64
 
+/* gh-2282: what one of a row's `iters` counts, declared ONCE.
+ *
+ * Each X(ENUM, name, rate) is one unit: the enum constant a benchmark
+ * passes, the `extra_info.unit` the JSON states, and the `rate_unit` label
+ * `jm bench` prints its throughput in (with an SI prefix: MSa/s, kcalls/s).
+ * The enum, jm_bench_unit_name() and jm_bench_unit_rate() are all expanded
+ * from this list, and jm's reader takes the label from the JSON, so a unit
+ * added here is a unit everywhere.
+ *
+ * A row used to state none of this: the header said `ops` was samples per
+ * second while `iters` was documented as calls, and a reader taking `mean`
+ * for a time per call was off by a factor of `iters`. */
+#define JM_BENCH_UNITS(X)                                                    \
+    X(JM_BENCH_CALL, "call", "calls/s")                                      \
+    X(JM_BENCH_SAMPLE, "sample", "Sa/s")                                     \
+    X(JM_BENCH_FRAME, "frame", "frames/s")
+
+typedef enum {
+#define JM_BENCH_UNIT_ENUM(e, name, rate) e,
+    JM_BENCH_UNITS(JM_BENCH_UNIT_ENUM)
+#undef JM_BENCH_UNIT_ENUM
+    JM_BENCH_UNIT_COUNT
+} jm_bench_unit_t;
+
+/* The unit's name, as `extra_info.unit` states it; NULL if not a unit. */
+static inline const char *
+jm_bench_unit_name(jm_bench_unit_t u)
+{
+    switch (u) {
+#define JM_BENCH_UNIT_NAME(e, name, rate)                                    \
+    case e:                                                                  \
+        return name;
+        JM_BENCH_UNITS(JM_BENCH_UNIT_NAME)
+#undef JM_BENCH_UNIT_NAME
+    default:
+        return NULL;
+    }
+}
+
+/* The unit's throughput label, as `extra_info.rate_unit` states it. */
+static inline const char *
+jm_bench_unit_rate(jm_bench_unit_t u)
+{
+    switch (u) {
+#define JM_BENCH_UNIT_RATE(e, name, rate)                                    \
+    case e:                                                                  \
+        return rate;
+        JM_BENCH_UNITS(JM_BENCH_UNIT_RATE)
+#undef JM_BENCH_UNIT_RATE
+    default:
+        return NULL;
+    }
+}
+
 typedef struct {
     char    name[JM_BENCH_NAME_LEN];
     double *times;  /* heap copy of per-round elapsed seconds */
     int     rounds; /* outer iteration count (ITERATIONS) */
-    int     iters;  /* inner calls per round (BENCH_N) */
+    int     iters;  /* units of work per round (BENCH_N) */
+    jm_bench_unit_t unit; /* what one of `iters` is (gh-2282) */
 } jm_bench_entry_t;
 
 /* gh-2188: `entries` is a heap array that jm_bench_add grows, so a benchmark
@@ -160,7 +222,9 @@ jm_bench_strcpy(char *dst, size_t n, const char *src)
     dst[k] = '\0';
 }
 
-/* Copy times[0..rounds-1] into the bench.  iters = BENCH_N.
+/* Copy times[0..rounds-1] into the bench: `rounds` timings, each of one
+ * round of `iters` units of `unit` -- a steps() call over BENCH_N samples
+ * is iters = BENCH_N, unit = JM_BENCH_SAMPLE.
  *
  * gh-840: `static inline`, not plain `static`. A benchmark that has not been
  * filled in yet never calls this, and a plain `static` in a header makes that
@@ -169,13 +233,17 @@ jm_bench_strcpy(char *dst, size_t n, const char *src)
  * about an unused `static inline` in a header, which is what the idiom is
  * for. */
 static inline void
-jm_bench_add(jm_bench_t *b, const char *name,
-             const double *times, int rounds, int iters)
+jm_bench_add_unit(jm_bench_t *b, const char *name, const double *times,
+                  int rounds, int iters, jm_bench_unit_t unit)
 {
     /* A row with no rounds has no time to report, and jm_bench_write_json
      * would read its order statistics out of an empty array. */
     if (rounds < 1)
         jm_bench_fail(name, "rounds must be at least 1");
+    /* A row whose unit the JSON cannot name would be written unlabelled,
+     * which is the ambiguity the unit exists to remove. */
+    if (!jm_bench_unit_name(unit))
+        jm_bench_fail(name, "unit is not one of JM_BENCH_UNITS");
     /* Grow by doubling: N rows cost O(log N) reallocs. Each entry's `times`
      * is its own allocation, so moving the array moves only the pointer. */
     if (b->count == b->cap) {
@@ -191,6 +259,20 @@ jm_bench_add(jm_bench_t *b, const char *name,
     memcpy(e->times, times, (size_t)rounds * sizeof(double));
     e->rounds = rounds;
     e->iters  = iters;
+    e->unit   = unit;
+}
+
+/* A row of `iters` CALLS per round: jm_bench_add_unit(..., JM_BENCH_CALL).
+ *
+ * gh-2282: the five-argument form every benchmark written before the unit
+ * existed calls, kept so they compile unchanged. A call is what `iters` was
+ * documented to count. A row of samples or frames says so through
+ * jm_bench_add_unit. */
+static inline void
+jm_bench_add(jm_bench_t *b, const char *name,
+             const double *times, int rounds, int iters)
+{
+    jm_bench_add_unit(b, name, times, rounds, iters, JM_BENCH_CALL);
 }
 
 /* qsort comparator for double */
@@ -301,6 +383,12 @@ jm_bench_write_json(jm_bench_t *b, const char *component)
         double q3     = jm_quantile(s, n, 0.75);
         double iqr    = q3 - q1;
         double ops    = (double)e->iters / mean;
+        /* gh-2282: the per-round figures over the units in a round. A row
+         * of no units has no time per unit, so it says null rather than
+         * writing `inf`, which is not JSON. */
+        const char  *pu_key[] = {"min", "max", "mean", "stddev", "median"};
+        const double pu_val[] = {mn, mx, mean, stddev, median};
+        const int    pu_n     = (int)(sizeof(pu_val) / sizeof(pu_val[0]));
 
         fprintf(fp, "    {\n");
         fprintf(fp, "      \"group\": null,\n");
@@ -309,7 +397,19 @@ jm_bench_write_json(jm_bench_t *b, const char *component)
                 component, e->name);
         fprintf(fp, "      \"params\": null,\n");
         fprintf(fp, "      \"param\": null,\n");
-        fprintf(fp, "      \"extra_info\": {},\n");
+        /* gh-2282: the unit and its rate label, from JM_BENCH_UNITS; a
+         * sample row also states its rate in MSa/s. This was a literal
+         * `{}`, and a downstream's private `MSa_s` line was lost to a
+         * re-vendor for 25 releases. */
+        fprintf(fp, "      \"extra_info\": {\n");
+        fprintf(fp, "        \"unit\": \"%s\",\n",
+                jm_bench_unit_name(e->unit));
+        fprintf(fp, "        \"rate_unit\": \"%s\"%s\n",
+                jm_bench_unit_rate(e->unit),
+                e->unit == JM_BENCH_SAMPLE ? "," : "");
+        if (e->unit == JM_BENCH_SAMPLE)
+            fprintf(fp, "        \"MSa_s\": %.17g\n", ops / 1e6);
+        fprintf(fp, "      },\n");
         fprintf(fp, "      \"options\": {\n");
         fprintf(fp, "        \"disable_gc\": false,\n");
         fprintf(fp, "        \"timer\": \"%s\",\n",
@@ -336,7 +436,15 @@ jm_bench_write_json(jm_bench_t *b, const char *component)
         fprintf(fp, "        \"hd15iqr\": %.17g,\n", mx);
         fprintf(fp, "        \"ops\": %.17g,\n", ops);
         fprintf(fp, "        \"total\": %.17g,\n", sum);
-        fprintf(fp, "        \"iterations\": %d\n", e->iters);
+        fprintf(fp, "        \"iterations\": %d,\n", e->iters);
+        for (int k = 0; k < pu_n; k++) {
+            fprintf(fp, "        \"%s_per_unit\": ", pu_key[k]);
+            if (e->iters > 0)
+                fprintf(fp, "%.17g", pu_val[k] / (double)e->iters);
+            else
+                fprintf(fp, "null");
+            fprintf(fp, "%s\n", k < pu_n - 1 ? "," : "");
+        }
         fprintf(fp, "      }\n");
         fprintf(fp, "    }%s\n", i < b->count - 1 ? "," : "");
         free(s);

@@ -102,7 +102,7 @@ class TestScaffold:
         compiles."""
         body = _bench_c(project).read_text(encoding="utf-8")
         assert "TODO" in body
-        assert "jm_bench_add(&_bench" in body
+        assert "jm_bench_add_unit(&_bench" in body
         assert "elapsed_sec" in body
         assert "ema_step(...)" in body
 
