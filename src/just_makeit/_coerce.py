@@ -1038,7 +1038,10 @@ def input_array_acq(
         )
     if dtype_fn:
         descr = f"_{arr_var.removesuffix('_arr')}_descr"
-        label = arr_var.removesuffix("_arr")
+        # gh-2271: the name the caller passes, as the converting path
+        # below uses -- a method's input is the local `in_arr` while its
+        # keyword is `x`, and a refusal saying "in" names no argument.
+        label = label or label_of(arr_var)
         # The input's dtype must EQUAL the record's, not merely convert to
         # it. Measured: `PyArray_FromAny` accepts a same-itemsize structured
         # dtype whose fields are declared in the other order and hands C the
@@ -1095,6 +1098,7 @@ def input_array_acq(
             obj_var=obj_var,
             arr_var=arr_var,
             fail=fail,
+            label=label or label_of(arr_var),
         )
     return (
         f"    PyArrayObject *{arr_var} =\n"
@@ -1134,7 +1138,13 @@ def _strict_rank_and_contiguity(
 
 
 def _strict_acq(
-    *, npy_enum: str, expect: str, obj_var: str, arr_var: str, fail: str
+    *,
+    npy_enum: str,
+    expect: str,
+    obj_var: str,
+    arr_var: str,
+    fail: str,
+    label: str = "",
 ) -> str:
     """Acquire a scalar-element input array WITHOUT converting it (gh-1426 B).
 
@@ -1166,8 +1176,12 @@ def _strict_acq(
     True
     >>> "complex64" in c                 # the refusal names what it wanted
     True
+    >>> '"x must be an ndarray' in _strict_acq(
+    ...     npy_enum="NPY_FLOAT", expect="float32", obj_var="in_obj",
+    ...     arr_var="in_arr", fail="return NULL;", label="x")
+    True
     """
-    label = arr_var.removesuffix("_arr")
+    label = label or label_of(arr_var)
     return (
         f"    if (!PyArray_Check({obj_var})\n"
         f"        || PyArray_TYPE((PyArrayObject *){obj_var})"
