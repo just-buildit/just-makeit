@@ -23,6 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _coerce
+from . import _inflight
 from . import _config as C
 from . import _csym as CSYM
 from ._builtins import require_scope_names
@@ -212,7 +213,8 @@ _fn_{backing}_create(PyObject *mod, PyObject *args)
 {{
     (void)mod;
 {decls}{parse}
-    _wrap_t *w = (_wrap_t *)malloc(sizeof(_wrap_t));
+    /* calloc: the in-flight count (gh-2272) starts at zero. */
+    _wrap_t *w = (_wrap_t *)calloc(1, sizeof(_wrap_t));
     if (!w) return PyErr_NoMemory();
 
     w->state = {sym}_create({call_args});
@@ -237,9 +239,17 @@ def _emit_execute(backing: str, sym: str, method: dict) -> str:
     name = method["name"]
     in_elem, in_npy = _array_elem_npy(method["arg_type"])
     out_elem, out_npy = _array_elem_npy(method["return_type"])
-    nogil = bool(method.get("nogil"))
-    gil_open = "    Py_BEGIN_ALLOW_THREADS\n" if nogil else ""
-    gil_close = "    Py_END_ALLOW_THREADS\n" if nogil else ""
+    # gh-2272 (gh-2267): through the one emitter, so the released call is
+    # counted on the wrapper and `destroy` waits for it.
+    from ._context._methods import _nogil_call
+
+    call = _nogil_call(
+        "size_t",
+        "n_out",
+        f"{sym}_{name}(w->state, in_data, n_in, out_data, max_out)",
+        bool(method.get("nogil")),
+        owner="w",
+    )
     _out_guard = _coerce.out_buffer_guard(
         "out_obj", out_npy, decrefs="Py_DECREF(x_arr);"
     )
@@ -273,9 +283,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 
     const {in_elem} *in_data  = (const {in_elem} *)PyArray_DATA(x_arr);
     {out_elem} *out_data = ({out_elem} *)PyArray_DATA(out_arr);
-    size_t n_out;
-{gil_open}    n_out = {sym}_{name}(w->state, in_data, n_in, out_data, max_out);
-{gil_close}    Py_DECREF(x_arr);
+{call}    Py_DECREF(x_arr);
 {_n_out_guard}
     /* Return out_arr[:n_out] — zero-copy view into the caller's buffer. */
     PyObject *stop  = PyLong_FromSsize_t((Py_ssize_t)n_out);
@@ -301,7 +309,11 @@ def _emit_void_method(backing: str, sym: str, method: dict) -> str:
 
     name = method["name"]
     call = _nogil_call(
-        "", "", f"{sym}_{name}(w->state)", bool(method.get("nogil"))
+        "",
+        "",
+        f"{sym}_{name}(w->state)",
+        bool(method.get("nogil")),
+        owner="w",
     )
     return f"""static PyObject *
 _fn_{backing}_{name}(PyObject *mod, PyObject *args)
@@ -325,9 +337,10 @@ _fn_{backing}_destroy(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    {sym}_destroy(w->state);
-    w->state     = NULL;
+    /* gh-2272: refuse new calls first, then wait for a running one. */
     w->destroyed = 1;
+{_inflight.wait("w", "w->destroyed = 0; return NULL;", "    ")}    {sym}_destroy(w->state);
+    w->state     = NULL;
     Py_RETURN_NONE;
 }}
 """
@@ -432,13 +445,13 @@ def render_ext(cfg: dict, module: str) -> str:
 
 #include "{header}"
 
-{_coerce.ARRAY_ARG_C}
+{_coerce.TU_HELPERS_C}
 static const char _CAPS[] = "{caps}";
 
 typedef struct {{
     {sym}_state_t *state;
     int                destroyed;
-}} _wrap_t;
+{_inflight.struct_field()}}} _wrap_t;
 
 static void
 _wrap_destructor(PyObject *cap)
@@ -447,7 +460,7 @@ _wrap_destructor(PyObject *cap)
     if (!w) return;
     if (!w->destroyed)
         {sym}_destroy(w->state);
-    free(w);
+{_inflight.free("w")}    free(w);
 }}
 
 static _wrap_t *

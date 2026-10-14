@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import _coerce
+from . import _inflight
 from . import _config as C
 from . import _modplatforms
 from ._builtins import require_scope_names
@@ -1831,7 +1832,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     PyObject_HEAD
     {struct} src;
     double   fs;{gen_field}
-}} {obj};
+{_inflight.struct_field() if gen else ""}}} {obj};
 """)
 
     # dealloc — destroy any built generator, then free every owned buffer
@@ -1859,7 +1860,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
 {{
-{gen_dtor}{free_bufs}    Py_TYPE(self)->tp_free((PyObject *)self);
+{gen_dtor}{free_bufs}{_inflight.free("self") if gen else ""}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """)
 
@@ -2173,7 +2174,7 @@ static int
 {parse_fail}
     }}
 {parse_ok}    self->fs = fs;
-{(f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
+{(_inflight.wait("self", "return -1;", "    ") + f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
     return 0;
 }}
 """
@@ -2454,10 +2455,7 @@ static PyObject *
     if (!arr)
         return NULL;
     {out_t} *out = ({out_t} *)PyArray_DATA((PyArrayObject *)arr);
-    Py_BEGIN_ALLOW_THREADS
-    {gen["steps_fn"]}(self->_gen, out, (size_t)n);
-    Py_END_ALLOW_THREADS
-    return arr;
+{_inflight.region("self", f"    {gen['steps_fn']}(self->_gen, out, (size_t)n);" + chr(10))}    return arr;
 }}
 
 static PyObject *
@@ -3753,10 +3751,8 @@ static PyObject *
             f"""    if (self->realtime > 0.0) {{
         if (!self->clk)
             self->clk = {rt_create}(self->realtime, 0);
-        Py_BEGIN_ALLOW_THREADS
-        {rt_pace}(self->clk, (size_t)n);
-        Py_END_ALLOW_THREADS
-    }}
+{_inflight.opening("self", "        ")}        {rt_pace}(self->clk, (size_t)n);
+{_inflight.closing("self", "        ")}    }}
 """
             if has_rt
             else ""
@@ -3821,14 +3817,14 @@ typedef struct {{
     PyObject_HEAD
     PyObject  *composer; /* strong ref to the {cname} */
     Py_ssize_t block;
-{rt_fields}}} {cname}StreamObject;
+{rt_fields}{_inflight.struct_field() if has_rt else ""}}} {cname}StreamObject;
 
 static PyTypeObject {cname}StreamType;
 
 static void
 {cname}Stream_dealloc({cname}StreamObject *self)
 {{
-{rt_dealloc}    Py_XDECREF(self->composer);
+{rt_dealloc}{_inflight.free("self") if has_rt else ""}    Py_XDECREF(self->composer);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 
@@ -4015,7 +4011,7 @@ typedef struct {{
     PyObject_HEAD
     {sym}_state_t *state;
     int                destroyed;
-}} {obj};
+{_inflight.struct_field()}}} {obj};
 
 /* Build a transient {seg_struct}[] from a list of {seg_t} objects. Each
  * source's bits pointer ALIASES the {src_t}'s owned buffer; {create_fn}
@@ -4108,7 +4104,7 @@ static void
 {{
     if (!self->destroyed && self->state)
         {destroy_fn}(self->state);
-    Py_TYPE(self)->tp_free((PyObject *)self);
+{_inflight.free("self")}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 
 static int
@@ -4257,10 +4253,8 @@ static PyObject *
     float _Complex *out =
         (float _Complex *)PyArray_DATA((PyArrayObject *)arr);
     size_t got;
-    Py_BEGIN_ALLOW_THREADS
-    got = {execute_fn}(self->state, out, (size_t)max);
-    Py_END_ALLOW_THREADS
-{execute_got_guard}    PyObject *stop = PyLong_FromSsize_t((Py_ssize_t)got);
+{_inflight.opening("self")}    got = {execute_fn}(self->state, out, (size_t)max);
+{_inflight.closing("self")}{execute_got_guard}    PyObject *stop = PyLong_FromSsize_t((Py_ssize_t)got);
     PyObject *slice = stop ? PySlice_New(NULL, stop, NULL) : NULL;
     Py_XDECREF(stop);
     PyObject *view = slice ? PyObject_GetItem(arr, slice) : NULL;
@@ -4303,10 +4297,8 @@ static PyObject *
         float _Complex *out =
             (float _Complex *)PyArray_DATA((PyArrayObject *)arr);
         size_t got;
-        Py_BEGIN_ALLOW_THREADS
-        got = {execute_fn}(self->state, out, (size_t)block);
-        Py_END_ALLOW_THREADS
-        if (got == 0) {{
+{_inflight.opening("self", "        ")}        got = {execute_fn}(self->state, out, (size_t)block);
+{_inflight.closing("self", "        ")}        if (got == 0) {{
             Py_DECREF(arr);
             break;
         }}
@@ -4393,8 +4385,9 @@ static PyObject *
 {cname}_close({obj} *self, PyObject *Py_UNUSED(ignored))
 {{
     if (!self->destroyed && self->state) {{
-        {destroy_fn}(self->state);
+        /* gh-2272: refuse new calls, then wait for a running one. */
         self->destroyed = 1;
+{_inflight.wait("self", "self->destroyed = 0; return NULL;")}        {destroy_fn}(self->state);
     }}
     Py_RETURN_NONE;
 }}
@@ -4777,7 +4770,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
 
 #include "{header}"
 {gen_includes}{json_includes}{rt_includes}{serializer_includes}
-{_coerce.ARRAY_ARG_C}""",
+{_coerce.TU_HELPERS_C}""",
         _extra_method_protos(cfg, module),
         render_enum_tables(cfg, module),
         render_range_helper(cfg, module),

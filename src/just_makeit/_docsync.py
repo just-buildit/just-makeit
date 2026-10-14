@@ -1253,6 +1253,20 @@ _FEATURE_MARKERS = {
         "the manifest declares nogil and this fragment calls the kernel "
         "holding the GIL, so no other thread runs while it does",
     ),
+    # gh-2272: jm's own guard, which a fragment rendered before it lacks --
+    # including one that does release the GIL. Named for its consequence:
+    # nothing tells the teardown a call is running.
+    "nogil-counted": _Feature(
+        ("jm_inflight_enter",),
+        "the manifest declares nogil and this fragment does not count the "
+        "released call, so a close()/destroy() on another thread frees the "
+        "state under it (gh-2272)",
+    ),
+    "teardown-waits": _Feature(
+        ("jm_inflight_wait",),
+        "this object releases the GIL and this fragment's teardown frees "
+        "without waiting for a call still running (gh-2272)",
+    ),
     # gh-1426 A: the record a release defaults its count from.
     "borrow-release": _Feature(
         ("_jm_borrowed",),

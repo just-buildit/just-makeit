@@ -61,7 +61,7 @@ timing every declared method it can.
 | `--exact-max-out`             | Assert `<pkg>_<comp>_<name>_max_out()` bounds any call, so the binding allocates exactly that instead of `max(max_out, n)` (gh-920). Say it when the bound does not depend on the call.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `--short-out`                 | Accept an `out=` **smaller** than `_max_out()` asks for, down to empty (any number of rows under `--out-cols`), for a **backpressure** kernel: it writes what fits, takes only the input that produced it, and the object reports how much, so the caller resumes there. Needs `--pass-capacity`. Every other method keeps the minimum (gh-2230).                                                                                                                                                                                                                                                                                                                                |
 | `--max-out N`                 | The worst-case count `<pkg>_<comp>_<name>_max_out()` returns. jm writes that body, so it needs no implementing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `--nogil`                     | Release the GIL across the pure-C kernel call of any method whose binding jm writes (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: sound only when the object is not shared across threads concurrently (one object per stream). Refused with `--varargs` or `--manual-stub`, whose binding is yours. See below.                                                                                                                                                                                                                                                                                                                 |
+| `--nogil`                     | Release the GIL across the pure-C kernel call of any method whose binding jm writes (numpy accessors hoisted out first), so a thread-per-shard worker scales across cores. Opt-in: two calls on one object run at once only if its kernel allows it (one object per stream); a `close()` from another thread waits for a running call (gh-2272). Refused with `--varargs` or `--manual-stub`, whose binding is yours. See below.                                                                                                                                                                                                                                                 |
 | `--count-default EXPR`        | C expression seeding the synthesized leading count argument of a void-input `--variable-output` method, e.g. `"state->num_taps"`. Its value **is** the zero-arg call's behaviour, and jm cannot derive it — it lives in your C (gh-1051).                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--count-name NAME`           | What that synthesized argument is **called** (default `count`). See [Naming the synthesized count](#naming-the-synthesized-count).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `--no-count`                  | Drop that synthesized argument **altogether**, for a kernel whose result is sized by the object alone: the method is `f()` (plus the optional `out=`), the kernel `f(state, out[, max_out])`, and `<pkg>_<comp>_<name>_max_out(state)` takes the state alone. See [A method with no count](#a-method-with-no-count) (gh-2233).                                                                                                                                                                                                                                                                                                                                                   |
@@ -684,9 +684,12 @@ just-makeit method ddc execute --module ddc \
 const float _Complex *_ng0 = (const float _Complex *)PyArray_DATA(x_arr);
 size_t _ng1 = (size_t)PyArray_SIZE(x_arr);
 size_t n_out;
+void *_jm_h = self->handle;
+jm_inflight_enter(&self->_jm_inflight);
 Py_BEGIN_ALLOW_THREADS
-n_out = <pkg>_ddc_execute(self->handle, _ng0, _ng1, _d0, _cap);
+n_out = <pkg>_ddc_execute(_jm_h, _ng0, _ng1, _d0, _cap);
 Py_END_ALLOW_THREADS
+jm_inflight_leave(&self->_jm_inflight);
 ```
 
 Every numpy accessor is hoisted into a local **before** the block — including
@@ -694,6 +697,11 @@ the output data pointer `_d0` — so no Python C-API runs while the GIL is
 dropped; the allocation and any error-raising stay above it, under the GIL. A
 worker that gives each thread its **own** object then scales across cores
 instead of serialising on the GIL.
+
+Closing the object from another thread while a call runs is safe: the
+generated `destroy()` / `close()` / `__exit__` first refuses new calls
+(`RuntimeError`), then waits with the GIL released for the running one to
+return, then frees (gh-2272).
 
 It is **opt-in** because releasing the GIL is sound only under that
 one-object-per-stream contract — jm cannot verify it, so you assert it by
