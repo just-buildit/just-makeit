@@ -32,6 +32,12 @@ stub, so a member added later is covered without a list to extend -- the
 runtime ``__doc__`` of the built module says the same thing, less only the
 signature line a ``METH_VARARGS`` callable leads with. Built and imported,
 because ``help()`` reads the ``.so``, not the C text.
+
+Two faces derived from one text agree even when the text is wrong, so a
+member whose shape is conditional is also held to what the BUILT callable
+accepts: ``stream(realtime=)`` exists only when the realtime table names all
+three clock functions (``_composer.realtime_clock``), and the docs had asked
+only whether the table was there.
 """
 
 from __future__ import annotations
@@ -117,6 +123,11 @@ discriminant = "kind"
 [module.playlist.composer]
 stream = true
 to_dict = true
+
+# A PARTIAL realtime table: `stream(realtime=)` needs all three clock fns,
+# so this stream takes no `realtime`, and neither face may document one.
+[module.playlist.composer.realtime]
+pace = "playlist_pace"
 
 [module.playlist.json]
 enabled = true
@@ -452,3 +463,58 @@ def test_a_factory_says_what_it_makes(built) -> None:
     assert "A pure sine at the clip's gain." in doc
     assert 'kind="sine"' in doc and "help(Clip)" in doc
     assert "A square wave" in mod.square.__doc__
+
+
+def test_a_partial_realtime_table_documents_no_realtime(built) -> None:
+    """The keyword, its runtime doc and its stub read one predicate.
+
+    The fixture's realtime table names only ``pace``, so the compiled
+    ``stream()`` refuses ``realtime=`` -- and so neither face may offer it.
+    """
+    tree, mod = built
+    mix = mod.Mix(mod.Track.sum(mod.Clip(), dur=4))
+    with pytest.raises(TypeError, match="realtime"):
+        mix.stream(realtime=1.0)
+    assert "realtime" not in mod.Mix.stream.__doc__
+    (stream,) = [
+        m
+        for c in tree.body
+        if isinstance(c, ast.ClassDef) and c.name == "Mix"
+        for m in c.body
+        if isinstance(m, ast.FunctionDef) and m.name == "stream"
+    ]
+    assert [a.arg for a in stream.args.args] == ["self", "block"]
+    assert "realtime" not in (ast.get_docstring(stream) or "")
+
+
+@pytest.mark.parametrize(
+    "named",
+    [
+        (),
+        ("pace",),
+        ("clock_create", "pace"),
+        ("clock_create", "destroy"),
+        ("clock_create", "pace", "destroy"),
+    ],
+)
+def test_the_keyword_and_both_docs_agree_on_realtime(named) -> None:
+    """Every partial table, rendered: the stub offers ``realtime`` exactly
+    when the binding's keyword list does, and documents it exactly then."""
+    from just_makeit import _composer
+    from test_composer_codegen import _cfg
+
+    cfg = _cfg()
+    mod = "wfm_compose"
+    rt = {k: f"dp_clk_{k}" for k in named}
+    cfg["module"][mod]["composer"] = {"stream": True, "realtime": rt}
+    ext = _composer.render_composer_type(cfg, mod)
+    pyi = _composer.render_pyi(cfg, mod)
+    takes = '"block", "realtime", NULL' in ext
+    assert takes == (len(named) == 3)
+    stub = pyi[pyi.index("    def stream(") :]
+    stub = stub[: stub.index("\n    def ", 1)]
+    assert ("realtime: float" in stub) == takes, stub
+    assert ("realtime : float" in stub) == takes, stub
+    row = ext[ext.index('{"stream",') :]
+    row = row[: row.index("},\n")]
+    assert ("realtime" in row) == takes, row

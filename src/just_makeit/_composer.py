@@ -58,6 +58,7 @@ from ._docstring import (
     class_docstring,
     render_numpy_doc,
     render_runtime_doc,
+    summary_docstring,
 )
 from ._pyfmt import reflow_pyi
 
@@ -3818,11 +3819,11 @@ static PyObject *
         # (void *), created lazily on the first block, paced by sample count,
         # and destroyed with the iterator. Only emitted when the `realtime`
         # sub-table names the clock create/pace/destroy fns.
-        rt = C.composer_stream(cfg, module).get("realtime") or {}
+        rt = realtime_clock(cfg, module)
         rt_create = rt.get("clock_create", "")
         rt_pace = rt.get("pace", "")
         rt_destroy = rt.get("destroy", "")
-        has_rt = bool(rt_create and rt_pace and rt_destroy)
+        has_rt = bool(rt)
         rt_fields = "    double realtime;\n    void *clk;\n" if has_rt else ""
         rt_dealloc = (
             f"    if (self->clk)\n        {rt_destroy}(self->clk);\n"
@@ -4795,7 +4796,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     # Standalone generation pulls in the composed generator's header and the
     # project's straight-C bridge declaration (source config -> generator state).
     # gh-317: the realtime stream's clock fns need their header.
-    _rt = C.composer_stream(cfg, module).get("realtime") or {}
+    _rt = realtime_clock(cfg, module)
     # <stdio.h> for the pacing warning's snprintf. It is emitted here rather
     # than left to json_includes above, because the two features are
     # independent: a composer with realtime and without JSON would otherwise
@@ -5220,7 +5221,9 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
     stream = C.composer_stream(cfg, module)
 
     def one(text: str) -> list[str]:
-        return authored_docstring([text], 8)
+        # Wrapped HERE, so the runtime text is the stub's line for line:
+        # `reflow_pyi` would otherwise wrap a long one on the stub alone.
+        return summary_docstring(text, indent=8)
 
     out = {
         f"{seg_t}.sum": one(f"Combine *sources* into a single {seg_t}."),
@@ -5252,7 +5255,7 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
                         "    speed multiplier. ``0`` (the default) streams",
                         "    as fast as possible.",
                     ]
-                    if stream.get("realtime")
+                    if realtime_clock(cfg, module)
                     else []
                 ),
             ],
@@ -5260,7 +5263,8 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
         )
     if stream.get("to_dict"):
         out[f"{cname}.to_dict"] = one(
-            "Serialise the composer state to a dict."
+            "Serialise the resolved composition (repeat, continuous, "
+            "segments) to a dict."
         )
     if C.composer_json(cfg, module):
         out[f"{cname}.from_json"] = one(f"Build a {cname} from a JSON spec.")
@@ -5291,6 +5295,36 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
             indent=4,
         )
     return out
+
+
+def realtime_clock(cfg: dict, module: str) -> dict:
+    """The ``[module.X.composer] realtime`` table, when ``stream()`` paces.
+
+    ``stream(realtime=)`` exists only when the table names all three clock
+    functions -- ``clock_create``, ``pace`` and ``destroy`` -- because the
+    iterator creates, paces and frees the clock. ``{}`` otherwise, including
+    for a table naming one or two of them.
+
+    The ONE answer to "does ``stream`` take ``realtime``": the keyword list,
+    the iterator's clock fields, the includes, the runtime doc and the stub
+    all ask it (gh-2283). The docs had asked whether the table was
+    non-empty, so a partial table documented a keyword the call refused.
+
+    Examples
+    --------
+    >>> m = {"module": {"m": {"composer": {"realtime": {"pace": "p"}}}}}
+    >>> realtime_clock(m, "m")
+    {}
+    >>> full = {"clock_create": "c", "pace": "p", "destroy": "d"}
+    >>> m["module"]["m"]["composer"]["realtime"] = full
+    >>> realtime_clock(m, "m") == full
+    True
+    """
+    rt = C.composer_stream(cfg, module).get("realtime") or {}
+    if not isinstance(rt, dict):
+        return {}
+    named = all(rt.get(k) for k in ("clock_create", "pace", "destroy"))
+    return dict(rt) if named else {}
 
 
 def _ml_doc_c(cfg: dict, module: str, member: str, sig: str) -> str:
@@ -5487,9 +5521,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         lines.extend(_extramethods.pyi_member(_em))
     if C.composer_stream(cfg, module).get("stream"):
         rt_arg = (
-            ", realtime: float = ..."
-            if C.composer_stream(cfg, module).get("realtime")
-            else ""
+            ", realtime: float = ..." if realtime_clock(cfg, module) else ""
         )
         lines += [
             f"    def stream(self, block: int = ...{rt_arg})"
