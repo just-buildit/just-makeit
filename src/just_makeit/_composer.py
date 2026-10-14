@@ -3434,20 +3434,24 @@ def resolve_field_docs(cfg: dict, module: str, root: "Path | None") -> dict:
         for f in tables[table](out, module).get("fields", []):
             if f.get("name") == name:
                 f["doc"] = doc
-    mod = out["module"][module]
-    for table, raw in classes.items():
-        mod[table][_CLASS_BLOCK_KEY] = raw
-    if values:
-        mod.setdefault("oo", {})[_VALUE_DOCS_KEY] = values
+    out.setdefault(_HEADER_DOCS_KEY, {})[module] = {
+        **classes,
+        "factories": values,
+    }
     return out
 
 
-#: Where :func:`resolve_field_docs` leaves a header-derived doc on the
-#: resolved copy: a source / segment table's struct block, and the oo table's
-#: ``{factory: doc}``. Transient render state, spelled with the leading ``_``
-#: that `_keys` and the manifest writer both pass over (``_doc_blocks``).
-_CLASS_BLOCK_KEY = "_struct_doc_block"
-_VALUE_DOCS_KEY = "_factory_value_docs"
+#: Where :func:`resolve_field_docs` leaves the header-derived docs that are
+#: not a field's on the resolved copy: ``{module: {"source": raw_block,
+#: "segment": raw_block, "factories": {factory: doc}}}``. Transient render
+#: state at the top level, beside no manifest table, so no table's
+#: vocabulary gate reads it as a key the renderer takes (gh-1236).
+_HEADER_DOCS_KEY = "_composer_header_docs"
+
+
+def _header_docs(cfg: dict, module: str) -> dict:
+    """*module*'s entry under :data:`_HEADER_DOCS_KEY`, or ``{}``."""
+    return dict(cfg.get(_HEADER_DOCS_KEY, {}).get(module, {}))
 
 
 def _factory_value_docs(
@@ -5127,13 +5131,13 @@ def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
             src["type_name"],
             src_fields + ([fs_field] if fs_field else []),
             enum_reg,
-            str(src.get(_CLASS_BLOCK_KEY) or ""),
+            str(_header_docs(cfg, module).get("source") or ""),
         ),
         seg["type_name"]: _pyi_doc_lines(
             seg["type_name"],
             src_fields + seg_fields,
             enum_reg,
-            str(seg.get(_CLASS_BLOCK_KEY) or ""),
+            str(_header_docs(cfg, module).get("segment") or ""),
         ),
     }
     tl_t = C.composer_timeline(cfg, module).get("type_name")
@@ -5265,7 +5269,7 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
         )
         out[f"{cname}.to_json"] = one("Serialise the spec as JSON.")
     disc = oo.get("discriminant")
-    values = oo.get(_VALUE_DOCS_KEY) or {}
+    values = _header_docs(cfg, module).get("factories") or {}
     for fac in oo.get("factories", []):
         preset = f' with ``{disc}="{fac}"``' if disc else ""
         out[fac] = render_numpy_doc(
