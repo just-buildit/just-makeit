@@ -1335,8 +1335,9 @@ class TestMethodWithParams:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        # float -> "f", int32_t -> "l" (long intermediate)
-        assert '"fl"' in ext
+        # float -> "f", int32_t -> "L" (a long long intermediate, the
+        # same width on every platform; gh-2269)
+        assert '"fL"' in ext
 
     def test_ext_c_meth_varargs(self, project):
         method_run(

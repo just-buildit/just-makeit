@@ -146,8 +146,18 @@ _CTYPE_META: dict[str, dict] = {
     "int16_t": _fwint(
         "int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG, narrow=True
     ),
+    # gh-2269: `L`, as `uint32_t` below, never `l`: a C `long` is 32 bits
+    # on Windows, so a value past `int32_t` was refused by CPython's own
+    # "too large to convert to C long" before the range check could say
+    # "out of range for int32_t [lo, hi]" -- one message per platform.
     "int32_t": _fwint(
-        "int32_t", "l", "long", "0L", "np.int32", _TO_PY_LONG, narrow=True
+        "int32_t",
+        "L",
+        "long long",
+        "0LL",
+        "np.int32",
+        _TO_PY_LONG,
+        narrow=True,
     ),
     "int64_t": _fwint(
         "int64_t", "L", "long long", "0LL", "np.int64", _TO_PY_LLONG
@@ -837,11 +847,12 @@ def wider_than_double(ctype: str) -> "str | None":
     error. Which types are wider is the type table's own statement, not a
     list of names: every integer row names the C type its binding parses
     through (``parse_type``), and that is a ``long long`` exactly when the
-    type needs more than 32 bits -- an ``int32_t`` parses through a
-    ``long``, an ``int64_t``, a ``size_t`` or a ``ptrdiff_t`` through a
-    ``long long`` -- except a row that carries ``bounds``, which holds fewer
+    type needs more than 32 bits -- an ``int64_t``, a ``size_t`` or a
+    ``ptrdiff_t`` -- except a row that carries ``bounds``, which holds fewer
     values than it parses through (a ``uint32_t`` parses through a
-    ``long long`` so its whole range survives the parse, gh-2144). No row
+    ``long long`` so its whole range survives the parse, gh-2144; an
+    ``int32_t`` does too, so no binding parses through the platform-wide
+    ``long``, gh-2269). No row
     needs between 33 and 53 bits, which
     ``tests/test_gh2139_composer_json_64bit.py`` holds against numpy's own
     width for every row.
