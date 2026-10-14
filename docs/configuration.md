@@ -1643,7 +1643,7 @@ released calls on ONE object run at once only if its kernel allows that (one
 object per stream is the contract jm assumes). Closing an object from another
 thread is safe: its `destroy()` / `close()` / `__exit__` refuses new calls
 (`RuntimeError`), waits with the GIL released for a call still running, then
-frees (gh-2272). On a `varargs` or `manual_stub` method, whose CPython
+frees (gh-2272), so a released kernel must return in bounded time. On a `varargs` or `manual_stub` method, whose CPython
 function is yours, it is refused: release the GIL in that function (gh-2259).
 
 #### Capsule-typed params (gh-432)

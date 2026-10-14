@@ -701,7 +701,12 @@ instead of serialising on the GIL.
 Closing the object from another thread while a call runs is safe: the
 generated `destroy()` / `close()` / `__exit__` first refuses new calls
 (`RuntimeError`), then waits with the GIL released for the running one to
-return, then frees (gh-2272).
+return, then frees (gh-2272). So a `--nogil` kernel must return in bounded
+time: `close()` waits for it, and the wait is not interrupted by Ctrl-C
+(ending a blocking kernel from `close()` is gh-2276). A kernel that calls
+back into Python which closes the same object deadlocks. A second `close()`
+issued while the first waits returns at once; only the first returns once
+the state is freed.
 
 It is **opt-in** because releasing the GIL is sound only under that
 one-object-per-stream contract — jm cannot verify it, so you assert it by

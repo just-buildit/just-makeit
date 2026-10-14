@@ -222,6 +222,100 @@ class TestEveryReleaseIsCounted:
         )
 
 
+@pytest.fixture(scope="module")
+def lending_ext(tmp_path_factory) -> str:
+    """The borrow shape alone: a lending object, whose teardown parks the
+    state and NULLs ``self->handle`` just as a waiting one does."""
+    root = tmp_path_factory.mktemp("lend")
+    _ok("new", "mp", "--no-c-prefix", cwd=root)
+    proj = root / "mp"
+    _ok("object", "o", "--state", "k:double:0.0", cwd=proj)
+    _ok("method", "o", "borrow", *SHAPES["borrow"], "--nogil", cwd=proj)
+    return (proj / "native/src/o/o_ext.c").read_text(encoding="utf-8")
+
+
+def _tails(c: str) -> "dict[str, str]":
+    """Each function's text after its LAST ``jm_inflight_leave``."""
+    out = {}
+    for m in re.finditer(r"^(\w+)\(.*?^}$", c, re.S | re.M):
+        body = m.group(0)
+        at = body.rfind("jm_inflight_leave(")
+        if at >= 0:
+            out[m.group(1)] = body[at:]
+    return out
+
+
+class TestNothingReadsTheHandleAfterTheRegion:
+    """The teardown NULLs ``self->handle`` before it waits, so the running
+    call reads its state through the local hoisted before the release
+    (`_inflight.hoist_handle`). Code after the region runs once the
+    teardown may already have NULLed it: a ``self->handle`` there would
+    read NULL (review of #2275)."""
+
+    @pytest.mark.parametrize("fixture", ["object_ext", "lending_ext"])
+    def test_no_tail_reads_the_handle(self, request, fixture):
+        tails = _tails(request.getfixturevalue(fixture))
+        assert tails, "no released method was rendered"
+        bad = {n: t for n, t in tails.items() if "self->handle" in t}
+        assert not bad, bad
+
+    def test_the_kernel_reads_the_hoisted_local(self, object_ext):
+        for name, body in _tails(object_ext).items():
+            assert "self->handle" not in body
+        region = re.findall(
+            r"Py_BEGIN_ALLOW_THREADS\n(.*?)Py_END_ALLOW_THREADS",
+            _HELPER.sub("", object_ext),
+            re.S,
+        )
+        assert region and not [r for r in region if "self->handle" in r]
+
+    def test_the_gate_sees_a_tail_that_reads_it(self):
+        c = (
+            "O_m(OObject *self)\n{\n"
+            "    jm_inflight_leave(&self->_jm_inflight);\n"
+            "    k(self->handle);\n}\n"
+        )
+        assert "self->handle" in _tails(c)["O_m"]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_every_released_shape_compiles(tmp_path):
+    """The hoisted handle is ``void *``; a shape whose call dereferenced
+    ``self->handle`` would not compile through it. Every shape, built."""
+    _ok("new", "mp", "--no-c-prefix", cwd=tmp_path)
+    proj = tmp_path / "mp"
+    _ok("object", "o", "--state", "k:double:0.0", cwd=proj)
+    for name, flags in SHAPES.items():
+        _ok("method", "o", name, *flags, "--nogil", cwd=proj)
+    # The two record shapes return the author's structs, which the sacred
+    # header declares (one `double a` column each, as SHAPES declares).
+    hdr = proj / "native/inc/mp/o/o_core.h"
+    text = hdr.read_text(encoding="utf-8")
+    first = text.index("#include")
+    eol = text.index("\n", first) + 1
+    hdr.write_text(
+        text[:eol]
+        + "typedef struct { double a; } rec_t;\n"
+        + "typedef struct { double a; } rec2_t;\n"
+        + text[eol:],
+        encoding="utf-8",
+    )
+    build = subprocess.run(
+        ["make", f"PYTHON={sys.executable}"],
+        cwd=proj,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    assert build.returncode == 0, build.stderr[-3000:]
+    # A green make that built nothing proves nothing: the extension exists.
+    built = list((proj / "src" / "mp").glob("o*.so")) + list(
+        (proj / "src" / "mp").glob("o*.pyd")
+    )
+    assert built, sorted(p.name for p in (proj / "src" / "mp").iterdir())
+
+
 class TestTheTeardownRefusesThenWaitsThenFrees:
     def test_object_destroy(self, object_ext):
         _in_order(
@@ -288,17 +382,19 @@ class TestTheTeardownRefusesThenWaitsThenFrees:
 
 # ── 4. compiled: close() from another thread ──────────────────────────────
 
-#: The kernel sleeps half a second with the GIL released, flagging that it
-#: runs; the core's destroy aborts if it is called while it does. So the
-#: process dies (SIGABRT) exactly when a teardown frees under a running call.
-_RUNNING = "static volatile int jm_test_running;\n"
+#: The kernel sleeps half a second with the GIL released, counting itself
+#: in and out; the core's destroy aborts if any is running. So the process
+#: dies (SIGABRT) exactly when a teardown frees under a running call. A
+#: COUNT, atomically: with two calls in flight a flag cleared by the first
+#: to finish hid a free under the second.
+_RUNNING = "static int jm_test_running;\n"
 _SLEEP = """
-    jm_test_running = 1;
+    __atomic_fetch_add(&jm_test_running, 1, __ATOMIC_SEQ_CST);
     struct timespec half = {0, 500000000L};
     nanosleep(&half, NULL);
-    jm_test_running = 0;
+    __atomic_fetch_sub(&jm_test_running, 1, __ATOMIC_SEQ_CST);
 """
-_TRIP = """    if (jm_test_running) {
+_TRIP = """    if (__atomic_load_n(&jm_test_running, __ATOMIC_SEQ_CST)) {
         fprintf(stderr, "FREED UNDER A RUNNING KERNEL\\n");
         abort();
     }
@@ -336,10 +432,44 @@ print(res["a"], res["c"], "waited" if res["waited"] > 0.2 else "freed")
 """
 
 
-def _run_probe(proj: Path, imp: str, make: str, close: str) -> str:
+#: Two calls in flight (the count at 2, so only the LAST leave may wake
+#: the teardown) and two closers 0.1 s in. The first closer waits for
+#: both; the second finds the object already refused and returns at once
+#: -- "close() returned" means "freed" only for the first. The core aborts
+#: if anything frees under either call.
+PROBE2 = """
+import sys, threading, time
+sys.path.insert(0, "src")
+sys.path.insert(0, ".")
+{imp}
+w = {make}
+res = {{}}
+def call(tag, delay):
+    time.sleep(delay)
+    res[tag] = w.work()
+def close(tag):
+    t0 = time.monotonic()
+    w.{close}()
+    res[tag] = time.monotonic() - t0
+ts = [threading.Thread(target=call, args=("a1", 0.0)),
+      threading.Thread(target=call, args=("a2", 0.05))]
+for t in ts: t.start()
+time.sleep(0.1)
+cs = [threading.Thread(target=close, args=(k,)) for k in ("b1", "b2")]
+for t in cs: t.start()
+for t in ts + cs: t.join()
+w1, w2 = sorted((res["b1"], res["b2"]))
+print(res["a1"], res["a2"], "first-returns" if w1 < 0.1 else "no-fast",
+      "last-waits" if w2 > 0.3 else "no-wait")
+"""
+
+
+def _run_probe(
+    proj: Path, imp: str, make: str, close: str, probe: str = PROBE
+) -> str:
     script = proj / "probe.py"
     script.write_text(
-        PROBE.format(imp=imp, make=make, close=close), encoding="utf-8"
+        probe.format(imp=imp, make=make, close=close), encoding="utf-8"
     )
     out = subprocess.run(
         [sys.executable, str(script)],
@@ -421,6 +551,11 @@ def test_close_from_another_thread_waits(tmp_path, variant):
     imp = "from p.dsp import W" if variant == "module" else "from p import W"
     got = _run_probe(proj, imp, "W(k=0)", close)
     assert got == "7 RuntimeError waited", got
+    if variant == "standalone":
+        # The count at 2 and two closers: only the last leave wakes the
+        # waiter, and the second closer does not wait (review of #2275).
+        got = _run_probe(proj, imp, "W(k=0)", close, PROBE2)
+        assert got == "7 7 first-returns last-waits", got
 
 
 _SLOW_H = """\
@@ -524,3 +659,25 @@ def test_apply_names_a_fragment_that_does_not_count(tmp_path):
         "w: the manifest declares nogil and this fragment does not count"
         in said
     ), said
+
+
+def test_a_body_holding_the_gil_is_named_once(tmp_path):
+    """A body that holds the GIL has nothing to count: `apply` says it
+    holds the GIL (gh-2259) and not, as well, that it does not count."""
+    _ok("new", "p", "--no-c-prefix", cwd=tmp_path)
+    proj = tmp_path / "p"
+    _ok("module", "dsp", cwd=proj)
+    _ok("object", "mx", "--module", "dsp", cwd=proj)
+    _ok("method", "mx", "w", "--return-type", "int", cwd=proj)
+    frag = proj / "objects" / "mx.toml"
+    text = frag.read_text(encoding="utf-8")
+    assert text.count('name = "w"\n') == 1, text
+    frag.write_text(
+        text.replace('name = "w"\n', 'name = "w"\nnogil = true\n', 1),
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stderr
+    said = r.stdout + r.stderr
+    assert "holding the GIL" in said, said
+    assert "does not count" not in said, said

@@ -24,6 +24,19 @@ The contract, in this order, all of it rendered from this file:
 3. Then it waits, with the GIL released, for the count to reach zero
    (``jm_inflight_wait``), and only then frees.
 
+Step 3 alone is what makes the free safe: the wait returns holding the GIL
+with nothing running, and the free follows without releasing it. Step 2 is
+liveness -- without it a stream of new calls could hold the count above
+zero for ever -- and what a closed object means to a caller. A composer
+source's re-``__init__`` has no refusal to raise, so it waits without one
+and a continuous ``steps()`` on another thread can starve it.
+
+The limits that follow, documented for ``nogil``: a released kernel must
+return in bounded time, since ``close()`` waits for it and the lock acquire
+is not interrupted (gh-2276 asks for a ``wake``); a kernel that calls back
+into Python which closes its own object deadlocks; and a second ``close()``
+issued during the wait returns at once, before the free.
+
 Because step 2 NULLs an object's ``self->handle`` before the wait, a released
 object call must not read ``self->handle`` inside the region: `hoist_handle`
 reads it into a local before the GIL is dropped. The other kinds keep their
