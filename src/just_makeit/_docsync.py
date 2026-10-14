@@ -1253,6 +1253,21 @@ _FEATURE_MARKERS = {
         "the manifest declares nogil and this fragment calls the kernel "
         "holding the GIL, so no other thread runs while it does",
     ),
+    # gh-2272: jm's own guard, which a fragment rendered before it lacks --
+    # including one that does release the GIL. Named for its consequence:
+    # nothing tells the teardown a call is running.
+    "nogil-counted": _Feature(
+        ("jm_inflight_enter",),
+        "the manifest declares nogil and this fragment does not count the "
+        "released call, so a close()/destroy() on another thread frees the "
+        "state under it (gh-2272); delete the fragment and re-run apply",
+    ),
+    "teardown-waits": _Feature(
+        ("jm_inflight_wait",),
+        "this object releases the GIL and this fragment's teardown frees "
+        "without waiting for a call still running (gh-2272); delete the "
+        "fragment and re-run apply",
+    ),
     # gh-1426 A: the record a release defaults its count from.
     "borrow-release": _Feature(
         ("_jm_borrowed",),
@@ -1510,7 +1525,11 @@ def signature_drift_details(existing: str, reference: str) -> "dict[str, str]":
     ex_feat = _method_feature_symbols(existing)
     ref_feat = _method_feature_symbols(reference)
     for n, markers in ref_feat.items():
-        missing = markers - ex_feat.get(n, frozenset())
+        missing = set(markers - ex_feat.get(n, frozenset()))
+        # gh-2272: a body that holds the GIL has nothing to count; saying
+        # so as well as "holding the GIL" names one fix twice.
+        if "nogil" in missing:
+            missing.discard("nogil-counted")
         if not missing:
             continue
         # Each marker says why in its own words. Composing one sentence

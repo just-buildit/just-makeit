@@ -1638,9 +1638,12 @@ codec-pack method, and a fixed-size result (a scalar, `void`,
 `status_return`, `error_negative`, `multi_output`, `out_type`) — in
 `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy accessors hoisted
 out first), so a thread-per-shard worker — one object + output buffer per
-thread — scales across cores instead of serialising on the GIL. Opt-in: it
-is sound only when the object is not shared across threads concurrently (one
-object per stream). On a `varargs` or `manual_stub` method, whose CPython
+thread — scales across cores instead of serialising on the GIL. Opt-in: two
+released calls on ONE object run at once only if its kernel allows that (one
+object per stream is the contract jm assumes). Closing an object from another
+thread is safe: its `destroy()` / `close()` / `__exit__` refuses new calls
+(`RuntimeError`), waits with the GIL released for a call still running, then
+frees (gh-2272), so a released kernel must return in bounded time. On a `varargs` or `manual_stub` method, whose CPython
 function is yours, it is refused: release the GIL in that function (gh-2259).
 
 #### Capsule-typed params (gh-432)

@@ -685,7 +685,7 @@ def render(template: str, ctx: dict) -> str:
     # compile, and a per-generator slot is how one generator forgets.
     ctx = {
         **INC.layout_slots(ctx),
-        "jm_array_arg_c": _coerce.ARRAY_ARG_C,
+        "jm_array_arg_c": _coerce.TU_HELPERS_C,
         **ctx,
     }
     result = template

@@ -15,6 +15,7 @@ from .. import _coerce
 from .. import _csym as CSYM
 from .. import _enumc
 from .. import _extramethods
+from .. import _inflight
 from .. import _borrow
 from .. import _outbuf
 from .. import _record
@@ -270,7 +271,9 @@ def _hoist_for_nogil(call_expr: str) -> tuple[str, str]:
     return "".join(decls), rewritten
 
 
-def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
+def _nogil_call(
+    decl: str, var: str, call_expr: str, nogil: bool, owner: str = "self"
+) -> str:
     """Emit ``<decl> <var> = <call>;``, with the GIL released when *nogil*.
 
     THE emitter for calling the author's kernel. It was two -- one for the
@@ -293,8 +296,14 @@ def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
 
     With *nogil* the numpy accessors are hoisted above the
     ``Py_BEGIN_ALLOW_THREADS`` block (:func:`_hoist_for_nogil`) and *var* is
-    declared outside it, so it survives to the code below. Sound only when
-    the object is not shared across threads concurrently.
+    declared outside it, so it survives to the code below.
+
+    gh-2272: the released block is counted on *owner*'s binding struct
+    (`_inflight.region`), so the teardown the same binding generates waits
+    for it instead of freeing under it; an object's ``self->handle`` is read
+    before the GIL is dropped (`_inflight.hoist_handle`), because that
+    teardown NULLs it first to refuse new calls. *owner* is the C pointer to
+    that struct: ``self`` for an object, ``w`` for a capsule's wrapper.
 
     Examples
     --------
@@ -302,28 +311,31 @@ def _nogil_call(decl: str, var: str, call_expr: str, nogil: bool) -> str:
         int _rc = k(self->handle);
     >>> print(_nogil_call("", "", "k(self->handle)", False), end="")
         k(self->handle);
-    >>> body = _nogil_call("", "", "k((float *)PyArray_DATA(a))", True)
+    >>> body = _nogil_call(
+    ...     "", "", "k(self->handle, (float *)PyArray_DATA(a))", True)
     >>> print(body[body.index("    float *"):], end="")
         float * _ng0 = (float *)PyArray_DATA(a);
+        void *_jm_h = self->handle;
+        jm_inflight_enter(&self->_jm_inflight);
         Py_BEGIN_ALLOW_THREADS
-        k(_ng0);
+        k(_jm_h, _ng0);
         Py_END_ALLOW_THREADS
+        jm_inflight_leave(&self->_jm_inflight);
     """
     if not nogil:
         lead = f"{decl} {var} = " if var else ""
         return f"    {lead}{call_expr};\n"
     stmt = f"{var} = " if var else ""
     hoist, rewritten = _hoist_for_nogil(call_expr)
+    h_decl, rewritten = _inflight.hoist_handle(rewritten)
     return (
-        "    /* nogil: GIL released across the pure-C kernel — sound only when\n"
-        "     * this object is not shared across threads concurrently (one\n"
-        "     * object per stream); the kernel touches only this object's\n"
-        "     * state/buffers and the caller's input. */\n"
+        "    /* nogil: GIL released across the pure-C kernel. Two calls on\n"
+        "     * one object may run at once only if its kernel allows it; a\n"
+        "     * teardown waits for a running call (gh-2272). */\n"
         f"{hoist}"
         + (f"    {decl} {var};\n" if var else "")
-        + "    Py_BEGIN_ALLOW_THREADS\n"
-        f"    {stmt}{rewritten};\n"
-        "    Py_END_ALLOW_THREADS\n"
+        + h_decl
+        + _inflight.region(owner, f"    {stmt}{rewritten};\n")
     )
 
 

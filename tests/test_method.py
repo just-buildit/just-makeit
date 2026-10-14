@@ -2440,7 +2440,10 @@ class TestMethodSingleRecord:
         )  # hoisted above the block
         assert "tone_metrics_t _r;" in ext  # declared outside the block
         assert "Py_BEGIN_ALLOW_THREADS" in ext
-        assert "_r = tm_analyze(self->handle," in ext
+        # gh-2272: the state is read before the release, so a teardown
+        # that NULLs self->handle to refuse new calls cannot reach it.
+        assert "void *_jm_h = self->handle;" in ext
+        assert "_r = tm_analyze(_jm_h," in ext
         assert "Py_END_ALLOW_THREADS" in ext
         # the input's final Py_DECREF stays under the GIL, after the released
         # block (rindex skips the earlier error-path DECREF).

@@ -33,6 +33,7 @@ from typing import NamedTuple, TYPE_CHECKING
 
 from . import _capsule
 from . import _coerce
+from . import _inflight
 from . import _config as C
 from . import _csym as CSYM
 from ._builtins import require_scope_names
@@ -424,8 +425,15 @@ def render_tp_init(cfg: dict, module: str) -> str:
     # self->h and leak the prior handle. Release it first (mirrors tp_dealloc)
     # now that args parsed and validated, i.e. we are committed to rebuilding.
     # On the first init the struct is zeroed (tp_new), so this is a no-op.
+    # gh-2272: and not under a GIL-free call still running on the old one.
+    reinit_wait = (
+        "        self->closed = 1;\n"
+        + _inflight.wait("self", "self->closed = 0; return -1;")
+        if any(m.get("nogil") for m in C.handle_methods(cfg, module))
+        else ""
+    )
     reinit = f"""    if (!self->closed && self->h) {{
-        {_destroy_silent(cfg, module)}
+{reinit_wait}        {_destroy_silent(cfg, module)}
         self->h = NULL;
         self->closed = 1;
     }}
@@ -959,8 +967,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     margs = list(m.get("args", []))
     returns = m.get("returns")
     nogil = bool(m.get("nogil"))
-    gil_open = "    Py_BEGIN_ALLOW_THREADS\n" if nogil else ""
-    gil_close = "    Py_END_ALLOW_THREADS\n" if nogil else ""
+    # gh-2272: counted, so close() waits for a released call to finish.
+    gil_open = _inflight.opening("self") if nogil else ""
+    gil_close = _inflight.closing("self") if nogil else ""
 
     closed_guard = f"""    if (self->closed) {{
         PyErr_SetString(PyExc_RuntimeError, "{tname} is closed");
@@ -1801,11 +1810,14 @@ def render_type(
         for gi, g in enumerate(C.handle_getters(cfg, module))
         if g.get("cache")
     )
+    # gh-2272: the in-flight count, on a handle with a GIL-free method.
+    releases = any(m.get("nogil") for m in C.handle_methods(cfg, module))
+    inflight_field = _inflight.struct_field() if releases else ""
     struct = f"""typedef struct {{
     PyObject_HEAD
     {htype} *h;
     int       closed;
-{stash_fields}{cache_fields}}} {obj};
+{stash_fields}{cache_fields}{inflight_field}}} {obj};
 """
 
     # RAII — idempotent close + context-manager + dealloc (composer pattern).
@@ -1836,11 +1848,20 @@ def render_type(
         close_body = f"""        {destroy}
         self->closed = 1;"""
 
+    # gh-2272: a method that released the GIL may still be running on
+    # self->h. Refuse new calls first (every method checks `closed`), then
+    # wait for it; the free below reads a handle nothing is using.
+    wait_s = (
+        "        self->closed = 1;\n"
+        + _inflight.wait("self", "self->closed = 0; return NULL;")
+        if releases
+        else ""
+    )
     close = f"""static PyObject *
 {tname}_close({obj} *self, PyObject *Py_UNUSED(ignored))
 {{
     if (!self->closed && self->h) {{
-{close_body}
+{wait_s}{close_body}
     }}
     Py_RETURN_NONE;
 }}
@@ -1873,7 +1894,7 @@ static PyObject *
     if (!self->closed && self->h) {{
         {destroy}
     }}
-    Py_TYPE(self)->tp_free((PyObject *)self);
+{_inflight.free("self") if releases else ""}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """
 
@@ -2082,7 +2103,7 @@ def render_ext(
 
 #include "{header}"
 {weak_decl}
-{_coerce.ARRAY_ARG_C}""",
+{_coerce.TU_HELPERS_C}""",
         render_enum_tables(cfg, module),
         render_type(cfg, module, doc_blocks),
     ]

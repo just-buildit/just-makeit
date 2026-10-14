@@ -64,6 +64,7 @@ from __future__ import annotations
 import re
 
 from .. import _config as C
+from .. import _inflight
 from .._gluedoc import glue_methods
 from ._diagnostics import _c_string_literal
 from ._parse import _build_ml_doc
@@ -342,11 +343,53 @@ def _inherited_error(spec: dict, exit_method: dict) -> tuple[str, str]:
     )
 
 
+#: The local a waiting teardown holds the state in once ``self->handle`` is
+#: NULL (gh-2272).
+_TAKEN = "_jm_st"
+
+
+def _take_and_wait(waits: bool) -> tuple[str, str]:
+    """``(prologue, state_expr)`` for a teardown inside ``if (self->handle)``.
+
+    gh-2272: an object with a GIL-free method must not free under a call
+    still running it. The prologue NULLs ``self->handle`` FIRST -- so every
+    method, a call starting now included, refuses through its existing
+    guard -- then waits for the running ones with the GIL released, and the
+    free reads the state from a local. Without a released method there is
+    nothing to wait for, and the body is the one it always was.
+
+    Examples
+    --------
+    >>> _take_and_wait(False)
+    ('', 'self->handle')
+    >>> pro, st = _take_and_wait(True)
+    >>> st
+    '_jm_st'
+    >>> print(pro, end="")
+    ... # doctest: +ELLIPSIS
+            void *_jm_st = self->handle;
+            self->handle = NULL;
+    ...
+            if (jm_inflight_wait(&self->_jm_inflight) < 0) {
+                self->handle = _jm_st; return NULL;
+            }
+    """
+    if not waits:
+        return "", "self->handle"
+    return (
+        f"        void *{_TAKEN} = self->handle;\n"
+        "        self->handle = NULL;\n"
+        + _inflight.wait("self", f"self->handle = {_TAKEN}; return NULL;"),
+        _TAKEN,
+    )
+
+
 def _teardown_body(
     component: str,
     spec: dict,
     exit_method: dict | None,
     dfn: str,
+    waits: bool = False,
 ) -> str:
     """The shared ``close()``/``__exit__`` body.
 
@@ -360,6 +403,15 @@ def _teardown_body(
     falling back to the generic default. See `_inherited_error`.
     """
     if spec.get("returns") != "int":
+        if waits:
+            prologue, st = _take_and_wait(True)
+            return (
+                "    if (self->handle) {\n"
+                f"{prologue}"
+                f"        {dfn}({st});\n"
+                "    }\n"
+                "    Py_RETURN_NONE;\n"
+            )
         return (
             "    if (self->handle) {\n"
             f"        {dfn}(self->handle);\n"
@@ -370,12 +422,12 @@ def _teardown_body(
     if exit_method:
         category, _inherited_msg = _inherited_error(spec, exit_method)
         message = _inherited_msg or _DEFAULT_MSG.format(component=component)
-        return _teardown_int_body(component, category, message, dfn)
+        return _teardown_int_body(component, category, message, dfn, waits)
     category = spec.get("error") or _DEFAULT_CATEGORY
     message = spec.get("error_message") or _DEFAULT_MSG.format(
         component=component
     )
-    return _teardown_int_body(component, category, message, dfn)
+    return _teardown_int_body(component, category, message, dfn, waits)
 
 
 def _park_body(wake_call: str) -> str:
@@ -415,7 +467,7 @@ def _park_body(wake_call: str) -> str:
 
 
 def _teardown_int_body(
-    component: str, category: str, message: str, dfn: str
+    component: str, category: str, message: str, dfn: str, waits: bool = False
 ) -> str:
     """The fallible teardown block, once — inherited and declared alike.
 
@@ -424,13 +476,25 @@ def _teardown_int_body(
     differing only in where their strings came from is precisely the shape
     this whole key is removing.
     """
+    if waits:
+        prologue, st = _take_and_wait(True)
+        call = (
+            f"{prologue}"
+            f"        int rc = {dfn}({st});\n"
+            "        /* gh-541: the handle is already clear, so a second\n"
+            "           call is a no-op rather than a double free. */\n"
+        )
+    else:
+        call = (
+            f"        int rc = {dfn}(self->handle);\n"
+            "        /* gh-541: clear the handle before reporting, so a second\n"
+            "           call is a no-op rather than a double free — the state is\n"
+            "           released whatever the status says. */\n"
+            "        self->handle = NULL;\n"
+        )
     return (
         "    if (self->handle) {\n"
-        f"        int rc = {dfn}(self->handle);\n"
-        "        /* gh-541: clear the handle before reporting, so a second\n"
-        "           call is a no-op rather than a double free — the state is\n"
-        "           released whatever the status says. */\n"
-        "        self->handle = NULL;\n"
+        f"{call}"
         "        if (rc != 0) {\n"
         f"            PyErr_SetString(PyExc_{category},\n"
         f"{_c_string_literal(message, 28)});\n"
@@ -562,6 +626,7 @@ def make_destroy_ctx(
     *,
     csym: str,
     lends: bool,
+    releases: "bool | None" = None,
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -644,6 +709,16 @@ def make_destroy_ctx(
     dfn = c_fn(csym, spec, create_fn)
     validate_destroy_spec(component, spec)
     fallible = spec.get("returns") == "int"
+    # gh-2272: a method that releases the GIL can still be running when an
+    # explicit teardown arrives on another thread. A lending object parks
+    # its state for tp_dealloc (gh-2187), which a running call's reference
+    # already holds off; every other object waits for the call here.
+    # *releases* is passed only to render the OTHER status, which is how a
+    # module fragment recognises a teardown jm wrote before the object
+    # started or stopped releasing (`_object._relent_teardown`).
+    if releases is None:
+        releases = any(m.get("nogil") for m in (methods or []))
+    waits = releases and not lends
 
     if fallible:
         # gh-541: the one path that must NOT raise. Stated in the generated C
@@ -759,8 +834,12 @@ def make_destroy_ctx(
     body = (
         _park_body(wake_call)
         if lends
-        else _teardown_body(component, spec, exit_method or None, dfn)
+        else _teardown_body(component, spec, exit_method or None, dfn, waits)
     )
+    if releases:
+        # The count lives on every releasing object, lending or not: the
+        # region counts on it either way. A wait may have allocated its lock.
+        dealloc += _inflight.free("self")
 
     names = destroy_py_names(spec)
     # gh-647: one definition of the teardown prose, rendered to both faces.
@@ -875,10 +954,13 @@ def make_destroy_ctx(
         "destroy_dealloc_call": dealloc,
         # gh-2187: where a lending object's teardown parks its state.
         "destroy_fields": (
-            f"    {csym}_state_t *{PARK_FIELD};"
-            "  /* gh-2187: freed by tp_dealloc */\n"
-            if lends
-            else ""
+            (
+                f"    {csym}_state_t *{PARK_FIELD};"
+                "  /* gh-2187: freed by tp_dealloc */\n"
+                if lends
+                else ""
+            )
+            + (_inflight.struct_field() if releases else "")
         ),
         "destroy_method_body": body,
         # gh-805 §H: the two were one string on purpose (gh-541 — the explicit

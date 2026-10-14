@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 
+from ._inflight import INFLIGHT_C
 from ._keys import INIT_PARAM_FIELDS, SHAPE_KEYS
 
 # The C function parameter type a path arg presents to user C code: the callee
@@ -631,6 +632,12 @@ jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
 }
 #endif /* JM_ARRAY_ARG_DEFINED */
 """
+
+#: Everything a binding translation unit is handed once, at its head: the
+#: array-argument converter and the in-flight count a GIL-free call and the
+#: teardown share (gh-2272). Every binding kind embeds THIS, so no kind can
+#: be handed one and not the other.
+TU_HELPERS_C = ARRAY_ARG_C + "\n" + INFLIGHT_C
 
 
 def array_arg(

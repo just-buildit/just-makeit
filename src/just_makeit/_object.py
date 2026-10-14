@@ -73,6 +73,7 @@ from ._docstring import (
 )
 from ._context._parse import _build_ml_doc
 from ._context._destroy import PARK_FIELD
+from . import _inflight
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
 # temp tree whose headers carry only template Doxygen. Docstring derivation
@@ -1234,7 +1235,12 @@ def _view_frag_id(view: dict) -> str:
 
 
 def fragment_destroy_ctx(
-    cfg: dict, obj: str, ctx: dict, *, lends: bool
+    cfg: dict,
+    obj: str,
+    ctx: dict,
+    *,
+    lends: bool,
+    releases: "bool | None" = None,
 ) -> "dict[str, str]":
     """A module fragment's destructor slots, for one lending status.
 
@@ -1258,6 +1264,10 @@ def fragment_destroy_ctx(
     lends : bool
         Whether the teardown parks the state for ``tp_dealloc`` rather than
         freeing it (`_borrow.lends`).
+    releases : bool, optional
+        Whether a method releases the GIL, so the teardown waits for it
+        (gh-2272). Derived from the manifest when omitted; passed only to
+        render the other status.
 
     Returns
     -------
@@ -1277,6 +1287,7 @@ def fragment_destroy_ctx(
         create_fn=C.object_create_fn(cfg, obj) or "",
         csym=ctx["csym"],
         lends=lends,
+        releases=releases,
     )
 
 
@@ -2085,6 +2096,9 @@ def jm_owned_functions(
     )
     if _declares_park(rendered) and not _declares_park(into):
         teardown = ()
+    # gh-2272: the same for a teardown that waits on the in-flight count.
+    if _declares_inflight(rendered) and not _declares_inflight(into):
+        teardown = ()
     return teardown + _record.dtype_builders(rendered)
 
 
@@ -2109,6 +2123,26 @@ def _declares_park(text: str) -> bool:
     return re.search(rf"\*\s*{PARK_FIELD}\s*;", _code_mask(text)) is not None
 
 
+def _declares_inflight(text: str) -> bool:
+    """Whether *text*'s object struct declares the in-flight count (gh-2272).
+
+    Examples
+    --------
+    >>> _declares_inflight("    jm_inflight_t _jm_inflight;  /* x */")
+    True
+    >>> _declares_inflight("jm_inflight_wait(&self->_jm_inflight)")
+    False
+    """
+    from ._docsync import _code_mask
+
+    return (
+        re.search(
+            rf"\bjm_inflight_t\s+{_inflight.FIELD}\s*;", _code_mask(text)
+        )
+        is not None
+    )
+
+
 def _relent_teardown(
     cfg: dict,
     ctx: dict,
@@ -2116,8 +2150,13 @@ def _relent_teardown(
     kept: "dict[str, str]",
     names: "tuple[str, ...]",
 ) -> "tuple[str, ...]":
-    """The teardown wrappers in *kept* that jm wrote for the OTHER lending
-    status (gh-2187), and so are jm's to re-render.
+    """The teardown wrappers in *kept* that jm wrote for ANOTHER lending
+    (gh-2187) or GIL-release (gh-2272) status, and so are jm's to re-render.
+
+    A teardown waits for a released call only on an object that releases
+    one, so a module object that gained a ``nogil`` method after its
+    fragment was written kept a ``destroy()`` that freed under it -- the
+    ordinary sequence, ``jm object --module`` then ``jm method --nogil``.
 
     Compared token for token (`_docsync._norm_unit`): a formatter's layout,
     a comment or a docstring is not an edit, and a body the author changed
@@ -2138,16 +2177,30 @@ def _relent_teardown(
     if not stale:
         return ()
     obj = ctx["component"]
-    flipped = fragment_destroy_ctx(
-        cfg, obj, ctx, lends=not _borrow.lends(cfg, obj)
-    )
-    other = _extract_c_function_bodies(
-        R.render_module_ext_fragment({**ctx, **flipped})
-    )
+    lends = _borrow.lends(cfg, obj)
+    releases = any(m.get("nogil") for m in C.methods(cfg, obj))
+    others = [
+        _extract_c_function_bodies(
+            R.render_module_ext_fragment(
+                {
+                    **ctx,
+                    **fragment_destroy_ctx(
+                        cfg, obj, ctx, lends=lnd, releases=rel
+                    ),
+                }
+            )
+        )
+        for lnd in (lends, not lends)
+        for rel in (releases, not releases)
+        if (lnd, rel) != (lends, releases)
+    ]
     return tuple(
         n
         for n in stale
-        if n in other and _norm_unit(kept[n]) == _norm_unit(other[n])
+        if any(
+            n in other and _norm_unit(kept[n]) == _norm_unit(other[n])
+            for other in others
+        )
     )
 
 
