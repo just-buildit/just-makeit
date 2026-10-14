@@ -1288,9 +1288,10 @@ class TestRealtimeStream:
         """
         s = _composer.render_composer_type(self._rt_cfg(), "wfm_compose")
 
-        # The docstring names the unit outright.
-        assert "SAMPLE RATE in Hz" in s
-        assert "not a speed multiplier" in s
+        # The docstring names the unit outright -- the stub's Parameters
+        # entry, one text on both faces since gh-2283.
+        assert "Sample rate in **Hz** to pace against" in s
+        assert "speed multiplier" in s
 
         # A negative rate cannot be one, and used to disable pacing silently.
         assert "realtime must be >= 0" in s
@@ -1532,7 +1533,8 @@ class TestPyiDocstrings:
     def test_factory_docstrings(self):
         pyi = _composer.render_pyi(_cfg(), "wfm_compose")
         assert "def tone(**kw: Any) -> Synth:" in pyi
-        assert '    """Return a Synth configured as a *tone* source."""' in pyi
+        # gh-2283: a numpy docstring now, the binding's text too.
+        assert '    """Return a Synth configured as a *tone* source.' in pyi
         assert "def qpsk(**kw: Any) -> Synth:" in pyi
 
     def test_close_docstring(self):

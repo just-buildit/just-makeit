@@ -2491,7 +2491,8 @@ static PyMethodDef {tname}_methods[] = {{
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
     .tp_getset    = {tname}_getset,{tp_methods_slot}
-    .tp_doc       = PyDoc_STR("{tname} — one composable source configuration."),
+    .tp_doc       = PyDoc_STR(
+        {_tp_doc_c(cfg, module, tname)}),
 }};
 """)
 
@@ -2535,12 +2536,13 @@ _factory_{fac}(PyObject *mod, PyObject *args, PyObject *kwds)
 def factory_method_rows(cfg: dict, module: str) -> list[str]:
     """PyMethodDef rows for the source factories (for the module table)."""
     oo = C.composer_oo(cfg, module)
+    src_t = C.composer_source(cfg, module)["type_name"]
     rows = []
     for fac in oo.get("factories", []):
         rows.append(
             f'    {{"{fac}", (PyCFunction)(void (*)(void))_factory_{fac}, '
             f"METH_VARARGS | METH_KEYWORDS,\n"
-            f'     "{fac}(**kw) -> {C.composer_source(cfg, module)["type_name"]}"}},'
+            f"     {_ml_doc_c(cfg, module, fac, f'{fac}(**kw) -> {src_t}')}}},"
         )
     return rows
 
@@ -2957,7 +2959,7 @@ static PyObject *
 """
         add_row = (
             f'    {{"add", (PyCFunction){tname}_add, METH_VARARGS,\n'
-            f'     "add(*others) -> {tl_tname}"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{tname}.add', f'add(*others) -> {tl_tname}')}}},\n"
         )
     parts.append(add_fn)
     parts.append(f"""
@@ -2969,7 +2971,7 @@ static PyGetSetDef {tname}_getset[] = {{
 static PyMethodDef {tname}_methods[] = {{
     {{"sum", (PyCFunction)(void (*)(void)){tname}_sum,
      METH_VARARGS | METH_KEYWORDS | METH_CLASS,
-     "sum(*sources, **segment_fields) -> {tname}"}},
+     {_ml_doc_c(cfg, module, f"{tname}.sum", f"sum(*sources, **segment_fields) -> {tname}")}}},
 {add_row}    {{NULL, NULL, 0, NULL}}
 }};
 """)
@@ -2985,7 +2987,7 @@ static PyMethodDef {tname}_methods[] = {{
     .tp_getset    = {tname}_getset,
     .tp_methods   = {tname}_methods,
     .tp_doc       = PyDoc_STR(
-        "{tname} — one segment: a list of sources + its span."),
+        {_tp_doc_c(cfg, module, tname)}),
 }};
 """)
     return "\n".join(parts)
@@ -3082,7 +3084,7 @@ static PyGetSetDef {tname}_getset[] = {{
 
 static PyMethodDef {tname}_methods[] = {{
     {{"add", (PyCFunction){tname}_add, METH_VARARGS,
-     "add(*segments) -> {tname}"}},
+     {_ml_doc_c(cfg, module, f"{tname}.add", f"add(*segments) -> {tname}")}}},
     {{NULL, NULL, 0, NULL}}
 }};
 
@@ -3098,7 +3100,8 @@ static PyTypeObject {type_obj} = {{
     .tp_as_mapping = &{tname}_as_mapping,
     .tp_getset    = {tname}_getset,
     .tp_methods   = {tname}_methods,
-    .tp_doc       = PyDoc_STR("{tname} — segments played back-to-back."),
+    .tp_doc       = PyDoc_STR(
+        {_tp_doc_c(cfg, module, tname)}),
 }};
 """
 
@@ -3345,8 +3348,22 @@ def _struct_field_docs(
     answer (gh-1300). ``{}`` without a *root*, which is every caller that
     renders for comparison rather than to write.
     """
+    return _included_docs(cfg, module, root)[1]
+
+
+def _included_docs(
+    cfg: dict, module: str, root: "Path | None"
+) -> "tuple[dict[str, str], dict[str, dict[str, str]], dict[str, str]]":
+    """``(by_name, by_struct, struct_blocks)`` from the binding's headers.
+
+    The one read of the headers :func:`render_ext` ``#include``s, transitively
+    (``_object._included_member_docs``): member docs by bare name (what an
+    enumerator's doc is), by struct (what a field's is), and the block each
+    struct definition opens with (what a source or segment type's class doc
+    is, gh-2283). All three empty without a *root*.
+    """
     if root is None:
-        return {}
+        return {}, {}, {}
     from ._object import _included_member_docs
 
     header = C.capsule_header(cfg, module) or INC.core_include(
@@ -3355,7 +3372,7 @@ def _struct_field_docs(
     gen = _source_generates(cfg, module)
     seeds = [header] + ([gen["header"]] if gen else [])
     text = "".join(f'#include "{h}"\n' for h in seeds)
-    return _included_member_docs(INC.inc_dir(Path(root)), text)[1]
+    return _included_member_docs(INC.inc_dir(Path(root)), text)
 
 
 def _header_field_docs(
@@ -3399,7 +3416,17 @@ def resolve_field_docs(cfg: dict, module: str, root: "Path | None") -> dict:
         for table, f, _s, doc in _header_field_docs(cfg, module, root)
         if doc
     ]
-    if not found:
+    # gh-2283: the type's own documentation is its struct's, read in the
+    # same pass and resolved into the same copy, so the `.pyi` class
+    # docstring and `tp_doc` read the one answer -- as the fields do.
+    by_name, _structs, blocks = _included_docs(cfg, module, root)
+    classes = {
+        table: blocks[str(get(cfg, module).get("struct") or "")]
+        for table, get in _FIELD_TABLES
+        if str(get(cfg, module).get("struct") or "") in blocks
+    }
+    values = _factory_value_docs(cfg, module, by_name)
+    if not (found or classes or values):
         return cfg
     out = copy.deepcopy(cfg)
     tables = dict(_FIELD_TABLES)
@@ -3407,7 +3434,63 @@ def resolve_field_docs(cfg: dict, module: str, root: "Path | None") -> dict:
         for f in tables[table](out, module).get("fields", []):
             if f.get("name") == name:
                 f["doc"] = doc
+    mod = out["module"][module]
+    for table, raw in classes.items():
+        mod[table][_CLASS_BLOCK_KEY] = raw
+    if values:
+        mod.setdefault("oo", {})[_VALUE_DOCS_KEY] = values
     return out
+
+
+#: Where :func:`resolve_field_docs` leaves a header-derived doc on the
+#: resolved copy: a source / segment table's struct block, and the oo table's
+#: ``{factory: doc}``. Transient render state, spelled with the leading ``_``
+#: that `_keys` and the manifest writer both pass over (``_doc_blocks``).
+_CLASS_BLOCK_KEY = "_struct_doc_block"
+_VALUE_DOCS_KEY = "_factory_value_docs"
+
+
+def _factory_value_docs(
+    cfg: dict, module: str, by_name: "dict[str, str]"
+) -> "dict[str, str]":
+    """``{factory: doc}`` -- what each factory's discriminant value means.
+
+    gh-2283. A factory presets the discriminant to its own name, and that
+    value is an ``[[enum]]`` choice; when the enum declares ``enumerators``,
+    the enumerator's header doc is what the choice means. The mapping is the
+    declared one gh-901 built for every other enum face
+    (``C.enum_choice_docs``), never inferred from the discriminant field's
+    prose: ``"tone: complex sinusoid."`` read out of a sentence is the guess
+    gh-901 rules out.
+    """
+    from ._docstring import DoxyBlock, member_doc_key
+
+    disc = C.composer_oo(cfg, module).get("discriminant")
+    field = next(
+        (
+            f
+            for f in C.composer_source(cfg, module).get("fields", [])
+            if f.get("name") == disc
+        ),
+        None,
+    )
+    if not field or not field.get("enum"):
+        return {}
+    blocks = {
+        member_doc_key(k): DoxyBlock(brief=v) for k, v in by_name.items()
+    }
+    values = C.enum_choice_docs(cfg, blocks).get(
+        C.enum_doc_key(
+            "string_enum:" + ",".join(C.enums(cfg).get(field["enum"], []))
+        ),
+        [],
+    )
+    docs = dict(values)
+    return {
+        fac: docs[fac]
+        for fac in C.composer_oo(cfg, module).get("factories", [])
+        if docs.get(fac)
+    }
 
 
 def field_doc_drift(root: Path, cfg: dict) -> "list":
@@ -3712,13 +3795,13 @@ static PyObject *
     if C.composer_json(cfg, module):
         json_rows = (
             f'    {{"from_json", (PyCFunction){cname}_from_json,\n'
-            f"     METH_VARARGS | METH_CLASS,"
-            f' "from_json(json) -> {cname}"}},\n'
+            f"     METH_VARARGS | METH_CLASS,\n"
+            f"     {_ml_doc_c(cfg, module, f'{cname}.from_json', f'from_json(json) -> {cname}')}}},\n"
             f'    {{"from_file", (PyCFunction){cname}_from_file,\n'
-            f"     METH_VARARGS | METH_CLASS,"
-            f' "from_file(path) -> {cname}"}},\n'
+            f"     METH_VARARGS | METH_CLASS,\n"
+            f"     {_ml_doc_c(cfg, module, f'{cname}.from_file', f'from_file(path) -> {cname}')}}},\n"
             f'    {{"to_json", (PyCFunction){cname}_to_json, METH_NOARGS,\n'
-            f'     "to_json() -> str"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{cname}.to_json', 'to_json() -> str')}}},\n"
         )
 
     # Feature 3 — a generated stream() iterator (drains execute into blocks),
@@ -3797,18 +3880,11 @@ static PyObject *
             if has_rt
             else ""
         )
-        # `realtime` is a SAMPLE RATE in Hz, and saying so is the whole job
-        # of this line. The previous wording -- "(realtime=fs paces)" -- reads
-        # as prose about what happens when pacing is on rather than as a
-        # statement that the argument's value IS fs, and the natural misread
-        # (a 0.0-1.0 scale factor, or a boolean-ish enable) is silent: passing
-        # 1.0 asks for one sample per second, so the first block blocks for
-        # `block` seconds with no error and nothing to grep for.
-        rt_doc = (
-            "stream(block=4096, realtime=0.0) -> iterator\\n\\n"
-            "realtime is the SAMPLE RATE in Hz to pace against -- pass "
-            "your fs (e.g. realtime=10e6), not a speed multiplier. "
-            "0 streams as fast as possible."
+        # gh-2283: the signature line only. What `realtime` means -- a
+        # SAMPLE RATE in Hz, never a speed multiplier -- is the docstring's
+        # `Parameters` entry, one text for both faces (`member_doc_lines`).
+        rt_sig = (
+            "stream(block=4096, realtime=0.0) -> iterator"
             if has_rt
             else "stream(block=4096) -> iterator of complex64 blocks"
         )
@@ -3892,7 +3968,7 @@ static PyObject *
         stream_row = (
             f'    {{"stream", (PyCFunction)(void (*)(void)){cname}_stream,\n'
             f"     METH_VARARGS | METH_KEYWORDS,\n"
-            f'     "{rt_doc}"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{cname}.stream', rt_sig)}}},\n"
         )
 
     # Feature 5 — a generic `to_dict()`: serialize the *resolved* composition
@@ -3985,7 +4061,7 @@ fail:
 """
         to_dict_row = (
             f'    {{"to_dict", (PyCFunction){cname}_to_dict, METH_NOARGS,\n'
-            f'     "to_dict() -> dict (resolved repeat/continuous/segments)"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{cname}.to_dict', 'to_dict() -> dict')}}},\n"
         )
 
     # gh-317: additional delegated serializers (to_sigmf, …) over the segments.
@@ -4415,10 +4491,12 @@ static PyObject *
 
 {stream_code}{to_dict_code}{serializer_code}static PyMethodDef {cname}_methods[] = {{
     {{"execute", (PyCFunction){cname}_execute, METH_VARARGS,
-     "execute(n) -> ndarray[complex64]"}},
+     {_ml_doc_c(cfg, module, f"{cname}.execute", "execute(n) -> ndarray[complex64]")}}},
     {{"compose", (PyCFunction)(void (*)(void)){cname}_compose,
-     METH_VARARGS | METH_KEYWORDS, "compose(block=4096) -> ndarray[complex64]"}},
-    {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
+     METH_VARARGS | METH_KEYWORDS,
+     {_ml_doc_c(cfg, module, f"{cname}.compose", "compose(block=4096) -> ndarray[complex64]")}}},
+    {{"close", (PyCFunction){cname}_close, METH_NOARGS,
+     {_ml_doc_c(cfg, module, f"{cname}.close", "close() -> None")}}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
 {stream_row}{to_dict_row}{serializer_rows}{json_rows}{extra_rows}    {{NULL, NULL, 0, NULL}}
@@ -4434,7 +4512,8 @@ static PyTypeObject {type_obj} = {{
     .tp_dealloc   = (destructor){cname}_dealloc,
     .tp_getset    = {cname}_getset,
     .tp_methods   = {cname}_methods,
-    .tp_doc       = PyDoc_STR("{cname} — multi-segment composer."),
+    .tp_doc       = PyDoc_STR(
+        {_tp_doc_c(cfg, module, cname)}),
 }};
 """
 
@@ -4971,12 +5050,24 @@ def _pyi_doc_lines(
     type_name: str,
     fields: list[dict],
     enum_reg: dict[str, list[str]],
+    raw_block: str = "",
 ) -> list[str]:
     """4-space-indented numpy-style class docstring from a field list (gh-375).
 
     gh-747: layout, wrapping and delimiters are `_docstring.class_docstring`'s;
     this function's job is deriving each field's type line and notes.
+
+    gh-2283: *raw_block* is the Doxygen block the type's struct opens with
+    (:func:`resolve_field_docs`). Its ``@brief`` is the summary and its body
+    the extended description -- the shape a handle takes from its
+    ``create_fn`` (``_handle._pyi_class_docstring``) -- and without one the
+    summary is ``"<Type>."``, as it always was.
     """
+    from ._docstring import group_paragraphs, parse_doxygen_block
+
+    block = parse_doxygen_block(raw_block) if raw_block else None
+    summary = block.brief if block and block.brief else f"{type_name}."
+    body = group_paragraphs(block.body) if block and block.brief else []
     params: list[ClassParam] = []
     for f in fields:
         ann = _pyi_field_type(f)
@@ -5008,7 +5099,208 @@ def _pyi_doc_lines(
                 choice_str = ", ".join(f'``"{c}"``' for c in choices)
                 notes.append(f"One of {choice_str}.")
         params.append(ClassParam(type_line, tuple(notes)))
-    return class_docstring(f"{type_name}.", params=params)
+    return class_docstring(summary, body=body, params=params)
+
+
+def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
+    """``{type_name: docstring lines}`` for every type the module defines.
+
+    gh-2283. The ONE definition of each composer type's class docstring:
+    :func:`render_pyi` splices these lines into the class body, and each
+    type's ``tp_doc`` is derived from them (:func:`_tp_doc_c`), the rule
+    gh-642 set for an object and gh-1499 for a handle. ``tp_doc`` was a fixed
+    sentence per type -- ``"Synth — one composable source configuration."``
+    -- beside a stub documenting every field, so ``help(Synth)`` listed no
+    keyword the stub did.
+
+    Lines are the stub's: delimiters included, 4-space indented.
+    """
+    enum_reg = C.enums(cfg)
+    src = C.composer_source(cfg, module)
+    seg = C.composer_segment(cfg, module)
+    src_fields = _source_fields(cfg, module)
+    seg_fields = _segment_fields(cfg, module)
+    # The fs segment field also appears at the end of Synth.__init__.
+    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
+    out = {
+        src["type_name"]: _pyi_doc_lines(
+            src["type_name"],
+            src_fields + ([fs_field] if fs_field else []),
+            enum_reg,
+            str(src.get(_CLASS_BLOCK_KEY) or ""),
+        ),
+        seg["type_name"]: _pyi_doc_lines(
+            seg["type_name"],
+            src_fields + seg_fields,
+            enum_reg,
+            str(seg.get(_CLASS_BLOCK_KEY) or ""),
+        ),
+    }
+    tl_t = C.composer_timeline(cfg, module).get("type_name")
+    if tl_t:
+        out[tl_t] = class_docstring(f"{tl_t}.")
+    seg_t = seg["type_name"]
+    seg_or_tl = (
+        f"{seg_t} | {tl_t} | list[{seg_t}] | None"
+        if tl_t
+        else (f"{seg_t} | list[{seg_t}] | None")
+    )
+    cname = C.composer_oo(cfg, module).get("composer_type_name", "Composer")
+    # gh-747: the composer's own class docstring was a fourth hand-written
+    # copy of this layout. Its strings are short, but `seg_or_tl` interpolates
+    # the project's type names — long ones overflow the `segments :` line, and
+    # `reflow_pyi` reflows signatures, not docstring type lines.
+    out[cname] = class_docstring(
+        f"{cname}.",
+        params=[
+            ClassParam(
+                f"segments : {seg_or_tl}, default None",
+                ("Initial segment list.",),
+            ),
+            ClassParam(
+                "repeat : bool, default False",
+                ("Loop the sequence after the last segment.",),
+            ),
+            ClassParam(
+                "continuous : bool, default False",
+                ("Never finish; execute always returns the requested count.",),
+            ),
+            # gh-1499: a setting is a keyword of `__init__` like the
+            # three above, and its `doc` is read on the getset beside
+            # it -- this is its stub face. None of them were listed.
+            *[
+                ClassParam(
+                    f"{st['name']} : {_setting_py_type(st)}, optional",
+                    tuple(
+                        ["\n".join(authored_doc_lines(str(st["doc"])))]
+                        if st.get("doc")
+                        else []
+                    ),
+                )
+                for st in C.composer_settings(cfg, module)
+            ],
+        ],
+    )
+    return out
+
+
+def _tp_doc_c(cfg: dict, module: str, type_name: str) -> str:
+    """*type_name*'s ``tp_doc`` literal: its stub class docstring's text."""
+    from ._docstring import CLASS_INDENT, docstring_body
+
+    return _build_ml_doc(
+        docstring_body(type_doc_lines(cfg, module)[type_name], CLASS_INDENT)
+    )
+
+
+def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
+    """``{member: docstring lines}`` for every callable jm writes the doc of.
+
+    gh-2283. Keyed ``"<Type>.<method>"`` for a method and by bare name for a
+    module-level factory; the lines are the stub's, delimiters and indent
+    included (8 for a method, 4 for a factory). :func:`render_pyi` splices
+    them, and the method table's ``ml_doc`` is derived from them by
+    :func:`_ml_doc_c` -- each had been two fixed strings, a signature line at
+    runtime and a sentence in the stub, describing one member twice.
+
+    A factory's text comes from the doc engine
+    (``_docstring.render_numpy_doc``): what it makes, what its discriminant
+    value means when the header says (:func:`_factory_value_docs`), and that
+    its keywords are the source type's.
+    """
+    src_t = C.composer_source(cfg, module)["type_name"]
+    seg_t = C.composer_segment(cfg, module)["type_name"]
+    tl_t = C.composer_timeline(cfg, module).get("type_name")
+    oo = C.composer_oo(cfg, module)
+    cname = oo.get("composer_type_name", "Composer")
+    stream = C.composer_stream(cfg, module)
+
+    def one(text: str) -> list[str]:
+        return authored_docstring([text], 8)
+
+    out = {
+        f"{seg_t}.sum": one(f"Combine *sources* into a single {seg_t}."),
+        f"{cname}.execute": one("Execute for *n* samples."),
+        f"{cname}.compose": one("Compose the full sequence into one array."),
+        f"{cname}.close": one("Release native resources."),
+    }
+    if tl_t:
+        out[f"{seg_t}.add"] = one(f"Append segments; return a {tl_t}.")
+        out[f"{tl_t}.add"] = one("Append and return self.")
+    if stream.get("stream"):
+        # `realtime` is a SAMPLE RATE in Hz, and saying so is the whole job
+        # of its entry: the natural misread (a 0.0-1.0 scale factor) is
+        # silent -- 1.0 asks for one sample per second, so the first block
+        # blocks for `block` seconds with no error and nothing to grep for.
+        out[f"{cname}.stream"] = authored_docstring(
+            [
+                "Iterate the sequence in blocks.",
+                *(
+                    [
+                        "",
+                        "Parameters",
+                        "----------",
+                        "block : int",
+                        "    Samples per yielded array.",
+                        "realtime : float",
+                        "    Sample rate in **Hz** to pace against — pass",
+                        "    your ``fs`` (e.g. ``realtime=10e6``), not a",
+                        "    speed multiplier. ``0`` (the default) streams",
+                        "    as fast as possible.",
+                    ]
+                    if stream.get("realtime")
+                    else []
+                ),
+            ],
+            8,
+        )
+    if stream.get("to_dict"):
+        out[f"{cname}.to_dict"] = one(
+            "Serialise the composer state to a dict."
+        )
+    if C.composer_json(cfg, module):
+        out[f"{cname}.from_json"] = one(f"Build a {cname} from a JSON spec.")
+        out[f"{cname}.from_file"] = one(
+            f"Build a {cname} from a JSON spec file."
+        )
+        out[f"{cname}.to_json"] = one("Serialise the spec as JSON.")
+    disc = oo.get("discriminant")
+    values = oo.get(_VALUE_DOCS_KEY) or {}
+    for fac in oo.get("factories", []):
+        preset = f' with ``{disc}="{fac}"``' if disc else ""
+        out[fac] = render_numpy_doc(
+            DoxyBlock(
+                brief=f"Return a {src_t} configured as a *{fac}* source.",
+                body=[values[fac]] if values.get(fac) else [],
+                params=[
+                    (
+                        "**kw",
+                        f"Any keyword {src_t} takes{preset}; "
+                        f"``help({src_t})`` lists them.",
+                    )
+                ],
+                returns=f"The configured {src_t}.",
+            ),
+            fac,
+            [("**kw", "Any")],
+            src_t,
+            indent=4,
+        )
+    return out
+
+
+def _ml_doc_c(cfg: dict, module: str, member: str, sig: str) -> str:
+    """*member*'s ``ml_doc`` literal: *sig*, then its stub docstring's text.
+
+    The signature line leads, as on every jm method (gh-642): a
+    ``METH_VARARGS`` callable has no ``__text_signature__``, so it is the
+    only place ``help()`` shows the call.
+    """
+    from ._docstring import docstring_body
+
+    lines = member_doc_lines(cfg, module)[member]
+    indent = len(lines[0]) - len(lines[0].lstrip())
+    return _build_ml_doc([sig, "", *docstring_body(lines, indent)])
 
 
 def render_pyi(cfg: dict, module: str) -> str:
@@ -5017,7 +5309,6 @@ def render_pyi(cfg: dict, module: str) -> str:
     Covers the source / segment / timeline / composer types, the factories,
     and — when enabled — the JSON faces. Docstrings include defaults and enum
     choices from the manifest (gh-375)."""
-    enum_reg = C.enums(cfg)
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     oo = C.composer_oo(cfg, module)
@@ -5035,9 +5326,9 @@ def render_pyi(cfg: dict, module: str) -> str:
     # whenever a timeline exists — not only for the composer's stream().
     typing_imports = "Any, Iterator" if (has_stream or tl_t) else "Any"
 
-    # The fs segment field also appears at the end of Synth.__init__.
-    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
-    synth_doc_fields = src_fields + ([fs_field] if fs_field else [])
+    # gh-2283: one definition per docstring, which the binding reads too.
+    type_docs = type_doc_lines(cfg, module)
+    docs = member_doc_lines(cfg, module)
 
     lines = [
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
@@ -5063,7 +5354,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         "@disjoint_base",
         f"class {src_t}:",
     ]
-    lines.extend(_pyi_doc_lines(src_t, synth_doc_fields, enum_reg))
+    lines.extend(type_docs[src_t])
     lines += [
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         "fs: float = ...) -> None: ...",
@@ -5111,7 +5402,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         else:
             lines.append(f"    {c['name']}: {pytype}")
     lines += ["", "@disjoint_base", f"class {seg_t}:"]
-    lines.extend(_pyi_doc_lines(seg_t, src_fields + seg_fields, enum_reg))
+    lines.extend(type_docs[seg_t])
     lines += [
         f"    sources: list[{src_t}]",
         # gh-560: the segment's own scalar fields are getsets too (same
@@ -5127,20 +5418,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"{seg_scalar_sig}) -> None: ...",
         "    @classmethod",
         f"    def sum(cls, *sources: {src_t}, {seg_scalar_sig}) -> {seg_t}:",
-        f'        """Combine *sources* into a single {seg_t}."""',
+        *docs[f"{seg_t}.sum"],
     ]
     if tl_t:
         lines += [
             f"    def add(self, *others: {seg_t}) -> {tl_t}:",
-            f'        """Append segments; return a {tl_t}."""',
+            *docs[f"{seg_t}.add"],
             "",
             "@disjoint_base",
             f"class {tl_t}:",
-            f'    """{tl_t}."""',
+            *type_docs[tl_t],
             f"    segments: list[{seg_t}]",
             f"    def __init__(self, segments: list[{seg_t}]) -> None: ...",
             f"    def add(self, *segments: {seg_t}) -> {tl_t}:",
-            '        """Append and return self."""',
+            *docs[f"{tl_t}.add"],
             f"    def __iter__(self) -> Iterator[{seg_t}]: ...",
             "    def __len__(self) -> int: ...",
             # gh-560: `/` — a tp_as_sequence slot takes its index positionally
@@ -5152,48 +5443,11 @@ def render_pyi(cfg: dict, module: str) -> str:
         if tl_t
         else (f"{seg_t} | list[{seg_t}] | None")
     )
-    # gh-747: the composer's own class docstring was a fourth hand-written
-    # copy of this layout. Its strings are short, but `seg_or_tl` interpolates
-    # the project's type names — long ones overflow the `segments :` line, and
-    # `reflow_pyi` reflows signatures, not docstring type lines.
     lines += [
         "",
         "@disjoint_base",
         f"class {cname}:",
-        *class_docstring(
-            f"{cname}.",
-            params=[
-                ClassParam(
-                    f"segments : {seg_or_tl}, default None",
-                    ("Initial segment list.",),
-                ),
-                ClassParam(
-                    "repeat : bool, default False",
-                    ("Loop the sequence after the last segment.",),
-                ),
-                ClassParam(
-                    "continuous : bool, default False",
-                    (
-                        "Never finish; execute always returns the "
-                        "requested count.",
-                    ),
-                ),
-                # gh-1499: a setting is a keyword of `__init__` like the
-                # three above, and its `doc` is read on the getset beside
-                # it -- this is its stub face. None of them were listed.
-                *[
-                    ClassParam(
-                        f"{st['name']} : {_setting_py_type(st)}, optional",
-                        tuple(
-                            ["\n".join(authored_doc_lines(str(st["doc"])))]
-                            if st.get("doc")
-                            else []
-                        ),
-                    )
-                    for st in C.composer_settings(cfg, module)
-                ],
-            ],
-        ),
+        *type_docs[cname],
         f"    segments: list[{seg_t}]",
         "    repeat: bool",
         "    continuous: bool",
@@ -5213,9 +5467,9 @@ def render_pyi(cfg: dict, module: str) -> str:
         + ", **segment_kwargs"
         ") -> None: ...",
         "    def execute(self, n: int) -> NDArray[np.complex64]:",
-        '        """Execute for *n* samples."""',
+        *docs[f"{cname}.execute"],
         "    def compose(self, block: int = ...) -> NDArray[np.complex64]:",
-        '        """Compose the full sequence into one array."""',
+        *docs[f"{cname}.compose"],
     ]
     # gh-1190: a declared hand-written method needs a stub too, or a type
     # checker rejects the call that works. `args` and `returns` are raw Python
@@ -5236,29 +5490,12 @@ def render_pyi(cfg: dict, module: str) -> str:
         lines += [
             f"    def stream(self, block: int = ...{rt_arg})"
             " -> Iterator[NDArray[np.complex64]]:",
-            '        """Iterate the sequence in blocks.',
-            "",
-            *(
-                [
-                    "        Parameters",
-                    "        ----------",
-                    "        block : int",
-                    "            Samples per yielded array.",
-                    "        realtime : float",
-                    "            Sample rate in **Hz** to pace against — pass",
-                    "            your ``fs`` (e.g. ``realtime=10e6``), not a",
-                    "            speed multiplier. ``0`` (the default) streams",
-                    "            as fast as possible.",
-                ]
-                if C.composer_stream(cfg, module).get("realtime")
-                else []
-            ),
-            '        """',
+            *docs[f"{cname}.stream"],
         ]
     if C.composer_stream(cfg, module).get("to_dict"):
         lines += [
             "    def to_dict(self) -> dict:",
-            '        """Serialise the composer state to a dict."""',
+            *docs[f"{cname}.to_dict"],
         ]
     for s in C.composer_serializers(cfg, module):
         sig = "".join(
@@ -5278,23 +5515,26 @@ def render_pyi(cfg: dict, module: str) -> str:
         ]
     lines += [
         "    def close(self) -> None:",
-        '        """Release native resources."""',
+        *docs[f"{cname}.close"],
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",
     ]
     if C.composer_json(cfg, module):
         lines += [
             "    @classmethod",
-            f"    def from_json(cls, json: str) -> {cname}: ...",
+            f"    def from_json(cls, json: str) -> {cname}:",
+            *docs[f"{cname}.from_json"],
             "    @classmethod",
-            f"    def from_file(cls, path: str) -> {cname}: ...",
-            "    def to_json(self) -> str: ...",
+            f"    def from_file(cls, path: str) -> {cname}:",
+            *docs[f"{cname}.from_file"],
+            "    def to_json(self) -> str:",
+            *docs[f"{cname}.to_json"],
         ]
     lines.append("")
     for fac in oo.get("factories", []):
         lines += [
             f"def {fac}(**kw: Any) -> {src_t}:",
-            f'    """Return a {src_t} configured as a *{fac}* source."""',
+            *docs[fac],
         ]
     lines.append("")
     # gh-744: the third stub producer, reflowed like the other two
