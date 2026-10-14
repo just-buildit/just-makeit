@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+## [0.105.2] — 2026-10-14
+
+### Fixed
+
+- **An `int32_t` argument out of range says the same thing on every
+    platform** (gh-2269). It parsed through `l`, a C `long`, which is 32
+    bits on Windows, so there a value past `int32_t` was refused by
+    CPython's "Python int too large to convert to C long" before jm's range
+    check could say `out of range for int32_t [lo, hi]`. It now parses
+    through `L` into a `long long`, as `uint32_t` already did, and every
+    value past `int32_t` but inside a `long long` gets jm's message
+    everywhere.
+
+- **A `strict` refusal names the argument the caller passed** (gh-2271).
+    A `strict` input is refused rather than converted, and the refusal
+    named the binding's C local rather than the keyword: `prod(x[::2])`
+    raised "in must be a 1-D C-contiguous array". It now says
+    `x must be ...`, as the converting path and the `.pyi` already did,
+    for a scalar-element input and a record input alike.
+
 ## [0.105.1] — 2026-10-14
 
 ### Fixed
