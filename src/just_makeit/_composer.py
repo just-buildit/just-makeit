@@ -3959,8 +3959,11 @@ static PyObject *
         return NULL;
     }}
 {rt_check}
-    {cname}StreamObject *it =
-        PyObject_New({cname}StreamObject, &{cname}StreamType);
+    /* tp_alloc ZEROES the object, so a field nobody below names (gh-2272's
+       inflight count and lock) starts empty rather than as garbage that
+       dealloc would free (gh-2292). */
+    {cname}StreamObject *it = ({cname}StreamObject *)
+        {cname}StreamType.tp_alloc(&{cname}StreamType, 0);
     if (!it)
         return NULL;
     Py_INCREF(self);
