@@ -5228,10 +5228,57 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
         # `reflow_pyi` would otherwise wrap a long one on the stub alone.
         return summary_docstring(text, indent=8)
 
+    def para(text: str) -> list[str]:
+        # An authored paragraph, wrapped to fit the stub at a method's
+        # indent; `authored_docstring` keeps each line as given.
+        return textwrap.wrap(text, 79 - 8)
+
+    # gh-2296: the backing C has ONE read position (create -> execute* ->
+    # destroy, no reset), and execute, compose and every stream() iterator
+    # all advance it. Each face says so, or `compose()` after a preview
+    # `execute(n)` is a silently short "full sequence".
+    def cursor(*others: str) -> str:
+        return (
+            f"Reads the {cname}'s one cursor, shared with "
+            f"{' and '.join(f'``{o}``' for o in others)}: it continues "
+            f"where the last read stopped, and a drained {cname} yields "
+            f"nothing. Build a new {cname} to start over."
+        )
+
     out = {
         f"{seg_t}.sum": one(f"Combine *sources* into a single {seg_t}."),
-        f"{cname}.execute": one("Execute for *n* samples."),
-        f"{cname}.compose": one("Compose the full sequence into one array."),
+        f"{cname}.execute": authored_docstring(
+            [
+                "Execute for the next *n* samples.",
+                "",
+                *para(
+                    cursor("compose()", "stream()")
+                    + " A short or empty array means the sequence ended."
+                ),
+            ],
+            8,
+        ),
+        f"{cname}.compose": authored_docstring(
+            [
+                "Compose what remains of the sequence into one array.",
+                "",
+                *para(
+                    "On a fresh "
+                    + cname
+                    + " that is the full sequence; after ``execute(n)`` it "
+                    "is the rest. " + cursor("execute()", "stream()")
+                ),
+                # The generated compose() refuses a continuous spec up
+                # front: it has no end to compose to.
+                "",
+                "Raises",
+                "------",
+                "ValueError",
+                "    On a continuous spec, which never ends; use",
+                "    ``execute()`` or ``stream()``.",
+            ],
+            8,
+        ),
         f"{cname}.close": one("Release native resources."),
     }
     if tl_t:
@@ -5245,6 +5292,11 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
         out[f"{cname}.stream"] = authored_docstring(
             [
                 "Iterate the sequence in blocks.",
+                "",
+                *para(
+                    cursor("execute()", "compose()")
+                    + " Two live iterators interleave over one sequence."
+                ),
                 *(
                     [
                         "",
