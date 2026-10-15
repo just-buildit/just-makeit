@@ -198,14 +198,22 @@ def test_the_five_argument_call_records_calls(written):
     assert legacy["extra_info"] == {"unit": "call", "rate_unit": "calls/s"}
 
 
-#: Units the header must refuse, and why: a unit the JSON could not carry
-#: as written, or one that truncating would relabel.
+#: Units the header must refuse, and the exact refusal: a unit the JSON
+#: could not carry as written, or one that truncating would relabel. The
+#: message quotes the offending value, bounded and printable -- it is the
+#: invalid input -- and says NULL rather than printing one. "in-sample" is
+#: what doppler passes.
 _BAD_UNITS = {
-    '""': "unit must be 1 to 31 characters",
-    '"' + "u" * 32 + '"': "unit must be 1 to 31 characters",
-    "NULL": "unit must be 1 to 31 characters",
-    '"Bins"': "unit must be [a-z0-9_]",
-    '"bin\\"s"': "unit must be [a-z0-9_]",
+    '"in-sample"': 'unit "in-sample" must be [a-z0-9_]',
+    '""': 'unit "" must be 1 to 31 characters',
+    '"' + "u" * 32 + '"': 'unit "' + "u" * 32 + '" must be 1 to 31 characters',
+    '"' + "v" * 50 + '"': 'unit "'
+    + "v" * 40
+    + '..." must be 1 to 31 characters',
+    "NULL": "unit is NULL; it must be 1 to 31 characters",
+    '"Bins"': 'unit "Bins" must be [a-z0-9_]',
+    '"bin\\"s"': 'unit "bin\\x22s" must be [a-z0-9_]',
+    '"tab\\tbin"': 'unit "tab\\x09bin" must be [a-z0-9_]',
 }
 
 
@@ -217,7 +225,8 @@ def test_a_unit_the_json_cannot_carry_is_refused(tmp_path, expr):
         [str(exe)], cwd=tmp_path, capture_output=True, text=True
     )
     assert ran.returncode != 0, ran.stdout
-    assert f'jm_bench: row "bad": {_BAD_UNITS[expr]}' in ran.stderr
+    want = f'jm_bench: row "bad": {_BAD_UNITS[expr]}\n'
+    assert want in ran.stderr, ran.stderr
     assert not (tmp_path / "bench_units_core.json").exists()
 
 

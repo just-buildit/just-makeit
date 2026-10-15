@@ -207,6 +207,45 @@ jm_bench_strcpy(char *dst, size_t n, const char *src)
     dst[k] = '\0';
 }
 
+/* Refuse a row's unit, quoting it: `unit "in-sample" must be [a-z0-9_]`.
+ *
+ * The value is the invalid input, so it is shown bounded and printable: a
+ * byte outside printable ASCII, a quote or a backslash is written as \xNN,
+ * and past JM_BENCH_UNIT_SHOWN bytes the rest is cut to `...`. A NULL unit
+ * says so rather than being printed. `rule` is what the unit must be. */
+#define JM_BENCH_UNIT_SHOWN 40
+
+static inline void
+jm_bench_fail_unit(const char *row, const char *unit, const char *rule)
+{
+    /* Each shown byte takes at most 4 characters (\xNN), so the loop's
+     * bound leaves room for the `...` and the NUL. */
+    char   shown[4 * JM_BENCH_UNIT_SHOWN + 4];
+    char   why[sizeof(shown) + 64];
+    size_t o = 0;
+    const char *p;
+    if (!unit) {
+        snprintf(why, sizeof(why), "unit is NULL; it %s", rule);
+        jm_bench_fail(row, why);
+        return;
+    }
+    for (p = unit; *p && p - unit < JM_BENCH_UNIT_SHOWN; p++) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch >= 0x20 && ch < 0x7f && ch != '"' && ch != '\\')
+            shown[o++] = (char)ch;
+        else
+            o += (size_t)snprintf(shown + o, sizeof(shown) - o, "\\x%02x",
+                                  ch);
+    }
+    if (*p) {
+        memcpy(shown + o, "...", 3);
+        o += 3;
+    }
+    shown[o] = '\0';
+    snprintf(why, sizeof(why), "unit \"%s\" %s", shown, rule);
+    jm_bench_fail(row, why);
+}
+
 /* Copy times[0..rounds-1] into the bench: `rounds` timings, each of one
  * round of `iters` units of `unit` -- a steps() call over BENCH_N samples
  * is iters = BENCH_N, unit = JM_BENCH_SAMPLE.
@@ -231,12 +270,12 @@ jm_bench_add_unit(jm_bench_t *b, const char *name, const double *times,
     {
         size_t k = unit ? strlen(unit) : 0;
         if (k == 0 || k >= JM_BENCH_UNIT_LEN)
-            jm_bench_fail(name, "unit must be 1 to 31 characters");
+            jm_bench_fail_unit(name, unit, "must be 1 to 31 characters");
         for (size_t c = 0; c < k; c++) {
             char ch = unit[c];
             if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
                   || ch == '_'))
-                jm_bench_fail(name, "unit must be [a-z0-9_]");
+                jm_bench_fail_unit(name, unit, "must be [a-z0-9_]");
         }
     }
     /* Grow by doubling: N rows cost O(log N) reallocs. Each entry's `times`

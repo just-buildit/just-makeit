@@ -4,7 +4,8 @@
     the ones jm's generated benchmarks use (`JM_BENCH_SAMPLE`,
     `JM_BENCH_CALL`, `JM_BENCH_FRAME`), and a project passes its own
     (`"bin"`, `"tap"`) without editing the vendored header. A unit the JSON
-    could not carry as written stops the run, naming the row. The
+    could not carry as written stops the run, naming the row and quoting
+    the unit (`unit "in-sample" must be [a-z0-9_]`). The
     five-argument `jm_bench_add` still compiles and records calls, which is
     what `iters` was documented to count. The JSON keeps every field it had
     and adds `extra_info.unit` and `rate_unit` (`Sa/s` for a sample,

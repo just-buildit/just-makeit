@@ -81,12 +81,13 @@ jm_bench_add_unit(&_bench, "fft", times, ITERATIONS, NFFT, "bin");
 ```
 
 A unit is up to 31 characters of `[a-z0-9_]`, singular; anything else stops
-the run, naming the row. `jm_bench_add(&_bench, name, times, rounds, iters)`
-still compiles and records calls. In the JSON, `stats` `min`, `max`, `mean`,
-`stddev` and `median` stay per round, and each gains a `<stat>_per_unit`
-beside it (divided by `iterations`). `ops` is units per second. `extra_info`
-names the `unit` and its `rate_unit`, which `jm_bench_rate_label` derives in
-one place: `Sa/s` for a sample, `<unit>s/s` otherwise (`calls/s`, `bins/s`).
+the run, naming the row and quoting the offending unit.
+`jm_bench_add(&_bench, name, times, rounds, iters)` still compiles and records
+calls. In the JSON, `stats` `min`, `max`, `mean`, `stddev` and `median` stay
+per round, and each gains a `<stat>_per_unit` beside it (divided by
+`iterations`). `ops` is units per second. `extra_info` names the `unit` and
+its `rate_unit`, which `jm_bench_rate_label` derives in one place: `Sa/s` for
+a sample, `<unit>s/s` otherwise (`calls/s`, `bins/s`).
 A sample row adds `MSa_s`. The table's `Per` column says what its times
 cover, and `Throughput` is in the row's own unit, as the JSON states it. A
 row that names no unit is shown for what its producer guarantees: a
