@@ -37,8 +37,9 @@ each, renders every row through the marked copy and refuses a call no row
 reaches. A new shape's call is a new site, so it cannot land without a row,
 and the row brings the checks above with it.
 
-The ``batch`` shape drops its params the same way and is carried as a strict
-xfail (gh-2021), so this file turns red the day it is fixed.
+The ``batch`` shape reads no params, and refuses one (gh-2021, gh-2261:
+``tests/test_gh2261_batch_keys.py``); its rows carry none, and are here so
+the batch kernel call is reached and built like every other shape's.
 """
 
 from __future__ import annotations
@@ -177,21 +178,20 @@ ROWS = [
         "    return n + (size_t)k <= 8 ? buf + k : NULL;",
         (("o.lend(3, 1).tolist()", "[2.0, 3.0, 4.0]"),),
     ),
-    # -- batch: drops its params too (gh-2021). The kernels do not read `k`
-    # because the prototype has none; they add it when that is fixed.
+    # -- batch: takes no params, and refuses one (gh-2021, gh-2261) --------
     Row(
         "batch",
         "block",
-        f'arg_type = "float"\nreturn_type = "float"\nbatch = true\n{_K}',
+        'arg_type = "float"\nreturn_type = "float"\nbatch = true',
         "(void)state;\n    for (size_t i = 0; i < n; i++) out[i] = in[i];",
-        (("o.block(np.ones(2, np.float32), 3).tolist()", "[4.0, 4.0]"),),
+        (("o.block(np.ones(2, np.float32)).tolist()", "[1.0, 1.0]"),),
     ),
     Row(
         "batch",
         "count",
-        f'arg_type = "void"\nreturn_type = "float"\nbatch = true\n{_K}',
-        "(void)state;\n    for (size_t i = 0; i < n; i++) out[i] = 0;",
-        (("o.count(2, 3).tolist()", "[3.0, 3.0]"),),
+        'arg_type = "void"\nreturn_type = "float"\nbatch = true',
+        "(void)state;\n    for (size_t i = 0; i < n; i++) out[i] = 3;",
+        (("o.count(2).tolist()", "[3.0, 3.0]"),),
     ),
     # -- variable_output with an input: gh-1960 ------------------------------
     Row(
@@ -423,13 +423,7 @@ _AUTHOR = {
 
 #: Known breakage, ratcheted: (object, method) -> {check: issue}. A strict
 #: xfail, so a fix turns the check red until the entry is removed.
-CARVED = {
-    ("batch", name): {
-        "prototype": "gh-2021: a batch method's prototype drops its params",
-        "call": "gh-2021: a batch method's binding drops its params",
-    }
-    for name in ("block", "count")
-}
+CARVED: "dict[tuple[str, str], dict[str, str]]" = {}
 
 
 def _title(obj: str) -> str:

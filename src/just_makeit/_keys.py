@@ -381,6 +381,43 @@ METHOD_NON_SIGNATURE_KEYS = frozenset(
 #: Keys whose value must match for two method entries to be the same call.
 METHOD_SIGNATURE_KEYS = METHOD_KEYS - METHOD_NON_SIGNATURE_KEYS
 
+#: The keys a ``batch = true`` method entry may carry: the ones its binding,
+#: prototype, stub and benchmark read (gh-2261).
+#:
+#: A batch method is a 1:1-rate block transform, ``void
+#: <stem>_<m>(state, const T *in, size_t n, R *out)``, and it is rendered
+#: ahead of every other result shape. So any other shape key on its row --
+#: a param, a capacity, a divisor, a status, a record, ``variable_output``
+#: itself -- was stored and then read by nobody: five issues (gh-1991,
+#: gh-2021, gh-2200, gh-2202, gh-2261) found one key each. This is the one
+#: answer to all of them, an ALLOW-list, so a method key added later is
+#: refused on a batch row until someone decides the batch binding reads it.
+#: ``_method.batch_why_not`` asks it, from ``_method.run``, which both
+#: ``jm method`` and ``apply``'s replay call; and
+#: ``tests/test_gh2261_batch_keys.py`` requires every other key in
+#: ``METHOD_KEYS`` to be refused there.
+#:
+#: ``strict`` reads the input block and ``count_default`` / ``count_name``
+#: the count of an input-less one; the rest name or document the method.
+BATCH_METHOD_KEYS = frozenset(
+    {
+        "name",
+        "doc",
+        "fn",
+        "arg_type",
+        "return_type",
+        "batch",
+        "nogil",
+        "strict",
+        "count_default",
+        "count_name",
+        "bench",
+        "impl",
+        "impl_file",
+        "replace",
+    }
+)
+
 #: Keys valid on a ``[[<component>.methods.params]]`` entry.
 PARAM_KEYS = frozenset(
     {

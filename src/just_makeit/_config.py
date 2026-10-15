@@ -5452,11 +5452,6 @@ def _out_cols_errors(entry: dict, what: str) -> list[str]:
             f"{what}: out_cols reshapes a flat array of scalars; "
             f"record_dtype already gives every row its own columns."
         )
-    if entry.get("batch"):
-        errors.append(
-            f"{what}: out_cols needs a variable_output method; batch is a "
-            f"1:1 transform whose result has the input's shape."
-        )
     return errors
 
 
@@ -5475,8 +5470,8 @@ def _short_out_errors(entry: dict, what: str) -> list[str]:
       can stop at it. Without it the kernel writes blind, and the minimum is
       the only thing between a short buffer and an overrun;
     * an ``out=`` buffer to relax, which is :func:`_outbuf.why_not`'s
-      answer, and not a ``batch`` method, which is rendered as a 1:1
-      transform with no ``out=`` of this kind.
+      answer. (A ``batch`` method refuses it with every other key its 1:1
+      binding does not read: ``_method.batch_why_not``, gh-2261.)
 
     Each is refused here, at load, rather than rendered into a binding that
     ignores the key -- or, without ``pass_capacity``, one that overruns.
@@ -5536,11 +5531,6 @@ def _short_out_errors(entry: dict, what: str) -> list[str]:
         errors.append(
             f"{what}: short_out relaxes the out= buffer, and this method "
             f"has none ({why})."
-        )
-    if entry.get("batch"):
-        errors.append(
-            f"{what}: short_out needs a variable_output method; batch is a "
-            f"1:1 transform whose result has the input's length."
         )
     if not entry.get("pass_capacity"):
         errors.append(
@@ -5625,11 +5615,6 @@ def _no_count_errors(entry: dict, what: str) -> list[str]:
                 f"{what}: {key} describes the synthesized count, which "
                 f"no_count removes; drop one of the two."
             )
-    if entry.get("batch"):
-        errors.append(
-            f"{what}: no_count needs a variable_output method; batch is a "
-            f"1:1 transform sized by its count."
-        )
     if entry.get("result_fields") and not entry.get("record_dtype"):
         errors.append(
             f"{what}: no_count needs a variable_output array result; a "

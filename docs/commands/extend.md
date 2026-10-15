@@ -351,6 +351,14 @@ Both `.pyi` faces and the runtime `__doc__` say so — an array in (or the
 count), an optional `out=`, an array out — and `--nogil` releases the GIL
 around the kernel on both the allocating and the `out=` path (gh-2259).
 
+That is the whole binding, so a batch method takes only the flags it reads:
+`--arg-type`, `--return-type`, `--nogil`, `--strict`, `--count-default` /
+`--count-name` (for `--arg-type void`), and the ones that name or document it
+(`--doc`, `--fn`, `--impl`, `--no-bench`). Any other — a `--param`, a
+`--max-out`, `--status-return`, `--variable-output`, a record — is refused
+before anything is written, by `jm method` and `apply` alike, naming the key
+(gh-2261). The list is one table, `_keys.BATCH_METHOD_KEYS`.
+
 ______________________________________________________________________
 
 #### `--variable-output` — self-sizing output
@@ -368,7 +376,8 @@ ownership](../memory-ownership.md) for the policy and the measurements.
 The array's element type is `--record-dtype` when given, else `--out-type`,
 else `--return-type`, so it cannot be `void`: a method with no element is
 refused before anything is written (gh-1885). A `--batch` method's element is
-its `--return-type`, under the same rule.
+its `--return-type`, under the same rule, and must be a scalar: a record has
+no scalar dtype (gh-2261).
 
 ```sh
 just-makeit method hbdecim execute --module resample \
