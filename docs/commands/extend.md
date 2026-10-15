@@ -870,6 +870,13 @@ directly: drop `--field` and declare the setter returning `int`), and on a
 property named for a state field (its setter is that field's accessor, which
 jm declares `void`). `--error-message` without `--error` is refused too.
 
+The converse is refused as well (gh-2302). Without `error` the binding calls
+the setter as a bare statement, so a header that already declares it
+returning `int` would have its status discarded: the assignment would
+succeed while C refused the value. `jm apply` and `jm status --check` name
+each such setter. Declare `error` on the property, or make the setter
+`void`.
+
 On a module object whose
 [fragment is sacred](../configuration.md#who-owns-a-modules-binding-fragment)
 (the default), a setter already in the fragment keeps its body, as any

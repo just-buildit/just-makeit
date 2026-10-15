@@ -570,6 +570,68 @@ def _reconcile_decl_doc(text: str, decl: str) -> str:
     return before[: m.start(1)] + fixed + m.group(2) + text[at:]
 
 
+def existing_decl(text: str, fn_name: str) -> "re.Pattern[str] | None":
+    """The pattern that finds *text*'s declaration of *fn_name*, or None.
+
+    The one by-name lookup of a prototype in a sacred header: the
+    replace-or-keep decision in :func:`_inject_decls_into_core_h` and the
+    return-type read of :func:`declared_return` both ask it. A single-line
+    match is tried first, then a multi-line one (gh-137: a prototype
+    wrapped across lines was missed, and the generated declaration appended
+    as a conflicting duplicate). Both require the prototype to end in
+    ``);``, so neither ever matches a definition, which ends in ``{``.
+
+    Examples
+    --------
+    >>> h = "int acc_set_alpha(acc_state_t *s,\\n    double v);\\n"
+    >>> existing_decl(h, "acc_set_alpha").search(h).group(0).split()[0]
+    'int'
+    >>> existing_decl("void f(void) { }", "f") is None
+    True
+    """
+    pat = re.compile(
+        r"^[ \t]*[A-Za-z_][^\n{]*\b"
+        + re.escape(fn_name)
+        + r"\s*\([^\n{]*\);[ \t]*$",
+        re.MULTILINE,
+    )
+    if pat.search(text):
+        return pat
+    pat_ml = re.compile(
+        r"^[ \t]*[A-Za-z_][^{;]*?\b"
+        + re.escape(fn_name)
+        + r"\s*\([^{;]*?\)\s*;",
+        re.MULTILINE,
+    )
+    return pat_ml if pat_ml.search(text) else None
+
+
+def declared_return(text: str, fn_name: str) -> "str | None":
+    """What *text*'s declaration of *fn_name* says it returns, or None.
+
+    Everything before the name, whitespace collapsed, so storage classes and
+    export macros come along (``static inline void``, ``DP_API int``): the
+    caller asks a question of it, such as whether it ends in ``void``.
+    ``None`` is no declaration, which is not the same answer as ``void``.
+
+    Examples
+    --------
+    >>> declared_return("DP_API int dp_x_set_bn(dp_x_t *s, double v);",
+    ...                 "dp_x_set_bn")
+    'DP_API int'
+    >>> declared_return("void *\\nx_buf(x_t *s);", "x_buf")
+    'void *'
+    >>> declared_return("int other(void);", "x_buf") is None
+    True
+    """
+    pat = existing_decl(text, fn_name)
+    if pat is None:
+        return None
+    decl = pat.search(text).group(0)
+    name = re.search(r"\b" + re.escape(fn_name) + r"\s*\(", decl)
+    return " ".join(decl[: name.start()].split())
+
+
 def _inject_decls_into_core_h(
     path: Path,
     comp: str,
@@ -668,27 +730,8 @@ def _inject_decls_into_core_h(
             ):
                 continue
             # Replace an existing prototype of the same name (a builtin
-            # override or a refreshed signature). Try a single-line match
-            # first; fall back to a multi-line match (gh-137: a prototype
-            # wrapped across lines — e.g. a 5-arg variable_output
-            # `*_execute(..., out, max_out)` — was previously missed and the
-            # generated decl appended as a conflicting/duplicate declaration).
-            # Both forms require the prototype to end in ');' so neither ever
-            # matches the inline step() definition (which ends in '{').
-            pat = re.compile(
-                r"^[ \t]*[A-Za-z_][^\n{]*\b"
-                + re.escape(fn_name)
-                + r"\s*\([^\n{]*\);[ \t]*$",
-                re.MULTILINE,
-            )
-            pat_ml = re.compile(
-                r"^[ \t]*[A-Za-z_][^{;]*?\b"
-                + re.escape(fn_name)
-                + r"\s*\([^{;]*?\)\s*;",
-                re.MULTILINE,
-            )
-            m_sl = pat.search(text)
-            use = pat if m_sl else pat_ml if pat_ml.search(text) else None
+            # override or a refreshed signature).
+            use = existing_decl(text, fn_name)
             if use is not None:
                 if skip_names and fn_name in skip_names:
                     # Name is in skip_names — preserve the existing decl.
