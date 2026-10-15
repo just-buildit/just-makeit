@@ -382,17 +382,61 @@ class TestTheTeardownRefusesThenWaitsThenFrees:
 
 # ── 4. compiled: close() from another thread ──────────────────────────────
 
-#: The kernel sleeps half a second with the GIL released, counting itself
-#: in and out; the core's destroy aborts if any is running. So the process
-#: dies (SIGABRT) exactly when a teardown frees under a running call. A
-#: COUNT, atomically: with two calls in flight a flag cleared by the first
-#: to finish hid a free under the second.
-_RUNNING = "static int jm_test_running;\n"
+#: The kernel counts itself in and out around a GATE; the core's destroy
+#: aborts if any is running. So the process dies (SIGABRT) exactly when a
+#: teardown frees under a running call. A COUNT, atomically: with two calls
+#: in flight a flag cleared by the first to finish hid a free under the
+#: second.
+#:
+#: Nothing here is ordered by the clock (gh-2290: a call started 50 ms
+#: before the closers reached the kernel after them on a loaded macOS
+#: runner). The kernel appends a byte to the file ``$JM_PROBE_ENTERED`` once
+#: it is counted in, and to ``$JM_PROBE_LEFT`` once counted out; the n-th
+#: call to enter is held until the probe creates ``$JM_PROBE_GO<n>``. The
+#: probe reads those files and opens the gates, so every step it asserts on
+#: has been observed, not waited for. The 60 s cap only keeps a broken
+#: probe from hanging; no passing run comes near it.
+_RUNNING = r"""static int jm_test_running;
+static int jm_test_entered;
+static void jm_test_mark(const char *var)
+{
+    const char *path = getenv(var);
+    FILE *f = path ? fopen(path, "ab") : NULL;
+    if (!f) {
+        fprintf(stderr, "no probe file in %s\n", var);
+        abort();
+    }
+    fputc('.', f);
+    fclose(f);
+}
+static void jm_test_gate(int n)
+{
+    const char *go = getenv("JM_PROBE_GO");
+    struct timespec ms = {0, 1000000L};
+    char path[4096];
+    int i;
+    if (!go) {
+        fprintf(stderr, "no JM_PROBE_GO\n");
+        abort();
+    }
+    snprintf(path, sizeof path, "%s%d", go, n);
+    for (i = 0; i < 60000; i++) {
+        FILE *f = fopen(path, "rb");
+        if (f) {
+            fclose(f);
+            return;
+        }
+        nanosleep(&ms, NULL);
+    }
+}
+"""
 _SLEEP = """
+    int jm_n = __atomic_add_fetch(&jm_test_entered, 1, __ATOMIC_SEQ_CST);
     __atomic_fetch_add(&jm_test_running, 1, __ATOMIC_SEQ_CST);
-    struct timespec half = {0, 500000000L};
-    nanosleep(&half, NULL);
+    jm_test_mark("JM_PROBE_ENTERED");
+    jm_test_gate(jm_n);
     __atomic_fetch_sub(&jm_test_running, 1, __ATOMIC_SEQ_CST);
+    jm_test_mark("JM_PROBE_LEFT");
 """
 _TRIP = """    if (__atomic_load_n(&jm_test_running, __ATOMIC_SEQ_CST)) {
         fprintf(stderr, "FREED UNDER A RUNNING KERNEL\\n");
@@ -400,76 +444,135 @@ _TRIP = """    if (__atomic_load_n(&jm_test_running, __ATOMIC_SEQ_CST)) {
     }
 """
 _PRELUDE = (
-    "#define _POSIX_C_SOURCE 199309L\n"
+    "#define _POSIX_C_SOURCE 200809L\n"
     "#include <stdio.h>\n#include <stdlib.h>\n#include <time.h>\n"
 )
 
-#: Thread A runs the kernel; B closes 0.1 s in; C starts a call 0.1 s
-#: after that, while B waits. Prints A's result, C's, and B's wait.
-PROBE = """
-import sys, threading, time
+#: What both probes share: the files the kernel writes, the gates it waits
+#: on, and ``until``, which polls for an observed state and exits non-zero
+#: naming the one it never saw.
+_PROBE_HEAD = """
+import os, sys, threading, time
 sys.path.insert(0, "src")
 sys.path.insert(0, ".")
+for k in ("ENTERED", "LEFT", "GO"):
+    os.environ["JM_PROBE_" + k] = os.path.abspath("probe-" + k.lower())
+for f in os.listdir("."):
+    if f.startswith("probe-"):
+        os.remove(f)
+def count(k):
+    try:
+        return os.path.getsize(os.environ["JM_PROBE_" + k])
+    except FileNotFoundError:
+        return 0
+def go(n):
+    open(os.environ["JM_PROBE_GO"] + str(n), "w").close()
+def until(pred, what, limit=30.0):
+    end = time.monotonic() + limit
+    while not pred():
+        if time.monotonic() > end:
+            sys.exit("never observed: " + what)
+        time.sleep(0.001)
 {imp}
 w = {make}
 res = {{}}
+"""
+
+#: Thread A enters the kernel and is held there; B closes once A is
+#: observed inside; the main thread polls a GIL-holding member ({ping})
+#: until B has observably refused new calls, then starts call C, while B
+#: still waits on A. Only then is A released. Prints A's result, C's, and
+#: whether B was still waiting when C was refused.
+PROBE = (
+    _PROBE_HEAD
+    + """
 def call(tag):
     try:
         res[tag] = w.work()
     except Exception as e:
         res[tag] = type(e).__name__
+w.{ping}()  # answers before the teardown, so a refusal below is B's
 a = threading.Thread(target=call, args=("a",)); a.start()
-time.sleep(0.1)
-def close():
-    t0 = time.monotonic()
-    w.{close}()
-    res["waited"] = time.monotonic() - t0
-b = threading.Thread(target=close); b.start()
-time.sleep(0.1)
+until(lambda: count("ENTERED") == 1, "A in the kernel")
+b = threading.Thread(target=w.{close}); b.start()
+def refused():
+    try:
+        w.{ping}()
+    except RuntimeError:
+        return True
+    return False
+until(refused, "B refusing new calls")
 call("c")
+waiting = b.is_alive() and count("ENTERED") == 1 and count("LEFT") == 0
+go(1)
 a.join(); b.join()
-print(res["a"], res["c"], "waited" if res["waited"] > 0.2 else "freed")
+print(res["a"], res["c"], "waited" if waiting else "freed")
 """
+)
 
 
-#: Two calls in flight (the count at 2, so only the LAST leave may wake
-#: the teardown) and two closers 0.1 s in. The first closer waits for
-#: both; the second finds the object already refused and returns at once
-#: -- "close() returned" means "freed" only for the first. The core aborts
-#: if anything frees under either call.
-PROBE2 = """
-import sys, threading, time
-sys.path.insert(0, "src")
-sys.path.insert(0, ".")
-{imp}
-w = {make}
-res = {{}}
-def call(tag, delay):
-    time.sleep(delay)
+#: Two calls held in the kernel (the count at 2, so only the LAST leave may
+#: wake the teardown) and two closers started once both are observed
+#: inside. The first closer waits for both; the second finds the object
+#: already refused and returns while both are still held -- "close()
+#: returned" means "freed" only for the first. The calls are then let out
+#: one at a time, and the waiting closer must outlive the first leave: the
+#: second call stays held for half a second after the first call's thread
+#: has returned, so a waiter woken by the first leave frees under it and the
+#: core aborts. That window is the only timing left, and it can only let a
+#: broken waiter pass, never fail a correct one.
+PROBE2 = (
+    _PROBE_HEAD
+    + """
+def call(tag):
     res[tag] = w.work()
-def close(tag):
-    t0 = time.monotonic()
-    w.{close}()
-    res[tag] = time.monotonic() - t0
-ts = [threading.Thread(target=call, args=("a1", 0.0)),
-      threading.Thread(target=call, args=("a2", 0.05))]
+ts = [threading.Thread(target=call, args=("a1",)),
+      threading.Thread(target=call, args=("a2",))]
 for t in ts: t.start()
-time.sleep(0.1)
-cs = [threading.Thread(target=close, args=(k,)) for k in ("b1", "b2")]
+until(lambda: count("ENTERED") == 2, "both calls in the kernel")
+cs = [threading.Thread(target=w.{close}) for _ in range(2)]
 for t in cs: t.start()
+def returned():
+    return sum(not t.is_alive() for t in cs)
+fast = True
+try:
+    until(lambda: returned() >= 1, "a closer returning", limit=10.0)
+except SystemExit:
+    fast = False
+fast = fast and returned() == 1 and count("LEFT") == 0
+go(1)
+# The kernel marks LEFT before its thread retakes the GIL and leaves the
+# count; a finished call thread has left it, and signalled any waiter.
+until(lambda: sum(not t.is_alive() for t in ts) == 1,
+      "the first call returning")
+# A waiter that woke on that leave would now free under the call still
+# held at its gate: the core aborts. Hold that call long enough for the
+# waiter to retake the GIL, watching that no closer returns meanwhile.
+held = returned()
+end = time.monotonic() + 0.5
+while time.monotonic() < end and returned() == held:
+    time.sleep(0.001)
+last = returned() == held == (1 if fast else 0)
+go(2)
 for t in ts + cs: t.join()
-w1, w2 = sorted((res["b1"], res["b2"]))
-print(res["a1"], res["a2"], "first-returns" if w1 < 0.1 else "no-fast",
-      "last-waits" if w2 > 0.3 else "no-wait")
+print(res["a1"], res["a2"], "first-returns" if fast else "no-fast",
+      "last-waits" if last else "no-wait")
 """
+)
 
 
 def _run_probe(
-    proj: Path, imp: str, make: str, close: str, probe: str = PROBE
+    proj: Path,
+    imp: str,
+    make: str,
+    close: str,
+    ping: str,
+    probe: str = PROBE,
 ) -> str:
     script = proj / "probe.py"
     script.write_text(
-        probe.format(imp=imp, make=make, close=close), encoding="utf-8"
+        probe.format(imp=imp, make=make, close=close, ping=ping),
+        encoding="utf-8",
     )
     out = subprocess.run(
         [sys.executable, str(script)],
@@ -549,12 +652,12 @@ def test_close_from_another_thread_waits(tmp_path, variant):
     )
     assert build.returncode == 0, build.stderr[-3000:]
     imp = "from p.dsp import W" if variant == "module" else "from p import W"
-    got = _run_probe(proj, imp, "W(k=0)", close)
+    got = _run_probe(proj, imp, "W(k=0)", close, "get_k")
     assert got == "7 RuntimeError waited", got
     if variant == "standalone":
         # The count at 2 and two closers: only the last leave wakes the
         # waiter, and the second closer does not wait (review of #2275).
-        got = _run_probe(proj, imp, "W(k=0)", close, PROBE2)
+        got = _run_probe(proj, imp, "W(k=0)", close, "get_k", PROBE2)
         assert got == "7 7 first-returns last-waits", got
 
 
@@ -565,6 +668,7 @@ typedef struct slow slow_t;
 slow_t *slow_open(int k);
 void slow_close(slow_t *s);
 int slow_work(slow_t *s);
+int slow_peek(slow_t *s);
 #endif
 """
 
@@ -587,6 +691,7 @@ int slow_work(slow_t *s) {"""
     + _SLEEP
     + """    return 7 + s->k;
 }
+int slow_peek(slow_t *s) { return s->k; }
 """
 )
 
@@ -616,7 +721,9 @@ def test_a_handle_close_from_another_thread_waits(tmp_path):
                     "fn": "slow_work",
                     "returns": "int",
                     "nogil": True,
-                }
+                },
+                # Holds the GIL: what the probe polls for the refusal.
+                {"name": "peek", "fn": "slow_peek", "returns": "int"},
             ],
         },
         tmp_path,
@@ -625,7 +732,7 @@ def test_a_handle_close_from_another_thread_waits(tmp_path):
     apply_run(tmp_path)
     # Compiled to `tmp_path/slow<EXT_SUFFIX>`, which the probe imports.
     _compile_import(tmp_path, "slow", _SLOW_H, _SLOW_C)
-    got = _run_probe(tmp_path, "import slow", "slow.Slow(0)", "close")
+    got = _run_probe(tmp_path, "import slow", "slow.Slow(0)", "close", "peek")
     assert got == "7 RuntimeError waited", got
 
 
