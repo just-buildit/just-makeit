@@ -1,5 +1,62 @@
 ## [Unreleased]
 
+## [0.106.0] — 2026-10-15
+
+### Added
+
+- **Every C benchmark row states what it counts** (gh-2282).
+    `jm_bench_add_unit(&_bench, name, times, rounds, iters, unit)` records a
+    row of `iters` units per round. The unit is a word: `jm_bench.h` defines
+    the ones jm's generated benchmarks use (`JM_BENCH_SAMPLE`,
+    `JM_BENCH_CALL`, `JM_BENCH_FRAME`), and a project passes its own
+    (`"bin"`, `"tap"`) without editing the vendored header. A unit the JSON
+    could not carry as written stops the run, naming the row and quoting
+    the unit (`unit "in-sample" must be [a-z0-9_]`). The
+    five-argument `jm_bench_add` still compiles and records calls, which is
+    what `iters` was documented to count. The JSON keeps every field it had
+    and adds `extra_info.unit` and `rate_unit` (`Sa/s` for a sample,
+    `<unit>s/s` otherwise, from one `jm_bench_rate_label`), `MSa_s` on a
+    sample row, and `stats.<stat>_per_unit` beside each per-round `min`,
+    `max`, `mean`, `stddev` and `median`. Before, `extra_info` was a literal
+    `{}`, the header called `ops` samples per second while documenting
+    `iters` as calls, and a reader taking `mean` for a time per call was off
+    by a factor of `iters`. `jm bench`'s table now has a `Per` column and
+    shows each row's throughput in the unit its JSON states (`MSa/s`,
+    `Mcalls/s`). It shows a pytest-benchmark row per call, and a row from an
+    older `jm_bench.h` per round in `ops/s`, where it used to label every
+    row `Sa/s`. **Adopting the header changes what an unchanged call
+    means:** a five-argument `jm_bench_add` row reads per round in `ops/s`
+    against an older `jm_bench.h` and per call against this one, so move
+    every row that counts samples (or bins, taps) to `jm_bench_add_unit` in
+    the same change as the re-vendor. Generated benchmarks name the unit
+    they time: `step()`, `steps()` and a method over an input are samples, a
+    method with no input is calls. A no-input records method, timed one call
+    a round, had claimed `BENCH_N` of them and reported a rate `BENCH_N`
+    times too high. A benchmark jm generates now calls `jm_bench_add_unit`,
+    so an existing project adopts the new `jm_bench.h` (`jm status` reports
+    it OUTDATED) before it builds one.
+
+### Fixed
+
+- **A composer module documents each member once, on both faces**
+    (gh-2283). A source, segment, timeline or composer type's runtime
+    `help()` was one fixed sentence, while its `.pyi` listed every field
+    as `Parameters`; the factories and the composer's own methods carried
+    a signature line at runtime and a different sentence in the stub. Each
+    docstring is now defined once, and the binding's text is derived from
+    the stub's. A source or segment type's summary is its struct's header
+    `@brief`, and a factory names what its discriminant value means when
+    the `[[enum]]` declares `enumerators`.
+
+- **A composer with a `realtime` clock no longer crashes when its
+    `stream()` iterator is freed** (gh-2292). This was a regression in
+    0.105.1 and 0.105.2. The iterator was allocated without zeroing,
+    and gh-2272's in-flight lock was garbage, so dropping the iterator
+    aborted the process. Every iterator jm generates is now allocated
+    zeroed, and a gate refuses any generator that allocates without
+    zeroing. Projects on 0.105.1 or 0.105.2 with a composer
+    `[module.X.composer.realtime]` table should upgrade.
+
 ## [0.105.2] — 2026-10-14
 
 ### Fixed
