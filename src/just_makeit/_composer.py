@@ -5268,6 +5268,14 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
                     + " that is the full sequence; after ``execute(n)`` it "
                     "is the rest. " + cursor("execute()", "stream()")
                 ),
+                # The generated compose() refuses a continuous spec up
+                # front: it has no end to compose to.
+                "",
+                "Raises",
+                "------",
+                "ValueError",
+                "    On a continuous spec, which never ends; use",
+                "    ``execute()`` or ``stream()``.",
             ],
             8,
         ),

@@ -45,3 +45,13 @@ def test_compose_no_longer_promises_the_full_sequence(built) -> None:  # noqa: F
     tree, _ = built
     summary = _stub_doc(tree, "Mix", "compose").split(".")[0]
     assert summary == "Compose what remains of the sequence into one array"
+
+
+def test_compose_documents_the_continuous_refusal(built) -> None:  # noqa: F811
+    """The generated compose() raises on a continuous spec; both faces say so."""
+    tree, mod = built
+    runtime = " ".join((mod.Mix.compose.__doc__ or "").split())
+    stub = _stub_doc(tree, "Mix", "compose")
+    for face, text in (("runtime", runtime), ("stub", stub)):
+        assert "Raises" in text and "ValueError" in text, f"{face}: {text!r}"
+        assert "continuous" in text, f"{face}: {text!r}"
