@@ -516,8 +516,11 @@ print(res["a"], res["c"], "waited" if waiting else "freed")
 #: inside. The first closer waits for both; the second finds the object
 #: already refused and returns while both are still held -- "close()
 #: returned" means "freed" only for the first. The calls are then let out
-#: one at a time, and the waiting closer must outlive the first leave. The
-#: core aborts if anything frees under either call.
+#: one at a time, and the waiting closer must outlive the first leave: the
+#: second call stays held for half a second after the first call's thread
+#: has returned, so a waiter woken by the first leave frees under it and the
+#: core aborts. That window is the only timing left, and it can only let a
+#: broken waiter pass, never fail a correct one.
 PROBE2 = (
     _PROBE_HEAD
     + """
@@ -538,8 +541,18 @@ except SystemExit:
     fast = False
 fast = fast and returned() == 1 and count("LEFT") == 0
 go(1)
-until(lambda: count("LEFT") == 1, "the first call leaving")
-last = returned() == (1 if fast else 0)
+# The kernel marks LEFT before its thread retakes the GIL and leaves the
+# count; a finished call thread has left it, and signalled any waiter.
+until(lambda: sum(not t.is_alive() for t in ts) == 1,
+      "the first call returning")
+# A waiter that woke on that leave would now free under the call still
+# held at its gate: the core aborts. Hold that call long enough for the
+# waiter to retake the GIL, watching that no closer returns meanwhile.
+held = returned()
+end = time.monotonic() + 0.5
+while time.monotonic() < end and returned() == held:
+    time.sleep(0.001)
+last = returned() == held == (1 if fast else 0)
 go(2)
 for t in ts + cs: t.join()
 print(res["a1"], res["a2"], "first-returns" if fast else "no-fast",
