@@ -77,7 +77,7 @@ from just_makeit import _cli
 from just_makeit import _cli_remove
 from just_makeit import _config as C
 from just_makeit import _createonly as CO
-from just_makeit._upgrade import MIGRATIONS, AppRows, _manifest_fragments
+from just_makeit._upgrade import MIGRATIONS, AppRows
 from test_cli_dispatch import _dispatched_commands
 from test_gh1648_exports_run_on_windows import CI_YML, _job_block
 from test_own_ci_matrix import _axes
@@ -1212,9 +1212,10 @@ def fresh(root: Path, shape: Shape, base: Path) -> "frozenset[str]":
     """
     _ok(base, ("new", "p", *shape.new))
     other = base / "p"
-    for path in _manifest_fragments(other):
+    # The fragments only: the root manifest is overwritten below.
+    for path in C.manifest_files(other)[1:]:
         path.unlink()
-    for path in (root / C.FILENAME, *_manifest_fragments(root)):
+    for path in C.manifest_files(root):
         rel = path.relative_to(root)
         (other / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, other / rel)

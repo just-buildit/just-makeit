@@ -79,6 +79,21 @@ def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:
     return out
 
 
+def manifest_files(root: Path) -> list[Path]:
+    """The manifest and the fragment files its ``include`` names.
+
+    The one answer to "which files ARE the manifest", for every reader
+    that walks them: ``upgrade`` rewrites them, ``_csym`` respells them, and
+    ``status`` counts them as files jm owns although no replay renders them
+    (gh-2299). A missing ``just-makeit.toml`` is left out, not an error.
+    """
+    main = root / FILENAME
+    if not main.is_file():
+        return []
+    raw = load_manifest(root)
+    return [main, *_resolve_includes(root, raw.get("include") or [])]
+
+
 def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
     """Merge an included fragment into *cfg*.
 

@@ -39,7 +39,6 @@ from _compilers import default_cc
 
 from _jmrun import run_cli
 from just_makeit import _config as C
-from just_makeit._upgrade import _manifest_fragments
 from test_gh1109_seeded_construction_is_attempted import _pytest_counts
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
@@ -93,9 +92,10 @@ def _apply_path(base: Path, module: str, obj: str) -> Path:
     declared = _cli_path(base / "declared", module, obj)
     _ok(base / "fresh", "new", "p")
     root = base / "fresh" / "p"
-    for path in _manifest_fragments(root):
+    # The fragments only: the root manifest is overwritten below.
+    for path in C.manifest_files(root)[1:]:
         path.unlink()
-    for path in (declared / C.FILENAME, *_manifest_fragments(declared)):
+    for path in C.manifest_files(declared):
         dest = root / path.relative_to(declared)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest)

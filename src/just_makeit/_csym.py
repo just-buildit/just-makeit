@@ -1973,16 +1973,6 @@ def respell_manifest(
     return IMPL_FILE_VALUE.sub(lifted, text)
 
 
-def _manifest_files(root: Path) -> "list[Path]":
-    """The manifest and the fragments it includes -- gh-1583's list."""
-    from . import _upgrade
-
-    main = root / "just-makeit.toml"
-    return ([main] if main.is_file() else []) + _upgrade._manifest_fragments(
-        root
-    )
-
-
 def unrenamed(root: Path, names: "dict[str, str]") -> "dict[str, list[str]]":
     """``{file: [old names]}`` for the author's C under *root* that still
     spells a name in *names* (from :func:`renames`) -- in code, whole
@@ -2045,11 +2035,13 @@ def author_named(root: Path, cfg: dict, tree: Path) -> "list[str]":
     same map as :func:`unrenamed_all`, by `apply` and first thing in
     `jm upgrade`, so neither writes.
     """
+    from . import _config as C
+
     if prefix(cfg) is None:
         return []
     names = with_macro_names(renames(tree, cfg))
     out = []
-    for p in _manifest_files(root):
+    for p in C.manifest_files(root):
         rel = p.relative_to(root).as_posix()
         text = p.read_text(encoding="utf-8")
         for m in AUTHOR_NAMED_VALUE.finditer(text):
@@ -2068,6 +2060,8 @@ def author_named(root: Path, cfg: dict, tree: Path) -> "list[str]":
 
 
 def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
+    from . import _config as C
+
     if not names and not stems:
         return {}
     macros = project_macros(root) if stems else {}
@@ -2083,7 +2077,7 @@ def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
             out[p.relative_to(root).as_posix()] = found
     if cfg is not None:
         followed = walked(root)
-        for p in _manifest_files(root):
+        for p in C.manifest_files(root):
             text = p.read_text(encoding="utf-8")
             frozen = unfollowed_bodies(text, root, followed)
             found = sorted(
