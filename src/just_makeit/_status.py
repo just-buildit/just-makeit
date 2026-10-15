@@ -751,6 +751,15 @@ def run(
             _rr = replay_root / "CMakeLists.txt"
             root_render = _rr.read_bytes() if _rr.is_file() else None
 
+        # gh-2299: what jm OWNS is what its replay renders, and the manifest
+        # it renders from (a fragment is read, never rendered). The scratch
+        # copy also holds every file jm never writes -- a tool cache, an
+        # author's notes -- which the replay leaves unchanged by definition,
+        # so counting "unchanged" over the copy counted each as a match.
+        _owned_paths = {p.as_posix() for p in _walk_managed(replay_root)} | {
+            p.relative_to(scratch).as_posix()
+            for p in C.manifest_files(scratch)
+        }
         for rel in _walk_managed(scratch):
             real = root / rel
             after = (scratch / rel).read_bytes()
@@ -782,7 +791,7 @@ def run(
                             (rel_posix, _exc.lineno or 0, _exc.msg, _lost)
                         )
                 if before == after:
-                    ok_count += 1
+                    ok_count += rel_posix in _owned_paths
                     continue
                 # gh-1641: a CRLF checkout of a current file. Its own state,
                 # never counted: no tool the build runs reads it differently,

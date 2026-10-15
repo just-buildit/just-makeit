@@ -306,7 +306,7 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
     # gh-1647: and the bodies jm renders a header FROM. Respelling only the
     # header left `apply` to put `float complex` back from the manifest, and
     # every later upgrade re-reported the same file.
-    for path in CSYM._manifest_files(root):
+    for path in C.manifest_files(root):
         text = path.read_text(encoding="utf-8")
         # gh-1684: a `replace` key is matched against its body, so it moves
         # only when the body did -- not when that body is an `impl_file`
@@ -628,7 +628,7 @@ def _prefix_headers(root: Path) -> None:
             _textio.write_text(f, new)
             touched.append(f.relative_to(root).as_posix())
 
-    manifests = [root / C.FILENAME] + _manifest_fragments(root)
+    manifests = C.manifest_files(root)
     for f in manifests:
         text = f.read_text(encoding="utf-8")
         new = _TOML_STRING.sub(
@@ -682,12 +682,6 @@ def _prefix_headers(root: Path) -> None:
             f" project: run `jm upgrade` there; an include of this"
             f' project\'s headers becomes "{INC.prefix(to)}...")'
         )
-
-
-def _manifest_fragments(root: Path) -> "list[Path]":
-    """The fragment files the manifest's ``include`` names."""
-    raw = C.load_manifest(root)
-    return C._resolve_includes(root, raw.get("include") or [])
 
 
 def _where_declared(root: Path, unknown) -> str:
@@ -796,7 +790,7 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
     # An `*_impl_file`'s function follows its file when the walk above
     # respelled that file (`CSYM.IMPL_FILE_VALUE`).
     followed = CSYM.walked(root)
-    for path in CSYM._manifest_files(root):
+    for path in C.manifest_files(root):
         text = path.read_text(encoding="utf-8")
         new = CSYM.respell_manifest(text, names, stems, root, followed, macros)
         if new != text:
