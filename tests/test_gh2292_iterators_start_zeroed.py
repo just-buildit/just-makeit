@@ -49,14 +49,45 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "just_makeit"
 
 #: The CPython allocators that return memory NOT zeroed. ``tp_alloc``
 #: (``PyType_GenericAlloc``) and ``PyType_GenericNew`` zero the whole object;
-#: these initialise only the header and leave every field as garbage.
+#: these initialise only the header and leave every field as garbage. The
+#: leading ``_?`` is the private spellings (``_PyObject_New``,
+#: ``_PyObject_GC_New``): ``\b`` alone does not match after an underscore.
 _UNZEROED = re.compile(
-    r"\bPyObject_(?:GC_)?(?:New|NEW|NewVar|NEW_VAR|Init|INIT|InitVar)\s*\("
+    r"\b_?PyObject_(?:GC_)?(?:New|NEW|NewVar|NEW_VAR|Init|INIT|InitVar)\s*\("
 )
+
+#: Every spelling the gate must catch, and the zeroing ones it must not.
+_SEEDS_CAUGHT = [
+    "it = PyObject_New(T, &TType);",
+    "it = PyObject_NEW(T, &TType);",
+    "it = PyObject_NewVar(T, &TType, n);",
+    "it = PyObject_GC_New(T, &TType);",
+    "it = _PyObject_New(&TType);",
+    "it = _PyObject_GC_New(&TType);",
+    "it = _PyObject_NewVar(&TType, n);",
+    "PyObject_Init(o, &TType);",
+]
+_SEEDS_PASSED = [
+    "it = (T *)TType.tp_alloc(&TType, 0);",
+    "it = PyType_GenericNew(&TType, NULL, NULL);",
+    "it = PyObject_Malloc(sizeof *it);  /* not an object allocator */",
+]
+
+
+def test_the_gate_reads_every_spelling() -> None:
+    """The pattern catches each non-zeroing spelling and no zeroing one."""
+    assert [s for s in _SEEDS_CAUGHT if not _UNZEROED.search(s)] == []
+    assert [s for s in _SEEDS_PASSED if _UNZEROED.search(s)] == []
 
 
 def test_no_generator_allocates_unzeroed() -> None:
-    """No generator or template spells a non-zeroing allocator."""
+    """No generator or template spells a non-zeroing allocator.
+
+    Line-based, and about CPython's object allocators only: a raw
+    ``malloc`` / ``PyMem_Malloc`` of a struct that carries ``_jm_inflight``
+    is not seen (none does today; a capsule's ``calloc`` zeroes). That
+    limit is documented, not gated.
+    """
     hits = []
     for path in sorted(_SRC.rglob("*")):
         if not path.is_file() or path.suffix not in {".py", ".c", ".h"}:
