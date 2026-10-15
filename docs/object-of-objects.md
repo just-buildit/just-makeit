@@ -403,11 +403,8 @@ block above the source or segment `struct` gives the class summary (its
 docstring is the `.pyi` class docstring and the runtime `tp_doc`, so
 `help(Synth)` lists the same keywords the stub does. A factory says what it
 makes the same way on both faces: the source type it returns, the
-discriminant value it presets (a discriminant keyword passed to it is
-overridden), and, when that value's `[[enum]]` declares `enumerators`, the
-enumerator's header doc (`WFM_SYNTH_TONE = 0, /**< ... */`). Its
-`Parameters` are the source type's own entries less the discriminant, so
-`help(tone)` answers by itself.
+discriminant value it presets and, when that value's `[[enum]]` declares
+`enumerators`, the enumerator's header doc (`WFM_SYNTH_TONE = 0, /**< ... */`).
 Every other method jm writes for the composer types has one docstring too,
 and its runtime text is the stub's after a leading signature line (gh-2283).
 

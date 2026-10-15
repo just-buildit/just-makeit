@@ -50,7 +50,6 @@ from ._context._parse import (
 )
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 from ._docstring import (
-    CLASS_DESC_WIDTH,
     ClassParam,
     DoxyBlock,
     authored_c_doc,
@@ -60,7 +59,6 @@ from ._docstring import (
     render_numpy_doc,
     render_runtime_doc,
     summary_docstring,
-    typed_section,
 )
 from ._pyfmt import reflow_pyi
 
@@ -5055,13 +5053,14 @@ def _pyi_field_sig(fields: list[dict]) -> str:
 
 def _pyi_doc_lines(
     type_name: str,
-    params: "list[tuple[str, ClassParam]]",
+    fields: list[dict],
+    enum_reg: dict[str, list[str]],
     raw_block: str = "",
 ) -> list[str]:
     """4-space-indented numpy-style class docstring from a field list (gh-375).
 
     gh-747: layout, wrapping and delimiters are `_docstring.class_docstring`'s;
-    each field's entry is :func:`_field_params`'.
+    this function's job is deriving each field's type line and notes.
 
     gh-2283: *raw_block* is the Doxygen block the type's struct opens with
     (:func:`resolve_field_docs`). Its ``@brief`` is the summary and its body
@@ -5074,23 +5073,7 @@ def _pyi_doc_lines(
     block = parse_doxygen_block(raw_block) if raw_block else None
     summary = block.brief if block and block.brief else f"{type_name}."
     body = group_paragraphs(block.body) if block and block.brief else []
-    return class_docstring(
-        summary, body=body, params=[cp for _n, cp in params]
-    )
-
-
-def _field_params(
-    fields: list[dict], enum_reg: dict[str, list[str]]
-) -> "list[tuple[str, ClassParam]]":
-    """``(name, Parameters entry)`` for each field, in order.
-
-    The one place a composer field becomes a numpy ``Parameters`` entry: its
-    type line, default, doc and enum choices. A source type's class
-    docstring and every factory's docstring list these same entries
-    (gh-2283), so a field's doc cannot read one way in ``help(Synth)`` and
-    another in ``help(tone)``.
-    """
-    params: list[tuple[str, ClassParam]] = []
+    params: list[ClassParam] = []
     for f in fields:
         ann = _pyi_field_type(f)
         type_line = f"{f['name']} : {ann}"
@@ -5120,21 +5103,8 @@ def _field_params(
             if choices:
                 choice_str = ", ".join(f'``"{c}"``' for c in choices)
                 notes.append(f"One of {choice_str}.")
-        params.append((str(f["name"]), ClassParam(type_line, tuple(notes))))
-    return params
-
-
-def _source_params(cfg: dict, module: str) -> "list[tuple[str, ClassParam]]":
-    """The source type's ``Parameters``: its fields, then the segment's
-    ``fs``, which ``__init__`` takes too. What ``help(Synth)`` lists, and
-    what each factory lists less the discriminant it presets."""
-    seg_fields = _segment_fields(cfg, module)
-    # The fs segment field also appears at the end of Synth.__init__.
-    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
-    return _field_params(
-        _source_fields(cfg, module) + ([fs_field] if fs_field else []),
-        C.enums(cfg),
-    )
+        params.append(ClassParam(type_line, tuple(notes)))
+    return class_docstring(summary, body=body, params=params)
 
 
 def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
@@ -5155,15 +5125,19 @@ def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
     seg = C.composer_segment(cfg, module)
     src_fields = _source_fields(cfg, module)
     seg_fields = _segment_fields(cfg, module)
+    # The fs segment field also appears at the end of Synth.__init__.
+    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
     out = {
         src["type_name"]: _pyi_doc_lines(
             src["type_name"],
-            _source_params(cfg, module),
+            src_fields + ([fs_field] if fs_field else []),
+            enum_reg,
             str(_header_docs(cfg, module).get("source") or ""),
         ),
         seg["type_name"]: _pyi_doc_lines(
             seg["type_name"],
-            _field_params(src_fields + seg_fields, enum_reg),
+            src_fields + seg_fields,
+            enum_reg,
             str(_header_docs(cfg, module).get("segment") or ""),
         ),
     }
@@ -5234,12 +5208,10 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
     :func:`_ml_doc_c` -- each had been two fixed strings, a signature line at
     runtime and a sentence in the stub, describing one member twice.
 
-    A factory's text says what it makes, what its discriminant value means
-    when the header says (:func:`_factory_value_docs`), that the
-    discriminant is preset, and the source type's own ``Parameters`` entries
-    (:func:`_source_params`) less that one -- so ``help(tone)`` answers by
-    itself. It is laid out by the class-docstring builder: a factory sits
-    at the class indent, and its entries ARE the class's.
+    A factory's text comes from the doc engine
+    (``_docstring.render_numpy_doc``): what it makes, what its discriminant
+    value means when the header says (:func:`_factory_value_docs`), and that
+    its keywords are the source type's.
     """
     src_t = C.composer_source(cfg, module)["type_name"]
     seg_t = C.composer_segment(cfg, module)["type_name"]
@@ -5302,31 +5274,25 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
         out[f"{cname}.to_json"] = one("Serialise the spec as JSON.")
     disc = oo.get("discriminant")
     values = _header_docs(cfg, module).get("factories") or {}
-    # The source type's own entries (`_source_params`, what `help(Synth)`
-    # lists), less the discriminant: the factory writes it into the
-    # keywords AFTER the caller's (`PyDict_SetItemString`), so a
-    # `disc=` passed here is overwritten, not honoured.
-    params = [cp for n, cp in _source_params(cfg, module) if n != disc]
-    returns = [
-        f"    {ln}".rstrip()
-        for ln in typed_section(
-            "Returns", [(src_t, f"The configured {src_t}.")], CLASS_DESC_WIDTH
-        )[1:]
-    ]
     for fac in oo.get("factories", []):
-        fixed = (
-            [
-                f'``{disc}`` is ``"{fac}"``: a ``{disc}`` passed here is '
-                "overridden."
-            ]
-            if disc
-            else []
-        )
-        out[fac] = class_docstring(
-            f"Return a {src_t} configured as a *{fac}* source.",
-            body=([values[fac]] if values.get(fac) else []) + fixed,
-            params=params,
-            trailer=returns,
+        preset = f' with ``{disc}="{fac}"``' if disc else ""
+        out[fac] = render_numpy_doc(
+            DoxyBlock(
+                brief=f"Return a {src_t} configured as a *{fac}* source.",
+                body=[values[fac]] if values.get(fac) else [],
+                params=[
+                    (
+                        "**kw",
+                        f"Any keyword {src_t} takes{preset}; "
+                        f"``help({src_t})`` lists them.",
+                    )
+                ],
+                returns=f"The configured {src_t}.",
+            ),
+            fac,
+            [("**kw", "Any")],
+            src_t,
+            indent=4,
         )
     return out
 

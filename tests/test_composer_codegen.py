@@ -1503,9 +1503,8 @@ class TestPyiDocstrings:
     def test_segment_class_docstring_parameters(self):
         pyi = _composer.render_pyi(_cfg(), "wfm_compose")
         assert '    """Segment.' in pyi
-        # source fields are included: Synth, Segment, and since gh-2283 each
-        # of the two factories, which list the source type's Parameters
-        assert pyi.count("    freq : float, default 0.0") == 4
+        # source fields are included
+        assert pyi.count("    freq : float, default 0.0") == 2
         # segment-only scalar fields
         assert "    num_samples : int, default 1024" in pyi
         assert "    off_samples : int, default 0" in pyi

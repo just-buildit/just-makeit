@@ -38,10 +38,6 @@ member whose shape is conditional is also held to what the BUILT callable
 accepts: ``stream(realtime=)`` exists only when the realtime table names all
 three clock functions (``_composer.realtime_clock``), and the docs had asked
 only whether the table was there.
-
-A factory's ``Parameters`` ARE the source type's, less the discriminant it
-presets, on both faces (``_composer._source_params``), so ``help(tone)``
-answers by itself.
 """
 
 from __future__ import annotations
@@ -110,13 +106,6 @@ bridge_fn = "clip_from_source"
 type_name = "Track"
 struct = "track_t"
 sources = "multi"
-
-# `fs` is the segment's, and the source type's `__init__` takes it too: so
-# `help(Clip)` and every factory list it, from the one entry.
-[[module.playlist.segment.fields]]
-name = "fs"
-type = "double"
-default = "1.0"
 
 [[module.playlist.segment.fields]]
 name = "dur"
@@ -467,13 +456,12 @@ def test_help_lists_the_keywords_the_stub_lists(built) -> None:
 
 def test_a_factory_says_what_it_makes(built) -> None:
     """The issue's item 3: the discriminant value's own doc, read through
-    the enum's declared ``enumerators``, and that the discriminant is
-    preset."""
+    the enum's declared ``enumerators``, and where its keywords are."""
     _, mod = built
     doc = mod.sine.__doc__
     assert "Return a Clip configured as a *sine* source." in doc
     assert "A pure sine at the clip's gain." in doc
-    assert '``kind`` is ``"sine"``' in doc
+    assert 'kind="sine"' in doc and "help(Clip)" in doc
     assert "A square wave" in mod.square.__doc__
 
 
@@ -530,70 +518,3 @@ def test_the_keyword_and_both_docs_agree_on_realtime(named) -> None:
     row = ext[ext.index('{"stream",') :]
     row = row[: row.index("},\n")]
     assert ("realtime" in row) == takes, row
-
-
-def _parameters(doc: str) -> "list[str]":
-    """The ``Parameters`` section of a numpy docstring, entry lines and all."""
-    lines = inspect.cleandoc(doc).split("\n")
-    i = lines.index("Parameters")
-    assert lines[i + 1].startswith("---")
-    out = []
-    for ln in lines[i + 2 :]:
-        if not ln.strip():
-            break
-        out.append(ln)
-    return out
-
-
-def _entries(section: "list[str]") -> "dict[str, list[str]]":
-    """``{name: [type line, description...]}`` of a Parameters section."""
-    out: dict[str, list[str]] = {}
-    for ln in section:
-        if not ln.startswith(" "):
-            name = ln.split(" : ", 1)[0]
-            out[name] = []
-        out[name].append(ln)
-    return out
-
-
-def test_a_factory_lists_the_source_types_parameters(built) -> None:
-    """``help(sine)`` answers by itself: its Parameters ARE ``help(Clip)``'s,
-    less the discriminant the factory presets -- on both faces, for every
-    factory the stub declares."""
-    tree, mod = built
-    disc = "kind"
-    stub = {
-        n.name: n
-        for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.ClassDef))
-    }
-    factories = [
-        n.name
-        for n in tree.body
-        if isinstance(n, ast.FunctionDef)
-        and isinstance(n.returns, ast.Name)
-        and n.returns.id == "Clip"
-    ]
-    assert factories == ["sine", "square"]
-    for face, doc_of in (
-        ("runtime", lambda name: getattr(mod, name).__doc__),
-        ("stub", lambda name: ast.get_docstring(stub[name])),
-    ):
-        want = _entries(_parameters(doc_of("Clip")))
-        assert {disc, "gain", "fs"} <= set(want), (face, want)
-        want.pop(disc)
-        for fac in factories:
-            got = _entries(_parameters(doc_of(fac)))
-            assert got == want, (face, fac, got, want)
-
-
-def test_the_factory_says_truly_what_it_does_with_the_discriminant(
-    built,
-) -> None:
-    """It says a ``kind`` passed here is overridden; the built factory
-    does exactly that (it writes ``kind`` after the caller's keywords)."""
-    _, mod = built
-    assert "a ``kind`` passed here is overridden" in " ".join(
-        mod.sine.__doc__.split()
-    )
-    assert mod.sine(kind="square").kind == "sine"
