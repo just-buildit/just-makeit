@@ -1009,25 +1009,86 @@ def _fmt_time(sec: float, unit: str) -> str:
     return f"{sec:.4f} s"
 
 
-def _fmt_ops(ops: float) -> str:
+def _fmt_ops(ops: float, rate: str) -> str:
+    """*ops* per second with an SI prefix on the row's own *rate* label.
+
+    gh-2282: the label was always ``Sa/s``, whatever the row counted. It is
+    now the row's -- ``rate_unit`` from the JSON, which ``jm_bench.h`` names
+    in one place (``jm_bench_rate_label``) for any unit a benchmark passes,
+    jm's or the project's own -- so no unit is spelled here.
+
+    >>> _fmt_ops(2.5e9, "Sa/s")
+    '2.50 GSa/s'
+    >>> _fmt_ops(3e6, "calls/s")
+    '3 Mcalls/s'
+    """
     if ops >= 1e9:
-        return f"{ops / 1e9:.2f} GSa/s"
+        return f"{ops / 1e9:.2f} G{rate}"
     if ops >= 1e6:
-        return f"{ops / 1e6:,.0f} MSa/s"
-    return f"{ops / 1e3:,.0f} kSa/s"
+        return f"{ops / 1e6:,.0f} M{rate}"
+    return f"{ops / 1e3:,.0f} k{rate}"
+
+
+#: The time statistics the table shows, in column order.
+_TIME_KEYS = ("min", "max", "mean", "stddev", "median")
+
+
+def _row_basis(b: dict, *, c_side: bool) -> tuple[str, dict, str]:
+    """What one row's times are per, those times, and its rate label.
+
+    gh-2282. A row from a ``jm_bench.h`` that knows its unit states it in
+    ``extra_info`` (``unit``, ``rate_unit``) and carries each time per unit
+    (``stats.<key>_per_unit``); the table shows those. Anything else is read
+    by what its producer guarantees and no more:
+
+    * a pytest-benchmark row's stats are already per call of the
+      benchmarked function, and its ``ops`` is calls per second;
+    * a C row from an older ``jm_bench.h`` -- or one of zero iterations,
+      whose per-unit times are null -- times a ROUND of a count it never
+      named, so its times are per round and its rate is a bare ``ops/s``.
+
+    Returns
+    -------
+    tuple[str, dict, str]
+        ``(per, times, rate)``: the word for what one time covers, the
+        ``_TIME_KEYS`` times in seconds, and the throughput label.
+
+    Examples
+    --------
+    >>> _row_basis({"stats": {"min": 2.0, "max": 2.0, "mean": 2.0,
+    ...     "stddev": 0.0, "median": 2.0}}, c_side=True)[0::2]
+    ('round', 'ops/s')
+    """
+    s = b["stats"]
+    info = b.get("extra_info") or {}
+    unit, rate = info.get("unit"), info.get("rate_unit")
+    per_unit = {k: s.get(f"{k}_per_unit") for k in _TIME_KEYS}
+    if unit and rate and None not in per_unit.values():
+        return unit, per_unit, rate
+    times = {k: s[k] for k in _TIME_KEYS}
+    return ("round", times, "ops/s") if c_side else ("call", times, "calls/s")
 
 
 # ── table display ─────────────────────────────────────────────────────────────
 
 
-def _display_table(label: str, data: dict, prev: dict | None) -> None:
+def _display_table(
+    label: str, data: dict, prev: dict | None, *, c_side: bool
+) -> None:
+    """Print one report's rows: times per the row's unit, and throughput.
+
+    *c_side* says whose JSON *data* is, which decides what a row that
+    names no unit is per (:func:`_row_basis`). The ``Per`` column says what
+    each row's times cover -- a sample, a call, a frame, or a round.
+    """
     benches = data.get("benchmarks", [])
     if not benches:
         print(f"\n  {label}: no benchmarks recorded.")
         return
 
+    bases = [_row_basis(b, c_side=c_side) for b in benches]
     # Choose a consistent time unit from the fastest min.
-    unit = _pick_unit([b["stats"]["min"] for b in benches])
+    unit = _pick_unit([times["min"] for _, times, _ in bases])
 
     # Previous ops keyed by benchmark name, for the Δ column.
     prev_ops: dict[str, float] = {}
@@ -1036,16 +1097,13 @@ def _display_table(label: str, data: dict, prev: dict | None) -> None:
             prev_ops[b["name"]] = b["stats"]["ops"]
 
     rows: list[dict[str, str]] = []
-    for b in benches:
+    for b, (per, times, rate) in zip(benches, bases):
         s = b["stats"]
         row: dict[str, str] = {
             "name": b["name"],
-            "min": _fmt_time(s["min"], unit),
-            "max": _fmt_time(s["max"], unit),
-            "mean": _fmt_time(s["mean"], unit),
-            "stddev": _fmt_time(s["stddev"], unit),
-            "median": _fmt_time(s["median"], unit),
-            "ops": _fmt_ops(s["ops"]),
+            "per": per,
+            **{k: _fmt_time(times[k], unit) for k in _TIME_KEYS},
+            "ops": _fmt_ops(s["ops"], rate),
         }
         if b["name"] in prev_ops and prev_ops[b["name"]]:
             delta = (s["ops"] - prev_ops[b["name"]]) / prev_ops[b["name"]]
@@ -1053,8 +1111,17 @@ def _display_table(label: str, data: dict, prev: dict | None) -> None:
         rows.append(row)
 
     has_delta = any("delta" in r for r in rows)
-    headers = ["Name", "Min", "Max", "Mean", "StdDev", "Median", "Throughput"]
-    keys = ["name", "min", "max", "mean", "stddev", "median", "ops"]
+    headers = [
+        "Name",
+        "Per",
+        "Min",
+        "Max",
+        "Mean",
+        "StdDev",
+        "Median",
+        "Throughput",
+    ]
+    keys = ["name", "per", *_TIME_KEYS, "ops"]
     if has_delta:
         headers.append("Δ vs prev")
         keys.append("delta")
@@ -1317,7 +1384,7 @@ def run(
                 creport["failed"] = list(failed)
             prev = _prev_snapshot(hdir, tag, is_c=True)
             _save_snapshot(root, hdir, tag, creport, is_c=True)
-            _display_table("C benchmarks", creport, prev)
+            _display_table("C benchmarks", creport, prev, c_side=True)
         else:
             print("  C benchmarks: none found.")
 
@@ -1344,7 +1411,7 @@ def run(
                 preport["failed"] = list(py_failed)
             prev = _prev_snapshot(hdir, tag, is_c=False)
             _save_snapshot(root, hdir, tag, preport, is_c=False)
-            _display_table("Python benchmarks", preport, prev)
+            _display_table("Python benchmarks", preport, prev, c_side=False)
         else:
             print("  Python benchmarks: none found.")
 
@@ -1508,7 +1575,7 @@ def _run_check(
                     "  disappears from the harness is indistinguishable from"
                     " one that stayed fast,\n"
                     "  so this fails. Check the target still builds and still"
-                    " calls jm_bench_add();\n"
+                    " records it (jm_bench_add_unit);\n"
                     "  if the benchmark was deleted on purpose, pass"
                     " --allow <name>."
                 )
