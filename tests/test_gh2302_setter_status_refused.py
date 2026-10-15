@@ -28,6 +28,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from _jmrun import run_cli
 from just_makeit import _incpath as INC
 
@@ -119,3 +121,35 @@ def test_declaring_error_is_the_way_out(tmp_path) -> None:
     _refused(root)
     _manifest_with(root, 'error = "ValueError"')
     _ok("apply", cwd=root)
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "void",
+        "static inline void",
+        "void JM_HOT",
+        "void __attribute__((nonnull))",
+    ],
+)
+def test_a_void_setter_is_not_refused(tmp_path, spelling: str) -> None:
+    """The negative control: a setter that returns nothing has nothing to
+    discard, however its declaration is decorated."""
+    root = _project(tmp_path, module=True)
+    header = INC.core_h(root, "acc")
+    text = header.read_text(encoding="utf-8")
+    new, n = _INT_SETTER.subn(spelling + r" \1(", text, count=1)
+    assert n == 1, text
+    header.write_text(new, encoding="utf-8")
+    _ok("apply", cwd=root)
+
+
+def test_a_pointer_returning_setter_is_refused(tmp_path) -> None:
+    """``void *`` returns something, so it is not the ``void`` above."""
+    root = _project(tmp_path, module=True)
+    header = INC.core_h(root, "acc")
+    text = header.read_text(encoding="utf-8")
+    new, n = _INT_SETTER.subn(r"void *\1(", text, count=1)
+    assert n == 1, text
+    header.write_text(new, encoding="utf-8")
+    assert "returning `void *`" in _refused(root)

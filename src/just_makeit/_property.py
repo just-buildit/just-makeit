@@ -88,7 +88,11 @@ def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
         for p in props:
             fn = CSYM.property_setter(CSYM.stem(cfg, comp), p["name"])
             ret = declared_return(text, fn)
-            if ret is None or re.search(r"\bvoid$", ret):
+            # `void` not followed by `*`, anywhere in the prefix: an
+            # attribute or a macro may sit between it and the name
+            # (`void JM_HOT`, `void __attribute__((nonnull))`), and only
+            # `void *` returns something.
+            if ret is None or re.search(r"\bvoid\b(?!\s*\*)", ret):
                 continue
             out.append(
                 f"`{comp}.{p['name']}` is writable and declares no `error`,"
