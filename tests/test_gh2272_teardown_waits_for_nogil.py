@@ -444,7 +444,7 @@ _TRIP = """    if (__atomic_load_n(&jm_test_running, __ATOMIC_SEQ_CST)) {
     }
 """
 _PRELUDE = (
-    "#define _POSIX_C_SOURCE 199309L\n"
+    "#define _POSIX_C_SOURCE 200809L\n"
     "#include <stdio.h>\n#include <stdlib.h>\n#include <time.h>\n"
 )
 
