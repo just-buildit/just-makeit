@@ -65,6 +65,40 @@ the `pytest-benchmark` suite under `src/`, prints a stats table per side with a
 `<tag>.json` (Python) and `<tag>-c.json` (C), where `<tag>` is a UTC timestamp.
 Commit them to keep the history.
 
+**Every row says what it counts (gh-2282).** A C row is `rounds` timings, each
+of one round of `iterations` units, and the benchmark names the unit when it
+records the row. The unit is a word: `jm_bench.h` defines the ones jm's
+generated benchmarks use (`JM_BENCH_SAMPLE`, `JM_BENCH_CALL`,
+`JM_BENCH_FRAME`), and a benchmark of your own passes any other without
+editing the vendored header:
+
+```c
+/* a steps() call over BENCH_N samples, timed ITERATIONS times */
+jm_bench_add_unit(&_bench, "steps", times, ITERATIONS, BENCH_N,
+                  JM_BENCH_SAMPLE);
+/* an FFT of NFFT bins a round */
+jm_bench_add_unit(&_bench, "fft", times, ITERATIONS, NFFT, "bin");
+```
+
+A unit is up to 31 characters of `[a-z0-9_]`, singular; anything else stops
+the run, naming the row and quoting the offending unit.
+`jm_bench_add(&_bench, name, times, rounds, iters)` still compiles and records
+calls. In the JSON, `stats` `min`, `max`, `mean`, `stddev` and `median` stay
+per round, and each gains a `<stat>_per_unit` beside it (divided by
+`iterations`). `ops` is units per second. `extra_info` names the `unit` and
+its `rate_unit`, which `jm_bench_rate_label` derives in one place: `Sa/s` for
+a sample, `<unit>s/s` otherwise (`calls/s`, `bins/s`).
+A sample row adds `MSa_s`. The table's `Per` column says what its times
+cover, and `Throughput` is in the row's own unit, as the JSON states it. A
+row that names no unit is shown for what its producer guarantees: a
+pytest-benchmark row per `call`, and a C row from an older `jm_bench.h` per
+`round`, in `ops/s`.
+
+So the same five-argument call reads differently by header: per `round` in
+`ops/s` against an older `jm_bench.h`, per `call` against this one. A project
+that re-vendors the header moves every row that counts samples (or bins,
+taps) to `jm_bench_add_unit` in the same change, or those rows report calls.
+
 **What gets run is what gets built (gh-1023).** The C side is not limited to
 manifest components. jm takes every `native/benchmarks/bench_<X>_core.c` that
 some build file compiles, so a benchmark for a `[project] c_deps` directory —
