@@ -57,6 +57,7 @@ from ._docstring import (
     DoxyBlock,
     extract_doc_blocks,
     extract_member_docs,
+    extract_struct_doc_blocks,
     extract_struct_member_docs,
     struct_members_key,
     member_doc_key,
@@ -94,14 +95,20 @@ _LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
 # Keyed on identity AND stat, because a test (or a user mid-session) can
 # rewrite a header between two applies in one process; a path-only key would
 # serve the pre-edit text and the edit would look like it did nothing.
-_MEMBER_DOC_CACHE: dict[tuple[Path, int, int], tuple[dict, str, dict]] = {}
+_MEMBER_DOC_CACHE: dict[
+    tuple[Path, int, int], tuple[dict, str, dict, dict]
+] = {}
 
 
-def _header_member_docs(path: Path) -> tuple[dict[str, str], str, dict]:
-    """``(member_docs, text, struct_docs)`` for one header, memoized.
+def _header_member_docs(
+    path: Path,
+) -> tuple[dict[str, str], str, dict, dict[str, str]]:
+    """``(member_docs, text, struct_docs, struct_blocks)`` for one header.
 
-    Keyed on path+mtime+size. *struct_docs* is gh-1300's per-struct map,
-    parsed in the same pass so a shared header is still scanned once.
+    Memoized, keyed on path+mtime+size. *struct_docs* is gh-1300's
+    per-struct map, and *struct_blocks* gh-2283's block each struct opens
+    with, both parsed in the same pass so a shared header is still scanned
+    once.
     """
     st = path.stat()
     key = (path, st.st_mtime_ns, st.st_size)
@@ -112,6 +119,7 @@ def _header_member_docs(path: Path) -> tuple[dict[str, str], str, dict]:
             extract_member_docs(body),
             body,
             extract_struct_member_docs(body),
+            extract_struct_doc_blocks(body),
         )
         _MEMBER_DOC_CACHE[key] = hit
     return hit
@@ -119,7 +127,7 @@ def _header_member_docs(path: Path) -> tuple[dict[str, str], str, dict]:
 
 def _included_member_docs(
     inc_root: Path, text: str
-) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+) -> tuple[dict[str, str], dict[str, dict[str, str]], dict[str, str]]:
     """Member docs from the project headers *text* includes (gh-724).
 
     A struct a component returns is often declared in a *shared* header that
@@ -145,13 +153,16 @@ def _included_member_docs(
     in both keeps the component's own text — the same "nearest wins" rule the
     rest of derivation follows.
 
-    Returns ``(by_name, by_struct)``. *by_name* is the bare-name map above,
-    which an enumerator may use; a struct FIELD must use *by_struct*, because
-    following includes is exactly what let an unrelated struct's same-named
-    field document a property (gh-1300).
+    Returns ``(by_name, by_struct, struct_blocks)``. *by_name* is the
+    bare-name map above, which an enumerator may use; a struct FIELD must use
+    *by_struct*, because following includes is exactly what let an unrelated
+    struct's same-named field document a property (gh-1300). *struct_blocks*
+    is the raw Doxygen block each struct definition opens with, by struct
+    name (gh-2283): what a composer's source type says about itself.
     """
     out: dict[str, str] = {}
     structs: dict[str, dict[str, str]] = {}
+    blocks: dict[str, str] = {}
     seen: set[Path] = set()
     pending = [text]
     while pending:
@@ -160,13 +171,15 @@ def _included_member_docs(
             if path in seen or not path.is_file():
                 continue
             seen.add(path)
-            docs, body, by_struct = _header_member_docs(path)
+            docs, body, by_struct, by_block = _header_member_docs(path)
             pending.append(body)
             for name, doc in docs.items():
                 out.setdefault(name, doc)
             for sname, fields in by_struct.items():
                 structs.setdefault(sname, fields)
-    return out, structs
+            for sname, raw in by_block.items():
+                blocks.setdefault(sname, raw)
+    return out, structs, blocks
 
 
 def _load_doc_blocks(
@@ -205,7 +218,7 @@ def _load_doc_blocks(
     #
     # gh-724: included project headers first, so the component's own header
     # overwrites them below and wins any name it declares itself.
-    _inc_by_name, _inc_structs = _included_member_docs(inc_root, text)
+    _inc_by_name, _inc_structs, _ = _included_member_docs(inc_root, text)
     for _mname, _mdoc in _inc_by_name.items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for _mname, _mdoc in extract_member_docs(text).items():

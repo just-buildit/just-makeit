@@ -397,6 +397,17 @@ pointer member, or by the first step of a `c_ptr` path. If a row's `doc` and
 the member's doc both exist and differ, `jm status` lists the row under `DOC`
 and `jm status --check` fails (gh-1703).
 
+**A type's docstring is its struct's, on both faces.** The `/** ... */`
+block above the source or segment `struct` gives the class summary (its
+`@brief`) and description, and the fields follow as `Parameters`. That one
+docstring is the `.pyi` class docstring and the runtime `tp_doc`, so
+`help(Synth)` lists the same keywords the stub does. A factory says what it
+makes the same way on both faces: the source type it returns, the
+discriminant value it presets and, when that value's `[[enum]]` declares
+`enumerators`, the enumerator's header doc (`WFM_SYNTH_TONE = 0, /**< ... */`).
+Every other method jm writes for the composer types has one docstring too,
+and its runtime text is the stub's after a leading signature line (gh-2283).
+
 A `bytes` field is **owned**: jm generates the coercion from a Python `bytes`,
 the getter, the setter, the `free` in `dealloc`, the deep-copy when a source is
 rebuilt from a resolved segment, and both halves of the JSON codec. By default

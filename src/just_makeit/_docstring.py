@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace as dc_replace
-from typing import Collection, NamedTuple, Sequence
+from typing import Collection, Iterator, NamedTuple, Sequence
 
 
 def extract_doctests(text: str) -> list[str]:
@@ -913,27 +913,90 @@ def extract_struct_member_docs(
     >>> sorted(docs)
     ['ring_t', 'rx_state', 'rx_state_t']
     """
+    out: dict[str, dict[str, str]] = {}
+    for names, _start, body in _struct_bodies(header_text):
+        fields = extract_member_docs(body)
+        for name in names:
+            out.setdefault(name, fields)
+    return _alias_structs(header_text, out)
+
+
+def _struct_bodies(
+    header_text: str,
+) -> "Iterator[tuple[list[str], int, str]]":
+    """``(names, start, body)`` for every struct body *header_text* defines.
+
+    The one structural walk both struct readers share: *names* is the tag and,
+    when typedef'd, the type name; *start* is where the ``struct`` (or its
+    ``typedef``) keyword begins; *body* is the text between the braces.
+    Scanned on a comment/string mask, so a brace in a comment cannot end a
+    body early.
+    """
     from ._docsync import _code_mask, _match_brace
 
     mask = _code_mask(header_text)
-    out: dict[str, dict[str, str]] = {}
     for m in _STRUCT_OPEN_RE.finditer(mask):
         open_idx = m.end() - 1
         close_idx = _match_brace(mask, open_idx)
         if close_idx < 0:
             continue
-        fields = extract_member_docs(header_text[open_idx + 1 : close_idx])
         names = [m.group("tag")] if m.group("tag") else []
         if m.group("td"):
             t = _STRUCT_TYPEDEF_NAME_RE.match(mask, close_idx + 1)
             if t:
                 names.append(t.group("name"))
-        for name in names:
-            out.setdefault(name, fields)
-    for tag, name in _STRUCT_ALIAS_RE.findall(mask):
+        yield names, m.start(), header_text[open_idx + 1 : close_idx]
+
+
+def _alias_structs(header_text: str, out: dict) -> dict:
+    """*out* with each ``typedef struct tag name;`` naming *tag*'s entry."""
+    from ._docsync import _code_mask
+
+    for tag, name in _STRUCT_ALIAS_RE.findall(_code_mask(header_text)):
         if tag in out:
             out.setdefault(name, out[tag])
     return out
+
+
+def extract_struct_doc_blocks(header_text: str) -> "dict[str, str]":
+    r"""``{struct: raw_block}`` -- the Doxygen block a struct opens with.
+
+    gh-2283. :func:`extract_doc_blocks` binds a block to a FUNCTION
+    declaration, and a struct definition has no parameter list, so the
+    ``@brief`` above ``typedef struct { ... } wfm_source_t;`` reached
+    nothing. This is the same struct walk :func:`extract_struct_member_docs`
+    makes (:func:`_struct_bodies`), asking for the comment that ends where
+    the definition starts instead of the comments inside it. The raw block
+    keeps its delimiters, ready for :func:`parse_doxygen_block`.
+
+    Examples
+    --------
+    >>> h = (
+    ...     "/** @brief One clip. */\n"
+    ...     "typedef struct {\n"
+    ...     "    double gain; /**< Linear gain. */\n"
+    ...     "} clip_t;\n"
+    ...     "typedef struct { int n; } bare_t;\n"
+    ... )
+    >>> extract_struct_doc_blocks(h)
+    {'clip_t': '/** @brief One clip. */'}
+    """
+    out: dict[str, str] = {}
+    for names, start, _body in _struct_bodies(header_text):
+        # The comment that ends where the definition starts, whitespace
+        # between -- Doxygen binds the nearest preceding block. A `/**<`
+        # opener is a trailing member doc of the line above, never this
+        # struct's, as in `_BLOCK_THEN_DECL_RE`.
+        head = header_text[:start].rstrip()
+        if not head.endswith("*/"):
+            continue
+        i = head.rfind("/*", 0, len(head) - 2)
+        raw = head[i:]
+        if i < 0 or raw[:3] not in ("/**", "/*!") or raw[:4] == "/**<":
+            continue
+        for name in names:
+            out.setdefault(name, raw)
+    return _alias_structs(header_text, out)
 
 
 def struct_members_key() -> str:
