@@ -2727,6 +2727,19 @@ def render_segment_type(cfg: dict, module: str) -> str:
     init_extracts = "\n".join(_extract_block(f, delete=True) for f in fields)
     sum_extracts = "\n".join(_extract_block(f, delete=False) for f in fields)
 
+    # gh-2264: the `fail:` tail exists only for a field's parse to jump to.
+    # A segment with no fields has no `goto fail`, and an unreached label is
+    # -Wunused-label, which a -Werror build of glue `jm apply` regenerates
+    # cannot fix -- so each function carries the tail only when its own
+    # extraction code can reach it.
+    def _fail_tail(extracts: str, release: str, ret: str) -> str:
+        if "goto fail;" not in extracts:
+            return ""
+        return f"fail:\n    {release}\n    return {ret};\n"
+
+    init_fail = _fail_tail(init_extracts, "Py_DECREF(kw);", "-1")
+    sum_fail = _fail_tail(sum_extracts, "Py_DECREF(self);", "NULL")
+
     # tp_init — single-source inline: forward leftover args/kwds to the source
     # type, wrap the one source.
     parts.append(f"""static int
@@ -2749,10 +2762,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     PyList_SET_ITEM(list, 0, one); /* steals */
     Py_XSETREF(self->sources, list);
     return 0;
-fail:
-    Py_DECREF(kw);
-    return -1;
-}}
+{init_fail}}}
 """)
 
     # sum classmethod — *sources positional + segment kwargs.
@@ -2792,10 +2802,7 @@ fail:
 {sum_extracts}
     }}
     return (PyObject *)self;
-fail:
-    Py_DECREF(self);
-    return NULL;
-}}
+{sum_fail}}}
 """)
 
     # getsets: sources (read-only) + each segment scalar.
