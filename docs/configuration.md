@@ -304,7 +304,9 @@ puts `source_core` on the consuming extension's own link line, which a
 dependency whose functions you call needs (gh-225).
 `{ name = "x", test_only = true }` links `x_core` into the component's C test
 and benchmark only, so a sibling the test merely round-trips through never
-ships in the artifact (gh-537):
+ships in the artifact (gh-537). It stays the declaring component's alone: what
+`x` itself depends on is test-only along with it, and a component that depends
+on this one does not inherit `x` at all (gh-2318):
 
 ```toml
 [waveform_engine]

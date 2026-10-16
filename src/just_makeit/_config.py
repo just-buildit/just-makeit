@@ -4642,24 +4642,6 @@ def depends_on(cfg: dict, component: str) -> list[str]:
     ]
 
 
-def depends_test_only_cores(cfg: dict, component: str) -> list[str]:
-    """``<name>_core`` targets declared ``test_only`` for a component (gh-537).
-
-    These link the component's C test and bench and nothing else — not the
-    core's PUBLIC link line (which would propagate them straight back into the
-    Python extension), not the ``.so``, not the aggregate library.
-    """
-    out: list[str] = []
-    for d in cfg.get(component, {}).get("depends_on", []):
-        if not _dep_test_only(d):
-            continue
-        name = _dep_name(d)
-        core = name if name.endswith("_core") else f"{name}_core"
-        if core not in out:
-            out.append(core)
-    return out
-
-
 def depends_on_raw(cfg: dict, component: str) -> list:
     """Raw depends_on entries — bare strings and/or ``{name, link}`` tables.
 
@@ -4747,10 +4729,36 @@ def transitive_dep_cores(
                 continue
             seen.add(core)
             out.append(core)
-            _visit(depends_on_raw(graph, core[:-5]))
+            # gh-2318: a dependency's own `test_only` edge links ITS C test
+            # and nothing else, so the walk never follows one past the first
+            # level. Followed, it put a sibling's test fixture on every
+            # dependent's core PUBLIC link line, test and bench.
+            _visit(
+                [
+                    d
+                    for d in depends_on_raw(graph, core[:-5])
+                    if not _dep_test_only(d)
+                ]
+            )
 
     _visit(entries)
     return out
+
+
+def test_only_dep_cores(cfg: dict, entries: list) -> "set[str]":
+    """The cores *entries* reach only through a ``test_only`` edge (gh-537).
+
+    What a component's C test and bench link and its core's PUBLIC link line
+    must not: from there a core propagates into the Python extension and
+    ships. It is the closure of every entry minus the closure of the shipped
+    ones, so a core a test-only dependency itself depends on is test-only
+    too (gh-2318), while one also reached through a real edge is not. The
+    one answer for both places that build a core's PUBLIC line.
+    """
+    shipped = [d for d in entries if not _dep_test_only(d)]
+    return set(transitive_dep_cores(cfg, entries)) - set(
+        transitive_dep_cores(cfg, shipped)
+    )
 
 
 def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
