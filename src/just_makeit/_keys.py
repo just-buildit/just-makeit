@@ -65,6 +65,8 @@ OBJECT_KEYS = frozenset(
         # standalone object, which is the asymmetry this ends.
         "fragment",
         "process_global",
+        # gh-2316: the object has no Python benchmark; the C one stays.
+        "no_python_bench",
         "serializable",
         "streamable",
         "stream_block_default",
