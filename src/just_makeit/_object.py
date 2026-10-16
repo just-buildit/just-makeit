@@ -2519,7 +2519,9 @@ def _regenerate_module_now(
             # ones — that is what a test-only dep is for. The core's PUBLIC link
             # must not, or the dependency propagates straight back into the
             # Python extension and ships after all, which is the bug.
-            _test_only_cores = C.depends_test_only_cores(cfg, obj)
+            _test_only_cores = C.test_only_dep_cores(
+                cfg, C.depends_on_raw(cfg, obj)
+            )
             _core_pub = [c for c in _colib if c not in _test_only_cores]
             # gh-160: also PUBLIC-link them onto the collocated OBJECT lib so
             # the deps propagate transitively to the Python extension. The
@@ -3130,10 +3132,7 @@ def run(
     # they would propagate into the Python extension and ship after all, which
     # is exactly what test_only exists to prevent. They remain on
     # extra_link_libs_block (test/bench) above.
-    _test_only = [
-        (n if n.endswith("_core") else f"{n}_core")
-        for n in C.dep_names([d for d in depends_on if C._dep_test_only(d)])
-    ]
+    _test_only = C.test_only_dep_cores(cfg, depends_on)
     _core_pub_libs = [lib for lib in _obj_libs if lib not in _test_only]
     ctx["extra_link_on_object_core"] = R.core_link_c(
         ctx["component"],
