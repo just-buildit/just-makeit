@@ -4184,8 +4184,10 @@ def _apply_manifest(
             indent="  ",
         )
 
-    # gh-2316: and a Python benchmark the object now declines. Warned here
-    # for gh-1142's reason: this run is the one that stopped reconciling it.
+    # gh-2316: and a Python benchmark the object declines. Warned on every
+    # apply while it is on disk, as gh-1142's orphan header is: apply is
+    # what an author runs after changing the manifest, so it is where the
+    # disagreement is first seen.
     for _declined in C.declined_python_benches(root, cfg):
         _report.warn(
             f"{_declined} is a Python benchmark for an object that declares "
