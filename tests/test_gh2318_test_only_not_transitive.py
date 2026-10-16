@@ -125,3 +125,25 @@ def test_a_collocated_objects_test_only_deps_stay_off_public(
     assert "x_core" in cmake and "y_core" in cmake, cmake
     assert "x_core" not in _public(cmake, "m"), cmake
     assert "y_core" not in _public(cmake, "m"), cmake
+
+
+def test_a_core_also_reached_by_a_real_edge_stays_public(
+    tmp_path: Path,
+) -> None:
+    """The diamond: a reaches x through test_only AND through b. A real
+    edge ships x, so it stays PUBLIC -- the subtraction drops only what
+    test_only edges alone reach, not everything a test_only edge touches."""
+    d = tmp_path / "p"
+    _q(new_run, "p", d, [], [], modules=["m"])
+    for obj in ("y", "x", "b", "a"):
+        _q(object_run, d, obj, "m")
+    cfg = C.load(d)
+    cfg["x"]["depends_on"] = ["y"]
+    cfg["b"]["depends_on"] = ["x"]
+    cfg["a"]["depends_on"] = [{"name": "x", "test_only": True}, "b"]
+    C.save(d, cfg)
+    (d / "native" / "src" / "a" / "CMakeLists.txt").unlink()
+    _q(apply_run, d)
+    public = _public(_cmake(d, "a"), "a")
+    for core in ("b_core", "x_core", "y_core"):
+        assert core in public, public
