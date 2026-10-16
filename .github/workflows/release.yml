@@ -16,6 +16,17 @@ on:
         required: true
         type: string
 
+# gh-2260: one tag push started TWO runs of this workflow (v0.104.0), both
+# past verify-ci and racing to publish. Keyed on the TAG, so a duplicate
+# push run and a dispatch for the same tag share one group (a dispatch's
+# `github.ref` is the branch, so it alone would not). cancel-in-progress
+# stays false: cancelling a run mid-publish could leave a version half
+# shipped. The later run waits instead, and the "already on PyPI" step in
+# `resolve` then ends it green without publishing again.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   # One place resolves what is being released, so every job below reads the
   # same answer. On a tag push these are exactly the values the jobs used
@@ -27,6 +38,10 @@ jobs:
     outputs:
       tag: ${{ steps.r.outputs.tag }}
       sha: ${{ steps.r.outputs.sha }}
+      # "true" only when PyPI already serves this exact version; every job
+      # from verify-ci on is skipped then, so a duplicate run cannot publish
+      # twice or fail on PyPI's "file exists" (gh-2260).
+      published: ${{ steps.pypi.outputs.published }}
     steps:
       - id: r
         env:
@@ -60,6 +75,36 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
+      # The distribution name is read from the tagged tree, not restated.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ steps.r.outputs.tag }}
+          sparse-checkout: pyproject.toml
+          sparse-checkout-cone-mode: false
+
+      # The per-version JSON endpoint, as scripts/release-watch.sh checks
+      # it. Fails toward publishing: only an exact version match skips, so
+      # a PyPI outage or a 404 lets the release run, and PyPI itself still
+      # refuses a re-upload.
+      - name: Is this version already on PyPI?
+        id: pypi
+        env:
+          TAG: ${{ steps.r.outputs.tag }}
+        run: |
+          set -uo pipefail
+          VERSION="${TAG#v}"
+          PKG="$(python3 -c 'import tomllib
+          print(tomllib.load(open("pyproject.toml", "rb"))["project"]["name"])')"
+          got="$(curl -s "https://pypi.org/pypi/$PKG/$VERSION/json" \
+                 | jq -r '.info.version // "absent"' 2>/dev/null)"
+          if [[ "$got" == "$VERSION" ]]; then
+            echo "::notice::$PKG $VERSION is already on PyPI -- another run released it. Ending green; nothing is built or published again."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$PKG $VERSION is not on PyPI yet -- releasing."
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # A release tag must point at a commit `main` already certified green: ci.yml's
   # "CI passed" aggregator runs on every push to main, so re-running the full
   # 6x2 matrix here is a redundant third run (PR CI + main-push CI + this one).
@@ -69,6 +114,7 @@ jobs:
   verify-ci:
     name: Verify CI already passed for this commit
     needs: resolve
+    if: needs.resolve.outputs.published != 'true'
     runs-on: ubuntu-latest
     # Above the poll window below (ATTEMPTS x INTERVAL = 60 min), so the
     # poll's own timeout message fires first, not GitHub's bare cancel;
@@ -127,6 +173,7 @@ jobs:
 
   build:
     needs: [resolve, verify-ci]
+    if: needs.resolve.outputs.published != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -263,7 +310,8 @@ jobs:
       version: ${{ needs.resolve.outputs.tag }}
 
   publish:
-    needs: [smoke, artifact-smoke]
+    needs: [resolve, smoke, artifact-smoke]
+    if: needs.resolve.outputs.published != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pypi
