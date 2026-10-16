@@ -1,5 +1,39 @@
 ## [Unreleased]
 
+## [0.107.0] — 2026-10-16
+
+### Added
+
+- **An object can decline its Python benchmark** (gh-2316).
+    `no_python_bench = true` on an object says it has no
+    `bench_<obj>.py`: `jm apply` no longer scaffolds one, and
+    `jm status --check` no longer reports a deleted one MISSING. Before
+    it, deleting the file was undone by the next `apply`. A file still on
+    disk under the key is reported as DECLINED by `status --check`, and
+    `apply` warns about it; jm deletes nothing. The C
+    `bench_<obj>_core.c` is unaffected; a method's `bench = false` is the
+    knob there.
+
+### Fixed
+
+- **A `test_only` dependency no longer leaks into another component's
+    link line** (gh-2318). `{ name = "x", test_only = true }` kept `x_core`
+    off its own component's core, but the transitive `depends_on` walk
+    followed that edge for everyone else, so a component depending on this
+    one linked `x_core` PUBLIC on its shipped core. Likewise, what `x`
+    itself depended on went PUBLIC on the declaring component's core. The
+    walk no longer follows a dependency's `test_only` edges, and a core's
+    PUBLIC line drops every core reached only through a `test_only` edge.
+
+- **A standalone object's `test_only` dependency reaches its C test
+    and bench** (gh-2320). `{ name = "x", test_only = true }` (gh-537)
+    linked `x_core` into a module object's test and bench but into
+    neither for a standalone object: they shared the extension's link
+    list, which leaves every `test_only` entry out. So a C test that
+    round-trips through the sibling could not link. They now link the
+    extension's libraries plus what the object's `test_only` edges reach.
+    The extension itself still links none of it.
+
 ## [0.106.2] — 2026-10-16
 
 ### Fixed
