@@ -3898,6 +3898,14 @@ def _apply_manifest(
     _extra_errors = _extramethods.manifest_errors(root, cfg)
     if _extra_errors:
         C._refuse(_extra_errors)
+    # gh-2302: a setter whose status the binding would discard. Before
+    # anything is written: a standalone header's declaration would be
+    # rewritten to `void` below, out of step with its definition.
+    from ._property import discarded_setter_status
+
+    _dropped_status = discarded_setter_status(root, cfg)
+    if _dropped_status:
+        C._refuse(_dropped_status)
 
     # gh-327: refuse to silently promote a former module object — whose
     # fragment was left behind after `objects = [...]` dropped it — into a

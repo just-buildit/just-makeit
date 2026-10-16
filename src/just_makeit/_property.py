@@ -34,7 +34,77 @@ from ._context._methods import (
 from ._init import (
     _inject_decls_into_core_h,
     _inject_struct_field,
+    declared_return,
 )
+
+
+def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
+    """Each setter whose C status the generated binding would throw away.
+
+    gh-2302, the converse of gh-2182. A writable property declaring no
+    ``error`` gets a binding that calls its C setter as a bare statement,
+    because `setter_return_type` says ``void``. When the header already
+    declares that setter returning something else -- an author's ``int``
+    status, written before gh-2182 made a refusing setter declarable -- the
+    call compiles and the status is dropped: the assignment succeeds in
+    Python while C refused the value. A module object's header is only ever
+    added to (gh-627), so its declaration stays as written; a standalone
+    one's is rewritten to ``void`` and no longer matches its definition.
+
+    The properties asked are the ones whose binding calls a C setter, the
+    set `validate_property_error` accepts ``error`` on: writable, not
+    ``field``, and not named for a state field (whose accessor jm declares
+    ``void``). How the GETTER is backed does not matter: an ``expr`` getter
+    still has a C setter.
+
+    Refused, naming the property and the declaration. The fix is the
+    manifest's: declare ``error`` (gh-2182), or make the C setter ``void``.
+    Only this direction: ``error`` over a ``void`` declaration is how a
+    property adopts gh-2182, and `apply` writes the ``int`` there.
+
+    Returns
+    -------
+    list of str
+        One message per setter, empty when none is dropped. A header that is
+        absent, or does not declare the setter yet, is not a finding.
+    """
+    out = []
+    for comp in C.components(cfg):
+        state = frozenset(n for n, _, _ in C.state_vars(cfg, comp))
+        props = [
+            p
+            for p in C.properties(cfg, comp)
+            if p.get("writable")
+            and not p.get("field")
+            and p["name"] not in state
+            and setter_return_type(p) == "void"
+        ]
+        if not props:
+            continue
+        try:
+            text = INC.core_h(root, comp).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for p in props:
+            fn = CSYM.property_setter(CSYM.stem(cfg, comp), p["name"])
+            ret = declared_return(text, fn)
+            # `void` not followed by `*`, anywhere in the prefix: an
+            # attribute or a macro may sit between it and the name
+            # (`void JM_HOT`, `void __attribute__((nonnull))`), and only
+            # `void *` returns something.
+            if ret is None or re.search(r"\bvoid\b(?!\s*\*)", ret):
+                continue
+            out.append(
+                f"`{comp}.{p['name']}` is writable and declares no `error`,"
+                f" so its binding calls {fn}() as a bare statement, but"
+                f" {INC.core_rel(comp, root)} declares it returning"
+                f" `{ret}`: the status would be discarded, and an"
+                " assignment C refused would succeed in Python. Declare"
+                " `error` on the property (gh-2182) so the binding raises"
+                f" on a nonzero return, or make {fn}() return void"
+                " (gh-2302)."
+            )
+    return out
 
 
 def plain_accessor_decls(
