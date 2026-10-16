@@ -1,5 +1,53 @@
 ## [Unreleased]
 
+## [0.106.2] — 2026-10-16
+
+### Fixed
+
+- **A `--batch` method refuses every key its binding does not read**
+    (gh-2261). A batch method is rendered ahead of every other result
+    shape, so `pass_capacity`, `exact_max_out`, `max_out`, `out_divisor`,
+    `status_return`, `error_negative`, a `--param` (gh-2021), `out_type`
+    (gh-1991), `variable_output` (gh-2200, which did not compile) and
+    `none_on_empty` (gh-2202) were each stored and generated nothing, and a
+    record return crashed with a bare `KeyError`. One allow-list,
+    `_keys.BATCH_METHOD_KEYS`, now answers all of them: any other key is
+    refused before anything is written, by `jm method` and `apply` alike,
+    naming the key and what a batch method reads, and a record return is
+    refused as not a scalar. The per-key batch refusals it replaces
+    (`multi_output`, the count keys, `out_cols`, `short_out`, `no_count`)
+    are gone.
+
+- **`jm migrate-to-fragments` writes one `include`** (gh-2263). A
+    manifest that already had `include` beside an inline object or
+    module section was migrated by carrying the old `include` over and
+    prepending a merged one, so the manifest said `include` twice and
+    the migration failed reading it back (`Cannot overwrite a value`).
+    It now writes the merged list once, and adds a directory's glob only
+    when no existing entry already reaches the fragments it wrote --
+    asked of the same include resolution `load` uses, so `*/*.toml` or
+    an explicit path is not doubled under another spelling.
+
+- **A composer segment with no fields builds under `-Werror`**
+    (gh-2264). A `kind = "composer"` segment's `__init__` and `sum`
+    always ended in a `fail:` label for a field's parse to jump to, so
+    a segment declaring no `fields` left it unreached: `-Wunused-label`
+    in glue `jm apply` regenerates, a hard error under `-Werror`. Each
+    function now carries that tail only when its own field parsing can
+    reach it.
+
+- **A setter whose status the binding would discard is refused**
+    (gh-2302). A writable property with no `error` gets a binding that
+    calls its C setter as a bare statement. When the header already
+    declared that setter returning `int`, the status was dropped, so an
+    assignment C refused succeeded in Python. On a module object nothing
+    said so; on a standalone one `apply` rewrote the declaration to
+    `void`, out of step with its definition. `jm apply` and
+    `jm status --check` now refuse it before writing anything, naming the
+    property and the declaration. Declare `error` (gh-2182), or make the
+    setter `void`. A project with such setters must do one or the other
+    before this release will apply.
+
 ## [0.106.1] — 2026-10-15
 
 ### Fixed
