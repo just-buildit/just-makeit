@@ -37,6 +37,7 @@ from . import _types as T
 
 from . import _report
 from . import _init
+from . import _keys
 from ._builtins import (
     builtin_method_names,
     is_builtin_symbol,
@@ -71,7 +72,6 @@ def count_why_not(
     error_negative: bool = False,
     error_sentinel: str = "",
     error_on_empty: bool = False,
-    batch: bool = False,
     varargs: bool = False,
     manual_stub: bool = False,
     codec: str = "",
@@ -102,10 +102,11 @@ def count_why_not(
     variable_output, count_type, error_negative, error_sentinel, \
 error_on_empty
         The declaration. An empty *count_type* is the default, ``size_t``.
-    batch, varargs, manual_stub, codec
+    varargs, manual_stub, codec
         The shapes that win over ``variable_output`` and never read the
         count: each renders its own binding, so a count key on one is
-        silently inert.
+        silently inert. (``batch`` is the fourth, and refuses every key its
+        binding does not read, these among them: `batch_why_not`.)
 
     Returns
     -------
@@ -153,9 +154,7 @@ error_on_empty
             )
         return ""
     hides = (
-        "--batch"
-        if batch
-        else "--varargs"
+        "--varargs"
         if varargs
         else "--manual-stub"
         if manual_stub
@@ -202,6 +201,68 @@ error_on_empty
             "--error-negative, or keep the default size_t count."
         )
     return ""
+
+
+def batch_why_not(method: str, carried) -> str:
+    """Why a ``batch`` method cannot carry *carried*, or ``""``.
+
+    gh-2261. A batch method is a 1:1-rate block transform, and the binding
+    renders it ahead of every other result shape, so a key outside
+    `_keys.BATCH_METHOD_KEYS` -- the ones its binding, prototype, stub and
+    benchmark read -- would be stored in the manifest and generate nothing:
+    a capacity no prototype takes, a status nobody raises, a param nobody
+    parses. Or worse, a declaration that does not compile (``variable_output``
+    renders a counted ``_core.c`` stub under a ``void`` prototype, gh-2200)
+    or a crash (a record return has no ndarray dtype). Every one is refused
+    by this one table rather than by a check per key, so a key added later
+    is refused on a batch row until the batch binding reads it.
+
+    Asked by `run`, which both ``jm method`` and ``apply``'s replay call, so
+    the two front doors refuse alike, before anything is written.
+
+    Parameters
+    ----------
+    method : str
+        ``<object>.<method>``, for the message.
+    carried : iterable of str
+        The manifest keys the method declares with a non-default value.
+
+    Returns
+    -------
+    str
+        One sentence for ``error:``, or ``""`` when every key is one a batch
+        method reads.
+
+    Examples
+    --------
+    >>> batch_why_not("o.run", ["arg_type", "batch", "nogil"])
+    ''
+    >>> why = batch_why_not("o.run", ["batch", "max_out", "params"])
+    >>> why.split(":")[0]
+    "method 'o.run'"
+    >>> "max_out and params have no effect on a batch method" in why
+    True
+    """
+    stray = sorted(set(carried) - _keys.BATCH_METHOD_KEYS)
+    if not stray:
+        return ""
+    # The keys that shape the call; the rest name or document the method.
+    reads = ", ".join(
+        sorted(
+            _keys.BATCH_METHOD_KEYS
+            - _keys.METHOD_NON_SIGNATURE_KEYS
+            - {"batch"}
+        )
+    )
+    one = len(stray) == 1
+    return (
+        f"method '{method}': {' and '.join(stray)} "
+        f"{'has' if one else 'have'} no effect on a batch method. Its "
+        "binding is a 1:1 block transform that reads only "
+        f"{reads}, so jm would store {'it' if one else 'them'} and generate "
+        f"nothing. Drop {'it' if one else 'them'}, or drop `batch` for a "
+        f"shape that reads {'it' if one else 'them'}."
+    )
 
 
 # gh-805 §A2: what a C function name may be.
@@ -1269,7 +1330,27 @@ def run(
     #: become this function's defaults. Only the caller can tell them apart.
     declared: "frozenset[str] | None" = None,
 ) -> None:
+    # gh-2261: every argument as passed, read before any local is bound, so
+    # the batch refusal below asks about every signature key there is,
+    # rather than a list of them kept here that a new key would miss.
+    _args = dict(locals())
     C.require_name(method_name, "method")  # gh-625
+    # gh-2261: a batch method reads a fixed set of keys (`_keys.
+    # BATCH_METHOD_KEYS`); any other is refused here, first and before
+    # anything is written, for `jm method` and `apply` alike. The carried
+    # keys are the ones differing from their default, compared exactly as a
+    # view override's are (an empty parent is "every key at its default").
+    # `record_doc` is the one non-signature key a batch row may not carry.
+    if batch:
+        _batch_why = batch_why_not(
+            f"{object_name}.{method_name}",
+            _signature_differences(
+                {}, None, **{k: _args[k] for k in _SIGNATURE_COERCIONS}
+            )
+            + (["record_doc"] if record_doc else []),
+        )
+        if _batch_why:
+            raise _report.Refusal(_batch_why)
     # gh-910: the method's parameters and result fields, before this command
     # writes any C. `C.save`'s gate catches them either way, but this command
     # renders the binding and the stub before it saves, so without this a
@@ -1364,12 +1445,12 @@ def run(
     # (gh-600), but only some result shapes render them. On these three the
     # key was accepted and stored, and then no prototype, binding or stub
     # used it: the declared outputs silently vanished. Refused here, before
-    # anything is written, so the CLI and `apply` agree (gh-1408).
+    # anything is written, so the CLI and `apply` agree (gh-1408). A batch
+    # method was the third; it refuses every key it does not read, this one
+    # among them, in `batch_why_not` above (gh-2261).
     if multi_output:
         _mo_shape = (
-            "--batch"
-            if batch
-            else "--single"
+            "--single"
             if single
             else "--result-field"
             if result_fields and not record_dtype and not borrow
@@ -1463,7 +1544,6 @@ def run(
         error_negative=error_negative,
         error_sentinel=error_sentinel,
         error_on_empty=error_on_empty,
-        batch=batch,
         varargs=varargs,
         manual_stub=manual_stub,
         codec=codec,
@@ -1492,24 +1572,6 @@ def run(
     if _shape_err:
         print(f"error: {_shape_err}", file=sys.stderr)
         sys.exit(1)
-    # gh-1885: an array-result method (variable-output or batch) with no
-    # output element -- a `void` return and nothing else naming one -- was
-    # persisted and then crashed the render, and so every later command
-    # that read the manifest. Asked here, before anything is written, for
-    # the CLI, `jm object --variable-output` and `apply`'s replay alike.
-    # After the record-shape gate, whose message about `--result-field` is
-    # the more specific one.
-    _element_why = _outbuf.element_why_not(
-        f"method '{object_name}.{method_name}'",
-        variable_output=variable_output,
-        batch=batch,
-        record_dtype=record_dtype,
-        borrow=borrow,
-        out_type=out_type or "",
-        return_type=return_type,
-    )
-    if _element_why:
-        raise _report.Refusal(_element_why)
     # gh-823 Ask D: `status_return` raises too, so it may name the exception
     # and carry the message. The key was never the problem — both were already
     # read from the manifest; only `error_negative`'s emitter looked at them.
@@ -1597,6 +1659,28 @@ def run(
     # ARRAY param naming an element is gh-1413, filed rather than half-done.
     arg_type = _record.resolve_element(arg_type, _elem_records)
     return_type = _record.resolve_element(return_type, _elem_records)
+
+    # gh-1885: an array-result method (variable-output or batch) with no
+    # output element -- a `void` return and nothing else naming one -- was
+    # persisted and then crashed the render, and so every later command
+    # that read the manifest. Asked here, before anything is written, for
+    # the CLI, `jm object --variable-output` and `apply`'s replay alike.
+    # After the record-shape gate, whose message about `--result-field` is
+    # the more specific one. gh-2261: and after the element is resolved, so
+    # a batch return naming a declared scalar element is its C type, and
+    # one naming a record struct -- which has no scalar dtype -- is refused
+    # rather than met by the render as a `KeyError`.
+    _element_why = _outbuf.element_why_not(
+        f"method '{object_name}.{method_name}'",
+        variable_output=variable_output,
+        batch=batch,
+        record_dtype=record_dtype,
+        borrow=borrow,
+        out_type=out_type or "",
+        return_type=return_type,
+    )
+    if _element_why:
+        raise _report.Refusal(_element_why)
 
     # Resolve which component this belongs to
     # gh-963: the manifest already records which module owns this object,

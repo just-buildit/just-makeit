@@ -595,7 +595,6 @@ _GENERATOR = {"no_count": True, "variable_output": True, "arg_type": "void"}
         ({"extra_args": [{"name": "k", "type": "int"}]}, "no params"),
         ({"count_default": "4"}, "count_default describes"),
         ({"count_name": "n"}, "count_name describes"),
-        ({"batch": True}, "batch is a 1:1 transform"),
         (
             {"result_fields": [{"name": "i", "type": "int"}]},
             "record or list-of-records",

@@ -425,7 +425,10 @@ def element_why_not(
     variable_output, record_dtype, borrow, out_type, return_type
         As :func:`element` takes them.
     batch : bool
-        The method is a 1:1-rate array method (``--batch``).
+        The method is a 1:1-rate array method (``--batch``). Its element
+        must then be a scalar C type, so *return_type* is asked RESOLVED
+        (``_record.resolve_element``): a declared scalar element's name
+        would otherwise read as a record (gh-2261).
     remedy : str
         The closing advice, when the face asking has different flags from
         ``jm method`` (``jm object`` has no ``--out-type``). Empty takes
@@ -457,6 +460,10 @@ def element_why_not(
     ...     batch=True, record_dtype="", borrow=None, out_type="",
     ...     return_type="void").splitlines()[0])
     method 'o.run' is batch, but its output element is 'void'.
+    >>> print(element_why_not("method 'o.run'", variable_output=False,
+    ...     batch=True, record_dtype="", borrow=None, out_type="",
+    ...     return_type="rec_t").splitlines()[0])
+    method 'o.run' is batch, but its output element 'rec_t' is not a scalar.
     """
     if batch:
         shape, noun = "batch", "batch"
@@ -472,6 +479,21 @@ def element_why_not(
         )
     else:
         return ""
+    if batch and elem.strip() not in ("void", *_CTYPE_META):
+        # gh-2261: a batch result is an ndarray of the return type, built
+        # from its `_CTYPE_META` dtype -- and a record struct has none, so
+        # the render died on the lookup. Asked of the RESOLVED type: a
+        # declared scalar element is its C type by then.
+        return (
+            f"{what} is batch, but its output element {elem!r} is not a "
+            "scalar.\n"
+            "  A batch method returns an array of one scalar per input; a "
+            "record has\n"
+            "  no scalar dtype. Return records with --variable-output "
+            "--record-dtype\n"
+            "  (`variable_output`, `record_dtype`), or drop --batch "
+            "(`batch`)."
+        )
     if elem.strip() != "void":
         return ""
     return (
