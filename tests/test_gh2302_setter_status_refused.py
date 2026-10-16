@@ -153,3 +153,23 @@ def test_a_pointer_returning_setter_is_refused(tmp_path) -> None:
     assert n == 1, text
     header.write_text(new, encoding="utf-8")
     assert "returning `void *`" in _refused(root)
+
+
+def test_prose_above_a_wrapped_prototype_is_not_its_type(tmp_path) -> None:
+    """A doc comment's prose is not part of the declaration it documents.
+
+    A wrapped prototype is found by the multi-line lookup, whose match can
+    start at a prose line of the comment above it; the word ``void`` there
+    must not make an ``int`` setter read as one.
+    """
+    root = _project(tmp_path, module=True)
+    header = INC.core_h(root, "acc")
+    text = header.read_text(encoding="utf-8")
+    new, n = _INT_SETTER.subn(
+        "/* Set alpha.\n   Returns void-like 0 when unchanged */\nint\n\\1(",
+        text,
+        count=1,
+    )
+    assert n == 1, text
+    header.write_text(new, encoding="utf-8")
+    assert "returning `int`" in _refused(root)

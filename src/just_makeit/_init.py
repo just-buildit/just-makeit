@@ -623,13 +623,23 @@ def declared_return(text: str, fn_name: str) -> "str | None":
     'void *'
     >>> declared_return("int other(void);", "x_buf") is None
     True
+    >>> declared_return("/* Returns void when unchanged.\\n   Else 1 */\\nint\\n"
+    ...                 "x_set(x_t *s,\\n      double v);", "x_set")
+    'int'
+
     """
     pat = existing_decl(text, fn_name)
     if pat is None:
         return None
     decl = pat.search(text).group(0)
     name = re.search(r"\b" + re.escape(fn_name) + r"\s*\(", decl)
-    return " ".join(decl[: name.start()].split())
+    # Comments out: a wrapped prototype's multi-line match starts at the
+    # earliest line it can, which may be prose INSIDE the doc comment above
+    # it ("Returns void when ..."), so the match holds that comment's close
+    # without its open. Nothing before the last `*/` is the type.
+    prefix = decl[: name.start()].rpartition("*/")[2]
+    prefix = re.sub(r"//[^\n]*", " ", prefix)
+    return " ".join(prefix.split())
 
 
 def _inject_decls_into_core_h(
