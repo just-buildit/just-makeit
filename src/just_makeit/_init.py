@@ -1635,6 +1635,27 @@ def run(
         "\n    ".join(block_libs) + "\n    " if block_libs else ""
     )
     ctx["extra_link_libs_block"] = extra_link_libs_block
+    # gh-2320: the C test and bench link what the .so does, plus what a
+    # `test_only` edge reaches (gh-537) -- the one thing they need that the
+    # .so must not have. They shared the .so's block, which `dep_link_libs`
+    # filters test_only out of, so a standalone object's test-only sibling
+    # reached neither. Its own edges are walked as the .so walks a link=true
+    # one.
+    test_libs = list(block_libs)
+    for core in C.transitive_dep_cores(
+        cfg,
+        [
+            {"name": C._dep_name(d), "link": True}
+            for d in depends_on
+            if C._dep_test_only(d)
+        ],
+        link_only=True,
+    ):
+        if core not in test_libs:
+            test_libs.append(core)
+    ctx["test_link_libs_block"] = (
+        "\n    ".join(test_libs) + "\n    " if test_libs else ""
+    )
     ctx["extra_ext_sources"] = ""  # populated on jm method --varargs
     # extra_include_dirs is a list of CMake include dirs (literals or ${VAR}
     # references). Each dir lands on its own indented line inside the
