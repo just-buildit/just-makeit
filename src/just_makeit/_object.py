@@ -2769,6 +2769,7 @@ def run(
     no_step: bool = False,
     no_reset: bool = False,
     process_global: bool = False,
+    no_python_bench: bool = False,
     fragment: str = "",
     mutable: bool = False,
     step_delegates: bool = False,
@@ -2911,6 +2912,7 @@ def run(
             core_family=core_family,
             no_reset=no_reset,
             process_global=process_global,
+            no_python_bench=no_python_bench,
             fragment=fragment,
             mutable=mutable,
             step_delegates=step_delegates,
@@ -3324,10 +3326,12 @@ def run(
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
     # gh-1528: born owned, as the standalone benchmark is (`_init`).
-    _write(
-        pkg_mod_dir / "benchmarks" / f"bench_{comp}.py",
-        R.owned_scaffold(r_py(bench_py_tmpl), f"bench_{comp}.py"),
-    )
+    # gh-2316: and declined the same way.
+    if not no_python_bench:
+        _write(
+            pkg_mod_dir / "benchmarks" / f"bench_{comp}.py",
+            R.owned_scaffold(r_py(bench_py_tmpl), f"bench_{comp}.py"),
+        )
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp)

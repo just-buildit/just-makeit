@@ -487,6 +487,14 @@ def run(
         for rel in _pg_mod.orphan_headers(root, cfg)
         if not _is_allowed(rel, allow_patterns)
     ]
+    # gh-2316: the same shape -- a Python benchmark on disk for an object
+    # whose manifest says `no_python_bench`. The replay renders none, so no
+    # diff can show it; this is the only place it is seen.
+    _declined_bench = [
+        rel
+        for rel in C.declined_python_benches(root, cfg)
+        if not _is_allowed(rel, allow_patterns)
+    ]
 
     # gh-1154: manifest `doc` values the renderer cannot carry whole. Static,
     # manifest-only, and nothing `apply` would rewrite — the same shape as
@@ -1086,6 +1094,7 @@ def run(
         + sum(1 for b in backend_entries if not b[2])
         + len(manifest_doc_entries)
         + len(_orphan_pg)
+        + len(_declined_bench)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
         # completeness ratchet projects legitimately differ on; this is "the
         # published constructor raises when called as documented", which is
@@ -1173,6 +1182,7 @@ def run(
                         for (o, n, m, h) in drift_entries
                     ],
                     "orphan_procglobal_headers": list(_orphan_pg),
+                    "declined_python_benches": list(_declined_bench),
                     # gh-1566: the UNRECONCILED buckets, from the same
                     # classifier the text prints -- one source, two faces.
                     "unreconciled": {
@@ -2288,6 +2298,23 @@ def run(
         )
         print()
 
+    # gh-2316: same treatment, and the same reason no diff can show it.
+    if _declined_bench:
+        print(
+            f"DECLINED ({len(_declined_bench)}) — Python benchmark(s) for an "
+            "object that declares `no_python_bench`:"
+        )
+        for rel in _declined_bench:
+            print(f"  ! {rel}")
+        print(
+            "  The manifest says this object has no Python benchmark, so "
+            "jm no longer\n  renders or reconciles the file. jm does not "
+            "delete files — remove it\n  yourself, or drop "
+            "`no_python_bench` if declining it was the mistake.\n"
+            "  See gh-2316."
+        )
+        print()
+
     # gh-921: deliberately NOT the "impossible to miss" treatment the three
     # sections around it get. Nothing here is broken — gh-920 made this seam
     # safe, and the allocation is the historical clamped one, which is correct
@@ -2409,6 +2436,7 @@ def run(
         and not drift_entries
         and not version_entries
         and not _orphan_pg
+        and not _declined_bench
         and not manifest_doc_entries
         and not any(not e[2] for e in kwargs_entries)
         # gh-1290: and the record shapes, on the same argument — a
@@ -2571,6 +2599,11 @@ def run(
                 else ""
             )
             + (f", {len(_orphan_pg)} orphan-header (!)" if _orphan_pg else "")
+            + (
+                f", {len(_declined_bench)} declined-bench (!)"
+                if _declined_bench
+                else ""
+            )
             + (
                 f", {sum(1 for e in record_entries if not e[2])} "
                 "record-drift (!)"

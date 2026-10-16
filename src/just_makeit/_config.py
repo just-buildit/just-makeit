@@ -2723,6 +2723,62 @@ def is_no_reset(cfg: dict, component: str) -> bool:
     return _truthy(cfg.get(component, {}).get("no_reset"))
 
 
+def is_no_python_bench(cfg: dict, component: str) -> bool:
+    """Return True if *component* declares ``no_python_bench = true``.
+
+    gh-2316. An object may decline its Python benchmark -- a project whose
+    Python rows only re-measured the C kernel plus the binding's call cost
+    keeps the C bench and drops ``bench_<obj>.py``. Manifest-only, like
+    ``process_global``: `jm apply` replays it, so the replay renders no
+    file, `status` stops reporting one MISSING and `apply` stops
+    re-scaffolding it. The C ``bench_<obj>_core.c`` is unaffected; a
+    method's ``bench = false`` is the knob for that. A file still on disk
+    under the key is :func:`declined_python_benches`'s to report.
+    """
+    return _truthy(cfg.get(component, {}).get("no_python_bench"))
+
+
+def python_bench_file(
+    root: Path, cfg: dict, component: str, module: "str | None" = None
+) -> Path:
+    """Where *component*'s Python benchmark ``bench_<comp>.py`` lives.
+
+    The one spelling of the path, for `jm remove` and gh-2316's report: a
+    module object's lands in its module's package directory
+    (:func:`module_package_resolved`, where `jm object` writes it), a
+    standalone object's in ``src/<pkg>/benchmarks/``. *module* is looked
+    up when omitted; `jm remove` passes the one it was given, since the
+    manifest may already have dropped the object.
+    """
+    if module is None:
+        module = module_of(cfg, component)
+    base = root / "src" / project_name(cfg)
+    for part in module_package_resolved(cfg, module).split("/"):
+        if part:
+            base = base / part
+    return base / "benchmarks" / f"bench_{component}.py"
+
+
+def declined_python_benches(root: Path, cfg: dict) -> "list[str]":
+    """Python benchmarks on disk for objects that declare they have none.
+
+    gh-2316, the gh-1142 shape: the manifest says ``no_python_bench``, so
+    the replay renders no ``bench_<obj>.py`` and nothing compares the file
+    on disk against anything. The tree and the manifest disagree, and jm
+    deletes nothing (`apply` never does), so this reports it: delete the
+    file, or drop the key if declining it was the mistake. Read from the
+    tree, relative to *root*, in object order.
+    """
+    out = []
+    for comp in object_order(cfg):
+        if not is_no_python_bench(cfg, comp):
+            continue
+        f = python_bench_file(root, cfg, comp)
+        if f.is_file():
+            out.append(f.relative_to(root).as_posix())
+    return out
+
+
 def is_serializable(cfg: dict, component: str) -> bool:
     """Return True if the component exposes a serializable-state triplet.
 
@@ -7750,7 +7806,8 @@ _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
 }  # fmt: skip
 _OBJECT_ORDER = (
     "module", "arg_type", "return_type", "mutable", "no_state", "no_step",
-    "no_reset", "opaque_state", "process_global", "header_only",
+    "no_reset", "opaque_state", "process_global", "no_python_bench",
+    "header_only",
     "core_macro", "core_header", "step_delegates_to_steps", "serializable",
     "streamable", "async_stream", "stream_block_default", "class_name",
     "create_fn", "create_error", "create_error_message", "doc",

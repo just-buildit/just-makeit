@@ -385,6 +385,10 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # test passes, because they call the emitters with a cfg that HAS the
         # key. Same shape as `destroy` below and gh-542's `no_reset`.
         "process_global": _procglobal.is_process_global(cfg, comp),
+        # gh-2316: manifest-only too. Dropped here, the replay scaffolds the
+        # `bench_<obj>.py` the object declined, `status` reports it MISSING
+        # and `apply` writes it back.
+        "no_python_bench": C.is_no_python_bench(cfg, comp),
         # gh-1448: manifest-only, for the reason every key above is. Dropped
         # here, the replayed tree renders every owned fragment SACRED -- the
         # "Hand-patches are preserved" banner and no ownership token -- and
@@ -4175,6 +4179,20 @@ def _apply_manifest(
             f"{_orphan.split('/')[2].removesuffix('_procglobal.h')} does not "
             "declare `process_global`. jm does not delete files — remove it, "
             "or re-declare the key",
+            gates=True,
+            stream=sys.stdout,
+            indent="  ",
+        )
+
+    # gh-2316: and a Python benchmark the object declines. Warned on every
+    # apply while it is on disk, as gh-1142's orphan header is: apply is
+    # what an author runs after changing the manifest, so it is where the
+    # disagreement is first seen.
+    for _declined in C.declined_python_benches(root, cfg):
+        _report.warn(
+            f"{_declined} is a Python benchmark for an object that declares "
+            "`no_python_bench`, so jm no longer renders or reconciles it. "
+            "jm does not delete files — remove it, or drop the key",
             gates=True,
             stream=sys.stdout,
             indent="  ",

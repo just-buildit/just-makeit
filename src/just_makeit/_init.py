@@ -1283,6 +1283,7 @@ def run(
     no_step: bool = False,
     no_reset: bool = False,
     process_global: bool = False,
+    no_python_bench: bool = False,
     fragment: str = "",
     mutable: bool = False,
     step_delegates: bool = False,
@@ -1873,13 +1874,15 @@ def run(
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
     # gh-1528: born owned too -- it constructs the object, so it goes stale
-    # with the constructor exactly as the test did.
-    _write(
-        root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
-        R.owned_scaffold(
-            R.render_scaffold_py(bench_py_tmpl, ctx), f"bench_{comp}.py"
-        ),
-    )
+    # with the constructor exactly as the test did. gh-2316: unless the
+    # object declines it, and then the replay renders none to restore.
+    if not no_python_bench:
+        _write(
+            root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
+            R.owned_scaffold(
+                R.render_scaffold_py(bench_py_tmpl, ctx), f"bench_{comp}.py"
+            ),
+        )
 
     # Benchmark history dir — dated snapshots committed to git
     gitkeep = root / "benchmarks" / "history" / ".gitkeep"
