@@ -2484,8 +2484,10 @@ def py_face(m: dict) -> PyFace:
         doc_call = f"{name}({', '.join(_d_names)})"
     elif ret_arr and not arrays and m.get("out_len_fn"):
         # (e) render(overrides_json) / at(snr, seed) -> ndarray (len from handle)
-        sig = "self, " + ", ".join(
-            f"{a['name']}: "
+        # Joined after `self` as (f) is: with no args, `"self, " + ""` was
+        # a dangling comma, and the `/` below would make it a syntax error.
+        sig = "self" + "".join(
+            f", {a['name']}: "
             + ("str" if a.get("type") == "string" else _pyi_scalar(a["type"]))
             for a in margs
         )
@@ -2555,6 +2557,12 @@ def py_face(m: dict) -> PyFace:
     # the opposite answer to the same declaration.
     if raises_instead_of_returning(m):
         ann = "None"
+    # gh-2212: a binding that takes no keywords (`METH_VARARGS` alone) has a
+    # positional-only signature, and says so with `/`, or a type checker
+    # accepts `write(iq=...)`, which raises `TypeError`. Asked of the
+    # predicate that picks the method's flags, never re-derived here.
+    if sig != "self" and not _method_kwargs(m):
+        sig += ", /"
     return PyFace(
         sig,
         ann,
@@ -2750,7 +2758,8 @@ def render_pyi(
         lines.append(
             '        """Serialize the handle\'s mutable state to bytes."""'
         )
-        lines.append("    def set_state(self, blob: bytes) -> None:")
+        # gh-2212: `METH_O`, so the blob is positional-only.
+        lines.append("    def set_state(self, blob: bytes, /) -> None:")
         lines.append(
             '        """Restore mutable state from a get_state() blob."""'
         )
@@ -2770,6 +2779,10 @@ def render_pyi(
     for f in C.handle_factories(cfg, module):
         ips = list(f.get("init_params", []))
         sig = ", ".join(f"{a['name']}: {_pyi_arg_ann(a)}" for a in ips)
+        # gh-2212: `_emit_factory` parses with `PyArg_ParseTuple` and the
+        # table registers it `METH_VARARGS`, so it takes no keywords.
+        if sig:
+            sig += ", /"
         lines.append(f"def {f['name']}({sig}) -> {tname}:")
         lines.extend(_factory_doc_lines(cfg, module, f))
         lines.append("")

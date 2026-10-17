@@ -348,7 +348,7 @@ class TestBytesReturn:
         # one tuple-parse slot), so the call passes it by name.
         assert "_got = ringbuf_save(self->h, level, _buf);" in s
         pyi = _handle.render_pyi(cfg, "ringbuf")
-        assert "def save(self, level: int) -> bytes:" in pyi
+        assert "def save(self, level: int, /) -> bytes:" in pyi
 
     def test_bytes_out_requires_out_len_fn(self):
         bad = {"name": "save", "fn": "ringbuf_save", "returns": "bytes"}
@@ -503,8 +503,8 @@ class TestFactories:
 
     def test_factory_pyi_is_module_level_function(self):
         pyi = _handle.render_pyi(_factory_cfg(), "ringbuf")
-        assert "def RingFromBlob(blob: bytes) -> Ring:" in pyi
-        assert "def RingFromFile(path: str | os.PathLike) -> Ring:" in pyi
+        assert "def RingFromBlob(blob: bytes, /) -> Ring:" in pyi
+        assert "def RingFromFile(path: str | os.PathLike, /) -> Ring:" in pyi
         assert "import os" in pyi  # gh-623
         # module-level (no leading indentation), distinct from the class body.
         assert "\ndef RingFromBlob(" in pyi
@@ -653,7 +653,9 @@ class TestPyi:
         # gh-1724: the arg's declared dtype, not `Any`.
         # gh-2207: the declared name, which the runtime doc uses too -- not
         # the `x` this pinned while the stub invented it.
-        assert "def write(self, iq: npt.NDArray[np.complex64]) -> int:" in pyi
+        assert (
+            "def write(self, iq: npt.NDArray[np.complex64], /) -> int:" in pyi
+        )
         assert '"""write(iq) -> int."""' in pyi
         assert "@property" in pyi
         assert "def clip_fraction(self) -> float:" in pyi
@@ -665,7 +667,7 @@ class TestPyi:
     def test_non_wfm_class_stub(self):
         pyi = _handle.render_pyi(_ring_cfg(), "ringbuf")
         assert "class Ring:" in pyi
-        assert "def pop(self, n: int) -> NDArray[Any]:" in pyi
+        assert "def pop(self, n: int, /) -> NDArray[Any]:" in pyi
         assert '"""pop(n) -> NDArray[Any]."""' in pyi
         assert "def fill_fraction(self) -> float:" in pyi
         assert '"""fill_fraction (float)."""' in pyi
@@ -1225,5 +1227,7 @@ class TestStringArgAndLenArray:
     def test_pyi_annotations(self):
         pyi = _handle.render_pyi(_plan_cfg(), "wfm_plan")
         assert "def __init__(self, spec_json: str) -> None: ..." in pyi
-        assert "def render(self, overrides_json: str) -> NDArray[Any]:" in pyi
-        assert "def at(self, snr: float, seed: int) -> NDArray[Any]:" in pyi
+        assert (
+            "def render(self, overrides_json: str, /) -> NDArray[Any]:" in pyi
+        )
+        assert "def at(self, snr: float, seed: int, /) -> NDArray[Any]:" in pyi

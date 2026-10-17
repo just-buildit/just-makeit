@@ -118,7 +118,8 @@ def cases():
             for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef) and node.name == "op"
         )
-        names = [a.arg for a in fn.args.args[1:]]
+        # gh-2212: a positional-only stub holds its parameters before `/`.
+        names = [a.arg for a in fn.args.posonlyargs + fn.args.args][1:]
         out.append((ident, m, body, names))
     return out
 

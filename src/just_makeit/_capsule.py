@@ -492,7 +492,7 @@ _get_wrap(PyObject *cap)
     rows = []
     for fn in fn_names:
         doc_c = _fn_doc_c(cfg, module, fn)
-        rows.append(f'    {{"{fn}", _fn_{fn}, METH_VARARGS,\n     {doc_c}}},')
+        rows.append(f'    {{"{fn}", _fn_{fn}, {FN_FLAGS},\n     {doc_c}}},')
     method_table = "\n".join(rows)
 
     parts.append(f"""static PyMethodDef _methods[] = {{
@@ -667,6 +667,31 @@ endif()
 # ── .pyi type stub ───────────────────────────────────────────────────────────
 
 
+#: The flags every function in a capsule module's method table registers
+#: with: each wrapper parses with ``PyArg_ParseTuple``, so none takes a
+#: keyword. :func:`_params` asks this, so the stub cannot disagree with it.
+FN_FLAGS = "METH_VARARGS"
+
+
+def _params(params: str) -> str:
+    """A capsule function's ``.pyi`` parameter list, positional-only when its
+    binding takes no keywords (gh-2212).
+
+    Without the ``/`` a type checker accepts ``f(state=cap)``, which raises
+    ``TypeError`` at runtime.
+
+    Examples
+    --------
+    >>> _params("state: Any")
+    'state: Any, /'
+    >>> _params("")
+    ''
+    """
+    if not params or "METH_KEYWORDS" in FN_FLAGS:
+        return params
+    return f"{params}, /"
+
+
 def _pyi_scalar(ptype: str) -> str:
     """Python annotation for a scalar C init-param / property type."""
     if ptype in ("float", "double", "long double"):
@@ -720,7 +745,8 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"{n}: {_pyi_scalar(t)}" for (n, t, _d) in init_params
     )
     _def(
-        f"{backing}_create", f"def {backing}_create({ctor_args}) -> {state_t}:"
+        f"{backing}_create",
+        f"def {backing}_create({_params(ctor_args)}) -> {state_t}:",
     )
 
     for m in C.module_methods(cfg, module):
@@ -733,32 +759,39 @@ def render_pyi(cfg: dict, module: str) -> str:
                 f"{backing}_{name}",
                 # gh-1724: the declared dtypes, by the one helper; the
                 # return is the ndarray view of `out`.
-                f"def {backing}_{name}(state: {state_t}, "
-                f"x: {T.array_param_annotation(m['arg_type'])}, "
-                f"out: {_out_ann}) -> NDArray[Any]:",
+                f"def {backing}_{name}("
+                + _params(
+                    f"state: {state_t}, "
+                    f"x: {T.array_param_annotation(m['arg_type'])}, "
+                    f"out: {_out_ann}"
+                )
+                + ") -> NDArray[Any]:",
             )
         else:
             _def(
                 f"{backing}_{name}",
-                f"def {backing}_{name}(state: {state_t}) -> None:",
+                f"def {backing}_{name}({_params(f'state: {state_t}')})"
+                " -> None:",
             )
 
     _def(
         f"{backing}_destroy",
-        f"def {backing}_destroy(state: {state_t}) -> None:",
+        f"def {backing}_destroy({_params(f'state: {state_t}')}) -> None:",
     )
 
     for p in C.module_properties(cfg, module):
         pn, pt = p["name"], p["type"]
         _def(
             f"{backing}_get_{pn}",
-            f"def {backing}_get_{pn}(state: {state_t}) -> {_pyi_scalar(pt)}:",
+            f"def {backing}_get_{pn}({_params(f'state: {state_t}')})"
+            f" -> {_pyi_scalar(pt)}:",
         )
         if p.get("writable"):
             _def(
                 f"{backing}_set_{pn}",
-                f"def {backing}_set_{pn}(state: {state_t}, "
-                f"value: {_pyi_scalar(pt)}) -> None:",
+                f"def {backing}_set_{pn}("
+                + _params(f"state: {state_t}, value: {_pyi_scalar(pt)}")
+                + ") -> None:",
             )
     lines.append("")
     # gh-747: same door as every other `.pyi` producer. No capsule module in

@@ -5481,6 +5481,10 @@ def render_pyi(cfg: dict, module: str) -> str:
         # gh-1356: the same declaration the runtime rows render from.
         for m in _source_gen_members(_gen):
             args = "".join(f", {n}: {a}" for n, a in m["params"])
+            # gh-2212: a row without METH_KEYWORDS takes no keywords, so
+            # its stub is positional-only, asked of the row's own flags.
+            if args and "METH_KEYWORDS" not in m["flags"]:
+                args += ", /"
             lines.append(f"    def {m['name']}(self{args}) -> {m['ret']}:")
             lines += render_numpy_doc(
                 m["block"],
@@ -5574,7 +5578,9 @@ def render_pyi(cfg: dict, module: str) -> str:
         )
         + ", **segment_kwargs"
         ") -> None: ...",
-        "    def execute(self, n: int) -> NDArray[np.complex64]:",
+        # gh-2212: `execute` and `from_json` / `from_file` below register
+        # METH_VARARGS (`PyArg_ParseTuple`), so they take no keywords.
+        "    def execute(self, n: int, /) -> NDArray[np.complex64]:",
         *docs[f"{cname}.execute"],
         "    def compose(self, block: int = ...) -> NDArray[np.complex64]:",
         *docs[f"{cname}.compose"],
@@ -5628,10 +5634,10 @@ def render_pyi(cfg: dict, module: str) -> str:
     if C.composer_json(cfg, module):
         lines += [
             "    @classmethod",
-            f"    def from_json(cls, json: str) -> {cname}:",
+            f"    def from_json(cls, json: str, /) -> {cname}:",
             *docs[f"{cname}.from_json"],
             "    @classmethod",
-            f"    def from_file(cls, path: str) -> {cname}:",
+            f"    def from_file(cls, path: str, /) -> {cname}:",
             *docs[f"{cname}.from_file"],
             "    def to_json(self) -> str:",
             *docs[f"{cname}.to_json"],
