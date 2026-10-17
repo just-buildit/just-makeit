@@ -275,6 +275,12 @@ def load(root: Path) -> dict:
     package_errors = module_package_errors(cfg)
     if package_errors:
         raise Refusal("\n".join(package_errors))
+    # gh-2215: a cycle of `object` init-param references leaks every object
+    # in it and has no construction order. Here, so every command that
+    # reads the manifest -- `status` included -- refuses it.
+    cycles = object_ref_cycles(cfg)
+    if cycles:
+        raise Refusal("\n".join(cycles))
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
     # wrong guess -- accepted as truthy, it rendered a two-argument call to
     # a one-argument reader and failed at C compile, far from this line.
@@ -1532,6 +1538,13 @@ def save(root: Path, cfg: dict) -> None:
     # deferred mutations later when the scope exits and the author has to work
     # out which one it was.
     require_declared_names(cfg)
+    # gh-2215: and the cycle `load` refuses, so the command whose edge
+    # closes one (`jm object --init-param x:object:<y>`, `jm view`) is
+    # refused too, and the mutating-command undo (gh-1867) puts back what
+    # it had written.
+    cycles = object_ref_cycles(cfg)
+    if cycles:
+        raise Refusal("\n".join(cycles))
     # gh-999: contract the group expansion, HERE, for the same reason `load`
     # expands there — this is the one place every manifest write passes
     # through. `save` and `load` are the symmetric pair: what `load` unfolds,
@@ -2531,6 +2544,95 @@ def validate_module_package(package: str) -> str | None:
             f' write "{nested}".'
         )
     return msg
+
+
+def object_ref_edges(cfg: dict, component: str) -> "list[str]":
+    """The components *component*'s ``object`` init-params name, in order.
+
+    An edge per reference on the object's own ``init_params`` and on each
+    of its views' (gh-504: a view's init-params may name a producer too).
+    A reference names ``<comp>`` or ``<comp>.<Class>``; the component is
+    the part before the dot. Shared by :func:`object_ref_cycles` and
+    ``jm script``, which creates every producer before its consumers.
+
+    >>> cfg = {"a": {"init_params": [{"name": "x", "object": "b.B"}]},
+    ...        "b": {}}
+    >>> object_ref_edges(cfg, "a")
+    ['b']
+    """
+    sec = cfg.get(component)
+    if not isinstance(sec, dict):
+        return []
+    rows = [
+        *(sec.get("init_params") or []),
+        *(
+            p
+            for v in (sec.get("views") or [])
+            if isinstance(v, dict)
+            for p in (v.get("init_params") or [])
+        ),
+    ]
+    out: list[str] = []
+    for p in rows:
+        if not isinstance(p, dict):
+            continue
+        target = str(p.get("object") or "").partition(".")[0]
+        if target and target not in out:
+            out.append(target)
+    return out
+
+
+def object_ref_cycles(cfg: dict) -> "list[str]":
+    """Every cycle in the ``object`` init-param graph, as a refusal.
+
+    gh-2215. A consumer built from a producer's capsule keeps the producer
+    alive through a strong reference (gh-790's ``_<name>_owner``), and no
+    type jm generates takes part in Python's cyclic GC -- none has a
+    ``tp_traverse``. So objects whose references form a cycle can never be
+    collected: every one of them leaks. A cycle also has no construction
+    order, so no script could rebuild it. Each cycle is named in order,
+    from the first of its components the manifest lists.
+
+    >>> cfg = {"a": {"init_params": [{"name": "x", "object": "b"}]},
+    ...        "b": {"init_params": [{"name": "y", "object": "a"}]}}
+    >>> object_ref_cycles(cfg)[0].split(":")[1].split(".")[0].strip()
+    'a -> b -> a'
+    >>> object_ref_cycles({"a": {}, "b": {}})
+    []
+    """
+    comps = [c for c in components(cfg) if isinstance(cfg.get(c), dict)]
+    graph = {
+        c: [t for t in object_ref_edges(cfg, c) if t in comps] for c in comps
+    }
+    seen: "set[frozenset[str]]" = set()
+    out: list[str] = []
+    done: "set[str]" = set()
+
+    def walk(node: str, path: "list[str]") -> None:
+        for nxt in graph[node]:
+            if nxt in path:
+                cycle = path[path.index(nxt) :]
+                key = frozenset(cycle)
+                if key not in seen:
+                    seen.add(key)
+                    out.append(" -> ".join([*cycle, cycle[0]]))
+            elif nxt not in done:
+                walk(nxt, [*path, nxt])
+        done.add(node)
+
+    for c in comps:
+        if c not in done:
+            walk(c, [c])
+    return [
+        f"init_param `object` references form a cycle: {cycle}. Each "
+        "consumer holds a strong reference to its producer (gh-790's "
+        "`_<name>_owner`), and jm's types have no GC traverse, so objects "
+        "in a cycle can never be collected -- every one leaks. Break the "
+        "cycle: drop one side's `object` init-param and attach that side "
+        "after construction, through a method param declared with "
+        "`capsule` and `retain = true` (gh-2327)."
+        for cycle in out
+    ]
 
 
 def module_package_errors(cfg: dict) -> "list[str]":

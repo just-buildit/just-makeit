@@ -15,3 +15,11 @@
     records, properties, methods and views (a reference may name a view),
     even when the manifest lists the consumer earlier. A module keeps its
     declared order through `jm object --before`.
+- **A cycle of `object` init-param references is refused** (gh-2215).
+    Every command that loads the manifest now refuses one, `jm status`
+    included, naming it in order (`a -> b -> a`); views' init-params count
+    too. A consumer holds a strong reference to its producer, and jm's
+    types take no part in Python's cyclic garbage collector, so objects in
+    such a cycle were never freed: every one leaked. Break the cycle by
+    attaching one side after construction, through a method param declared
+    with `capsule` and `retain = true`.

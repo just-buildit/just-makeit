@@ -1102,20 +1102,11 @@ def run(root: Path) -> None:
     # skipped in the sections below.
     def _refs(comp: str) -> "list[str]":
         """The emitted components *comp*'s `object` init-params name."""
-        rows = [
-            *(cfg[comp].get("init_params") or []),
-            *(
-                q
-                for v in C.views(cfg, comp)
-                for q in (v.get("init_params") or [])
-            ),
+        return [
+            t
+            for t in C.object_ref_edges(cfg, comp)
+            if t in all_comps and t != comp
         ]
-        out: list[str] = []
-        for p in rows:
-            target = str(p.get("object", "")).partition(".")[0]
-            if target in all_comps and target != comp and target not in out:
-                out.append(target)
-        return out
 
     producers = {p for c in all_comps for p in _refs(c)}
 
