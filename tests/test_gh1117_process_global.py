@@ -539,7 +539,10 @@ class TestApplyActuallyEmitsIt:
         )
         assert _cli("apply", cwd=root).returncode == 0
         ext = (root / "native/src/eng/eng_ext.c").read_text()
-        assert "PyCapsule_New" not in ext
+        # Every binding embeds `jm_capsule_lend` (gh-2328), so a bare
+        # `PyCapsule_New` is no longer the rendezvous's alone: ask for its
+        # own publish, by the variable it publishes into.
+        assert "PyObject *_pg = PyCapsule_New(" not in ext
         assert "_jm_pg_" not in ext
         assert not (root / INC_ROOT / "eng/eng_procglobal.h").exists()
 
