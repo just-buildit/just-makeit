@@ -228,9 +228,12 @@ class TestThePythonFaces:
         assert "y.dtype.names" in ext
         assert "('n', 'value', 'probe', 'flags')" in ext
 
-    def test_the_runtime_doc_does_not_promise_out(self, tmp_path):
+    def test_the_runtime_doc_offers_out(self, tmp_path):
+        """A structured result takes `out=` (gh-805 section E), so its
+        summary says so, as every shape with the buffer does (gh-2222)."""
         ext = _ext(_project(tmp_path))
-        assert "Pass out= to write into your own buffer" not in ext
+        assert '"out"' in ext
+        assert "Pass out= to write into your own buffer" in ext
 
     def test_a_single_field_record_keeps_its_trailing_comma(self, tmp_path):
         """`('n',)` — Python's own repr, so the doctest is copy-pasteable
