@@ -281,8 +281,8 @@ module contains. `dsp_ext.c` is re-rendered on every change; each object's
 `dsp_ext_<obj>.c` fragment only gains missing members. Two parts of it are
 jm's alone and follow the manifest: the object struct's jm fields (`_jm_*`,
 a constructor capsule's `_<name>_owner`), which `apply` adds and removes
-while leaving any member you added, and `tp_dealloc`, which releases them
-(gh-2227).
+while leaving any member you added, and `tp_dealloc`'s release of each of
+them, among whatever else it frees (gh-2227).
 
 ______________________________________________________________________
 

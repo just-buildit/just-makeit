@@ -2955,19 +2955,14 @@ def refresh_module_fragment_docs(
                     + (f" +{', +'.join(_added)}" if _added else "")
                     + (f" -{', -'.join(_removed)}" if _removed else "")
                 )
-            # tp_dealloc releases what those fields hold. Every verb
-            # regenerates it (`_object._restore_c_function_bodies` never
-            # keeps one); apply now holds it to the same render.
-            _dn = f"{ctx['ComponentW']}_dealloc"
-            _ref_d = O._extract_c_function_bodies(reference).get(_dn)
-            _disk_d = O._extract_c_function_bodies(updated).get(_dn)
-            if (
-                _ref_d
-                and _disk_d
-                and _norm_unit(_ref_d) != _norm_unit(_disk_d)
-            ):
-                updated = updated.replace(_disk_d, _ref_d, 1)
-                print(f"  update  {_rel}: {_dn}")
+            # tp_dealloc releases what those fields hold, and only its
+            # lines that read them are jm's: an older fragment frees its own
+            # buffers there, which its kept wrappers still fill.
+            updated, _freed = O.reconcile_dealloc(
+                updated, reference, ctx["ComponentW"]
+            )
+            if _freed:
+                print(f"  update  {_rel}: {ctx['ComponentW']}_dealloc")
             _was = O._extract_c_function_bodies(updated)
             _own_names = O.jm_owned_functions(
                 cfg, ctx, reference, kept=_was, into=updated

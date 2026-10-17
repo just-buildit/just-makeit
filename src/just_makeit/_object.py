@@ -2205,6 +2205,69 @@ def reconcile_struct_fields(text: str, reference: str, Component: str):
     )
 
 
+#: A statement that reads one of jm's struct fields (`_JM_FIELD_RE`).
+_JM_FIELD_USE_RE = re.compile(r"self\s*->\s*(?:_jm_\w+|_\w+_owner)\b")
+
+
+def reconcile_dealloc(text: str, reference: str, ComponentW: str):
+    r"""*text*'s ``tp_dealloc`` releasing exactly *reference*'s jm fields.
+
+    The partner of :func:`reconcile_struct_fields` (gh-2227): a field the
+    struct gains is released here, and one it loses is no longer touched.
+    Only the lines that read a jm field are jm's -- the parked state's free,
+    the in-flight count's, a kept owner's ``Py_XDECREF``. Every other line
+    stays as it is, which matters: a fragment from an older jm frees buffers
+    of its own here that its kept wrappers still allocate. jm's lines go
+    before ``tp_free``, after the destroy call, in the render's order.
+
+    Returns ``(text, changed)``.
+
+    Examples
+    --------
+    >>> disk = ("static void\nP_dealloc(PObject *self)\n{\n"
+    ...         "    if (self->handle)\n        p_destroy(self->handle);\n"
+    ...         "    free(self->_old_buf);\n"
+    ...         "    Py_TYPE(self)->tp_free((PyObject *)self);\n}\n")
+    >>> ref = ("static void\nP_dealloc(PObject *self)\n{\n"
+    ...        "    if (self->handle)\n        p_destroy(self->handle);\n"
+    ...        "    Py_XDECREF(self->_jm_retain_attach_t);\n"
+    ...        "    Py_TYPE(self)->tp_free((PyObject *)self);\n}\n")
+    >>> out, changed = reconcile_dealloc(disk, ref, "P")
+    >>> print(out, end="")
+    static void
+    P_dealloc(PObject *self)
+    {
+        if (self->handle)
+            p_destroy(self->handle);
+        free(self->_old_buf);
+        Py_XDECREF(self->_jm_retain_attach_t);
+        Py_TYPE(self)->tp_free((PyObject *)self);
+    }
+    >>> reconcile_dealloc(out, ref, "P")[1]
+    False
+    """
+    name = f"{ComponentW}_dealloc"
+    on_disk = _extract_c_function_bodies(text).get(name)
+    rendered = _extract_c_function_bodies(reference).get(name)
+    if not on_disk or not rendered:
+        return text, False
+    from ._docsync import _code_mask
+
+    def jm(line: str) -> bool:
+        return bool(_JM_FIELD_USE_RE.search(_code_mask(line)))
+
+    lines = on_disk.splitlines(True)
+    want = [ln for ln in rendered.splitlines(True) if jm(ln)]
+    if [ln.strip() for ln in lines if jm(ln)] == [ln.strip() for ln in want]:
+        return text, False
+    keep = [ln for ln in lines if not jm(ln)]
+    at = next(
+        (i for i, ln in enumerate(keep) if "tp_free" in ln), len(keep) - 1
+    )
+    new = "".join(keep[:at] + want + keep[at:])
+    return text.replace(on_disk, new, 1), True
+
+
 def _declares_park(text: str) -> bool:
     """Whether *text*'s object struct declares `PARK_FIELD` (gh-2187).
 

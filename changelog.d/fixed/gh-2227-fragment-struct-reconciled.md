@@ -4,5 +4,5 @@
     `_jm_borrowed`, a released call's `_jm_inflight`, a retained owner) did
     not compile, because the struct was never revisited. `apply` now adds
     the jm fields the render declares and removes the ones it no longer
-    does, keeping any member you added, and refreshes `tp_dealloc` as every
-    verb already did.
+    does, keeping any member you added, and gives `tp_dealloc` the release
+    of each of those fields, leaving its other lines as they are.

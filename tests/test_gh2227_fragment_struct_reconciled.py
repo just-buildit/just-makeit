@@ -173,3 +173,31 @@ def test_an_unchanged_struct_is_not_rewritten(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "object struct fields" not in r.stdout, r.stdout
     assert _frag(proj).read_bytes() == before
+
+
+def test_dealloc_keeps_its_own_lines(tmp_path):
+    """Only dealloc's lines that read a jm field are jm's. A fragment from
+    an older jm frees buffers of its own there, which the wrappers it keeps
+    still fill -- replaced wholesale, those leak (`stale_project` holds one:
+    `free(self->_decimate_buf)`)."""
+    proj = _project(tmp_path)
+    frag = _frag(proj)
+    text = frag.read_text(encoding="utf-8")
+    tail = "    Py_TYPE(self)->tp_free((PyObject *)self);\n"
+    at = text.index("O_dealloc(OObject *self)")
+    assert text.count(tail, at) >= 1, text
+    cut = text.index(tail, at)
+    frag.write_text(
+        text[:cut] + "    free(self->scratch);\n" + text[cut:],
+        encoding="utf-8",
+    )
+    _append(proj, ROWS["retain"][0])
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stderr
+    text = frag.read_text(encoding="utf-8")
+    body = text[text.index("O_dealloc(OObject *self)") :]
+    body = body[: body.index("\n}\n")]
+    assert "free(self->scratch);" in body, body
+    assert "Py_XDECREF(self->_jm_retain_attach_t);" in body, body
+    assert body.index("_jm_retain_attach_t") < body.index("tp_free"), body
+    assert "O_dealloc" in r.stdout, r.stdout
