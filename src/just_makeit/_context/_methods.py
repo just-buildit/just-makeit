@@ -795,8 +795,9 @@ def _bench_call(c_fn: str, proto: str, args: "dict[str, str]") -> str:
     vals = []
     for pname, _ in _prototype_params(proto):
         if pname not in args:
-            raise ValueError(
-                f"benchmark: no argument for {c_fn}()'s `{pname}` in {proto}"
+            raise RuntimeError(
+                f"benchmark: no argument for `{pname}`, a parameter of"
+                f" {c_fn} in {proto}"
             )
         vals.append(args[pname])
     return f"{c_fn}({', '.join(vals)})"
@@ -926,12 +927,16 @@ def _bench_method_block(
         csym=csym,
     )
     kernel = _prototype_params(proto)
+    declared = {p["name"]: p["type"] for p in params}
     # A kernel that takes its input as a block is handed a buffer, whatever
     # shape declared it (gh-244: a record method with an input does).
-    block_in = any(p in ("in", "x") and ptr for p, ptr in kernel)
-    # What each parameter role is passed in the timing loop. A declared
-    # param takes its zero (an array param no data); the rest are the
-    # loop's own locals.
+    block_in = any(
+        p in ("in", "x") and ptr and p not in declared for p, ptr in kernel
+    )
+    # What each parameter role is passed in the timing loop: the loop's
+    # own locals, and for a declared param its zero -- no data for any
+    # parameter it expands to a pointer (an array, `bytes`, `path`), and a
+    # zero length beside it.
     args = {
         "state": "obj",
         "in": f"{name}_in",
@@ -942,13 +947,12 @@ def _bench_method_block(
         "out": f"{name}_out",
         "result": f"{name}_results",
     }
-    for p in params:
-        pt = p["type"]
-        if is_array_param_type(pt):
-            args[p["name"]] = "NULL"
-            args[f"{p['name']}_len"] = "0"
-        else:
-            args[p["name"]] = _CTYPE_META.get(pt, {}).get("zero", "0")
+    for pname, ptr in kernel:
+        if pname in declared:
+            zero = _CTYPE_META.get(declared[pname], {}).get("zero", "0")
+            args[pname] = "NULL" if ptr else zero
+        elif pname.endswith("_len") and pname[: -len("_len")] in declared:
+            args[pname] = "0"
 
     # gh-1523: gh-600 made each extra `multi_output` value a trailing
     # `<T> *outN` parameter, after the params, and the binding passes a local

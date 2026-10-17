@@ -492,8 +492,9 @@ def _method(root: Path, row: Row) -> dict:
 # -- which rows must exist: every kernel call jm spells -----------------------
 
 #: The functions that spell a call of the author's kernel: the binding and
-#: the benchmark.
-_KERNEL_CALLERS = ("make_methods_ctx", "_bench_method_block")
+#: the benchmark, which spells every shape's call in `_bench_call`, from
+#: the kernel's prototype.
+_KERNEL_CALLERS = ("make_methods_ctx", "_bench_method_block", "_bench_call")
 _SITE = re.compile(r"/\*@site:(\d+\.\d+)\*/")
 
 
@@ -589,7 +590,7 @@ def test_every_kernel_call_is_reached_by_a_row(project):
     """
     mod, sites = _marked_methods_module()
     # Armed: the binding spells a kernel call in every result shape, and the
-    # benchmark in five more.
+    # benchmark one more, for every shape it times.
     assert len(sites) >= 20, sites
     cfg = C.load(project)
     reached: dict[str, str] = {}

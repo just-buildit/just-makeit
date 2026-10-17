@@ -76,6 +76,10 @@ def test_every_shape_benchmark_builds(tmp_path) -> None:
     _ok("apply", cwd=proj)
     src = bench.read_text(encoding="utf-8")
     assert "/* bench: single() */" in src, src
+    # Written out by hand: the input block and its count for the record
+    # method, and no data beside a zero length for an array param.
+    assert "o_single(obj, single_in, BENCH_N);" in src, src
+    assert "o_array_param(obj, NULL, 0);" in src, src
     for cmd in (
         [
             "cmake",
