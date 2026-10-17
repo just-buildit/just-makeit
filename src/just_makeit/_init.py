@@ -386,6 +386,75 @@ def _func_span_before_brace(
     return (name, i + 1) if name else None
 
 
+# A C comment, either kind. A block comment is only matched closed, so text
+# that opens one and never closes it is left as it is.
+_C_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+
+
+def _blank_comments(text: str) -> str:
+    r"""*text* with every complete comment blanked to spaces, newlines kept.
+
+    How :func:`_decl_start` reads a header (gh-2314). The result is as
+    long as *text*, so an offset found in it indexes *text*. A comment can
+    sit anywhere a space can -- ``void /* none */ f(void);`` -- so cutting
+    at a ``*/`` instead loses whatever code came before the comment.
+
+    *text* must start outside a comment, as a whole header does. String
+    literals are not recognised; a declaration has none.
+
+    Examples
+    --------
+    >>> _blank_comments("void /* x */ f(void);")
+    'void         f(void);'
+    >>> _blank_comments("int // a;\n/* b\n */ g;")
+    'int      \n    \n    g;'
+    """
+    return _C_COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+
+
+# A preprocessor directive, with any backslash-continued lines.
+_PP_LINE_RE = re.compile(r"^[ \t]*#(?:[^\n]*\\\n)*[^\n]*", re.M)
+
+
+def _decl_start(head: str) -> "tuple[int, int]":
+    r"""Where the declaration that *head* runs into begins.
+
+    *head* is a header up to a declared name. The declaration starts past
+    the previous statement, block, brace or preprocessor line, read with
+    comments blanked (:func:`_blank_comments`), so a ``;`` in a comment is
+    not an end and a comment between the return type and the name is not
+    a start (gh-2314). The one reading of "the text before a name that is
+    its declaration": :func:`step_def_start` inserts above it and
+    :func:`declared_return` reads the type out of it.
+
+    Returns
+    -------
+    tuple of int
+        ``(doc, code)``: *code* is the declaration's first character of
+        code; *doc* is the start of the comment ending right before it,
+        which documents it, or *code* when there is none.
+
+    Examples
+    --------
+    >>> h = "int a;\n/* doc; */\nvoid /* x */ f"
+    >>> doc, code = _decl_start(h)
+    >>> h[doc:code], h[code:]
+    ('/* doc; */\n', 'void /* x */ f')
+    >>> _decl_start("#include <x.h>\nint g")
+    (15, 15)
+    """
+    mask = _blank_comments(head)
+    at = max(mask.rfind(";"), mask.rfind("}"), mask.rfind("{")) + 1
+    for m in _PP_LINE_RE.finditer(mask, at):
+        at = m.end()
+    code = at + len(mask[at:]) - len(mask[at:].lstrip())
+    lead = len(head[:code].rstrip())
+    for m in _C_COMMENT_RE.finditer(head, at, code):
+        if m.end() == lead and m.group(0).startswith("/*"):
+            return m.start(), code
+    return code, code
+
+
 def step_def_start(source: str, stem: str) -> "int | None":
     r"""Where the inline ``<stem>_step()`` definition begins in a ``_core.h``
     -- its doc comment if one sits right above it -- or None when the header
@@ -406,22 +475,21 @@ def step_def_start(source: str, stem: str) -> "int | None":
     '/** doc */'
     >>> step_def_start("void a(void);\n", "q") is None
     True
+
+    A comment inside the declaration is part of it (gh-2314):
+
+    >>> c = "int a;\n/** doc */\nfloat /* hot */\nq_step(float x)\n{}"
+    >>> c[step_def_start(c, "q"):].splitlines()[0]
+    '/** doc */'
     """
     i = 0
     while (brace := source.find("{", i)) != -1:
         end = _matching_brace(source, brace)
         span = _func_span_before_brace(source, brace)
         if span and span[0] == f"{stem}_step":
-            # Back to the start of the declaration: just past the previous
-            # statement, block or comment end.
-            head = source[: span[1]]
-            doc_end = head.rfind("*/") + 2 if "*/" in head else 0
-            at = max(head.rfind(";") + 1, head.rfind("}") + 1, doc_end)
-            if doc_end and at == doc_end:
-                # Nothing but the step's own return type follows that
-                # comment, so it is the step's doc: keep them together.
-                at = head.rfind("/*", 0, at)
-            return at + len(source[at:]) - len(source[at:].lstrip())
+            # Back to the start of the declaration, with its doc comment:
+            # the two stay together.
+            return _decl_start(source[: span[1]])[0]
         # A function body is skipped whole; any other block -- the
         # `extern "C" {` wrapping the whole header, a struct -- is stepped
         # INTO, or the step inside it is never seen.
@@ -612,7 +680,9 @@ def declared_return(text: str, fn_name: str) -> "str | None":
     Everything before the name, whitespace collapsed, so storage classes and
     export macros come along (``static inline void``, ``DP_API int``): the
     caller asks a question of it, such as whether it ends in ``void``.
-    ``None`` is no declaration, which is not the same answer as ``void``.
+    ``None`` is "can't tell" -- no declaration, or none whose return type
+    survives taking the comments out -- which is not the same answer as
+    ``void``. A comment anywhere in the type is not part of it (gh-2314).
 
     Examples
     --------
@@ -626,20 +696,23 @@ def declared_return(text: str, fn_name: str) -> "str | None":
     >>> declared_return("/* Returns void when unchanged.\\n   Else 1 */\\nint\\n"
     ...                 "x_set(x_t *s,\\n      double v);", "x_set")
     'int'
+    >>> declared_return("void /* nothing */ x_set(x_t *s, double v);",
+    ...                 "x_set")
+    'void'
 
     """
     pat = existing_decl(text, fn_name)
     if pat is None:
         return None
-    decl = pat.search(text).group(0)
-    name = re.search(r"\b" + re.escape(fn_name) + r"\s*\(", decl)
-    # Comments out: a wrapped prototype's multi-line match starts at the
-    # earliest line it can, which may be prose INSIDE the doc comment above
-    # it ("Returns void when ..."), so the match holds that comment's close
-    # without its open. Nothing before the last `*/` is the type.
-    prefix = decl[: name.start()].rpartition("*/")[2]
-    prefix = re.sub(r"//[^\n]*", " ", prefix)
-    return " ".join(prefix.split())
+    m = pat.search(text)
+    name = re.search(r"\b" + re.escape(fn_name) + r"\s*\(", m.group(0))
+    # Read back from the name through the whole header, not from where the
+    # lookup's match starts: that can be prose INSIDE the doc comment above
+    # a prototype ("Returns void when ..."), whose `*/` then closes a
+    # comment the match never opened.
+    head = text[: m.start() + name.start()]
+    prefix = _blank_comments(head)[_decl_start(head)[1] :]
+    return " ".join(prefix.split()) or None
 
 
 def _inject_decls_into_core_h(
