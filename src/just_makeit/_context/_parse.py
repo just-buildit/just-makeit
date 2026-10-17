@@ -10,6 +10,7 @@ import re
 
 from .. import _coerce
 from .. import _record
+from .. import _retain
 from .._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,
@@ -49,8 +50,9 @@ def capsule_new_c(
     capsule_name: str,
     owner: str,
     indent: str = "    ",
+    owner_expr: str = "(PyObject *)self",
 ) -> str:
-    """The body that publishes *ptr_expr* as a borrowed named ``PyCapsule``.
+    """The body that lends *ptr_expr* as a named ``PyCapsule``.
 
     The producing half of the capsule triangle, and the peer of
     :func:`capsule_unwrap_c`. gh-788 gap 4 introduced it for an **object**
@@ -59,8 +61,8 @@ def capsule_new_c(
     and was the only one that could not give one.
 
     Extracted for the same reason the unwrap was: this is a *contract*, not a
-    call. The NULL destructor is the whole of it, and a second copy is a place
-    for that to be quietly changed on one side only.
+    call, and a second copy is a place for it to be quietly changed on one
+    side only.
 
     Parameters
     ----------
@@ -74,29 +76,40 @@ def capsule_new_c(
         Display name of the owning type, for the comment only.
     indent : str
         Leading whitespace for each emitted line.
+    owner_expr : str
+        C expression for the Python object that owns the pointer: the one the
+        capsule keeps alive.
 
     Notes
     -----
-    **The destructor is NULL and is not configurable.** The capsule lends a
-    pointer the owner still owns; a capsule with a destructor would free it on
-    garbage collection and the owner would free it again in its deallocator. A
-    capsule that *owns* its pointer is a different feature and should look
-    different.
+    **The capsule never frees the pointer.** It lends a pointer the owner
+    still owns; a capsule that freed it on garbage collection would free it
+    a second time in the owner's deallocator. A capsule that *owns* its
+    pointer is a different feature and should look different.
+
+    **It does keep the owner alive** (gh-2328). The helper it calls,
+    ``jm_capsule_lend`` (``_coerce.CAPSULE_LEND_C``), stores a reference to the
+    owner as the capsule's context, and the capsule's destructor releases
+    only that reference. Before, the capsule held nothing: a consumer that
+    keeps what it is passed -- a constructor capsule param (gh-790), a
+    ``retain`` method param (gh-2327) -- kept the owner alive when passed the
+    owner, and kept only the capsule when passed ``owner._capsule``, so the
+    owner could be collected under it.
 
     Examples
     --------
     >>> print(capsule_new_c("self->h", "doppler.wfm.clk", "SampleClock"))
-        /* Borrowed: NULL destructor, so the capsule never
-           frees a pointer SampleClock still owns. */
-        return PyCapsule_New((void *)(self->h),
-                             "doppler.wfm.clk", NULL);
+        /* Lent, not owned: the capsule never frees the pointer, and
+           holds SampleClock, so the pointer lives as long as it. */
+        return jm_capsule_lend((void *)(self->h),
+                               "doppler.wfm.clk", (PyObject *)self);
     """
     i = indent
     return (
-        f"{i}/* Borrowed: NULL destructor, so the capsule never\n"
-        f"{i}   frees a pointer {owner} still owns. */\n"
-        f"{i}return PyCapsule_New((void *)({ptr_expr}),\n"
-        f'{i}                     "{capsule_name}", NULL);'
+        f"{i}/* Lent, not owned: the capsule never frees the pointer, and\n"
+        f"{i}   holds {owner}, so the pointer lives as long as it. */\n"
+        f"{i}return jm_capsule_lend((void *)({ptr_expr}),\n"
+        f'{i}                       "{capsule_name}", {owner_expr});'
     )
 
 
@@ -1109,7 +1122,9 @@ def _build_params_parse(
             #   anything with a `_capsule`  -> that attribute, then as above
             # The `_capsule` duck-typing lets callers pass the friendly
             # wrapper object rather than digging the capsule out themselves.
-            obj_var = f"{pname}_obj"
+            # gh-2327: named by `_retain.obj_var`, which the swap that keeps
+            # a retained param's owner reads too.
+            obj_var = _retain.obj_var(pname)
             decl_lines.append(f"    PyObject *{obj_var} = Py_None;")
             fmt_chars.append("O")
             addr_exprs.append(f"&{obj_var}")

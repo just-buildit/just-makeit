@@ -14,9 +14,10 @@ strongest evidence the abstraction was drawn in the right place. The whole
 feature is one getter and one getset row.
 
 Emitted through `_context/_parse.capsule_new_c`, shared with gap 4 rather than
-copied. The NULL destructor is a *contract*, not a call: a second copy is a
-place for it to be quietly changed on one side only, and a capsule that frees a
-pointer its owner also frees is a double-free.
+copied. That the capsule never frees the pointer is a *contract*, not a call: a
+second copy is a place for it to be quietly changed on one side only, and a
+capsule that frees a pointer its owner also frees is a double-free. Since
+gh-2328 the capsule holds its owner, so a consumer keeping it keeps the owner.
 """
 
 from __future__ import annotations
@@ -54,19 +55,19 @@ class TestTheGetter:
     def test_it_publishes_the_declared_name(self):
         c = _c(_cfg())
         assert "Writer_get__capsule(WriterObject *self" in c
-        assert f'"{CAP}", NULL);' in c
+        assert f'"{CAP}", (PyObject *)self);' in c
 
-    def test_the_destructor_is_null(self):
-        """The load-bearing detail: the handle still owns the pointer, so a
-        capsule with a destructor would free it on collection and `close()`
-        would free it again."""
+    def test_the_capsule_holds_the_handle_object(self):
+        """The load-bearing detail: the handle still owns the pointer, so the
+        capsule never frees it -- `close()` does. It holds the handle object
+        instead (gh-2328), so a consumer that keeps the capsule keeps it."""
         c = _c(_cfg())
-        call = c[c.index("PyCapsule_New(") :]
+        call = c[c.index("jm_capsule_lend(") :]
         call = call[: call.index(");")]
-        assert call.rstrip().endswith("NULL"), call
+        assert call.rstrip().endswith("(PyObject *)self"), call
 
     def test_it_lends_the_opaque_handle(self):
-        assert "PyCapsule_New((void *)(self->h)," in _c(_cfg())
+        assert "jm_capsule_lend((void *)(self->h)," in _c(_cfg())
 
     def test_the_closed_guard_is_kept(self):
         """Handing out a capsule over a closed handle is exactly the
@@ -78,7 +79,7 @@ class TestTheGetter:
         assert "self->closed" in body
         assert "PyExc_RuntimeError" in body
         # ...and it comes BEFORE the pointer is handed out.
-        assert body.index("self->closed") < body.index("PyCapsule_New")
+        assert body.index("self->closed") < body.index("jm_capsule_lend")
 
     def test_it_is_wired_into_the_getset_table(self):
         """A getter no PyGetSetDef references is dead code that compiles and
@@ -104,7 +105,8 @@ class TestTheStub:
         pyi = _pyi(_cfg())
         block = pyi[pyi.index("def _capsule") :][:600]
         assert CAP in block
-        assert "Non-owning" in block
+        assert "never frees the handle" in block
+        assert "keeps this object alive" in block
 
 
 class TestZeroChurn:
@@ -152,14 +154,14 @@ class TestTheSharedEmitter:
             "Telemetry", "OWNER"
         ) == hnd.replace("self->h", "PTR").replace("Writer", "OWNER")
 
-    def test_the_null_destructor_is_not_parameterised(self):
-        """There is no argument that could make this capsule owning. A
-        capsule that owns its pointer is a different feature and should look
-        different."""
+    def test_the_destructor_is_not_parameterised(self):
+        """There is no argument that could make this capsule free its
+        pointer. A capsule that owns its pointer is a different feature and
+        should look different."""
         import inspect
 
         assert "destructor" not in inspect.signature(capsule_new_c).parameters
-        assert "NULL);" in capsule_new_c("p", CAP, "X")
+        assert "jm_capsule_lend((void *)(p)," in capsule_new_c("p", CAP, "X")
 
 
 class TestItReachesTheConsumingSide:
@@ -179,7 +181,7 @@ class TestItReachesTheConsumingSide:
             "return -1;",
             allow_none=False,
         )
-        assert f'"{CAP}", NULL);' in produced
+        assert f'"{CAP}", (PyObject *)self);' in produced
         assert f'PyCapsule_GetPointer(clock_cap, "{CAP}")' in consumed
 
     def test_the_duck_typed_path_finds_it(self):

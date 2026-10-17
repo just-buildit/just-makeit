@@ -76,7 +76,8 @@ class TestWarningCodegen:
         # The message is split across adjacent C literals to fit 79 cols;
         # concatenating them back must reproduce it exactly.
         ext = _ext_c(project)
-        block = ext[ext.index("PyErr_WarnEx") : ext.index("< 0)")]
+        at = ext.index("PyErr_WarnEx")
+        block = ext[at : ext.index("< 0)", at)]
         joined = "".join(re.findall(r'"([^"]*)"', block))
         assert joined == _MSG
 

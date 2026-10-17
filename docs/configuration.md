@@ -1669,6 +1669,7 @@ name    = "tlm"
 type    = "dp_tlm_t *"
 capsule = "doppler.telemetry.dp_tlm"
 header  = "telemetry/telemetry.h"
+retain  = true      # set_telemetry keeps the pointer
 
 [[agc.methods.params]]
 name = "prefix"
@@ -1694,6 +1695,33 @@ The `.pyi` annotates the param `object | None`. The `header` key injects
 method param only. A function spells a status return as
 `check_return = true` (`jm function --check-return`).
 
+**`retain = true`: the kernel keeps the pointer** (gh-2327). Without it the
+pointer is borrowed for the call only, which is right for a kernel that uses
+it while it runs. A kernel that stores it, as `set_telemetry` does, would
+otherwise hold a pointer into an object Python is free to collect:
+
+```python
+agc.set_telemetry(Telemetry(1 << 20), "agc")   # the Telemetry is collected
+agc.step(x)                                    # writes into freed memory
+```
+
+With `retain = true` the object keeps a reference to what it was passed:
+
+| the call                  | what the object holds afterwards        |
+| ------------------------- | --------------------------------------- |
+| succeeds                  | the object just passed                  |
+| passes `None`             | nothing (the detach)                    |
+| is refused by the kernel  | what it held before                     |
+| the object is deallocated | nothing, after the C state is destroyed |
+
+A call counts as refused when the kernel says so: a non-zero
+`status_return`, a negative `error_negative`, a count's `error_sentinel`,
+an empty count under `error_on_empty`, or a NULL `borrow`. Passing the
+owner's bare capsule (`tlm._capsule`) works too, since a capsule jm lends
+holds the object that lent it (gh-2328). `retain` is refused on a param
+with no `capsule`, on a `varargs` or `manual_stub` method (whose binding is
+yours), and on a method a composer source delegates.
+
 ### `[[<object>.properties]]`
 
 One entry per `just-makeit property` call.
@@ -1711,7 +1739,7 @@ One entry per `just-makeit property` call.
 | `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                                        |
 | `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                                     |
 | `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`)          |
-| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                                       |
+| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is. The capsule holds this object and never frees the pointer (gh-2328)                  |
 | `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                             |
 
 ### `[[<object>.views]]`

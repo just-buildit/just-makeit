@@ -2069,9 +2069,9 @@ def jm_owned_functions(
     A teardown that parks is taken from the render only where the text it
     lands in declares `PARK_FIELD`. *into* is the fresh render for a verb,
     so that always holds; for `jm apply` it is the fragment on disk, whose
-    struct apply never rewrites, so a manifest edited by hand to lend would
-    have it park into a field the struct lacks. There the body stays as it
-    is and the marker names it.
+    struct apply first reconciles (`reconcile_struct_fields`, gh-2227), so
+    it holds there too unless the struct could not be read. There the body
+    stays as it is and the marker names it.
 
     One answer for both writers of a fragment: `_regenerate_module_now`
     regenerates these instead of restoring them, and `jm apply`
@@ -2113,6 +2113,197 @@ def jm_owned_functions(
     if _declares_inflight(rendered) and not _declares_inflight(into):
         teardown = ()
     return teardown + _record.dtype_builders(rendered)
+
+
+#: One struct member declaration, its name captured. Read on comment-masked
+#: code, one declaration per line.
+_FIELD_DECL_RE = re.compile(r"[\w\s*]*?[\s*](\w+)\s*;")
+
+#: jm's own prefix: the borrow record, the parked state, the in-flight
+#: count, a retained owner. An author's member never starts with it.
+_JM_PREFIX = "_jm_"
+
+
+def _jm_field(name: str, owners: "frozenset[str]") -> bool:
+    """Whether struct member *name* is jm's (gh-2227).
+
+    A ``_jm_*`` name always is. A constructor capsule's ``_<param>_owner``
+    (gh-790) is jm's only when the render declares it -- *owners*, read from
+    the manifest's render -- because the shape alone also fits a member the
+    author named that way.
+
+    >>> _jm_field("_jm_inflight", frozenset())
+    True
+    >>> _jm_field("_cache_owner", frozenset())
+    False
+    >>> _jm_field("_clk_owner", frozenset({"_clk_owner"}))
+    True
+    """
+    return name.startswith(_JM_PREFIX) or name in owners
+
+
+def _render_owners(reference: str) -> "frozenset[str]":
+    """The ``_<param>_owner`` members a fresh render releases in dealloc."""
+    return frozenset(
+        re.findall(r"Py_XDECREF\(self->(_\w+_owner)\);", reference)
+    )
+
+
+def reconcile_struct_fields(text: str, reference: str, Component: str):
+    r"""*text* with its object struct's jm fields made *reference*'s (gh-2227).
+
+    A module fragment is sacred, and `apply` restores its members into it
+    rather than re-rendering it. Its ``typedef struct {...} <C>Object;``
+    was never revisited, so a binding apply added that writes a field jm
+    declares -- a borrow's ``_jm_borrowed``, a retained owner -- did not
+    compile, and a lending object could not be given ``_jm_parked``.
+
+    The fields are jm's (`_jm_field`): those the fresh render declares and
+    *text* lacks are added after ``handle``, where the template puts them;
+    those *text* declares and the render does not are removed. Every other
+    line is the author's and is left where it is. What is jm's is decided
+    by the ``_jm_`` prefix and, for a constructor capsule's owner, by the
+    render -- so an author's ``_cache_owner`` is never touched, and an owner
+    whose param the manifest dropped stays too, never set again and so
+    NULL, its dealloc release harmless.
+
+    Returns ``(text, added, removed)``, the field names that moved; *text*
+    unchanged when none did.
+
+    Examples
+    --------
+    >>> disk = ("typedef struct {\n    PyObject_HEAD\n"
+    ...         "    p_state_t *handle;\n    int mine;\n} PObject;\n")
+    >>> ref = ("typedef struct {\n    PyObject_HEAD\n"
+    ...        "    p_state_t *handle;\n"
+    ...        "    PyObject *_jm_retain_attach_t;  /* keeps t */\n"
+    ...        "} PObject;\n")
+    >>> out, added, removed = reconcile_struct_fields(disk, ref, "P")
+    >>> print(out, end="")
+    typedef struct {
+        PyObject_HEAD
+        p_state_t *handle;
+        PyObject *_jm_retain_attach_t;  /* keeps t */
+        int mine;
+    } PObject;
+    >>> added, removed
+    (['_jm_retain_attach_t'], [])
+    >>> reconcile_struct_fields(out, disk, "P")[1:]
+    ([], ['_jm_retain_attach_t'])
+    """
+    from ._docsync import _code_mask
+
+    pat = re.compile(
+        rf"typedef\s+struct\s*\{{\n(.*?)\}}\s*{Component}Object\s*;",
+        re.S,
+    )
+
+    owners = _render_owners(reference)
+
+    def fields(body: str) -> "list[tuple[str, str]]":
+        out = []
+        for line in body.splitlines(True):
+            m = _FIELD_DECL_RE.match(_code_mask(line))
+            if m and _jm_field(m.group(1), owners):
+                out.append((m.group(1), line))
+        return out
+
+    on_disk = list(pat.finditer(text))
+    rendered = list(pat.finditer(reference))
+    if len(on_disk) != 1 or len(rendered) != 1:
+        return text, [], []
+    body = on_disk[0].group(1)
+    have = fields(body)
+    want = fields(rendered[0].group(1))
+    if [n for n, _ in have] == [n for n, _ in want]:
+        return text, [], []
+    jm_lines = {line for _, line in have}
+    keep = [ln for ln in body.splitlines(True) if ln not in jm_lines]
+    at = next(
+        (
+            i + 1
+            for i, ln in enumerate(keep)
+            if re.search(r"\*\s*handle\s*;", ln)
+        ),
+        next((i + 1 for i, ln in enumerate(keep) if "PyObject_HEAD" in ln), 0),
+    )
+    new_body = "".join(keep[:at] + [ln for _, ln in want] + keep[at:])
+    s, e = on_disk[0].span(1)
+    have_n = {n for n, _ in have}
+    want_n = {n for n, _ in want}
+    return (
+        text[:s] + new_body + text[e:],
+        [n for n, _ in want if n not in have_n],
+        [n for n, _ in have if n not in want_n],
+    )
+
+
+#: A statement reading a struct member through ``self``, the name captured.
+_FIELD_USE_RE = re.compile(r"self\s*->\s*(\w+)\b")
+
+
+def reconcile_dealloc(text: str, reference: str, ComponentW: str):
+    r"""*text*'s ``tp_dealloc`` releasing exactly *reference*'s jm fields.
+
+    The partner of :func:`reconcile_struct_fields` (gh-2227): a field the
+    struct gains is released here, and one it loses is no longer touched.
+    Only the lines that read a jm field are jm's -- the parked state's free,
+    the in-flight count's, a kept owner's ``Py_XDECREF``. Every other line
+    stays as it is, which matters: a fragment from an older jm frees buffers
+    of its own here that its kept wrappers still allocate. jm's lines go
+    before ``tp_free``, after the destroy call, in the render's order.
+
+    Returns ``(text, changed)``.
+
+    Examples
+    --------
+    >>> disk = ("static void\nP_dealloc(PObject *self)\n{\n"
+    ...         "    if (self->handle)\n        p_destroy(self->handle);\n"
+    ...         "    free(self->_old_buf);\n"
+    ...         "    Py_TYPE(self)->tp_free((PyObject *)self);\n}\n")
+    >>> ref = ("static void\nP_dealloc(PObject *self)\n{\n"
+    ...        "    if (self->handle)\n        p_destroy(self->handle);\n"
+    ...        "    Py_XDECREF(self->_jm_retain_attach_t);\n"
+    ...        "    Py_TYPE(self)->tp_free((PyObject *)self);\n}\n")
+    >>> out, changed = reconcile_dealloc(disk, ref, "P")
+    >>> print(out, end="")
+    static void
+    P_dealloc(PObject *self)
+    {
+        if (self->handle)
+            p_destroy(self->handle);
+        free(self->_old_buf);
+        Py_XDECREF(self->_jm_retain_attach_t);
+        Py_TYPE(self)->tp_free((PyObject *)self);
+    }
+    >>> reconcile_dealloc(out, ref, "P")[1]
+    False
+    """
+    name = f"{ComponentW}_dealloc"
+    on_disk = _extract_c_function_bodies(text).get(name)
+    rendered = _extract_c_function_bodies(reference).get(name)
+    if not on_disk or not rendered:
+        return text, False
+    from ._docsync import _code_mask
+
+    owners = _render_owners(reference)
+
+    def jm(line: str) -> bool:
+        return any(
+            _jm_field(n, owners)
+            for n in _FIELD_USE_RE.findall(_code_mask(line))
+        )
+
+    lines = on_disk.splitlines(True)
+    want = [ln for ln in rendered.splitlines(True) if jm(ln)]
+    if [ln.strip() for ln in lines if jm(ln)] == [ln.strip() for ln in want]:
+        return text, False
+    keep = [ln for ln in lines if not jm(ln)]
+    at = next(
+        (i for i, ln in enumerate(keep) if "tp_free" in ln), len(keep) - 1
+    )
+    new = "".join(keep[:at] + want + keep[at:])
+    return text.replace(on_disk, new, 1), True
 
 
 def _declares_park(text: str) -> bool:

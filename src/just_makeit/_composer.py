@@ -1478,6 +1478,7 @@ def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
     from . import _borrow
     from . import _codec
     from . import _record
+    from . import _retain
     from ._builtins import absorbable_members
 
     if m["name"] in absorbable_members(cfg, gname):
@@ -1494,6 +1495,13 @@ def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
         return (
             "it lends memory the generator owns, and the source destroys its "
             "generator when it is re-initialised"
+        )
+    if _retain.retained(m):
+        # gh-2327: the owner slot lives on the type the wrapper is bound to,
+        # and the source rebuilds the generator that keeps the pointer.
+        return (
+            "it retains a capsule param, whose owner must outlive the "
+            "generator, and the source destroys and rebuilds its generator"
         )
     if _record.is_record(m):
         return (
