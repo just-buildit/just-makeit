@@ -760,6 +760,48 @@ def _bench_todo(
     return _comment_block(body)
 
 
+def _prototype_params(proto: str) -> "list[tuple[str, bool]]":
+    """``(name, is_pointer)`` for each parameter of a one-line prototype.
+
+    The kernel's own declaration, as the sacred header carries it, read
+    back into the parameters a call has to supply.
+
+    >>> _prototype_params("rec_t f(s_t *state, const float *in, size_t n_in);")
+    [('state', True), ('in', True), ('n_in', False)]
+    """
+    inner = proto[proto.index("(") + 1 : proto.rindex(")")]
+    out = []
+    for decl in inner.split(","):
+        decl = decl.strip()
+        if decl and decl != "void":
+            pname = re.findall(r"\w+", decl)[-1]
+            out.append((pname, "*" in decl))
+    return out
+
+
+def _bench_call(c_fn: str, proto: str, args: "dict[str, str]") -> str:
+    """The benchmark's call to *c_fn*, argument for argument as *proto*
+    declares it.
+
+    The bench used to spell each shape's call by hand, beside the
+    prototype the header declares, and the two drifted: a ``single``
+    method with a block input was called ``f(obj, 0.0f)`` against
+    ``f(state, const float *in, size_t n_in)``. *args* names the value each
+    parameter role takes in the timing loop; the prototype decides which
+    roles the call has and their order. A parameter with no value is a jm
+    bug, so it fails the render naming it rather than emit a call that
+    does not compile.
+    """
+    vals = []
+    for pname, _ in _prototype_params(proto):
+        if pname not in args:
+            raise ValueError(
+                f"benchmark: no argument for {c_fn}()'s `{pname}` in {proto}"
+            )
+        vals.append(args[pname])
+    return f"{c_fn}({', '.join(vals)})"
+
+
 def _bench_method_block(
     component: str,
     m: dict,
@@ -863,14 +905,50 @@ def _bench_method_block(
         ret_meta = _CTYPE_META.get(return_type)
         ret_disp = return_type if ret_meta else return_type
 
-    param_args = ""
+    # The kernel's declaration, from the one builder the sacred header's
+    # comes from; every call below is spelled from it (`_bench_call`).
+    from .. import _method
+
+    proto = _method._build_method_prototype(
+        component,
+        name,
+        arg_type,
+        return_type,
+        False,
+        list(m.get("multi_output", [])),
+        params,
+        batch=batch,
+        result_fields=result_fields,
+        single=single_record,
+        record_dtype=m.get("record_dtype", ""),
+        borrow=borrow_m,
+        c_fn=m.get("fn", ""),
+        csym=csym,
+    )
+    kernel = _prototype_params(proto)
+    # A kernel that takes its input as a block is handed a buffer, whatever
+    # shape declared it (gh-244: a record method with an input does).
+    block_in = any(p in ("in", "x") and ptr for p, ptr in kernel)
+    # What each parameter role is passed in the timing loop. A declared
+    # param takes its zero (an array param no data); the rest are the
+    # loop's own locals.
+    args = {
+        "state": "obj",
+        "in": f"{name}_in",
+        "x": f"{name}_in" if block_in else (arg_zero if has_arg else ""),
+        "n": "BENCH_N",
+        "n_in": "BENCH_N",
+        "x_len": "BENCH_N",
+        "out": f"{name}_out",
+        "result": f"{name}_results",
+    }
     for p in params:
         pt = p["type"]
         if is_array_param_type(pt):
-            param_args += ", NULL, 0"
+            args[p["name"]] = "NULL"
+            args[f"{p['name']}_len"] = "0"
         else:
-            pm = _CTYPE_META.get(pt, {})
-            param_args += f", {pm.get('zero', '0')}"
+            args[p["name"]] = _CTYPE_META.get(pt, {}).get("zero", "0")
 
     # gh-1523: gh-600 made each extra `multi_output` value a trailing
     # `<T> *outN` parameter, after the params, and the binding passes a local
@@ -884,9 +962,8 @@ def _bench_method_block(
         f"        {rt} {name}_out{i + 1} = {_CTYPE_META[rt]['zero']};"
         for i, rt in enumerate(multi_output)
     ]
-    mo_args = "".join(
-        f", &{name}_out{i + 1}" for i in range(len(multi_output))
-    )
+    for i in range(len(multi_output)):
+        args[f"out{i + 1}"] = f"&{name}_out{i + 1}"
 
     lines: list[str] = [f"    /* bench: {name}() */", "    {"]
     has_sink = False
@@ -932,6 +1009,8 @@ def _bench_method_block(
             lines.append(f"        {rf_disp} {name}_results[{max_results}];")
         # gh-1961: the params sit between the input and the results, as in
         # the prototype; this call omitted them, like the binding did.
+        args["max_results"] = rf_cap
+        call = _bench_call(c_fn, proto, args)
         if has_arg:
             lines += [
                 f"        {arg_elem_disp} *{name}_in ="
@@ -939,12 +1018,7 @@ def _bench_method_block(
                 f" sizeof({arg_elem_disp}));",
                 f'        if (!{name}_in) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
             ]
-            call = (
-                f"{c_fn}(obj, {name}_in, BENCH_N{param_args},"
-                f" {name}_results, {rf_cap})"
-            )
         else:
-            call = f"{c_fn}(obj{param_args}, {name}_results, {rf_cap})"
             # gh-2282: ONE call per round, with no input to count -- the
             # row said BENCH_N, so its rate was BENCH_N times too high.
             unit, iters = "JM_BENCH_CALL", "1"
@@ -982,8 +1056,7 @@ def _bench_method_block(
         lines += [
             f'        if (!({chk_vars})) {{ fprintf(stderr, "OOM\\n"); return 1; }}',
         ]
-        in_arg = f" {name}_in," if has_arg else ""
-        call = f"{c_fn}(obj,{in_arg} BENCH_N, {name}_out)"
+        call = _bench_call(c_fn, proto, args)
         lines += [
             "        for (int i = 0; i < 4; i++)",
             f"            {call};",
@@ -998,7 +1071,7 @@ def _bench_method_block(
             lines.append(f"        free({name}_in);")
         lines.append(f"        free({name}_out);")
 
-    elif is_array_arg:
+    elif block_in:
         lines += [
             f"        {arg_elem_disp} *{name}_in ="
             f" ({arg_elem_disp} *)calloc("
@@ -1017,7 +1090,7 @@ def _bench_method_block(
             has_sink = True
         sink = f"{name}_sink = " if has_ret else ""
         lines += mo_decls
-        call = f"{c_fn}(obj, {name}_in, BENCH_N{param_args}{mo_args})"
+        call = _bench_call(c_fn, proto, args)
         lines += [
             "        for (int i = 0; i < 4; i++)",
             f"            {sink}{call};",
@@ -1043,12 +1116,11 @@ def _bench_method_block(
             has_sink = True
         sink = f"{name}_sink = " if has_ret else ""
         lines += mo_decls
-        in_arg = f", {arg_zero}" if has_arg else ""
         # BENCH_N calls a round: each takes one sample when the method has
         # an input, and is just a call when it has none.
         if not has_arg:
             unit = "JM_BENCH_CALL"
-        call = f"{c_fn}(obj{in_arg}{param_args}{mo_args})"
+        call = _bench_call(c_fn, proto, args)
         lines += [
             f"        for (int i = 0; i < 16; i++) {sink}{call};",
             "        for (int r = 0; r < ITERATIONS; r++) {",
