@@ -37,15 +37,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _handle  # noqa: E402
 
 #: Argument row kinds, by what `_emit_method` dispatches on: an array, the
-#: caller's writable buffer, a scalar with and without a default, and an
-#: enum choice (gh-2228). Names are assigned per position, and none is a
-#: name jm ever hard-coded.
+#: caller's writable buffer, a scalar with and without a default, an enum
+#: choice (gh-2228) and a `string` (gh-2211 review). Names are assigned per
+#: position, and none is a name jm ever hard-coded.
 _ROWS = {
     "array": {"type": "float[]"},
     "out": {"type": "float[]", "writable": True},
     "scalar": {"type": "double"},
     "default": {"type": "float", "default": "1.0f"},
     "choice": {"type": "int", "enum": "zqmode"},
+    "text": {"type": "string"},
 }
 #: The `[[enum]]` a "choice" row names.
 _ENUMS = [{"name": "zqmode", "values": ["zqlo", "zqhi"]}]
@@ -67,7 +68,7 @@ def _methods():
     one, which no Python signature can spell."""
     for n in range(len(_NAMES) + 1):
         for kinds in itertools.product(_ROWS, repeat=n):
-            if "default" in kinds and {"scalar", "choice"} & set(
+            if "default" in kinds and {"scalar", "choice", "text"} & set(
                 kinds[kinds.index("default") :]
             ):
                 continue

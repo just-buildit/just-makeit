@@ -42,6 +42,8 @@ typedef struct gen gen_t;
 gen_t *gen_open(void);
 void gen_close(gen_t *g);
 size_t gen_fill(gen_t *g, float *out, size_t n, float gain, float offset);
+size_t gen_label(gen_t *g, float *out, size_t n, const char *tag,
+                 float gain);
 #endif
 """
 
@@ -58,6 +60,14 @@ size_t gen_fill(gen_t *g, float *out, size_t n, float gain, float offset) {
     for (size_t i = 0; i < n; i++)
         out[i] = gain * (float)(i + 1) + offset;
     return n;
+}
+/* The text's own bytes, scaled: what reached C is read back exactly. */
+size_t gen_label(gen_t *g, float *out, size_t n, const char *tag,
+                 float gain) {
+    size_t k = 0;
+    (void)g;
+    for (; k < n && tag[k]; k++) out[k] = gain * (float)tag[k];
+    return k;
 }
 """
 
@@ -78,7 +88,18 @@ _MODULE = {
                 {"name": "gain", "type": "float"},
                 {"name": "offset", "type": "float", "default": "0.0f"},
             ],
-        }
+        },
+        {
+            # A `string` after the count, as (e) and (f) take one.
+            "name": "label",
+            "fn": "gen_label",
+            "returns": "float[]",
+            "args": [
+                {"name": "n", "type": "size_t"},
+                {"name": "tag", "type": "string"},
+                {"name": "gain", "type": "float", "default": "1.0f"},
+            ],
+        },
     ],
 }
 
@@ -149,3 +170,36 @@ def test_the_stub_names_what_the_binding_takes(built):
         "gain: float",
         "offset: float = ...",
     ], sig.group(0)
+
+
+def test_a_count_cannot_be_a_string():
+    """The first argument sizes the result: text there is refused naming
+    it, rather than parsed as a count under a type the stub would not
+    offer."""
+    from just_makeit import _handle
+    from just_makeit._report import Refusal
+
+    m = {
+        "name": "label",
+        "fn": "gen_label",
+        "returns": "float[]",
+        "args": [{"name": "tag", "type": "string"}],
+    }
+    cfg = {
+        "project": {"name": "p"},
+        "module": {"gen": {**_MODULE, "methods": [m]}},
+    }
+    with pytest.raises(Refusal, match="'tag' is the count"):
+        _handle.render_ext(cfg, "gen")
+
+
+def test_a_string_after_the_count_reaches_c(built):
+    """A `string` argument is the text C reads, positionally or by name."""
+    root, mod = _built(built)
+    g = mod.Gen()
+    assert g.label(5, "AB").tolist() == [65.0, 66.0]
+    assert g.label(1, tag="AB", gain=2.0).tolist() == [130.0]
+    pyi = next(root.rglob("gen.pyi")).read_text()
+    assert (
+        "def label(self, n: int, tag: str, gain: float = ...) -> NDArray[Any]:"
+    ) in pyi, pyi

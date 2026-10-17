@@ -687,9 +687,9 @@ def _params(params: str) -> str:
     >>> _params("")
     ''
     """
-    if not params or "METH_KEYWORDS" in FN_FLAGS:
-        return params
-    return f"{params}, /"
+    from ._stubs import positional_only
+
+    return positional_only(params, FN_FLAGS)
 
 
 def _pyi_scalar(ptype: str) -> str:

@@ -582,7 +582,7 @@ def _method_arg(
     a: dict, where: str, fail: str, enums: dict
 ) -> "tuple[str, str, str, str, str]":
     """``(decl, fmt, &addr, conversion, call)`` for one handle-method arg
-    that is not an array: an enum choice or a C scalar.
+    that is not an array: a ``string``, an enum choice or a C scalar.
 
     The one parse every method shape uses for these rows, so an ``enum``
     means the same thing on each. gh-2228: a method arg declaring ``enum``
@@ -592,15 +592,47 @@ def _method_arg(
     validated by :func:`_enumc.validate_c` into ``_arg_<name>`` after the
     parse, the refusal naming the choices -- and *call* is that int.
 
+    A ``string`` is a borrowed ``const char *`` (``s``) on every shape,
+    valid for the call: shapes (e) and (f) took one and the rest refused
+    it as an unknown scalar, so a ``read(n, tag)`` could not be declared
+    (gh-2211 review).
+
     *fail* leaves the wrapper on a refusal; a scalar is
     :func:`_scalar_arg`'s, narrowed after the parse (gh-2144).
     """
     n = a["name"]
+    if a.get("type") == "string":
+        return _arg_decl(a), _arg_fmt(a), _arg_addr(a), "", n
     if a.get("enum"):
         check = _enumc.validate_c(n, a["enum"], enums, fail=fail)
         return _arg_decl(a), _arg_fmt(a), _arg_addr(a), check, f"_arg_{n}"
     d, f, ad, conv = _scalar_arg(a, where, fail)
     return d, f, ad, conv, n
+
+
+def method_flags(m: dict) -> str:
+    """The ``METH_*`` flags handle method *m* registers with: the one
+    answer the method table and the ``.pyi``'s ``/`` both read (gh-2212).
+
+    Examples
+    --------
+    >>> method_flags({"name": "op", "args": [{"name": "g", "type": "float"}]})
+    'METH_VARARGS | METH_KEYWORDS'
+    >>> method_flags({"name": "op", "args": [{"name": "x", "type": "float[]"}]})
+    'METH_VARARGS'
+    """
+    if _method_kwargs(m):
+        return "METH_VARARGS | METH_KEYWORDS"
+    return "METH_VARARGS"
+
+
+#: A factory parses with ``PyArg_ParseTuple`` (:func:`_emit_factory`); the
+#: table registers this, and the ``.pyi`` asks it (gh-2212).
+FACTORY_FLAGS = "METH_VARARGS"
+
+#: ``set_state`` takes the blob as its one object; the table registers
+#: this, and the ``.pyi`` asks it (gh-2212).
+SET_STATE_FLAGS = "METH_O"
 
 
 def _scalar_string_argparse(
@@ -615,16 +647,7 @@ def _scalar_string_argparse(
     after it (:func:`_arg_parse`), and the names passed to the C call."""
     decls, fmt_parts, addrs, calls, narrow = "", [], [], [], ""
     for a in margs:
-        if a.get("type") == "string":
-            d, f, ad, conv, call = (
-                _arg_decl(a),
-                "s",
-                _arg_addr(a),
-                "",
-                a["name"],
-            )
-        else:
-            d, f, ad, conv, call = _method_arg(a, where, "return NULL;", enums)
+        d, f, ad, conv, call = _method_arg(a, where, "return NULL;", enums)
         decls += f"{d}\n"
         fmt_parts.append(f)
         addrs.append(ad)
@@ -1124,16 +1147,24 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
             "got", cnt, f"{tname}.{name}", "Py_DECREF(arr);"
         )
         rest = margs[1:]
-        if margs and margs[0].get("enum"):
+        if margs and (
+            margs[0].get("enum") or margs[0].get("type") == "string"
+        ):
             from ._report import Refusal
 
-            # gh-2228: every other arg takes its enum's choice string; the
-            # count sizes the result, so a choice has nothing to size it by.
+            # gh-2228: every other arg takes its enum's choice string, or a
+            # `string` as text; the count sizes the result, so text has
+            # nothing to size it by.
+            what = (
+                f"enum '{margs[0]['enum']}'"
+                if margs[0].get("enum")
+                else "a string"
+            )
             raise Refusal(
                 f"handle method '{name}': its first argument"
                 f" '{cnt}' is the count the array result is sized by, so"
-                f" it cannot take enum '{margs[0]['enum']}'. Declare the"
-                " count first, then the enum argument after it."
+                f" it cannot take {what}. Declare the count first, then"
+                " that argument after it."
             )
         if rest:
             c_decls, c_fmt, c_addrs, c_narrow = "", ["n"], "", ""
@@ -2041,11 +2072,7 @@ static PyObject *
     _blocks = doc_blocks or {}
     method_rows = []
     for m in C.handle_methods(cfg, module):
-        flags = (
-            "METH_VARARGS | METH_KEYWORDS"
-            if _method_kwargs(m)
-            else "METH_VARARGS"
-        )
+        flags = method_flags(m)
         _face = py_face(m)
         _block = _method_block(_blocks, m.get("fn"), m["name"])
         _override = str(m.get("doc", ""))
@@ -2147,7 +2174,8 @@ static PyObject *
             ' "Serialize the handle\'s mutable state to bytes."},'
         )
         method_rows.append(
-            f'    {{"set_state", (PyCFunction){tname}_set_state, METH_O,'
+            f'    {{"set_state", (PyCFunction){tname}_set_state,'
+            f" {SET_STATE_FLAGS},"
             ' "Restore mutable state from a get_state() blob."},'
         )
     method_table = "\n".join(method_rows)
@@ -2243,7 +2271,7 @@ def render_ext(
         # gh-1499: the stub's docstring, derived -- one text, both faces.
         _fn_entries = "".join(
             f'    {{"{f["name"]}", (PyCFunction){leaf}_{f["name"]},'
-            f" METH_VARARGS,\n"
+            f" {FACTORY_FLAGS},\n"
             f"     "
             f"{_build_ml_doc(docstring_body(_factory_doc_lines(cfg, module, f), 4))}"
             f"}},\n"
@@ -2634,10 +2662,11 @@ def py_face(m: dict) -> PyFace:
         ann = "None"
     # gh-2212: a binding that takes no keywords (`METH_VARARGS` alone) has a
     # positional-only signature, and says so with `/`, or a type checker
-    # accepts `write(iq=...)`, which raises `TypeError`. Asked of the
-    # predicate that picks the method's flags, never re-derived here.
-    if sig != "self" and not _method_kwargs(m):
-        sig += ", /"
+    # accepts `write(iq=...)`, which raises `TypeError`. Asked of the flags
+    # the method table registers, never re-derived here.
+    from ._stubs import positional_only
+
+    sig = positional_only(sig[len("self, ") :], method_flags(m), "self")
     return PyFace(
         sig,
         ann,
@@ -2720,6 +2749,8 @@ def render_pyi(
     documents that method, and a single-field getter's ``@brief`` documents its
     property. An empty/absent map reproduces the pre-enrichment stub exactly
     (gh-374)."""
+    from ._stubs import positional_only
+
     doc_blocks = doc_blocks or {}
     tname = C.handle_type_name(cfg, module)
     C.handle_backing(cfg, module)
@@ -2834,7 +2865,11 @@ def render_pyi(
             '        """Serialize the handle\'s mutable state to bytes."""'
         )
         # gh-2212: `METH_O`, so the blob is positional-only.
-        lines.append("    def set_state(self, blob: bytes, /) -> None:")
+        lines.append(
+            "    def set_state("
+            f"{positional_only('blob: bytes', SET_STATE_FLAGS, 'self')})"
+            " -> None:"
+        )
         lines.append(
             '        """Restore mutable state from a get_state() blob."""'
         )
@@ -2854,10 +2889,8 @@ def render_pyi(
     for f in C.handle_factories(cfg, module):
         ips = list(f.get("init_params", []))
         sig = ", ".join(f"{a['name']}: {_pyi_arg_ann(a)}" for a in ips)
-        # gh-2212: `_emit_factory` parses with `PyArg_ParseTuple` and the
-        # table registers it `METH_VARARGS`, so it takes no keywords.
-        if sig:
-            sig += ", /"
+        # gh-2212: the flags the factory table registers decide the `/`.
+        sig = positional_only(sig, FACTORY_FLAGS)
         lines.append(f"def {f['name']}({sig}) -> {tname}:")
         lines.extend(_factory_doc_lines(cfg, module, f))
         lines.append("")
