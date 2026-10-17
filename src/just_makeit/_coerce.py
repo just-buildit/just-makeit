@@ -633,11 +633,48 @@ jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
 #endif /* JM_ARRAY_ARG_DEFINED */
 """
 
+#: The helper every lent capsule is made by (gh-2328), embedded once per
+#: binding translation unit through `_coerce.TU_HELPERS_C`.
+CAPSULE_LEND_C = """\
+#ifndef JM_CAPSULE_LEND_DEFINED
+#define JM_CAPSULE_LEND_DEFINED
+/* gh-2328: a lent capsule's context is the object that owns its pointer.
+ * The destructor releases that reference and nothing else -- the pointer is
+ * the owner's to free -- so whoever keeps the capsule keeps the owner. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
+static void
+jm_capsule_lend_release(PyObject *cap)
+{
+    Py_XDECREF((PyObject *)PyCapsule_GetContext(cap));
+}
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
+static PyObject *
+jm_capsule_lend(void *ptr, const char *name, PyObject *owner)
+{
+    PyObject *cap = PyCapsule_New(ptr, name, jm_capsule_lend_release);
+    if (!cap)
+        return NULL;
+    Py_INCREF(owner);
+    if (PyCapsule_SetContext(cap, owner) < 0) {
+        Py_DECREF(owner);
+        Py_DECREF(cap);
+        return NULL;
+    }
+    return cap;
+}
+#endif /* JM_CAPSULE_LEND_DEFINED */
+"""
+
 #: Everything a binding translation unit is handed once, at its head: the
-#: array-argument converter and the in-flight count a GIL-free call and the
-#: teardown share (gh-2272). Every binding kind embeds THIS, so no kind can
+#: array-argument converter, the in-flight count a GIL-free call and the
+#: teardown share (gh-2272), and the lent capsule that keeps its owner alive
+#: (gh-2328). Every binding kind embeds THIS, so no kind can
 #: be handed one and not the other.
-TU_HELPERS_C = ARRAY_ARG_C + "\n" + INFLIGHT_C
+TU_HELPERS_C = ARRAY_ARG_C + "\n" + INFLIGHT_C + "\n" + CAPSULE_LEND_C
 
 
 def array_arg(

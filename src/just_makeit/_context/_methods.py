@@ -19,6 +19,7 @@ from .. import _inflight
 from .. import _borrow
 from .. import _outbuf
 from .. import _record
+from .. import _retain
 from .. import _types as T
 from .._builtins import result_local
 from .._report import Refusal
@@ -2109,6 +2110,13 @@ def make_methods_ctx(
         # composer fields and handle methods; this is that key reaching one
         # more place, not a new concept.
         c_fn: str = C.method_c_symbol(csym, m)
+        # gh-2327: one owner slot per retained capsule param, released by
+        # dealloc after the C state it was lent to is destroyed. `_keep` is
+        # placed where the call is known to have succeeded; `_retain.errors`
+        # refuses the shapes that have no such single place.
+        buf_fields.append(_retain.fields_c(m))
+        buf_free.append(_retain.free_c(m))
+        _keep = _retain.swap_c(m)
 
         # Summary precedence: TOML `doc` override > header @brief > name
         # fallback. This one is still resolved here because the *runtime*
@@ -3705,6 +3713,9 @@ def make_methods_ctx(
                     # guard below -- which would otherwise report it as an
                     # overrun. This path holds `out_arr`.
                     + _count_refusal_c(m, name, "Py_DECREF(out_arr);", " " * 8)
+                    # gh-2327: kept once the kernel has not refused -- here,
+                    # or after the empty refusal below when it declares one.
+                    + ("" if error_on_empty else _reindent(_keep))
                     # gh-1716: `n_out` becomes the length of a view over the
                     # caller's `_cap`-element buffer; past it, the view reads
                     # beyond the caller's allocation.
@@ -3717,7 +3728,8 @@ def make_methods_ctx(
                         unit=_cap_unit,
                     )
                     + f"{_out_none}"
-                    f"        npy_intp _odim = (npy_intp){_odim_c};\n"
+                    + (_reindent(_keep) if error_on_empty else "")
+                    + f"        npy_intp _odim = (npy_intp){_odim_c};\n"
                     + (
                         # gh-2115: whole rows only. A kernel that returns a
                         # count that is not a multiple of the width has broken
@@ -4005,6 +4017,7 @@ def make_methods_ctx(
                     # gh-2012: the same refusal, before the same guard. This
                     # path holds the arrays it allocated, not `out_arr`.
                     + _count_refusal_c(m, name, _decref_arrs, " " * 4)
+                    + ("" if error_on_empty else _keep)
                     # gh-1716: past `_cap`, PyArray_Resize below GREW the
                     # result into memory the kernel never wrote.
                     + _coerce.returned_count_c(
@@ -4015,7 +4028,8 @@ def make_methods_ctx(
                         unit=_cap_unit,
                     )
                     + f"{_vo_empty}"
-                    f"{_vo_exact}"
+                    + (_keep if error_on_empty else "")
+                    + f"{_vo_exact}"
                     f"{_none_on_empty_line if not none_on_empty else ''}"
                     f"{_vo_views}"
                     f"{_vo_return}"
@@ -4312,6 +4326,7 @@ def make_methods_ctx(
                         nogil,
                     )
                     + _p_cleanup
+                    + _keep
                 )
             elif has_arg:
                 _s_parse = (
@@ -4478,6 +4493,7 @@ def make_methods_ctx(
                         nogil,
                     )
                     + _p_cleanup
+                    + _keep
                 )
             elif has_arg:
                 _rf_parse = (
@@ -4542,9 +4558,14 @@ def make_methods_ctx(
             if _rf_consumed and has_params:
                 _rf_tail = _records_consumed_c(
                     _rf_buffer,
-                    lambda cap: _kernel_call_block(
-                        f"{c_fn}({_st}, {_p_call}, results, {cap})",
-                        nogil,
+                    # gh-2327: after every call; keeping the object already
+                    # kept is a no-op.
+                    lambda cap: (
+                        _kernel_call_block(
+                            f"{c_fn}({_st}, {_p_call}, results, {cap})",
+                            nogil,
+                        )
+                        + _keep
                     ),
                     ptr="x",
                     count="x_len",
@@ -4722,6 +4743,7 @@ def make_methods_ctx(
                         else empty_raise_c(*raise_pair_of(m, name), indent=8)
                     )
                     + "    }\n"
+                    + _keep
                     # gh-1426 A: remembered at the ONE place the view is
                     # built, so a release defaults to it without anything
                     # re-deriving the count.
@@ -4759,8 +4781,9 @@ def make_methods_ctx(
                     + f"{_p_cleanup}"
                     f"    if (_rc < 0) {{\n"
                     + _rc_raise_c(*_raise_pair)
-                    + f"    }}\n"
-                    f"    return {ret_meta['to_py']('_rc')};\n"
+                    + "    }\n"
+                    + _keep
+                    + f"    return {ret_meta['to_py']('_rc')};\n"
                 )
             elif status_return:
                 # gh-432: status-code return — 0 = OK -> None, non-zero raises.
@@ -4778,7 +4801,8 @@ def make_methods_ctx(
                     f"    if (_rc != 0) {{\n"
                     + _rc_raise_c(*_raise_pair)
                     + "    }\n"
-                    "    Py_RETURN_NONE;\n"
+                    + _keep
+                    + "    Py_RETURN_NONE;\n"
                 )
             elif multi_output:
                 extra_decls = "".join(
@@ -4813,6 +4837,7 @@ def make_methods_ctx(
                     f"{extra_decls}"
                     f"{call_line}"
                     f"{_p_cleanup}"
+                    f"{_keep}"
                     f"    return PyTuple_Pack({n},"
                     f" {', '.join(pack_parts)});\n"
                 )
@@ -4868,6 +4893,7 @@ def make_methods_ctx(
                         nogil,
                     )
                     + f"{_p_cleanup}"
+                    f"{_keep}"
                     f"    return _out;\n"
                 )
             elif ret_meta:
@@ -4879,12 +4905,14 @@ def make_methods_ctx(
                         ret_disp, _res, f"{c_fn}({call_args_c})", nogil
                     )
                     + f"{_p_cleanup}"
+                    f"{_keep}"
                     f"    return {ret_expr};\n"
                 )
             else:
                 ret_body = (
                     _nogil_call("", "", f"{c_fn}({call_args_c})", nogil)
                     + f"{_p_cleanup}"
+                    f"{_keep}"
                     f"    Py_RETURN_NONE;\n"
                 )
             # gh-1310: same rule as the variable-output record path -- the
@@ -5835,17 +5863,14 @@ def make_properties_ctx(
             # free functions over an opaque capsule *as the state*, not a
             # property on a `PyTypeObject`.
             #
-            # The destructor is NULL, and that is the load-bearing detail.
-            # The capsule lends a pointer the object still owns; a capsule
-            # with a destructor would free it on garbage-collection and the
-            # owner would free it again on `__dealloc__`. Non-owning is the
-            # only correct choice here, so it is not configurable — a
-            # capsule that owns its pointer is a different feature and
-            # should look different.
+            # The capsule never frees the pointer, and that is the
+            # load-bearing detail: it lends a pointer the object still owns,
+            # and the owner frees it on `__dealloc__`. It holds the object
+            # itself instead (gh-2328), so a consumer that keeps the capsule
+            # keeps the pointer's owner.
             # gh-794: the body moved to `capsule_new_c` so a handle type can
-            # publish the identical contract. One emitter, two callers — the
-            # NULL destructor is the contract, and a second copy is a place
-            # for it to be changed on one side only.
+            # publish the identical contract. One emitter, two callers -- a
+            # second copy is a place for it to be changed on one side only.
             _cap_expr = p.get("expr") or "self->handle"
             getter = (
                 f"static PyObject *\n"

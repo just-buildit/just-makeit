@@ -431,6 +431,9 @@ PARAM_KEYS = frozenset(
         "mutable",
         "doc",
         "capsule",
+        # gh-2327: the kernel keeps the capsule's pointer past the call, so
+        # the binding keeps its owner alive (`_retain`).
+        "retain",
         "header",
         # gh-805 §C: array shape/interleave metadata. `rank` is the opt-in
         # `PyArray_NDIM` guard; `elements_per_sample` is the interleave factor

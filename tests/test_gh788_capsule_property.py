@@ -75,15 +75,25 @@ class TestTheGetter:
         assert f'"{CAP}"' in ext
         assert "PyCapsule_New" in ext
 
-    def test_the_destructor_is_null(self, tmp_path):
+    def test_the_capsule_never_frees_the_pointer(self, tmp_path):
         """The load-bearing detail. The capsule lends a pointer the object
-        still owns; a capsule with a destructor would free it on garbage
-        collection and the owner would free it again in `__dealloc__`. A
-        double free is not a thing to leave to a default."""
+        still owns; a capsule that freed it on garbage collection would free
+        it a second time in `__dealloc__`. Its destructor releases only the
+        object it holds (gh-2328), never the pointer."""
         ext = _ext(_project(tmp_path))
-        call = re.search(r"PyCapsule_New\((.*?)\);", ext, re.S)
-        assert call, "no PyCapsule_New emitted"
-        assert call.group(1).rstrip().endswith("NULL"), call.group(1)
+        call = re.search(r"return jm_capsule_lend\((.*?)\);", ext, re.S)
+        assert call, "no jm_capsule_lend emitted"
+        assert call.group(1).rstrip().endswith("(PyObject *)self"), call
+        release = re.search(
+            r"jm_capsule_lend_release\(PyObject \*cap\)\n\{(.*?)\n\}",
+            ext,
+            re.S,
+        )
+        assert release, "no jm_capsule_lend_release emitted"
+        assert release.group(1).split() == [
+            "Py_XDECREF((PyObject",
+            "*)PyCapsule_GetContext(cap));",
+        ], release.group(1)
 
     def test_it_defaults_to_the_handle(self, tmp_path):
         ext = _ext(_project(tmp_path))

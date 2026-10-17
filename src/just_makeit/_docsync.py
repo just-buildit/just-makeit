@@ -43,6 +43,7 @@ from . import _config as C
 from . import _gluedoc
 from . import _record
 from . import _report
+from . import _retain
 from . import _render as R
 from ._context._destroy import PARK_FIELD
 from ._context._parse import INT_RANGE_GUARD_RE
@@ -1367,6 +1368,16 @@ _FEATURE_MARKERS = {
         "the manifest declares consumed_fn and this fragment calls the "
         "kernel once, so the input it leaves when its result buffer fills "
         "is never offered and those records are lost",
+    ),
+    # gh-2327: a manifest declaration -- `retain` on a capsule param, added
+    # after its sacred fragment was rendered. Named for its consequence,
+    # which is silent until the freed owner's pointer is used.
+    "retain": _Feature(
+        (_retain.FIELD_PREFIX,),
+        "the manifest declares retain on a capsule param and this fragment "
+        "does not keep its owner, so the object passed can be freed while "
+        "the kernel still holds its pointer (gh-2327); delete the fragment "
+        "and re-run apply",
     ),
     # gh-2187: jm's own teardown for an object that lends views, which parks
     # the state for tp_dealloc. A teardown jm wrote before the object lent is
@@ -2930,8 +2941,33 @@ def refresh_module_fragment_docs(
             # describes the old element while the contract asserts the new.
             # The one list is `_object.jm_owned_functions`, which the
             # regenerate path reads too. gh-2187: a teardown jm wrote for
-            # the other lending status is on it, where this struct -- which
-            # apply never rewrites -- carries what the render's body needs.
+            # the other lending status is on it, where this struct carries
+            # what the render's body needs -- reconciled just below.
+            # gh-2227: first the struct's jm fields, so every body restored
+            # below -- a parking teardown, the dealloc releasing an owner,
+            # a wrapper transplanted above -- finds the fields it uses.
+            updated, _added, _removed = O.reconcile_struct_fields(
+                updated, reference, ctx["Component"]
+            )
+            if _added or _removed:
+                print(
+                    f"  update  {_rel}: object struct fields"
+                    + (f" +{', +'.join(_added)}" if _added else "")
+                    + (f" -{', -'.join(_removed)}" if _removed else "")
+                )
+            # tp_dealloc releases what those fields hold. Every verb
+            # regenerates it (`_object._restore_c_function_bodies` never
+            # keeps one); apply now holds it to the same render.
+            _dn = f"{ctx['ComponentW']}_dealloc"
+            _ref_d = O._extract_c_function_bodies(reference).get(_dn)
+            _disk_d = O._extract_c_function_bodies(updated).get(_dn)
+            if (
+                _ref_d
+                and _disk_d
+                and _norm_unit(_ref_d) != _norm_unit(_disk_d)
+            ):
+                updated = updated.replace(_disk_d, _ref_d, 1)
+                print(f"  update  {_rel}: {_dn}")
             _was = O._extract_c_function_bodies(updated)
             _own_names = O.jm_owned_functions(
                 cfg, ctx, reference, kept=_was, into=updated

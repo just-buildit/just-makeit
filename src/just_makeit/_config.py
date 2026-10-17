@@ -304,6 +304,13 @@ def load(root: Path) -> dict:
     shape_errors = shape_key_errors(cfg)
     if shape_errors:
         _refuse(shape_errors)
+    # gh-2327: a `retain` that would keep nothing alive -- on a param that
+    # is not a capsule, or a method whose binding has no one success point.
+    from ._retain import errors as retain_errors
+
+    retain_errs = retain_errors(cfg)
+    if retain_errs:
+        _refuse(retain_errs)
     # gh-2204: a `consumed_fn` no binding would call -- on a method that is
     # not a list of records, or has no input block to re-offer.
     consumed_errors = _consumed_fn_errors(cfg)

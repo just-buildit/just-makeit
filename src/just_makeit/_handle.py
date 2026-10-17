@@ -1753,8 +1753,8 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
         rows.append(
             f'    {{"_capsule", (getter){tname}_get__capsule, NULL,\n'
             f'     "Borrowed {_cap} capsule for this handle.\\n\\n"\n'
-            f'     "Non-owning: the capsule does not free the handle, and\\n"\n'
-            f'     "is only valid while this object is alive and open.",\n'
+            f'     "It never frees the handle, and keeps this object alive;\\n"\n'
+            f'     "it is valid until the handle is closed.",\n'
             f"     NULL}},"
         )
 
@@ -2679,9 +2679,9 @@ def render_pyi(
         lines.append(
             f'        """Borrowed `{_cap_pyi}` capsule for this handle.\n\n'
             f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
-            f"        capsule is accepted. Non-owning: it does not free the\n"
-            f"        handle, and is only valid while this object is alive\n"
-            f'        and open."""'
+            f"        capsule is accepted. It never frees the handle, and it\n"
+            f"        keeps this object alive; it is valid until the handle\n"
+            f'        is closed."""'
         )
 
     # serializable state triplet (gh-403).

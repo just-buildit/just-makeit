@@ -1,5 +1,39 @@
 ## [Unreleased]
 
+### Added
+
+- **A capsule method param can say the kernel keeps its pointer**
+    (gh-2327). `retain = true` on a param with `capsule` makes the object
+    hold a reference to what it was passed, so a kernel that stores the
+    pointer (`set_telemetry`) no longer writes into an object Python has
+    collected. A successful call replaces what is held, `None` clears it,
+    a call the kernel refuses (its `status_return`, `error_negative`,
+    `error_sentinel`, `error_on_empty` or a NULL `borrow`) keeps what was
+    held, and dealloc releases it after the C state is destroyed. Every
+    method shape jm writes honours it. It is refused on a param with no
+    `capsule`, on a `varargs` / `manual_stub` method and on a method a
+    composer source delegates. A module fragment rendered before the key is
+    named by `apply` and `status`.
+
+### Fixed
+
+- **A capsule an object or handle lends keeps that object alive**
+    (gh-2328). The capsule held no reference to the object that lent it,
+    so a constructor capsule param (gh-790) or a retained method param
+    passed `obj._capsule` rather than `obj` kept only the capsule, and the
+    object could be collected under the pointer. The capsule now holds its
+    lender; its destructor releases that reference and still never frees
+    the pointer.
+
+- **`apply` keeps a module fragment's object struct in step with the
+    manifest** (gh-2227). A member `apply` added to a sacred
+    `<mod>_ext_<obj>.c` that writes a field jm declares (a borrow's
+    `_jm_borrowed`, a released call's `_jm_inflight`, a retained owner) did
+    not compile, because the struct was never revisited. `apply` now adds
+    the jm fields the render declares and removes the ones it no longer
+    does, keeping any member you added, and refreshes `tp_dealloc` as every
+    verb already did.
+
 ## [0.107.0] — 2026-10-16
 
 ### Added
