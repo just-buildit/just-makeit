@@ -1388,7 +1388,10 @@ def run(
     # (state_vars is None) and the struct isn't opaque-managed. An explicit
     # [] — e.g. apply replaying an object whose last field was removed —
     # stays empty rather than resurrecting `gain`.
-    _has_opaque = bool(opaque_fields)
+    # gh-2215: `opaque_state` too -- a starter field in a struct the header
+    # does not publish is a member nobody declared, and `jm script` replays
+    # the manifest's `state = []` with no `--state` at all.
+    _has_opaque = bool(opaque_fields) or opaque_state
     if no_state:
         vars_ = []
     elif state_vars is None:

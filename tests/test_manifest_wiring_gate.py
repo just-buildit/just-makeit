@@ -32,6 +32,7 @@ idempotence half to protect you, which is the point.
 from __future__ import annotations
 from _jminc import INC_ROOT  # noqa: E402
 
+import ast
 import hashlib
 import io
 import sys
@@ -49,6 +50,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from just_makeit._property import run as property_run  # noqa: E402
 from just_makeit._status import run as status_run  # noqa: E402
 from just_makeit._view import run as view_run  # noqa: E402
 
@@ -306,7 +308,148 @@ def _record(tmp_path: Path) -> Path:
     return root
 
 
+def _capsule_typed(tmp_path: Path, module: str | None) -> Path:
+    """A capsule producer that SAYS what its pointer is, and its consumer.
+
+    gh-2215: `_replay_property` forwarded every property key but
+    `capsule_type` (gh-1235), so the replay's manifest held a producer
+    publishing over `expr` with no declared type. The consumer's `object`
+    reference resolves against that manifest, and `resolve_object_ref`
+    refuses exactly that producer -- so on a module consumer `jm apply`
+    refused a project `jm property` had built.
+
+    The consumer is built the way `jm object --init-param src:object:nco`
+    builds it, which crashed on `_CTYPE_META['']` until the creation path
+    resolved the reference (gh-1893) -- and `jm script` then has to emit the
+    producer's capsule before the consumer that names it.
+    """
+    from just_makeit._cli_parse import parse_init_param_flag
+
+    root = _base(tmp_path)
+    if module:
+        module_run(root, module)
+    object_run(
+        root,
+        "nco",
+        module,
+        state_vars=[("cap", "size_t", "16")],
+        arg_type="float",
+        return_type="float",
+    )
+    property_run(
+        root,
+        "nco",
+        "_capsule",
+        module,
+        "capsule",
+        False,
+        capsule="demo.nco.desc",
+        capsule_type="const nco_desc_t *",
+        expr="&self->handle->cap",
+    )
+    src, _ = parse_init_param_flag(["--init-param", "src:object:nco"], 0)
+    object_run(
+        root,
+        "mixer",
+        module,
+        arg_type="float",
+        return_type="float",
+        init_params=[src],
+    )
+    return root
+
+
+def _capsule_typed_standalone(tmp_path: Path) -> Path:
+    return _capsule_typed(tmp_path, None)
+
+
+def _capsule_typed_module(tmp_path: Path) -> Path:
+    return _capsule_typed(tmp_path, "osc")
+
+
+def _object_flags(tmp_path: Path, module: str | None) -> Path:
+    """Object keys the replay's `_object.run` call never named (gh-2215).
+
+    `step_delegates_to_steps` and `opaque_state` are written by
+    `jm object --step-delegates` / `--opaque-state`, and `bench = false` by
+    `jm method --no-bench`. The replay forwarded none of the three; this
+    shape is what measures whether that changed a render.
+    """
+    root = _base(tmp_path)
+    if module:
+        module_run(root, module)
+    object_run(
+        root,
+        "deleg",
+        module,
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+        step_delegates=True,
+    )
+    object_run(
+        root,
+        "opaq",
+        module,
+        state_vars=[],
+        arg_type="float",
+        return_type="float",
+        no_step=True,
+        opaque_state=True,
+    )
+    method_run(
+        root,
+        "deleg",
+        "scale",
+        module,
+        "float",
+        "float",
+        False,
+        [],
+        no_bench=True,
+    )
+    return root
+
+
+def _object_flags_standalone(tmp_path: Path) -> Path:
+    return _object_flags(tmp_path, None)
+
+
+def _object_flags_module(tmp_path: Path) -> Path:
+    return _object_flags(tmp_path, "blk")
+
+
+def _project_deps(tmp_path: Path) -> Path:
+    """`[project]` dependency keys `jm new` writes (gh-2215).
+
+    The replay's `_new.run` call named none of `find_packages`,
+    `pkg_modules` or `c_deps`.
+    """
+    root = tmp_path / "demo"
+    new_run(
+        "demo",
+        root,
+        find_packages=["ZLIB"],
+        pkg_modules=["fftw3"],
+        c_deps=["vendored"],
+    )
+    object_run(
+        root,
+        "widget",
+        None,
+        state_vars=[("gain", "float", "1.0f")],
+        arg_type="float",
+        return_type="float",
+    )
+    return root
+
+
 SHAPES = {
+    "object_flags_standalone": _object_flags_standalone,
+    "object_flags_module": _object_flags_module,
+    "project_deps": _project_deps,
+    "capsule_typed_standalone": _capsule_typed_standalone,
+    "capsule_typed_module": _capsule_typed_module,
     "standalone": _standalone,
     "module": _module,
     "module_extras": _module_extras,
@@ -595,4 +738,101 @@ def test_declared_doc_reaches_both_faces(tmp_path, surface):
         f"{'neither face' if len(missing) == 2 else 'only one face'} "
         f"(missing from: {', '.join(missing)}). The two faces are generated by "
         "different builders; a fix applied to one does not reach the other."
+    )
+
+
+# ── every writer parameter, named at the replay ─────────────────────────────
+# gh-2215: `_replay_property` forwarded every key but `capsule_type`, and every
+# arm above passed, because none of them is told which keys exist: the shapes
+# only cover the keys someone thought to put in a shape, and the per-kind key
+# lists (`test_gh663_apply_threads_method_keys`) cover one kind and are lists.
+# The writers' signatures are the one place every key is already declared. So
+# this arm reads each `<writer>.run(...)` call in `_apply.py` and requires it
+# to bind EVERY parameter its `run` takes -- positionally, by keyword, or
+# through a `**helper(...)` whose body returns a dict literal. A parameter
+# the replay does not need is still named, with the reason beside it; an
+# omission and a decision then look different, which is the whole point.
+
+
+def _apply_tree() -> "ast.Module":
+    from just_makeit import _apply
+
+    return ast.parse(Path(_apply.__file__).read_text(encoding="utf-8"))
+
+
+def _dict_helper_keys(tree: "ast.Module", name: str) -> "set[str]":
+    """The keys of the dict literal module-level function *name* returns."""
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            for ret in ast.walk(node):
+                if isinstance(ret, ast.Return) and isinstance(
+                    ret.value, ast.Dict
+                ):
+                    keys = ret.value.keys
+                    assert all(isinstance(k, ast.Constant) for k in keys), (
+                        f"{name}() returns a dict this gate cannot read"
+                    )
+                    return {k.value for k in keys}  # type: ignore[union-attr]
+    raise AssertionError(
+        f"`**{name}(...)` is splatted into a writer, and {name} is not a "
+        "module-level function returning a dict literal -- this gate cannot "
+        "see which parameters it binds"
+    )
+
+
+def _writer_calls() -> "list[tuple[int, str, set[str]]]":
+    """``(line, writer, unbound)`` for every ``_<writer>.run(...)`` call."""
+    import importlib
+    import inspect
+
+    tree = _apply_tree()
+    out = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "run"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id.startswith("_")
+        ):
+            continue
+        writer = node.func.value.id
+        mod = importlib.import_module(f"just_makeit.{writer}")
+        params = list(inspect.signature(mod.run).parameters)
+        assert not any(isinstance(a, ast.Starred) for a in node.args), (
+            f"_apply.py:{node.lineno}: `*args` into {writer}.run hides "
+            "which parameters it binds"
+        )
+        bound = set(params[: len(node.args)])
+        for kw in node.keywords:
+            if kw.arg is not None:
+                bound.add(kw.arg)
+            else:
+                call = kw.value
+                assert isinstance(call, ast.Call) and isinstance(
+                    call.func, ast.Name
+                ), f"_apply.py:{node.lineno}: an unreadable `**` splat"
+                bound |= _dict_helper_keys(tree, call.func.id)
+        out.append((node.lineno, writer, set(params) - bound))
+    return out
+
+
+def test_the_replay_names_every_writer_parameter():
+    calls = _writer_calls()
+    # Armed: the replay's own writers are all among what was read. A scan
+    # that found no call would pass for the wrong reason.
+    found = {w for _line, w, _u in calls}
+    for writer in ("_new", "_module", "_object", "_method", "_property"):
+        assert writer in found, f"no {writer}.run call found in _apply.py"
+    unbound = sorted(
+        f"_apply.py:{line}: {writer}.run({', '.join(sorted(u))})"
+        for line, writer, u in calls
+        if u
+    )
+    assert not unbound, (
+        "`jm apply` replays the manifest through each writer's `run`, and "
+        "these calls leave parameters to their defaults -- a manifest key "
+        "the writer accepts and the replay drops (gh-2215's `capsule_type`). "
+        "Forward each from the manifest, or name it with the value the "
+        "replay means and why:\n  " + "\n  ".join(unbound)
     )

@@ -318,6 +318,11 @@ def _object_flags(
     if C.is_no_step(cfg, comp):
         parts.append(_bool_flag("--no-step"))
 
+    # gh-2215: written by `jm object --opaque-state` and dropped here, so a
+    # replayed object published the struct it declared opaque.
+    if C.is_opaque_state(cfg, comp):
+        parts.append(_bool_flag("--opaque-state"))
+
     if C.is_no_reset(cfg, comp):
         parts.append(_bool_flag("--no-reset"))
 
@@ -651,6 +656,11 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
     if m.get("batch"):
         parts.append(_bool_flag("--batch"))
+
+    # gh-2215: `jm method --no-bench` writes `bench = false`; dropped here,
+    # the replayed method was benchmarked again.
+    if m.get("bench") is False:
+        parts.append(_bool_flag("--no-bench"))
 
     if m.get("variable_output"):
         parts.append(_bool_flag("--variable-output"))
@@ -1075,11 +1085,48 @@ def run(root: Path) -> None:
             " `just-makeit apply` (gh-1310).\n\n"
         )
 
+    # gh-1893: a component an `object` init-param names must publish its
+    # capsule BEFORE the consumer's `jm object` line, which resolves the
+    # reference on the spot and refuses a producer with no capsule. So a
+    # producer's properties are emitted right after its own object line --
+    # all of them, in manifest order, so the replayed `properties` list is
+    # the same list -- and skipped in the properties section below.
+    producers = {
+        str(p.get("object", "")).partition(".")[0]
+        for c in C.components(cfg)
+        if isinstance(cfg.get(c), dict)
+        for p in [
+            *(cfg[c].get("init_params") or []),
+            *(
+                q
+                for v in C.views(cfg, c)
+                for q in (v.get("init_params") or [])
+            ),
+        ]
+        if p.get("object")
+    }
+
+    def _object_lines(comp: str, mod: "str | None") -> "list[str]":
+        out = list(_init_param_notes(cfg[comp].get("init_params", [])))
+        out.append(
+            _render_cmd(
+                ["just-makeit", "object", comp],
+                _object_flags(cfg, comp, module=mod),
+            )
+        )
+        if comp in producers:
+            for p in C.properties(cfg, comp):
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "property", comp, p["name"]],
+                        _property_flags(p, mod),
+                    )
+                )
+        return out
+
     # ── standalone objects ───────────────────────────────────────────────────
     for comp in standalone:
-        flags = _object_flags(cfg, comp)
-        lines += _init_param_notes(cfg[comp].get("init_params", []))
-        lines.append(_render_cmd(["just-makeit", "object", comp], flags))
+        lines += _object_lines(comp, None)
 
     if standalone:
         lines.append("\n")
@@ -1089,9 +1136,7 @@ def run(root: Path) -> None:
         for comp in C.module_objects(cfg, mod):
             if comp in templated:
                 continue
-            flags = _object_flags(cfg, comp, module=mod)
-            lines += _init_param_notes(cfg[comp].get("init_params", []))
-            lines.append(_render_cmd(["just-makeit", "object", comp], flags))
+            lines += _object_lines(comp, mod)
         lines.append("\n")
 
     # ── methods ───────────────────────────────────────────────────────────────
@@ -1136,6 +1181,8 @@ def run(root: Path) -> None:
     # ── properties ────────────────────────────────────────────────────────────
     prop_lines: list[str] = []
     for comp in all_comps:
+        if comp in producers:  # gh-1893: emitted with the object above
+            continue
         mod = C.component_module(cfg, comp)
         for p in C.properties(cfg, comp):
             flags = _property_flags(p, mod)

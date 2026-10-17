@@ -3750,6 +3750,17 @@ def resolve_init_param_tuples(cfg: dict, params: "list[tuple]") -> list[tuple]:
     An undefined enum name exits with :func:`resolve_enum_type`'s message,
     before anything is written.
 
+    An ``object`` reference (gh-1224, slot 15) nothing has resolved yet --
+    ``jm object --init-param src:object:nco``, whose parser leaves the
+    type, capsule and header slots empty -- is resolved by the manifest
+    path's own reading: the tuple is written as the dict the manifest will
+    hold and projected back through :func:`_project_init_params`, so the
+    first render and every later one read the reference one way. Before
+    gh-2215 the empty type reached the renderer as ``_CTYPE_META['']``. A
+    tuple that already carries its type -- `apply`'s replay passes the
+    source manifest's resolved ones -- is left alone, since the scratch
+    manifest it is replayed into may not hold the producer's capsule yet.
+
     >>> cfg = {"enum": [{"name": "lvl", "values": ["a", "b"]}]}
     >>> resolve_init_param_tuples(cfg, [("x", "enum:lvl", "b"), ("n", "int")])
     [('x', 'string_enum:a,b', 'b'), ('n', 'int')]
@@ -3757,6 +3768,10 @@ def resolve_init_param_tuples(cfg: dict, params: "list[tuple]") -> list[tuple]:
     out: list[tuple] = []
     for p in params:
         try:
+            if len(p) > 15 and p[15] and not p[1]:
+                rec = init_param_tuple_to_dict(p)
+                out.append(_project_init_params(cfg, [rec])[0])
+                continue
             out.append((p[0], resolve_enum_type(cfg, p[1]), *p[2:]))
         except ValueError as exc:
             print(f"error: --init-param '{p[0]}': {exc}", file=_sys.stderr)

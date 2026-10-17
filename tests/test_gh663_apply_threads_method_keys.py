@@ -37,8 +37,6 @@ _EXEMPT = {
     # Read under either spelling and passed as `params=`.
     "extra_args",
     "params",
-    # Documentation-only manifest keys with no _method.run parameter.
-    "bench",
     # The body's provenance: `_resolve_impl(m, ...)` reads all three off the
     # entry, and passes the body it resolves as `impl_body=`.
     "impl",

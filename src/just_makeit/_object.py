@@ -3188,7 +3188,9 @@ def run(
     if no_state:
         vars_ = []
     elif state_vars is None:
-        vars_ = [("gain", "double", "0.0")]
+        # gh-2215: no starter in an opaque-managed struct, as `_init.run`.
+        _has_opaque = bool(opaque_fields) or opaque_state
+        vars_ = [] if _has_opaque else [("gain", "double", "0.0")]
     else:
         vars_ = list(state_vars)
     ctx = _make_object_ctx(
@@ -3375,7 +3377,7 @@ def run(
     # with a real header are included — a bare link target like `lo_core` is
     # skipped. gh-432: method params' `header` keys (a capsule param's
     # foreign type) are included the same way when the header exists.
-    from ._init import _dep_header_includes
+    from ._init import _dep_header_includes, _param_headers_at_create
 
     ctx["depends_includes"] = "".join(
         "\n" + inc
@@ -3389,7 +3391,10 @@ def run(
         )
         + [
             f'#include "{h}"'
-            for h in C.param_headers(cfg, object_name)
+            # gh-1893: the init-params' headers too, read off the argument --
+            # the object is not in the manifest yet, which is the gh-790 trap
+            # the standalone path in `_init.run` already reads around.
+            for h in _param_headers_at_create(cfg, object_name, init_params)
             if (INC.inc_dir(root) / h).exists()
         ]
     )
