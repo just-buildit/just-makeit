@@ -418,13 +418,14 @@ def test_output_axes_c(tmp_path: Path):
     # the csv + byte-swap writer is emitted
     assert "static void\njm_write_block(" in c
     assert "static size_t\njm_elem_size(" in c
-    assert 'fprintf(out, "%0.9f,%0.9f' in c  # csv float line
+    assert "jm_put_iq(out, (double)re, (double)im, 9);" in c  # gh-2254
     assert "bytes[off + a] = bytes[off + b];" in c  # big-endian swap
     # --record dumps the resolved run, with choice names from the tables
     assert "static const char *const jm_choices_sample_type[]" in c
     assert "if (record_path) {" in c
     assert 'fprintf(rec, ",\\"sample_type\\":\\"%s\\"", ' in c
-    assert 'fprintf(rec, ",\\"freq\\":%g", (double)freq);' in c
+    # gh-2254: a real is recorded with every digit it needs to replay
+    assert 'jm_put_real(rec, (double)freq, 17, "NaN", "Infinity");' in c
 
 
 def test_output_axes_python(tmp_path: Path):
