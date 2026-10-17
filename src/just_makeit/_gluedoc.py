@@ -588,6 +588,13 @@ COUNT_PARAM_DOC = (
     "the worst case."
 )
 
+#: The same, for a method with no `out=` to size (a `multi_output` one):
+#: the clause above would point the reader at a buffer, and a `_max_out()`,
+#: the method does not have (gh-2222).
+COUNT_PARAM_DOC_NO_OUT = (
+    "How many output samples to ask for. The call may return fewer."
+)
+
 #: Default description for the optional `out=` buffer.
 OUT_PARAM_DOC = (
     "Optional pre-allocated output buffer. When given, the result is "
@@ -795,6 +802,11 @@ def binding_param_docs(
     ['count', 'out']
     >>> sorted(binding_param_docs("n", count=True, out=False))
     ['n']
+
+    gh-2222: the count's text offers `out=` only beside one.
+
+    >>> "out=" in binding_param_docs(count=True, out=False)["count"]
+    False
     >>> binding_param_docs(count=False, out=False)
     {}
     >>> "2-D" in binding_param_docs(count=False, out=True, out_cols=True)["out"]
@@ -817,7 +829,9 @@ def binding_param_docs(
         }
     docs: dict[str, str] = {}
     if count:
-        docs[count_kwarg_name(count_name)] = COUNT_PARAM_DOC
+        docs[count_kwarg_name(count_name)] = (
+            COUNT_PARAM_DOC if out else COUNT_PARAM_DOC_NO_OUT
+        )
     if out:
         docs["out"] = (OUT_PARAM_DOC_MATRIX if out_cols else OUT_PARAM_DOC) + (
             OUT_PARAM_DOC_SHORT if short_out else ""
