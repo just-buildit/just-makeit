@@ -33,8 +33,10 @@ shape ``jm method`` writes a binding for), and for each pair:
 3. **Armed.** Every key is accepted on some shape and refused on another.
 
 Then, built: every shape ``status_return`` is accepted on returns what its
-``.pyi`` says from a kernel that succeeds, and raises ``ValueError`` naming
-the code from one that refuses.
+``.pyi`` and ``help()`` say from a kernel that succeeds, and raises
+``ValueError`` naming the code from one that refuses; the same output
+shapes without a status return their whole tuple without leaking it; and
+the module-aggregated ``.pyi`` annotates each as the standalone one does.
 """
 
 from __future__ import annotations
@@ -304,12 +306,21 @@ def _call_args(flags: "list[str]") -> str:
     return ", ".join(args)
 
 
+#: The roster's fixed-output shapes that carry an output -- built WITHOUT
+#: a status too, because what they return is the list the status variant
+#: drops its first value from (`fixed_result_parts`).
+OUTPUT_SHAPES = [
+    s for s in SHAPES if {"--multi-output", "--out-type"} & set(SHAPES[s])
+]
+
+
 @pytest.fixture(scope="module")
 def status_built(outcomes, blank, tmp_path_factory):
     """Every shape `status_return` is accepted on, one method each, built.
 
     Each kernel returns the object's ``k`` as its status, so ``O(k=0)``
-    succeeds and ``O(k=3)`` refuses with code 3.
+    succeeds and ``O(k=3)`` refuses with code 3. Each `OUTPUT_SHAPES`
+    entry is built beside it as ``<shape>_plain``, with no status.
     """
     why = _skip_reason()
     if why:
@@ -322,6 +333,9 @@ def status_built(outcomes, blank, tmp_path_factory):
         flags += [] if "--status-return" in flags else ["--status-return"]
         r = run_cli("method", "o", s, *flags, cwd=root)
         assert r.returncode == 0, (s, r.stdout + r.stderr)
+    for s in OUTPUT_SHAPES:
+        r = run_cli("method", "o", f"{s}_plain", *SHAPES[s], cwd=root)
+        assert r.returncode == 0, (s, r.stdout + r.stderr)
     core = root / "native/src/o/o_core.c"
     text = core.read_text("utf-8")
     for s in shapes:
@@ -330,14 +344,20 @@ def status_built(outcomes, blank, tmp_path_factory):
         text = text[:stub] + "return (int)state->k;" + text[stub + 14 :]
     core.write_text(text, "utf-8")
     build = root / "build"
+    # A failed build is reported by the tests, not here: in the fixture it
+    # is an ERROR, which no test names (and which is what this issue's
+    # trigger did -- `too few arguments` in the user's build).
+    failed = ""
     for cmd in (
         ["cmake", "-S", str(root), "-B", str(build),
          f"-DPython3_EXECUTABLE={sys.executable}"],
         ["cmake", "--build", str(build)],
     ):  # fmt: skip
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        assert r.returncode == 0, f"{cmd[:2]}:\n{r.stdout}\n{r.stderr}"
-    return root, shapes
+        if r.returncode:
+            failed = f"{cmd[:2]}:\n{r.stdout}\n{r.stderr}"
+            break
+    return root, shapes, failed
 
 
 def _pyi_return(root: Path, method: str) -> str:
@@ -349,15 +369,52 @@ def _pyi_return(root: Path, method: str) -> str:
     raise AssertionError(f"{method}: not in the .pyi")
 
 
-def test_status_return_shapes_include_the_output_forms(status_built):
-    """Armed: the two forms that did not compile are among those built."""
-    _root, shapes = status_built
+def _run(root: Path, probe: "list[str]") -> "list[list[str]]":
+    """Run *probe* against the built extension; its lines, split."""
+    r = subprocess.run(
+        [sys.executable, "-c", "\n".join(probe)],
+        cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root / "src")},
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    return [ln.split(" ", 3) for ln in r.stdout.splitlines()]
+
+
+def _faces_agree(root: Path, method: str, kind: str, n: str) -> None:
+    """What the call returned is what the `.pyi` and `help()` say."""
+    ann = _pyi_return(root, method)
+    if ann == "None":
+        assert kind == "NoneType", (method, ann, kind)
+    elif ann.startswith("tuple["):
+        assert kind == "tuple", (method, ann, kind)
+        assert int(n) == ann.count(",") + 1, (method, ann, n)
+    elif ann.startswith("NDArray"):
+        assert kind == "ndarray", (method, ann, kind)
+    else:
+        assert kind == ann, (method, ann, kind)
+    ext = (root / "native/src/o/o_ext.c").read_text("utf-8")
+    synopsis = re.search(rf'"{method}\(.*?\) -> (.*?)\\n"', ext)
+    assert synopsis, method
+    assert synopsis.group(1) == re.sub(r"NDArray\[[^]]*\]", "ndarray", ann), (
+        method
+    )
+
+
+def test_every_status_return_shape_builds(status_built):
+    """Armed: the two forms that did not compile are among those built,
+    and they build."""
+    _root, shapes, failed = status_built
+    assert not failed, failed
     assert {"out_type", "multi_output", "multi_output_void"} <= set(shapes)
 
 
 def test_a_status_return_method_raises_on_a_refusal(status_built):
     """Each built method, called on an accepting and a refusing kernel."""
-    root, shapes = status_built
+    root, shapes, failed = status_built
+    assert not failed, failed
     probe = ["import numpy as np", "from p import O"]
     for shape in shapes:
         call = f"{shape}({_call_args(_flags('status_return', shape))})"
@@ -371,36 +428,83 @@ def test_a_status_return_method_raises_on_a_refusal(status_built):
             "    why = str(e)",
             f"print({shape!r}, type(r).__name__, n, repr(why))",
         ]
-    r = subprocess.run(
-        [sys.executable, "-c", "\n".join(probe)],
-        cwd=root,
-        env={**os.environ, "PYTHONPATH": str(root / "src")},
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    assert r.returncode == 0, r.stdout + r.stderr
-    ext = (root / "native/src/o/o_ext.c").read_text("utf-8")
     seen = []
-    for line in r.stdout.splitlines():
-        shape, kind, n, why = line.split(" ", 3)
+    for shape, kind, n, why in _run(root, probe):
         seen.append(shape)
         assert "rc=3" in why, (shape, why)
-        ann = _pyi_return(root, shape)
-        # What the call returned is what the `.pyi` says it returns.
-        if ann == "None":
-            assert kind == "NoneType", (shape, ann, kind)
-        elif ann.startswith("tuple["):
-            assert kind == "tuple", (shape, ann, kind)
-            assert int(n) == ann.count(",") + 1, (shape, ann, n)
-        elif ann.startswith("NDArray"):
-            assert kind == "ndarray", (shape, ann, kind)
-        else:
-            assert kind == ann, (shape, ann, kind)
-        # ...and the runtime synopsis says the same.
-        synopsis = re.search(rf'"{shape}\(.*?\) -> (.*?)\\n"', ext)
-        assert synopsis, shape
-        assert synopsis.group(1) == re.sub(
-            r"NDArray\[[^]]*\]", "ndarray", ann
-        ), shape
-    assert seen == shapes, r.stdout
+        _faces_agree(root, shape, kind, n)
+    assert seen == shapes
+
+
+def test_a_fixed_output_returns_what_its_faces_say(status_built):
+    """The same shapes with no status, which return their whole list --
+    and keep no reference to what they returned (`PyTuple_Pack` took each
+    value's new reference with ``O``, leaking one per value per call)."""
+    root, _shapes, failed = status_built
+    assert not failed, failed
+    probe = ["import numpy as np, tracemalloc", "from p import O", "o = O()"]
+    for shape in OUTPUT_SHAPES:
+        call = f"o.{shape}_plain({_call_args(SHAPES[shape])})"
+        probe += [
+            f"r = {call}",
+            "n = len(r) if isinstance(r, tuple) else 0",
+            "tracemalloc.start()",
+            "base = tracemalloc.get_traced_memory()[0]",
+            f"for _ in range(20000): {call}",
+            "grew = tracemalloc.get_traced_memory()[0] - base",
+            "tracemalloc.stop()",
+            f"print({shape!r}, type(r).__name__, n, grew)",
+        ]
+    seen = []
+    for shape, kind, n, grew in _run(root, probe):
+        seen.append(shape)
+        _faces_agree(root, f"{shape}_plain", kind, n)
+        # 20000 calls leaking one float each is ~0.5 MB.
+        assert int(grew) < 100_000, (shape, grew)
+    assert seen == OUTPUT_SHAPES
+
+
+def _returns(pyi: Path) -> "dict[str, str]":
+    """Every method's return annotation in *pyi*, by name."""
+    return {
+        node.name: ast.unparse(node.returns)
+        for node in ast.walk(ast.parse(pyi.read_text("utf-8")))
+        if isinstance(node, ast.FunctionDef) and node.returns is not None
+    }
+
+
+def test_the_module_stub_annotates_what_the_object_stub_does(
+    outcomes, tmp_path
+):
+    """The module-aggregated ``.pyi`` is the second producer (`_stubs`):
+    each output and status shape is annotated there as in the standalone
+    ``.pyi``, which `test_a_fixed_output_returns_what_its_faces_say` holds
+    to the built binding."""
+    status = [s for s in SHAPES if _accepted(outcomes, "status_return", s)]
+    rows = [(s, _flags("status_return", s)) for s in status] + [
+        (f"{s}_plain", SHAPES[s]) for s in OUTPUT_SHAPES
+    ]
+    stubs = []
+    for where in ((), ("--module", "dsp")):
+        base = tmp_path / (where[-1] if where else "solo")
+        base.mkdir()
+        assert run_cli("new", "p", "--no-c-prefix", cwd=base).returncode == 0
+        root = base / "p"
+        if where:
+            assert run_cli("module", "dsp", cwd=root).returncode == 0
+        r = run_cli("object", "o", *where, cwd=root)
+        assert r.returncode == 0, r.stdout + r.stderr
+        for name, flags in rows:
+            flags = [*flags]
+            if name in status and "--status-return" not in flags:
+                flags.append("--status-return")
+            r = run_cli("method", "o", name, *flags, *where, cwd=root)
+            assert r.returncode == 0, (name, r.stdout + r.stderr)
+        stubs.append(
+            _returns(
+                root / "src/p/dsp/dsp.pyi" if where else root / "src/p/o.pyi"
+            )
+        )
+    solo, module = stubs
+    names = [name for name, _ in rows]
+    assert {n: module[n] for n in names} == {n: solo[n] for n in names}
