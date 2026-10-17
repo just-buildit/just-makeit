@@ -8,4 +8,6 @@
     shape gets its own neutral `return`: the count its `_max_out` takes (or
     `_max_out(state)` when it has none, cast to `count_type`), `0` records
     for a list of records, `NULL` for a borrow, the type's zero for a
-    scalar, and a zeroed `(<T>){0}` for a record returned by value.
+    scalar, and a zeroed `(<T>){0}` for a record returned by value. A body
+    counts as complete only when its last statement is a `return`, so one
+    that returns early and then falls off its end is completed too.

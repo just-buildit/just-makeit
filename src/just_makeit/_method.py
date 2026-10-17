@@ -586,6 +586,42 @@ def _zero_return(return_type: str) -> str:
     return f"return ({return_type}){meta['zero'] if meta else '{0}'};"
 
 
+def ends_in_return(body: str) -> bool:
+    """Whether *body*'s last top-level statement is a ``return``.
+
+    What decides whether an ``impl`` body is complete (gh-2248). Asking
+    whether ``return`` appears anywhere read an early exit --
+    ``if (n == 0) return 0;`` followed by more work -- as a body that
+    returns, and the function then fell off its end. Read on the body with
+    comments and literals blanked (`_docsync._code_mask`): the statement
+    ending the body is everything after the ``;``, ``{`` or ``}`` before
+    its own final ``;``, so a ``;`` or ``return`` in a comment or a
+    string is not seen. A body ending in a block
+    (``if/else``, a loop) does not end in a ``return``; the one appended
+    after it is at worst unreachable, which compiles.
+
+    Examples
+    --------
+    >>> ends_in_return("x = 1;\\nreturn x;  /* done */")
+    True
+    >>> ends_in_return("if (n == 0) return 0;\\nout[0] = 1;")
+    False
+    >>> ends_in_return("for (;;) { return 1; }")
+    False
+    >>> ends_in_return("if (n) { return 1; }\\nreturn 0;")
+    True
+    """
+    from ._docsync import _code_mask
+
+    mask = _code_mask(body).rstrip()
+    # The final statement starts past the previous `;`, `{` or `}`: any
+    # brace met walking back from a top-level `;` closes or opens a block
+    # before it, so no depth needs tracking. A body ending in a block
+    # leaves only its closing `}` there, which is not a `return`.
+    start = max(mask.rfind(c, 0, len(mask) - 1) for c in ";{}") + 1
+    return re.match(r"\s*return\b", mask[start:]) is not None
+
+
 def impl_default_return(
     *,
     return_type: str,
@@ -2324,15 +2360,14 @@ def run(
                 csym=csym,
             )
         if impl_body is not None:
-            import re as _re
-
             from . import _impl as I
 
             body = impl_body
-            if not _re.search(r"\breturn\b", body):
+            if not ends_in_return(body):
                 # gh-2248: the shape's own neutral return, for every shape
-                # the dispatch above picks; it was `n` for variable_output
-                # alone and nothing for the rest.
+                # the dispatch above picks, unless the body already ends in
+                # one; it was `n` for variable_output alone, nothing for the
+                # rest, and nothing after an early `return` either.
                 _ret = impl_default_return(
                     return_type=return_type,
                     record_list=bool(

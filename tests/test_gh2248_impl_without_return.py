@@ -15,10 +15,17 @@ count `_max_out_count_param` names (or ``<fn>_max_out(state)`` with none),
 ``0`` records, ``NULL`` for a borrow, nothing for ``void`` and a batch, and
 otherwise the zero the stub returns -- ``(<T>){0}`` for a record.
 
+A body is complete when its LAST statement is a ``return``
+(`_method.ends_in_return`): an early ``if (n == 0) return 0;`` followed by
+more work still falls off its end, which asking whether the word
+``return`` appears anywhere read as complete.
+
 GATE: compiled, with ``-Werror=return-type``. One method per shape, each
 with an ``impl`` that returns nothing, in ``_core.c`` and header-only; the
 C build and its test pass, and each appended return is the one written out
-by hand in ``RETURNS``. The variable_output roster is held to the count
+by hand in ``RETURNS``. ``EARLY`` adds an early-returning body per shape
+whose default is a value, and one ending in its own ``return``, which is
+left alone. The variable_output roster is held to the count
 classifier: it must reach every count it names.
 """
 
@@ -109,6 +116,60 @@ OTHER = {
 #: method returning a declared record element by value. No ``impl``.
 STUB_ONLY = {"element_stub": {"arg_type": "void", "return_type": "el_t"}}
 
+#: Bodies that return EARLY and then fall off their end, one per shape
+#: whose default is a value, plus one that ends in a ``return`` and must be
+#: left alone. Each row is the method and its ``impl``.
+EARLY = {
+    "early_fixed": (
+        {"arg_type": "float", "return_type": "float"},
+        "(void)state;\nif (x != x) return 1.0f;\n(void)x;",
+    ),
+    "early_status": (
+        {"arg_type": "float", "return_type": "int", "status_return": True},
+        "(void)state;\nif (x != x) return 1;\n(void)x;",
+    ),
+    "early_one": (
+        {
+            "arg_type": "void",
+            "return_type": "rec_t",
+            "single": True,
+            "result_fields": _FIELDS,
+        },
+        "if (!state) return (rec_t){1.0f};\n(void)state;",
+    ),
+    "early_list": (
+        {
+            "arg_type": "float",
+            "return_type": "rec_t",
+            "result_fields": _FIELDS,
+        },
+        "(void)state; (void)in; (void)result; (void)max_results;\n"
+        "if (n_in == 0) return 0;\n(void)n_in;",
+    ),
+    "early_counted": (
+        {
+            "arg_type": "float",
+            "return_type": "float",
+            "variable_output": True,
+        },
+        "(void)state; (void)in;\nif (n_in == 0) return 0;\nout[0] = 1.0f;",
+    ),
+    "early_borrowed": (
+        {
+            "arg_type": "void",
+            "return_type": "float",
+            "borrow": True,
+            "borrow_count": "n",
+            "params": [{"name": "n", "type": "size_t"}],
+        },
+        "(void)state;\nif (n == 0) return NULL;\n(void)n;",
+    ),
+    "ends_in_return": (
+        {"arg_type": "float", "return_type": "float"},
+        "(void)state;\nif (x != x) return 1.0f;\nreturn x; /* done */",
+    ),
+}
+
 #: What each kernel returns once the body is completed, written out by hand
 #: rather than read from the code under test; None is no ``return`` at all.
 RETURNS = {
@@ -130,6 +191,14 @@ RETURNS = {
     "batch": None,
     "borrowed": "NULL",
     "element_stub": "(el_t){0}",
+    "early_fixed": "(float)0.0f",
+    "early_status": "(int)0",
+    "early_one": "(rec_t){0}",
+    "early_list": "0",
+    "early_counted": "n_in",
+    "early_borrowed": "NULL",
+    # Already ends in its return, a comment after it: nothing appended.
+    "ends_in_return": "return x; /* done */",
 }
 
 #: Writes one result and returns nothing, as a void reference function's
@@ -185,6 +254,10 @@ def _toml(header_only: bool) -> str:
             for name, row in OTHER.items()
         ]
         + [{"name": name, **row} for name, row in STUB_ONLY.items()]
+        + [
+            {"name": name, **row, "impl": impl}
+            for name, (row, impl) in EARLY.items()
+        ]
     )
     return C._dump(
         {
@@ -256,7 +329,9 @@ def test_an_impl_without_a_return_builds_in_every_shape(
     _textio.write_text(header, text.replace(include, include + TYPEDEFS))
     where = header if header_only else root / "native/src/nr/nr_core.c"
     core = where.read_text(encoding="utf-8")
-    assert set(RETURNS) == set(COUNTED) | set(OTHER) | set(STUB_ONLY)
+    assert set(RETURNS) == (
+        set(COUNTED) | set(OTHER) | set(STUB_ONLY) | set(EARLY)
+    )
     for name, ret in RETURNS.items():
         # Each kernel is defined there, ending the body that returned
         # nothing with the shape's own return.
@@ -264,8 +339,13 @@ def test_an_impl_without_a_return_builds_in_every_shape(
         assert m, (name, core)
         last = m.group(1).rstrip().splitlines()[-1].strip()
         want = f"return {ret};" if ret else IMPL_OUT.splitlines()[-1]
+        if ret and ret.startswith("return "):
+            want = ret  # the body's own, written in full
         if ret is None and name != "batch":
             want = IMPL
         assert last == want, (name, m.group(1))
+        if name in EARLY:
+            # The early return is kept, and exactly one return follows it.
+            assert m.group(1).count("return ") == 2, (name, m.group(1))
     for what, rc, out in _build(root):
         assert rc == 0, (what, out)
