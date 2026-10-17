@@ -736,7 +736,12 @@ def render_component_pyi(ctx: dict) -> str:
     # gh-1478: numpy too, by the predicate the module peer asks -- the
     # template imported it unconditionally, an `F401` on every no-step stub.
     # The empty constructor also rendered `(self, )`, which ruff rewrites.
-    from ._stubs import _uses_any, numpy_imports
+    from ._stubs import (
+        _uses_any,
+        mark_positional_only,
+        method_table_flags,
+        numpy_imports,
+    )
 
     params = ctx.get("init_params_pyi", "")
     ctx = {
@@ -762,7 +767,15 @@ def render_component_pyi(ctx: dict) -> str:
             f"\n{line}" for line in numpy_imports(probe)
         ),
     }
-    return reflow_pyi(render(COMPONENT_PYI, ctx))
+    # gh-2212: a member whose row takes no keywords is positional-only in
+    # the stub, told by the binding this same context renders -- the module
+    # peer, `_stubs.make_module_pyi`, asks the same function of its
+    # fragments.
+    stub = mark_positional_only(
+        render(COMPONENT_PYI, ctx),
+        {ctx["Component"]: method_table_flags(render(COMPONENT_EXT_C, ctx))},
+    )
+    return reflow_pyi(stub)
 
 
 #: An assertion **statement** in the rendered C test. Anchored to the start of

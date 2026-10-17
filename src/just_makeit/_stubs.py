@@ -2897,6 +2897,93 @@ _NUMPY_IMPORT_LINES = (
 # ── public entry point ────────────────────────────────────────────────────────
 
 
+#: One ``{"name", <function, any cast>, <flags>,`` row of a ``PyMethodDef``
+#: table.
+_PMD_ROW = _re.compile(
+    r'\{"(\w+)",\s*[^,"]+,\s*(METH_[A-Z_]+(?:\s*\|\s*METH_[A-Z_]+)*)\s*,'
+)
+
+
+def method_table_flags(c_text: str) -> "dict[str, str]":
+    """``{member: flags}`` for every ``PyMethodDef`` row in *c_text*.
+
+    *c_text* is one type's rendered binding -- a standalone ``_ext.c`` or a
+    module fragment -- so the flags are the ones the extension registers,
+    read rather than re-derived (gh-2212).
+
+    Examples
+    --------
+    >>> method_table_flags('''
+    ...     {"step",  (PyCFunction)Fir_step, METH_VARARGS,
+    ...      "step(x)"},
+    ...     {"steps", (PyCFunction)(void *)Fir_steps,
+    ...      METH_VARARGS | METH_KEYWORDS, NULL},''')
+    {'step': 'METH_VARARGS', 'steps': 'METH_VARARGS | METH_KEYWORDS'}
+    """
+    return {m.group(1): m.group(2) for m in _PMD_ROW.finditer(c_text)}
+
+
+def mark_positional_only(
+    pyi: str, flags_by_class: "dict[str, dict[str, str]]"
+) -> str:
+    """*pyi* with ``/`` closing the positional parameters of every method
+    whose binding takes no keywords (gh-2212).
+
+    An object's ``step``, ``set_<field>``, ``__exit__``, ``set_state`` and
+    most declared methods register ``METH_VARARGS`` or ``METH_O``: they
+    parse positionally, so ``obj.step(x=1.0)`` raises ``TypeError``. Their
+    stubs named the parameters plainly, so a type checker accepted that
+    call. Each member's flags come from *flags_by_class* -- ``{class:
+    method_table_flags(<that class's rendered binding>)}`` -- so the stub
+    is told by the table, and both stub writers (the standalone
+    ``render_component_pyi`` and the module ``make_module_pyi``) call this
+    one function rather than each deciding per shape.
+
+    A member is left as written when its flags take keywords, when it has
+    nothing a caller names (``self`` alone, or ``*args`` / keyword-only
+    parameters only), or when the stub already ends its positional
+    parameters with ``/``. The ``/`` goes after the last positional
+    parameter and its default, so a ``*args`` after it stays in place.
+
+    Examples
+    --------
+    >>> stub = (
+    ...     "class Fir:\\n"
+    ...     "    def step(self, x: float) -> float: ...\\n"
+    ...     "    def steps(self, x: float, out: int = ...) -> None: ...\\n"
+    ...     "    def reset(self) -> None: ...\\n"
+    ... )
+    >>> print(mark_positional_only(stub, {"Fir": {
+    ...     "step": "METH_VARARGS",
+    ...     "steps": "METH_VARARGS | METH_KEYWORDS",
+    ...     "reset": "METH_NOARGS"}}), end="")
+    class Fir:
+        def step(self, x: float, /) -> float: ...
+        def steps(self, x: float, out: int = ...) -> None: ...
+        def reset(self) -> None: ...
+    """
+    lines = pyi.split("\n")
+    edits: "list[tuple[int, int]]" = []
+    for node in ast.parse(pyi).body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        flags = flags_by_class.get(node.name, {})
+        for f in node.body:
+            if not isinstance(f, ast.FunctionDef) or f.decorator_list:
+                continue  # a property's accessor is no PyMethodDef row
+            if f.name not in flags or "METH_KEYWORDS" in flags[f.name]:
+                continue
+            a = f.args
+            if a.posonlyargs or len(a.args) < 2:
+                continue
+            end = a.defaults[-1] if a.defaults else a.args[-1]
+            edits.append((end.end_lineno or 0, end.end_col_offset or 0))
+    for line, col in sorted(edits, reverse=True):
+        raw = lines[line - 1].encode("utf-8")
+        lines[line - 1] = (raw[:col] + b", /" + raw[col:]).decode("utf-8")
+    return "\n".join(lines)
+
+
 def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
     """The synthetic component a view is rendered as: ``(name, cfg)``.
 
@@ -3178,4 +3265,18 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             if x
         )
         parts.insert(_typing_slot, f"from typing import {typing_imports}")
-    return reflow_pyi("\n".join(parts)) + "\n"
+    # gh-2212: positional-only where each class's row takes no keywords,
+    # told by the fragment that class renders to -- through the one
+    # function the standalone stub (`_render.render_component_pyi`) asks.
+    # A copy of the manifest, because building the contexts stashes header
+    # docs on it, which this stub must not start reading.
+    import copy
+
+    from . import _render as R
+    from ._object import build_component_ctxs
+
+    _flags = {
+        c["Component"]: method_table_flags(R.render_module_ext_fragment(c))
+        for c in build_component_ctxs(root, copy.deepcopy(cfg), module, pkg)
+    }
+    return reflow_pyi(mark_positional_only("\n".join(parts), _flags)) + "\n"

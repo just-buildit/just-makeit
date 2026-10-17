@@ -200,10 +200,10 @@ def run(root: Path) -> None:
     )
     # --status-return erases the int; --error-negative keeps it. Same C
     # signature, and the declared flag is the only difference.
-    assert "def take(self, x: int) -> None:" in pyi, (
+    assert "def take(self, x: int, /) -> None:" in pyi, (
         "status_return must erase the int from the Python signature"
     )
-    assert "def peek(self, x: int) -> int:" in pyi, (
+    assert "def peek(self, x: int, /) -> int:" in pyi, (
         "error_negative must KEEP the int -- it is a value, not a status"
     )
     for token in ("ValueError", "RuntimeWarning", "IndexError"):

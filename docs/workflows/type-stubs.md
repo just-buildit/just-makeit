@@ -50,7 +50,7 @@ class Gain:
     def reset(self) -> None:
         """Reset state to post-create defaults."""
 
-    def step(self, x: float) -> float:
+    def step(self, x: float, /) -> float:
         """Process one input sample.
 
         Parameters
@@ -85,7 +85,7 @@ class Gain:
     def get_gain(self) -> float:
         """Return current gain."""
 
-    def set_gain(self, value: float) -> None:
+    def set_gain(self, value: float, /) -> None:
         """Set gain."""
 
     # destroy(), __enter__() and __exit__() follow, each with a docstring
