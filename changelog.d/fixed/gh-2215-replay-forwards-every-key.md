@@ -14,6 +14,4 @@
     created, so the script now creates each producer first, with its
     records, properties, methods and views (a reference may name a view),
     even when the manifest lists the consumer earlier. A module keeps its
-    declared order through the new `jm object --module M --before OBJ`,
-    which inserts the object ahead of `OBJ` in `[module.M] objects` -- its
-    load order -- instead of appending it.
+    declared order through `jm object --before`.
