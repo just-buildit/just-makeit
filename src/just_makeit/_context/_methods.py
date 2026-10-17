@@ -4075,6 +4075,10 @@ def make_methods_ctx(
                 # A declared default is C, not a Python literal, so the
                 # Python-facing signature shows `...` rather than leaking it.
                 _vo_sig_arg = f"{_count_kw}={'...' if _count_default else 1}"
+                # gh-2222: and the buffer it takes, as every other shape's
+                # signature line names it (`_doc_names`).
+                if _stub_enable_out:
+                    _vo_sig_arg += ", out=None"
                 _vo_call_example = f"obj.{name}(4)"
             # gh-788: a numpydoc-shaped block naming each column of the
             # structured result and its Python type. Only the documented
@@ -4101,10 +4105,9 @@ def make_methods_ctx(
                 # and was wrong on both clauses once that buffer was deleted.
                 *_runtime_doc(
                     (
-                        # gh-788: a structured result gets its own sentence.
-                        # The generic one promises `out=`, which this shape
-                        # deliberately does not offer, and says nothing about
-                        # the property that makes the shape worth having.
+                        # gh-788: a structured result gets its own sentence,
+                        # naming the property that makes the shape worth
+                        # having.
                         "Returns a new NumPy-owned structured array each"
                         f" call, one row per {record_dtype} — the dtype is"
                         " that struct's own layout, so a row and the C"
@@ -4113,8 +4116,16 @@ def make_methods_ctx(
                         if record_dtype
                         else "Returns a new NumPy-owned array each call —"
                         " independent of every other result, and safe to"
-                        " keep. Pass out= to write into your own buffer"
-                        " instead."
+                        " keep."
+                    )
+                    # gh-2222: offered where the binding takes `out=` -- the
+                    # predicate its `_kwlist` and both `.pyi` writers read
+                    # -- and only there: a `multi_output` method has none,
+                    # and a structured result has one (gh-805 section E).
+                    + (
+                        " Pass out= to write into your own buffer instead."
+                        if _stub_enable_out
+                        else ""
                     )
                 ),
                 # gh-788: the columns, documented on the SAME face as the
