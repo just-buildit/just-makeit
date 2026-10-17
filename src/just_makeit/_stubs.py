@@ -2937,7 +2937,9 @@ def mark_positional_only(
     method_table_flags(<that class's rendered binding>)}`` -- so the stub
     is told by the table, and both stub writers (the standalone
     ``render_component_pyi`` and the module ``make_module_pyi``) call this
-    one function rather than each deciding per shape.
+    one function rather than each deciding per shape. The key ``""`` holds
+    the module's own table, for its top-level functions, which have no
+    ``self`` to pass over.
 
     A member is left as written when its flags take keywords, when it has
     nothing a caller names (``self`` alone, or ``*args`` / keyword-only
@@ -2961,20 +2963,28 @@ def mark_positional_only(
         def step(self, x: float, /) -> float: ...
         def steps(self, x: float, out: int = ...) -> None: ...
         def reset(self) -> None: ...
+    >>> print(mark_positional_only(
+    ...     "def apply(x: float, g: int = 3) -> float: ...\\n",
+    ...     {"": {"apply": "METH_VARARGS"}}), end="")
+    def apply(x: float, g: int = 3, /) -> float: ...
     """
     lines = pyi.split("\n")
     edits: "list[tuple[int, int]]" = []
-    for node in ast.parse(pyi).body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        flags = flags_by_class.get(node.name, {})
-        for f in node.body:
+    tree = ast.parse(pyi)
+    # (members, their flags, how many leading parameters no caller names)
+    scopes = [(tree.body, flags_by_class.get("", {}), 0)] + [
+        (node.body, flags_by_class.get(node.name, {}), 1)
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    ]
+    for body, flags, lead in scopes:
+        for f in body:
             if not isinstance(f, ast.FunctionDef) or f.decorator_list:
                 continue  # a property's accessor is no PyMethodDef row
             if f.name not in flags or "METH_KEYWORDS" in flags[f.name]:
                 continue
             a = f.args
-            if a.posonlyargs or len(a.args) < 2:
+            if a.posonlyargs or len(a.args) <= lead:
                 continue
             end = a.defaults[-1] if a.defaults else a.args[-1]
             edits.append((end.end_lineno or 0, end.end_col_offset or 0))
@@ -3276,7 +3286,10 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     from ._object import build_component_ctxs
 
     # With no project root there is no header to read, here or for the
-    # stub above, so the contexts are built in their header-free form.
+    # stub above, so the contexts are built in their header-free form. The
+    # module's own functions are told by the table the aggregator renders
+    # for them (key "").
+    _cname = C.module_paths(module).cname
     _flags = {
         c["Component"]: method_table_flags(R.render_module_ext_fragment(c))
         for c in build_component_ctxs(
@@ -3287,4 +3300,13 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             force_fallback=root is None,
         )
     }
+    _flags[""] = method_table_flags(
+        R.make_functions_ctx(
+            _cname,
+            "".join(w.title() for w in _cname.split("_")),
+            list(functions),
+            C.enums(cfg),
+            owner=cfg,
+        )["module_methods_def"]
+    )
     return reflow_pyi(mark_positional_only("\n".join(parts), _flags)) + "\n"

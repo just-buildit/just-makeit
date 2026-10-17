@@ -6,4 +6,6 @@
     writers, standalone and module, now ask one function for each member's
     flags, read from the method table the same class's binding registers,
     and close the positional parameters with `/` exactly where those flags
-    take no keywords.
+    take no keywords. A module's `jm function`s are read from the module's
+    own table the same way; every one that takes a parameter binds with
+    keywords today, so their stubs are unchanged.
