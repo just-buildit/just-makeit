@@ -647,11 +647,17 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         no_state=False,
         arg_type="float _Complex",
         return_type=None,
-        # gh-2215: the `[project]` dependency keys, as declared. The
-        # replay's manifest and root wiring are then the project's own.
+        # gh-2215: the `[project]` dependency keys, as declared, so the
+        # replay's manifest is the project's own.
         find_packages=cfg.get("project", {}).get("find_packages"),
         pkg_modules=cfg.get("project", {}).get("pkg_modules"),
-        c_deps=cfg.get("project", {}).get("c_deps"),
+        # ...except `c_deps`: each is one `add_subdirectory` line, and its
+        # one writer on `apply` is `_splice_cmake_components`, which
+        # prepends it from the SOURCE manifest. Rendered into the replay as
+        # well, the line would sit wherever `_new.run` put it and be kept
+        # there instead -- two writers of one block (gh-1985's order test
+        # measures it).
+        c_deps=None,
         platforms=cfg.get("project", {}).get("platforms"),
         # The replay writes one manifest whatever layout the project uses:
         # it is scratch, never read back (`_SKIP_FILES`), and its writers
