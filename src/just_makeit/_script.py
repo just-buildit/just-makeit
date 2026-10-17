@@ -1085,48 +1085,172 @@ def run(root: Path) -> None:
             " `just-makeit apply` (gh-1310).\n\n"
         )
 
-    # gh-1893: a component an `object` init-param names must publish its
-    # capsule BEFORE the consumer's `jm object` line, which resolves the
-    # reference on the spot and refuses a producer with no capsule. So a
-    # producer's properties are emitted right after its own object line --
-    # all of them, in manifest order, so the replayed `properties` list is
-    # the same list -- and skipped in the properties section below.
-    producers = {
-        str(p.get("object", "")).partition(".")[0]
-        for c in C.components(cfg)
-        if isinstance(cfg.get(c), dict)
-        for p in [
-            *(cfg[c].get("init_params") or []),
+    all_comps = list(standalone)
+    for mod in mods:
+        all_comps += [
+            c for c in C.module_objects(cfg, mod) if c not in templated
+        ]
+
+    # gh-1893, gh-2215: an `object` init-param is resolved when its
+    # consumer's `jm object` line runs -- it has to be, because the type it
+    # resolves to goes into the consumer's `_core.c` and `_core.h`, which
+    # are written once. So the component it names (the PRODUCER) must be
+    # fully declared first: its object line, then its records, properties,
+    # methods and views (a reference may name a view class), each list in
+    # its own order so the replayed manifest is the same manifest. Those
+    # members are emitted right after the producer's object line and
+    # skipped in the sections below.
+    def _refs(comp: str) -> "list[str]":
+        """The emitted components *comp*'s `object` init-params name."""
+        rows = [
+            *(cfg[comp].get("init_params") or []),
             *(
                 q
-                for v in C.views(cfg, c)
+                for v in C.views(cfg, comp)
                 for q in (v.get("init_params") or [])
             ),
         ]
-        if p.get("object")
-    }
+        out: list[str] = []
+        for p in rows:
+            target = str(p.get("object", "")).partition(".")[0]
+            if target in all_comps and target != comp and target not in out:
+                out.append(target)
+        return out
 
-    def _object_lines(comp: str, mod: "str | None") -> "list[str]":
-        out = list(_init_param_notes(cfg[comp].get("init_params", [])))
-        out.append(
-            _render_cmd(
-                ["just-makeit", "object", comp],
-                _object_flags(cfg, comp, module=mod),
+    producers = {p for c in all_comps for p in _refs(c)}
+
+    def _record_lines(comp: str) -> "list[str]":
+        out: list[str] = []
+        for rec in C.records(cfg, comp):
+            out.extend(_record_notes(rec))
+            out.append(
+                _render_cmd(
+                    ["just-makeit", "record", comp, str(rec["name"])],
+                    _record_decl_flags(rec),
+                )
             )
-        )
-        if comp in producers:
-            for p in C.properties(cfg, comp):
+        return out
+
+    def _method_lines(comp: str, mod: "str | None") -> "list[str]":
+        out: list[str] = []
+        for m in C.methods(cfg, comp):
+            out.extend(_method_notes(m))
+            out.append(
+                _render_cmd(
+                    ["just-makeit", "method", comp, m["name"]],
+                    _method_flags(m, mod),
+                )
+            )
+        return out
+
+    def _property_lines(comp: str, mod: "str | None") -> "list[str]":
+        return [
+            _render_cmd(
+                ["just-makeit", "property", comp, p["name"]],
+                _property_flags(p, mod),
+            )
+            for p in C.properties(cfg, comp)
+        ]
+
+    def _view_lines(comp: str, mod: "str | None") -> "list[str]":
+        out: list[str] = []
+        for v in C.views(cfg, comp):
+            out += _init_param_notes(v.get("init_params", []))
+            out.append(
+                _render_cmd(
+                    ["just-makeit", "view", comp, v["class_name"]],
+                    _view_flags(v, mod),
+                )
+            )
+            # gh-504: the view's OWN added/overriding members, after its
+            # `jm view` line (methods before properties, matching apply
+            # replay).
+            cls = v["class_name"]
+            for m in C.view_methods(v):
+                out.extend(_method_notes(m))
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "method", comp, m["name"]],
+                        _method_flags(m, mod) + [_flag("--view", cls)],
+                    )
+                )
+            for p in C.view_properties(v):
                 out.append(
                     _render_cmd(
                         ["just-makeit", "property", comp, p["name"]],
-                        _property_flags(p, mod),
+                        _property_flags(p, mod) + [_flag("--view", cls)],
+                    )
+                )
+            # gh-509: the view's OWN warnings, reusing the object-warning
+            # flag builder plus --view (mirrors the members above).
+            for w in C.view_warnings(v):
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "warning", comp],
+                        _warning_flags(w, mod) + [_flag("--view", cls)],
+                    )
+                )
+            # gh-580: the view's OWN create_error, if it declared one. Read
+            # the raw key rather than C.view_create_error() — the accessor
+            # resolves the parent's value, and re-emitting an inherited
+            # translation as an explicit `jm error --view` would turn
+            # inheritance into a frozen copy on every round-trip.
+            if v.get("create_error"):
+                err_flags = []
+                if mod:
+                    err_flags.append(_flag("--module", mod))
+                err_flags.append(_flag("--category", v["create_error"]))
+                err_flags.append(
+                    _flag("--message", v.get("create_error_message", ""))
+                )
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "error", comp],
+                        err_flags + [_flag("--view", cls)],
                     )
                 )
         return out
 
+    created: "set[str]" = set()
+    pending: "set[str]" = set()
+
+    def _create(comp: str, out: "list[str]") -> None:
+        """Emit *comp*'s object line, after every producer it names.
+
+        A producer the manifest lists LATER is pulled forward. For a
+        standalone object that changes nothing in the manifest (components
+        are keyed, and fragments load sorted by path). In a module it would
+        change the `objects` list, so a module object created ahead of a
+        member listed before it is placed with `--before <that member>`:
+        the first already-created object the manifest lists after it. A
+        project built by the CLI is created in its declared order, so its
+        script has no `--before` at all.
+        """
+        if comp in created or comp in pending:
+            return
+        pending.add(comp)
+        for producer in _refs(comp):
+            _create(producer, out)
+        pending.discard(comp)
+        mod = C.component_module(cfg, comp)
+        flags = _object_flags(cfg, comp, module=mod)
+        if mod:
+            order = C.module_objects(cfg, mod)
+            later = [o for o in order[order.index(comp) + 1 :] if o in created]
+            if later:
+                flags.append(_flag("--before", later[0]))
+        out += _init_param_notes(cfg[comp].get("init_params", []))
+        out.append(_render_cmd(["just-makeit", "object", comp], flags))
+        created.add(comp)
+        if comp in producers:
+            out += _record_lines(comp)
+            out += _property_lines(comp, mod)
+            out += _method_lines(comp, mod)
+            out += _view_lines(comp, mod)
+
     # ── standalone objects ───────────────────────────────────────────────────
     for comp in standalone:
-        lines += _object_lines(comp, None)
+        _create(comp, lines)
 
     if standalone:
         lines.append("\n")
@@ -1136,61 +1260,37 @@ def run(root: Path) -> None:
         for comp in C.module_objects(cfg, mod):
             if comp in templated:
                 continue
-            lines += _object_lines(comp, mod)
+            _create(comp, lines)
         lines.append("\n")
 
-    # ── methods ───────────────────────────────────────────────────────────────
-    all_comps = list(standalone)
-    for mod in mods:
-        all_comps += [
-            c for c in C.module_objects(cfg, mod) if c not in templated
-        ]
+    members = [c for c in all_comps if c not in producers]
 
     # ── records ───────────────────────────────────────────────────────────────
     # gh-1407: BEFORE the methods, because a method referencing a declared
     # record is refused until it exists -- `--arg-type 'iq16_t[]'` and
     # `--record-dtype iq16_t` both consult the declaration. Emitting these
     # after the methods, or not at all, is a script that dies on replay.
-    record_lines: list[str] = []
-    for comp in all_comps:
-        for rec in C.records(cfg, comp):
-            record_lines.extend(_record_notes(rec))
-            record_lines.append(
-                _render_cmd(
-                    ["just-makeit", "record", comp, str(rec["name"])],
-                    _record_decl_flags(rec),
-                )
-            )
+    record_lines = [ln for c in members for ln in _record_lines(c)]
     if record_lines:
         lines += record_lines
         lines.append("\n")
 
-    method_lines: list[str] = []
-    for comp in all_comps:
-        mod = C.component_module(cfg, comp)
-        for m in C.methods(cfg, comp):
-            flags = _method_flags(m, mod)
-            method_lines.extend(_method_notes(m))
-            method_lines.append(
-                _render_cmd(["just-makeit", "method", comp, m["name"]], flags)
-            )
+    # ── methods ───────────────────────────────────────────────────────────────
+    method_lines = [
+        ln
+        for c in members
+        for ln in _method_lines(c, C.component_module(cfg, c))
+    ]
     if method_lines:
         lines += method_lines
         lines.append("\n")
 
     # ── properties ────────────────────────────────────────────────────────────
-    prop_lines: list[str] = []
-    for comp in all_comps:
-        if comp in producers:  # gh-1893: emitted with the object above
-            continue
-        mod = C.component_module(cfg, comp)
-        for p in C.properties(cfg, comp):
-            flags = _property_flags(p, mod)
-            prop_lines.append(
-                _render_cmd(
-                    ["just-makeit", "property", comp, p["name"]], flags
-                )
-            )
+    prop_lines = [
+        ln
+        for c in members
+        for ln in _property_lines(c, C.component_module(cfg, c))
+    ]
     if prop_lines:
         lines += prop_lines
         lines.append("\n")
@@ -1198,63 +1298,11 @@ def run(root: Path) -> None:
     # ── views ─────────────────────────────────────────────────────────────────
     # After properties: a view's --exclude-property names properties that must
     # already be declared for the reconstruction to make sense.
-    view_lines: list[str] = []
-    for comp in all_comps:
-        mod = C.component_module(cfg, comp)
-        for v in C.views(cfg, comp):
-            view_lines += _init_param_notes(v.get("init_params", []))
-            view_lines.append(
-                _render_cmd(
-                    ["just-makeit", "view", comp, v["class_name"]],
-                    _view_flags(v, mod),
-                )
-            )
-            # gh-504: the view's OWN added/overriding members, after its
-            # `jm view` line (methods before properties, matching apply replay).
-            cls = v["class_name"]
-            for m in C.view_methods(v):
-                view_lines.extend(_method_notes(m))
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "method", comp, m["name"]],
-                        _method_flags(m, mod) + [_flag("--view", cls)],
-                    )
-                )
-            for p in C.view_properties(v):
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "property", comp, p["name"]],
-                        _property_flags(p, mod) + [_flag("--view", cls)],
-                    )
-                )
-            # gh-509: the view's OWN warnings, reusing the object-warning flag
-            # builder plus --view (mirrors the members above).
-            for w in C.view_warnings(v):
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "warning", comp],
-                        _warning_flags(w, mod) + [_flag("--view", cls)],
-                    )
-                )
-            # gh-580: the view's OWN create_error, if it declared one. Read the
-            # raw key rather than C.view_create_error() — the accessor resolves
-            # the parent's value, and re-emitting an inherited translation as an
-            # explicit `jm error --view` would turn inheritance into a frozen
-            # copy on every round-trip.
-            if v.get("create_error"):
-                err_flags = []
-                if mod:
-                    err_flags.append(_flag("--module", mod))
-                err_flags.append(_flag("--category", v["create_error"]))
-                err_flags.append(
-                    _flag("--message", v.get("create_error_message", ""))
-                )
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "error", comp],
-                        err_flags + [_flag("--view", cls)],
-                    )
-                )
+    view_lines = [
+        ln
+        for c in members
+        for ln in _view_lines(c, C.component_module(cfg, c))
+    ]
     if view_lines:
         lines += view_lines
         lines.append("\n")

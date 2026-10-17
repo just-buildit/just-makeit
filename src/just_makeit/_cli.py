@@ -67,6 +67,9 @@ Commands:
                                 equivalent flag combination; passing the
                                 flags directly is always equivalent.
     --module name               Place object inside this module's .so.
+    --before OBJ                With --module: insert ahead of OBJ in the
+                                module's objects list (its load order)
+                                instead of appending.
     --state name:type[:default] State variable; repeatable.
     --arg-type TYPE             step() input type (default: float _Complex).
     --return-type TYPE          step() return type (default: --arg-type).

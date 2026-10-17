@@ -1789,12 +1789,66 @@ def scaffold_module(cfg: dict, module: str) -> dict:
     return cfg
 
 
-def add_to_module(cfg: dict, module: str, object_name: str) -> dict:
-    """Append object_name to an existing module's object list."""
-    cfg.setdefault("module", {}).setdefault(module, {}).setdefault(
-        "objects", []
-    ).append(object_name)
+def add_to_module(
+    cfg: dict, module: str, object_name: str, before: str = ""
+) -> dict:
+    """Add *object_name* to an existing module's object list.
+
+    Appended, or -- with *before* (``jm object --before``, gh-2215) --
+    inserted ahead of that member. The list is the module's load order
+    (gh-1985), which every writer sorts the root CMakeLists and the
+    umbrella header by, so placing the entry is all a writer has to do.
+    :func:`before_why_not` is the refusal; a caller asks it first.
+
+    >>> cfg = {"module": {"m": {"objects": ["a", "b"]}}}
+    >>> add_to_module(cfg, "m", "x", before="b")["module"]["m"]["objects"]
+    ['a', 'x', 'b']
+    """
+    objs = (
+        cfg.setdefault("module", {})
+        .setdefault(module, {})
+        .setdefault("objects", [])
+    )
+    if before:
+        objs.insert(objs.index(before), object_name)
+    else:
+        objs.append(object_name)
     return cfg
+
+
+def before_why_not(cfg: dict, module: "str | None", before: str) -> str:
+    """Why ``jm object --before <before>`` cannot place an object, or ``""``.
+
+    gh-2215. ``--before`` sets a position in a module's ``objects`` list,
+    so it needs a module, and it names a member of that module.
+
+    >>> cfg = {"module": {"m": {"objects": ["a"]}, "n": {"objects": ["b"]}}}
+    >>> before_why_not(cfg, "m", "a")
+    ''
+    >>> before_why_not(cfg, None, "a")[:30]
+    '--before a needs --module: it '
+    >>> before_why_not(cfg, "m", "b")
+    "--before b: 'b' is in module 'n', not 'm'"
+    >>> before_why_not(cfg, "m", "zz")
+    "--before zz: module 'm' has no object 'zz' (it has: a)"
+    """
+    if not before:
+        return ""
+    if not module:
+        return (
+            f"--before {before} needs --module: it places the object in a "
+            "module's load order, and a standalone object has none"
+        )
+    if before in module_objects(cfg, module):
+        return ""
+    home = component_module(cfg, before)
+    if home:
+        return f"--before {before}: '{before}' is in module '{home}', not '{module}'"
+    have = ", ".join(module_objects(cfg, module)) or "no objects"
+    return (
+        f"--before {before}: module '{module}' has no object '{before}' "
+        f"(it has: {have})"
+    )
 
 
 def module_of(cfg: dict, obj: str) -> str:

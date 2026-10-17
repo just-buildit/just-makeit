@@ -7,6 +7,13 @@
     and a test reads every writer's signature so the next dropped key fails
     it. `jm object --init-param src:object:nco` no longer crashes with
     `KeyError: ''`, a module object includes that producer's header in its
-    `_core.h`, and `jm script` emits a producer's capsule before the object
-    that names it, plus `--opaque-state` and `--no-bench`. An opaque-state
-    object no longer gets the starter `gain` field.
+    `_core.h`, and `jm script` learns `--opaque-state` and `--no-bench`. An
+    opaque-state object no longer gets the starter `gain` field.
+- **`jm script` rebuilds a project whatever order its `object` references
+    run in** (gh-2215). The reference is resolved when the consumer is
+    created, so the script now creates each producer first, with its
+    records, properties, methods and views (a reference may name a view),
+    even when the manifest lists the consumer earlier. A module keeps its
+    declared order through the new `jm object --module M --before OBJ`,
+    which inserts the object ahead of `OBJ` in `[module.M] objects` -- its
+    load order -- instead of appending it.

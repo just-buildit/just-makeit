@@ -469,6 +469,9 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "method_name": "run",
         "max_out": 0,
         "_hint": True,
+        # The replay creates a module's objects in its `objects` order, so
+        # appending each one rebuilds that list as declared.
+        "before": "",
     }
 
 

@@ -367,6 +367,92 @@ def _capsule_typed_module(tmp_path: Path) -> Path:
     return _capsule_typed(tmp_path, "osc")
 
 
+def _hand_ordered(root: Path, cfg: dict) -> Path:
+    """Save *cfg* as a hand-written manifest and `apply` it.
+
+    The file is written fresh so its section order is *cfg*'s, which is the
+    point: the shapes below declare an order no sequence of commands
+    writes, the way an author editing the TOML does.
+    """
+    (root / C.FILENAME).unlink()
+    C.save(root, cfg)
+    with redirect_stdout(io.StringIO()):
+        apply_run(root)
+    return root
+
+
+def _consumer_first_standalone(tmp_path: Path) -> Path:
+    """gh-2215: the consumer's section above its producer's.
+
+    `jm script` emitted objects in manifest order, so the consumer's
+    `jm object` line ran before the producer existed and was refused.
+    """
+    root = _capsule_typed(tmp_path, None)
+    cfg = C.load(root)
+    first = ["project", "mixer"]
+    return _hand_ordered(
+        root,
+        {k: cfg[k] for k in [*first, *(k for k in cfg if k not in first)]},
+    )
+
+
+def _consumer_first_module(tmp_path: Path) -> Path:
+    """gh-2215: a module listing the consumer before its producer.
+
+    The `objects` list is the module's load order (gh-1985), so the script
+    cannot create the producer first and append: it creates it first and
+    places the consumer with `jm object --before`.
+    """
+    root = _capsule_typed(tmp_path, "osc")
+    cfg = C.load(root)
+    cfg["module"]["osc"]["objects"] = ["mixer", "nco"]
+    return _hand_ordered(root, cfg)
+
+
+def _view_target(tmp_path: Path) -> Path:
+    """gh-2215: an `object` init-param naming a VIEW of the producer.
+
+    The reference resolves only once the view is declared, and `jm script`
+    emitted every view after every object.
+    """
+    from just_makeit._cli_parse import parse_init_param_flag
+
+    root = _base(tmp_path)
+    module_run(root, "osc")
+    object_run(
+        root,
+        "nco",
+        "osc",
+        state_vars=[("cap", "size_t", "16")],
+        arg_type="float",
+        return_type="float",
+    )
+    property_run(
+        root,
+        "nco",
+        "_capsule",
+        "osc",
+        "capsule",
+        False,
+        capsule="demo.nco.desc",
+        capsule_type="const nco_desc_t *",
+        expr="&self->handle->cap",
+    )
+    view_run(root, "nco", "NcoDesc", "osc", create_fn="nco_create_desc")
+    src, _ = parse_init_param_flag(
+        ["--init-param", "src:object:nco.NcoDesc"], 0
+    )
+    object_run(
+        root,
+        "mixer",
+        None,
+        arg_type="float",
+        return_type="float",
+        init_params=[src],
+    )
+    return root
+
+
 def _object_flags(tmp_path: Path, module: str | None) -> Path:
     """Object keys the replay's `_object.run` call never named (gh-2215).
 
@@ -450,6 +536,9 @@ SHAPES = {
     "project_deps": _project_deps,
     "capsule_typed_standalone": _capsule_typed_standalone,
     "capsule_typed_module": _capsule_typed_module,
+    "consumer_first_standalone": _consumer_first_standalone,
+    "consumer_first_module": _consumer_first_module,
+    "view_target": _view_target,
     "standalone": _standalone,
     "module": _module,
     "module_extras": _module_extras,
@@ -599,6 +688,28 @@ def test_script_round_trips_the_manifest(tmp_path, shape):
         "`_script.py` never learned to emit.\n"
         f"emitted script:\n{run_cli('script', cwd=root).stdout}"
     )
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES), ids=sorted(SHAPES))
+def test_the_replayed_project_is_clean(tmp_path, shape):
+    """gh-2215: the tree a script rebuilds is in sync, not just its manifest.
+
+    A manifest can round-trip while the tree under it does not: an `object`
+    reference resolved by a command that ran too early writes a `_core.c`
+    that no later command revisits. So the replay must report nothing under
+    `status --check`, and `apply` on it must change nothing.
+    """
+    root = SHAPES[shape](tmp_path)
+    script_round_trip(root, tmp_path / "replay")
+    replayed = tmp_path / "replay" / "demo"
+    s = run_cli("status", "--check", cwd=replayed)
+    assert s.returncode == 0, s.stdout + s.stderr
+    before = _tree_digest(replayed)
+    a = run_cli("apply", cwd=replayed)
+    assert a.returncode == 0, a.stdout + a.stderr
+    after = _tree_digest(replayed)
+    moved = sorted(k for k in before if before[k] != after.get(k))
+    assert not moved, f"`jm apply` rewrote {moved} on the replayed {shape}"
 
 
 # ── both faces ──────────────────────────────────────────────────────────────

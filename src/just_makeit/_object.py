@@ -3017,7 +3017,19 @@ def run(
     # gh-1882: the manifest's `reset_impl` / `reset_impl_file` as written,
     # from the replay alone -- see `_init.run`, which takes it too.
     reset_impl_decl: "dict[str, str] | None" = None,
+    # gh-2215: `jm object --before <obj>` -- place this object ahead of a
+    # member in the module's `objects` list (its gh-1985 load order)
+    # instead of appending it. Refused before anything is written.
+    before: str = "",
 ) -> None:
+    if before and (
+        why := C.before_why_not(
+            C.load(root) if (root / C.FILENAME).exists() else {},
+            module,
+            before,
+        )
+    ):
+        raise _report.Refusal(why)
     # gh-588: `opaque_state` forward-declares the struct, so anything that
     # dereferences it from the PUBLIC header is incoherent. Say so here rather
     # than let the user meet it as an incomplete-type error in generated C they
@@ -3529,7 +3541,7 @@ def run(
         )
 
     # Update config before regenerating module (so module_objects is up-to-date)
-    C.add_to_module(cfg, module, comp)
+    C.add_to_module(cfg, module, comp, before=before)
     C.add_component(
         cfg,
         comp,
