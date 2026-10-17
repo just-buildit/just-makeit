@@ -453,16 +453,87 @@ _PY_WRITE = (
 )
 
 
+# ── exact numeric text (gh-2254) ─────────────────────────────────────────────
+# The significant digits that write an IEEE 754 binary real so the decimal
+# text reads back to the same bits: C11's FLT_DECIMAL_DIG / DBL_DECIMAL_DIG,
+# which C99 (the generated projects' standard) does not define. Keyed by the
+# width the type row's `py_type` states, so a real row of another width is a
+# KeyError at render time, not lossy text.
+_REAL_DIGITS = {32: 9, 64: 17}
+
+
+def _real_digits(ctype: str) -> int:
+    """The digits that write the real *ctype* exactly, from its row's width.
+
+    >>> _real_digits("float"), _real_digits("double")
+    (9, 17)
+    """
+    py_type = T._CTYPE_META[ctype]["py_type"]
+    return _REAL_DIGITS[int(py_type.rsplit("float", 1)[1])]
+
+
+def c_printf(ctype: str) -> "tuple[str, str]":
+    """The ``printf`` conversion and cast that write a *ctype* value exactly.
+
+    gh-2254: the one answer for every generated C line that prints a
+    numeric value -- a ``jm app`` executable's ``--record`` and a function
+    app's result -- derived from the type's ``_CTYPE_META`` row rather
+    than a table of its own. An integer is widened to ``long long`` (or
+    ``unsigned long long`` when its row's floor is ``0``, the split
+    :func:`cli_number_c` reads by), which holds every integer row. A real
+    is widened to ``double`` and written with the digits that read back
+    to the same bits through ``strtof`` / ``strtod`` -- the parse
+    :func:`cli_number_c` emits -- so a recorded value replays as itself.
+    ``%g`` kept six digits, so ``0.123456789`` was recorded as
+    ``0.123457``.
+
+    Parameters
+    ----------
+    ctype : str
+        A numeric ``_CTYPE_META`` key (kind ``int`` or ``float``).
+
+    Returns
+    -------
+    tuple of str
+        ``(conversion, cast)``: the conversion spec, and the C cast that
+        puts the value in the type the conversion reads.
+
+    Examples
+    --------
+    >>> c_printf("float"), c_printf("double")
+    (('%.9g', '(double)'), ('%.17g', '(double)'))
+    >>> c_printf("int8_t"), c_printf("size_t")
+    (('%lld', '(long long)'), ('%llu', '(unsigned long long)'))
+    """
+    meta = T._CTYPE_META[ctype]
+    if meta["kind"] == "float":
+        return f"%.{_real_digits(ctype)}g", "(double)"
+    if meta["limits"][0] == "0":
+        return "%llu", "(unsigned long long)"
+    return "%lld", "(long long)"
+
+
+# A csv I or Q value, per float sample type: the conversion `c_printf` writes
+# the component type with, so each line reads back to the sample's bits
+# (gh-2254). `%0.9f` kept nine places after the point, so a cf32 sample
+# below 5e-10 -- an ordinary small amplitude -- was written as 0.000000000.
+# Both faces spell it with this one conversion: Python's `%` and C's
+# `printf` both round correctly, so the two write the same bytes.
+_CSV_CF32 = c_printf("float")[0]
+_CSV_CF64 = c_printf("double")[0]
+
 _PY_PACK_WRITE = (
     "    _st = args.sample_type\n"
     '    if args.file_type == "csv":\n'
     "        _lines = []\n"
     '        if _st == "cf32":\n'
     "            for _z in out:\n"
-    '                _lines.append("%0.9f,%0.9f" % (_z.real, _z.imag))\n'
+    f'                _lines.append("{_CSV_CF32},{_CSV_CF32}"'
+    " % (_z.real, _z.imag))\n"
     '        elif _st == "cf64":\n'
     "            for _z in out:\n"
-    '                _lines.append("%0.17g,%0.17g" % (_z.real, _z.imag))\n'
+    f'                _lines.append("{_CSV_CF64},{_CSV_CF64}"'
+    " % (_z.real, _z.imag))\n"
     "        else:\n"
     '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0, "ci8": 127.0}[_st]\n'
     "            for _z in out:\n"
@@ -849,9 +920,11 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
         for (size_t i = 0; i < n; i++) {
             float re = crealf(in[i]), im = cimagf(in[i]);
             if (st == 0)
-                fprintf(out, "%0.9f,%0.9f\\n", (double)re, (double)im);
+                fprintf(out, "JM_CSV_CF32,JM_CSV_CF32\\n", (double)re,
+                        (double)im);
             else if (st == 1)
-                fprintf(out, "%0.17g,%0.17g\\n", (double)re, (double)im);
+                fprintf(out, "JM_CSV_CF64,JM_CSV_CF64\\n", (double)re,
+                        (double)im);
             else {
                 double sc = (st == 2) ? 2147483647.0
                             : (st == 3) ? 32767.0
@@ -874,67 +947,7 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
     }
     fwrite(bytes, 1, nb, out);
 }
-"""
-
-# ── exact numeric text (gh-2254) ─────────────────────────────────────────────
-# The significant digits that write an IEEE 754 binary real so the decimal
-# text reads back to the same bits: C11's FLT_DECIMAL_DIG / DBL_DECIMAL_DIG,
-# which C99 (the generated projects' standard) does not define. Keyed by the
-# width the type row's `py_type` states, so a real row of another width is a
-# KeyError at render time, not lossy text.
-_REAL_DIGITS = {32: 9, 64: 17}
-
-
-def _real_digits(ctype: str) -> int:
-    """The digits that write the real *ctype* exactly, from its row's width.
-
-    >>> _real_digits("float"), _real_digits("double")
-    (9, 17)
-    """
-    py_type = T._CTYPE_META[ctype]["py_type"]
-    return _REAL_DIGITS[int(py_type.rsplit("float", 1)[1])]
-
-
-def c_printf(ctype: str) -> "tuple[str, str]":
-    """The ``printf`` conversion and cast that write a *ctype* value exactly.
-
-    gh-2254: the one answer for every generated C line that prints a
-    numeric value -- a ``jm app`` executable's ``--record`` and a function
-    app's result -- derived from the type's ``_CTYPE_META`` row rather
-    than a table of its own. An integer is widened to ``long long`` (or
-    ``unsigned long long`` when its row's floor is ``0``, the split
-    :func:`cli_number_c` reads by), which holds every integer row. A real
-    is widened to ``double`` and written with the digits that read back
-    to the same bits through ``strtof`` / ``strtod`` -- the parse
-    :func:`cli_number_c` emits -- so a recorded value replays as itself.
-    ``%g`` kept six digits, so ``0.123456789`` was recorded as
-    ``0.123457``.
-
-    Parameters
-    ----------
-    ctype : str
-        A numeric ``_CTYPE_META`` key (kind ``int`` or ``float``).
-
-    Returns
-    -------
-    tuple of str
-        ``(conversion, cast)``: the conversion spec, and the C cast that
-        puts the value in the type the conversion reads.
-
-    Examples
-    --------
-    >>> c_printf("float"), c_printf("double")
-    (('%.9g', '(double)'), ('%.17g', '(double)'))
-    >>> c_printf("int8_t"), c_printf("size_t")
-    (('%lld', '(long long)'), ('%llu', '(unsigned long long)'))
-    """
-    meta = T._CTYPE_META[ctype]
-    if meta["kind"] == "float":
-        return f"%.{_real_digits(ctype)}g", "(double)"
-    if meta["limits"][0] == "0":
-        return "%llu", "(unsigned long long)"
-    return "%lld", "(long long)"
-
+""".replace("JM_CSV_CF32", _CSV_CF32).replace("JM_CSV_CF64", _CSV_CF64)
 
 # A real's record entry: JSON has no spelling for a non-finite number, and
 # `%g` writes `inf` / `nan`, which no JSON reader takes. The spellings here
@@ -1400,7 +1413,8 @@ def _c_call_print(function: str, ret_t: str, param_names: list[str]) -> str:
     args = ", ".join(param_names)
     if ret_t == "void" or ret_t not in _C_PARSE:
         return f"    {function}({args});"
-    # gh-2254: exactly, as the Python face's print() writes a float.
+    # gh-2254: a real round-trips exactly, as the Python face's print()
+    # does -- the same value, though not always the same text.
     fmt, cast = c_printf(ret_t)
     return (
         f"    {ret_t} result = {function}({args});\n"

@@ -105,7 +105,7 @@ numpy), so a capture is reproducible regardless of which face produced it.
 | Flag            | Values                            | Effect                                                                                                                                     |
 | --------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--sample_type` | `cf32` `cf64` `ci32` `ci16` `ci8` | wire type, converted on write (full-scale ±1.0 for the integer types)                                                                      |
-| `--file_type`   | `raw` `csv`                       | `raw` interleaved I/Q (default) or text `I,Q` lines (`%0.9f` cf32, `%0.17g` cf64, `%d` integer)                                            |
+| `--file_type`   | `raw` `csv`                       | `raw` interleaved I/Q (default) or text `I,Q` lines (`%.9g` cf32, `%.17g` cf64: each reads back exact; `%d` integer)                       |
 | `--endian`      | `le` `be`                         | byte order; `be` reverses each element (raw only — csv is text)                                                                            |
 | `--record FILE` | path                              | write a JSON record of the fully-resolved run (every flag after defaulting; choice flags as their chosen string) for reproducible captures |
 
