@@ -508,9 +508,9 @@ def test_composer_cli_refuses_a_bad_number(tmp_path):
 def test_app_refuses_a_bad_number(tmp_path):
     """Every type a built `jm app` executable parses, and its other faces.
 
-    The object app's ``--record`` writes what each flag resolved to: an
-    integer exactly, a real with ``%g`` -- so a real's extremes are held
-    to six digits there, and exactly on the composer face above."""
+    The object app's ``--record`` writes what each flag resolved to, every
+    type exactly: a real with the digits that read back to its bits
+    (gh-2254), so a real's extremes are held exactly here too."""
     proj = _app_project(tmp_path)
     build = _build(proj, "tool", "picker", "multi")
     tool = _exe(build, "tool")
@@ -544,12 +544,7 @@ def test_app_refuses_a_bad_number(tmp_path):
                 problems.append(f"{what}: exit {r.returncode}: {r.stderr}")
                 continue
             got = json.loads(rec.read_text(encoding="utf-8"))[flag]
-            ok = (
-                got == pytest.approx(want, rel=1e-5)
-                if isinstance(want, float)
-                else got == want
-            )
-            if not ok:
+            if _want(ctype, got) != _want(ctype, want):
                 problems.append(f"{what}: recorded as {got!r}")
 
     # The function app (its template gained the helper slot) and a

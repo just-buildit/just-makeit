@@ -71,11 +71,9 @@ METHODS: "list[tuple[str, str, bool]]" = [
     # The same two routes without the key: an empty array, and a raise.
     ("plain", _VO, False),
     ("wait", _BORROW, False),
-    # The key where no route reads it -- a scalar has no empty result -- so
-    # no face may promise a None the binding never returns. Accepted today;
-    # gh-2202 refuses it, and this then moves to a refusal test. (A 1:1
-    # batch was the other; it refuses the key now, gh-2261.)
-    ("level", "--arg-type float --return-type float --none-on-empty", False),
+    # The key where no route reads it -- a scalar, a 1:1 batch -- is
+    # refused now (gh-2202, gh-2261): tests/test_gh2250_shape_bound_method_
+    # keys.py holds that, over every shape.
 ]
 
 _EMPTY = re.compile(r"if\s*\(\s*!\s*(?:n_out|_p)\s*\)\s*")

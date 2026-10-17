@@ -755,7 +755,7 @@ class TestSourceGenerates:
 
     def test_pyi_declares_generation_methods(self):
         pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
-        assert "def steps(self, n: int) -> NDArray[np.complex64]:" in pyi
+        assert "def steps(self, n: int, /) -> NDArray[np.complex64]:" in pyi
         assert "def step(self) -> complex:" in pyi
         # absent without generates
         assert "def steps(" not in _composer.render_pyi(_cfg(), "wfm_compose")

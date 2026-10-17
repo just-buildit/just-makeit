@@ -50,6 +50,25 @@ _VO = (*_ARR, "--return-type", "float", "--variable-output")
 REFUSING = {
     "status_return": [
         ("st", *_ARR, "--return-type", "int", "--status-return"),
+        # gh-2250: beside an output, which it now returns.
+        (
+            "sto",
+            *_ARR,
+            "--return-type",
+            "int",
+            "--out-type",
+            "float",
+            "--status-return",
+        ),
+        (
+            "stm",
+            *_ARR,
+            "--return-type",
+            "int",
+            "--multi-output",
+            "double",
+            "--status-return",
+        ),
     ],
     "error_negative": [
         ("neg", *_ARR, "--return-type", "int64_t", "--error-negative"),
