@@ -1629,7 +1629,7 @@ One entry per `just-makeit method` call.
 | `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)      |
 | `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                 |
 | `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)           |
-| `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432)  |
+| `status_return`   | bool                    | integer return is a status: ValueError on non-0 (gh-432, gh-2250)  |
 | `batch`           | bool                    | `--batch`                                                          |
 | `multi_output`    | array of strings        | `--multi-output` types                                             |
 | `out_type`        | string                  | `--out-type`                                                       |
