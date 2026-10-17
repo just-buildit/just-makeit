@@ -280,6 +280,18 @@ def project(tmp_path: Path) -> Path:
             "--return-type",
             "double",
         ),
+        # gh-2202: `none_on_empty` is read only by a variable_output result
+        # (and a borrow), so its sweep rows land on one of these.
+        (
+            "method",
+            "o",
+            "drain2",
+            "--module",
+            "m",
+            "--return-type",
+            "double",
+            "--variable-output",
+        ),
         ("property", "o", "level", "--module", "m", "--type", "double"),
         ("view", "o", "Peek", "--module", "m", "--create-fn", "o_create_peek"),
         ("function", "calc", "--module", "m"),
@@ -292,6 +304,14 @@ def project(tmp_path: Path) -> Path:
             "double",
             "--return-type",
             "double",
+        ),
+        (
+            "method",
+            "solo",
+            "drain",
+            "--return-type",
+            "double",
+            "--variable-output",
         ),
         ("property", "solo", "bias", "--type", "double"),
     ]
@@ -414,7 +434,7 @@ class TestThePackageInitGuardsItsDLLs:
 SWEEP: dict[str, tuple[str, str, str]] = {
     # [[<obj>.methods]] — `_replay_method`
     "method.max_results": ("o", 'name = "gain2"', 'max_results = "16"'),
-    "method.none_on_empty": ("o", 'name = "gain2"', "none_on_empty = true"),
+    "method.none_on_empty": ("o", 'name = "drain2"', "none_on_empty = true"),
     "method.sink_fn": ("o", 'name = "gain2"', 'sink_fn = "o_sink"'),
     "method.nogil": ("o", 'name = "gain2"', "nogil = true"),
     "method.doc": ("o", 'name = "gain2"', 'doc = "METHOD marker."'),
@@ -470,7 +490,7 @@ SWEEP: dict[str, tuple[str, str, str]] = {
     "solo.property.doc": ("solo", 'name = "bias"', 'doc = "SOLO_P marker."'),
     "solo.method.none_on_empty": (
         "solo",
-        'name = "scale"',
+        'name = "drain"',
         "none_on_empty = true",
     ),
     # [[<obj>.extra_methods]] -- `_object_kwargs` (gh-1997): the row, its
