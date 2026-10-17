@@ -130,6 +130,12 @@ def test_declaring_error_is_the_way_out(tmp_path) -> None:
         "static inline void",
         "void JM_HOT",
         "void __attribute__((nonnull))",
+        # gh-2314: a comment between the type and the name is not the type.
+        "void /* x */",
+        "void /* nothing\n   to report */",
+        "/* status: none */ void",
+        "void // nothing to report\n",
+        "/** Set alpha; returns nothing. */\nvoid /* x */\n",
     ],
 )
 def test_a_void_setter_is_not_refused(tmp_path, spelling: str) -> None:
