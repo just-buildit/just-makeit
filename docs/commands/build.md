@@ -1015,9 +1015,10 @@ ______________________________________________________________________
 ## `just-makeit migrate-to-fragments`
 
 Move every `[<obj>]` section of `just-makeit.toml` into `objects/<obj>.toml`
-and every `[module.X]` into `modules/<name>.toml`, leaving the manifest with
-`[project]` and the `include` globs — the layout `jm new` gives a project
-today. The merged manifest is unchanged, and running it again is a no-op. Must
+and every `[module.X]` into `modules/<name>.toml` (a dotted id by its C name,
+`dsp.filters` into `modules/dsp_filters.toml`, as `jm module` names it),
+leaving the manifest with `[project]` and the `include` globs — the layout
+`jm new` gives a project today. The merged manifest is unchanged, and running it again is a no-op. Must
 be run from the project root.
 
 Fragments load sorted by file name, so the order the manifest lists
