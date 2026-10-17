@@ -959,6 +959,77 @@ def optional_ann(m: dict, ann: str) -> str:
     return f"{ann} | None" if empty_is_none(m) else ann
 
 
+def fixed_result_parts(m: dict) -> "list[tuple[str, str]]":
+    """The values a fixed-output method returns, in order, as ``(kind, C)``.
+
+    gh-2250. A fixed-output binding (`_method.result_shape` ``"fixed"``,
+    not a borrow) hands back:
+
+    - its kernel's return -- unless ``status_return`` claims that int as a
+      status, or ``out_type`` replaces it with the fresh array the kernel
+      fills (``("array", <out_type>)``);
+    - then one value per ``multi_output`` entry (gh-600).
+
+    One value is returned bare; several as a tuple; none (a status alone)
+    as ``None``. The binding builds exactly this list, and both ``.pyi``
+    producers and the runtime synopsis annotate it (`fixed_result_ann`), so
+    the three cannot disagree. They did: a ``multi_output`` method returned
+    a tuple, its ``.pyi`` said the scalar and its ``__doc__`` an ndarray,
+    and ``status_return`` beside either form did not compile.
+
+    Examples
+    --------
+    >>> fixed_result_parts({"name": "m", "return_type": "float"})
+    [('scalar', 'float')]
+    >>> fixed_result_parts({"name": "m", "return_type": "int",
+    ...                     "status_return": True, "multi_output": ["double"]})
+    [('scalar', 'double')]
+    >>> fixed_result_parts({"name": "m", "return_type": "void",
+    ...                     "out_type": "float", "multi_output": ["int"]})
+    [('array', 'float'), ('scalar', 'int')]
+    >>> fixed_result_parts({"name": "m", "return_type": "int",
+    ...                     "status_return": True})
+    []
+    """
+    out_type = m.get("out_type")
+    parts: "list[tuple[str, str]]" = []
+    if out_type:
+        parts.append(("array", str(out_type)))
+    elif not m.get("status_return"):
+        parts.append(("scalar", str(m.get("return_type") or "float _Complex")))
+    parts += [("scalar", str(rt)) for rt in m.get("multi_output") or []]
+    return parts
+
+
+def fixed_result_ann(m: dict, scalar, array) -> str:
+    """The return annotation of a fixed-output method's result (gh-2250).
+
+    *scalar* and *array* spell one C type as a scalar and as an ndarray of
+    it -- each face passes its own (`str` vs ``NDArray[...]`` spellings
+    differ by face), and the SHAPE comes from `fixed_result_parts`, the
+    list the binding builds.
+
+    Examples
+    --------
+    >>> ann = fixed_result_ann(
+    ...     {"name": "m", "return_type": "float", "multi_output": ["int"]},
+    ...     lambda t: {"float": "float", "int": "int"}[t],
+    ...     lambda t: "ndarray")
+    >>> ann
+    'tuple[float, int]'
+    >>> fixed_result_ann({"name": "m", "return_type": "int",
+    ...                   "status_return": True}, str, str)
+    'None'
+    """
+    anns = [
+        array(ct) if kind == "array" else scalar(ct)
+        for kind, ct in fixed_result_parts(m)
+    ]
+    if not anns:
+        return "None"
+    return anns[0] if len(anns) == 1 else f"tuple[{', '.join(anns)}]"
+
+
 def empty_is_none_doc(m: dict) -> str:
     """The ``Returns`` sentence saying when *m* returns ``None``, or ``""``.
 
