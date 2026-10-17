@@ -2941,11 +2941,14 @@ def mark_positional_only(
     the module's own table, for its top-level functions, which have no
     ``self`` to pass over.
 
-    A member is left as written when its flags take keywords, when it has
-    nothing a caller names (``self`` alone, or ``*args`` / keyword-only
-    parameters only), or when the stub already ends its positional
-    parameters with ``/``. The ``/`` goes after the last positional
-    parameter and its default, so a ``*args`` after it stays in place.
+    This is an adapter, not a second decision: it finds each member's
+    positional parameters in the rendered text -- from the first one a
+    caller names to the last one's default -- and hands that text and the
+    member's flags to :func:`positional_only`, which alone decides whether
+    a ``/`` closes it and where. A ``*args`` or keyword-only parameter after
+    them is therefore left in place. A member is left as written when it is
+    not in the table (a property accessor), or when the stub already ends
+    its positional parameters with ``/``.
 
     Examples
     --------
@@ -2968,8 +2971,12 @@ def mark_positional_only(
     ...     {"": {"apply": "METH_VARARGS"}}), end="")
     def apply(x: float, g: int = 3, /) -> float: ...
     """
-    lines = pyi.split("\n")
-    edits: "list[tuple[int, int]]" = []
+    raw = pyi.encode("utf-8")
+    # ast reports a line and a UTF-8 byte column; this is each line's start.
+    starts = [0]
+    for line in raw.split(b"\n"):
+        starts.append(starts[-1] + len(line) + 1)
+    edits: "list[tuple[int, int, str]]" = []
     tree = ast.parse(pyi)
     # (members, their flags, how many leading parameters no caller names)
     scopes = [(tree.body, flags_by_class.get("", {}), 0)] + [
@@ -2981,17 +2988,20 @@ def mark_positional_only(
         for f in body:
             if not isinstance(f, ast.FunctionDef) or f.decorator_list:
                 continue  # a property's accessor is no PyMethodDef row
-            if f.name not in flags or "METH_KEYWORDS" in flags[f.name]:
-                continue
             a = f.args
-            if a.posonlyargs or len(a.args) <= lead:
+            if f.name not in flags or a.posonlyargs or len(a.args) <= lead:
                 continue
-            end = a.defaults[-1] if a.defaults else a.args[-1]
-            edits.append((end.end_lineno or 0, end.end_col_offset or 0))
-    for line, col in sorted(edits, reverse=True):
-        raw = lines[line - 1].encode("utf-8")
-        lines[line - 1] = (raw[:col] + b", /" + raw[col:]).decode("utf-8")
-    return "\n".join(lines)
+            first = a.args[lead]
+            last = a.defaults[-1] if a.defaults else a.args[-1]
+            lo = starts[first.lineno - 1] + first.col_offset
+            hi = starts[(last.end_lineno or 1) - 1] + (
+                last.end_col_offset or 0
+            )
+            params = raw[lo:hi].decode("utf-8")
+            edits.append((lo, hi, positional_only(params, flags[f.name])))
+    for lo, hi, text in sorted(edits, reverse=True):
+        raw = raw[:lo] + text.encode("utf-8") + raw[hi:]
+    return raw.decode("utf-8")
 
 
 def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
