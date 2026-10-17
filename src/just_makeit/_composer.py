@@ -1287,6 +1287,18 @@ def _bridge_refused(gen: dict) -> "list[tuple[str, str]]":
     ]
 
 
+#: The flags each fixed member of the composer type registers with, by
+#: name. The method table renders them and the ``.pyi`` asks
+#: `_stubs.positional_only` of them, so one entry decides both whether the
+#: binding takes keywords and whether the stub says ``/`` (gh-2212).
+COMPOSER_FLAGS = {
+    "execute": "METH_VARARGS",
+    "compose": "METH_VARARGS | METH_KEYWORDS",
+    "from_json": "METH_VARARGS | METH_CLASS",
+    "from_file": "METH_VARARGS | METH_CLASS",
+}
+
+
 def _source_gen_members(gen: dict) -> "list[dict]":
     """``steps`` / ``step`` / ``reset`` on a generating source, declared once.
 
@@ -3815,10 +3827,10 @@ static PyObject *
     if C.composer_json(cfg, module):
         json_rows = (
             f'    {{"from_json", (PyCFunction){cname}_from_json,\n'
-            f"     METH_VARARGS | METH_CLASS,\n"
+            f"     {COMPOSER_FLAGS['from_json']},\n"
             f"     {_ml_doc_c(cfg, module, f'{cname}.from_json', f'from_json(json) -> {cname}')}}},\n"
             f'    {{"from_file", (PyCFunction){cname}_from_file,\n'
-            f"     METH_VARARGS | METH_CLASS,\n"
+            f"     {COMPOSER_FLAGS['from_file']},\n"
             f"     {_ml_doc_c(cfg, module, f'{cname}.from_file', f'from_file(path) -> {cname}')}}},\n"
             f'    {{"to_json", (PyCFunction){cname}_to_json, METH_NOARGS,\n'
             f"     {_ml_doc_c(cfg, module, f'{cname}.to_json', 'to_json() -> str')}}},\n"
@@ -4513,10 +4525,10 @@ static PyObject *
 }};
 
 {stream_code}{to_dict_code}{serializer_code}static PyMethodDef {cname}_methods[] = {{
-    {{"execute", (PyCFunction){cname}_execute, METH_VARARGS,
+    {{"execute", (PyCFunction){cname}_execute, {COMPOSER_FLAGS["execute"]},
      {_ml_doc_c(cfg, module, f"{cname}.execute", "execute(n) -> ndarray[complex64]")}}},
     {{"compose", (PyCFunction)(void (*)(void)){cname}_compose,
-     METH_VARARGS | METH_KEYWORDS,
+     {COMPOSER_FLAGS["compose"]},
      {_ml_doc_c(cfg, module, f"{cname}.compose", "compose(block=4096) -> ndarray[complex64]")}}},
     {{"close", (PyCFunction){cname}_close, METH_NOARGS,
      {_ml_doc_c(cfg, module, f"{cname}.close", "close() -> None")}}},
@@ -5417,6 +5429,8 @@ def render_pyi(cfg: dict, module: str) -> str:
     Covers the source / segment / timeline / composer types, the factories,
     and — when enabled — the JSON faces. Docstrings include defaults and enum
     choices from the manifest (gh-375)."""
+    from ._stubs import positional_only
+
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     oo = C.composer_oo(cfg, module)
@@ -5480,8 +5494,14 @@ def render_pyi(cfg: dict, module: str) -> str:
     if _gen:
         # gh-1356: the same declaration the runtime rows render from.
         for m in _source_gen_members(_gen):
-            args = "".join(f", {n}: {a}" for n, a in m["params"])
-            lines.append(f"    def {m['name']}(self{args}) -> {m['ret']}:")
+            # gh-2212: positional-only exactly when the row's own flags
+            # take no keywords.
+            args = positional_only(
+                ", ".join(f"{n}: {a}" for n, a in m["params"]),
+                m["flags"],
+                "self",
+            )
+            lines.append(f"    def {m['name']}({args}) -> {m['ret']}:")
             lines += render_numpy_doc(
                 m["block"],
                 m["name"],
@@ -5574,9 +5594,16 @@ def render_pyi(cfg: dict, module: str) -> str:
         )
         + ", **segment_kwargs"
         ") -> None: ...",
-        "    def execute(self, n: int) -> NDArray[np.complex64]:",
+        # gh-2212: each `/` from the flags the method table registers.
+        "    def execute("
+        f"{positional_only('n: int', COMPOSER_FLAGS['execute'], 'self')})"
+        " -> NDArray[np.complex64]:",
         *docs[f"{cname}.execute"],
-        "    def compose(self, block: int = ...) -> NDArray[np.complex64]:",
+        "    def compose("
+        + positional_only(
+            "block: int = ...", COMPOSER_FLAGS["compose"], "self"
+        )
+        + ") -> NDArray[np.complex64]:",
         *docs[f"{cname}.compose"],
     ]
     # gh-1190: a declared hand-written method needs a stub too, or a type
@@ -5628,10 +5655,14 @@ def render_pyi(cfg: dict, module: str) -> str:
     if C.composer_json(cfg, module):
         lines += [
             "    @classmethod",
-            f"    def from_json(cls, json: str) -> {cname}:",
+            "    def from_json("
+            f"{positional_only('json: str', COMPOSER_FLAGS['from_json'], 'cls')})"
+            f" -> {cname}:",
             *docs[f"{cname}.from_json"],
             "    @classmethod",
-            f"    def from_file(cls, path: str) -> {cname}:",
+            "    def from_file("
+            f"{positional_only('path: str', COMPOSER_FLAGS['from_file'], 'cls')})"
+            f" -> {cname}:",
             *docs[f"{cname}.from_file"],
             "    def to_json(self) -> str:",
             *docs[f"{cname}.to_json"],

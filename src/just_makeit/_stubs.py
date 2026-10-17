@@ -2810,6 +2810,40 @@ def numpy_imports(body: str) -> "list[str]":
     return out
 
 
+def positional_only(params: str, flags: str, lead: str = "") -> str:
+    """A stub's parameter list, ending in ``/`` exactly when the binding's
+    ``METH_*`` *flags* take no keywords (gh-2212).
+
+    The one answer every stub writer asks, from the flags the method table
+    registers, so a stub cannot accept ``f(x=...)`` where the binding
+    raises ``TypeError`` -- nor refuse a keyword the binding takes. A
+    ``METH_VARARGS`` or ``METH_O`` binding parses positionally; only
+    ``METH_KEYWORDS`` takes names.
+
+    Parameters
+    ----------
+    params : str
+        The parameters a caller passes, comma-joined; ``""`` for none, which
+        gets no ``/``.
+    flags : str
+        The row's flags, as the ``PyMethodDef`` spells them.
+    lead : str, optional
+        ``self`` or ``cls``, which no caller names, placed first.
+
+    Examples
+    --------
+    >>> positional_only("x: float", "METH_VARARGS", "self")
+    'self, x: float, /'
+    >>> positional_only("x: float", "METH_VARARGS | METH_KEYWORDS", "self")
+    'self, x: float'
+    >>> positional_only("", "METH_VARARGS", "self")
+    'self'
+    """
+    if params and "METH_KEYWORDS" not in flags:
+        params += ", /"
+    return ", ".join(p for p in (lead, params) if p)
+
+
 def prune_stub_imports(lines: "list[str]") -> "list[str]":
     """*lines* without the numpy imports and ``Any`` the stub never names.
 
