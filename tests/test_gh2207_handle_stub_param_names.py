@@ -37,14 +37,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _handle  # noqa: E402
 
 #: Argument row kinds, by what `_emit_method` dispatches on: an array, the
-#: caller's writable buffer, and a scalar with and without a default. Names
-#: are assigned per position, and none is a name jm ever hard-coded.
+#: caller's writable buffer, a scalar with and without a default, and an
+#: enum choice (gh-2228). Names are assigned per position, and none is a
+#: name jm ever hard-coded.
 _ROWS = {
     "array": {"type": "float[]"},
     "out": {"type": "float[]", "writable": True},
     "scalar": {"type": "double"},
     "default": {"type": "float", "default": "1.0f"},
+    "choice": {"type": "int", "enum": "zqmode"},
 }
+#: The `[[enum]]` a "choice" row names.
+_ENUMS = [{"name": "zqmode", "values": ["zqlo", "zqhi"]}]
 _NAMES = ("zqa", "zqb", "zqc")
 _RETURNS = (None, "int", "float[]", "bytes")
 
@@ -59,13 +63,12 @@ _BASE = {
 
 
 def _methods():
-    """Every method the keys form, but a required scalar after a defaulted
+    """Every method the keys form, but a required row after a defaulted
     one, which no Python signature can spell."""
     for n in range(len(_NAMES) + 1):
         for kinds in itertools.product(_ROWS, repeat=n):
-            if (
-                "default" in kinds
-                and "scalar" in kinds[kinds.index("default") :]
+            if "default" in kinds and {"scalar", "choice"} & set(
+                kinds[kinds.index("default") :]
             ):
                 continue
             args = [
@@ -98,6 +101,7 @@ def cases():
     for ident, m in _methods():
         cfg = {
             "project": {"name": "p"},
+            "enum": _ENUMS,
             "module": {"h": {**_BASE, "methods": [m]}},
         }
         try:

@@ -795,7 +795,7 @@ The generated type carries:
     result); and a scalar/string-args → handle-length **`bytes`** shape
     (`returns = "bytes"` + `out_len_fn`: a temp buffer filled by
     `fn(self->h, …, void *out)`, copied into an immutable `bytes` — `save()`, the
-    write half of §5.5 save/restore, gh-565);
+    write half of §5.5 save/restore, gh-565). On every shape, and on a factory, an arg declaring `enum` takes that enum's choice string and reaches C as its int, as a create-arg does (gh-2228);
 - **module-level factories** (§5.5) — alternate constructors that build a
     *fresh* handle from a blob or file;
 - **decoded-getter properties** (§5.2), including **writable** scalar

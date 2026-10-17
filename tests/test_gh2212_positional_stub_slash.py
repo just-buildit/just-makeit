@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from just_makeit import _capsule, _handle  # noqa: E402
 from test_gh2207_handle_stub_param_names import (  # noqa: E402
     _BASE,
+    _ENUMS,
     _methods,
 )
 
@@ -106,6 +107,7 @@ def handle_cases():
     for ident, m in _methods():
         cfg = {
             "project": {"name": "p"},
+            "enum": _ENUMS,
             "module": {"h": {**_BASE, **_EXTRAS, "methods": [m]}},
         }
         try:
