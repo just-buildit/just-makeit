@@ -8,6 +8,7 @@ result and the reason the gate scans:
 | --------------------------------------- | ----------------------------- |
 | module-function param                   | bare                          |
 | handle create-arg                       | bare                          |
+| handle method arg / factory param       | bare (gh-2228)                |
 | composer serializer param               | bare                          |
 | composer source `tp_init` field         | bare                          |
 | composer source property setter         | bare                          |

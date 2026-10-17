@@ -265,6 +265,254 @@ def batch_why_not(method: str, carried) -> str:
     )
 
 
+def result_shape(m: dict) -> str:
+    """The result shape the binding renders method *m* as.
+
+    gh-2250. ``make_methods_ctx`` picks ONE shape per method, in this
+    order, and a key belonging to another shape is never read:
+
+    - ``varargs`` / ``manual_stub`` -- the author writes the binding;
+    - ``codec`` -- generated from the ``[codec.X]`` table alone;
+    - ``batch`` -- a 1:1 block transform (gh-179);
+    - ``variable_output`` -- an array sized by the kernel's count;
+    - ``single`` / ``records`` -- one record by value, or a list of them;
+    - ``borrow`` -- a view the kernel lends (gh-1312);
+    - ``fixed`` -- everything else: a scalar or ``void`` return, with any
+      ``status_return``, ``error_negative``, ``multi_output`` or
+      ``out_type``.
+
+    `_keys.RESULT_SHAPE_KEYS` names, per key, the shapes that read it.
+
+    Examples
+    --------
+    >>> result_shape({"name": "m", "variable_output": True})
+    'variable_output'
+    >>> result_shape({"name": "m", "result_fields": [{"name": "a"}],
+    ...               "single": True})
+    'single'
+    >>> result_shape({"name": "m", "result_fields": [{"name": "a"}],
+    ...               "variable_output": True, "record_dtype": "rec_t"})
+    'variable_output'
+    >>> result_shape({"name": "m", "out_type": "float"})
+    'fixed'
+    """
+    for key in ("varargs", "manual_stub", "codec", "batch", "variable_output"):
+        if m.get(key):
+            return key
+    if m.get("result_fields") and not _record.is_record_array(
+        m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+    ):
+        return "single" if m.get("single") else "records"
+    return "borrow" if _borrow.is_borrow(m) else "fixed"
+
+
+def method_input(m: dict) -> str:
+    """What the binding of method *m* reads its input length from.
+
+    gh-2313. One of three answers:
+
+    - ``"block"`` -- an input ARRAY the binding acquires: a block
+      ``arg_type`` (every ``batch``, ``variable_output`` and record shape
+      takes its input as ``const T *in, size_t n``), a ``T[]`` ``arg_type``,
+      or an array param that is not the caller's buffer to write. ``strict``
+      reads it (gh-1426 B).
+    - ``"count"`` -- no input at all, so the binding synthesizes a leading
+      count (`_gluedoc.synthesizes_count`, and an input-less ``batch``).
+      ``count_default`` and ``count_name`` size and name it (gh-657,
+      gh-1074).
+    - ``""`` -- neither: scalars only, nothing, or a binding jm does not
+      write.
+
+    `_keys.INPUT_SIDE_KEYS` names, per key, the answer that reads it.
+
+    Examples
+    --------
+    >>> method_input({"name": "m", "arg_type": "float", "batch": True})
+    'block'
+    >>> method_input({"name": "m", "return_type": "float", "batch": True})
+    'count'
+    >>> method_input({"name": "m", "variable_output": True})
+    'count'
+    >>> method_input({"name": "m", "arg_type": "float"})
+    ''
+    >>> method_input({"name": "m", "params": [{"name": "v",
+    ...                                        "type": "float[]"}]})
+    'block'
+    >>> method_input({"name": "m", "params": [{"name": "y", "out": True,
+    ...                                        "type": "float[]"}]})
+    ''
+    """
+    from . import _gluedoc
+
+    shape = result_shape(m)
+    if shape in ("varargs", "manual_stub", "codec"):
+        return ""
+    arg_type = str(m.get("arg_type") or "void")
+    has_arg = arg_type != "void"
+    if shape == "batch":
+        # A batch binding parses `x` or a count and nothing else (gh-2259).
+        return "block" if has_arg else "count"
+    params = m.get("params") or []
+    if has_arg and (
+        shape in ("variable_output", "single", "records")
+        or T.is_array_param_type(arg_type)
+    ):
+        return "block"
+    if any(
+        T.is_array_param_type(str(p.get("type", "")))
+        and not T.param_writable(p)
+        for p in params
+    ):
+        return "block"
+    if _gluedoc.synthesizes_count(
+        variable_output=shape == "variable_output",
+        arg_type=arg_type,
+        params=params,
+        no_count=m.get("no_count"),
+    ):
+        return "count"
+    return ""
+
+
+#: How a refusal names each `result_shape`.
+_SHAPE_NAMES = {
+    "varargs": "a --varargs method (its binding is yours)",
+    "manual_stub": "a --manual-stub method (its binding is yours)",
+    "codec": "a codec method (its binding is the codec's)",
+    "batch": "a batch method",
+    "variable_output": "a variable_output method",
+    "single": "a --single record method",
+    "records": "a list-of-records method",
+    "borrow": "a --borrow method",
+    "fixed": "a fixed-output method",
+}
+
+#: Why `status_return` has nothing to read on a shape that has no int status
+#: in its return, and what to declare instead (gh-2250).
+_NO_STATUS = {
+    "variable_output": (
+        "its kernel returns the output COUNT. To refuse through it, declare "
+        "a signed --count-type with --error-negative, or --error-sentinel, "
+        "or --error-on-empty"
+    ),
+    "single": "its kernel returns the record itself, by value",
+    "records": (
+        "its kernel returns the number of records it wrote; to refuse, "
+        "return them through --variable-output --record-dtype, whose count "
+        "takes --error-negative or --error-sentinel"
+    ),
+    "borrow": (
+        "its kernel returns the pointer it lends: a NULL already raises, "
+        "and --status-fn maps why"
+    ),
+}
+
+
+def shape_keys_why_not(method: str, m: dict) -> str:
+    """Why *m* carries a key its shape's binding does not read, or ``""``.
+
+    gh-2202 / gh-2250 / gh-2313: the #1408 family. A key read on only some
+    shapes was accepted on every one, stored in the manifest, and read by
+    nobody -- ``none_on_empty`` on a scalar, ``status_return`` on a record
+    (whose refusing kernel's error code then became a result), ``strict``
+    with no input array, ``count_default`` beside an input that sizes the
+    call. The shapes that read each key are DECLARED, in
+    `_keys.RESULT_SHAPE_KEYS` and `_keys.INPUT_SIDE_KEYS`, and asked of
+    `result_shape` and `method_input`; this refuses every other pairing.
+
+    ``status_return`` also needs an integer return to read: ``void`` did not
+    compile, and a floating return was truncated to ``int`` and tested.
+
+    Asked by `run`, which both ``jm method`` and ``apply``'s replay call,
+    so the two front doors refuse alike, before anything is written.
+    A ``batch`` row's stray keys are `batch_why_not`'s, asked first.
+
+    Parameters
+    ----------
+    method : str
+        ``<object>.<method>``, for the message.
+    m : dict
+        The method's manifest entry, with its params as tables.
+
+    Returns
+    -------
+    str
+        One sentence for ``error:``, or ``""``.
+
+    Examples
+    --------
+    >>> shape_keys_why_not("o.m", {"name": "m", "return_type": "float",
+    ...                            "none_on_empty": True}).split(".")[1]
+    "m': none_on_empty has no effect on a fixed-output method"
+    >>> shape_keys_why_not("o.m", {"name": "m", "return_type": "int",
+    ...                            "status_return": True, "out_type": "u8"})
+    ''
+    >>> "nothing to read" in shape_keys_why_not(
+    ...     "o.m", {"name": "m", "status_return": True, "single": True,
+    ...             "result_fields": [{"name": "a", "type": "int"}]})
+    True
+    >>> "has no input array" in shape_keys_why_not(
+    ...     "o.m", {"name": "m", "arg_type": "float", "strict": True})
+    True
+    """
+    who = f"method '{method}'"
+    shape = result_shape(m)
+    for key, reads in _keys.RESULT_SHAPE_KEYS.items():
+        if not m.get(key) or shape in reads:
+            continue
+        if key == "status_return" and shape in _NO_STATUS:
+            return (
+                f"{who}: status_return reads the kernel's int return as a "
+                f"status, and {_SHAPE_NAMES[shape]} has nothing to read: "
+                f"{_NO_STATUS[shape]}. Drop status_return."
+            )
+        return (
+            f"{who}: {key} has no effect on {_SHAPE_NAMES[shape]}. It is "
+            f"read only by {' and '.join(_SHAPE_NAMES[s] for s in sorted(reads))}"
+            ", so jm would store it and generate nothing. Drop it."
+        )
+    rt = str(m.get("return_type") or "float _Complex")
+    if (
+        m.get("status_return")
+        and T._CTYPE_META.get(rt, {}).get("kind") != "int"
+    ):
+        return (
+            f"{who}: status_return reads the kernel's return as an integer "
+            f"status (0 is success), and {rt!r} is not an integer. Declare "
+            "the integer the kernel returns: --return-type int."
+        )
+    side = method_input(m)
+    stray = [
+        k
+        for k, want in _keys.INPUT_SIDE_KEYS.items()
+        if m.get(k) and want != side
+    ]
+    if not stray:
+        return ""
+    one = len(stray) == 1
+    has = (
+        "takes its input as an array"
+        if side == "block"
+        else "synthesizes a count to size its call"
+        if side == "count"
+        else "has no input array and synthesizes no count"
+    )
+    readers = "; ".join(
+        f"{k} reads "
+        + (
+            "an input array (a block arg_type or an array param)"
+            if _keys.INPUT_SIDE_KEYS[k] == "block"
+            else "the count an input-less variable_output or batch method "
+            "synthesizes"
+        )
+        for k in stray
+    )
+    return (
+        f"{who}: {' and '.join(stray)} {'has' if one else 'have'} no effect: "
+        f"the method {has}, and {readers}. Drop {'it' if one else 'them'}."
+    )
+
+
 # gh-805 §A2: what a C function name may be.
 _C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -561,6 +809,131 @@ def _methods_c_stub_result_single(
     return "\n".join(lines) + "\n"
 
 
+def _zero_return(return_type: str) -> str:
+    """The ``return`` of *return_type*'s zero, or "" for ``void``.
+
+    The neutral value a fixed-output stub returns, and what
+    :func:`impl_default_return` completes a body with: one spelling, so the
+    two cannot differ. A registered scalar returns its ``_CTYPE_META``
+    zero. Any other type is a record returned by value -- ``single``, or a
+    declared record element as a fixed return (gh-1405) -- and returns a
+    zeroed C99 compound literal. The fixed stub emitted no ``return`` at
+    all for that kind, so a fresh scaffold fell off the end of a non-void
+    function (gh-2248).
+
+    >>> _zero_return("float")
+    'return (float)0.0f;'
+    >>> _zero_return("iq16_t")
+    'return (iq16_t){0};'
+    >>> _zero_return("void")
+    ''
+    """
+    if return_type == "void":
+        return ""
+    meta = T._CTYPE_META.get(return_type)
+    return f"return ({return_type}){meta['zero'] if meta else '{0}'};"
+
+
+def ends_in_return(body: str) -> bool:
+    """Whether *body*'s last top-level statement is a ``return``.
+
+    What decides whether an ``impl`` body is complete (gh-2248). Asking
+    whether ``return`` appears anywhere read an early exit --
+    ``if (n == 0) return 0;`` followed by more work -- as a body that
+    returns, and the function then fell off its end. Read on the body with
+    comments and literals blanked (`_docsync._code_mask`): the statement
+    ending the body is everything after the ``;``, ``{`` or ``}`` before
+    its own final ``;``, so a ``;`` or ``return`` in a comment or a
+    string is not seen. A body ending in a block
+    (``if/else``, a loop) does not end in a ``return``; the one appended
+    after it is at worst unreachable, which compiles.
+
+    Examples
+    --------
+    >>> ends_in_return("x = 1;\\nreturn x;  /* done */")
+    True
+    >>> ends_in_return("if (n == 0) return 0;\\nout[0] = 1;")
+    False
+    >>> ends_in_return("for (;;) { return 1; }")
+    False
+    >>> ends_in_return("if (n) { return 1; }\\nreturn 0;")
+    True
+    """
+    from ._docsync import _code_mask
+
+    mask = _code_mask(body).rstrip()
+    # The final statement starts past the previous `;`, `{` or `}`: any
+    # brace met walking back from a top-level `;` closes or opens a block
+    # before it, so no depth needs tracking. A body ending in a block
+    # leaves only its closing `}` there, which is not a `return`.
+    start = max(mask.rfind(c, 0, len(mask) - 1) for c in ";{}") + 1
+    return re.match(r"\s*return\b", mask[start:]) is not None
+
+
+def impl_default_return(
+    *,
+    return_type: str,
+    record_list: bool = False,
+    variable_output: bool = False,
+    arg_type: str = "void",
+    params: list | None = None,
+    no_count: bool = False,
+    count_type: str = "",
+    batch: bool = False,
+    borrow: bool = False,
+    c_fn: str,
+) -> str:
+    """The ``return`` that completes an ``impl`` body which has none.
+
+    gh-2248. A body lifted from a reference function (``--impl``, or a
+    manifest ``impl``) may end without a ``return`` where the method's
+    kernel returns something; falling off its end compiles with at most a
+    warning and returns garbage. jm appends this statement, the shape's
+    own neutral value, deciding the shape in the order the stub dispatch
+    in :func:`run` does:
+
+    * a list of records (``result_fields``): ``0`` records;
+    * ``variable_output``: the body filled the output it was handed, so
+      the shape's own count -- the one ``_max_out`` mirrors from the
+      kernel (:func:`_max_out_count_param`: ``n``, ``n_in``,
+      ``<p>_len``) -- or, for a kernel with none (all-scalar params,
+      gh-2233's ``no_count``), the bound the binding sized ``out`` with,
+      ``<fn>_max_out(state)``; cast to *count_type* unless ``size_t``;
+    * a borrow: ``NULL``, which the binding raises on;
+    * a batch: nothing, it returns ``void``;
+    * any other -- a scalar, ``void``, one record by value (``single``):
+      the zero the stub returns (:func:`_zero_return`), ``(<T>){0}`` for a
+      record.
+
+    Every non-void type has a zero to spell, so no shape is refused.
+
+    Examples
+    --------
+    >>> impl_default_return(return_type="rec_t", c_fn="f")
+    'return (rec_t){0};'
+    >>> impl_default_return(return_type="rec_t", record_list=True, c_fn="f")
+    'return 0;'
+    >>> impl_default_return(return_type="float", variable_output=True,
+    ...                     arg_type="float", c_fn="f")
+    'return n_in;'
+    >>> impl_default_return(return_type="float", variable_output=True,
+    ...                     no_count=True, count_type="int", c_fn="f")
+    'return (int)f_max_out(state);'
+    """
+    if record_list:
+        return "return 0;"
+    if variable_output:
+        count = _max_out_count_param(arg_type, params, no_count)[1]
+        ctype = count_type or DEFAULT_COUNT_TYPE
+        cast = "" if ctype == "size_t" else f"({ctype})"
+        return f"return {cast}{count or f'{c_fn}_max_out(state)'};"
+    if borrow:
+        return "return NULL;"
+    if batch:
+        return ""
+    return _zero_return(return_type)
+
+
 def _methods_c_stub_fixed(
     component: str,
     name: str,
@@ -671,12 +1044,8 @@ def _methods_c_stub_fixed(
         c_params = f"{csym}_state_t *state{extra_params}{out_param}"
         suppress = f"    (void)state;{extra_suppress}{out_suppress}"
 
-    zero = (
-        T._CTYPE_META[return_type]["zero"]
-        if return_type in T._CTYPE_META
-        else None
-    )
-    ret_line = f"    return ({ret_disp}){zero};" if zero is not None else ""
+    zero = _zero_return(return_type)
+    ret_line = f"    {zero}" if zero else ""
     lines = [
         f"/* <<IMPLEMENT: {name} >> */",
         f"{ret_disp}",
@@ -2041,6 +2410,22 @@ def run(
             _norm_params.append(_entry)
     params = _norm_params
 
+    # gh-2202 / gh-2250 / gh-2313: a key only some shapes read, on a shape
+    # that does not -- refused here, below the normalisation (the input side
+    # asks whether a param is an array the caller writes), for `jm method`
+    # and `apply` alike, before anything is written.
+    _shape_why = shape_keys_why_not(
+        f"{object_name}.{method_name}",
+        {
+            **{k: _args[k] for k in _SIGNATURE_COERCIONS},
+            "name": method_name,
+            "params": params,
+            "result_fields": result_fields,
+        },
+    )
+    if _shape_why:
+        raise _report.Refusal(_shape_why)
+
     # gh-1312: a borrow's refusals live in `_borrow.why_not` so every face
     # asks one place and the reason reaches the author as prose rather than
     # as a C compile error several generated files away.
@@ -2239,13 +2624,34 @@ def run(
                 csym=csym,
             )
         if impl_body is not None:
-            import re as _re
-
             from . import _impl as I
 
             body = impl_body
-            if variable_output and not _re.search(r"\breturn\b", body):
-                body = body.rstrip("\n") + "\nreturn n;"
+            if not ends_in_return(body):
+                # gh-2248: the shape's own neutral return, for every shape
+                # the dispatch above picks, unless the body already ends in
+                # one; it was `n` for variable_output alone, nothing for the
+                # rest, and nothing after an early `return` either.
+                _ret = impl_default_return(
+                    return_type=return_type,
+                    record_list=bool(
+                        result_fields
+                        and not single
+                        and not _record.is_record_array(
+                            variable_output, record_dtype, borrow
+                        )
+                    ),
+                    variable_output=bool(variable_output),
+                    arg_type=arg_type,
+                    params=params,
+                    no_count=bool(no_count),
+                    count_type=count_type,
+                    batch=bool(batch),
+                    borrow=bool(borrow),
+                    c_fn=_c_fn,
+                )
+                if _ret:
+                    body = body.rstrip("\n") + "\n" + _ret
             stub = I.inject_body_into_stub(stub, body)
         # gh-994: `fn` overrides the symbol; unset it derives the same way
         # every stub emitter above does.

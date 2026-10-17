@@ -21,7 +21,8 @@ What each one is really doing:
 - **`--error-negative`** says the `int` is a **value** unless it is negative.
     `peek()` returns an `int` in Python, and only a negative raises.
 
-Both method flags need `--return-type int`. That is not cosmetic:
-`--status-return` with `--return-type size_t` is accepted and generates
-`int _rc = budget_allocator_take(...)` against a `size_t` prototype, which compiles
-and silently truncates.
+Both method flags read an integer return. `--status-return` takes any
+integer type, and the binding keeps the status in that type, so a non-zero
+`size_t` is never truncated to a zero `int`; a `float` or `void` return is
+refused, since it is not a status. `--error-negative` needs a signed one: an
+unsigned value is never negative, and the test would never fire.

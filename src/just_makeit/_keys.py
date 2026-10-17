@@ -420,6 +420,39 @@ BATCH_METHOD_KEYS = frozenset(
     }
 )
 
+#: Method keys that only some RESULT shapes read: each key, and the shapes
+#: (`_method.result_shape`) whose binding reads it (gh-2202, gh-2250).
+#:
+#: ``none_on_empty`` answers ``None`` for an empty result, and only a
+#: ``variable_output`` count and a borrow's ``NULL`` can be empty.
+#: ``status_return`` reads the kernel's integer return as a status, and only
+#: a fixed-output kernel returns one: a single record returns the record, a
+#: list of records and a ``variable_output`` result their count, a borrow its
+#: pointer. On any other shape each was stored and read by nobody, or (on a
+#: fixed ``out_type`` / ``multi_output``) rendered a call that did not
+#: compile. ``_method.shape_keys_why_not`` refuses the rest, from
+#: ``_method.run``, which ``jm method`` and ``apply``'s replay both call; and
+#: ``tests/test_gh2250_shape_bound_method_keys.py`` builds every pair this
+#: accepts and refuses every other, over every shape it knows.
+RESULT_SHAPE_KEYS: "dict[str, frozenset[str]]" = {
+    "none_on_empty": frozenset({"variable_output", "borrow"}),
+    "status_return": frozenset({"fixed"}),
+}
+
+#: Method keys that read one side of the INPUT: each key, and the input
+#: `_method.method_input` must report for the binding to read it (gh-2313).
+#:
+#: ``strict`` refuses a wrong-dtype input ARRAY rather than converting it, so
+#: it needs one: a block input or an array param. ``count_default`` and
+#: ``count_name`` size and name the count the binding SYNTHESIZES for an
+#: input-less ``variable_output`` or ``batch`` method, so they need that
+#: count. On the other side each was stored and generated nothing.
+INPUT_SIDE_KEYS: "dict[str, str]" = {
+    "strict": "block",
+    "count_default": "count",
+    "count_name": "count",
+}
+
 #: Keys valid on a ``[[<component>.methods.params]]`` entry.
 PARAM_KEYS = frozenset(
     {

@@ -1610,11 +1610,7 @@ def save(root: Path, cfg: dict) -> None:
         if mod in module_owners:
             dst = module_owners[mod]
         elif split_layout:
-            # Sanitize a dotted module id to its cname for the fragment file
-            # name (modules/dsp_filters.toml) — one clean extension that still
-            # matches the modules/*.toml include glob; the dotted key lives
-            # inside the file.
-            dst = root / "modules" / f"{module_paths(mod).cname}.toml"
+            dst = module_fragment(root, mod)
         else:
             dst = manifest_path
         by_file.setdefault(dst, {}).setdefault("module", {})[mod] = data
@@ -1958,6 +1954,25 @@ class ModulePaths(NamedTuple):
 def module_paths(module_id: str) -> ModulePaths:
     """Derived path/identifier forms for a (possibly dotted) module id."""
     return ModulePaths.of(module_id)
+
+
+def module_fragment(root: Path, module_id: str) -> Path:
+    """The split-layout fragment a module's ``[module.X]`` is written to.
+
+    ``modules/<cname>.toml``: a dotted id is spelled by its cname
+    (``dsp.filters`` -> ``modules/dsp_filters.toml``), one clean extension
+    the ``modules/*.toml`` include glob still reaches; the dotted id lives
+    inside the file. The one spelling of that path, for `save` routing a
+    new module and `migrate-to-fragments` moving an inline one (gh-2306):
+    the two disagreed, so one manifest gave differently named fragments
+    depending on how the project got there.
+
+    Examples
+    --------
+    >>> module_fragment(Path("p"), "dsp.filters").as_posix()
+    'p/modules/dsp_filters.toml'
+    """
+    return root / "modules" / f"{module_paths(module_id).cname}.toml"
 
 
 def module_cnames(cfg: dict) -> set[str]:

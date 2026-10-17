@@ -43,6 +43,7 @@ from dataclasses import replace as _replace
 
 from ._context._diagnostics import create_raises_doc as _create_raises_doc
 from ._context._diagnostics import empty_is_none_doc as _empty_is_none_doc
+from ._context._diagnostics import fixed_result_ann as _fixed_result_ann
 from ._context._diagnostics import optional_ann as _optional_ann
 from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
@@ -2177,14 +2178,6 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             )
         elif m_py_return_type:
             ret_ann = m_py_return_type
-        elif m.get("status_return"):
-            # gh-432: status returns bind as None (raise on failure).
-            #
-            # gh-805 §B: `error_negative` is deliberately NOT folded in here.
-            # It also raises, but the int is the VALUE on success, so its
-            # annotation is the ordinary scalar one and it must fall through.
-            # The two keys are mutually exclusive at declaration time.
-            ret_ann = "None"
         elif m_result_fields and not _record.is_record_array(
             m_var, m.get("record_dtype"), m.get("borrow")
         ):
@@ -2217,14 +2210,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                     else ndarrays[0]
                 ),
             )
-        elif m.get("out_type"):
+        elif m.get("status_return") or m_multi or m.get("out_type"):
             # gh-529: peer of the `out_type` branch in
             # make_methods_ctx's return-annotation resolution -- a method
             # with out_type returns a fresh ndarray, not the scalar m_ret.
             # This is the module-aggregated .pyi; the standalone one lives in
             # _context/_methods.py, and the two are pinned together by
             # tests/test_gh529_method_out_type_pyi.py.
-            ret_ann = f"NDArray[{_np(m['out_type'])}]"
+            # gh-432: a status alone binds as None (raise on failure).
+            # gh-805 §B: `error_negative` is deliberately NOT folded in: the
+            # int is the VALUE on success, so it falls through to the scalar.
+            # gh-2250: the shape is the binding's own list, asked of the one
+            # helper the peer asks -- a `multi_output` tuple read as the
+            # bare scalar here.
+            ret_ann = _fixed_result_ann(m, _py, lambda t: f"NDArray[{_np(t)}]")
         else:
             ret_ann = _py(m_ret)
 
@@ -2809,6 +2808,40 @@ def numpy_imports(body: str) -> "list[str]":
     if _re.search(r"(?<!\.)\bNDArray\b", code):
         out.append("from numpy.typing import NDArray")
     return out
+
+
+def positional_only(params: str, flags: str, lead: str = "") -> str:
+    """A stub's parameter list, ending in ``/`` exactly when the binding's
+    ``METH_*`` *flags* take no keywords (gh-2212).
+
+    The one answer every stub writer asks, from the flags the method table
+    registers, so a stub cannot accept ``f(x=...)`` where the binding
+    raises ``TypeError`` -- nor refuse a keyword the binding takes. A
+    ``METH_VARARGS`` or ``METH_O`` binding parses positionally; only
+    ``METH_KEYWORDS`` takes names.
+
+    Parameters
+    ----------
+    params : str
+        The parameters a caller passes, comma-joined; ``""`` for none, which
+        gets no ``/``.
+    flags : str
+        The row's flags, as the ``PyMethodDef`` spells them.
+    lead : str, optional
+        ``self`` or ``cls``, which no caller names, placed first.
+
+    Examples
+    --------
+    >>> positional_only("x: float", "METH_VARARGS", "self")
+    'self, x: float, /'
+    >>> positional_only("x: float", "METH_VARARGS | METH_KEYWORDS", "self")
+    'self, x: float'
+    >>> positional_only("", "METH_VARARGS", "self")
+    'self'
+    """
+    if params and "METH_KEYWORDS" not in flags:
+        params += ", /"
+    return ", ".join(p for p in (lead, params) if p)
 
 
 def prune_stub_imports(lines: "list[str]") -> "list[str]":

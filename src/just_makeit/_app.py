@@ -453,16 +453,90 @@ _PY_WRITE = (
 )
 
 
+# ── exact numeric text (gh-2254) ─────────────────────────────────────────────
+# The significant digits that write an IEEE 754 binary real so the decimal
+# text reads back to the same bits: C11's FLT_DECIMAL_DIG / DBL_DECIMAL_DIG,
+# which C99 (the generated projects' standard) does not define. Keyed by the
+# width the type row's `py_type` states, so a real row of another width is a
+# KeyError at render time, not lossy text.
+_REAL_DIGITS = {32: 9, 64: 17}
+
+
+def _real_digits(ctype: str) -> int:
+    """The digits that write the real *ctype* exactly, from its row's width.
+
+    >>> _real_digits("float"), _real_digits("double")
+    (9, 17)
+    """
+    py_type = T._CTYPE_META[ctype]["py_type"]
+    return _REAL_DIGITS[int(py_type.rsplit("float", 1)[1])]
+
+
+def c_printf(ctype: str) -> "tuple[str, str]":
+    """The ``printf`` conversion and cast that write a *ctype* value exactly.
+
+    gh-2254: the one answer for every generated C line that prints a
+    numeric value -- a ``jm app`` executable's ``--record`` and a function
+    app's result -- derived from the type's ``_CTYPE_META`` row rather
+    than a table of its own. An integer is widened to ``long long`` (or
+    ``unsigned long long`` when its row's floor is ``0``, the split
+    :func:`cli_number_c` reads by), which holds every integer row. A real
+    is widened to ``double`` and written with the digits that read back
+    to the same bits through ``strtof`` / ``strtod`` -- the parse
+    :func:`cli_number_c` emits -- so a recorded value replays as itself.
+    ``%g`` kept six digits, so ``0.123456789`` was recorded as
+    ``0.123457``.
+
+    Parameters
+    ----------
+    ctype : str
+        A numeric ``_CTYPE_META`` key (kind ``int`` or ``float``).
+
+    Returns
+    -------
+    tuple of str
+        ``(conversion, cast)``: the conversion spec, and the C cast that
+        puts the value in the type the conversion reads.
+
+    Examples
+    --------
+    >>> c_printf("float"), c_printf("double")
+    (('%.9g', '(double)'), ('%.17g', '(double)'))
+    >>> c_printf("int8_t"), c_printf("size_t")
+    (('%lld', '(long long)'), ('%llu', '(unsigned long long)'))
+    """
+    meta = T._CTYPE_META[ctype]
+    if meta["kind"] == "float":
+        return f"%.{_real_digits(ctype)}g", "(double)"
+    if meta["limits"][0] == "0":
+        return "%llu", "(unsigned long long)"
+    return "%lld", "(long long)"
+
+
+# A csv I or Q value, per float sample type: the conversion `c_printf` writes
+# the component type with, so each line reads back to the sample's bits
+# (gh-2254). `%0.9f` kept nine places after the point, so a cf32 sample
+# below 5e-10 -- an ordinary small amplitude -- was written as 0.000000000.
+# Both faces spell it with this one conversion: Python's `%` and C's
+# `printf` both round correctly, so the two write the same bytes. A
+# non-finite sample is the exception printf does not share -- it writes a
+# sign-bit NaN as "-nan" where Python's `%` writes "nan" -- so the C face
+# writes those through `jm_put_real` (`_WRITE_BLOCK_C`) in Python's spelling.
+_CSV_CF32 = c_printf("float")[0]
+_CSV_CF64 = c_printf("double")[0]
+
 _PY_PACK_WRITE = (
     "    _st = args.sample_type\n"
     '    if args.file_type == "csv":\n'
     "        _lines = []\n"
     '        if _st == "cf32":\n'
     "            for _z in out:\n"
-    '                _lines.append("%0.9f,%0.9f" % (_z.real, _z.imag))\n'
+    f'                _lines.append("{_CSV_CF32},{_CSV_CF32}"'
+    " % (_z.real, _z.imag))\n"
     '        elif _st == "cf64":\n'
     "            for _z in out:\n"
-    '                _lines.append("%0.17g,%0.17g" % (_z.real, _z.imag))\n'
+    f'                _lines.append("{_CSV_CF64},{_CSV_CF64}"'
+    " % (_z.real, _z.imag))\n"
     "        else:\n"
     '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0, "ci8": 127.0}[_st]\n'
     "            for _z in out:\n"
@@ -826,6 +900,36 @@ jm_convert_block(const float _Complex *in, size_t n, int st,
 # assumed little-endian (jm's targets), so big-endian output reverses each
 # element on the way out.
 _WRITE_BLOCK_C = """\
+#include <math.h>
+
+/* gh-2254: write v so it reads back exactly -- `digits` significant digits
+   (the type's round-trip count), or, for a non-finite v, nan_s / inf_s with
+   a '-' before a negative infinity. A NaN's sign is dropped, as Python's
+   `%` drops it, where printf writes "-nan". The one writer of a real both
+   the csv lines and the --record JSON go through, with their own spellings
+   of the non-finite values. */
+static void
+jm_put_real(FILE *f, double v, int digits, const char *nan_s,
+            const char *inf_s)
+{
+    if (isnan(v))
+        fputs(nan_s, f);
+    else if (isinf(v))
+        fprintf(f, "%s%s", v < 0 ? "-" : "", inf_s);
+    else
+        fprintf(f, "%.*g", digits, v);
+}
+
+/* One csv I,Q line, each component as Python's `%.<digits>g` writes it. */
+static void
+jm_put_iq(FILE *f, double re, double im, int digits)
+{
+    jm_put_real(f, re, digits, "nan", "inf");
+    fputc(',', f);
+    jm_put_real(f, im, digits, "nan", "inf");
+    fputc('\\n', f);
+}
+
 /* Bytes per I or Q element for sample type st (for big-endian swapping). */
 static size_t
 jm_elem_size(int st)
@@ -849,9 +953,9 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
         for (size_t i = 0; i < n; i++) {
             float re = crealf(in[i]), im = cimagf(in[i]);
             if (st == 0)
-                fprintf(out, "%0.9f,%0.9f\\n", (double)re, (double)im);
+                jm_put_iq(out, (double)re, (double)im, JM_CSV_CF32);
             else if (st == 1)
-                fprintf(out, "%0.17g,%0.17g\\n", (double)re, (double)im);
+                jm_put_iq(out, (double)re, (double)im, JM_CSV_CF64);
             else {
                 double sc = (st == 2) ? 2147483647.0
                             : (st == 3) ? 32767.0
@@ -874,23 +978,17 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
     }
     fwrite(bytes, 1, nb, out);
 }
-"""
+""".replace("JM_CSV_CF32", str(_real_digits("float"))).replace(
+    "JM_CSV_CF64", str(_real_digits("double"))
+)
 
-# printf format + cast for each numeric C type, used by the --record JSON dump.
-_C_REC_FMT = {
-    "float": ("%g", "(double)"),
-    "double": ("%g", "(double)"),
-    "int": ("%d", "(int)"),
-    "int8_t": ("%d", "(int)"),
-    "int16_t": ("%d", "(int)"),
-    "int32_t": ("%d", "(int)"),
-    "int64_t": ("%lld", "(long long)"),
-    "uint8_t": ("%u", "(unsigned)"),
-    "uint16_t": ("%u", "(unsigned)"),
-    "uint32_t": ("%lu", "(unsigned long)"),
-    "uint64_t": ("%llu", "(unsigned long long)"),
-    "size_t": ("%zu", ""),
-}
+
+def _is_recorded_real(f: dict) -> bool:
+    return (
+        not f.get("choices")
+        and f["type"] in _C_PARSE
+        and T._CTYPE_META[f["type"]]["kind"] == "float"
+    )
 
 
 def _c_choice_arrays(flags: list[dict]) -> str:
@@ -924,8 +1022,20 @@ def _c_record_block(flags: list[dict], name: str, version: str) -> str:
                 f'            fprintf(rec, ",\\"{nm}\\":\\"%s\\"", '
                 f"jm_choices_{nm}[{nm}]);"
             )
-        elif f["type"] in _C_REC_FMT:
-            fmt, cast = _C_REC_FMT[f["type"]]
+        elif _is_recorded_real(f):
+            # gh-2254: the digits `c_printf` writes this type with, through
+            # the csv's writer (`_WRITE_BLOCK_C`, always beside a record).
+            # JSON has no spelling for a non-finite number and `%g` writes
+            # `inf` / `nan`, which no JSON reader takes: these are the ones
+            # Python's `json` writes for the Python face's record and reads
+            # back, and `strtod` reads them too, so either record replays.
+            lines.append(f'            fprintf(rec, ",\\"{nm}\\":");')
+            lines.append(
+                f"            jm_put_real(rec, (double){nm}, "
+                f'{_real_digits(f["type"])}, "NaN", "Infinity");'
+            )
+        elif f["type"] in _C_PARSE:
+            fmt, cast = c_printf(f["type"])
             lines.append(
                 f'            fprintf(rec, ",\\"{nm}\\":{fmt}", {cast}{nm});'
             )
@@ -942,7 +1052,7 @@ def _py_record_block(flags: list[dict], name: str, version: str) -> str:
     """Emit a `--record` JSON dump in Python from the parsed args."""
     fields = [f'"tool": "{name}"', f'"version": "{version}"']
     for f in flags:
-        if f.get("choices") or f["type"] in _C_REC_FMT:
+        if f.get("choices") or f["type"] in _C_PARSE:
             fields.append(f'"{f["name"]}": args.{f["name"]}')
     # One key per line with a trailing comma: the layout ruff keeps at any
     # width, where the one-line dict ran past it (gh-1478).
@@ -1278,23 +1388,6 @@ def _app_shape(cfg: dict, component: str) -> str | None:
 
 
 # ── module-function apps ─────────────────────────────────────────────────────
-# printf format + cast per scalar return type.
-_C_PRINTF = {
-    "float": ("%g", "(double)"),
-    "double": ("%g", "(double)"),
-    "int": ("%d", ""),
-    "int8_t": ("%d", "(int)"),
-    "int16_t": ("%d", "(int)"),
-    "int32_t": ("%ld", "(long)"),
-    "int64_t": ("%lld", "(long long)"),
-    "uint8_t": ("%u", "(unsigned)"),
-    "uint16_t": ("%u", "(unsigned)"),
-    "uint32_t": ("%lu", "(unsigned long)"),
-    "uint64_t": ("%llu", "(unsigned long long)"),
-    "size_t": ("%zu", ""),
-}
-
-
 def _find_fn(cfg: dict, function: str, module: str | None):
     """Return (module, fn_dict) for the named function, or (None, None)."""
     mods = [module] if module else C.modules(cfg)
@@ -1312,7 +1405,7 @@ def _fn_generatable(fn: dict) -> bool:
         if p["type"] not in _C_PARSE:
             return False
     ret = fn.get("return_type", "void")
-    return ret == "void" or ret in _C_PRINTF
+    return ret == "void" or ret in _C_PARSE
 
 
 def _fn_flags(params: list[dict]) -> list[dict]:
@@ -1332,9 +1425,11 @@ def _fn_flags(params: list[dict]) -> list[dict]:
 
 def _c_call_print(function: str, ret_t: str, param_names: list[str]) -> str:
     args = ", ".join(param_names)
-    if ret_t == "void" or ret_t not in _C_PRINTF:
+    if ret_t == "void" or ret_t not in _C_PARSE:
         return f"    {function}({args});"
-    fmt, cast = _C_PRINTF[ret_t]
+    # gh-2254: a real round-trips exactly, as the Python face's print()
+    # does -- the same value, though not always the same text.
+    fmt, cast = c_printf(ret_t)
     return (
         f"    {ret_t} result = {function}({args});\n"
         f'    printf("{fmt}\\n", {cast}result);'

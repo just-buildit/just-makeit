@@ -54,7 +54,7 @@ _METHODS = (
     ("m_void", (), False, False),
     ("m_neg", ("--return-type", "int", "--error-negative"), False, False),
     ("m_nogil", ("--return-type", "double", "--nogil"), False, False),
-    ("m_status", ("--status-return",), False, False),
+    ("m_status", ("--return-type", "int", "--status-return"), False, False),
     ("m_vo", ("--out-type", "float", "--variable-output"), True, False),
     ("m_ot", ("--out-type", "float"), True, False),
     (

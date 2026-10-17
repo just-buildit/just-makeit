@@ -64,6 +64,8 @@ from ._diagnostics import (
     empty_is_none,
     empty_is_none_doc,
     empty_raise_c,
+    fixed_result_ann,
+    fixed_result_parts as _fixed_result_parts,
     optional_ann,
     property_declared_raise,
     property_raises_doc,
@@ -2553,9 +2555,6 @@ def make_methods_ctx(
                 m,
                 _pyi_ndarray(_borrow.element_type(record_dtype, return_type)),
             )
-        elif status_return:
-            # gh-432: status returns bind as None (raise on failure).
-            _ret_ann = "None"
         elif result_fields and single_record:
             # gh-244/gh-646: one named record — a PyStructSequence (a tuple
             # subclass). This used to annotate as a bare tuple of the field
@@ -2598,7 +2597,7 @@ def make_methods_ctx(
                     else _ndarrays[0]
                 ),
             )
-        elif out_type:
+        elif status_return or multi_output or out_type:
             # gh-529: `out_type` on a method allocates a fresh output array
             # per call and returns it -- the C wrapper (the `elif out_type`
             # branch below) does exactly what a function's out_type does, and
@@ -2607,7 +2606,11 @@ def make_methods_ctx(
             # contradicting both. `_stubs._obj_stub` carries the peer of this
             # branch for the module-aggregated stub; the two must move
             # together (see tests/test_gh529_method_out_type_pyi.py).
-            _ret_ann = _pyi_ndarray(out_type)
+            # gh-432: a status alone binds as None (raise on failure).
+            # gh-2250: all three from the list the binding builds -- a
+            # `multi_output` tuple read as the bare scalar here, and a
+            # status beside an output had no binding to describe.
+            _ret_ann = fixed_result_ann(m, _pyi_scalar, _pyi_ndarray)
         else:
             _ret_ann = _pyi_scalar(return_type)
 
@@ -4075,6 +4078,10 @@ def make_methods_ctx(
                 # A declared default is C, not a Python literal, so the
                 # Python-facing signature shows `...` rather than leaking it.
                 _vo_sig_arg = f"{_count_kw}={'...' if _count_default else 1}"
+                # gh-2222: and the buffer it takes, as every other shape's
+                # signature line names it (`_doc_names`).
+                if _stub_enable_out:
+                    _vo_sig_arg += ", out=None"
                 _vo_call_example = f"obj.{name}(4)"
             # gh-788: a numpydoc-shaped block naming each column of the
             # structured result and its Python type. Only the documented
@@ -4101,10 +4108,9 @@ def make_methods_ctx(
                 # and was wrong on both clauses once that buffer was deleted.
                 *_runtime_doc(
                     (
-                        # gh-788: a structured result gets its own sentence.
-                        # The generic one promises `out=`, which this shape
-                        # deliberately does not offer, and says nothing about
-                        # the property that makes the shape worth having.
+                        # gh-788: a structured result gets its own sentence,
+                        # naming the property that makes the shape worth
+                        # having.
                         "Returns a new NumPy-owned structured array each"
                         f" call, one row per {record_dtype} — the dtype is"
                         " that struct's own layout, so a row and the C"
@@ -4113,8 +4119,16 @@ def make_methods_ctx(
                         if record_dtype
                         else "Returns a new NumPy-owned array each call —"
                         " independent of every other result, and safe to"
-                        " keep. Pass out= to write into your own buffer"
-                        " instead."
+                        " keep."
+                    )
+                    # gh-2222: offered where the binding takes `out=` -- the
+                    # predicate its `_kwlist` and both `.pyi` writers read
+                    # -- and only there: a `multi_output` method has none,
+                    # and a structured result has one (gh-805 section E).
+                    + (
+                        " Pass out= to write into your own buffer instead."
+                        if _stub_enable_out
+                        else ""
                     )
                 ),
                 # gh-788: the columns, documented on the SAME face as the
@@ -4785,116 +4799,137 @@ def make_methods_ctx(
                     + _keep
                     + f"    return {ret_meta['to_py']('_rc')};\n"
                 )
-            elif status_return:
-                # gh-432: status-code return — 0 = OK -> None, non-zero raises.
+            elif status_return or multi_output or out_type:
+                # gh-2250: ONE emitter for every fixed-output result that is
+                # not a plain return -- a status (gh-432), extra outputs
+                # (gh-600), a fresh output array (gh-529), and any of them
+                # together. They were three sibling branches, so a status
+                # beside an output was a branch that rendered neither the
+                # outputs nor the array: `too few arguments` in the user's
+                # build. What the call returns is `fixed_result_parts`, the
+                # list both `.pyi` producers and the runtime synopsis
+                # annotate.
                 #
-                # gh-823 Ask D: `error` / `error_message` now reach here too.
-                # They were always read (above, generically), and only
-                # `error_negative`'s emitter looked at them — so a method whose
-                # whole purpose is to explain a failure could say nothing but
-                # "<name> failed (rc=%d)", while the same verdict reached
-                # through the destructor, which can carry a message, explained
-                # itself. Additive: the derived string stays the default.
-                ret_body = (
-                    _nogil_call("int", "_rc", f"{c_fn}({call_args_c})", nogil)
-                    + f"{_p_cleanup}"
-                    f"    if (_rc != 0) {{\n"
-                    + _rc_raise_c(*_raise_pair)
-                    + "    }\n"
-                    + _keep
-                    + "    Py_RETURN_NONE;\n"
-                )
-            elif multi_output:
-                extra_decls = "".join(
+                # gh-823 Ask D: `error` / `error_message` reach the status
+                # raise, through `_rc_raise_c`, as on every raising shape.
+                _pre = ""
+                _out_arg = ""
+                _cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
+                if out_type:
+                    out_disp = out_type
+                    out_npy = _CTYPE_TO_NPY[out_type]
+                    # Buffer size: `_outbuf.length`, the rule a module
+                    # function's output is sized by too (gh-1888). The first
+                    # array the call parses -- an array `arg_type` input
+                    # first, as the `x` it is parsed as above; it was left
+                    # out, so `--arg-type 'T[]'` allocated nothing and a
+                    # kernel filling `x_len` wrote past it. Else the first
+                    # integer param, so ``foo(n: int) -> ndarray`` (n
+                    # samples requested) allocates n (gh-65).
+                    _sizing = (
+                        [{"name": "x", "type": arg_type}]
+                        if has_arg and arg_type.endswith("[]")
+                        else []
+                    ) + list(params)
+                    # With neither, still an empty output: refusing the row
+                    # would stop `apply` on projects that declare one -- the
+                    # frozen `stale_project` example's `shape` among them --
+                    # so that call is left open in gh-2109.
+                    raw_len = (
+                        _outbuf.length(
+                            _sizing, out_type=out_type, count_fallback=True
+                        )
+                        or "0"
+                    )
+                    if out_divisor > 1:
+                        len_expr = f"({raw_len} / {out_divisor})"
+                    else:
+                        len_expr = raw_len
+                    # gh-1710: the fallback length is the caller's int, which
+                    # an unsigned param parses without a range check.
+                    _pre += (
+                        _coerce.output_size_c(
+                            "_dim",
+                            len_expr,
+                            f"{_who}.{name}",
+                            _cleanup_inline,
+                        )
+                        + f"    PyObject *_out ="
+                        f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
+                        f"    if (!_out)"
+                        f" {{{_cleanup_inline} return NULL; }}\n"
+                    )
+                    _out_arg = (
+                        f", ({out_disp} *)PyArray_DATA((PyArrayObject *)_out)"
+                    )
+                _pre += "".join(
                     f"    {rt} out{i + 1} = {_CTYPE_META[rt]['zero']};\n"
                     for i, rt in enumerate(multi_output)
                 )
-                extra_call = "".join(
+                _extra_args = "".join(
                     f", &out{i + 1}" for i in range(len(multi_output))
                 )
-                if ret_meta:
-                    _res = result_local(params)
-                    call_line = _nogil_call(
-                        ret_disp,
-                        _res,
-                        f"{c_fn}({call_args_c}{extra_call})",
-                        nogil,
-                    )
-                    py_primary = ret_meta["to_py"](_res)
-                else:
-                    call_line = _nogil_call(
-                        "", "", f"{c_fn}({call_args_c}{extra_call})", nogil
-                    )
-                    py_primary = "Py_None"
-                pack_parts = [py_primary] + [
-                    _CTYPE_META[rt]["to_py"](f"out{i + 1}")
-                    if rt in _CTYPE_META
-                    else f"PyLong_FromLong(out{i + 1})"
-                    for i, rt in enumerate(multi_output)
-                ]
-                n = len(multi_output) + 1
-                ret_body = (
-                    f"{extra_decls}"
-                    f"{call_line}"
-                    f"{_p_cleanup}"
-                    f"{_keep}"
-                    f"    return PyTuple_Pack({n},"
-                    f" {', '.join(pack_parts)});\n"
+                _res = result_local(params)
+                # The status is kept as `_rc`; the array replaces the return
+                # (gh-529), and a `void` kernel has none to keep.
+                _decl, _var = (
+                    (ret_disp, "_rc")
+                    if status_return
+                    else ("", "")
+                    if out_type or not ret_meta
+                    else (ret_disp, _res)
                 )
-            elif out_type:
-                out_disp = out_type
-                out_npy = _CTYPE_TO_NPY[out_type]
-                # Buffer size: `_outbuf.length`, the rule a module function's
-                # output is sized by too (gh-1888). The first array the call
-                # parses -- an array `arg_type` input first, as the `x` it is
-                # parsed as above; it was left out, so `--arg-type 'T[]'`
-                # allocated nothing and a kernel filling `x_len` wrote past
-                # it. Else the first integer param, so ``foo(n: int) ->
-                # ndarray`` (n samples requested) allocates n (gh-65).
-                _sizing = (
-                    [{"name": "x", "type": arg_type}]
-                    if has_arg and arg_type.endswith("[]")
-                    else []
-                ) + list(params)
-                # With neither, still an empty output: refusing the row
-                # would stop `apply` on projects that declare one -- the
-                # frozen `stale_project` example's `shape` among them --
-                # so that call is left open in gh-2109.
-                raw_len = (
-                    _outbuf.length(
-                        _sizing, out_type=out_type, count_fallback=True
-                    )
-                    or "0"
+                _call_c = _nogil_call(
+                    _decl,
+                    _var,
+                    f"{c_fn}({call_args_c}{_extra_args}{_out_arg})",
+                    nogil,
                 )
-                if out_divisor > 1:
-                    len_expr = f"({raw_len} / {out_divisor})"
+                _check_c = (
+                    "    if (_rc != 0) {\n"
+                    + ("        Py_DECREF(_out);\n" if out_type else "")
+                    + _rc_raise_c(*_raise_pair)
+                    + "    }\n"
+                    if status_return
+                    else ""
+                )
+                # Each value with how `Py_BuildValue` takes it: `N` steals
+                # the new reference a conversion returns. `PyTuple_Pack`
+                # took them with `O` and leaked one per value per call.
+                _vals: "list[tuple[str, str]]" = []
+                _parts = _fixed_result_parts(m)
+                # The lead value, when there is one: the array, else the
+                # kernel's return (`None` for a `void` kernel).
+                for _kind, _ct in _parts[: len(_parts) - len(multi_output)]:
+                    if _kind == "array":
+                        _vals.append(("N", "_out"))
+                    elif ret_meta:
+                        _vals.append(("N", ret_meta["to_py"](_res)))
+                    else:
+                        _vals.append(("O", "Py_None"))
+                for _i, _rt in enumerate(multi_output):
+                    _vals.append(
+                        (
+                            "N",
+                            _CTYPE_META[_rt]["to_py"](f"out{_i + 1}")
+                            if _rt in _CTYPE_META
+                            else f"PyLong_FromLong(out{_i + 1})",
+                        )
+                    )
+                if not _vals:
+                    _return_c = "    Py_RETURN_NONE;\n"
+                elif len(_vals) == 1:
+                    _return_c = f"    return {_vals[0][1]};\n"
                 else:
-                    len_expr = raw_len
-                cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
-                # gh-1710: the fallback length is the caller's int, which an
-                # unsigned param parses without a range check.
+                    _fmt = "".join(f for f, _ in _vals)
+                    _pad = " " * 25
+                    _return_c = (
+                        f'    return Py_BuildValue("({_fmt})",\n'
+                        + ",\n".join(f"{_pad}{v}" for _, v in _vals)
+                        + ");\n"
+                    )
                 ret_body = (
-                    _coerce.output_size_c(
-                        "_dim",
-                        len_expr,
-                        f"{_who}.{name}",
-                        cleanup_inline,
-                    )
-                    + f"    PyObject *_out ="
-                    f" PyArray_EMPTY(1, &_dim, {out_npy}, 0);\n"
-                    f"    if (!_out)"
-                    f" {{{cleanup_inline} return NULL; }}\n"
-                    + _nogil_call(
-                        "",
-                        "",
-                        f"{c_fn}({call_args_c},"
-                        f" ({out_disp} *)PyArray_DATA"
-                        f"((PyArrayObject *)_out))",
-                        nogil,
-                    )
-                    + f"{_p_cleanup}"
-                    f"{_keep}"
-                    f"    return _out;\n"
+                    f"{_pre}{_call_c}{_p_cleanup}{_check_c}{_keep}{_return_c}"
                 )
             elif ret_meta:
                 # gh-1512: `y` unless a param already took it.
@@ -4948,19 +4983,17 @@ def make_methods_ctx(
             # missing `Raises`, one line down: a doc face describing a
             # different function than the one it is attached to.
             _fix_ret_hint = (
-                "None"
-                if status_return
                 # gh-1312: a borrow returns an ndarray view, so its synopsis
                 # line says so. Left out, this read `-> complex` above a
                 # body that hands back an array -- the same "doc face
                 # describing a different function" defect the comment above
                 # is about.
                 # gh-2183: and optional when a NULL borrow answers None.
-                else (
-                    optional_ann(m, "ndarray")
-                    if out_type or multi_output or borrow
-                    else _pyi_scalar(return_type)
-                )
+                optional_ann(m, "ndarray")
+                if borrow
+                # gh-2250: the list the binding returns -- a `multi_output`
+                # tuple read `-> ndarray` here.
+                else fixed_result_ann(m, _pyi_scalar, lambda _t: "ndarray")
             )
             _fix_demo: list[str] = []
             if has_arg or has_params:
@@ -4983,7 +5016,13 @@ def make_methods_ctx(
                     f"    >>> {'' if _fix_ret_hint == 'None' else 'y = '}"
                     f"obj.{name}({_call_str})"
                 )
-            elif out_type or multi_output or borrow:
+            elif multi_output:
+                # gh-2250: a tuple, which has no `ndim` -- the demo below
+                # raised AttributeError on every multi_output method.
+                _fix_demo.append(f"    >>> y = obj.{name}({_call_str})")
+                _fix_demo.append("    >>> len(y)")
+                _fix_demo.append(f"    {len(_fixed_result_parts(m))}")
+            elif out_type or borrow:
                 # gh-1312: a borrow demos like every other array-returning
                 # shape. Without this it fell to the scalar branch below and
                 # printed `0j` as the expected output of a call that returns

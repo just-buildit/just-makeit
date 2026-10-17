@@ -1355,7 +1355,9 @@ def test_the_cli_binds_the_text_form(project: Path) -> None:
         )
     )
     # gain 1.0 + frame.n 4, for the default dur of two samples.
-    assert out.splitlines() == ["5.000000000,0.000000000"] * 2, out
+    # gh-2254: csv writes %.9g, which reads back exactly and drops the
+    # trailing zeros %0.9f padded with.
+    assert out.splitlines() == ["5,0"] * 2, out
 
 
 def test_the_cli_refuses_text_the_host_refuses(project: Path) -> None:

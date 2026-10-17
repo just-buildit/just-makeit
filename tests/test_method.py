@@ -1043,7 +1043,9 @@ class TestMethodFixedMultiOutput:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyTuple_Pack" in ext
+        # gh-2250: `N` hands each new reference to the tuple; PyTuple_Pack
+        # took them with `O` and leaked them.
+        assert 'Py_BuildValue("(NN)"' in ext
 
     def test_ext_c_stack_alloc_out(self, project):
         method_run(
@@ -1113,7 +1115,9 @@ class TestMethodFixedMultiOutput:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyTuple_Pack" in ext
+        # gh-2250: `N` hands each new reference to the tuple; PyTuple_Pack
+        # took them with `O` and leaked them.
+        assert 'Py_BuildValue("(NN)"' in ext
 
     def test_multiple_extra_outputs(self, project):
         method_run(
@@ -1134,7 +1138,7 @@ class TestMethodFixedMultiOutput:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyTuple_Pack(3," in ext
+        assert 'Py_BuildValue("(NNN)"' in ext
 
 
 # ---------------------------------------------------------------------------
