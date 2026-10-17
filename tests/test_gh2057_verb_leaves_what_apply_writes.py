@@ -514,6 +514,9 @@ CASES: "dict[str, dict[str, Case]]" = {
         # `a` sorts before every name a shape holds (gh-1985).
         "standalone": _case("object", "a", needs=()),
         "in-a-module": _case("object", "a", "{M}", needs=("module",)),
+        # gh-2215: placed ahead of the module's `o`, not appended.
+        "in-a-module-before": _case("object", "a", "{M}", "--before", "o",
+                                    needs=("module",)),
         "generator": _case("object", "a", "--preset", "generator",
                            only=BASE),
         "consumer": _case("object", "a", "--preset", "consumer", only=BASE),
