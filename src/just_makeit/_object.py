@@ -2115,11 +2115,38 @@ def jm_owned_functions(
     return teardown + _record.dtype_builders(rendered)
 
 
-#: A field jm declares in an object's binding struct: one of its own
-#: ``_jm_*`` members (the borrow record, the parked state, the in-flight
-#: count, a retained owner) or a constructor capsule's owner (gh-790). Read
-#: on comment-masked code, one declaration per line.
-_JM_FIELD_RE = re.compile(r"[\w\s*]*?[\s*](_jm_\w+|_\w+_owner)\s*;")
+#: One struct member declaration, its name captured. Read on comment-masked
+#: code, one declaration per line.
+_FIELD_DECL_RE = re.compile(r"[\w\s*]*?[\s*](\w+)\s*;")
+
+#: jm's own prefix: the borrow record, the parked state, the in-flight
+#: count, a retained owner. An author's member never starts with it.
+_JM_PREFIX = "_jm_"
+
+
+def _jm_field(name: str, owners: "frozenset[str]") -> bool:
+    """Whether struct member *name* is jm's (gh-2227).
+
+    A ``_jm_*`` name always is. A constructor capsule's ``_<param>_owner``
+    (gh-790) is jm's only when the render declares it -- *owners*, read from
+    the manifest's render -- because the shape alone also fits a member the
+    author named that way.
+
+    >>> _jm_field("_jm_inflight", frozenset())
+    True
+    >>> _jm_field("_cache_owner", frozenset())
+    False
+    >>> _jm_field("_clk_owner", frozenset({"_clk_owner"}))
+    True
+    """
+    return name.startswith(_JM_PREFIX) or name in owners
+
+
+def _render_owners(reference: str) -> "frozenset[str]":
+    """The ``_<param>_owner`` members a fresh render releases in dealloc."""
+    return frozenset(
+        re.findall(r"Py_XDECREF\(self->(_\w+_owner)\);", reference)
+    )
 
 
 def reconcile_struct_fields(text: str, reference: str, Component: str):
@@ -2131,10 +2158,14 @@ def reconcile_struct_fields(text: str, reference: str, Component: str):
     declares -- a borrow's ``_jm_borrowed``, a retained owner -- did not
     compile, and a lending object could not be given ``_jm_parked``.
 
-    The fields are jm's: those the fresh render declares and *text* lacks
-    are added after ``handle``, where the template puts them; those *text*
-    declares and the render does not are removed. Every other line is the
-    author's and is left where it is.
+    The fields are jm's (`_jm_field`): those the fresh render declares and
+    *text* lacks are added after ``handle``, where the template puts them;
+    those *text* declares and the render does not are removed. Every other
+    line is the author's and is left where it is. What is jm's is decided
+    by the ``_jm_`` prefix and, for a constructor capsule's owner, by the
+    render -- so an author's ``_cache_owner`` is never touched, and an owner
+    whose param the manifest dropped stays too, never set again and so
+    NULL, its dealloc release harmless.
 
     Returns ``(text, added, removed)``, the field names that moved; *text*
     unchanged when none did.
@@ -2167,11 +2198,13 @@ def reconcile_struct_fields(text: str, reference: str, Component: str):
         re.S,
     )
 
+    owners = _render_owners(reference)
+
     def fields(body: str) -> "list[tuple[str, str]]":
         out = []
         for line in body.splitlines(True):
-            m = _JM_FIELD_RE.match(_code_mask(line))
-            if m:
+            m = _FIELD_DECL_RE.match(_code_mask(line))
+            if m and _jm_field(m.group(1), owners):
                 out.append((m.group(1), line))
         return out
 
@@ -2205,8 +2238,8 @@ def reconcile_struct_fields(text: str, reference: str, Component: str):
     )
 
 
-#: A statement that reads one of jm's struct fields (`_JM_FIELD_RE`).
-_JM_FIELD_USE_RE = re.compile(r"self\s*->\s*(?:_jm_\w+|_\w+_owner)\b")
+#: A statement reading a struct member through ``self``, the name captured.
+_FIELD_USE_RE = re.compile(r"self\s*->\s*(\w+)\b")
 
 
 def reconcile_dealloc(text: str, reference: str, ComponentW: str):
@@ -2253,8 +2286,13 @@ def reconcile_dealloc(text: str, reference: str, ComponentW: str):
         return text, False
     from ._docsync import _code_mask
 
+    owners = _render_owners(reference)
+
     def jm(line: str) -> bool:
-        return bool(_JM_FIELD_USE_RE.search(_code_mask(line)))
+        return any(
+            _jm_field(n, owners)
+            for n in _FIELD_USE_RE.findall(_code_mask(line))
+        )
 
     lines = on_disk.splitlines(True)
     want = [ln for ln in rendered.splitlines(True) if jm(ln)]

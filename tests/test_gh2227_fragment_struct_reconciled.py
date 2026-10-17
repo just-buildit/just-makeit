@@ -63,6 +63,14 @@ ROWS = {
     ),
 }
 
+#: A constructor capsule param keeps its owner (gh-790). Not built: a new
+#: constructor param changes `create()`, whose body is the author's to edit.
+CTOR_ROW = (
+    '\n[[o.init_params]]\nname = "clk"\ntype = "tt_t *"\n'
+    'capsule = "p.tt"\nheader = "p/tt.h"\n',
+    ("_clk_owner",),
+)
+
 
 def _ok(*args: str, cwd: Path) -> None:
     r = run_cli(*args, cwd=cwd)
@@ -107,10 +115,10 @@ def _build(proj: Path) -> None:
     assert build.returncode == 0, build.stderr[-3000:]
 
 
-@pytest.mark.parametrize("row", sorted(ROWS))
+@pytest.mark.parametrize("row", sorted(ROWS) + ["ctor"])
 def test_a_hand_added_member_gets_its_fields(tmp_path, row):
     proj = _project(tmp_path)
-    toml, fields = ROWS[row]
+    toml, fields = CTOR_ROW if row == "ctor" else ROWS[row]
     _append(proj, toml)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stderr
@@ -118,12 +126,13 @@ def test_a_hand_added_member_gets_its_fields(tmp_path, row):
     for f in fields:
         assert re.search(rf"\b{f}\s*;", struct), (f, struct)
     assert "object struct fields +" in r.stdout, r.stdout
-    # And dealloc releases what a field holds (the retained owner).
-    if row == "retain":
+    # And dealloc releases what a field holds (the kept owners).
+    held = {"retain": "_jm_retain_attach_t", "ctor": "_clk_owner"}
+    if row in held:
         text = _frag(proj).read_text(encoding="utf-8")
         dealloc = text[text.index("O_dealloc(OObject *self)") :]
         assert (
-            "Py_XDECREF(self->_jm_retain_attach_t);"
+            f"Py_XDECREF(self->{held[row]});"
             in dealloc[: dealloc.index("\n}\n")]
         )
 
@@ -201,3 +210,32 @@ def test_dealloc_keeps_its_own_lines(tmp_path):
     assert "Py_XDECREF(self->_jm_retain_attach_t);" in body, body
     assert body.index("_jm_retain_attach_t") < body.index("tp_free"), body
     assert "O_dealloc" in r.stdout, r.stdout
+
+
+def test_an_author_owner_named_field_is_the_authors(tmp_path):
+    """A member named like gh-790's constructor owner (`_<param>_owner`) is
+    jm's only when the render declares it: the shape alone also fits one the
+    author named that way (review of #2330). Kept in the struct, and its
+    release in dealloc kept, while jm's own fields move around it."""
+    proj = _project(tmp_path)
+    frag = _frag(proj)
+    text = frag.read_text(encoding="utf-8")
+    assert text.count("} OObject;") == 1, text
+    text = text.replace(
+        "} OObject;",
+        "    PyObject *_cache_owner;  /* the author's */\n} OObject;",
+    )
+    tail = "    Py_TYPE(self)->tp_free((PyObject *)self);\n"
+    cut = text.index(tail, text.index("O_dealloc(OObject *self)"))
+    text = text[:cut] + "    Py_XDECREF(self->_cache_owner);\n" + text[cut:]
+    frag.write_text(text, encoding="utf-8")
+    _append(proj, ROWS["retain"][0])
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stderr
+    assert "_cache_owner" not in r.stdout, r.stdout
+    text = frag.read_text(encoding="utf-8")
+    assert "    PyObject *_cache_owner;  /* the author's */\n" in _struct(proj)
+    body = text[text.index("O_dealloc(OObject *self)") :]
+    body = body[: body.index("\n}\n")]
+    assert "Py_XDECREF(self->_cache_owner);" in body, body
+    assert "Py_XDECREF(self->_jm_retain_attach_t);" in body, body
