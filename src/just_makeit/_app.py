@@ -876,21 +876,98 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
 }
 """
 
-# printf format + cast for each numeric C type, used by the --record JSON dump.
-_C_REC_FMT = {
-    "float": ("%g", "(double)"),
-    "double": ("%g", "(double)"),
-    "int": ("%d", "(int)"),
-    "int8_t": ("%d", "(int)"),
-    "int16_t": ("%d", "(int)"),
-    "int32_t": ("%d", "(int)"),
-    "int64_t": ("%lld", "(long long)"),
-    "uint8_t": ("%u", "(unsigned)"),
-    "uint16_t": ("%u", "(unsigned)"),
-    "uint32_t": ("%lu", "(unsigned long)"),
-    "uint64_t": ("%llu", "(unsigned long long)"),
-    "size_t": ("%zu", ""),
+# ── exact numeric text (gh-2254) ─────────────────────────────────────────────
+# The significant digits that write an IEEE 754 binary real so the decimal
+# text reads back to the same bits: C11's FLT_DECIMAL_DIG / DBL_DECIMAL_DIG,
+# which C99 (the generated projects' standard) does not define. Keyed by the
+# width the type row's `py_type` states, so a real row of another width is a
+# KeyError at render time, not lossy text.
+_REAL_DIGITS = {32: 9, 64: 17}
+
+
+def _real_digits(ctype: str) -> int:
+    """The digits that write the real *ctype* exactly, from its row's width.
+
+    >>> _real_digits("float"), _real_digits("double")
+    (9, 17)
+    """
+    py_type = T._CTYPE_META[ctype]["py_type"]
+    return _REAL_DIGITS[int(py_type.rsplit("float", 1)[1])]
+
+
+def c_printf(ctype: str) -> "tuple[str, str]":
+    """The ``printf`` conversion and cast that write a *ctype* value exactly.
+
+    gh-2254: the one answer for every generated C line that prints a
+    numeric value -- a ``jm app`` executable's ``--record`` and a function
+    app's result -- derived from the type's ``_CTYPE_META`` row rather
+    than a table of its own. An integer is widened to ``long long`` (or
+    ``unsigned long long`` when its row's floor is ``0``, the split
+    :func:`cli_number_c` reads by), which holds every integer row. A real
+    is widened to ``double`` and written with the digits that read back
+    to the same bits through ``strtof`` / ``strtod`` -- the parse
+    :func:`cli_number_c` emits -- so a recorded value replays as itself.
+    ``%g`` kept six digits, so ``0.123456789`` was recorded as
+    ``0.123457``.
+
+    Parameters
+    ----------
+    ctype : str
+        A numeric ``_CTYPE_META`` key (kind ``int`` or ``float``).
+
+    Returns
+    -------
+    tuple of str
+        ``(conversion, cast)``: the conversion spec, and the C cast that
+        puts the value in the type the conversion reads.
+
+    Examples
+    --------
+    >>> c_printf("float"), c_printf("double")
+    (('%.9g', '(double)'), ('%.17g', '(double)'))
+    >>> c_printf("int8_t"), c_printf("size_t")
+    (('%lld', '(long long)'), ('%llu', '(unsigned long long)'))
+    """
+    meta = T._CTYPE_META[ctype]
+    if meta["kind"] == "float":
+        return f"%.{_real_digits(ctype)}g", "(double)"
+    if meta["limits"][0] == "0":
+        return "%llu", "(unsigned long long)"
+    return "%lld", "(long long)"
+
+
+# A real's record entry: JSON has no spelling for a non-finite number, and
+# `%g` writes `inf` / `nan`, which no JSON reader takes. The spellings here
+# are the ones Python's `json` writes for the Python face's record and reads
+# back, and `strtod` reads them too, so either face's record replays.
+_REC_REAL_C = """\
+static void
+jm_rec_real(FILE *rec, const char *key, double v, int digits)
+{
+    if (isnan(v))
+        fprintf(rec, ",\\"%s\\":NaN", key);
+    else if (isinf(v))
+        fprintf(rec, ",\\"%s\\":%s", key, v < 0 ? "-Infinity" : "Infinity");
+    else
+        fprintf(rec, ",\\"%s\\":%.*g", key, digits, v);
 }
+"""
+
+
+def _c_record_helpers(flags: list[dict]) -> str:
+    """``jm_rec_real`` and its header when a recorded flag is a real, else
+    ``""``: an uncalled ``static`` is ``-Wunused-function`` (gh-1863)."""
+    if not any(_is_recorded_real(f) for f in flags):
+        return ""
+    return "#include <math.h>\n\n" + _REC_REAL_C
+
+
+def _is_recorded_real(f: dict) -> bool:
+    return (
+        not f.get("choices")
+        and f["type"] in _C_PARSE
+        and T._CTYPE_META[f["type"]]["kind"] == "float"
+    )
 
 
 def _c_choice_arrays(flags: list[dict]) -> str:
@@ -924,8 +1001,14 @@ def _c_record_block(flags: list[dict], name: str, version: str) -> str:
                 f'            fprintf(rec, ",\\"{nm}\\":\\"%s\\"", '
                 f"jm_choices_{nm}[{nm}]);"
             )
-        elif f["type"] in _C_REC_FMT:
-            fmt, cast = _C_REC_FMT[f["type"]]
+        elif _is_recorded_real(f):
+            # gh-2254: the digits `c_printf` writes this type with.
+            lines.append(
+                f'            jm_rec_real(rec, "{nm}", (double){nm}, '
+                f"{_real_digits(f['type'])});"
+            )
+        elif f["type"] in _C_PARSE:
+            fmt, cast = c_printf(f["type"])
             lines.append(
                 f'            fprintf(rec, ",\\"{nm}\\":{fmt}", {cast}{nm});'
             )
@@ -942,7 +1025,7 @@ def _py_record_block(flags: list[dict], name: str, version: str) -> str:
     """Emit a `--record` JSON dump in Python from the parsed args."""
     fields = [f'"tool": "{name}"', f'"version": "{version}"']
     for f in flags:
-        if f.get("choices") or f["type"] in _C_REC_FMT:
+        if f.get("choices") or f["type"] in _C_PARSE:
             fields.append(f'"{f["name"]}": args.{f["name"]}')
     # One key per line with a trailing comma: the layout ruff keeps at any
     # width, where the one-line dict ran past it (gh-1478).
@@ -1278,23 +1361,6 @@ def _app_shape(cfg: dict, component: str) -> str | None:
 
 
 # ── module-function apps ─────────────────────────────────────────────────────
-# printf format + cast per scalar return type.
-_C_PRINTF = {
-    "float": ("%g", "(double)"),
-    "double": ("%g", "(double)"),
-    "int": ("%d", ""),
-    "int8_t": ("%d", "(int)"),
-    "int16_t": ("%d", "(int)"),
-    "int32_t": ("%ld", "(long)"),
-    "int64_t": ("%lld", "(long long)"),
-    "uint8_t": ("%u", "(unsigned)"),
-    "uint16_t": ("%u", "(unsigned)"),
-    "uint32_t": ("%lu", "(unsigned long)"),
-    "uint64_t": ("%llu", "(unsigned long long)"),
-    "size_t": ("%zu", ""),
-}
-
-
 def _find_fn(cfg: dict, function: str, module: str | None):
     """Return (module, fn_dict) for the named function, or (None, None)."""
     mods = [module] if module else C.modules(cfg)
@@ -1312,7 +1378,7 @@ def _fn_generatable(fn: dict) -> bool:
         if p["type"] not in _C_PARSE:
             return False
     ret = fn.get("return_type", "void")
-    return ret == "void" or ret in _C_PRINTF
+    return ret == "void" or ret in _C_PARSE
 
 
 def _fn_flags(params: list[dict]) -> list[dict]:
@@ -1332,9 +1398,10 @@ def _fn_flags(params: list[dict]) -> list[dict]:
 
 def _c_call_print(function: str, ret_t: str, param_names: list[str]) -> str:
     args = ", ".join(param_names)
-    if ret_t == "void" or ret_t not in _C_PRINTF:
+    if ret_t == "void" or ret_t not in _C_PARSE:
         return f"    {function}({args});"
-    fmt, cast = _C_PRINTF[ret_t]
+    # gh-2254: exactly, as the Python face's print() writes a float.
+    fmt, cast = c_printf(ret_t)
     return (
         f"    {ret_t} result = {function}({args});\n"
         f'    printf("{fmt}\\n", {cast}result);'
@@ -1618,6 +1685,7 @@ def _build_ctx(
                 x
                 for x in (
                     helpers,
+                    _c_record_helpers(parse_flags),
                     _c_choice_arrays(parse_flags),
                     _SAMPLE_TYPE_C + _WRITE_BLOCK_C,
                 )

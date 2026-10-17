@@ -424,7 +424,8 @@ def test_output_axes_c(tmp_path: Path):
     assert "static const char *const jm_choices_sample_type[]" in c
     assert "if (record_path) {" in c
     assert 'fprintf(rec, ",\\"sample_type\\":\\"%s\\"", ' in c
-    assert 'fprintf(rec, ",\\"freq\\":%g", (double)freq);' in c
+    # gh-2254: a real is recorded with every digit it needs to replay
+    assert 'jm_rec_real(rec, "freq", (double)freq, 17);' in c
 
 
 def test_output_axes_python(tmp_path: Path):
