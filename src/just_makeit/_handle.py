@@ -549,8 +549,13 @@ def _method_kwargs(m: dict) -> bool:
         )
     arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     ret_arr = bool(returns) and str(returns).endswith("[]")
+    if ret_arr and not arrays and m.get("out_len_fn"):
+        return False  # (e) handle-length array-out
     if ret_arr and not arrays:
-        return False  # (c) int-in -> array-out
+        # (c) count-in -> array-out. The bare count is positional; with
+        # arguments after it (gh-2211) it parses with keywords, as (b) and
+        # (d) do once they carry trailing scalars.
+        return len(margs) > 1
     if any(a.get("writable") for a in arrays) and ret_arr:
         # (d) array-in + writable array-out. Bare form is positional; with
         # trailing scalars (gh-582) it parses with keywords exactly as (b)
@@ -641,8 +646,9 @@ def py_args(m: dict) -> list:
 
 
 def _count_name(m: dict) -> str:
-    """The count parameter of shape (c), ``read(n) -> ndarray``: the one
-    declared argument, or ``n`` when the manifest declares none."""
+    """The count parameter of shape (c), ``read(n) -> ndarray``: the first
+    declared argument, or ``n`` when the manifest declares none. Every
+    argument after it passes through to C behind the count (gh-2211)."""
     margs = m.get("args", [])
     return str(margs[0]["name"]) if margs else "n"
 
@@ -846,7 +852,11 @@ def method_locals(m: dict) -> "frozenset[str]":
     if m.get("out_len_fn") and returns == "bytes":
         return raw  # (f)
     if ret_arr and not array_in:
-        return frozenset({"dims", "arr", "out", "got"})  # (c)
+        # (c): the count parses as `Py_ssize_t`, the arguments after it
+        # (gh-2211) as every other shape's scalars do.
+        return scalar_raw_locals(
+            (a["name"], a.get("type", "")) for a in margs[1:]
+        ) | frozenset({"dims", "arr", "out", "got"})
     if ret_arr and any(a.get("writable") for a in array_in):
         return raw | frozenset(  # (d)
             {
@@ -1053,7 +1063,11 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 }}
 """
 
-    # (c) int-in → array-out: an array return with a single integer arg.
+    # (c) count-in → array-out: an array return sized by its first argument.
+    # gh-2211: every argument declared after the count passes through to C
+    # behind it, `fn(h, out, n, <args>)` -- the order (b) threads its
+    # scalars in after `n_in`. The shape parsed the count alone and dropped
+    # the rest, so a `read(n, gain)` accepted `gain` and never used it.
     if returns and str(returns).endswith("[]") and not array_in:
         out_elem, out_npy = _array_elem_npy(returns)
         cnt = _count_name(m)
@@ -1061,12 +1075,43 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         _got_guard = _coerce.returned_count_c(
             "got", cnt, f"{tname}.{name}", "Py_DECREF(arr);"
         )
+        rest = margs[1:]
+        if rest:
+            c_decls, c_fmt, c_addrs, c_narrow = "", ["n"], "", ""
+            c_opt = False
+            for s in rest:
+                # gh-2144: at the row's width, narrowed after the parse.
+                sd, sf, sa, sc = _scalar_arg(s, args_where, "return NULL;")
+                c_decls += f"{sd}\n"
+                if s.get("default") is not None and not c_opt:
+                    c_fmt.append("|")
+                    c_opt = True
+                c_fmt.append(sf)
+                c_addrs += f", {sa}"
+                c_narrow += f"{sc}\n" if sc else ""
+            c_kwlist = ", ".join(f'"{a["name"]}"' for a in margs)
+            c_sig = (
+                f"{tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)"
+            )
+            c_parse = (
+                f"    static char *kwlist[] = {{{c_kwlist}, NULL}};\n"
+                f"    Py_ssize_t {cnt};\n{c_decls}"
+                f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
+                f' "{"".join(c_fmt)}", kwlist,\n'
+                f"            &{cnt}{c_addrs}))\n"
+                f"        return NULL;\n{c_narrow}"
+            )
+        else:
+            c_sig = f"{tname}_{name}({obj} *self, PyObject *args)"
+            c_parse = (
+                f"    Py_ssize_t {cnt};\n"
+                f'    if (!PyArg_ParseTuple(args, "n", &{cnt})) return NULL;\n'
+            )
+        c_call = "".join(f", {s['name']}" for s in rest)
         return f"""static PyObject *
-{tname}_{name}({obj} *self, PyObject *args)
+{c_sig}
 {{
-    Py_ssize_t {cnt};
-    if (!PyArg_ParseTuple(args, "n", &{cnt})) return NULL;
-{closed_guard}
+{c_parse}{closed_guard}
     if ({cnt} < 0) {{
         PyErr_SetString(PyExc_ValueError, "count must be >= 0");
         return NULL;
@@ -1078,7 +1123,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     if (!arr) return NULL;
     {out_elem} *out = ({out_elem} *)PyArray_DATA((PyArrayObject *)arr);
     size_t got;
-{gil_open}    got = {fn}(self->h, out, (size_t){cnt});
+{gil_open}    got = {fn}(self->h, out, (size_t){cnt}{c_call});
 {gil_close}{_got_guard}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got; /* trim */
     return arr;
 }}
@@ -2447,10 +2492,23 @@ def py_face(m: dict) -> PyFace:
         ann = "NDArray[Any]"
         doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
     elif ret_arr and not arrays:
-        # (c) read(n) -> ndarray, the count named as the binding names it.
-        sig = f"self, {_count_name(m)}: int"
+        # (c) read(n[, args...]) -> ndarray, the count named as the binding
+        # names it, then every argument the binding passes through behind
+        # it (gh-2211), a `default` shown as `= ...`.
+        _c_rest = margs[1:]
+        sig = f"self, {_count_name(m)}: int" + "".join(
+            f", {a['name']}: {_pyi_scalar(a['type'])}"
+            + (" = ..." if a.get("default") is not None else "")
+            for a in _c_rest
+        )
         ann = "NDArray[Any]"
-        doc_call = f"{name}({_count_name(m)})"
+        _c_doc = [_count_name(m)] + [
+            f"{a['name']}={a['default']}"
+            if a.get("default") is not None
+            else a["name"]
+            for a in _c_rest
+        ]
+        doc_call = f"{name}({', '.join(_c_doc)})"
     elif arrays:
         # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
         # `= ...` (gh-178 review #6). gh-2207: the array is named as declared,

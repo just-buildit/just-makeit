@@ -169,8 +169,9 @@ def _misnamed(m: dict, names: "list[str]") -> bool:
     declared = [a["name"] for a in m["args"]]
     if _has_array_arg(m):
         return sorted(names) != sorted(declared)
-    # A count-in shape takes one count, `n` when none is declared.
-    return bool(declared) and not set(names) <= set(declared)
+    # Every other shape takes the rows as declared -- a count-in shape its
+    # count and then the rest (gh-2211) -- and `n` when none is declared.
+    return bool(declared) and names != declared
 
 
 def test_the_stub_names_only_what_the_manifest_declares(cases):
