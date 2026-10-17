@@ -518,7 +518,10 @@ def c_printf(ctype: str) -> "tuple[str, str]":
 # (gh-2254). `%0.9f` kept nine places after the point, so a cf32 sample
 # below 5e-10 -- an ordinary small amplitude -- was written as 0.000000000.
 # Both faces spell it with this one conversion: Python's `%` and C's
-# `printf` both round correctly, so the two write the same bytes.
+# `printf` both round correctly, so the two write the same bytes. A
+# non-finite sample is the exception printf does not share -- it writes a
+# sign-bit NaN as "-nan" where Python's `%` writes "nan" -- so the C face
+# writes those through `jm_put_real` (`_WRITE_BLOCK_C`) in Python's spelling.
 _CSV_CF32 = c_printf("float")[0]
 _CSV_CF64 = c_printf("double")[0]
 
@@ -897,6 +900,36 @@ jm_convert_block(const float _Complex *in, size_t n, int st,
 # assumed little-endian (jm's targets), so big-endian output reverses each
 # element on the way out.
 _WRITE_BLOCK_C = """\
+#include <math.h>
+
+/* gh-2254: write v so it reads back exactly -- `digits` significant digits
+   (the type's round-trip count), or, for a non-finite v, nan_s / inf_s with
+   a '-' before a negative infinity. A NaN's sign is dropped, as Python's
+   `%` drops it, where printf writes "-nan". The one writer of a real both
+   the csv lines and the --record JSON go through, with their own spellings
+   of the non-finite values. */
+static void
+jm_put_real(FILE *f, double v, int digits, const char *nan_s,
+            const char *inf_s)
+{
+    if (isnan(v))
+        fputs(nan_s, f);
+    else if (isinf(v))
+        fprintf(f, "%s%s", v < 0 ? "-" : "", inf_s);
+    else
+        fprintf(f, "%.*g", digits, v);
+}
+
+/* One csv I,Q line, each component as Python's `%.<digits>g` writes it. */
+static void
+jm_put_iq(FILE *f, double re, double im, int digits)
+{
+    jm_put_real(f, re, digits, "nan", "inf");
+    fputc(',', f);
+    jm_put_real(f, im, digits, "nan", "inf");
+    fputc('\\n', f);
+}
+
 /* Bytes per I or Q element for sample type st (for big-endian swapping). */
 static size_t
 jm_elem_size(int st)
@@ -920,11 +953,9 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
         for (size_t i = 0; i < n; i++) {
             float re = crealf(in[i]), im = cimagf(in[i]);
             if (st == 0)
-                fprintf(out, "JM_CSV_CF32,JM_CSV_CF32\\n", (double)re,
-                        (double)im);
+                jm_put_iq(out, (double)re, (double)im, JM_CSV_CF32);
             else if (st == 1)
-                fprintf(out, "JM_CSV_CF64,JM_CSV_CF64\\n", (double)re,
-                        (double)im);
+                jm_put_iq(out, (double)re, (double)im, JM_CSV_CF64);
             else {
                 double sc = (st == 2) ? 2147483647.0
                             : (st == 3) ? 32767.0
@@ -947,32 +978,9 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
     }
     fwrite(bytes, 1, nb, out);
 }
-""".replace("JM_CSV_CF32", _CSV_CF32).replace("JM_CSV_CF64", _CSV_CF64)
-
-# A real's record entry: JSON has no spelling for a non-finite number, and
-# `%g` writes `inf` / `nan`, which no JSON reader takes. The spellings here
-# are the ones Python's `json` writes for the Python face's record and reads
-# back, and `strtod` reads them too, so either face's record replays.
-_REC_REAL_C = """\
-static void
-jm_rec_real(FILE *rec, const char *key, double v, int digits)
-{
-    if (isnan(v))
-        fprintf(rec, ",\\"%s\\":NaN", key);
-    else if (isinf(v))
-        fprintf(rec, ",\\"%s\\":%s", key, v < 0 ? "-Infinity" : "Infinity");
-    else
-        fprintf(rec, ",\\"%s\\":%.*g", key, digits, v);
-}
-"""
-
-
-def _c_record_helpers(flags: list[dict]) -> str:
-    """``jm_rec_real`` and its header when a recorded flag is a real, else
-    ``""``: an uncalled ``static`` is ``-Wunused-function`` (gh-1863)."""
-    if not any(_is_recorded_real(f) for f in flags):
-        return ""
-    return "#include <math.h>\n\n" + _REC_REAL_C
+""".replace("JM_CSV_CF32", str(_real_digits("float"))).replace(
+    "JM_CSV_CF64", str(_real_digits("double"))
+)
 
 
 def _is_recorded_real(f: dict) -> bool:
@@ -1015,10 +1023,16 @@ def _c_record_block(flags: list[dict], name: str, version: str) -> str:
                 f"jm_choices_{nm}[{nm}]);"
             )
         elif _is_recorded_real(f):
-            # gh-2254: the digits `c_printf` writes this type with.
+            # gh-2254: the digits `c_printf` writes this type with, through
+            # the csv's writer (`_WRITE_BLOCK_C`, always beside a record).
+            # JSON has no spelling for a non-finite number and `%g` writes
+            # `inf` / `nan`, which no JSON reader takes: these are the ones
+            # Python's `json` writes for the Python face's record and reads
+            # back, and `strtod` reads them too, so either record replays.
+            lines.append(f'            fprintf(rec, ",\\"{nm}\\":");')
             lines.append(
-                f'            jm_rec_real(rec, "{nm}", (double){nm}, '
-                f"{_real_digits(f['type'])});"
+                f"            jm_put_real(rec, (double){nm}, "
+                f'{_real_digits(f["type"])}, "NaN", "Infinity");'
             )
         elif f["type"] in _C_PARSE:
             fmt, cast = c_printf(f["type"])
@@ -1699,7 +1713,6 @@ def _build_ctx(
                 x
                 for x in (
                     helpers,
-                    _c_record_helpers(parse_flags),
                     _c_choice_arrays(parse_flags),
                     _SAMPLE_TYPE_C + _WRITE_BLOCK_C,
                 )

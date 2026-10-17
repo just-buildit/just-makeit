@@ -12,4 +12,5 @@
     exact bits (9 for `float`, 17 for `double`), a non-finite record entry
     as `Infinity` / `-Infinity` / `NaN` as the Python face's record writes
     it, and an integer through a 64-bit conversion. The C and Python faces
-    still write byte-identical csv.
+    write byte-identical csv, a non-finite sample included: the C face had
+    written a sign-bit NaN as `-nan` where Python writes `nan`.
