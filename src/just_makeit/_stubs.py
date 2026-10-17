@@ -2898,18 +2898,36 @@ _NUMPY_IMPORT_LINES = (
 
 
 #: One ``{"name", <function, any cast>, <flags>,`` row of a ``PyMethodDef``
-#: table.
+#: table, from its ``{`` -- in any layout a formatter gives it: split over
+#: lines, a space inside the brace, a cast such as
+#: ``(PyCFunction)(void (*)(void))`` before the function.
 _PMD_ROW = _re.compile(
-    r'\{"(\w+)",\s*[^,"]+,\s*(METH_[A-Z_]+(?:\s*\|\s*METH_[A-Z_]+)*)\s*,'
+    r'\{\s*"(\w+)"\s*,\s*[^,"]+,\s*(METH_[A-Z_]+(?:\s*\|\s*METH_[A-Z_]+)*)\s*,'
 )
+
+#: The ``{NULL, ...}`` / ``{0}`` row that ends a table.
+_PMD_SENTINEL = _re.compile(r"\{\s*(?:NULL|0)\b")
 
 
 def method_table_flags(c_text: str) -> "dict[str, str]":
     """``{member: flags}`` for every ``PyMethodDef`` row in *c_text*.
 
     *c_text* is one type's rendered binding -- a standalone ``_ext.c`` or a
-    module fragment -- so the flags are the ones the extension registers,
-    read rather than re-derived (gh-2212).
+    module fragment, whose ``static PyMethodDef`` tables are read -- or the
+    rows of one table on their own. The flags are the ones the extension
+    registers, read rather than re-derived (gh-2212).
+
+    Every entry is accounted for. The table is walked by brace on the
+    code-masked text (`_docsync`'s walk, which strings and comments cannot
+    confuse), and each entry but the ``{NULL, ...}`` sentinel must parse as
+    a row. One that does not is a jm bug -- a layout this reader was never
+    taught -- and raises, rather than leaving its member out and its stub
+    unmarked.
+
+    Raises
+    ------
+    RuntimeError
+        Naming the entry that did not parse.
 
     Examples
     --------
@@ -2919,8 +2937,48 @@ def method_table_flags(c_text: str) -> "dict[str, str]":
     ...     {"steps", (PyCFunction)(void *)Fir_steps,
     ...      METH_VARARGS | METH_KEYWORDS, NULL},''')
     {'step': 'METH_VARARGS', 'steps': 'METH_VARARGS | METH_KEYWORDS'}
+    >>> method_table_flags('''static PyMethodDef H_methods[] = {
+    ...   { "op", (PyCFunction) (void (*) (void))H_op,
+    ...     METH_VARARGS
+    ...         | METH_KEYWORDS,
+    ...     "op() -> None" },
+    ...   { NULL, NULL, 0, NULL }
+    ... };''')
+    {'op': 'METH_VARARGS | METH_KEYWORDS'}
+    >>> try:
+    ...     method_table_flags('{"op", H_op, 3, NULL},')
+    ... except RuntimeError as exc:
+    ...     print('{"op", H_op, 3, NULL}' in str(exc))
+    True
     """
-    return {m.group(1): m.group(2) for m in _PMD_ROW.finditer(c_text)}
+    from ._docsync import _METHODS_RE, _code_mask, _entry_spans, _match_brace
+
+    mask = _code_mask(c_text)
+    bodies = []
+    for m in _METHODS_RE.finditer(mask):
+        close = _match_brace(mask, m.end() - 1)
+        if close == -1:
+            raise RuntimeError(
+                "jm could not find the end of the PyMethodDef table at"
+                f" {c_text[m.start() : m.end()]!r}"
+            )
+        bodies.append((m.end(), close))
+    if not bodies:  # the rows of one table, without its declaration
+        bodies = [(0, len(mask))]
+    out: "dict[str, str]" = {}
+    for start, end in bodies:
+        for s, e in _entry_spans(mask, start, end):
+            if _PMD_SENTINEL.match(mask, s):
+                continue
+            row = _PMD_ROW.match(c_text, s, e + 1)
+            if row is None:
+                raise RuntimeError(
+                    "jm could not read this PyMethodDef row, so it cannot"
+                    " tell its stub whether the binding takes keywords"
+                    f" (gh-2212): {c_text[s : e + 1]!r}"
+                )
+            out[row.group(1)] = " ".join(row.group(2).split())
+    return out
 
 
 def mark_positional_only(

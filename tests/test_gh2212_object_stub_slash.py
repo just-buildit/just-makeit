@@ -116,6 +116,46 @@ def _functions_project(where: Path) -> Path:
     return root
 
 
+#: A string literal or a comment, in one pass: what `_entry_openers`
+#: blanks before counting. Written here, not borrowed from `_docsync`, so
+#: the count is not the reader's own walk.
+_LITERAL_OR_COMMENT = re.compile(
+    r'"(?:[^"\\\n]|\\.)*"|/\*.*?\*/|//[^\n]*', re.S
+)
+
+
+def _entry_openers(body: str) -> int:
+    """How many named rows a ``PyMethodDef`` table body holds, counted
+    without `method_table_flags`: each ``{`` followed by a string literal,
+    once strings are emptied and comments blanked, so a ``{"`` inside a
+    docstring is not one. The ``{NULL, ...}`` sentinel names nothing."""
+    masked = _LITERAL_OR_COMMENT.sub(
+        lambda m: '""' if m.group(0).startswith('"') else " ", body
+    )
+    return len(re.findall(r'\{\s*"', masked))
+
+
+def _table_bodies(text: str) -> "list[tuple[str, str]]":
+    """``(table name, body)`` for each ``static PyMethodDef`` table."""
+    return re.findall(
+        r"static\s+PyMethodDef\s+(\w+)\s*\[\s*\]\s*=\s*\{(.*?)\n\s*\};",
+        text,
+        re.S,
+    )
+
+
+def unread_rows(text: str) -> "list[str]":
+    """Each table in *text* whose named rows `method_table_flags` did not
+    all return -- the miss a stub cannot show, because a member the reader
+    drops is simply left unmarked."""
+    return [
+        f"{name}: {_entry_openers(body)} rows, read"
+        f" {sorted(method_table_flags(body))}"
+        for name, body in _table_bodies(text)
+        if _entry_openers(body) != len(method_table_flags(body))
+    ]
+
+
 def _tables(root: Path) -> "dict[str, dict[str, str]]":
     """``{class: {member: flags}}`` for each extension type in *root*'s C,
     keyed by the class name its ``tp_name`` ends in, and the modules'
@@ -164,6 +204,10 @@ def _stubs(root: Path) -> "dict[str, dict[str, ast.FunctionDef]]":
     return out
 
 
+#: Every generated C file the fixture wrote, for the row-count check.
+_CS: "list[str]" = []
+
+
 @pytest.fixture(scope="module")
 def pairs(tmp_path_factory):
     """``(project, class, member, flags, stub def)`` for every row."""
@@ -171,6 +215,12 @@ def pairs(tmp_path_factory):
     roots = F.build(where, projects={k: F.PROJECTS[k] for k in _ROWS})
     roots["fn"] = _functions_project(where)
     out = []
+    _CS.clear()
+    _CS.extend(
+        c.read_text(encoding="utf-8")
+        for root in roots.values()
+        for c in root.rglob("native/src/**/*.c")
+    )
     for row, root in roots.items():
         stubs = _stubs(root)
         for cls, rows in _tables(root).items():
@@ -222,3 +272,14 @@ def test_a_stub_is_positional_only_exactly_where_its_row_is(pairs):
         and bool(fn.args.posonlyargs) == ("METH_KEYWORDS" in flags)
     ]
     assert not wrong, "\n".join(wrong)
+
+
+def test_every_row_of_every_table_is_read(pairs):
+    """The reader accounts for every named row: a row its pattern misses
+    would leave that member's stub unmarked, which the comparison above
+    cannot see, because it reads rows through the same function."""
+    tables = sum(len(_table_bodies(text)) for text in _CS)
+    owners = {cls for _r, cls, *_ in pairs}
+    assert tables >= len(owners), (tables, sorted(owners))
+    unread = [u for text in _CS for u in unread_rows(text)]
+    assert not unread, "\n".join(unread)
