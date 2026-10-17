@@ -5,7 +5,7 @@ Convert a central-manifest project to the per-component fragment layout:
 
     just-makeit.toml      # [project] + include globs only
     objects/<obj>.toml    # one per standalone object
-    modules/<mod>.toml     # one per module (full [module.X] config)
+    modules/<cname>.toml  # one per module (full [module.X] config)
 
 Each component's spec becomes a self-contained file, so copying a component
 into another project is "copy its fragment + source dirs, run jm apply" —
@@ -69,10 +69,11 @@ def run(root: Path) -> None:
             print(f"  create  {frag}")
 
     if modules:
-        modules_dir = root / "modules"
-        modules_dir.mkdir(exist_ok=True)
+        (root / "modules").mkdir(exist_ok=True)
         for mod, data in modules.items():
-            frag = modules_dir / f"{mod}.toml"
+            # gh-2306: where `save` writes a new module, so a migrated
+            # project names its fragments as a split one does.
+            frag = C.module_fragment(root, mod)
             _textio.write_text(frag, C._dump({"module": {mod: data}}))
             created.setdefault("modules/*.toml", []).append(frag)
             print(f"  create  {frag}")
