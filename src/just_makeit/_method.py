@@ -561,6 +561,95 @@ def _methods_c_stub_result_single(
     return "\n".join(lines) + "\n"
 
 
+def _zero_return(return_type: str) -> str:
+    """The ``return`` of *return_type*'s zero, or "" for ``void``.
+
+    The neutral value a fixed-output stub returns, and what
+    :func:`impl_default_return` completes a body with: one spelling, so the
+    two cannot differ. A registered scalar returns its ``_CTYPE_META``
+    zero. Any other type is a record returned by value -- ``single``, or a
+    declared record element as a fixed return (gh-1405) -- and returns a
+    zeroed C99 compound literal. The fixed stub emitted no ``return`` at
+    all for that kind, so a fresh scaffold fell off the end of a non-void
+    function (gh-2248).
+
+    >>> _zero_return("float")
+    'return (float)0.0f;'
+    >>> _zero_return("iq16_t")
+    'return (iq16_t){0};'
+    >>> _zero_return("void")
+    ''
+    """
+    if return_type == "void":
+        return ""
+    meta = T._CTYPE_META.get(return_type)
+    return f"return ({return_type}){meta['zero'] if meta else '{0}'};"
+
+
+def impl_default_return(
+    *,
+    return_type: str,
+    record_list: bool = False,
+    variable_output: bool = False,
+    arg_type: str = "void",
+    params: list | None = None,
+    no_count: bool = False,
+    count_type: str = "",
+    batch: bool = False,
+    borrow: bool = False,
+    c_fn: str,
+) -> str:
+    """The ``return`` that completes an ``impl`` body which has none.
+
+    gh-2248. A body lifted from a reference function (``--impl``, or a
+    manifest ``impl``) may end without a ``return`` where the method's
+    kernel returns something; falling off its end compiles with at most a
+    warning and returns garbage. jm appends this statement, the shape's
+    own neutral value, deciding the shape in the order the stub dispatch
+    in :func:`run` does:
+
+    * a list of records (``result_fields``): ``0`` records;
+    * ``variable_output``: the body filled the output it was handed, so
+      the shape's own count -- the one ``_max_out`` mirrors from the
+      kernel (:func:`_max_out_count_param`: ``n``, ``n_in``,
+      ``<p>_len``) -- or, for a kernel with none (all-scalar params,
+      gh-2233's ``no_count``), the bound the binding sized ``out`` with,
+      ``<fn>_max_out(state)``; cast to *count_type* unless ``size_t``;
+    * a borrow: ``NULL``, which the binding raises on;
+    * a batch: nothing, it returns ``void``;
+    * any other -- a scalar, ``void``, one record by value (``single``):
+      the zero the stub returns (:func:`_zero_return`), ``(<T>){0}`` for a
+      record.
+
+    Every non-void type has a zero to spell, so no shape is refused.
+
+    Examples
+    --------
+    >>> impl_default_return(return_type="rec_t", c_fn="f")
+    'return (rec_t){0};'
+    >>> impl_default_return(return_type="rec_t", record_list=True, c_fn="f")
+    'return 0;'
+    >>> impl_default_return(return_type="float", variable_output=True,
+    ...                     arg_type="float", c_fn="f")
+    'return n_in;'
+    >>> impl_default_return(return_type="float", variable_output=True,
+    ...                     no_count=True, count_type="int", c_fn="f")
+    'return (int)f_max_out(state);'
+    """
+    if record_list:
+        return "return 0;"
+    if variable_output:
+        count = _max_out_count_param(arg_type, params, no_count)[1]
+        ctype = count_type or DEFAULT_COUNT_TYPE
+        cast = "" if ctype == "size_t" else f"({ctype})"
+        return f"return {cast}{count or f'{c_fn}_max_out(state)'};"
+    if borrow:
+        return "return NULL;"
+    if batch:
+        return ""
+    return _zero_return(return_type)
+
+
 def _methods_c_stub_fixed(
     component: str,
     name: str,
@@ -671,12 +760,8 @@ def _methods_c_stub_fixed(
         c_params = f"{csym}_state_t *state{extra_params}{out_param}"
         suppress = f"    (void)state;{extra_suppress}{out_suppress}"
 
-    zero = (
-        T._CTYPE_META[return_type]["zero"]
-        if return_type in T._CTYPE_META
-        else None
-    )
-    ret_line = f"    return ({ret_disp}){zero};" if zero is not None else ""
+    zero = _zero_return(return_type)
+    ret_line = f"    {zero}" if zero else ""
     lines = [
         f"/* <<IMPLEMENT: {name} >> */",
         f"{ret_disp}",
@@ -2244,18 +2329,30 @@ def run(
             from . import _impl as I
 
             body = impl_body
-            if variable_output and not _re.search(r"\breturn\b", body):
-                # A body lifted from a void reference function filled the
-                # output it was handed: return the shape's own count, the
-                # one `_max_out` mirrors from the kernel (`n`, `n_in`,
-                # `<p>_len`), or for a kernel with none (all-scalar params,
-                # gh-2233's `no_count`) the bound the binding sized `out`
-                # with. gh-2248: it was `n` for every shape.
-                _count = _max_out_count_param(arg_type, params, no_count)[1]
-                _ret = _count or f"{_c_fn}_max_out(state)"
-                _ctype = count_type or DEFAULT_COUNT_TYPE
-                _cast = "" if _ctype == "size_t" else f"({_ctype})"
-                body = body.rstrip("\n") + f"\nreturn {_cast}{_ret};"
+            if not _re.search(r"\breturn\b", body):
+                # gh-2248: the shape's own neutral return, for every shape
+                # the dispatch above picks; it was `n` for variable_output
+                # alone and nothing for the rest.
+                _ret = impl_default_return(
+                    return_type=return_type,
+                    record_list=bool(
+                        result_fields
+                        and not single
+                        and not _record.is_record_array(
+                            variable_output, record_dtype, borrow
+                        )
+                    ),
+                    variable_output=bool(variable_output),
+                    arg_type=arg_type,
+                    params=params,
+                    no_count=bool(no_count),
+                    count_type=count_type,
+                    batch=bool(batch),
+                    borrow=bool(borrow),
+                    c_fn=_c_fn,
+                )
+                if _ret:
+                    body = body.rstrip("\n") + "\n" + _ret
             stub = I.inject_body_into_stub(stub, body)
         # gh-994: `fn` overrides the symbol; unset it derives the same way
         # every stub emitter above does.
