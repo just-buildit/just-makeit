@@ -124,7 +124,7 @@ class TestGeneratedBinding:
         pyi = _pyi(_scaffold(tmp_path))
         assert "def state_bytes(self) -> int:" in pyi
         assert "def get_state(self) -> bytes:" in pyi
-        assert "def set_state(self, blob: bytes) -> None:" in pyi
+        assert "def set_state(self, blob: bytes, /) -> None:" in pyi
 
     def test_not_serializable_has_no_triplet(self, tmp_path):
         root = _scaffold(tmp_path, serializable=False)
@@ -174,7 +174,7 @@ class TestModuleObject:
         pyi = (root / "src/p/sig/sig.pyi").read_text(encoding="utf-8")
         assert "def state_bytes(self) -> int:" in pyi
         assert "def get_state(self) -> bytes:" in pyi
-        assert "def set_state(self, blob: bytes) -> None:" in pyi
+        assert "def set_state(self, blob: bytes, /) -> None:" in pyi
 
     def test_module_fragment_has_triplet(self, tmp_path):
         root = self._scaffold_module(tmp_path)

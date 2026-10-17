@@ -528,4 +528,4 @@ def test_the_stub_publishes_what_the_binding_takes(outcome):
             r"out: [^=]+\| None = None,?\s*\)",
             text,
         ), text
-    assert "def run_max_out(self, n_in: int) -> int:" in text
+    assert "def run_max_out(self, n_in: int, /) -> int:" in text

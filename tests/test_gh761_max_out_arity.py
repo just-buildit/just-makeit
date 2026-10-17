@@ -145,7 +145,7 @@ class TestStandaloneFacesAgree:
         pyi = flatten_signatures(
             (root / "src" / "proj" / "widget.pyi").read_text()
         )
-        assert "def run_max_out(self, x_len: int) -> int:" in pyi
+        assert "def run_max_out(self, x_len: int, /) -> int:" in pyi
 
     def test_a_state_only_prototype_drops_it_everywhere(self, tmp_path):
         from just_makeit._apply import run as apply_run

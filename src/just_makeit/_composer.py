@@ -5512,8 +5512,23 @@ def render_pyi(cfg: dict, module: str) -> str:
             )
         # gh-2259: a delegated method's member, as the generator's emitter
         # writes it for the generator.
-        _dlg = _source_delegated(cfg, module).get("pyi_extra_methods", "")
-        lines += _dlg.strip("\n").split("\n") if _dlg.strip() else []
+        _dctx = _source_delegated(cfg, module)
+        _dlg = _dctx.get("pyi_extra_methods", "")
+        if _dlg.strip():
+            # gh-2212: positional-only where the source's row is, told by
+            # the rows this same emitter renders onto the source type --
+            # the one function the object's stub writers ask.
+            from ._stubs import mark_positional_only, method_table_flags
+
+            _member = mark_positional_only(
+                "class _Src:\n" + _dlg.strip("\n"),
+                {
+                    "_Src": method_table_flags(
+                        _dctx.get("extra_methods_pymethoddef", "")
+                    )
+                },
+            )
+            lines += _member.split("\n")[1:]
     # Feature 6 — computed read-only properties (derived in C; never stale).
     for c in _source_computed(cfg, module):
         pytype = T.scalar_py_annotation(c["type"])  # gh-2035

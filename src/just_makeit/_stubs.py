@@ -3275,8 +3275,16 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     from . import _render as R
     from ._object import build_component_ctxs
 
+    # With no project root there is no header to read, here or for the
+    # stub above, so the contexts are built in their header-free form.
     _flags = {
         c["Component"]: method_table_flags(R.render_module_ext_fragment(c))
-        for c in build_component_ctxs(root, copy.deepcopy(cfg), module, pkg)
+        for c in build_component_ctxs(
+            root,
+            copy.deepcopy(cfg),
+            module,
+            pkg,
+            force_fallback=root is None,
+        )
     }
     return reflow_pyi(mark_positional_only("\n".join(parts), _flags)) + "\n"
