@@ -2245,7 +2245,17 @@ def run(
 
             body = impl_body
             if variable_output and not _re.search(r"\breturn\b", body):
-                body = body.rstrip("\n") + "\nreturn n;"
+                # A body lifted from a void reference function filled the
+                # output it was handed: return the shape's own count, the
+                # one `_max_out` mirrors from the kernel (`n`, `n_in`,
+                # `<p>_len`), or for a kernel with none (all-scalar params,
+                # gh-2233's `no_count`) the bound the binding sized `out`
+                # with. gh-2248: it was `n` for every shape.
+                _count = _max_out_count_param(arg_type, params, no_count)[1]
+                _ret = _count or f"{_c_fn}_max_out(state)"
+                _ctype = count_type or DEFAULT_COUNT_TYPE
+                _cast = "" if _ctype == "size_t" else f"({_ctype})"
+                body = body.rstrip("\n") + f"\nreturn {_cast}{_ret};"
             stub = I.inject_body_into_stub(stub, body)
         # gh-994: `fn` overrides the symbol; unset it derives the same way
         # every stub emitter above does.
