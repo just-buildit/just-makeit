@@ -491,10 +491,42 @@ def _method(root: Path, row: Row) -> dict:
 
 # -- which rows must exist: every kernel call jm spells -----------------------
 
-#: The functions that spell a call of the author's kernel: the binding and
-#: the benchmark.
-_KERNEL_CALLERS = ("make_methods_ctx", "_bench_method_block")
+#: The primitives a generated kernel call goes through: the binding's
+#: release-aware call blocks, and the benchmark's prototype-driven call.
+#: A function that calls one of them EMITS kernel calls (`_emitters`).
+_KERNEL_HELPERS = (
+    "_nogil_call",
+    "_kernel_call_block",
+    "_single_kernel_block",
+    "_bench_call",
+)
 _SITE = re.compile(r"/\*@site:(\d+\.\d+)\*/")
+
+
+def _emitters(tree: ast.Module) -> "dict[str, set[str]]":
+    """Each function that emits a kernel call, and where its calls are spelled.
+
+    Read off the source, not kept here: every top-level function of
+    ``_context/_methods`` that calls a :data:`_KERNEL_HELPERS` primitive
+    emits kernel calls, and its call text is spelled in itself or in the
+    helper it hands it to (the benchmark's in `_bench_call`). Returns
+    ``{emitter: {functions whose f-strings may hold its call sites}}``.
+    """
+    fns = {f.name: f for f in tree.body if isinstance(f, ast.FunctionDef)}
+    missing = set(_KERNEL_HELPERS) - set(fns)
+    assert not missing, f"kernel-call helpers no longer defined: {missing}"
+    out: "dict[str, set[str]]" = {}
+    for name, fn in fns.items():
+        if name in _KERNEL_HELPERS:
+            continue
+        called = {
+            c.func.id
+            for c in ast.walk(fn)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        } & set(_KERNEL_HELPERS)
+        if called:
+            out[name] = {name} | called
+    return out
 
 
 def _is_declaration(node: ast.JoinedStr, parents: dict) -> bool:
@@ -522,7 +554,9 @@ def _is_declaration(node: ast.JoinedStr, parents: dict) -> bool:
     return False
 
 
-def _marked_methods_module() -> "tuple[types.ModuleType, dict[str, str]]":
+def _marked_methods_module() -> (
+    "tuple[types.ModuleType, dict[str, str], dict[str, set[str]]]"
+):
     """``_context/_methods`` with every kernel call it spells marked.
 
     A kernel call is an f-string that spells the method's C symbol
@@ -530,17 +564,18 @@ def _marked_methods_module() -> "tuple[types.ModuleType, dict[str, str]]":
     ``/*@site:<line>.<n>*/`` comment after the symbol, in an AST-transformed
     copy of the module -- so a rendered binding or benchmark names the site
     that wrote each of its calls, and the site list is read off the source
-    rather than kept here. Returns the copy and ``{site: source line}``.
+    rather than kept here. Returns the copy, ``{site: source line}`` and
+    the emitters (:func:`_emitters`), whose functions are the ones scanned.
     """
     path = SRC / "just_makeit" / "_context" / "_methods.py"
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
     lines = source.splitlines()
+    emitters = _emitters(tree)
+    scanned = set().union(*emitters.values())
     sites: dict[str, str] = {}
     for fn in tree.body:
-        if not (
-            isinstance(fn, ast.FunctionDef) and fn.name in _KERNEL_CALLERS
-        ):
+        if not (isinstance(fn, ast.FunctionDef) and fn.name in scanned):
             continue
         parents = {
             child: node
@@ -576,7 +611,7 @@ def _marked_methods_module() -> "tuple[types.ModuleType, dict[str, str]]":
     mod.__package__ = "just_makeit._context"
     mod.__file__ = str(path)
     exec(compile(tree, str(path), "exec"), mod.__dict__)
-    return mod, sites
+    return mod, sites, emitters
 
 
 def test_every_kernel_call_is_reached_by_a_row(project):
@@ -587,10 +622,18 @@ def test_every_kernel_call_is_reached_by_a_row(project):
     added with its own kernel call fails here until it has a row -- and so
     the prototype, build, call, stub and example checks.
     """
-    mod, sites = _marked_methods_module()
-    # Armed: the binding spells a kernel call in every result shape, and the
-    # benchmark in five more.
-    assert len(sites) >= 20, sites
+    mod, sites, emitters = _marked_methods_module()
+    # Armed: every function that emits kernel calls contributes at least one
+    # marked site, in itself or the helper it spells them in. Not a count of
+    # sites -- consolidating several call spellings into one emitter is what
+    # this repo wants, and must not read as the scan going blind.
+    assert {"make_methods_ctx", "_bench_method_block"} <= set(emitters), (
+        emitters
+    )
+    for emitter, spelled_in in sorted(emitters.items()):
+        assert any(
+            where.split(":", 1)[0] in spelled_in for where in sites.values()
+        ), f"the scan found no kernel call emitted by {emitter}"
     cfg = C.load(project)
     reached: dict[str, str] = {}
     for obj in OBJECTS:
