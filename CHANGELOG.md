@@ -23,6 +23,10 @@ ignored or did not build.
     the cycle would hold the next alive, and none could be freed.
 - **`opaque_state = "true"` on an object with an inline `step()`**
     (gh-2215), the refusal `jm object` already gave.
+- **A string count on a handle method's shape (c)** (gh-2333), as an
+    enum count is. The count was never type-checked, so a `string` count
+    used to parse as a `Py_ssize_t`; the count sizes the result, so it must
+    be an integer.
 
 Generated output that changes shape:
 
