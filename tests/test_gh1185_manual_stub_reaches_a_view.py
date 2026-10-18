@@ -120,7 +120,7 @@ class TestTheRepro:
         _declare(project, 'name = "gain2"\n', "manual_stub = true")
         assert _cli("apply", cwd=project).returncode == 0
         pyi = (project / "src/sw/m/m.pyi").read_text(encoding="utf-8")
-        assert pyi.count("def gain2(self, x: float) -> float:") == 2, pyi
+        assert pyi.count("def gain2(self, x: float, /) -> float:") == 2, pyi
         assert "<<MANUAL_STUB>>" not in pyi, pyi
 
     def test_status_is_clean_and_apply_is_idempotent(

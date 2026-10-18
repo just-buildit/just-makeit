@@ -354,7 +354,8 @@ def _probe(pyi: str) -> str:
             "| None"
         ):
             continue
-        args = fn.args.args[1:]
+        # gh-2212: a positional-only parameter sits before `/`.
+        args = (fn.args.posonlyargs + fn.args.args)[1:]
         required = args[: len(args) - len(fn.args.defaults)]
         call = ", ".join(value(ast.unparse(a.annotation)) for a in required)
         lines += [
@@ -367,7 +368,7 @@ def _probe(pyi: str) -> str:
         if out is None:
             continue
         mo = fns[f"{name}_max_out"]
-        mo_arg = "4" if len(mo.args.args) > 1 else ""
+        mo_arg = "4" if len(mo.args.posonlyargs + mo.args.args) > 1 else ""
         elem = re.search(r"NDArray\[(np\.\w+)\]", ast.unparse(out.annotation))
         # A scaffold `_max_out` answers 0, and an input-sized method then
         # needs the input's length (gh-421): room for both.

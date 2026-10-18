@@ -121,7 +121,7 @@ class TestStandaloneMatchesModule:
         )
 
         # And the parts that already worked still do.
-        assert doc.startswith("def scale(self, x: float) -> float:")
+        assert doc.startswith("def scale(self, x: float, /) -> float:")
         assert "Sample to scale." in doc
         assert "The scaled sample." in doc
         assert ">>> obj.scale(1.0)" in doc

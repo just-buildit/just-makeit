@@ -575,7 +575,7 @@ class TestMethodOutKwarg:
         assert "out:" in pyi and "| None = None" in pyi
         # gh-607: max_out() mirrors the kernel's own count param (n_in for
         # an array-arg method).
-        assert "def execute_cf32_max_out(self, n_in: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, n_in: int, /) -> int:" in pyi
 
     def test_multi_output_stays_positional(self, project):
         ext = self._add(project, arg="void", multi=["float _Complex"])
@@ -693,7 +693,7 @@ class TestVariableOutputSingleArrayParam:
         assert "out:" in pyi and "| None = None" in pyi
         # gh-607: max_out() mirrors the kernel's own count param — the
         # array's own `_len` name for a single-array-param method.
-        assert "def steps_max_out(self, x_len: int) -> int:" in pyi
+        assert "def steps_max_out(self, x_len: int, /) -> int:" in pyi
 
     def test_returned_view_pinned_to_callers_array(self, project):
         ext = self._ext(project)
@@ -2138,7 +2138,7 @@ class TestMethodSingleRecord:
         # indexing type-check exactly as they did before.
         pyi = (self._scaffold(tmp_path) / "src/p/tm.pyi").read_text("utf-8")
         assert (
-            "def analyze(self, x: npt.NDArray[np.complex64])"
+            "def analyze(self, x: npt.NDArray[np.complex64], /)"
             " -> ToneMetrics:" in pyi
         )
         assert "class ToneMetrics(tuple[float, float, int]):" in pyi

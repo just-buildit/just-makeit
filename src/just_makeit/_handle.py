@@ -44,6 +44,7 @@ from . import _context as Ctx
 from . import _types as T
 from . import _procglobal
 from . import _incpath as INC
+from ._stubs import positional_only
 from ._context import _diagnostics
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
@@ -2664,8 +2665,6 @@ def py_face(m: dict) -> PyFace:
     # positional-only signature, and says so with `/`, or a type checker
     # accepts `write(iq=...)`, which raises `TypeError`. Asked of the flags
     # the method table registers, never re-derived here.
-    from ._stubs import positional_only
-
     sig = positional_only(sig[len("self, ") :], method_flags(m), "self")
     return PyFace(
         sig,
@@ -2749,8 +2748,6 @@ def render_pyi(
     documents that method, and a single-field getter's ``@brief`` documents its
     property. An empty/absent map reproduces the pre-enrichment stub exactly
     (gh-374)."""
-    from ._stubs import positional_only
-
     doc_blocks = doc_blocks or {}
     tname = C.handle_type_name(cfg, module)
     C.handle_backing(cfg, module)

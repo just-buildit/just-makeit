@@ -142,8 +142,9 @@ def test_a_handle_stub_is_positional_only_where_its_binding_is(
     assert not wrong, "\n".join(wrong)
 
 
-def test_a_capsule_stub_is_positional_only_where_its_binding_is():
-    cfg = {
+def _capsule_cfg() -> dict:
+    """A capsule module registering every function kind."""
+    return {
         "project": {"name": "p"},
         "module": {
             "c": {
@@ -166,6 +167,10 @@ def test_a_capsule_stub_is_positional_only_where_its_binding_is():
             }
         },
     }
+
+
+def test_a_capsule_stub_is_positional_only_where_its_binding_is():
+    cfg = _capsule_cfg()
     ext = _capsule.render_ext(cfg, "c")
     pyi = _capsule.render_pyi(cfg, "c")
     rows = _rows(ext)
@@ -206,3 +211,37 @@ def test_a_composer_stub_is_positional_only_where_its_binding_is():
         compared
     ), compared
     assert not wrong, "\n".join(wrong)
+
+
+def test_every_row_of_every_table_is_read(handle_cases):
+    """Every named row of every table these bindings register is read by
+    `method_table_flags` and by this file's own `_ROW`: either one missing a
+    row would leave that member out of the comparison above, unseen. The
+    count is taken independently, by the object gate's `_entry_openers`."""
+    from test_composer_codegen import _cfg, _gen_cfg
+    from test_gh2212_object_stub_slash import (
+        _entry_openers,
+        _table_bodies,
+        unread_rows,
+    )
+
+    from just_makeit import _composer
+
+    exts = [ext for _ident, ext, _pyi in handle_cases]
+    exts.append(_capsule.render_ext(_capsule_cfg(), "c"))
+    for cfg in (_cfg(), _gen_cfg()):
+        exts += [
+            _composer.render_ext(cfg, mod)
+            for mod, body in cfg["module"].items()
+            if body.get("kind") == "composer"
+        ]
+    unread = [u for ext in exts for u in unread_rows(ext)]
+    unread += [
+        f"{name}: {_entry_openers(body)} rows, _ROW read"
+        f" {len(_ROW.findall(body))}"
+        for ext in exts
+        for name, body in _table_bodies(ext)
+        if _entry_openers(body) != len(_ROW.findall(body))
+    ]
+    assert sum(len(_table_bodies(ext)) for ext in exts) > len(exts)
+    assert not unread, "\n".join(sorted(set(unread)))

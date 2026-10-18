@@ -2897,6 +2897,171 @@ _NUMPY_IMPORT_LINES = (
 # ── public entry point ────────────────────────────────────────────────────────
 
 
+#: One ``{"name", <function, any cast>, <flags>,`` row of a ``PyMethodDef``
+#: table, from its ``{`` -- in any layout a formatter gives it: split over
+#: lines, a space inside the brace, a cast such as
+#: ``(PyCFunction)(void (*)(void))`` before the function.
+_PMD_ROW = _re.compile(
+    r'\{\s*"(\w+)"\s*,\s*[^,"]+,\s*(METH_[A-Z_]+(?:\s*\|\s*METH_[A-Z_]+)*)\s*,'
+)
+
+#: The ``{NULL, ...}`` / ``{0}`` row that ends a table.
+_PMD_SENTINEL = _re.compile(r"\{\s*(?:NULL|0)\b")
+
+
+def method_table_flags(c_text: str) -> "dict[str, str]":
+    """``{member: flags}`` for every ``PyMethodDef`` row in *c_text*.
+
+    *c_text* is one type's rendered binding -- a standalone ``_ext.c`` or a
+    module fragment, whose ``static PyMethodDef`` tables are read -- or the
+    rows of one table on their own. The flags are the ones the extension
+    registers, read rather than re-derived (gh-2212).
+
+    Every entry is accounted for. The table is walked by brace on the
+    code-masked text (`_docsync`'s walk, which strings and comments cannot
+    confuse), and each entry but the ``{NULL, ...}`` sentinel must parse as
+    a row. One that does not is a jm bug -- a layout this reader was never
+    taught -- and raises, rather than leaving its member out and its stub
+    unmarked.
+
+    Raises
+    ------
+    RuntimeError
+        Naming the entry that did not parse.
+
+    Examples
+    --------
+    >>> method_table_flags('''
+    ...     {"step",  (PyCFunction)Fir_step, METH_VARARGS,
+    ...      "step(x)"},
+    ...     {"steps", (PyCFunction)(void *)Fir_steps,
+    ...      METH_VARARGS | METH_KEYWORDS, NULL},''')
+    {'step': 'METH_VARARGS', 'steps': 'METH_VARARGS | METH_KEYWORDS'}
+    >>> method_table_flags('''static PyMethodDef H_methods[] = {
+    ...   { "op", (PyCFunction) (void (*) (void))H_op,
+    ...     METH_VARARGS
+    ...         | METH_KEYWORDS,
+    ...     "op() -> None" },
+    ...   { NULL, NULL, 0, NULL }
+    ... };''')
+    {'op': 'METH_VARARGS | METH_KEYWORDS'}
+    >>> try:
+    ...     method_table_flags('{"op", H_op, 3, NULL},')
+    ... except RuntimeError as exc:
+    ...     print('{"op", H_op, 3, NULL}' in str(exc))
+    True
+    """
+    from ._docsync import _METHODS_RE, _code_mask, _entry_spans, _match_brace
+
+    mask = _code_mask(c_text)
+    bodies = []
+    for m in _METHODS_RE.finditer(mask):
+        close = _match_brace(mask, m.end() - 1)
+        if close == -1:
+            raise RuntimeError(
+                "jm could not find the end of the PyMethodDef table at"
+                f" {c_text[m.start() : m.end()]!r}"
+            )
+        bodies.append((m.end(), close))
+    if not bodies:  # the rows of one table, without its declaration
+        bodies = [(0, len(mask))]
+    out: "dict[str, str]" = {}
+    for start, end in bodies:
+        for s, e in _entry_spans(mask, start, end):
+            if _PMD_SENTINEL.match(mask, s):
+                continue
+            row = _PMD_ROW.match(c_text, s, e + 1)
+            if row is None:
+                raise RuntimeError(
+                    "jm could not read this PyMethodDef row, so it cannot"
+                    " tell its stub whether the binding takes keywords"
+                    f" (gh-2212): {c_text[s : e + 1]!r}"
+                )
+            out[row.group(1)] = " ".join(row.group(2).split())
+    return out
+
+
+def mark_positional_only(
+    pyi: str, flags_by_class: "dict[str, dict[str, str]]"
+) -> str:
+    """*pyi* with ``/`` closing the positional parameters of every method
+    whose binding takes no keywords (gh-2212).
+
+    An object's ``step``, ``set_<field>``, ``__exit__``, ``set_state`` and
+    most declared methods register ``METH_VARARGS`` or ``METH_O``: they
+    parse positionally, so ``obj.step(x=1.0)`` raises ``TypeError``. Their
+    stubs named the parameters plainly, so a type checker accepted that
+    call. Each member's flags come from *flags_by_class* -- ``{class:
+    method_table_flags(<that class's rendered binding>)}`` -- so the stub
+    is told by the table, and both stub writers (the standalone
+    ``render_component_pyi`` and the module ``make_module_pyi``) call this
+    one function rather than each deciding per shape. The key ``""`` holds
+    the module's own table, for its top-level functions, which have no
+    ``self`` to pass over.
+
+    This is an adapter, not a second decision: it finds each member's
+    positional parameters in the rendered text -- from the first one a
+    caller names to the last one's default -- and hands that text and the
+    member's flags to :func:`positional_only`, which alone decides whether
+    a ``/`` closes it and where. A ``*args`` or keyword-only parameter after
+    them is therefore left in place. A member is left as written when it is
+    not in the table (a property accessor), or when the stub already ends
+    its positional parameters with ``/``.
+
+    Examples
+    --------
+    >>> stub = (
+    ...     "class Fir:\\n"
+    ...     "    def step(self, x: float) -> float: ...\\n"
+    ...     "    def steps(self, x: float, out: int = ...) -> None: ...\\n"
+    ...     "    def reset(self) -> None: ...\\n"
+    ... )
+    >>> print(mark_positional_only(stub, {"Fir": {
+    ...     "step": "METH_VARARGS",
+    ...     "steps": "METH_VARARGS | METH_KEYWORDS",
+    ...     "reset": "METH_NOARGS"}}), end="")
+    class Fir:
+        def step(self, x: float, /) -> float: ...
+        def steps(self, x: float, out: int = ...) -> None: ...
+        def reset(self) -> None: ...
+    >>> print(mark_positional_only(
+    ...     "def apply(x: float, g: int = 3) -> float: ...\\n",
+    ...     {"": {"apply": "METH_VARARGS"}}), end="")
+    def apply(x: float, g: int = 3, /) -> float: ...
+    """
+    raw = pyi.encode("utf-8")
+    # ast reports a line and a UTF-8 byte column; this is each line's start.
+    starts = [0]
+    for line in raw.split(b"\n"):
+        starts.append(starts[-1] + len(line) + 1)
+    edits: "list[tuple[int, int, str]]" = []
+    tree = ast.parse(pyi)
+    # (members, their flags, how many leading parameters no caller names)
+    scopes = [(tree.body, flags_by_class.get("", {}), 0)] + [
+        (node.body, flags_by_class.get(node.name, {}), 1)
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    ]
+    for body, flags, lead in scopes:
+        for f in body:
+            if not isinstance(f, ast.FunctionDef) or f.decorator_list:
+                continue  # a property's accessor is no PyMethodDef row
+            a = f.args
+            if f.name not in flags or a.posonlyargs or len(a.args) <= lead:
+                continue
+            first = a.args[lead]
+            last = a.defaults[-1] if a.defaults else a.args[-1]
+            lo = starts[first.lineno - 1] + first.col_offset
+            hi = starts[(last.end_lineno or 1) - 1] + (
+                last.end_col_offset or 0
+            )
+            params = raw[lo:hi].decode("utf-8")
+            edits.append((lo, hi, positional_only(params, flags[f.name])))
+    for lo, hi, text in sorted(edits, reverse=True):
+        raw = raw[:lo] + text.encode("utf-8") + raw[hi:]
+    return raw.decode("utf-8")
+
+
 def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
     """The synthetic component a view is rendered as: ``(name, cfg)``.
 
@@ -3178,4 +3343,38 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             if x
         )
         parts.insert(_typing_slot, f"from typing import {typing_imports}")
-    return reflow_pyi("\n".join(parts)) + "\n"
+    # gh-2212: positional-only where each class's row takes no keywords,
+    # told by the fragment that class renders to -- through the one
+    # function the standalone stub (`_render.render_component_pyi`) asks.
+    # A copy of the manifest, because building the contexts stashes header
+    # docs on it, which this stub must not start reading.
+    import copy
+
+    from . import _render as R
+    from ._object import build_component_ctxs
+
+    # With no project root there is no header to read, here or for the
+    # stub above, so the contexts are built in their header-free form. The
+    # module's own functions are told by the table the aggregator renders
+    # for them (key "").
+    _cname = C.module_paths(module).cname
+    _flags = {
+        c["Component"]: method_table_flags(R.render_module_ext_fragment(c))
+        for c in build_component_ctxs(
+            root,
+            copy.deepcopy(cfg),
+            module,
+            pkg,
+            force_fallback=root is None,
+        )
+    }
+    _flags[""] = method_table_flags(
+        R.make_functions_ctx(
+            _cname,
+            "".join(w.title() for w in _cname.split("_")),
+            list(functions),
+            C.enums(cfg),
+            owner=cfg,
+        )["module_methods_def"]
+    )
+    return reflow_pyi(mark_positional_only("\n".join(parts), _flags)) + "\n"

@@ -49,13 +49,13 @@ class TestModulePyiOutKwarg:
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
         # gh-607: max_out() mirrors the kernel's own count param.
-        assert "def execute_cf32_max_out(self, n_in: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, n_in: int, /) -> int:" in pyi
 
     def test_single_array_param_gets_out_kwarg_and_max_out(self, tmp_path):
         root = self._scaffold(tmp_path, params=[("x", "float _Complex[]")])
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, x_len: int, /) -> int:" in pyi
 
     def test_array_beside_a_scalar_gets_out_kwarg_and_max_out(self, tmp_path):
         # Farrow.delay-shaped: an array param beside a scalar. gh-412 left it
@@ -67,7 +67,7 @@ class TestModulePyiOutKwarg:
         )
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, x_len: int, /) -> int:" in pyi
 
     def test_params_beside_an_input_get_out_kwarg_and_max_out(self, tmp_path):
         # An `arg_type` input plus a param: parsed since gh-1960, and offered
@@ -82,7 +82,7 @@ class TestModulePyiOutKwarg:
             r"out: [^=]+\| None = None,?\s*\)",
             pyi,
         ), pyi
-        assert "def execute_cf32_max_out(self, n_in: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, n_in: int, /) -> int:" in pyi
 
     def test_multi_output_gets_no_out_kwarg(self, tmp_path):
         # Two output arrays would need two buffers; one `out=` cannot say
