@@ -3017,7 +3017,19 @@ def run(
     # gh-1882: the manifest's `reset_impl` / `reset_impl_file` as written,
     # from the replay alone -- see `_init.run`, which takes it too.
     reset_impl_decl: "dict[str, str] | None" = None,
+    # gh-2215: `jm object --before <obj>` -- place this object ahead of a
+    # member in the module's `objects` list (its gh-1985 load order)
+    # instead of appending it. Refused before anything is written.
+    before: str = "",
 ) -> None:
+    if before and (
+        why := C.before_why_not(
+            C.load(root) if (root / C.FILENAME).exists() else {},
+            module,
+            before,
+        )
+    ):
+        raise _report.Refusal(why)
     # gh-588: `opaque_state` forward-declares the struct, so anything that
     # dereferences it from the PUBLIC header is incoherent. Say so here rather
     # than let the user meet it as an incomplete-type error in generated C they
@@ -3188,7 +3200,9 @@ def run(
     if no_state:
         vars_ = []
     elif state_vars is None:
-        vars_ = [("gain", "double", "0.0")]
+        # gh-2215: no starter in an opaque-managed struct, as `_init.run`.
+        _has_opaque = bool(opaque_fields) or opaque_state
+        vars_ = [] if _has_opaque else [("gain", "double", "0.0")]
     else:
         vars_ = list(state_vars)
     ctx = _make_object_ctx(
@@ -3375,7 +3389,7 @@ def run(
     # with a real header are included — a bare link target like `lo_core` is
     # skipped. gh-432: method params' `header` keys (a capsule param's
     # foreign type) are included the same way when the header exists.
-    from ._init import _dep_header_includes
+    from ._init import _dep_header_includes, _param_headers_at_create
 
     ctx["depends_includes"] = "".join(
         "\n" + inc
@@ -3389,7 +3403,10 @@ def run(
         )
         + [
             f'#include "{h}"'
-            for h in C.param_headers(cfg, object_name)
+            # gh-1893: the init-params' headers too, read off the argument --
+            # the object is not in the manifest yet, which is the gh-790 trap
+            # the standalone path in `_init.run` already reads around.
+            for h in _param_headers_at_create(cfg, object_name, init_params)
             if (INC.inc_dir(root) / h).exists()
         ]
     )
@@ -3524,7 +3541,7 @@ def run(
         )
 
     # Update config before regenerating module (so module_objects is up-to-date)
-    C.add_to_module(cfg, module, comp)
+    C.add_to_module(cfg, module, comp, before=before)
     C.add_component(
         cfg,
         comp,

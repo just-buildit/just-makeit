@@ -275,6 +275,12 @@ def load(root: Path) -> dict:
     package_errors = module_package_errors(cfg)
     if package_errors:
         raise Refusal("\n".join(package_errors))
+    # gh-2215: a cycle of `object` init-param references leaks every object
+    # in it and has no construction order. Here, so every command that
+    # reads the manifest -- `status` included -- refuses it.
+    cycles = object_ref_cycles(cfg)
+    if cycles:
+        raise Refusal("\n".join(cycles))
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
     # wrong guess -- accepted as truthy, it rendered a two-argument call to
     # a one-argument reader and failed at C compile, far from this line.
@@ -1532,6 +1538,13 @@ def save(root: Path, cfg: dict) -> None:
     # deferred mutations later when the scope exits and the author has to work
     # out which one it was.
     require_declared_names(cfg)
+    # gh-2215: and the cycle `load` refuses, so the command whose edge
+    # closes one (`jm object --init-param x:object:<y>`, `jm view`) is
+    # refused too, and the mutating-command undo (gh-1867) puts back what
+    # it had written.
+    cycles = object_ref_cycles(cfg)
+    if cycles:
+        raise Refusal("\n".join(cycles))
     # gh-999: contract the group expansion, HERE, for the same reason `load`
     # expands there — this is the one place every manifest write passes
     # through. `save` and `load` are the symmetric pair: what `load` unfolds,
@@ -1785,12 +1798,66 @@ def scaffold_module(cfg: dict, module: str) -> dict:
     return cfg
 
 
-def add_to_module(cfg: dict, module: str, object_name: str) -> dict:
-    """Append object_name to an existing module's object list."""
-    cfg.setdefault("module", {}).setdefault(module, {}).setdefault(
-        "objects", []
-    ).append(object_name)
+def add_to_module(
+    cfg: dict, module: str, object_name: str, before: str = ""
+) -> dict:
+    """Add *object_name* to an existing module's object list.
+
+    Appended, or -- with *before* (``jm object --before``, gh-2215) --
+    inserted ahead of that member. The list is the module's load order
+    (gh-1985), which every writer sorts the root CMakeLists and the
+    umbrella header by, so placing the entry is all a writer has to do.
+    :func:`before_why_not` is the refusal; a caller asks it first.
+
+    >>> cfg = {"module": {"m": {"objects": ["a", "b"]}}}
+    >>> add_to_module(cfg, "m", "x", before="b")["module"]["m"]["objects"]
+    ['a', 'x', 'b']
+    """
+    objs = (
+        cfg.setdefault("module", {})
+        .setdefault(module, {})
+        .setdefault("objects", [])
+    )
+    if before:
+        objs.insert(objs.index(before), object_name)
+    else:
+        objs.append(object_name)
     return cfg
+
+
+def before_why_not(cfg: dict, module: "str | None", before: str) -> str:
+    """Why ``jm object --before <before>`` cannot place an object, or ``""``.
+
+    gh-2215. ``--before`` sets a position in a module's ``objects`` list,
+    so it needs a module, and it names a member of that module.
+
+    >>> cfg = {"module": {"m": {"objects": ["a"]}, "n": {"objects": ["b"]}}}
+    >>> before_why_not(cfg, "m", "a")
+    ''
+    >>> before_why_not(cfg, None, "a")[:30]
+    '--before a needs --module: it '
+    >>> before_why_not(cfg, "m", "b")
+    "--before b: 'b' is in module 'n', not 'm'"
+    >>> before_why_not(cfg, "m", "zz")
+    "--before zz: module 'm' has no object 'zz' (it has: a)"
+    """
+    if not before:
+        return ""
+    if not module:
+        return (
+            f"--before {before} needs --module: it places the object in a "
+            "module's load order, and a standalone object has none"
+        )
+    if before in module_objects(cfg, module):
+        return ""
+    home = component_module(cfg, before)
+    if home:
+        return f"--before {before}: '{before}' is in module '{home}', not '{module}'"
+    have = ", ".join(module_objects(cfg, module)) or "no objects"
+    return (
+        f"--before {before}: module '{module}' has no object '{before}' "
+        f"(it has: {have})"
+    )
 
 
 def module_of(cfg: dict, obj: str) -> str:
@@ -2492,6 +2559,95 @@ def validate_module_package(package: str) -> str | None:
             f' write "{nested}".'
         )
     return msg
+
+
+def object_ref_edges(cfg: dict, component: str) -> "list[str]":
+    """The components *component*'s ``object`` init-params name, in order.
+
+    An edge per reference on the object's own ``init_params`` and on each
+    of its views' (gh-504: a view's init-params may name a producer too).
+    A reference names ``<comp>`` or ``<comp>.<Class>``; the component is
+    the part before the dot. Shared by :func:`object_ref_cycles` and
+    ``jm script``, which creates every producer before its consumers.
+
+    >>> cfg = {"a": {"init_params": [{"name": "x", "object": "b.B"}]},
+    ...        "b": {}}
+    >>> object_ref_edges(cfg, "a")
+    ['b']
+    """
+    sec = cfg.get(component)
+    if not isinstance(sec, dict):
+        return []
+    rows = [
+        *(sec.get("init_params") or []),
+        *(
+            p
+            for v in (sec.get("views") or [])
+            if isinstance(v, dict)
+            for p in (v.get("init_params") or [])
+        ),
+    ]
+    out: list[str] = []
+    for p in rows:
+        if not isinstance(p, dict):
+            continue
+        target = str(p.get("object") or "").partition(".")[0]
+        if target and target not in out:
+            out.append(target)
+    return out
+
+
+def object_ref_cycles(cfg: dict) -> "list[str]":
+    """Every cycle in the ``object`` init-param graph, as a refusal.
+
+    gh-2215. A consumer built from a producer's capsule keeps the producer
+    alive through a strong reference (gh-790's ``_<name>_owner``), and no
+    type jm generates takes part in Python's cyclic GC -- none has a
+    ``tp_traverse``. So objects whose references form a cycle can never be
+    collected: every one of them leaks. A cycle also has no construction
+    order, so no script could rebuild it. Each cycle is named in order,
+    from the first of its components the manifest lists.
+
+    >>> cfg = {"a": {"init_params": [{"name": "x", "object": "b"}]},
+    ...        "b": {"init_params": [{"name": "y", "object": "a"}]}}
+    >>> object_ref_cycles(cfg)[0].split(":")[1].split(".")[0].strip()
+    'a -> b -> a'
+    >>> object_ref_cycles({"a": {}, "b": {}})
+    []
+    """
+    comps = [c for c in components(cfg) if isinstance(cfg.get(c), dict)]
+    graph = {
+        c: [t for t in object_ref_edges(cfg, c) if t in comps] for c in comps
+    }
+    seen: "set[frozenset[str]]" = set()
+    out: list[str] = []
+    done: "set[str]" = set()
+
+    def walk(node: str, path: "list[str]") -> None:
+        for nxt in graph[node]:
+            if nxt in path:
+                cycle = path[path.index(nxt) :]
+                key = frozenset(cycle)
+                if key not in seen:
+                    seen.add(key)
+                    out.append(" -> ".join([*cycle, cycle[0]]))
+            elif nxt not in done:
+                walk(nxt, [*path, nxt])
+        done.add(node)
+
+    for c in comps:
+        if c not in done:
+            walk(c, [c])
+    return [
+        f"init_param `object` references form a cycle: {cycle}. Each "
+        "consumer holds a strong reference to its producer (gh-790's "
+        "`_<name>_owner`), and jm's types have no GC traverse, so objects "
+        "in a cycle can never be collected -- every one leaks. Break the "
+        "cycle: drop one side's `object` init-param and attach that side "
+        "after construction, through a method param declared with "
+        "`capsule` and `retain = true` (gh-2327)."
+        for cycle in out
+    ]
 
 
 def module_package_errors(cfg: dict) -> "list[str]":
@@ -3765,6 +3921,17 @@ def resolve_init_param_tuples(cfg: dict, params: "list[tuple]") -> list[tuple]:
     An undefined enum name exits with :func:`resolve_enum_type`'s message,
     before anything is written.
 
+    An ``object`` reference (gh-1224, slot 15) nothing has resolved yet --
+    ``jm object --init-param src:object:nco``, whose parser leaves the
+    type, capsule and header slots empty -- is resolved by the manifest
+    path's own reading: the tuple is written as the dict the manifest will
+    hold and projected back through :func:`_project_init_params`, so the
+    first render and every later one read the reference one way. Before
+    gh-2215 the empty type reached the renderer as ``_CTYPE_META['']``. A
+    tuple that already carries its type -- `apply`'s replay passes the
+    source manifest's resolved ones -- is left alone, since the scratch
+    manifest it is replayed into may not hold the producer's capsule yet.
+
     >>> cfg = {"enum": [{"name": "lvl", "values": ["a", "b"]}]}
     >>> resolve_init_param_tuples(cfg, [("x", "enum:lvl", "b"), ("n", "int")])
     [('x', 'string_enum:a,b', 'b'), ('n', 'int')]
@@ -3772,6 +3939,10 @@ def resolve_init_param_tuples(cfg: dict, params: "list[tuple]") -> list[tuple]:
     out: list[tuple] = []
     for p in params:
         try:
+            if len(p) > 15 and p[15] and not p[1]:
+                rec = init_param_tuple_to_dict(p)
+                out.append(_project_init_params(cfg, [rec])[0])
+                continue
             out.append((p[0], resolve_enum_type(cfg, p[1]), *p[2:]))
         except ValueError as exc:
             print(f"error: --init-param '{p[0]}': {exc}", file=_sys.stderr)

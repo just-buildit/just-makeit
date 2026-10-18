@@ -104,6 +104,7 @@ def run(args: list[str]) -> None:
 
     object_name = args[0]
     module = None
+    before = ""
     perf: bool | None = None
     arg_type = "float _Complex"
     return_type = None
@@ -147,6 +148,16 @@ def run(args: list[str]) -> None:
                 print("error: --module requires a name", file=sys.stderr)
                 sys.exit(1)
             module = remaining[i]
+            i += 1
+        elif tok == "--before":
+            # gh-2215: a position in the module's load order.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --before requires an object name", file=sys.stderr
+                )
+                sys.exit(1)
+            before = remaining[i]
             i += 1
         elif tok in ("--state", "--param"):
             var, i = parse_state_flag(remaining, i)
@@ -463,4 +474,5 @@ def run(args: list[str]) -> None:
         create_fn=create_fn_obj,
         max_out=max_out_obj,
         extra_include_dirs=extra_include_dirs_obj,
+        before=before,
     )

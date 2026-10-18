@@ -465,7 +465,8 @@ class Case(NamedTuple):
     """One run of a verb: argv, what the shape must hold, which shapes.
 
     In ``argv``, ``{M}`` is ``--module <id>`` when ``o`` lives in a module
-    and nothing when it is standalone; ``{mod}`` is that module's id.
+    and nothing when it is standalone; ``{mod}`` is that module's id, and
+    ``{first}`` the first object its manifest lists.
     ``only`` restricts the case to the named shapes; by default it runs on
     every shape that holds ``needs`` and nothing in ``without``. ``refuses``,
     when not empty, says the verb must refuse there, and is what its one
@@ -514,6 +515,10 @@ CASES: "dict[str, dict[str, Case]]" = {
         # `a` sorts before every name a shape holds (gh-1985).
         "standalone": _case("object", "a", needs=()),
         "in-a-module": _case("object", "a", "{M}", needs=("module",)),
+        # gh-2215: placed ahead of the module's first member, not appended.
+        "in-a-module-before": _case("object", "a", "{M}", "--before",
+                                    "{first}",
+                                    needs=("module",)),
         "generator": _case("object", "a", "--preset", "generator",
                            only=BASE),
         "consumer": _case("object", "a", "--preset", "consumer", only=BASE),
@@ -1065,10 +1070,14 @@ RATCHET = load_ratchet(RATCHET_DIR)
 # ── Running a case ───────────────────────────────────────────────────────────
 
 
-def _expand(argv: tuple, shape: Shape) -> "list[str]":
+def _expand(argv: tuple, shape: Shape, root: Path) -> "list[str]":
     out: "list[str]" = []
     for tok in argv:
-        if tok == "{M}":
+        if tok == "{first}":
+            # gh-2215: the module's first member, read off the shape's own
+            # manifest -- `o` is not the member in every shape.
+            out.append(C.module_objects(C.load(root), shape.module)[0])
+        elif tok == "{M}":
             out += ["--module", shape.module] if shape.module else []
         else:
             out.append(tok.replace("{mod}", shape.module))
@@ -1585,9 +1594,9 @@ def test_the_verb_leaves_what_apply_writes(
     shape = SHAPES[sname]
     root = shape_copy(sname)
     if case.refuses:
-        _refused(root, _expand(case.argv, shape), case.refuses)
+        _refused(root, _expand(case.argv, shape, root), case.refuses)
     else:
-        _ok(root, _expand(case.argv, shape))
+        _ok(root, _expand(case.argv, shape, root))
     found = findings(root)
     if verb in FRESH_VERBS:
         found |= fresh(root, shape, tmp_path_factory.mktemp("fresh"))
@@ -1676,7 +1685,7 @@ def test_a_verb_that_fails_after_writing_writes_nothing(
         raise Refusal("injected: the command failed after its last write")
 
     monkeypatch.setattr(_undo, "commit", fail)
-    r = run_cli(*_expand(case.argv, shape), cwd=root)
+    r = run_cli(*_expand(case.argv, shape, root), cwd=root)
 
     assert _tree_and_dirs(root) == before, (r.stdout + r.stderr)[-3000:]
     if case.refuses or (verb, cname) in READ_ONLY_MODES:
