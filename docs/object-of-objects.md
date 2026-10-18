@@ -1090,6 +1090,25 @@ leaves undocumented. A source field may instead be an owned pointer (§4.2,
 gh-1711):
 `{ name, object? | type + capsule? + header?, c_ptr?, copy_fn, free_fn, parse_fn, format_fn, parse_why? }`.
 
+A project that generates its own faces from these rows (a CLI table, a JSON
+schema) may put its own keys on them, and declare them once so jm does not
+warn that each one has no effect (gh-1752):
+
+```toml
+[project]
+composer_field_keys = ["cli", "json", "metavar"]
+
+[[module.wfm_compose.source.fields]]
+name = "freq"
+type = "double"
+cli = "--freq"      # read by the project's generator, not by jm
+metavar = "HZ"
+```
+
+Any other unknown key on a field row still warns, so a misspelt jm key stays
+visible; a declared name on any other table still warns too. A name jm itself
+reads on a field row is refused.
+
 **Handle only:**
 
 | table / key                             | meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
