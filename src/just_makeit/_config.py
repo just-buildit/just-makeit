@@ -325,8 +325,13 @@ def load(root: Path) -> dict:
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
-    from ._keys import warn_unknown_keys
+    from ._keys import project_field_key_errors, warn_unknown_keys
 
+    # gh-1752: a project-declared field key jm itself reads is a mistake, and
+    # the walk below would take the declaration at its word.
+    field_key_errors = project_field_key_errors(cfg)
+    if field_key_errors:
+        _refuse(field_key_errors)
     warn_unknown_keys(cfg)
     # gh-1368: a retired switch still loads; it just says it does nothing.
     warn_retired_platforms(cfg)

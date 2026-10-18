@@ -906,6 +906,14 @@ COMPOSER_OWNED_PTR_KEYS = (
 COMPOSER_SOURCE_FIELD_KEYS = COMPOSER_FIELD_KEYS | frozenset(
     COMPOSER_OWNED_PTR_KEYS
 )
+#: gh-1752: the field vocabularies a project may extend, through
+#: ``[project] composer_field_keys``, with the keys its OWN generator reads
+#: off the same rows. doppler generates wfmgen's CLI table and JSON schema
+#: from ``cli``, ``json``, ``metavar`` ... on its composer field rows; jm reads
+#: none of them, and warning on every one buried a real typo among ~20 lines
+#: of expected noise per apply. A declared name is skipped on these rows ONLY,
+#: so every other unknown key -- a misspelt jm key above all -- still warns.
+PROJECT_FIELD_VOCABS = ("composer field", "composer source field")
 COMPOSER_COMPUTED_KEYS = frozenset({"name", "type", "fn", "doc"})
 COMPOSER_SOURCE_KEYS = frozenset(
     {
@@ -1216,17 +1224,20 @@ class Unknown:
         return f"Unknown({self.kind!r}, {self.where!r}, {self.key!r})"
 
 
-def _check(kind: str, where: str, table: dict) -> list:
+def _check(
+    kind: str, where: str, table: dict, own: frozenset = frozenset()
+) -> list:
     """Collect the unrecognised keys of one table.
 
     Keys beginning with ``_`` are transient render state (``_doc_blocks``) and
     are never manifest-authored, so they are skipped exactly as ``_dump``
-    skips them.
+    skips them. ``own`` is the keys the project declared as its own on this
+    table (gh-1752, :func:`project_field_keys`); they are skipped too.
     """
     valid = KIND_KEYS[kind]
     out = []
     for key in table:
-        if key.startswith("_") or key in valid:
+        if key.startswith("_") or key in valid or key in own:
             continue
         valid_for = tuple(
             k for k, keys in KIND_KEYS.items() if k != kind and key in keys
@@ -1248,7 +1259,92 @@ def _accepted_keys(kind: str) -> frozenset:
     return KIND_KEYS.get(f"{kind} module", frozenset())
 
 
-def _check_dict_subtables(kind: str, mod: str, data: dict) -> list:
+def project_field_keys(cfg: dict) -> frozenset:
+    """The keys a project declared as its own on composer field rows.
+
+    gh-1752. ``[project] composer_field_keys`` names the keys a project's own
+    generator reads off ``source.fields`` / ``segment.fields`` rows. jm reads
+    none of them, keeps them on a save as it keeps every key (gh-2045), and
+    stops warning that they have no effect -- on those rows only.
+
+    Parameters
+    ----------
+    cfg : dict
+        A loaded manifest.
+
+    Returns
+    -------
+    frozenset of str
+        The declared names; empty when the key is absent. A malformed value
+        contributes nothing here: :func:`project_field_key_errors` refuses it
+        first, in ``_config.load``.
+
+    Examples
+    --------
+    >>> cfg = {"project": {"composer_field_keys": ["cli", "json"]}}
+    >>> sorted(project_field_keys(cfg))
+    ['cli', 'json']
+    >>> project_field_keys({"project": {}})
+    frozenset()
+    """
+    value = (cfg.get("project") or {}).get("composer_field_keys", [])
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(k for k in value if isinstance(k, str))
+
+
+def project_field_key_errors(cfg: dict) -> list:
+    """Why ``[project] composer_field_keys`` cannot be honoured, if it cannot.
+
+    gh-1752. Two refusals:
+
+    - the value is not a list of strings -- there is no name to skip;
+    - a listed name is one jm READS on a composer field row (``doc``,
+      ``copy_fn``, ...). Declaring it the project's would claim jm ignores a
+      key that changes what jm generates, and would hide nothing: a key jm
+      reads never warns. Listing it is a mistake, said so.
+
+    Returns
+    -------
+    list of str
+        One sentence per problem; empty when the declaration is sound.
+
+    Examples
+    --------
+    >>> project_field_key_errors({"project": {"composer_field_keys": ["cli"]}})
+    []
+    >>> (err,) = project_field_key_errors(
+    ...     {"project": {"composer_field_keys": ["cli", "doc"]}}
+    ... )
+    >>> print(err)  # doctest: +NORMALIZE_WHITESPACE
+    [project] composer_field_keys lists `doc`, which jm reads on a composer
+    field row; it cannot be declared the project's own. Remove it from the
+    list.
+    """
+    proj = cfg.get("project") or {}
+    if "composer_field_keys" not in proj:
+        return []
+    value = proj["composer_field_keys"]
+    if not isinstance(value, list) or not all(
+        isinstance(k, str) for k in value
+    ):
+        return [
+            "[project] composer_field_keys must be a list of key names, "
+            f"got {value!r}"
+        ]
+    jm_reads = frozenset().union(*(KIND_KEYS[v] for v in PROJECT_FIELD_VOCABS))
+    return [
+        f"[project] composer_field_keys lists `{k}`, which jm reads on a "
+        "composer field row; it cannot be declared the project's own. "
+        "Remove it from the list."
+        for k in value
+        if k in jm_reads
+    ]
+
+
+def _check_dict_subtables(
+    kind: str, mod: str, data: dict, own: frozenset = frozenset()
+) -> list:
     """Collect the unrecognised keys of a kind module's TABLE sub-tables.
 
     gh-1236. :func:`_check_kind_module` walked the sub-tables whose rows are
@@ -1293,13 +1389,17 @@ def _check_dict_subtables(kind: str, mod: str, data: dict) -> list:
                 continue
             where = f"{mod}.{tbl}.{inner}"
             rows = val if isinstance(val, list) else [val]
+            # gh-1752: the project's own keys apply to its field rows only.
+            skip = own if nvocab in PROJECT_FIELD_VOCABS else frozenset()
             for row in rows:
                 if isinstance(row, dict):
-                    found += _check(nvocab, where, row)
+                    found += _check(nvocab, where, row, skip)
     return found
 
 
-def _check_kind_module(mod: str, data: dict) -> list:
+def _check_kind_module(
+    mod: str, data: dict, own: frozenset = frozenset()
+) -> list:
     """Collect the unrecognised keys of one ``kind``-bearing module (gh-1114).
 
     Sub-tables are walked only when their rows are TABLES. ``composes`` and
@@ -1316,7 +1416,7 @@ def _check_kind_module(mod: str, data: dict) -> list:
     if f"{kind} module" not in KIND_KEYS:
         return []  # not a kind jm generates; nothing to say about it
     found = _check(f"{kind} module", mod, data)
-    found += _check_dict_subtables(kind, mod, data)
+    found += _check_dict_subtables(kind, mod, data, own)
     for tbl, rows in data.items():
         if not isinstance(rows, list) or not any(
             isinstance(r, dict) for r in rows
@@ -1388,6 +1488,7 @@ def unknown_keys(cfg: dict) -> list:
     # `[app]` key as an unknown object key.
     from ._config import components
 
+    own = project_field_keys(cfg)
     found: list = []
     for name in components(cfg):
         section = cfg.get(name)
@@ -1442,7 +1543,7 @@ def unknown_keys(cfg: dict) -> list:
         if data.get("kind"):
             # gh-1114: it has its own vocabulary -- which is now written down,
             # so it is checked against that rather than skipped.
-            found += _check_kind_module(mod, data)
+            found += _check_kind_module(mod, data, own)
             continue
         # gh-1432: `depends_on` is a real key on a `kind` module and is
         # DROPPED on an object module -- no link line, and no
