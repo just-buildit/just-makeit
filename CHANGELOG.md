@@ -4,9 +4,13 @@
 
 ### Breaking
 
+Measured on doppler (938f51201) with this release's `jm apply`: no refusal
+below fires, and its regenerated files change only in binding glue and
+stubs.
+
 A manifest that declared one of these was accepted before and is refused
 now, by `jm apply` and the verb alike, with the reason. Each one was either
-ignored or did not build. doppler declares none of them.
+ignored or did not build.
 
 - **A method key on a shape that does not read it** (gh-2202, gh-2250,
     gh-2313): `none_on_empty` off a `variable_output` or `borrow` method;
@@ -22,10 +26,28 @@ ignored or did not build. doppler declares none of them.
 
 Generated output that changes shape:
 
+- **`jm apply` forwards keys its replay used to drop** (gh-2215):
+    `capsule_type`, `step_delegates_to_steps`, `opaque_state`, a method's
+    `bench = false`, `find_packages` / `pkg_modules` / `platforms`, and a
+    module's `extra_include_dirs` / `extra_link_libs` / `extra_types` /
+    `functions_in_core`. A project declaring one gets what it declared on
+    its next `apply`: a declined benchmark is not scaffolded, an opaque
+    struct loses the starter `gain` field, a module's extras reach its
+    build.
+
+- **`status_return` beside `out_type` or `multi_output` checks the status**
+    (gh-2250). Those shapes did not compile before; a non-zero status now
+    raises, as on every other shape that reads it.
+
+- **A handle method or factory arg with `enum` takes the choice string**
+    (gh-2228), validated into its int, so its Python signature is `str`. It
+    did not compile before.
+
 - **A `jm app`'s CSV samples, `--record` reals and function results are
     written exactly** (gh-2254): `%.9g` / `%.17g` instead of `%0.9f` / `%g`,
     so `5.000000000` is now `5`, and a non-finite sample is `nan` / `inf` /
     `-inf` on both faces.
+
 - **A stub ends a positional-only method's parameters with `/`**
     (gh-2212): a type checker now refuses the keyword calls the binding
     always refused at runtime.
