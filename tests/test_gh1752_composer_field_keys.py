@@ -31,6 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from just_makeit import _config as C  # noqa: E402
 from just_makeit._keys import (  # noqa: E402
     project_field_key_errors,
+    project_field_keys,
     unknown_keys,
 )
 from test_composer_codegen import _cfg  # noqa: E402
@@ -119,6 +120,15 @@ class TestTheDeclarationIsRefusedWhenWrong:
             {"project": {"composer_field_keys": value}}
         )
         assert "must be a list of key names" in err
+
+    @pytest.mark.parametrize("value", ["cli", {"cli": 1}])
+    def test_a_malformed_value_declares_nothing(self, value: object) -> None:
+        """Read outside `load` (which refuses it first), a value that is not
+        a list declares no key rather than every character of a string."""
+        cfg = _declared(None)
+        cfg["project"] = {"composer_field_keys": value}
+        assert project_field_keys(cfg) == frozenset()
+        assert ("composer source field", "cli") in _keys_reported(cfg)
 
     def test_load_refuses_it(self, tmp_path: pathlib.Path) -> None:
         C.save(tmp_path, _declared(["cli", "doc"]))
