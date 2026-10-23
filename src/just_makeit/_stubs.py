@@ -39,7 +39,6 @@ from . import _outbuf
 from . import _record
 from . import _context as Ctx
 from . import _types as T
-from dataclasses import replace as _replace
 
 from ._context._diagnostics import create_raises_doc as _create_raises_doc
 from ._context._diagnostics import empty_is_none_doc as _empty_is_none_doc
@@ -2417,7 +2416,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 _outbuf.interleave(m_arg != "void", m_params),
             )
             if _mo_blk is not None:
-                _mo_gm = _replace(_mo_gm, block=_mo_blk)
+                # gh-2343: through the constructor, which also records that
+                # this body is the header's LINES, not jm's paragraphs. A
+                # bare replace here left the blank-line spacing behind and
+                # printed every wrapped source line as its own paragraph.
+                _mo_gm = _mo_gm.with_header_block(_mo_blk)
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
             )
