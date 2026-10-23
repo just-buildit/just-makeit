@@ -518,6 +518,10 @@ PROPERTY_KEYS = frozenset(
         "expr",
         "enum",
         "value_type",
+        # gh-2347: a `json` property's stub annotation, e.g.
+        # "list[dict[str, Any]]". Deliberately not `value_type`, which names a
+        # container's C element type -- one key, one meaning.
+        "py_type",
         "entry_type",
         "count_fn",
         "key_fn",

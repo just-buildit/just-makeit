@@ -1019,6 +1019,43 @@ guards, not decoration: `PyUnicode_FromString(NULL)` reaches `strlen(NULL)` and
 crashes, so the unchecked form segfaults rather than raising. A partially built
 container is released on every failure path.
 
+### JSON properties — `type = "json"`
+
+When your core already holds a structured document, such as a file's metadata
+it parsed at open, a `json` property hands Python the structure itself. The C
+getter returns the document as JSON text, and the binding parses it with
+`json.loads` (gh-2347).
+
+```toml
+[[reader.properties]]
+name    = "annotations"
+type    = "json"
+py_type = "list[dict[str, Any]]"
+doc     = "The capture's annotations, one dict per entry."
+```
+
+```c
+char *<stem>_get_annotations(const <stem>_state_t *state);
+```
+
+**The binding owns the text.** Return a `malloc`'d, NUL-terminated UTF-8
+document. The generated getter frees it on every path, so returning a pointer
+into your state or a string literal is a double free. To report a failure,
+return `NULL`: the read raises `RuntimeError` naming the getter. Text that
+doesn't parse, or isn't UTF-8, raises `ValueError` naming the property and
+quoting the decoder's message.
+
+Every read parses afresh, so a caller can mutate what it gets back without
+touching the next read. Like a container, the property is read-only. `field`,
+`buf_field`, `expr`, `enum`, `codec`, `capsule`, `value_type` and the container
+accessors are refused on it, because the JSON text is its whole backing.
+
+`py_type` is the stub's annotation, `Any` when absent. It lands in the `.pyi`
+verbatim, so jm accepts only builtin generics, `Any` and `X | None`. A name the
+stub does not import, such as `Sequence`, is refused at declaration.
+
+From the CLI: `jm property reader annotations --type json --py-type "list[dict[str, Any]]"`.
+
 ### Removing a method or property
 
 `just-makeit remove <kind> <name> --object <obj> [--module <mod>] [--force]`,

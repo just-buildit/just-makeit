@@ -754,6 +754,9 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     ...                  "value_type": "object",
     ...                  "count_fn": "r_nkw"}, None)[1:]
     ['    --value-type object \\\\\\n', '    --count-fn r_nkw \\\\\\n']
+    >>> _property_flags({"name": "ann", "type": "json",
+    ...                  "py_type": "list[dict[str, Any]]"}, None)[1:]
+    ['    --py-type "list[dict[str, Any]]" \\\\\\n']
     """
     parts: list[str] = []
 
@@ -787,6 +790,11 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
 
     if p.get("expr"):
         parts.append(_flag("--expr", p["expr"]))
+
+    # gh-2347: a json property's stub annotation; dropped, the replay
+    # annotates it Any.
+    if p.get("py_type"):
+        parts.append(_flag("--py-type", p["py_type"]))
 
     # gh-519: the [[enum]] the property decodes through. Dropping it would
     # rebuild the property as a bare int — the exact silent-divergence the

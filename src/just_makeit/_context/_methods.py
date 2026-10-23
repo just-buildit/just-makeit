@@ -5663,6 +5663,132 @@ def validate_container_property(component: str, p: dict) -> None:
             )
 
 
+#: gh-2347: the keys a `json` property refuses -- each names another backing
+#: (a struct member, a buffer, an expression, a container's accessors, a
+#: codec, a capsule) or a decode (`enum`) that the JSON text replaces.
+_JSON_CLASHES = (
+    "field",
+    "buf_field",
+    "expr",
+    "enum",
+    "codec",
+    "capsule",
+    "value_type",
+    "count_fn",
+    "key_fn",
+    "value_fn",
+    "entry_fn",
+)
+
+
+def validate_json_property(component: str, p: dict) -> None:
+    """Refuse an incoherent `json` property, and `py_type` on any other kind.
+
+    gh-2347. Raised at render time, before anything is written, so a
+    misdeclaration is a jm diagnostic rather than C the author never wrote.
+
+    >>> validate_json_property("r", {"name": "a", "type": "json"})
+    >>> validate_json_property("r", {"name": "a", "type": "json",
+    ...                              "writable": True})  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+    ...
+    just_makeit._report.Refusal: r.a: a json property is read-only. ...
+    >>> validate_json_property("r", {"name": "a", "type": "double",
+    ...                              "py_type": "int"})  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+    ...
+    just_makeit._report.Refusal: r.a: py_type annotates a json property only; ...
+    """
+    where = f"{component}.{p.get('name', '?')}"
+    if not T.is_json_type(str(p.get("type", ""))):
+        if p.get("py_type"):
+            raise Refusal(
+                f"{where}: py_type annotates a json property only; a "
+                f"{p.get('type')} property's stub type comes from its C type. "
+                f'Drop py_type, or use type = "json".'
+            )
+        return
+    if p.get("writable"):
+        raise Refusal(
+            f"{where}: a json property is read-only. The value is parsed "
+            f"fresh from the C getter's text on every read, so a setter "
+            f"would mutate a copy the caller never sees. Expose a method "
+            f"that mutates the core instead."
+        )
+    for clash in _JSON_CLASHES:
+        if p.get(clash):
+            raise Refusal(
+                f"{where}: `{clash}` cannot be combined with a json property "
+                f"-- the value is the JSON text its getter returns."
+            )
+    if p.get("error") or p.get("error_message"):
+        raise Refusal(
+            f"{where}: a json property has no setter, so `error` has nothing "
+            f"to test. A NULL from the getter already raises."
+        )
+    py_type = p.get("py_type")
+    if py_type:
+        why = T.json_py_type_error(str(py_type))
+        if why:
+            raise Refusal(
+                f"{where}: py_type {py_type!r} {why}. Use builtin generics "
+                f'and Any, e.g. "list[dict[str, Any]]".'
+            )
+
+
+def _json_getter(
+    Component: str, pname: str, getter_fn: str, guard: str
+) -> str:
+    """The getter of a `json` property (gh-2347).
+
+    The C getter returns malloc'd JSON text the binding owns: parsed with
+    ``json.loads``, then ``free``d on every path. ``NULL`` raises
+    ``RuntimeError`` naming the getter; text that does not parse (or is not
+    UTF-8) raises ``ValueError`` naming the property, with the decoder's
+    message.
+    """
+    return (
+        f"static PyObject *\n"
+        f"{Component}_getprop_{pname}"
+        f"({Component}Object *self, void *Py_UNUSED(closure))\n"
+        f"{{\n"
+        f"{guard}"
+        f"    char *_js = {getter_fn}(self->handle);\n"
+        f"    if (!_js) {{\n"
+        f"        PyErr_SetString(PyExc_RuntimeError,\n"
+        f'            "{pname}: {getter_fn} returned NULL");\n'
+        f"        return NULL;\n"
+        f"    }}\n"
+        f'    PyObject *_mod = PyImport_ImportModule("json");\n'
+        f"    if (!_mod) {{\n"
+        f"        free(_js);\n"
+        f"        return NULL;\n"
+        f"    }}\n"
+        f'    PyObject *_v = PyObject_CallMethod(_mod, "loads", "s", _js);\n'
+        f"    Py_DECREF(_mod);\n"
+        f"    free(_js);\n"
+        f"    if (!_v && PyErr_ExceptionMatches(PyExc_ValueError)) {{\n"
+        f"        /* JSONDecodeError and UnicodeDecodeError are both\n"
+        f"           ValueErrors: re-raise naming the property. */\n"
+        f"#if PY_VERSION_HEX >= 0x030C0000\n"
+        f"        PyObject *_e = PyErr_GetRaisedException();\n"
+        f"#else\n"
+        f"        PyObject *_t, *_e, *_tb;\n"
+        f"        PyErr_Fetch(&_t, &_e, &_tb);\n"
+        f"        PyErr_NormalizeException(&_t, &_e, &_tb);\n"
+        f"        Py_XDECREF(_t);\n"
+        f"        Py_XDECREF(_tb);\n"
+        f"#endif\n"
+        f"        PyErr_Format(PyExc_ValueError,\n"
+        f'            "{pname}: {getter_fn} returned malformed JSON: %S",\n'
+        f"            _e ? _e : Py_None);\n"
+        f"        Py_XDECREF(_e);\n"
+        f"    }}\n"
+        f"    return _v;\n"
+        f"}}"
+    )
+
+
 def _container_getter(
     component: str,
     Component: str,
@@ -5932,7 +6058,11 @@ def make_properties_ctx(
         # the user never wrote.
         if container:
             validate_container_property(component, p)
-        validate_property_error(component, p, state_var_names, csym=csym)
+        # gh-2347: also refuses `py_type` on every other kind.
+        validate_json_property(component, p)
+        is_json: bool = T.is_json_type(ctype)
+        if not is_json:
+            validate_property_error(component, p, state_var_names, csym=csym)
         # gh-2182: what a refused assignment raises, or None; read once, by
         # the setter's binding, its prototype and both doc faces.
         setter_fn = CSYM.property_setter(csym, pname)
@@ -5996,6 +6126,31 @@ def make_properties_ctx(
                 f"{guard}"
                 + _capsule_new_c(_cap_expr, p["capsule"], Component)
                 + "\n}"
+            )
+        elif is_json:
+            if pname in state_var_names:
+                # gh-2347: the state field's own accessor is a scalar getter
+                # of the same name, so the char * one would conflict with it.
+                raise Refusal(
+                    f"{component}.{pname}: a json property cannot share a "
+                    f"state variable's name -- that variable already has a "
+                    f"getter, and this one returns char *. Rename the "
+                    f"property."
+                )
+            _jget = CSYM.property_getter(csym, pname)
+            getter = _json_getter(Component, pname, _jget, guard)
+            decl_lines.append(
+                f"/**\n"
+                f" * @brief Get {pname}, as JSON text.\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" * @return A malloc'd, NUL-terminated UTF-8 JSON"
+                f" document the caller\n"
+                f" *         owns and must free(), or NULL on failure.\n"
+                f" *         The Python property parses it with"
+                f" json.loads and frees it.\n"
+                f" */\n"
+                f"{T.JSON_GETTER_CTYPE}{_jget}"
+                f"(const {csym}_state_t *state);"
             )
         elif container:
             _cdc = None
@@ -6268,6 +6423,10 @@ def make_properties_ctx(
             # capsule-typed *params* already annotate to, so the producing
             # and consuming faces of the same pointer read alike.
             py_t = "Any"
+        elif is_json:
+            # gh-2347: the declared annotation, validated above to name only
+            # builtins and Any (whose import the stub derives from its text).
+            py_t = str(p.get("py_type") or "Any")
         elif container:
             _pcdc = (
                 (codecs or {}).get(p["codec"])

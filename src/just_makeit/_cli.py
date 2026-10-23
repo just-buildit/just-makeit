@@ -998,6 +998,7 @@ def _main() -> None:
         capsule_type = ""  # gh-1235
         error = ""  # gh-2182
         error_message = ""
+        py_type = ""  # gh-2347
 
         remaining = args[3:]
         i = 0
@@ -1070,6 +1071,8 @@ def _main() -> None:
                 # gh-2182: the exception a refused assignment raises.
                 "--error",
                 "--error-message",
+                # gh-2347: a json property's stub annotation.
+                "--py-type",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -1100,6 +1103,8 @@ def _main() -> None:
                     error = val  # gh-2182
                 elif tok == "--error-message":
                     error_message = val
+                elif tok == "--py-type":
+                    py_type = val  # gh-2347
                 else:
                     expr = val
                 i += 1
@@ -1152,6 +1157,7 @@ def _main() -> None:
             capsule_type=capsule_type,
             error=error,
             error_message=error_message,
+            py_type=py_type,
         )
 
     elif cmd == "warning":
