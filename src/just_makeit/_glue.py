@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import _borrow
 from . import _config as C
+from . import _enumc
 from . import _incpath as INC
 from . import _procglobal
 from . import _record
@@ -204,6 +205,11 @@ def component_ctx(
             enums=C.enums(cfg),
         )
     )
+    # gh-2344: the enum values this object's `.so` publishes as module
+    # attributes. The C adds them in its PyInit_; the stub declares them.
+    _pub = ctx.get("enum_publish_entries") or []
+    ctx["enum_publish"] = _enumc.publish_c(_pub)
+    ctx["pyi_enum_publish"] = _enumc.publish_pyi(_pub)
     ctx.update(
         Ctx.make_properties_ctx(
             object_name,

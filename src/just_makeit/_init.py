@@ -238,6 +238,12 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # computes the real value for any component that has one.
         "record_type_ready": "",
         "record_add_object": "",
+        # gh-2344: the [[enum]] values the `.so` publishes as module
+        # attributes, and their stub lines. Seeded for the same reason as the
+        # record slots; `_glue.component_ctx` computes them from the
+        # object's enum tables.
+        "enum_publish": "",
+        "pyi_enum_publish": "",
         # gh-541/gh-544: destructor slots. Seeded here — the one place every
         # component render path passes through — so no path can leak a literal
         # <<destroy_*>> into generated C. The undeclared values reproduce the

@@ -5440,8 +5440,38 @@ def make_enum_tables_ctx(
     second copy would be a duplicate definition in the same TU, not a
     fallback.
 
-    Returns ``{"enum_tables": ...}``, empty when nothing references an enum —
-    so a type without one renders byte-identically to before.
+    Returns ``{"enum_tables": ..., "enum_publish_entries": ...}``, empty when
+    nothing references an enum -- so a type without one renders
+    byte-identically to before. The entries are what the type publishes to
+    Python (gh-2344), read by :func:`enum_publication` for the stub too.
+    """
+    used, looked_up, decoded = _enum_usage(
+        component, Component, methods, properties, enums
+    )
+    if not used:
+        return {"enum_tables": "", "enum_publish_entries": []}
+    return {
+        "enum_tables": _render_enum_tables(
+            Component, used, enums or {}, looked_up, decoded
+        ),
+        "enum_publish_entries": _enumc.publication(
+            used, enums, prefix=Component
+        ),
+    }
+
+
+def _enum_usage(
+    component: str,
+    Component: str,
+    methods: list[dict] | None,
+    properties: list[dict] | None,
+    enums: dict[str, list[str]] | None,
+) -> tuple[list[str], list[str], list[str]]:
+    """The enums a type's tables cover: ``(used, looked_up, decoded)``.
+
+    One predicate for both the emitted tables (:func:`make_enum_tables_ctx`)
+    and what the type publishes to Python (:func:`enum_publication`), so the
+    two cannot name different enums.
     """
     used = method_param_enums(methods, enums)
     # gh-1745: every method parameter is looked up; a property only when its
@@ -5460,13 +5490,25 @@ def make_enum_tables_ctx(
         lk = _property_lookup_enum(component, Component, prp, enums)
         if lk and lk not in looked_up:
             looked_up.append(lk)
-    if not used:
-        return {"enum_tables": ""}
-    return {
-        "enum_tables": _render_enum_tables(
-            Component, used, enums or {}, looked_up, decoded
-        )
-    }
+    return used, looked_up, decoded
+
+
+def enum_publication(
+    component: str,
+    Component: str,
+    methods: list[dict] | None,
+    properties: list[dict] | None,
+    enums: dict[str, list[str]] | None,
+) -> list[dict]:
+    """What one object publishes to Python (gh-2344), as ``_enumc.publication``.
+
+    The stub asks this for the same object :func:`make_enum_tables_ctx` was
+    given, so the ``.pyi`` declares exactly the attributes the extension
+    adds. The entries' C table names are not read by the stub, so *Component*
+    only has to be the name the object's own tables would use.
+    """
+    used, _, _ = _enum_usage(component, Component, methods, properties, enums)
+    return _enumc.publication(used, enums, prefix=Component)
 
 
 def _render_enum_tables(

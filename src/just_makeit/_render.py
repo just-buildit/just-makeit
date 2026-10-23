@@ -25,6 +25,7 @@ from ._types import (
 )
 from . import _coerce
 from . import _config as C
+from . import _enumc
 from . import _record
 from . import _borrow
 from . import _outbuf
@@ -895,7 +896,7 @@ PyInit_<<module_leaf>>(void)
 <<type_ready_checks>>
     PyObject *m = PyModule_Create(&<<module>>_moduledef);
     if (!m) return NULL;
-<<add_object_calls>><<procglobal>>
+<<add_object_calls>><<enum_publish>><<procglobal>>
     return m;
 }
 """
@@ -2753,6 +2754,16 @@ def render_module_ext_aggregator(
     # component, so a view and its parent sharing a record_name publish one
     # type object rather than two, the second of which frees the first.
     _rec_seen: dict[str, _record.RecordReg] = {}
+    # gh-2344: one Python name per enum for the whole module. Two objects
+    # that index the same [[enum]] each carry its table, but only the first
+    # publishes it -- a second would overwrite the same attribute.
+    _enum_pub: list[dict] = []
+    _enum_seen: set[str] = set()
+    for ctx in comp_ctxs:
+        for _e in ctx.get("enum_publish_entries") or []:
+            if _e["py"] not in _enum_seen:
+                _enum_seen.add(_e["py"])
+                _enum_pub.append(_e)
     for ctx in comp_ctxs:
         type_ready_lines.append(
             f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
@@ -2795,6 +2806,10 @@ def render_module_ext_aggregator(
         "Module": Module,
         "type_ready_checks": type_ready_checks,
         "add_object_calls": add_object_calls,
+        # gh-2344: the enum values the module publishes, one per name.
+        "enum_publish": (
+            "\n" + _enumc.publish_c(_enum_pub) if _enum_pub else ""
+        ),
         # gh-645: m_doc. Defaulted here so no render path can leak a literal
         # <<module_doc_c>> into generated C; the caller passes the manifest
         # string when the module declares one.
