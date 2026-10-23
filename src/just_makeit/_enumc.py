@@ -382,15 +382,19 @@ def publish_pyi(entries: "list[dict]") -> str:
     ``dict[int, str]``, matching the two shapes. Returns ``""`` for no
     entries.
 
+    The template supplies the newline that ends the block, so this returns
+    one trailing newline: the blank line before ``@final`` is then the same
+    whether or not an enum is published, which the formatter requires.
+
     >>> publish_pyi(publication(["k"], {"k": ["a"]}))
-    'K: tuple[str, ...]\\n\\n'
+    'K: tuple[str, ...]\\n'
     """
     lines = [
         f"{e['py']}: "
         + ("tuple[str, ...]" if e["dense"] else "dict[int, str]")
         for e in entries
     ]
-    return "\n".join(lines) + "\n\n" if lines else ""
+    return "\n".join(lines) + "\n" if lines else ""
 
 
 def default_c(

@@ -1,5 +1,6 @@
 from typing import <<pyi_any_typing>>final<<pyi_stream_typing>><<pyi_property_typing>><<pyi_os_import>><<pyi_object_imports>><<pyi_numpy_imports>>
-<<pyi_records>><<pyi_enum_publish>>@final
+<<pyi_records>><<pyi_enum_publish>>
+@final
 class <<Component>>:
 <<class_docstring>>
 
