@@ -6128,22 +6128,30 @@ def make_properties_ctx(
                 + "\n}"
             )
         elif is_json:
+            if pname in state_var_names:
+                # gh-2347: the state field's own accessor is a scalar getter
+                # of the same name, so the char * one would conflict with it.
+                raise Refusal(
+                    f"{component}.{pname}: a json property cannot share a "
+                    f"state variable's name -- that variable already has a "
+                    f"getter, and this one returns char *. Rename the "
+                    f"property."
+                )
             _jget = CSYM.property_getter(csym, pname)
             getter = _json_getter(Component, pname, _jget, guard)
-            if pname not in state_var_names:
-                decl_lines.append(
-                    f"/**\n"
-                    f" * @brief Get {pname}, as JSON text.\n"
-                    f" * @param state  Must be non-NULL.\n"
-                    f" * @return A malloc'd, NUL-terminated UTF-8 JSON"
-                    f" document the caller\n"
-                    f" *         owns and must free(), or NULL on failure.\n"
-                    f" *         The Python property parses it with"
-                    f" json.loads and frees it.\n"
-                    f" */\n"
-                    f"{T.JSON_GETTER_CTYPE}{_jget}"
-                    f"(const {csym}_state_t *state);"
-                )
+            decl_lines.append(
+                f"/**\n"
+                f" * @brief Get {pname}, as JSON text.\n"
+                f" * @param state  Must be non-NULL.\n"
+                f" * @return A malloc'd, NUL-terminated UTF-8 JSON"
+                f" document the caller\n"
+                f" *         owns and must free(), or NULL on failure.\n"
+                f" *         The Python property parses it with"
+                f" json.loads and frees it.\n"
+                f" */\n"
+                f"{T.JSON_GETTER_CTYPE}{_jget}"
+                f"(const {csym}_state_t *state);"
+            )
         elif container:
             _cdc = None
             if _codec.is_codec_property(p):

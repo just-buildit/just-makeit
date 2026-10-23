@@ -177,6 +177,32 @@ class TestDiagnostics:
         with pytest.raises(ValueError, match="py_type"):
             validate_json_property("rdr", {**ANN, "py_type": bad})
 
+    @pytest.mark.parametrize(
+        "bad",
+        ["int + str", "list[1]", "list['a']"],
+        ids=["operator", "int-literal", "str-literal"],
+    )
+    def test_py_type_refuses_values_and_operators(self, bad):
+        with pytest.raises(ValueError, match="not a Python type expression"):
+            validate_json_property("rdr", {**ANN, "py_type": bad})
+
+    @pytest.mark.parametrize(
+        "good",
+        ["tuple[int, ...]", "dict[str, Any] | None", "None", "list[bool]"],
+    )
+    def test_py_type_accepts_stub_safe_expressions(self, good):
+        validate_json_property("rdr", {**ANN, "py_type": good})
+
+    def test_a_state_variable_of_the_same_name_is_refused(self):
+        with pytest.raises(ValueError, match="cannot share a state variable"):
+            make_properties_ctx(
+                "rdr",
+                "Rdr",
+                [ANN],
+                state_var_names=frozenset({"annotations"}),
+                csym="rdr",
+            )
+
     def test_render_raises_rather_than_emitting_bad_c(self):
         with pytest.raises(ValueError, match="read-only"):
             _ctx([{**ANN, "writable": True}])
