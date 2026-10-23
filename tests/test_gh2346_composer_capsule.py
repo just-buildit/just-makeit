@@ -27,13 +27,14 @@ The gates, cheapest first:
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+from _compilers import default_cc, find_compiler
 from _jmrun import run_cli
 
 SRC = Path(__file__).parent.parent / "src"
@@ -134,17 +135,41 @@ class TestZeroChurn:
     def test_nor_does_its_stub(self):
         assert "_capsule" not in _composer.render_pyi(_cfg(key=""), "wc")
 
-    def test_declaring_it_adds_the_getter_and_its_row_and_nothing_else(self):
-        """Byte for byte: remove the two pieces and the declared render IS
-        the undeclared one, so the key cannot move anything beside them."""
+    def test_declaring_it_adds_its_pieces_and_nothing_else(self):
+        """Byte for byte: take the declared pieces back out and the declared
+        render IS the undeclared one, so the key cannot move anything else.
+
+        The pieces: the getter and its row, and the gh-2346 deferral -- the
+        `lent` field, close() leaving a lent state to dealloc, and dealloc
+        freeing it."""
         fn, row = _composer._capsule_getset_c(
             _cfg(), "wc", "Composer", "ComposerObject"
         )
         assert fn and row
         declared = _composer.render_ext(_cfg(), "wc")
-        assert declared.count(fn) == 1 and declared.count(row) == 1
-        stripped = declared.replace(fn, "", 1).replace(row, "", 1)
-        assert stripped == _composer.render_ext(_cfg(key=""), "wc")
+        back = [
+            (fn, ""),
+            (row, ""),
+            (
+                "    int                lent; /* gh-2346: the state was lent */\n",
+                "",
+            ),
+            (
+                "        /* gh-2346: lent -> a borrower may still read it; dealloc\n"
+                "           frees it once the last one lets go. */\n"
+                "        if (!self->lent)\n"
+                "            wfm_compose_destroy(self->state);\n",
+                "        wfm_compose_destroy(self->state);\n",
+            ),
+            (
+                "    if (self->state && (!self->destroyed || self->lent))\n",
+                "    if (!self->destroyed && self->state)\n",
+            ),
+        ]
+        for piece, plain in back:
+            assert declared.count(piece) == 1, piece
+            declared = declared.replace(piece, plain, 1)
+        assert declared == _composer.render_ext(_cfg(key=""), "wc")
 
     def test_nor_anything_in_the_build(self):
         assert _composer.render_cmake(_cfg(), "wc") == _composer.render_cmake(
@@ -167,7 +192,7 @@ def test_the_getter_compiles_against_the_lend_helper(tmp_path):
         "#define PY_SSIZE_T_CLEAN\n#include <Python.h>\n"
         "typedef struct wfm_compose_state wfm_compose_state_t;\n"
         "typedef struct { PyObject_HEAD wfm_compose_state_t *state;"
-        " int destroyed; } ComposerObject;\n"
+        " int destroyed; int lent; } ComposerObject;\n"
         f"{_coerce.CAPSULE_LEND_C}\n{getter}\n"
         "PyObject *probe(ComposerObject *s) "
         "{ return Composer_get__capsule(s, NULL); }\n"
@@ -192,12 +217,38 @@ def test_the_getter_compiles_against_the_lend_helper(tmp_path):
 
 # -- 4. built end to end --------------------------------------------------------
 
-#: The consumer's two methods: keep the composer, and say whether it is kept.
-#: The example project carries the `studio_` C prefix.
+#: The consumer's methods: keep the composer, say whether it is kept, and
+#: READ the kept state -- the read a use after free is made of. The example
+#: project carries the `studio_` C prefix.
 _POOL_C = {
     "studio_pool_attach": "    state->held = t;\n    return 0;\n",
     "studio_pool_peek": "    return state->held ? 1 : 0;\n",
+    "studio_pool_count": (
+        "    if (!state->held)\n        return -1;\n"
+        "    return (int)((const volatile unsigned char *)state->held)[0];\n"
+    ),
 }
+
+#: The review's sequence (5634567388): the consumer keeps the composer, the
+#: composer is closed, the consumer reads what it kept. doppler's
+#: `Writer.annotate(scene)` then `w.close()` after `with Composer(...)` exits
+#: is exactly this. A close() that freed the state here left the consumer
+#: reading freed memory; ASan names it.
+_PROBE_AFTER_CLOSE = """\
+import sys
+sys.path.insert(0, "src")
+from studio.playlist.playlist import Mix, Track
+from studio import Pool
+pool = Pool(k=0)
+m = Mix([Track(dur=4), Track(dur=2)])
+pool.attach(m)
+before = pool.count()
+m.close()
+print("read after close", pool.count() == before)
+pool.attach(None)
+del m
+print("released")
+"""
 
 _PROBE = """\
 import gc, sys
@@ -266,8 +317,38 @@ def _implement(path: Path, fn: str, body: str) -> None:
     )
 
 
-@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
-def test_a_consumer_keeps_the_composer(tmp_path):
+def _asan_runtime() -> str:
+    """The AddressSanitizer runtime to preload into Python, or "".
+
+    The extension is instrumented, the interpreter is not, so the runtime
+    has to be in the process before the extension loads.
+    """
+    gcc = find_compiler("gcc")
+    if gcc is None:
+        return ""
+    lib = subprocess.run(
+        [gcc, "-print-file-name=libasan.so"], capture_output=True, text=True
+    ).stdout.strip()
+    return lib if lib and Path(lib).is_file() else ""
+
+
+def _cmake(proj: Path, *args: str, timeout: int = 900) -> None:
+    r = subprocess.run(
+        ["cmake", *args],
+        cwd=proj,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    assert r.returncode == 0, (r.stdout + r.stderr)[-4000:]
+
+
+def _pool_project(tmp_path: Path, asan: bool = False) -> Path:
+    """The bundled composer_seams project, built, given a capsule and a
+    consumer object (`Pool`) whose `attach` keeps the `Mix` (`retain`).
+
+    *asan* reconfigures it with AddressSanitizer before the second build.
+    """
     sys.path.insert(
         0, str(SRC / "just_makeit" / "examples" / "composer_seams")
     )
@@ -301,7 +382,8 @@ def test_a_consumer_keeps_the_composer(tmp_path):
         'params = [{ name = "t", type = "playlist_state_t *", '
         'capsule = "studio.playlist.mix", '
         'header = "studio/playlist/playlist_core.h", retain = true }]\n'
-        '\n[[pool.methods]]\nname = "peek"\nreturn_type = "int"\n',
+        '\n[[pool.methods]]\nname = "peek"\nreturn_type = "int"\n'
+        '\n[[pool.methods]]\nname = "count"\nreturn_type = "int"\n',
         encoding="utf-8",
     )
     _ok("apply", cwd=proj)
@@ -317,46 +399,124 @@ def test_a_consumer_keeps_the_composer(tmp_path):
     core = proj / "native/src/pool/pool_core.c"
     for fn, body in _POOL_C.items():
         _implement(core, fn, body)
-    build = subprocess.run(
-        ["cmake", "--build", "build", "--parallel", "4"],
-        cwd=proj,
-        capture_output=True,
-        text=True,
-        timeout=900,
+    # A new object needs a fresh configure to be picked up; ASan needs one
+    # for its flags.
+    flags = (
+        [
+            "-DCMAKE_C_FLAGS=-fsanitize=address -fno-omit-frame-pointer",
+            "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address",
+        ]
+        if asan
+        else []
     )
-    if build.returncode != 0:
-        # A new object needs a fresh configure to be picked up.
-        cfgr = subprocess.run(
-            [
-                "cmake",
-                "-B",
-                "build",
-                "-S",
-                ".",
-                f"-DPython3_EXECUTABLE={sys.executable}",
-            ],
-            cwd=proj,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        assert cfgr.returncode == 0, cfgr.stderr[-3000:]
-        build = subprocess.run(
-            ["cmake", "--build", "build", "--parallel", "4"],
-            cwd=proj,
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
-    assert build.returncode == 0, (build.stdout + build.stderr)[-4000:]
+    _cmake(
+        proj,
+        "-B",
+        "build",
+        "-S",
+        ".",
+        f"-DPython3_EXECUTABLE={sys.executable}",
+        *flags,
+        timeout=600,
+    )
+    _cmake(proj, "--build", "build", "--parallel", "4")
+    return proj
+
+
+def _run(proj: Path, probe: str, env: "dict | None" = None):
     script = proj / "probe.py"
-    script.write_text(_PROBE, encoding="utf-8")
-    out = subprocess.run(
+    script.write_text(probe, encoding="utf-8")
+    return subprocess.run(
         [sys.executable, str(script)],
         cwd=proj,
+        env=env,
         capture_output=True,
         text=True,
         timeout=120,
     )
+
+
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_a_consumer_keeps_the_composer(tmp_path):
+    proj = _pool_project(tmp_path)
+    out = _run(proj, _PROBE)
     assert out.returncode == 0, (out.returncode, out.stderr[-2000:])
     assert out.stdout.split("\n")[:-1] == _EXPECT, out.stdout
+
+
+@pytest.mark.skipif(
+    _NO_TOOLCHAIN or not _asan_runtime(),
+    reason="no cmake / C compiler / AddressSanitizer runtime",
+)
+def test_a_kept_composer_outlives_its_close_under_asan(tmp_path):
+    """The review's use after free (5634567388), under AddressSanitizer.
+
+    close() on a composer whose state was lent marks it closed and leaves
+    the free to dealloc; the consumer's retained reference keeps dealloc
+    away, so its read after close() is of live memory. Freed in close(), as
+    before the fix, ASan reports `heap-use-after-free` in studio_pool_count.
+    """
+    proj = _pool_project(tmp_path, asan=True)
+    env = dict(os.environ)
+    env["LD_PRELOAD"] = _asan_runtime()
+    env["ASAN_OPTIONS"] = "detect_leaks=0"
+    out = _run(proj, _PROBE_AFTER_CLOSE, env)
+    assert "AddressSanitizer" not in out.stderr, out.stderr[-3000:]
+    assert out.returncode == 0, (out.returncode, out.stderr[-2000:])
+    assert out.stdout.split("\n")[:-1] == [
+        "read after close True",
+        "released",
+    ], out.stdout
+
+
+# -- 5. the same close pairing on a handle (gh-794) ---------------------------
+
+
+class TestAHandleDefersItsCloseToo:
+    """A gh-794 handle capsule plus a `retain` consumer is the same pairing:
+    close() tore the handle down under a consumer still holding it. The fix
+    is the same one, and the lend is recorded in the same shared body
+    (`capsule_new_c`)."""
+
+    @staticmethod
+    def _ext(capsule: bool = True) -> str:
+        from just_makeit import _handle
+        from test_handle_codegen import _writer_cfg
+
+        cfg = _writer_cfg()
+        if capsule:
+            cfg["module"]["wfm_writer"]["capsule"] = "p.wfm.writer"
+        return _handle.render_ext(cfg, "wfm_writer")
+
+    def test_the_lend_is_recorded(self):
+        ext = self._ext()
+        getter = ext[ext.index("Writer_get__capsule(WriterObject *self") :]
+        assert getter.index("self->lent = 1;") < getter.index(
+            "jm_capsule_lend("
+        )
+
+    def test_close_leaves_a_lent_handle_to_dealloc(self):
+        ext = self._ext()
+        close = ext[ext.index("Writer_close(WriterObject *self") :]
+        close = close[: close.index("Py_RETURN_NONE;")]
+        lent = close.index("if (self->lent) {")
+        assert lent < close.index("wfm_writer_close(self->h);")
+        assert "} else {" in close
+
+    def test_dealloc_frees_what_close_left(self):
+        ext = self._ext()
+        assert "if (self->h && (!self->closed || self->lent)) {" in ext
+
+    def test_a_second_init_of_a_lent_handle_is_refused(self):
+        """The teardown before a rebuild would free the lent pointer, and
+        there is one slot, so the old handle cannot wait for dealloc."""
+        ext = self._ext()
+        init = ext[ext.index("Writer_init(WriterObject *self") :]
+        refuse = init.index("if (self->lent) {")
+        assert refuse < init.index("wfm_writer_close(self->h);")
+        assert "a second __init__ would free it under the borrower" in init
+
+    def test_an_undeclared_handle_renders_none_of_it(self):
+        ext = self._ext(capsule=False)
+        assert "self->lent" not in ext
+        assert "int       lent;" not in ext

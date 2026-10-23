@@ -3164,7 +3164,9 @@ def _capsule_getset_c(
         f"    if (self->destroyed || !self->state) {{\n"
         f'        PyErr_SetString(PyExc_RuntimeError, "composer already closed");\n'
         f"        return NULL;\n"
-        f"    }}\n" + _capsule_new_c("self->state", cap, cname) + "\n}\n\n"
+        f"    }}\n"
+        + _capsule_new_c("self->state", cap, cname, lent_flag="self->lent")
+        + "\n}\n\n"
     )
     row = (
         f'    {{"_capsule", (getter){cname}_get__capsule, NULL,\n'
@@ -4160,6 +4162,28 @@ fail:
     capsule_getset, capsule_getset_row = _capsule_getset_c(
         cfg, module, cname, obj
     )
+    # gh-2346: once the state has been lent, close() marks the composer
+    # closed and leaves the free to dealloc -- a consumer that kept the
+    # pointer (`retain`) keeps this object alive, so dealloc cannot run under
+    # it. Rendered only for a composer that publishes a capsule.
+    lends = bool(C.published_capsule(cfg, module))
+    lent_field = (
+        "    int                lent; /* gh-2346: the state was lent */\n"
+        if lends
+        else ""
+    )
+    close_free = (
+        "        /* gh-2346: lent -> a borrower may still read it; dealloc\n"
+        "           frees it once the last one lets go. */\n"
+        f"        if (!self->lent)\n            {destroy_fn}(self->state);\n"
+        if lends
+        else f"        {destroy_fn}(self->state);\n"
+    )
+    dealloc_live = (
+        "self->state && (!self->destroyed || self->lent)"
+        if lends
+        else "!self->destroyed && self->state"
+    )
 
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
@@ -4167,7 +4191,7 @@ typedef struct {{
     PyObject_HEAD
     {sym}_state_t *state;
     int                destroyed;
-{_inflight.struct_field()}}} {obj};
+{lent_field}{_inflight.struct_field()}}} {obj};
 
 /* Build a transient {seg_struct}[] from a list of {seg_t} objects. Each
  * source's bits pointer ALIASES the {src_t}'s owned buffer; {create_fn}
@@ -4258,7 +4282,7 @@ _{backing}_segments_to_list(const {seg_struct} *src, size_t n)
 static void
 {cname}_dealloc({obj} *self)
 {{
-    if (!self->destroyed && self->state)
+    if ({dealloc_live})
         {destroy_fn}(self->state);
 {_inflight.free("self")}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
@@ -4543,8 +4567,7 @@ static PyObject *
     if (!self->destroyed && self->state) {{
         /* gh-2272: refuse new calls, then wait for a running one. */
         self->destroyed = 1;
-{_inflight.wait("self", "self->destroyed = 0; return NULL;")}        {destroy_fn}(self->state);
-    }}
+{_inflight.wait("self", "self->destroyed = 0; return NULL;")}{close_free}    }}
     Py_RETURN_NONE;
 }}
 

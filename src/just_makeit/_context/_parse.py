@@ -51,6 +51,7 @@ def capsule_new_c(
     owner: str,
     indent: str = "    ",
     owner_expr: str = "(PyObject *)self",
+    lent_flag: str = "",
 ) -> str:
     """The body that lends *ptr_expr* as a named ``PyCapsule``.
 
@@ -79,6 +80,15 @@ def capsule_new_c(
     owner_expr : str
         C expression for the Python object that owns the pointer: the one the
         capsule keeps alive.
+    lent_flag : str
+        C lvalue set to 1 whenever the pointer is lent (gh-2346), or ``""``
+        for none. An owner whose ``close()`` would otherwise free the pointer
+        reads it to defer that free to its deallocator: a consumer that keeps
+        the pointer (``retain``) keeps the owner alive, not its pointer, and
+        a ``close()`` that freed it anyway left the consumer reading freed
+        memory. Every lend reaches this one body -- the duck-typed
+        ``._capsule`` unwrap calls the same getter -- so this is the one
+        place the fact is recorded.
 
     Notes
     -----
@@ -105,9 +115,16 @@ def capsule_new_c(
                                "doppler.wfm.clk", (PyObject *)self);
     """
     i = indent
+    mark = (
+        f"{i}/* gh-2346: lent once, so close() leaves the free to dealloc. */\n"
+        f"{i}{lent_flag} = 1;\n"
+        if lent_flag
+        else ""
+    )
     return (
         f"{i}/* Lent, not owned: the capsule never frees the pointer, and\n"
         f"{i}   holds {owner}, so the pointer lives as long as it. */\n"
+        f"{mark}"
         f"{i}return jm_capsule_lend((void *)({ptr_expr}),\n"
         f'{i}                       "{capsule_name}", {owner_expr});'
     )
