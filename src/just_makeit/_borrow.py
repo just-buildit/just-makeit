@@ -211,9 +211,32 @@ def lends_from(
         return True
     # gh-2346: a capsule lends the pointer itself. Last, so an object that
     # also lends views keeps answering True (and its prose) byte for byte.
-    if any(p.get("type") == "capsule" for p in properties):
+    if any(publishes_capsule(p) for p in properties):
         return "capsule"
     return False
+
+
+def publishes_capsule(p: dict) -> bool:
+    """Whether property *p* hands out its object's pointer as a capsule.
+
+    The ``capsule`` key decides it, not the ``type``: the getter renders
+    ``jm_capsule_lend`` for any property carrying the key
+    (`_context._methods`), so a ``type = "capsule"``, a pointer type and no
+    type at all all lend. One test for both, so the getter that lends and the
+    teardown that must defer cannot disagree -- keyed on the type, the other
+    two spellings freed in ``destroy()`` under a kept capsule.
+
+    >>> publishes_capsule({"name": "_capsule", "type": "capsule",
+    ...                    "capsule": "p.o"})
+    True
+    >>> publishes_capsule({"name": "_capsule", "capsule": "p.o"})
+    True
+    >>> publishes_capsule({"name": "t", "type": "t_t *", "capsule": "p.t"})
+    True
+    >>> publishes_capsule({"name": "g", "type": "double"})
+    False
+    """
+    return bool(p.get("capsule"))
 
 
 def is_writeable(m: dict) -> bool:

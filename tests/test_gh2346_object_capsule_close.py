@@ -42,6 +42,16 @@ from just_makeit import _borrow  # noqa: E402
 from just_makeit._context import _destroy  # noqa: E402
 
 _CAP = {"name": "_capsule", "type": "capsule", "capsule": "p.tt"}
+
+#: Every spelling of a producer property. The getter lends `self->handle` for
+#: ANY property carrying a `capsule` key, so the predicate must answer for
+#: each -- keyed on `type == "capsule"` it missed the other two, and their
+#: destroy() freed under a kept capsule (review on c18e8770).
+_SPELLINGS = {
+    "type-capsule": 'type = "capsule", ',
+    "typeless": "",
+    "typed-pointer": 'type = "tt_state_t *", ',
+}
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 
@@ -51,6 +61,19 @@ _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 class TestThePredicate:
     def test_a_capsule_lends(self):
         assert _borrow.lends_from([], [_CAP], []) == "capsule"
+
+    @pytest.mark.parametrize(
+        "prop",
+        [
+            {"name": "_capsule", "capsule": "p.tt"},
+            {"name": "_capsule", "type": "tt_state_t *", "capsule": "p.tt"},
+        ],
+        ids=["typeless", "typed-pointer"],
+    )
+    def test_every_spelling_the_getter_lends_for_lends(self, prop):
+        """The getter keys on the `capsule` key, not the type; so must
+        the predicate, or the object frees under the borrower."""
+        assert _borrow.lends_from([], [prop], []) == "capsule"
 
     def test_views_still_answer_true(self):
         """An object lending views AND a capsule keeps its views answer, so
@@ -219,21 +242,19 @@ def _cmake(proj: Path, *args: str) -> None:
     assert r.returncode == 0, (r.stdout + r.stderr)[-4000:]
 
 
-def _project(tmp_path: Path, asan: bool) -> Path:
+def _project(tmp_path: Path, asan: bool, spelling: str) -> Path:
     """A producer `Tt` publishing `_capsule`, and a consumer `Pool` whose
     `attach` keeps it (`retain`) and whose `read` reads the kept state."""
     _ok("new", "p", "--no-c-prefix", cwd=tmp_path)
     proj = tmp_path / "p"
     _ok("object", "tt", "--state", "k:int:0", cwd=proj)
-    _ok(
-        "property",
-        "tt",
-        "_capsule",
-        "--type",
-        "capsule",
-        "--capsule",
-        "p.tt",
-        cwd=proj,
+    tt = proj / "objects" / "tt.toml"
+    tt.write_text(
+        tt.read_text(encoding="utf-8")
+        + '\n[[tt.properties]]\nname = "_capsule"\n'
+        + _SPELLINGS[spelling].replace(", ", "\n")
+        + 'capsule = "p.tt"\n',
+        encoding="utf-8",
     )
     _ok("object", "pool", "--state", "k:int:0", cwd=proj)
     frag = proj / "objects" / "pool.toml"
@@ -293,7 +314,7 @@ def _probe(proj: Path, env: "dict | None" = None):
 
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
 def test_a_kept_object_is_readable_after_destroy(tmp_path):
-    out = _probe(_project(tmp_path, asan=False))
+    out = _probe(_project(tmp_path, asan=False, spelling="type-capsule"))
     assert out.returncode == 0, (out.returncode, out.stderr[-2000:])
     assert out.stdout.split("\n")[:-1] == [
         "read after destroy 7",
@@ -305,11 +326,12 @@ def test_a_kept_object_is_readable_after_destroy(tmp_path):
     _NO_TOOLCHAIN or not _asan_runtime(),
     reason="no cmake / C compiler / AddressSanitizer runtime",
 )
-def test_a_kept_object_outlives_its_destroy_under_asan(tmp_path):
+@pytest.mark.parametrize("spelling", list(_SPELLINGS))
+def test_a_kept_object_outlives_its_destroy_under_asan(tmp_path, spelling):
     """Freed in destroy(), as before the fix, ASan reports
     `heap-use-after-free` in pool_read; parked, the read is of live
     memory and the free waits for the consumer to let go."""
-    proj = _project(tmp_path, asan=True)
+    proj = _project(tmp_path, asan=True, spelling=spelling)
     env = dict(os.environ)
     env["LD_PRELOAD"] = _asan_runtime()
     env["ASAN_OPTIONS"] = "detect_leaks=0"
