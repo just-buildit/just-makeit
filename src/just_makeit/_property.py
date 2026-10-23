@@ -29,6 +29,7 @@ from . import _incpath as INC
 from ._context._diagnostics import setter_return_type
 from ._context._methods import (
     validate_container_property,
+    validate_json_property,
     validate_property_error,
 )
 from ._init import (
@@ -135,8 +136,20 @@ def plain_accessor_decls(
     >>> plain_accessor_decls("acc", "alpha", "double", True, csym="acc",
     ...                      setter_type="int")[1]
     'int acc_set_alpha(acc_state_t *state, double val);'
+
+    A ``json`` property's getter returns the malloc'd text the binding parses
+    and frees (gh-2347):
+
+    >>> plain_accessor_decls("rd", "meta", "json", False, csym="rd")
+    ['char *rd_get_meta(const rd_state_t *state);']
     """
     disp = ctype
+    if T.is_json_type(ctype):
+        # `char *` already ends in the star, so no separating space.
+        return [
+            f"{T.JSON_GETTER_CTYPE}{CSYM.property_getter(csym, prop_name)}"
+            f"(const {csym}_state_t *state);"
+        ]
     decls = [
         f"{disp} {CSYM.property_getter(csym, prop_name)}(const {csym}_state_t *state);"
     ]
@@ -278,6 +291,7 @@ def run(
     value_field: str = "",
     error: str = "",
     error_message: str = "",
+    py_type: str = "",
 ) -> None:
     # gh-625: `jm object` and `jm function` rejected this and these two did
     # not, so `jm property thing level:double` — the shape muscle memory
@@ -295,14 +309,19 @@ def run(
     # gh-543: a container property's `type` names a Python container, not a C
     # type, so it is deliberately absent from _CTYPE_META.
     container = T.is_container_type(ctype)
+    # gh-2347: `json` names how the value crosses (JSON text), not a C type.
+    is_json = T.is_json_type(ctype)
     if (
         not container
+        and not is_json
         and not buf_field
         and not expr
         and not capsule  # gh-788: a capsule names no C type; it is opaque
         and ctype not in T._CTYPE_META
     ):
-        supported = ", ".join(sorted(T._CTYPE_META) + list(T.CONTAINER_KINDS))
+        supported = ", ".join(
+            sorted(T._CTYPE_META) + list(T.CONTAINER_KINDS) + [T.JSON_KIND]
+        )
         print(
             f"error: unsupported --type '{ctype}'.\nSupported: {supported}",
             file=sys.stderr,
@@ -348,6 +367,35 @@ def run(
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
+
+    # gh-2347: a json property's coherence, and `py_type` on any other kind,
+    # refused before the manifest is written -- the check every render runs.
+    try:
+        validate_json_property(
+            object_name,
+            {
+                "name": prop_name,
+                "type": ctype,
+                "py_type": py_type,
+                "writable": writable,
+                "field": field,
+                "buf_field": buf_field,
+                "expr": expr,
+                "enum": enum,
+                "codec": codec,
+                "capsule": capsule,
+                "value_type": value_type,
+                "count_fn": count_fn,
+                "key_fn": key_fn,
+                "value_fn": value_fn,
+                "entry_fn": entry_fn,
+                "error": error,
+                "error_message": error_message,
+            },
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     cfg = C.load(root)
     # gh-1591: the stem every derived accessor name below starts with.
@@ -499,6 +547,8 @@ def run(
         prop_entry["expr"] = expr
     if enum:
         prop_entry["enum"] = enum
+    if py_type:
+        prop_entry["py_type"] = py_type  # gh-2347
     if capsule:
         # gh-788: the PyCapsule name the pointer is published under. It is
         # the same string gh-432's capsule-typed params unwrap with, and the
@@ -651,6 +701,13 @@ def run(
                 f"Done!  Implement {', '.join(f'{n}()' for n in todo)}\n"
                 f"       in {core_c}  [{ctype}, {rw}]"
             )
+    elif is_json:
+        print(
+            f"Done!  Implement {CSYM.property_getter(csym, prop_name)}() in"
+            f" {_body_file}: return a malloc'd\n"
+            f"       JSON document (the binding parses it and frees it), or"
+            f" NULL to raise.  [json, read-only]"
+        )
     elif field:
         print(
             f"Done!  Struct field '{prop_name}' added to"

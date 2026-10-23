@@ -997,6 +997,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # replay's producer publishes over `expr` with no declared type,
             # and a consumer's `object` reference refuses it.
             capsule_type=p.get("capsule_type", ""),
+            py_type=p.get("py_type", ""),  # gh-2347
             entry_type=p.get("entry_type", ""),
             type_field=p.get("type_field", ""),
             count_field=p.get("count_field", ""),
@@ -3273,7 +3274,9 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
         ):
             continue
         ctype = p.get("type", "")
-        if ctype not in _T._CTYPE_META:
+        # gh-2347: a json property's getter is declared like a plain one,
+        # returning the `char *` the binding parses and frees.
+        if ctype not in _T._CTYPE_META and not _T.is_json_type(ctype):
             continue  # dict/list/tuple and friends are declared by the user
         out += plain_accessor_decls(
             comp,

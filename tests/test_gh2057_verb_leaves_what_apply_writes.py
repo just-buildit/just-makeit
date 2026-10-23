@@ -798,6 +798,9 @@ CASES: "dict[str, dict[str, Case]]" = {
                               "capsule", "--capsule", "p.o",
                               "--capsule-type", "p_o_state_t", "{M}",
                               only=BASE),
+        # gh-2347: a json property and its stub annotation.
+        "json": _case("property", "o", "meta", "--type", "json",
+                      "--py-type", "dict[str, Any]", "{M}", only=BASE),
     },
     "warning": {
         "plain": _case("warning", "o", "--condition", "g2", "--message",

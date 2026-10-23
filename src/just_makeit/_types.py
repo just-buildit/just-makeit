@@ -2040,6 +2040,80 @@ CONTAINER_KINDS: tuple[str, ...] = ("dict", "list", "tuple")
 OBJECT_VALUE_TYPE = "object"
 
 
+# gh-2347: a property whose value crosses the ABI as JSON text. Its C getter
+# returns a malloc'd `char *` that the binding parses with `json.loads` and
+# frees, so a core already holding a structured document (a SigMF sidecar's
+# annotations) hands Python the structure without a second reader. Not a
+# container kind: no count/key/value protocol backs it.
+JSON_KIND = "json"
+
+#: The one C return type a `json` property's getter has. Owned by the binding:
+#: the getter allocates it with `malloc` and the generated glue `free`s it.
+JSON_GETTER_CTYPE = "char *"
+
+#: The names a `json` property's `py_type` may use: builtin generics and
+#: `Any`, the one `typing` name every generated stub already imports on use.
+JSON_PY_TYPE_NAMES = frozenset(
+    {"Any", "None", "bool", "dict", "float", "int", "list", "str", "tuple"}
+)
+
+
+def is_json_type(ctype: str) -> bool:
+    """Return True if ctype names the JSON property kind (gh-2347).
+
+    >>> is_json_type("json")
+    True
+    >>> is_json_type("dict")
+    False
+    """
+    return ctype == JSON_KIND
+
+
+def json_py_type_error(py_type: str) -> str:
+    """Why *py_type* cannot annotate a `json` property, or ``""`` (gh-2347).
+
+    It lands in the ``.pyi`` verbatim, so it must be an expression of
+    :data:`JSON_PY_TYPE_NAMES` alone: a name the stub does not import would
+    leave a stub that does not type-check.
+
+    >>> json_py_type_error("list[dict[str, Any]]")
+    ''
+    >>> json_py_type_error("Sequence[int]")
+    "names 'Sequence', which a generated stub does not import"
+    >>> json_py_type_error("list[")
+    'is not a Python type expression'
+    >>> json_py_type_error("dict[str, Any] | None")
+    ''
+    >>> json_py_type_error("os.system('x')")
+    'is not a Python type expression'
+    """
+    import ast
+
+    try:
+        tree = ast.parse(py_type, mode="eval")
+    except SyntaxError:
+        return "is not a Python type expression"
+    allowed = (ast.Expression, ast.Name, ast.Subscript, ast.Tuple, ast.Load)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id not in JSON_PY_TYPE_NAMES:
+                return (
+                    f"names '{node.id}', which a generated stub does not "
+                    f"import"
+                )
+        elif isinstance(node, ast.BinOp):
+            if not isinstance(node.op, ast.BitOr):
+                return "is not a Python type expression"
+        elif isinstance(node, ast.BitOr):
+            pass
+        elif isinstance(node, ast.Constant):
+            if node.value is not None and node.value is not Ellipsis:
+                return "is not a Python type expression"
+        elif not isinstance(node, allowed):
+            return "is not a Python type expression"
+    return ""
+
+
 def is_container_type(ctype: str) -> bool:
     """Return True if ctype names a container property kind (gh-543).
 
