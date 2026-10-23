@@ -37,8 +37,11 @@ wrapper (gh-1976) -- instead of asking here.
 from __future__ import annotations
 
 import os
+import platform
 import re
 import shutil
+import subprocess
+import sys
 
 #: CMake's unversioned default C compiler search, in its order, as far as a
 #: Linux or macOS box carries the names. ``cc`` is first, so on every box
@@ -127,3 +130,63 @@ def find_compiler(name: str) -> "str | None":
             if hit and (best is None or int(m.group(1)) > best[0]):
                 best = (int(m.group(1)), hit)
     return best[1] if best else None
+
+
+#: Where each platform's AddressSanitizer runtime is, and how it gets into an
+#: interpreter that was not built with it: the runtime file names to ask the
+#: compiler for, in order, and the loader variable that preloads one.
+_ASAN_RUNTIMES = {
+    "linux": (
+        ("libasan.so", f"libclang_rt.asan-{platform.machine()}.so"),
+        "LD_PRELOAD",
+    ),
+    "darwin": (
+        ("libclang_rt.asan_osx_dynamic.dylib",),
+        "DYLD_INSERT_LIBRARIES",
+    ),
+}
+
+
+def asan_env(cc: "str | None") -> "dict[str, str] | None":
+    """The environment that loads *cc*'s AddressSanitizer runtime, or None.
+
+    A test that builds a Python extension with ``-fsanitize=address`` runs
+    it in an interpreter that was not, so the runtime has to be in the
+    process before the extension loads. That is a preload, and both halves
+    are the platform's: gcc ships ``libasan.so`` and Linux preloads with
+    ``LD_PRELOAD``; Apple clang ships ``libclang_rt.asan_osx_dynamic.dylib``
+    and macOS preloads with ``DYLD_INSERT_LIBRARIES`` (uv's Python is not
+    SIP-protected, so the variable reaches it). The runtime asked for is
+    *cc*'s own -- the compiler that instrumented the build -- because a
+    gcc-instrumented object under clang's runtime, or the reverse, is not a
+    supported pairing.
+
+    Three test files each carried a Linux-only copy of this (gh-2346
+    review): on macOS they skipped, and the skip gate (gh-1442) rightly
+    failed the run, since an installed Apple clang is the fix. One copy now.
+
+    None only when *cc* is None, the platform has no entry, or *cc* has no
+    runtime -- the caller's skip says which is missing.
+
+    Examples
+    --------
+    >>> env = asan_env(default_cc())
+    >>> env is None or os.path.isfile(next(iter(env.values())))
+    True
+    >>> asan_env(None) is None
+    True
+    """
+    if cc is None:
+        return None
+    key = "darwin" if sys.platform == "darwin" else sys.platform[:5]
+    if key not in _ASAN_RUNTIMES:
+        return None
+    names, var = _ASAN_RUNTIMES[key]
+    for name in names:
+        lib = subprocess.run(
+            [cc, f"-print-file-name={name}"], capture_output=True, text=True
+        ).stdout.strip()
+        # An unknown name echoes back bare, so only a real file counts.
+        if os.path.isabs(lib) and os.path.isfile(lib):
+            return {var: lib, "ASAN_OPTIONS": "detect_leaks=0"}
+    return None

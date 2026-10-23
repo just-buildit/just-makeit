@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc, find_compiler
+from _compilers import asan_env, default_cc
 from _jmrun import run_cli
 
 SRC = Path(__file__).parent.parent / "src"
@@ -203,17 +203,6 @@ print("released")
 """
 
 
-def _asan_runtime() -> str:
-    """The AddressSanitizer runtime to preload into Python, or ""."""
-    gcc = find_compiler("gcc")
-    if gcc is None:
-        return ""
-    lib = subprocess.run(
-        [gcc, "-print-file-name=libasan.so"], capture_output=True, text=True
-    ).stdout.strip()
-    return lib if lib and Path(lib).is_file() else ""
-
-
 def _ok(*args: str, cwd: Path) -> None:
     r = run_cli(*args, cwd=cwd)
     assert r.returncode == 0, (args, r.stdout, r.stderr)
@@ -323,7 +312,7 @@ def test_a_kept_object_is_readable_after_destroy(tmp_path):
 
 
 @pytest.mark.skipif(
-    _NO_TOOLCHAIN or not _asan_runtime(),
+    _NO_TOOLCHAIN or not asan_env(default_cc()),
     reason="no cmake / C compiler / AddressSanitizer runtime",
 )
 @pytest.mark.parametrize("spelling", list(_SPELLINGS))
@@ -332,9 +321,7 @@ def test_a_kept_object_outlives_its_destroy_under_asan(tmp_path, spelling):
     `heap-use-after-free` in pool_read; parked, the read is of live
     memory and the free waits for the consumer to let go."""
     proj = _project(tmp_path, asan=True, spelling=spelling)
-    env = dict(os.environ)
-    env["LD_PRELOAD"] = _asan_runtime()
-    env["ASAN_OPTIONS"] = "detect_leaks=0"
+    env = {**os.environ, **asan_env(default_cc())}
     out = _probe(proj, env)
     assert "AddressSanitizer" not in out.stderr, out.stderr[-3000:]
     assert out.returncode == 0, (out.returncode, out.stderr[-2000:])

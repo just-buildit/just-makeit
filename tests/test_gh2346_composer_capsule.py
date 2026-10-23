@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc, find_compiler
+from _compilers import asan_env, default_cc
 from _jmrun import run_cli
 
 SRC = Path(__file__).parent.parent / "src"
@@ -317,21 +317,6 @@ def _implement(path: Path, fn: str, body: str) -> None:
     )
 
 
-def _asan_runtime() -> str:
-    """The AddressSanitizer runtime to preload into Python, or "".
-
-    The extension is instrumented, the interpreter is not, so the runtime
-    has to be in the process before the extension loads.
-    """
-    gcc = find_compiler("gcc")
-    if gcc is None:
-        return ""
-    lib = subprocess.run(
-        [gcc, "-print-file-name=libasan.so"], capture_output=True, text=True
-    ).stdout.strip()
-    return lib if lib and Path(lib).is_file() else ""
-
-
 def _cmake(proj: Path, *args: str, timeout: int = 900) -> None:
     r = subprocess.run(
         ["cmake", *args],
@@ -445,7 +430,7 @@ def test_a_consumer_keeps_the_composer(tmp_path):
 
 
 @pytest.mark.skipif(
-    _NO_TOOLCHAIN or not _asan_runtime(),
+    _NO_TOOLCHAIN or not asan_env(default_cc()),
     reason="no cmake / C compiler / AddressSanitizer runtime",
 )
 def test_a_kept_composer_outlives_its_close_under_asan(tmp_path):
@@ -457,9 +442,7 @@ def test_a_kept_composer_outlives_its_close_under_asan(tmp_path):
     before the fix, ASan reports `heap-use-after-free` in studio_pool_count.
     """
     proj = _pool_project(tmp_path, asan=True)
-    env = dict(os.environ)
-    env["LD_PRELOAD"] = _asan_runtime()
-    env["ASAN_OPTIONS"] = "detect_leaks=0"
+    env = {**os.environ, **asan_env(default_cc())}
     out = _run(proj, _PROBE_AFTER_CLOSE, env)
     assert "AddressSanitizer" not in out.stderr, out.stderr[-3000:]
     assert out.returncode == 0, (out.returncode, out.stderr[-2000:])
