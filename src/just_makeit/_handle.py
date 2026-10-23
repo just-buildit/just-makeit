@@ -1893,7 +1893,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     # gh-794: `_capsule` — the handle lending its opaque pointer, borrowed.
     # Emitted last so it never disturbs the getter numbering above, and only
     # when declared, so every existing handle module renders byte-identically.
-    _cap = C.handle_capsule(cfg, module)
+    _cap = C.published_capsule(cfg, module)
     if _cap:
         funcs.append(
             f"static PyObject *\n"
@@ -2841,7 +2841,7 @@ def render_pyi(
     # gh-794: the borrowed-pointer capsule. `Any` is what gh-432's capsule
     # params and gh-788 gap 4's producing property already annotate to, so all
     # three faces of one pointer read alike.
-    _cap_pyi = C.handle_capsule(cfg, module)
+    _cap_pyi = C.published_capsule(cfg, module)
     if _cap_pyi:
         lines.append("    @property")
         lines.append("    def _capsule(self) -> Any:")

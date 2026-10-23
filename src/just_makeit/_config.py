@@ -3509,14 +3509,21 @@ def handle_type(cfg: dict, module: str) -> str:
     )
 
 
-def handle_capsule(cfg: dict, module: str) -> str:
-    """The ``PyCapsule`` name a handle module publishes, or ``""`` (gh-794).
+def published_capsule(cfg: dict, module: str) -> str:
+    """The ``PyCapsule`` name a handle or composer module publishes, or ``""``.
 
     When set, the generated type gains a ``_capsule`` property lending its
-    opaque ``<handle_type> *`` — borrowed and non-owning, exactly as an
-    object's gh-788 gap-4 property does, so a handle drops straight into a
+    pointer -- a handle's opaque ``<handle_type> *`` (gh-794), a composer's
+    ``<sym>_state_t *`` (gh-2346) -- borrowed and non-owning, exactly as an
+    object's gh-788 gap-4 property does, so either drops straight into a
     gh-432 method param or a gh-790 constructor with no change on the
     consuming side.
+
+    One reader for both kinds, so the two spellings below mean one thing
+    wherever they are written. A composer is the second shape built to be
+    borrowed from: a writer annotating a capture with a scene's segments
+    needs the scene, and before gh-2346 a composer accepted `capsule_name`
+    (a shared module key) and silently did nothing with it.
 
     A handle is the shape most likely to be on the *giving* end of a capsule —
     it exists to wrap a long-lived resource another component wants to borrow —
@@ -4059,7 +4066,7 @@ def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
     ``ctype``       ``<handle_type> *`` -- the generated struct stores exactly
                     ``{htype} *h`` and the capsule lends ``self->h``, so the
                     published pointer's type IS the declared `handle_type`.
-    ``capsule``     :func:`handle_capsule` -- the `capsule` key, or the
+    ``capsule``     :func:`published_capsule` -- the `capsule` key, or the
                     `capsule_name` a capsule module already spells it with.
     ``header``      :func:`handle_header` -- the module's own `header`.
     ``class_name``  :func:`handle_type_name` -- the generated CPython type.
@@ -4082,7 +4089,7 @@ def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
             f"the class '{tname}', not '{cls}'. A handle generates one type, "
             f"so the '.{cls}' suffix can only ever name it."
         )
-    capsule = handle_capsule(cfg, mod)
+    capsule = published_capsule(cfg, mod)
     if not capsule:
         raise ValueError(
             f"init_param object = '{ref}': handle module '{mod}' publishes "

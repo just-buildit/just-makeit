@@ -126,20 +126,22 @@ class TestZeroChurn:
 
 class TestTheConfigKey:
     def test_capsule_key(self):
-        assert C.handle_capsule(_cfg(), "wfm_writer") == CAP
+        assert C.published_capsule(_cfg(), "wfm_writer") == CAP
 
     def test_capsule_name_is_accepted_too(self):
         """`kind = "capsule"` modules already spell this `capsule_name`; one
         idea should not need two spellings depending on which kind you are."""
-        assert C.handle_capsule(_cfg(key="capsule_name"), "wfm_writer") == CAP
+        assert (
+            C.published_capsule(_cfg(key="capsule_name"), "wfm_writer") == CAP
+        )
 
     def test_capsule_wins_over_capsule_name(self):
         cfg = _cfg()
         cfg["module"]["wfm_writer"]["capsule_name"] = "other.name"
-        assert C.handle_capsule(cfg, "wfm_writer") == CAP
+        assert C.published_capsule(cfg, "wfm_writer") == CAP
 
     def test_absent_is_empty(self):
-        assert C.handle_capsule(_writer_cfg(), "wfm_writer") == ""
+        assert C.published_capsule(_writer_cfg(), "wfm_writer") == ""
 
 
 class TestTheSharedEmitter:

@@ -670,6 +670,30 @@ keeps a plain four-argument create for its own C callers names the
 reason-naming one in `create_fn` (doppler: `create_fn = "dp_wfm_compose_create_why"`). A `create_why` that is not `true`/`false` is
 refused at load.
 
+A composer can **lend its state to another module** (gh-2346), the way a
+handle lends its pointer (gh-794): `[module.X] capsule = "<name>"` (or the
+shared `capsule_name`) gives the composer type a read-only `_capsule`
+holding its `<state_t> *`, borrowed -- it never frees the state -- and
+holding the composer alive. A closed composer refuses it with
+`RuntimeError`. Another module's method then takes the `Composer` itself,
+or its `_capsule`, through an ordinary capsule param:
+
+```toml
+[module.wfm_compose]
+kind    = "composer"
+capsule = "proj.wfm.composer"
+
+[[writer.methods]]
+name   = "annotate"
+params = [{ name = "scene", type = "wfm_compose_state_t *",
+            capsule = "proj.wfm.composer",
+            header = "proj/wfm/wfm_compose.h", retain = true }]
+```
+
+`retain = true` keeps the composer for as long as the consumer holds the
+pointer (gh-2327). A composer that declares neither key renders exactly as
+before.
+
 ### 4.7 JSON faces (generated vs delegated)
 
 With `[module.X.json] enabled = true` the composer gets
