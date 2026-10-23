@@ -370,8 +370,7 @@ class TestBuildAndRun:
     )
 
     @pytest.fixture(scope="class")
-    @classmethod
-    def built(cls, tmp_path_factory):
+    def built(self, tmp_path_factory):
         if _SKIP:
             pytest.skip(_SKIP)
         root = tmp_path_factory.mktemp("jp") / "proj"
@@ -393,7 +392,7 @@ class TestBuildAndRun:
             drop_jm_stubs(
                 core.read_text(encoding="utf-8"), "rdr_get_annotations"
             )
-            + cls.CORE_IMPL,
+            + self.CORE_IMPL,
             encoding="utf-8",
         )
         apply_run(root)
