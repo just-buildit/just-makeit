@@ -594,6 +594,29 @@ list also attaches each constant's `///<` doc to its choice in the
 docstrings. Worked end to end:
 [Binding a C enum whose values are not 0..n-1](examples/enum_constants.md).
 
+#### Reading an enum from Python — the published value
+
+An integer from the C side can reach Python without going through an
+`enum = "<name>"` property: a struct-sequence field, a value read back from
+a file. Each `[[enum]]` that a module's or object's bindings index is
+therefore also published as an attribute of the extension module its object
+is built into, named by its `name` in upper case, so the reader decodes the
+integer with the same list the binding uses:
+
+```python
+from proj.eng import ENG_STATE   # [[enum]] name = "eng_state"
+
+ENG_STATE[2]                     # "tracking" (values in C order)
+```
+
+Without `enumerators` the attribute is a `tuple` indexed by the C int. With
+`enumerators` it is a `dict` from each C constant to its name, since jm
+cannot read the constants' values, so only a literal `0, 1, ..., n-1` is
+known to be positional. An enum no object binding indexes is not published,
+and neither is one only a module-level `function` parameter looks up; those
+are not covered yet. A module publishes a shared enum once, under one name.
+The `.pyi` declares the attribute as `tuple[str, ...]` or `dict[int, str]`.
+
 ______________________________________________________________________
 
 ## Module-function param types

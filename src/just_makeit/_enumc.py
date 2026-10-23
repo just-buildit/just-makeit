@@ -241,6 +241,162 @@ def constants_of(
     return getattr((enums or {}).get(name), "constants", None)
 
 
+def py_name(ename: str) -> str:
+    """The module attribute an ``[[enum]]``'s choices are published under.
+
+    gh-2344. The enum's ``name`` in upper case, as a module constant:
+    ``async_dsss_rx_state`` becomes ``ASYNC_DSSS_RX_STATE``, so a status
+    field's integer is decoded as ``ASYNC_DSSS_RX_STATE[v]``. Upper-casing
+    is the whole rule. No helper in ``_csym`` fits: its ``upper`` takes an
+    owning component, and an enum is not one.
+
+    >>> py_name("async_dsss_rx_state")
+    'ASYNC_DSSS_RX_STATE'
+    """
+    return ename.upper()
+
+
+def _is_dense(consts: "list[str] | None", n: int) -> bool:
+    """Whether a choice's position is its C value, so a tuple can index it.
+
+    Without ``enumerators`` position is the C int by contract. With them,
+    jm cannot read the constants' values (they are C names), so only the
+    literal spelling ``0, 1, ..., n-1`` proves position and value agree.
+    Anything else -- a name, a hex literal, a gap -- is a dict, which is
+    always right.
+
+    >>> _is_dense(None, 2), _is_dense(["0", "1"], 2), _is_dense(["A", "B"], 2)
+    (True, True, False)
+    """
+    if consts is None:
+        return True
+    return len(consts) == n and all(c == str(i) for i, c in enumerate(consts))
+
+
+def publication(
+    used: list[str],
+    enums: "dict[str, list[str]] | None",
+    *,
+    prefix: str = "",
+) -> list[dict]:
+    """One entry per enum in *used*: what its Python-visible value is.
+
+    gh-2344. The single description of an enum's Python face. The C side
+    (:func:`publish_c`) and the stub (:func:`publish_pyi`) both read these
+    entries, and the table each one names is the one :func:`render_tables`
+    emits from the same *used* list, so the published value and the binding's
+    private table cannot describe two different lists.
+
+    Each entry is a dict with keys ``enum`` (the ``[[enum]]`` name), ``py``
+    (the module attribute, :func:`py_name`), ``table`` (the C array of
+    choice strings, :func:`symbols`), ``count`` (its length), ``dense`` (a
+    tuple, else a dict keyed by ``table_c``) and ``consts`` (the C constant
+    array's name, or ``None`` when the enum has none).
+
+    >>> e = publication(["k"], {"k": ["a", "b"]}, prefix="Acq")[0]
+    >>> e["py"], e["table"], e["dense"], e["consts"]
+    ('K', '_enum_Acq_k', True, None)
+    """
+    out: list[dict] = []
+    for name in used:
+        choices = list((enums or {}).get(name, []))
+        consts = constants_of(enums, name)
+        _, table = symbols(prefix, name)
+        out.append(
+            {
+                "enum": name,
+                "py": py_name(name),
+                "table": table,
+                "count": len(choices),
+                "dense": _is_dense(consts, len(choices)),
+                "consts": f"{table}_c" if consts else None,
+            }
+        )
+    return out
+
+
+def publish_c(entries: "list[dict]") -> str:
+    """C statements that add each enum's value to the module being built.
+
+    gh-2344. Each statement runs inside a ``PyInit_`` after ``m`` exists and
+    reads the same choice array the binding indexes, so the Python value is
+    built from the list the C int is decoded through, never from a second
+    copy. A dense enum becomes a tuple, a constant-bound one a dict from the
+    C constant to its name. The C is written in ``PyInit_``'s own style: a
+    failed add releases the value and the module and returns ``NULL``.
+
+    Returns ``""`` for no entries, so an enum-free module renders
+    byte-identically to before.
+
+    Examples
+    --------
+    >>> e = publication(["k"], {"k": ["a", "b"]}, prefix="A")
+    >>> "PyTuple_New(2)" in publish_c(e)
+    True
+    >>> publish_c([])
+    ''
+    """
+    parts: list[str] = []
+    for e in entries:
+        n, table, py = e["count"], e["table"], e["py"]
+        if e["dense"]:
+            body = [
+                f"        PyObject *_e = PyTuple_New({n});",
+                f"        for (Py_ssize_t _i = 0; _e && _i < {n}; _i++) {{",
+                f"            PyObject *_s = PyUnicode_FromString({table}[_i]);",
+                "            if (_s)",
+                "                PyTuple_SET_ITEM(_e, _i, _s);",
+                "            else",
+                "                Py_CLEAR(_e);",
+                "        }",
+            ]
+        else:
+            body = [
+                "        PyObject *_e = PyDict_New();",
+                f"        for (Py_ssize_t _i = 0; _e && _i < {n}; _i++) {{",
+                f"            PyObject *_k = PyLong_FromLong({e['consts']}[_i]);",
+                f"            PyObject *_v = PyUnicode_FromString({table}[_i]);",
+                "            if (!_k || !_v || PyDict_SetItem(_e, _k, _v) < 0)",
+                "                Py_CLEAR(_e);",
+                "            Py_XDECREF(_k);",
+                "            Py_XDECREF(_v);",
+                "        }",
+            ]
+        parts += [
+            "    {  /* gh-2344: [[enum]] %s -> %s */" % (e["enum"], py),
+            *body,
+            f'        if (!_e || PyModule_AddObject(m, "{py}", _e) < 0) {{',
+            "            Py_XDECREF(_e);",
+            "            Py_DECREF(m);",
+            "            return NULL;",
+            "        }",
+            "    }",
+        ]
+    return "\n".join(parts) + "\n" if parts else ""
+
+
+def publish_pyi(entries: "list[dict]") -> str:
+    """The ``.pyi`` declarations for the values :func:`publish_c` adds.
+
+    A dense enum is ``tuple[str, ...]`` and a constant-bound one
+    ``dict[int, str]``, matching the two shapes. Returns ``""`` for no
+    entries.
+
+    The template supplies the newline that ends the block, so this returns
+    one trailing newline: the blank line before ``@final`` is then the same
+    whether or not an enum is published, which the formatter requires.
+
+    >>> publish_pyi(publication(["k"], {"k": ["a"]}))
+    'K: tuple[str, ...]\\n'
+    """
+    lines = [
+        f"{e['py']}: "
+        + ("tuple[str, ...]" if e["dense"] else "dict[int, str]")
+        for e in entries
+    ]
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def default_c(
     ename: str, choice: str, enums: "dict[str, list[str]] | None"
 ) -> str:
