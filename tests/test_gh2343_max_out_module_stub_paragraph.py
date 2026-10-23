@@ -46,7 +46,7 @@ _PARA_TEXT = " ".join(_PARA)
 
 
 def _module_project(tmp_path: Path) -> Path:
-    """A module object whose ``encode_max_out`` header has a wrapped paragraph."""
+    """A module object whose ``encode_max_out`` brief wraps a paragraph."""
     assert (
         run_cli("new", "demo", "--no-c-prefix", cwd=tmp_path).returncode == 0
     )
@@ -74,10 +74,13 @@ def _module_project(tmp_path: Path) -> Path:
     text = hdr.read_text(encoding="utf-8")
     decl = "size_t enc_encode_max_out(enc_state_t *state, size_t n);"
     assert text.count(decl) == 1, "the scaffold's max_out declaration moved"
+    wrapped = "".join(f" * {ln}\n" for ln in _PARA)
     block = (
         "/**\n"
         " * @brief The output capacity encode() needs for n input samples.\n"
-        " *\n" + "".join(f" * {ln}\n" for ln in _PARA) + " *\n"
+        " *\n"
+        f"{wrapped}"
+        " *\n"
         " * @param state  Must be non-NULL.\n"
         " * @param n      Number of input samples the call will be given.\n"
         " * @return Largest number of output samples encode() can write.\n"
@@ -93,7 +96,8 @@ def _module_project(tmp_path: Path) -> Path:
 def _max_out_doc(root: Path) -> str:
     text = (root / "src/demo/filter/filter.pyi").read_text(encoding="utf-8")
     m = re.search(
-        r'    def encode_max_out\(.*?\) -> int:\n        """(.*?)\n        """',
+        r"    def encode_max_out\(.*?\) -> int:\n"
+        r'        """(.*?)\n        """',
         text,
         re.S,
     )
@@ -128,7 +132,7 @@ class TestTheShapeIsOwnedByOneSubstitution:
 
     @staticmethod
     def _block_replacements():
-        """``(file, enclosing function, line)`` of every block= replace call."""
+        """``(file, function, line)`` of every ``block=`` replace call."""
         found = []
         for path in sorted(SRC.rglob("*.py")):
             # templates/ holds Python TEMPLATES (`<<Component>>`), not modules.
