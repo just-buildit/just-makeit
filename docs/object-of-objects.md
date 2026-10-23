@@ -694,6 +694,20 @@ params = [{ name = "scene", type = "wfm_compose_state_t *",
 pointer (gh-2327). A composer that declares neither key renders exactly as
 before.
 
+**A lent pointer outlives `close()`.** `retain` keeps the *object* alive,
+so a `close()` that freed the state would leave the consumer reading freed
+memory. Once `_capsule` has been taken, `close()` only marks the composer
+closed -- every method, and `_capsule` itself, refuses from then on -- and
+dealloc frees the state when the last borrower lets go (gh-2346). A handle
+that publishes a capsule (gh-794) does the same, with a trade worth knowing:
+its `close_fn` waits for dealloc too, so a file or socket the handle holds is
+**not released at `close()`** while it is borrowed, and a status the close
+function would report is **not raised**. Its `close()` docstring says so on
+both faces. A lent handle also refuses a second `__init__`, which would free
+the pointer under the borrower. An object that publishes `_capsule` (gh-788
+gap 4) parks its state at `destroy()` exactly as an object that lends views
+does (gh-2187).
+
 ### 4.7 JSON faces (generated vs delegated)
 
 With `[module.X.json] enabled = true` the composer gets

@@ -746,7 +746,9 @@ def make_destroy_ctx(
     if lends and fallible:
         raise Refusal(
             f"object '{component}': [{component}.destroy] returns = \"int\" "
-            f"on an object that lends views (gh-2187). Its destroy() defers "
+            f"on an object that lends "
+            f"{'its pointer as a capsule (gh-2346)' if lends == 'capsule' else 'views (gh-2187)'}"
+            f". Its destroy() defers "
             f"the free to tp_dealloc, where a status has no caller to reach. "
             f"Report the failure from a finalizer instead: declare it as a "
             f"method and name it with `exit` (gh-805 §H)."

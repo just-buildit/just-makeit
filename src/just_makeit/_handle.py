@@ -2153,7 +2153,7 @@ static PyObject *
         )
     method_rows.append(
         f'    {{"close", (PyCFunction){tname}_close, METH_NOARGS, '
-        f'"{CLOSE_DOC}"}},'
+        f'"{close_doc(cfg, module)}"}},'
     )
 
     # ── serializable: state-blob triplet over the backing handle (gh-403) ─────
@@ -2572,6 +2572,23 @@ class PyFace(NamedTuple):
 #: that has no reason to exist once one place owns the answer.
 CLOSE_DOC = "Release the handle and free resources."
 
+#: gh-2346: what a handle that publishes a capsule adds. Once its pointer
+#: was lent, close() only marks it closed, so the teardown -- and the
+#: status a `close_fn` reports -- waits for dealloc.
+CLOSE_DOC_LENT = (
+    " Once its `_capsule` has been taken, close() only marks it closed: the"
+    " teardown waits until the last borrower lets go (gh-2346), so a file or"
+    " socket it holds is not released here, and a status the close function"
+    " would report is not raised."
+)
+
+
+def close_doc(cfg: dict, module: str) -> str:
+    """The handle's ``close()`` docstring, one text for both faces."""
+    return CLOSE_DOC + (
+        CLOSE_DOC_LENT if C.published_capsule(cfg, module) else ""
+    )
+
 
 def _arg_array_ann(a: dict) -> str:
     """The ``.pyi`` annotation of one array ``arg`` of a handle method.
@@ -2913,7 +2930,7 @@ def render_pyi(
 
     # RAII surface.
     lines.append("    def close(self) -> None:")
-    lines.append(f'        """{CLOSE_DOC}"""')
+    lines.append(f'        """{close_doc(cfg, module)}"""')
     if C.handle_context(cfg, module):
         lines.append(f"    def __enter__(self) -> {tname}:")
         lines.append('        """Enter context; return self."""')
