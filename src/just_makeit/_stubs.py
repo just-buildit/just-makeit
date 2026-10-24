@@ -46,6 +46,7 @@ from ._context._diagnostics import fixed_result_ann as _fixed_result_ann
 from ._context._diagnostics import optional_ann as _optional_ann
 from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
+from ._context._parse import capsule_annotation
 from ._context._types import _py_default
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
@@ -2104,9 +2105,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             param_parts.append(f"x: {_x_ann}")
         for p in m_params:
             # gh-432: a capsule param takes the named PyCapsule, a wrapper
-            # exposing `_capsule`, or None (detach).
+            # exposing `_capsule`, or None (detach) unless it is declared
+            # `required = true` (gh-2360).
             if p.get("capsule"):
-                param_parts.append(f"{p['name']}: object | None")
+                param_parts.append(f"{p['name']}: {capsule_annotation(p)}")
                 continue
             # gh-1021: an enum param (type "int" plus an `enum` name) takes
             # the choice STRING, exactly as a module function's does — see
@@ -2310,7 +2312,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             if p.get("enum"):
                 _ann = "str"
             elif p.get("capsule"):
-                _ann = "object | None"
+                _ann = capsule_annotation(p)
             else:
                 _ann = T.py_param_annotation(
                     _py(p["type"]),

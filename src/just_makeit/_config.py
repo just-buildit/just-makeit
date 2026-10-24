@@ -317,6 +317,13 @@ def load(root: Path) -> dict:
     retain_errs = retain_errors(cfg)
     if retain_errs:
         _refuse(retain_errs)
+    # gh-2360: a method-param `required` on a param that is not a capsule,
+    # or not a bool.
+    from ._context._parse import required_errors
+
+    required_errs = required_errors(cfg)
+    if required_errs:
+        _refuse(required_errs)
     # gh-2204: a `consumed_fn` no binding would call -- on a method that is
     # not a list of records, or has no input block to re-offer.
     consumed_errors = _consumed_fn_errors(cfg)
@@ -1696,6 +1703,45 @@ RESERVED_SECTIONS = (
 def components(cfg: dict) -> list[str]:
     """Return component names — all top-level keys except reserved sections."""
     return [k for k in cfg if k not in RESERVED_SECTIONS]
+
+
+def declared_methods(cfg: dict) -> "list[tuple[str, dict]]":
+    """Every object's and view's ``[[...methods]]`` row, with its table.
+
+    The one walk the load-time param checks share (`_retain.errors`,
+    `_context/_parse.required_errors`): two copies of it, each skipping a
+    malformed entry, is the pair that drifts the day views gain a sibling.
+    Entries that are not tables -- a stray top-level scalar, a non-table
+    method or view -- are skipped here, for the key walk to name.
+
+    Examples
+    --------
+    >>> cfg = {
+    ...     "o": {"methods": [{"name": "a"}, 1],
+    ...           "views": [{"methods": [{"name": "b"}]}, "v"]},
+    ...     "stray": 1,
+    ... }
+    >>> [(t, m["name"]) for t, m in declared_methods(cfg)]
+    [('o.methods', 'a'), ('o.views.methods', 'b')]
+    """
+    out: "list[tuple[str, dict]]" = []
+    for comp in components(cfg):
+        body = cfg[comp]
+        if not isinstance(body, dict):
+            continue
+        out += [
+            (f"{comp}.methods", m)
+            for m in body.get("methods") or []
+            if isinstance(m, dict)
+        ]
+        for v in body.get("views") or []:
+            if isinstance(v, dict):
+                out += [
+                    (f"{comp}.views.methods", m)
+                    for m in v.get("methods") or []
+                    if isinstance(m, dict)
+                ]
+    return out
 
 
 def modules(cfg: dict) -> list[str]:

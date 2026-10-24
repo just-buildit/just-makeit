@@ -205,8 +205,11 @@ def _stub_params(
             )
         elif p.get("capsule"):
             # gh-432: a capsule-typed param takes the named PyCapsule, any
-            # wrapper exposing `_capsule`, or None (detach).
-            fields.append((p["name"], "object | None", ""))
+            # wrapper exposing `_capsule`, or None (detach) unless it is
+            # declared `required = true` (gh-2360).
+            from ._parse import capsule_annotation
+
+            fields.append((p["name"], capsule_annotation(p), ""))
         else:
             # gh-240: a defaulted scalar renders as an optional kwarg.
             # gh-1271: through `_py_default`, not verbatim. The C literal went

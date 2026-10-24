@@ -1686,7 +1686,8 @@ Generated binding semantics: `None` maps to `NULL` (the C-side detach
 idiom); a PyCapsule is name-checked with `PyCapsule_GetPointer`; any other
 object is unwrapped through its `_capsule` attribute first, so callers pass
 the friendly wrapper (`obj.set_telemetry(tlm, "agc")`), not the capsule.
-The `.pyi` annotates the param `object | None`. The `header` key injects
+The `.pyi` annotates the param `object | None` (`object` under
+`required = true`, below). The `header` key injects
 `#include "path/hdr.h"` into the object's `_core.h` alongside the gh-170
 `depends_on` includes (skipped when the file doesn't exist under
 `native/inc`). `status_return = true` binds the C `int` status as
@@ -1722,6 +1723,27 @@ owner's bare capsule (`tlm._capsule`) works too, since a capsule jm lends
 holds the object that lent it (gh-2328). `retain` is refused on a param
 with no `capsule`, on a `varargs` or `manual_stub` method (whose binding is
 yours), and on a method a composer source delegates.
+
+**`required = true`: the param is mandatory** (gh-2360). By default a
+capsule param takes `None` as `NULL`, the detach idiom above. A kernel that
+refuses `NULL` declares the param `required = true`, and then both faces
+say so from that one key: the binding raises `TypeError` for `None` before
+the kernel runs, and the `.pyi` types the param `object` rather than
+`object | None`, so a type checker refuses the call too.
+
+```toml
+[[writer.methods.params]]
+name     = "scene"
+type     = "wfm_compose_t *"
+capsule  = "proj.wfm.compose"
+retain   = true
+required = true     # annotate(None) is a TypeError, not a failed status
+```
+
+`required` is refused on a method param with no `capsule` (where it would
+read as "has no default"), and must be `true` or `false`. It reads exactly
+as it does on a constructor capsule param: nullable unless
+`required = true`.
 
 ### `[[<object>.properties]]`
 
