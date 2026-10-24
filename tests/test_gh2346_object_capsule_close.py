@@ -112,6 +112,15 @@ class TestTheTeardown:
         assert "``_capsule`` was handed to" in doc
         assert "gh-2346" in doc
 
+    def test_its_c_comments_name_the_capsule_not_views(self):
+        """A capsule-only lender has no views: the park and dealloc comments
+        said "the views this object lent" anyway (doppler adoption, 0.109.0).
+        """
+        ctx = _ctx("capsule")
+        for key in ("destroy_method_body", "destroy_dealloc_call"):
+            assert "the capsule this object lent" in ctx[key], key
+            assert "views" not in ctx[key], key
+
     def test_a_fallible_destroy_on_a_capsule_lender_is_refused(self):
         """A status has no caller in tp_dealloc (the gh-2187 rule)."""
         from just_makeit._report import Refusal
@@ -137,6 +146,8 @@ class TestNothingElseMoves:
         views = _ctx(True)
         assert "Views this object handed out" in views["pyi_destroy_methods"]
         assert "_capsule" not in views["pyi_destroy_methods"]
+        for key in ("destroy_method_body", "destroy_dealloc_call"):
+            assert "the views this object lent" in views[key], key
 
     def test_an_object_lending_nothing_renders_as_it_did(self):
         plain = _ctx(False)

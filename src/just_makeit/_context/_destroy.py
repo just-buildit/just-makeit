@@ -430,7 +430,32 @@ def _teardown_body(
     return _teardown_int_body(component, category, message, dfn, waits)
 
 
-def _park_body(wake_call: str) -> str:
+def _lent_phrase(lends: "bool | str") -> "tuple[str, str]":
+    """What a lending object's teardown comments say was lent (gh-2346).
+
+    ``(park, dealloc)``: the subject of `_park_body`'s comment and of the
+    deallocator's. `_borrow.lends` answers ``"capsule"`` for an object that
+    lends only its pointer, which has no views to speak of.
+
+    >>> _lent_phrase(True)[0]
+    'the views this object lent point'
+    >>> _lent_phrase("capsule")[1]
+    'the capsule this object lent; it is'
+    """
+    if lends == "capsule":
+        return (
+            "the capsule this object lent points",
+            "the capsule this object lent; it is",
+        )
+    return (
+        "the views this object lent point",
+        "the views this object lent; they are",
+    )
+
+
+def _park_body(
+    wake_call: str, lent: str = "the views this object lent point"
+) -> str:
     """The teardown of an object that lends views (gh-2187).
 
     Not a free: every view the object handed out points into the state and
@@ -441,6 +466,10 @@ def _park_body(wake_call: str) -> str:
     With the handle NULL, every method refuses through its existing guard.
     *wake_call*, when declared, first ends a blocking call that would
     otherwise wait on the parked state for ever.
+
+    *lent* names what points into the state, for the comment: the views
+    (gh-2187) by default, or the capsule an object lends its pointer through
+    (gh-2346), which `_lent_phrase` picks from `_borrow.lends`.
 
     Examples
     --------
@@ -456,7 +485,7 @@ def _park_body(wake_call: str) -> str:
     return (
         "    if (self->handle) {\n"
         f"{wake_call}"
-        "        /* gh-2187: the views this object lent point into the\n"
+        f"        /* gh-2187: {lent} into the\n"
         "           state; the free waits for tp_dealloc, and every method\n"
         "           refuses from here on. */\n"
         f"        self->{PARK_FIELD} = self->handle;\n"
@@ -798,7 +827,7 @@ def make_destroy_ctx(
     if lends:
         dealloc = (
             "    /* gh-2187: destroy() parks the state here instead of\n"
-            "       freeing it under the views this object lent; they are\n"
+            f"       freeing it under {_lent_phrase(lends)[1]}\n"
             "       gone now, so the free is now. */\n"
             f"    if (self->handle)\n        {dfn}(self->handle);\n"
             f"    if (self->{PARK_FIELD})\n"
@@ -834,7 +863,7 @@ def make_destroy_ctx(
             )
 
     body = (
-        _park_body(wake_call)
+        _park_body(wake_call, _lent_phrase(lends)[0])
         if lends
         else _teardown_body(component, spec, exit_method or None, dfn, waits)
     )
