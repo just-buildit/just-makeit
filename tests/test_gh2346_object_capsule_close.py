@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import asan_env, default_cc
+from _compilers import asan_env, asan_skip_reason, default_cc
 from _jmrun import run_cli
 
 SRC = Path(__file__).parent.parent / "src"
@@ -313,7 +313,7 @@ def test_a_kept_object_is_readable_after_destroy(tmp_path):
 
 @pytest.mark.skipif(
     _NO_TOOLCHAIN or not asan_env(default_cc()),
-    reason="no cmake / C compiler / AddressSanitizer runtime",
+    reason=asan_skip_reason(),
 )
 @pytest.mark.parametrize("spelling", list(_SPELLINGS))
 def test_a_kept_object_outlives_its_destroy_under_asan(tmp_path, spelling):

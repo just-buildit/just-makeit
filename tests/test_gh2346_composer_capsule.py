@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import asan_env, default_cc
+from _compilers import asan_env, asan_skip_reason, default_cc
 from _jmrun import run_cli
 
 SRC = Path(__file__).parent.parent / "src"
@@ -431,7 +431,7 @@ def test_a_consumer_keeps_the_composer(tmp_path):
 
 @pytest.mark.skipif(
     _NO_TOOLCHAIN or not asan_env(default_cc()),
-    reason="no cmake / C compiler / AddressSanitizer runtime",
+    reason=asan_skip_reason(),
 )
 def test_a_kept_composer_outlives_its_close_under_asan(tmp_path):
     """The review's use after free (5634567388), under AddressSanitizer.
