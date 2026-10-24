@@ -1,5 +1,57 @@
 ## [Unreleased]
 
+## [0.109.0] — 2026-10-23
+
+### Added
+
+- **A project declares the keys its own generator reads off composer field
+    rows** (gh-1752). `[project] composer_field_keys = ["cli", "json", ...]`
+    names them once; jm keeps them on a save as before and stops warning, on
+    every load, that each one "has no effect". Only on `source.fields` /
+    `segment.fields` rows, and only the names listed: any other unknown key
+    there still warns, so a misspelt jm key is no longer buried in the
+    expected ones. A listed name jm itself reads on a field row is refused.
+
+- **A composer module can publish its state as a capsule** (gh-2346).
+    `[module.X] capsule = "<name>"` (or the shared `capsule_name`, which a
+    composer used to accept and ignore) gives the generated composer type a
+    read-only `_capsule` lending its `<sym>_state_t *`, borrowed and holding
+    the composer alive, as a handle's (gh-794) and an object's (gh-788) do.
+    Another module's method then takes the `Composer` itself through a
+    `capsule` param, `retain = true` included; a closed composer is refused.
+    One reader, `published_capsule`, serves handles and composers.
+
+- **A lent pointer outlives its owner's `close()`** (gh-2346). `retain`
+    keeps the producer object alive, but `close()` freed its pointer anyway,
+    so a consumer reading it afterwards read freed memory: a
+    heap-use-after-free a handle publishing a capsule has had since gh-794,
+    and an object publishing `_capsule` since gh-788. Once lent, a composer's
+    or handle's `close()` only marks it closed and dealloc frees the pointer;
+    an object parks its state at `destroy()` as one lending views does
+    (gh-2187). For a handle, its close function and the status it reports
+    wait for the last borrower, and a lent handle refuses a second
+    `__init__`.
+
+- **A property can hand Python a structured value parsed from JSON**
+    (gh-2347). `type = "json"` on `[[<obj>.properties]]` declares a getter
+    `char *<stem>_get_<name>(const <stem>_state_t *)` that returns malloc'd
+    JSON text. The binding parses it with `json.loads` and frees it. `NULL`
+    raises `RuntimeError`, malformed text raises `ValueError` naming the
+    property, and `py_type` (for example `list[dict[str, Any]]`) is the stub
+    annotation. For a core that already holds a structured document, such as
+    doppler's SigMF annotations (doppler-dsp/doppler#2565).
+
+### Fixed
+
+- **A module stub's `*_max_out` docstring keeps its wrapped paragraph**
+    (gh-2343). The header Doxygen of a `*_max_out` was rendered into the
+    module-aggregated `.pyi` with a blank line after every source line, so a
+    six-line paragraph read as six one-line paragraphs. The runtime docstring
+    and the standalone object's stub were already right. The module stub now
+    takes the header block through `GlueMethod.with_header_block`, the same
+    path the standalone stub uses, so the paragraph renders as consecutive
+    lines.
+
 ## [0.108.0] — 2026-10-18
 
 ### Breaking
