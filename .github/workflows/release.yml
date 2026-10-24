@@ -1,4 +1,10 @@
 name: Release
+# The tag under release, in the run's title, for both triggers. A dispatch
+# (`-f tag=`, the recovery when a tag's own run failed) runs on `main`, so
+# `head_branch` names the branch, not the tag; artifact.yml's post-publish
+# smoke reads the version from this title instead (v0.109.0 installed
+# `just-makeit==main`).
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
 on:
   push:
