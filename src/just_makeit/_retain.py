@@ -156,12 +156,36 @@ def swap_c(m: dict, indent: str = "    ") -> str:
         Py_XSETREF(self->_jm_retain_attach_t,
                    t_obj != Py_None ? t_obj : NULL);
     <BLANKLINE>
+
+    A param that also declares ``required = true`` never reaches the swap
+    as ``None`` -- the binding refused it up front -- so it is kept
+    unconditionally, with no detach branch to read as reachable:
+
+    >>> m["params"][0]["required"] = True
+    >>> print(swap_c(m))
+        /* retain: the kernel keeps `t`, so this object keeps its owner
+           until the next call replaces it. */
+        Py_INCREF(t_obj);
+        Py_XSETREF(self->_jm_retain_attach_t, t_obj);
+    <BLANKLINE>
     """
+    # Imported here: `_context._parse` imports this module at load.
+    from ._context._parse import capsule_nullable
+
     i = indent
     out = []
     for p in retained(m):
         n = p["name"]
         o = obj_var(n)
+        if not capsule_nullable(p):
+            out.append(
+                f"{i}/* retain: the kernel keeps `{n}`, so this object keeps"
+                f" its owner\n"
+                f"{i}   until the next call replaces it. */\n"
+                f"{i}Py_INCREF({o});\n"
+                f"{i}Py_XSETREF(self->{field(m['name'], n)}, {o});\n"
+            )
+            continue
         out.append(
             f"{i}/* retain: the kernel keeps `{n}`, so this object keeps its"
             f" owner\n"

@@ -217,6 +217,17 @@ def test_the_binding_refuses_none_up_front(declared):
     assert "if (t_obj != Py_None) {" not in ext
 
 
+def test_a_retained_required_param_is_kept_without_a_detach(declared):
+    """`retain = true`'s swap keeps the owner or, on None, drops it. The
+    binding has already refused None, so the swap keeps it unconditionally
+    rather than carrying a detach branch that cannot run."""
+    variant, proj = declared
+    ext = _ext(proj, variant)
+    assert "Py_XSETREF(self->_jm_retain_attach_t, t_obj);" in ext, ext
+    assert "t_obj != Py_None ? t_obj : NULL" not in ext
+    assert "None detaches it" not in ext
+
+
 def test_the_stub_types_it_object(declared):
     variant, proj = declared
     pyi = _pyi(proj, variant)
@@ -245,6 +256,7 @@ def test_undeclared_it_still_detaches(undeclared):
     ext = _ext(proj, variant)
     assert "if (t_obj != Py_None) {" in ext
     assert not REQUIRED_CAPSULE_RE.search(ext), ext
+    assert "t_obj != Py_None ? t_obj : NULL" in ext, ext
     assert "def attach(self, t: object | None) -> None:" in _pyi(proj, variant)
 
 
