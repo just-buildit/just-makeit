@@ -328,6 +328,27 @@ def _cmake(proj: Path, *args: str, timeout: int = 900) -> None:
     assert r.returncode == 0, (r.stdout + r.stderr)[-4000:]
 
 
+def _same_second_as_the_build(proj: Path) -> None:
+    """Date every file written since the first build to that build.
+
+    gh-2362, measured on macOS: the example's build compiled the composer
+    and `apply` rewrote `playlist_ext.c` and the `playlist_bridge.h` it
+    includes within the same second. macOS make (3.81) compares mtimes to
+    the second, so the rebuild kept the old object and imported a `Mix`
+    with no `_capsule`. Pinning every newer file to the composer object's
+    mtime puts every platform in that case on every run; the
+    `--clean-first` rebuild in `_pool_project` is what survives it.
+    """
+    obj = next(proj.glob("build/**/playlist_ext.c.o*"))
+    built = obj.stat().st_mtime_ns
+    for path in proj.rglob("*"):
+        if "build" in path.relative_to(proj).parts[:1] or not path.is_file():
+            continue
+        st = path.stat()
+        if st.st_mtime_ns > built:
+            os.utime(path, ns=(st.st_atime_ns, built))
+
+
 def _pool_project(tmp_path: Path, asan: bool = False) -> Path:
     """The bundled composer_seams project, built, given a capsule and a
     consumer object (`Pool`) whose `attach` keeps the `Mix` (`retain`).
@@ -391,6 +412,7 @@ def _pool_project(tmp_path: Path, asan: bool = False) -> Path:
     core = proj / "native/src/pool/pool_core.c"
     for fn, body in _POOL_C.items():
         _implement(core, fn, body)
+    _same_second_as_the_build(proj)
     # A new object needs a fresh configure to be picked up; ASan needs one
     # for its flags.
     flags = (
@@ -411,7 +433,9 @@ def _pool_project(tmp_path: Path, asan: bool = False) -> Path:
         *flags,
         timeout=600,
     )
-    _cmake(proj, "--build", "build", "--parallel", "4")
+    # Rebuild from clean: whether make recompiles a rewritten file must not
+    # hang on mtime resolution (gh-2362, pinned above).
+    _cmake(proj, "--build", "build", "--parallel", "4", "--clean-first")
     return proj
 
 
