@@ -372,6 +372,13 @@ def _pool_project(tmp_path: Path, asan: bool = False) -> Path:
         encoding="utf-8",
     )
     _ok("apply", cwd=proj)
+    # gh-2362: one macOS 3.11 run imported a Mix with no `_capsule`.
+    # Split the two causes: apply did not write it (fails here) or the
+    # build did not recompile what apply wrote (`_build_state` below).
+    ext = proj / "native/src/playlist/playlist_ext.c"
+    assert "_get__capsule" in ext.read_text(encoding="utf-8"), (
+        "apply wrote playlist_ext.c without the declared capsule"
+    )
     hdr = next(proj.glob("native/inc/**/pool/pool_core.h"))
     text = hdr.read_text(encoding="utf-8")
     assert text.count("    int k;\n") == 1, text
@@ -422,10 +429,29 @@ def _run(proj: Path, probe: str, env: "dict | None" = None):
 
 
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def _build_state(proj: Path) -> str:
+    """The mtimes, in ns, of the composer's source, objects and modules.
+
+    For a failure message: a source newer than its object after the build
+    means the build tool judged a just-rewritten file up to date.
+    """
+    paths = [proj / "native/src/playlist/playlist_ext.c"]
+    paths += sorted((proj / "build").rglob("playlist_ext.c.o"))
+    paths += sorted((proj / "src").rglob("playlist*.so"))
+    paths += sorted((proj / "src").rglob("playlist*.pyd"))
+    return "\n".join(
+        f"  {p.stat().st_mtime_ns}  {p.relative_to(proj)}" for p in paths
+    )
+
+
 def test_a_consumer_keeps_the_composer(tmp_path):
     proj = _pool_project(tmp_path)
     out = _run(proj, _PROBE)
-    assert out.returncode == 0, (out.returncode, out.stderr[-2000:])
+    assert out.returncode == 0, (
+        out.returncode,
+        out.stderr[-2000:],
+        "build state (mtime ns):\n" + _build_state(proj),
+    )
     assert out.stdout.split("\n")[:-1] == _EXPECT, out.stdout
 
 
