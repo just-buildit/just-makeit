@@ -47,7 +47,13 @@ jobs:
       inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
-    runs-on: ${{ matrix.os }}
+    # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has no
+    # 3.9 build ("The version '3.9' with architecture 'x64' was not found for
+    # Ubuntu 26.04"): the v0.109.0 release failed before publish on this one
+    # leg. `requires-python = ">=3.9"` still promises 3.9, so its Linux leg
+    # stays, on the newest image that ships it. Every other leg follows
+    # ubuntu-latest.
+    runs-on: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9') && 'ubuntu-24.04' || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
