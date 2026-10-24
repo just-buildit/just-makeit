@@ -702,6 +702,10 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
     # gh-1755: the create takes a trailing `const char **why` --
     # `[module.X.json] from_json_why`'s shape.
     "create_why",
+    # gh-2346: the capsule the composer publishes as `_capsule` -- the same
+    # key a handle reads (`_config.published_capsule`); `capsule_name`, the
+    # shared spelling, is honoured too.
+    "capsule",
 }
 
 #: A handle method: `args` / `returns`, and the gh-565/gh-1111 status raise.

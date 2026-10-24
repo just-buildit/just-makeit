@@ -52,6 +52,11 @@ _DUAL_LEVEL = {
     "doc": "a module documents itself, and so does each of its faces",
     "header": "the module's backing header vs the generator's own",
     "type_name": "the module's class vs the source / segment / timeline class",
+    "capsule": (
+        "the capsule the composer PUBLISHES as `_capsule` (gh-2346, read by "
+        "`_config.published_capsule`) vs the one a field or init-param "
+        "CONSUMES"
+    ),
 }
 
 

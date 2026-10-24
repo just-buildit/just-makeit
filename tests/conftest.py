@@ -354,6 +354,8 @@ from just_makeit._pyfmt import flatten_signatures  # noqa: E402,F401
 # The line is not "environmental" -- it is whether a MAINTAINER COULD FIX IT.
 # AVX-512 is absent because the host lacks the silicon; ruff is absent because
 # nobody put it on PATH. The second is a gate that is not running.
+from _compilers import ASAN_NO_PRELOAD_MACOS  # noqa: E402
+
 _ALLOWED_SKIPS = (
     # A ratchet with nothing left to hold. It shrinks to empty by design.
     "got empty parameter set",
@@ -368,6 +370,12 @@ _ALLOWED_SKIPS = (
     # The ordering test beside it runs on every platform, so the fix is
     # still checked there -- only the runtime demonstration is glibc-only.
     "needs glibc's malloc.perturb",
+    # gh-2346's ASan demonstrations: macOS resolves Apple clang's runtime,
+    # but preloading it into the runner's interpreter does not take
+    # ("Interceptors are not working", just-makeit#2353 run 40042035671).
+    # The behaviour tests beside them run on macOS, so the fix is still
+    # checked there. A missing runtime on Linux is not allowed.
+    ASAN_NO_PRELOAD_MACOS,
     # test_gh1374's own subject: it must contain the spelling it hunts for.
     "names the pattern in order to detect it",
     "allow-listed:",

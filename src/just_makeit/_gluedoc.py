@@ -320,8 +320,26 @@ def _lifecycle(
     # gh-2187: a lending object's teardown cannot free "immediately" -- the
     # views it handed out point into the memory -- so its prose says when
     # the memory does go, rather than promising what the body no longer does.
+    # gh-2346: an object that lends its pointer as a capsule defers the same
+    # way (`_borrow.lends` answers "capsule"), and says so in its own terms.
+    _close_capsule = DoxyBlock(
+        brief="Close the object; the memory goes with its last user.",
+        body=[
+            "Ordinarily unnecessary: the resources are freed when the "
+            "object is garbage-collected. Call this, or use the object "
+            "as a context manager, to end its use at a definite point.",
+            "A consumer this object's ``_capsule`` was handed to may "
+            "still hold its pointer, and keeps this object alive while it "
+            "does: the memory is freed when the last of them, and this "
+            "object, are gone, not here (gh-2346). Idempotent: calling it "
+            "again does nothing. Every other method raises "
+            "``RuntimeError`` once it has run.",
+        ],
+    )
     _close = (
-        DoxyBlock(
+        _close_capsule
+        if lends == "capsule"
+        else DoxyBlock(
             brief="Close the object; the memory goes with its last user.",
             body=[
                 "Ordinarily unnecessary: the resources are freed when the "

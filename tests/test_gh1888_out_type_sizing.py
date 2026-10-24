@@ -45,7 +45,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc, find_compiler
+from _compilers import asan_env, default_cc, find_compiler
 from _jmrun import run_cli
 
 from just_makeit import _config as C
@@ -72,23 +72,17 @@ def _run_ok(root: Path, *args: str) -> None:
     assert r.returncode == 0, (args, r.stdout + r.stderr)
 
 
-def _asan() -> "tuple[str, str] | None":
-    """``(gcc, its libasan)`` when this box can sanitize a Python extension.
+def _asan() -> "tuple[str, dict[str, str]] | None":
+    """``(gcc, the env that loads its ASan runtime)``, or None.
 
-    Linux only: the runtime is preloaded into the interpreter, which only
-    ``LD_PRELOAD`` does without rebuilding Python. Elsewhere the build is
-    plain and the read-back below is the whole check -- every shape is
-    still built and called.
+    gcc by name, as the build below has always used it; the runtime and the
+    preload are `_compilers.asan_env`'s, the one place a platform's answer
+    lives. Without one the build is plain and the read-back below is the
+    whole check -- every shape is still built and called.
     """
-    if not sys.platform.startswith("linux"):
-        return None
     gcc = find_compiler("gcc")
-    if gcc is None:
-        return None
-    lib = subprocess.run(
-        [gcc, "-print-file-name=libasan.so"], capture_output=True, text=True
-    ).stdout.strip()
-    return (gcc, lib) if os.path.isabs(lib) and os.path.exists(lib) else None
+    env = asan_env(gcc)
+    return (gcc, env) if gcc and env else None
 
 
 # -- the build ----------------------------------------------------------------
@@ -259,7 +253,7 @@ def _build(base: Path) -> "tuple[Path, dict]":
         assert r.returncode == 0, f"{cmd[:2]}:\n{r.stdout}\n{r.stderr}"
     env = {**os.environ, "PYTHONPATH": str(root / "src")}
     if asan:
-        env |= {"LD_PRELOAD": asan[1], "ASAN_OPTIONS": "detect_leaks=0"}
+        env |= asan[1]
     return root, env
 
 

@@ -6094,7 +6094,7 @@ def make_properties_ctx(
                 return f"    return {meta['to_py'](acc)};\n"
             return _enumc.decode_c(_p, _e, acc, enums, prefix=Component) + "\n"
 
-        if p.get("capsule"):
+        if _borrow.publishes_capsule(p):
             # gh-788 gap 4: the PRODUCING side of gh-432. That issue taught
             # jm to *consume* a foreign pointer arriving as a named
             # `PyCapsule` (or duck-unwrapped from an object's `_capsule`);

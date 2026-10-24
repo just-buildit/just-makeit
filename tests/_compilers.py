@@ -37,8 +37,11 @@ wrapper (gh-1976) -- instead of asking here.
 from __future__ import annotations
 
 import os
+import platform
 import re
 import shutil
+import subprocess
+import sys
 
 #: CMake's unversioned default C compiler search, in its order, as far as a
 #: Linux or macOS box carries the names. ``cc`` is first, so on every box
@@ -127,3 +130,88 @@ def find_compiler(name: str) -> "str | None":
             if hit and (best is None or int(m.group(1)) > best[0]):
                 best = (int(m.group(1)), hit)
     return best[1] if best else None
+
+
+#: Where each platform's AddressSanitizer runtime is, and how it gets into an
+#: interpreter that was not built with it: the runtime file names to ask the
+#: compiler for, in order, and the loader variable that preloads one.
+#:
+#: macOS has no row, by measurement: Apple clang's
+#: ``libclang_rt.asan_osx_dynamic.dylib`` resolves, but with
+#: ``DYLD_INSERT_LIBRARIES`` set the runner's uv Python still loads it only
+#: when the extension does, and ASan aborts with "Interceptors are not
+#: working ... loaded too late (e.g. via dlopen)" (just-makeit#2353, run
+#: 40042035671). See `ASAN_NO_PRELOAD_MACOS`.
+_ASAN_RUNTIMES = {
+    "linux": (
+        ("libasan.so", f"libclang_rt.asan-{platform.machine()}.so"),
+        "LD_PRELOAD",
+    ),
+}
+
+#: The skip reason of an ASan test on macOS, which `tests/conftest.py`'s
+#: skip gate (gh-1442) allow-lists by this exact text. Anywhere else a
+#: missing runtime is `asan_skip_reason`'s other answer, which the gate
+#: refuses: there a compiler install is the fix.
+ASAN_NO_PRELOAD_MACOS = (
+    "macOS: the ASan runtime cannot be preloaded into this interpreter"
+)
+
+
+def asan_env(cc: "str | None") -> "dict[str, str] | None":
+    """The environment that loads *cc*'s AddressSanitizer runtime, or None.
+
+    A test that builds a Python extension with ``-fsanitize=address`` runs
+    it in an interpreter that was not, so the runtime has to be in the
+    process before the extension loads. That is a preload: gcc ships
+    ``libasan.so`` (clang ``libclang_rt.asan-<arch>.so``) and Linux preloads
+    it with ``LD_PRELOAD``. The runtime asked for is *cc*'s own -- the
+    compiler that instrumented the build -- because a gcc-instrumented
+    object under clang's runtime, or the reverse, is not a supported
+    pairing. macOS answers None: the preload was tried and measured not to
+    take (see `_ASAN_RUNTIMES`).
+
+    Three test files each carried a copy of this (gh-2346 review); one now.
+    A caller skips with `asan_skip_reason` when this is None.
+
+    None when *cc* is None, the platform has no entry, or *cc* has no
+    runtime.
+
+    Examples
+    --------
+    >>> env = asan_env(default_cc())
+    >>> env is None or os.path.isfile(next(iter(env.values())))
+    True
+    >>> asan_env(None) is None
+    True
+    """
+    if cc is None:
+        return None
+    key = sys.platform[:5]
+    if key not in _ASAN_RUNTIMES:
+        return None
+    names, var = _ASAN_RUNTIMES[key]
+    for name in names:
+        lib = subprocess.run(
+            [cc, f"-print-file-name={name}"], capture_output=True, text=True
+        ).stdout.strip()
+        # An unknown name echoes back bare, so only a real file counts.
+        if os.path.isabs(lib) and os.path.isfile(lib):
+            return {var: lib, "ASAN_OPTIONS": "detect_leaks=0"}
+    return None
+
+
+def asan_skip_reason() -> str:
+    """Why an ASan test skips on this platform when `asan_env` is None.
+
+    On macOS it is `ASAN_NO_PRELOAD_MACOS`, which the skip gate accepts,
+    because no install makes the preload take. Elsewhere it names the
+    missing tool, which the gate refuses.
+
+    >>> asan_skip_reason() in (ASAN_NO_PRELOAD_MACOS,
+    ...                        "no cmake / C compiler / AddressSanitizer runtime")
+    True
+    """
+    if sys.platform == "darwin":
+        return ASAN_NO_PRELOAD_MACOS
+    return "no cmake / C compiler / AddressSanitizer runtime"

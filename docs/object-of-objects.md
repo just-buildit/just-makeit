@@ -670,6 +670,44 @@ keeps a plain four-argument create for its own C callers names the
 reason-naming one in `create_fn` (doppler: `create_fn = "dp_wfm_compose_create_why"`). A `create_why` that is not `true`/`false` is
 refused at load.
 
+A composer can **lend its state to another module** (gh-2346), the way a
+handle lends its pointer (gh-794): `[module.X] capsule = "<name>"` (or the
+shared `capsule_name`) gives the composer type a read-only `_capsule`
+holding its `<state_t> *`, borrowed -- it never frees the state -- and
+holding the composer alive. A closed composer refuses it with
+`RuntimeError`. Another module's method then takes the `Composer` itself,
+or its `_capsule`, through an ordinary capsule param:
+
+```toml
+[module.wfm_compose]
+kind    = "composer"
+capsule = "proj.wfm.composer"
+
+[[writer.methods]]
+name   = "annotate"
+params = [{ name = "scene", type = "wfm_compose_state_t *",
+            capsule = "proj.wfm.composer",
+            header = "proj/wfm/wfm_compose.h", retain = true }]
+```
+
+`retain = true` keeps the composer for as long as the consumer holds the
+pointer (gh-2327). A composer that declares neither key renders exactly as
+before.
+
+**A lent pointer outlives `close()`.** `retain` keeps the *object* alive,
+so a `close()` that freed the state would leave the consumer reading freed
+memory. Once `_capsule` has been taken, `close()` only marks the composer
+closed -- every method, and `_capsule` itself, refuses from then on -- and
+dealloc frees the state when the last borrower lets go (gh-2346). A handle
+that publishes a capsule (gh-794) does the same, with a trade worth knowing:
+its `close_fn` waits for dealloc too, so a file or socket the handle holds is
+**not released at `close()`** while it is borrowed, and a status the close
+function would report is **not raised**. Its `close()` docstring says so on
+both faces. A lent handle also refuses a second `__init__`, which would free
+the pointer under the borrower. An object that publishes `_capsule` (gh-788
+gap 4) parks its state at `destroy()` exactly as an object that lends views
+does (gh-2187).
+
 ### 4.7 JSON faces (generated vs delegated)
 
 With `[module.X.json] enabled = true` the composer gets

@@ -351,12 +351,13 @@ producing, `capsule_unwrap_c` for consuming. Two copies of a name-checked
 pair that drifts, and the producing side's `NULL` destructor is a **contract**,
 not a call.
 
-| direction         | declared as                                  | issue        |
-| ----------------- | -------------------------------------------- | ------------ |
-| consume, per call | a method `param` with `capsule`              | gh-432       |
-| produce (object)  | a property `--type capsule --capsule <name>` | gh-788 gap 4 |
-| produce (handle)  | `capsule = "<name>"` on a `kind = "handle"`  | gh-794       |
-| construct         | an `init_param` with `capsule`               | gh-790       |
+| direction          | declared as                                   | issue        |
+| ------------------ | --------------------------------------------- | ------------ |
+| consume, per call  | a method `param` with `capsule`               | gh-432       |
+| produce (object)   | a property `--type capsule --capsule <name>`  | gh-788 gap 4 |
+| produce (handle)   | `capsule = "<name>"` on a `kind = "handle"`   | gh-794       |
+| produce (composer) | `capsule = "<name>"` on a `kind = "composer"` | gh-2346      |
+| construct          | an `init_param` with `capsule`                | gh-790       |
 
 `capsule_new_c` takes no destructor argument on purpose: a capsule that *owns*
 its pointer is a different feature and should look different. Both producers

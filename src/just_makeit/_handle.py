@@ -443,7 +443,22 @@ def render_tp_init(cfg: dict, module: str) -> str:
         if any(m.get("nogil") for m in C.handle_methods(cfg, module))
         else ""
     )
-    reinit = f"""    if (!self->closed && self->h) {{
+    # gh-2346: a handle whose pointer was lent cannot be rebuilt in place --
+    # the teardown below would free the pointer a borrower still holds, and
+    # there is one slot, so the old handle cannot be deferred to dealloc
+    # either. Refused, releasing what the parse borrowed, as a failed parse
+    # does.
+    reinit_refuse = (
+        "    if (self->lent) {\n"
+        "        PyErr_SetString(PyExc_RuntimeError,\n"
+        f'            "{tname}: its pointer was lent as a capsule; '
+        'a second __init__ would free it under the borrower");\n'
+        f"{fs_decref}        return -1;\n"
+        "    }\n"
+        if C.published_capsule(cfg, module)
+        else ""
+    )
+    reinit = f"""{reinit_refuse}    if (!self->closed && self->h) {{
 {reinit_wait}        {_destroy_silent(cfg, module)}
         self->h = NULL;
         self->closed = 1;
@@ -1893,7 +1908,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     # gh-794: `_capsule` — the handle lending its opaque pointer, borrowed.
     # Emitted last so it never disturbs the getter numbering above, and only
     # when declared, so every existing handle module renders byte-identically.
-    _cap = C.handle_capsule(cfg, module)
+    _cap = C.published_capsule(cfg, module)
     if _cap:
         funcs.append(
             f"static PyObject *\n"
@@ -1904,7 +1919,9 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             # over a closed handle is exactly the use-after-free the RAII
             # protocol exists to prevent, and the consumer has no way to
             # notice. Same reasoning as gh-788 gap 4's destroyed guard.
-            f"{closed_get}\n" + _capsule_new_c("self->h", _cap, tname) + "\n}"
+            f"{closed_get}\n"
+            + _capsule_new_c("self->h", _cap, tname, lent_flag="self->lent")
+            + "\n}"
         )
         rows.append(
             f'    {{"_capsule", (getter){tname}_get__capsule, NULL,\n'
@@ -1969,11 +1986,19 @@ def render_type(
     # gh-2272: the in-flight count, on a handle with a GIL-free method.
     releases = any(m.get("nogil") for m in C.handle_methods(cfg, module))
     inflight_field = _inflight.struct_field() if releases else ""
+    # gh-2346: a handle that publishes a capsule records each lend, so that
+    # close() can leave the teardown to dealloc (see `close` below).
+    lends = bool(C.published_capsule(cfg, module))
+    lent_field = (
+        "    int       lent; /* gh-2346: the handle was lent */\n"
+        if lends
+        else ""
+    )
     struct = f"""typedef struct {{
     PyObject_HEAD
     {htype} *h;
     int       closed;
-{stash_fields}{cache_fields}{inflight_field}}} {obj};
+{lent_field}{stash_fields}{cache_fields}{inflight_field}}} {obj};
 """
 
     # RAII — idempotent close + context-manager + dealloc (composer pattern).
@@ -2003,6 +2028,21 @@ def render_type(
     else:
         close_body = f"""        {destroy}
         self->closed = 1;"""
+    # gh-2346: once lent, close() only marks the handle closed (every method
+    # refuses from then on) and dealloc runs the teardown. A consumer that
+    # kept the pointer (`retain`) keeps this object alive, so dealloc cannot
+    # run under it; tearing down here left that consumer reading freed
+    # memory. A close_fn status is then not reported, as in dealloc.
+    if lends:
+        close_body = (
+            "        if (self->lent) {\n"
+            "            self->closed = 1;\n"
+            "        } else {\n"
+            + "\n".join(
+                "    " + ln if ln else ln for ln in close_body.split("\n")
+            )
+            + "\n        }"
+        )
 
     # gh-2272: a method that released the GIL may still be running on
     # self->h. Refuse new calls first (every method checks `closed`), then
@@ -2047,7 +2087,7 @@ static PyObject *
     dealloc = f"""static void
 {tname}_dealloc({obj} *self)
 {{
-    if (!self->closed && self->h) {{
+    if ({"self->h && (!self->closed || self->lent)" if lends else "!self->closed && self->h"}) {{
         {destroy}
     }}
 {_inflight.free("self") if releases else ""}    Py_TYPE(self)->tp_free((PyObject *)self);
@@ -2113,7 +2153,7 @@ static PyObject *
         )
     method_rows.append(
         f'    {{"close", (PyCFunction){tname}_close, METH_NOARGS, '
-        f'"{CLOSE_DOC}"}},'
+        f'"{close_doc(cfg, module)}"}},'
     )
 
     # ── serializable: state-blob triplet over the backing handle (gh-403) ─────
@@ -2532,6 +2572,23 @@ class PyFace(NamedTuple):
 #: that has no reason to exist once one place owns the answer.
 CLOSE_DOC = "Release the handle and free resources."
 
+#: gh-2346: what a handle that publishes a capsule adds. Once its pointer
+#: was lent, close() only marks it closed, so the teardown -- and the
+#: status a `close_fn` reports -- waits for dealloc.
+CLOSE_DOC_LENT = (
+    " Once its `_capsule` has been taken, close() only marks it closed: the"
+    " teardown waits until the last borrower lets go (gh-2346), so a file or"
+    " socket it holds is not released here, and a status the close function"
+    " would report is not raised."
+)
+
+
+def close_doc(cfg: dict, module: str) -> str:
+    """The handle's ``close()`` docstring, one text for both faces."""
+    return CLOSE_DOC + (
+        CLOSE_DOC_LENT if C.published_capsule(cfg, module) else ""
+    )
+
 
 def _arg_array_ann(a: dict) -> str:
     """The ``.pyi`` annotation of one array ``arg`` of a handle method.
@@ -2841,7 +2898,7 @@ def render_pyi(
     # gh-794: the borrowed-pointer capsule. `Any` is what gh-432's capsule
     # params and gh-788 gap 4's producing property already annotate to, so all
     # three faces of one pointer read alike.
-    _cap_pyi = C.handle_capsule(cfg, module)
+    _cap_pyi = C.published_capsule(cfg, module)
     if _cap_pyi:
         lines.append("    @property")
         lines.append("    def _capsule(self) -> Any:")
@@ -2873,7 +2930,7 @@ def render_pyi(
 
     # RAII surface.
     lines.append("    def close(self) -> None:")
-    lines.append(f'        """{CLOSE_DOC}"""')
+    lines.append(f'        """{close_doc(cfg, module)}"""')
     if C.handle_context(cfg, module):
         lines.append(f"    def __enter__(self) -> {tname}:")
         lines.append('        """Enter context; return self."""')

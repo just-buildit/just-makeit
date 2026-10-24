@@ -123,7 +123,7 @@ class TestItResolves:
 
     def test_capsule_name_falls_back_the_way_gh794_does(self, tmp_path: Path):
         """`capsule_name` is how a capsule module spells the same idea, and
-        `handle_capsule` already accepts either. The resolver must not
+        `published_capsule` already accepts either. The resolver must not
         introduce a third opinion about which key wins."""
         cfg = C.load(_project(tmp_path, capsule=None, capsule_name="proj.alt"))
         cfg["module"]["wfm_writer"].pop("capsule", None)

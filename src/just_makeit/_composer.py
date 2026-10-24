@@ -43,6 +43,7 @@ from ._context._modpath import module_docstring_lines, module_m_doc
 from ._capsule import scalar_meta
 from ._context._parse import (
     _build_ml_doc,
+    capsule_new_c as _capsule_new_c,
     capsule_unwrap_c,
     scalar_arg_c,
     scalar_parse_c,
@@ -3134,6 +3135,49 @@ static PyTypeObject {type_obj} = {{
 """
 
 
+def _capsule_getset_c(
+    cfg: dict, module: str, cname: str, obj: str
+) -> tuple[str, str]:
+    """The composer's ``_capsule`` getter and its getset row (gh-2346).
+
+    Declared by ``[module.X] capsule = "<name>"`` (or the shared
+    ``capsule_name``), read through :func:`_config.published_capsule`, the one
+    reader a handle uses too. The getter lends ``self->state`` -- the
+    ``<sym>_state_t *`` -- through the shared
+    :func:`~._context._parse.capsule_new_c`, so the capsule never frees the
+    state and holds the composer alive (gh-2328), as every other producer's.
+
+    The ``destroyed`` guard is the one ``close()`` sets: a capsule carries no
+    liveness of its own, so lending a closed composer's state would hand a
+    consumer a freed pointer it cannot detect.
+
+    Returns ``("", "")`` when nothing is declared, so every existing composer
+    renders byte-identically.
+    """
+    cap = C.published_capsule(cfg, module)
+    if not cap:
+        return "", ""
+    fn = (
+        f"static PyObject *\n"
+        f"{cname}_get__capsule({obj} *self, void *Py_UNUSED(closure))\n"
+        f"{{\n"
+        f"    if (self->destroyed || !self->state) {{\n"
+        f'        PyErr_SetString(PyExc_RuntimeError, "composer already closed");\n'
+        f"        return NULL;\n"
+        f"    }}\n"
+        + _capsule_new_c("self->state", cap, cname, lent_flag="self->lent")
+        + "\n}\n\n"
+    )
+    row = (
+        f'    {{"_capsule", (getter){cname}_get__capsule, NULL,\n'
+        f'     "Borrowed {cap} capsule for this composer.\\n\\n"\n'
+        f'     "It never frees the composer, and keeps this object alive;\\n"\n'
+        f'     "it is valid until the composer is closed.",\n'
+        f"     NULL}},\n"
+    )
+    return fn, row
+
+
 def render_serializers(
     cfg: dict,
     module: str,
@@ -4115,6 +4159,31 @@ fail:
     settings_getset, settings_getset_rows = _settings_getset_c(
         cfg, module, cname, obj
     )
+    capsule_getset, capsule_getset_row = _capsule_getset_c(
+        cfg, module, cname, obj
+    )
+    # gh-2346: once the state has been lent, close() marks the composer
+    # closed and leaves the free to dealloc -- a consumer that kept the
+    # pointer (`retain`) keeps this object alive, so dealloc cannot run under
+    # it. Rendered only for a composer that publishes a capsule.
+    lends = bool(C.published_capsule(cfg, module))
+    lent_field = (
+        "    int                lent; /* gh-2346: the state was lent */\n"
+        if lends
+        else ""
+    )
+    close_free = (
+        "        /* gh-2346: lent -> a borrower may still read it; dealloc\n"
+        "           frees it once the last one lets go. */\n"
+        f"        if (!self->lent)\n            {destroy_fn}(self->state);\n"
+        if lends
+        else f"        {destroy_fn}(self->state);\n"
+    )
+    dealloc_live = (
+        "self->state && (!self->destroyed || self->lent)"
+        if lends
+        else "!self->destroyed && self->state"
+    )
 
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
@@ -4122,7 +4191,7 @@ typedef struct {{
     PyObject_HEAD
     {sym}_state_t *state;
     int                destroyed;
-{_inflight.struct_field()}}} {obj};
+{lent_field}{_inflight.struct_field()}}} {obj};
 
 /* Build a transient {seg_struct}[] from a list of {seg_t} objects. Each
  * source's bits pointer ALIASES the {src_t}'s owned buffer; {create_fn}
@@ -4213,7 +4282,7 @@ _{backing}_segments_to_list(const {seg_struct} *src, size_t n)
 static void
 {cname}_dealloc({obj} *self)
 {{
-    if (!self->destroyed && self->state)
+    if ({dealloc_live})
         {destroy_fn}(self->state);
 {_inflight.free("self")}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
@@ -4498,8 +4567,7 @@ static PyObject *
     if (!self->destroyed && self->state) {{
         /* gh-2272: refuse new calls, then wait for a running one. */
         self->destroyed = 1;
-{_inflight.wait("self", "self->destroyed = 0; return NULL;")}        {destroy_fn}(self->state);
-    }}
+{_inflight.wait("self", "self->destroyed = 0; return NULL;")}{close_free}    }}
     Py_RETURN_NONE;
 }}
 
@@ -4517,11 +4585,11 @@ static PyObject *
     return {cname}_close(self, NULL);
 }}
 {json_fns}
-{settings_getset}static PyGetSetDef {cname}_getset[] = {{
+{settings_getset}{capsule_getset}static PyGetSetDef {cname}_getset[] = {{
     {{"segments", (getter){cname}_get_segments, NULL, NULL, NULL}},
     {{"repeat", (getter){cname}_get_repeat, NULL, NULL, NULL}},
     {{"continuous", (getter){cname}_get_continuous, NULL, NULL, NULL}},
-{settings_getset_rows}    {{NULL, NULL, NULL, NULL, NULL}}
+{settings_getset_rows}{capsule_getset_row}    {{NULL, NULL, NULL, NULL, NULL}}
 }};
 
 {stream_code}{to_dict_code}{serializer_code}static PyMethodDef {cname}_methods[] = {{
@@ -5660,6 +5728,18 @@ def render_pyi(cfg: dict, module: str) -> str:
                 or [f"Serialise as {s['name']}."],
                 8,
             ),
+        ]
+    # gh-2346: the borrowed-state capsule, stubbed as a handle's is (gh-794).
+    _cap_pyi = C.published_capsule(cfg, module)
+    if _cap_pyi:
+        lines += [
+            "    @property",
+            "    def _capsule(self) -> Any:",
+            f'        """Borrowed `{_cap_pyi}` capsule for this composer.\n\n'
+            f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
+            f"        capsule is accepted. It never frees the composer, and\n"
+            f"        it keeps this object alive; it is valid until the\n"
+            f'        composer is closed."""',
         ]
     lines += [
         "    def close(self) -> None:",
