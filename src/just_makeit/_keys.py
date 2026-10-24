@@ -467,6 +467,10 @@ PARAM_KEYS = frozenset(
         # gh-2327: the kernel keeps the capsule's pointer past the call, so
         # the binding keeps its owner alive (`_retain`).
         "retain",
+        # gh-2360: `required = true` makes a capsule param mandatory -- the
+        # binding refuses None and the stub drops `| None`. The constructor's
+        # spelling of the same choice (gh-805 §H).
+        "required",
         "header",
         # gh-805 §C: array shape/interleave metadata. `rank` is the opt-in
         # `PyArray_NDIM` guard; `elements_per_sample` is the interleave factor

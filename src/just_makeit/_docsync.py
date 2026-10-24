@@ -46,7 +46,7 @@ from . import _report
 from . import _retain
 from . import _render as R
 from ._context._destroy import PARK_FIELD
-from ._context._parse import INT_RANGE_GUARD_RE
+from ._context._parse import INT_RANGE_GUARD_RE, REQUIRED_CAPSULE_RE
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
 # both ``{name, meth, flags, DOC}`` and ``{name, get, set, DOC, closure}``.
@@ -1378,6 +1378,16 @@ _FEATURE_MARKERS = {
         "does not keep its owner, so the object passed can be freed while "
         "the kernel still holds its pointer (gh-2327); delete the fragment "
         "and re-run apply",
+    ),
+    # gh-2360: a manifest declaration -- `required = true` on a capsule
+    # param, added after its sacred fragment was rendered. Named for its
+    # consequence: None still reaches the kernel as NULL.
+    "capsule-required": _Feature(
+        (REQUIRED_CAPSULE_RE,),
+        "the manifest declares required on a capsule param and "
+        "this fragment passes None to the kernel as NULL, so the call "
+        "fails in C instead of raising TypeError at the binding; delete "
+        "the fragment and re-run apply",
     ),
     # gh-2187: jm's own teardown for an object that lends views, which parks
     # the state for tp_dealloc. A teardown jm wrote before the object lent is

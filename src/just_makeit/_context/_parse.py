@@ -274,6 +274,116 @@ def borrow_view_c(
     )
 
 
+#: The method-param key that makes a capsule param mandatory (gh-2360).
+REQUIRED_KEY = "required"
+
+#: The test only a MANDATORY capsule unwrap emits (`capsule_unwrap_c` with
+#: ``allow_none=False``): what `_docsync` looks for in a fragment rendered
+#: before its param was declared ``required = true``. Code, not the error
+#: string, because the fragment reader masks string literals; whitespace-
+#: tolerant, because a fragment may have been reformatted.
+REQUIRED_CAPSULE_RE = re.compile(
+    r"\b(\w+)_obj\s*==\s*Py_None\s*\|\|\s*\1_obj\s*==\s*NULL\b"
+)
+
+
+def capsule_nullable(p: dict) -> bool:
+    """Whether a method's capsule param *p* accepts ``None`` (as ``NULL``).
+
+    True unless the param declares ``required = true``: ``None`` is the
+    C-side detach idiom (``set_telemetry(None)``), which is what a method
+    capsule param has always meant. A kernel that refuses ``NULL`` declares
+    the key, and then the binding rejects ``None`` up front with a
+    ``TypeError`` and the stub types the param ``object`` -- both from this
+    one answer, so the faces cannot disagree (gh-2360).
+
+    ``required`` is the constructor's spelling of the same choice (gh-805
+    §H), and it is declared ``true`` rather than ``nullable = false``
+    because every manifest reader treats a bool key's ``false`` as its
+    absence -- `jm script` would have replayed ``nullable = false`` away.
+
+    Examples
+    --------
+    >>> capsule_nullable({"name": "t", "capsule": "x.t"})
+    True
+    >>> capsule_nullable({"name": "t", "capsule": "x.t", "required": True})
+    False
+    """
+    return p.get(REQUIRED_KEY) is not True
+
+
+def capsule_annotation(p: dict) -> str:
+    """The ``.pyi`` and docstring annotation of a method's capsule param.
+
+    Every writer of a method signature or ``Parameters`` line asks this
+    rather than :func:`capsule_nullable`, so the spelling lives in one place.
+
+    Examples
+    --------
+    >>> capsule_annotation({"name": "t", "capsule": "x.t"})
+    'object | None'
+    >>> capsule_annotation({"name": "t", "capsule": "x.t", "required": True})
+    'object'
+    """
+    return "object | None" if capsule_nullable(p) else "object"
+
+
+def required_errors(cfg: dict) -> "list[str]":
+    """Every method-param ``required`` jm would not honour, by row.
+
+    Asked at load (`_config.load`), over every object's and view's method
+    params: the key must be a bool, and it means something only on a param
+    that declares a ``capsule`` (gh-2360). On any other method param it
+    would read as "has no default", which is a different question.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"methods": [{"name": "attach", "params": [
+    ...     {"name": "n", "type": "int", "required": True}]}]}}
+    >>> print(required_errors(cfg)[0])
+    [[o.methods.params]] attach.n: required says a capsule param refuses None, and n declares no `capsule`; drop the key
+    >>> cfg["o"]["methods"][0]["params"][0].update(capsule="x.t", type="t *")
+    >>> required_errors(cfg)
+    []
+    >>> cfg["o"]["methods"][0]["params"][0]["required"] = "yes"
+    >>> print(required_errors(cfg)[0])
+    [[o.methods.params]] attach.n: required = 'yes' must be true or false
+    """
+    from .._config import components
+
+    out: "list[str]" = []
+
+    def check(where: str, m: dict) -> None:
+        for p in m.get("params") or []:
+            if not isinstance(p, dict) or REQUIRED_KEY not in p:
+                continue
+            row = f"{where} {m.get('name', '?')}.{p.get('name', '?')}"
+            value = p[REQUIRED_KEY]
+            if not isinstance(value, bool):
+                out.append(
+                    f"{row}: required = {value!r} must be true or false"
+                )
+            elif value and not p.get("capsule"):
+                out.append(
+                    f"{row}: required says a capsule param refuses None, "
+                    f"and {p.get('name', '?')} declares no `capsule`; "
+                    "drop the key"
+                )
+
+    for comp in components(cfg):
+        body = cfg[comp]
+        if not isinstance(body, dict):
+            continue
+        for m in body.get("methods") or []:
+            if isinstance(m, dict):
+                check(f"[[{comp}.methods.params]]", m)
+        for v in body.get("views") or []:
+            for m in (v.get("methods") or []) if isinstance(v, dict) else []:
+                if isinstance(m, dict):
+                    check(f"[[{comp}.views.methods.params]]", m)
+    return out
+
+
 def capsule_unwrap_c(
     name: str,
     ctype: str,
@@ -1146,8 +1256,9 @@ def _build_params_parse(
             fmt_chars.append("O")
             addr_exprs.append(f"&{obj_var}")
             # gh-790: the unwrap moved to `capsule_unwrap_c` so tp_init can
-            # reuse it verbatim. A method param keeps `allow_none=True` (the
-            # detach idiom) and returns NULL on failure.
+            # reuse it verbatim. A method param takes None as NULL (the
+            # detach idiom) unless it declares `required = true` (gh-2360),
+            # and returns NULL on failure.
             conv_lines.append(
                 capsule_unwrap_c(
                     pname,
@@ -1155,6 +1266,7 @@ def _build_params_parse(
                     p["capsule"],
                     obj_var,
                     "return NULL;",
+                    allow_none=capsule_nullable(p),
                 )
             )
             call_args.append(pname)

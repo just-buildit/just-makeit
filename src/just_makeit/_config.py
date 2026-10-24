@@ -317,6 +317,13 @@ def load(root: Path) -> dict:
     retain_errs = retain_errors(cfg)
     if retain_errs:
         _refuse(retain_errs)
+    # gh-2360: a method-param `required` on a param that is not a capsule,
+    # or not a bool.
+    from ._context._parse import required_errors
+
+    required_errs = required_errors(cfg)
+    if required_errs:
+        _refuse(required_errs)
     # gh-2204: a `consumed_fn` no binding would call -- on a method that is
     # not a list of records, or has no input block to re-offer.
     consumed_errors = _consumed_fn_errors(cfg)
