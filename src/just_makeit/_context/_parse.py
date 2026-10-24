@@ -348,16 +348,22 @@ def required_errors(cfg: dict) -> "list[str]":
     >>> cfg["o"]["methods"][0]["params"][0]["required"] = "yes"
     >>> print(required_errors(cfg)[0])
     [[o.methods.params]] attach.n: required = 'yes' must be true or false
+
+    A row that is not a table is the key walk's to name, not this one's:
+
+    >>> required_errors({"o": {"methods": [{"name": "m", "params": [1]}]}})
+    []
     """
-    from .._config import components
+    from .._config import declared_methods
 
     out: "list[str]" = []
-
-    def check(where: str, m: dict) -> None:
+    for table, m in declared_methods(cfg):
         for p in m.get("params") or []:
             if not isinstance(p, dict) or REQUIRED_KEY not in p:
                 continue
-            row = f"{where} {m.get('name', '?')}.{p.get('name', '?')}"
+            row = (
+                f"[[{table}.params]] {m.get('name', '?')}.{p.get('name', '?')}"
+            )
             value = p[REQUIRED_KEY]
             if not isinstance(value, bool):
                 out.append(
@@ -369,18 +375,6 @@ def required_errors(cfg: dict) -> "list[str]":
                     f"and {p.get('name', '?')} declares no `capsule`; "
                     "drop the key"
                 )
-
-    for comp in components(cfg):
-        body = cfg[comp]
-        if not isinstance(body, dict):
-            continue
-        for m in body.get("methods") or []:
-            if isinstance(m, dict):
-                check(f"[[{comp}.methods.params]]", m)
-        for v in body.get("views") or []:
-            for m in (v.get("methods") or []) if isinstance(v, dict) else []:
-                if isinstance(m, dict):
-                    check(f"[[{comp}.views.methods.params]]", m)
     return out
 
 

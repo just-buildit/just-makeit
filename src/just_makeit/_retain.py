@@ -210,16 +210,17 @@ def errors(cfg: dict) -> "list[str]":
     >>> print(errors(cfg)[0])
     [[o.methods.params]] attach.n: retain cannot be kept by jm, because its binding is hand-written, so jm writes no call to keep it after; keep a reference to the owner in that binding
     """
-    from ._config import components
+    from ._config import declared_methods
 
     out: "list[str]" = []
-
-    def check(where: str, m: dict) -> None:
+    for table, m in declared_methods(cfg):
         params = m.get("extra_args") or m.get("params") or []
         for p in params:
             if not isinstance(p, dict) or KEY not in p:
                 continue
-            row = f"{where} {m.get('name', '?')}.{p.get('name', '?')}"
+            row = (
+                f"[[{table}.params]] {m.get('name', '?')}.{p.get('name', '?')}"
+            )
             value = p[KEY]
             if not isinstance(value, bool):
                 out.append(f"{row}: retain = {value!r} must be true or false")
@@ -238,15 +239,4 @@ def errors(cfg: dict) -> "list[str]":
                         "keep a reference to the owner in that binding"
                     )
 
-    for comp in components(cfg):
-        body = cfg[comp]
-        if not isinstance(body, dict):
-            continue
-        for m in body.get("methods") or []:
-            if isinstance(m, dict):
-                check(f"[[{comp}.methods.params]]", m)
-        for v in body.get("views") or []:
-            for m in (v.get("methods") or []) if isinstance(v, dict) else []:
-                if isinstance(m, dict):
-                    check(f"[[{comp}.views.methods.params]]", m)
     return out
