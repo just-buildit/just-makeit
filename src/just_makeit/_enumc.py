@@ -58,6 +58,7 @@ inside this change would hide it. It is filed separately.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 #: The shared string-enum → index lookup, as C.
@@ -388,6 +389,32 @@ def fragment_publication(
         if _defines(mask, e["table"])
         and (e["consts"] is None or _defines(mask, e["consts"]))
     ]
+
+
+def module_publication(per_object: "Iterable[list[dict]]") -> list[dict]:
+    """One entry per Python name across a module's objects.
+
+    gh-2344. Two objects that index the same ``[[enum]]`` each carry its
+    table, but the module has one attribute of that name: the first object
+    to name it publishes it, and a second would only overwrite it. The
+    aggregator, the module stub and the package ``__init__.py`` (gh-2372)
+    all read the module's enums through this, so the extension, the
+    ``.pyi`` and the re-export name the same list. *per_object* is each
+    object's entries, already through :func:`fragment_publication`.
+
+    >>> a = publication(["k"], {"k": ["x"]}, prefix="A")
+    >>> b = publication(["k", "m"], {"k": ["x"], "m": ["y"]}, prefix="B")
+    >>> [(e["py"], e["table"]) for e in module_publication([a, b])]
+    [('K', '_enum_A_k'), ('M', '_enum_B_m')]
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for entries in per_object:
+        for e in entries:
+            if e["py"] not in seen:
+                seen.add(e["py"])
+                out.append(e)
+    return out
 
 
 def publish_c(entries: "list[dict]") -> str:

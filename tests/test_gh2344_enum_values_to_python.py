@@ -286,3 +286,78 @@ def test_a_fragment_that_predates_the_enum_still_builds(tmp_path):
     root = _late_enum_module(tmp_path)
     mod = _build_and_import(root, "m")
     assert not hasattr(mod, ENUM_NAME)
+
+
+# -- the package re-export (gh-2372) -------------------------------------------
+
+
+def _init_names(root: Path) -> tuple[list[str], list[str]]:
+    """The names the module package's ``__init__.py`` imports from the
+    extension, and its ``__all__``, read by executing nothing."""
+    import ast
+
+    tree = ast.parse((root / "src" / "proj" / "m" / "__init__.py").read_text())
+    imported: list[str] = []
+    exported: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "m":
+            imported += [a.name for a in node.names]
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+        ):
+            exported += [ast.literal_eval(e) for e in node.value.elts]
+    return imported, exported
+
+
+def test_the_package_re_exports_a_published_enum(tmp_path):
+    """Users import from the package, so the published name is there too,
+    once, though two objects index it."""
+    root = _module_with_two_objects(tmp_path)
+    imported, exported = _init_names(root)
+    assert imported.count(ENUM_NAME) == 1, imported
+    assert exported.count(ENUM_NAME) == 1, exported
+
+
+def test_apply_adds_the_enum_to_an_older_re_export(tmp_path):
+    """A package ``__init__.py`` an earlier jm wrote gains the name on
+    `apply`, and `status` then agrees -- the path an adopter takes."""
+    root = _module_with_two_objects(tmp_path)
+    init = root / "src" / "proj" / "m" / "__init__.py"
+    old = init.read_text().replace(f", {ENUM_NAME}", "")
+    old = old.replace(f'"{ENUM_NAME}", ', "").replace(f', "{ENUM_NAME}"', "")
+    init.write_text(old)
+    assert ENUM_NAME not in init.read_text(), "fixture premise"
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    imported, exported = _init_names(root)
+    assert ENUM_NAME in imported and ENUM_NAME in exported, init.read_text()
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_a_table_the_fragment_lacks_is_not_re_exported(tmp_path):
+    """Re-exporting a name the extension does not add is an ImportError on
+    the package, so the re-export reads the same filtered list."""
+    root = _late_enum_module(tmp_path)
+    imported, exported = _init_names(root)
+    assert ENUM_NAME not in imported + exported
+
+
+@pytest.mark.skipif(_SKIP is not None, reason=_SKIP or "")
+def test_the_enum_is_reachable_from_the_package(tmp_path, monkeypatch):
+    """``proj.m.ENG_STATE`` is the extension's own value."""
+    root = _module_with_two_objects(tmp_path)
+    ext = _build_and_import(root, "m")
+    monkeypatch.syspath_prepend(str(root / "src"))
+    for name in [
+        n for n in sys.modules if n == "proj" or n.startswith("proj.")
+    ]:
+        monkeypatch.delitem(sys.modules, name)
+    pkg = importlib.import_module("proj.m")
+    try:
+        assert getattr(pkg, ENUM_NAME) == getattr(ext, ENUM_NAME)
+    finally:
+        for name in [
+            n for n in sys.modules if n == "proj" or n.startswith("proj.")
+        ]:
+            del sys.modules[name]
