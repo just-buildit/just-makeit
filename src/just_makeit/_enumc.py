@@ -57,6 +57,9 @@ inside this change would hide it. It is filed separately.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 #: The shared string-enum → index lookup, as C.
 #:
 #: Order **is** the C int — the ``[[enum]]`` SSOT contract, which is why that
@@ -313,6 +316,78 @@ def publication(
             }
         )
     return out
+
+
+def _defines(mask: str, name: str) -> bool:
+    """Whether code *mask* (comments and literals blanked) defines array
+    *name*: ``name[] =``, the shape :func:`render_tables` writes."""
+    return re.search(rf"\b{re.escape(name)}\s*\[\s*\]\s*=", mask) is not None
+
+
+def fragment_publication(
+    root: "Path | None", cname: str, obj: str, entries: "list[dict]"
+) -> list[dict]:
+    """The *entries* module object *obj*'s fragment can publish.
+
+    gh-2344. A module object's tables live in its fragment,
+    ``native/src/<cname>/<cname>_ext_<obj>.c``, which is sacred: ``apply``
+    only appends members it lacks, so an ``enum =`` declared on a param the
+    fragment already binds never brings its table. The aggregator, which
+    is regenerated from the manifest, would then publish a table nothing
+    defines -- a C error, not a stale value. So what is published is read
+    off the fragment itself: an entry is kept only when the fragment
+    defines its table (and, for a constant-bound enum, its constants).
+
+    The fragment read is the real project's, also under ``apply``'s temp
+    replay (``_init._real_root``). A fragment not yet on disk keeps every
+    entry: the render that writes it emits every table the manifest uses. With no *root* there is no
+    fragment to read, and the manifest's answer stands. The aggregator and
+    the module stub both call this, so the ``.pyi`` declares exactly what
+    the extension adds.
+
+    >>> import tempfile
+    >>> e = publication(["k"], {"k": ["a"]}, prefix="G")
+    >>> d = Path(tempfile.mkdtemp())
+    >>> [x["py"] for x in fragment_publication(d, "m", "g", e)]
+    ['K']
+    >>> f = d / "native" / "src" / "m" / "m_ext_g.c"
+    >>> f.parent.mkdir(parents=True)
+    >>> _ = f.write_text('/* _enum_G_k[] = */ static int y = 0;\\n')
+    >>> fragment_publication(d, "m", "g", e)
+    []
+    >>> _ = f.write_text('static const char *const _enum_G_k[] = {"a"};\\n')
+    >>> [x["py"] for x in fragment_publication(d, "m", "g", e)]
+    ['K']
+    """
+    if root is None or not entries:
+        return entries
+    # Imported here: `_object`, `_docsync` and `_init` import `_render`,
+    # which imports this module.
+    from . import _object
+    from ._docsync import _code_mask
+    from ._init import _real_root
+
+    # `apply` renders into a temp replay whose fragments are fresh and hold
+    # every table; the sacred fragment that will be compiled is the real
+    # project's, as for the `_core.h` Doxygen -- and under `status`, the
+    # user's rather than its scratch copy's.
+    frag = (
+        Path(_object._FRAGMENT_ROOT_OVERRIDE or _real_root(Path(root)))
+        / "native"
+        / "src"
+        / cname
+        / f"{cname}_ext_{obj}.c"
+    )
+    if not frag.is_file():
+        return entries
+
+    mask = _code_mask(frag.read_text(encoding="utf-8"))
+    return [
+        e
+        for e in entries
+        if _defines(mask, e["table"])
+        and (e["consts"] is None or _defines(mask, e["consts"]))
+    ]
 
 
 def publish_c(entries: "list[dict]") -> str:

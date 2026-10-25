@@ -618,6 +618,11 @@ def run(
         # versions behind that is. The replay tree is the only place jm's
         # *current* render of those files exists.
         replay_root = Path(tmp) / "jm-replay"
+        # gh-2344: the fragments deleted above are what decides what the
+        # aggregator publishes, so the replay reads the user's.
+        from . import _object as _obj
+
+        _obj._FRAGMENT_ROOT_OVERRIDE = root
         try:
             with (
                 contextlib.redirect_stdout(_replay_out),
@@ -655,6 +660,8 @@ def run(
             raise SystemExit(
                 _exc.code if isinstance(_exc.code, int) else 1
             ) from None
+        finally:
+            _obj._FRAGMENT_ROOT_OVERRIDE = None
 
         # gh-1361: the link-check table is derived from the binding, and the
         # scratch copy above swapped every unreconciled fragment for a fresh

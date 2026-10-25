@@ -612,10 +612,17 @@ ENG_STATE[2]                     # "tracking" (values in C order)
 Without `enumerators` the attribute is a `tuple` indexed by the C int. With
 `enumerators` it is a `dict` from each C constant to its name, since jm
 cannot read the constants' values, so only a literal `0, 1, ..., n-1` is
-known to be positional. An enum no object binding indexes is not published,
-and neither is one only a module-level `function` parameter looks up; those
-are not covered yet. A module publishes a shared enum once, under one name.
-The `.pyi` declares the attribute as `tuple[str, ...]` or `dict[int, str]`.
+known to be positional. An enum no object binding indexes is not published.
+Views, module-level `function` parameters and handle, capsule and composer
+modules publish nothing yet (gh-2369). A module publishes a shared enum once,
+under one name. The `.pyi` declares the attribute as `tuple[str, ...]` or
+`dict[int, str]`.
+
+A module object publishes only the enums whose tables its binding fragment
+(`<module>_ext_<object>.c`) defines. The fragment is yours, so `apply` does
+not add a table to it when you declare `enum =` on a param it already
+binds. That enum is published once the fragment has its table: delete the
+fragment and re-run `apply` to receive it, as `jm status` suggests.
 
 ______________________________________________________________________
 

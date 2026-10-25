@@ -3300,17 +3300,22 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         parts.append(_rec_block)
     # gh-2344: the enum values the aggregator publishes, one per Python name.
     # Read the same way the aggregator reads its objects' entries (first
-    # object to name an enum wins), so the stub declares exactly what the
-    # extension adds.
+    # object to name an enum wins, and only what its fragment defines), so
+    # the stub declares exactly what the extension adds.
     _enum_pub: list[dict] = []
     _enum_seen: set[str] = set()
     for obj in objects:
-        for _e in enum_publication(
+        for _e in _enumc.fragment_publication(
+            root,
+            C.module_paths(module).cname,
             obj,
-            C.resolved_class_name(cfg, obj),
-            C.methods(cfg, obj),
-            C.properties(cfg, obj),
-            C.enums(cfg),
+            enum_publication(
+                obj,
+                C.resolved_class_name(cfg, obj),
+                C.methods(cfg, obj),
+                C.properties(cfg, obj),
+                C.enums(cfg),
+            ),
         ):
             if _e["py"] not in _enum_seen:
                 _enum_seen.add(_e["py"])

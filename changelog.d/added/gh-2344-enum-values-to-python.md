@@ -7,4 +7,7 @@
     binding decodes through, and the `.pyi` declares the attribute, so a
     struct-sequence field or a telemetry value read back from a file decodes
     without restating the enum, and a reordered enum moves every reader with
-    it. A module that shares an enum across objects publishes it once.
+    it. A module that shares an enum across objects publishes it once. A
+    module object publishes only what its binding fragment defines a table
+    for. Views, module functions and handle, capsule and composer modules
+    are not covered yet (gh-2369).

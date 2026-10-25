@@ -219,3 +219,70 @@ def test_an_enum_nobody_indexes_is_not_published(tmp_path):
     assert ENUM_NAME not in stub
     ext = (root / "native" / "src" / "eng" / "eng_ext.c").read_text()
     assert ENUM_NAME not in ext
+
+
+# -- a sacred fragment that predates the enum ----------------------------------
+
+
+def _late_enum_module(tmp_path: Path) -> Path:
+    """A module object whose int param is bound to the enum AFTER its
+    fragment was written, as a manifest edit and `apply` would do it.
+
+    The fragment is sacred, so `apply` leaves the existing binding (and its
+    lack of a table) alone; the aggregator is regenerated from the
+    manifest, which is where a publish of the missing table came from.
+    """
+    from just_makeit import _config as C
+
+    root = tmp_path / "proj"
+    assert run_cli("new", "proj", cwd=tmp_path).returncode == 0
+    manifest = root / "just-makeit.toml"
+    manifest.write_text(manifest.read_text() + "\n" + _enum_block())
+    assert run_cli("module", "m", cwd=root).returncode == 0
+    r = run_cli("object", "a", "--module", "m", cwd=root)
+    assert r.returncode == 0, r.stderr
+    r = run_cli(
+        "method",
+        "a",
+        "go",
+        "--module",
+        "m",
+        "--arg-type",
+        "void",
+        "--return-type",
+        "int",
+        "--param",
+        "k:int",
+        cwd=root,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    cfg = C.load(root)
+    (m,) = [m for m in cfg["a"]["methods"] if m["name"] == "go"]
+    (p,) = m["params"]
+    p["enum"] = "eng_state"
+    C.save(root, cfg)
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    frag = (root / "native" / "src" / "m" / "m_ext_a.c").read_text()
+    assert "_enum_A_eng_state[] =" not in frag, "fixture premise"
+    return root
+
+
+def test_a_table_the_fragment_lacks_is_not_published(tmp_path):
+    """The aggregator and the stub publish only what the fragment defines,
+    and `status` agrees with what `apply` wrote."""
+    root = _late_enum_module(tmp_path)
+    ext = (root / "native" / "src" / "m" / "m_ext.c").read_text()
+    assert ENUM_NAME not in ext, ext
+    stub = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+    assert ENUM_NAME not in stub, stub
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.skipif(_SKIP is not None, reason=_SKIP or "")
+def test_a_fragment_that_predates_the_enum_still_builds(tmp_path):
+    """The publish referenced a table nothing defined: a C error."""
+    root = _late_enum_module(tmp_path)
+    mod = _build_and_import(root, "m")
+    assert not hasattr(mod, ENUM_NAME)
