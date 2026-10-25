@@ -209,7 +209,9 @@ def component_ctx(
     # attributes. The C adds them in its PyInit_; the stub declares them.
     _pub = ctx.get("enum_publish_entries") or []
     ctx["enum_publish"] = _enumc.publish_c(_pub)
-    ctx["pyi_enum_publish"] = _enumc.publish_pyi(_pub)
+    # Opened by a blank line, as `pyi_records` is: the slot follows the
+    # imports (or a record class), and the formatter wants one between.
+    ctx["pyi_enum_publish"] = "\n" + _enumc.publish_pyi(_pub) if _pub else ""
     ctx.update(
         Ctx.make_properties_ctx(
             object_name,
