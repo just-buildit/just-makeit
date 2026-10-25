@@ -40,6 +40,8 @@ from . import _record
 from . import _context as Ctx
 from . import _types as T
 
+from . import _enumc
+from ._context._methods import enum_publication
 from ._context._diagnostics import create_raises_doc as _create_raises_doc
 from ._context._diagnostics import empty_is_none_doc as _empty_is_none_doc
 from ._context._diagnostics import fixed_result_ann as _fixed_result_ann
@@ -3296,6 +3298,31 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     )
     if _rec_block:
         parts.append(_rec_block)
+    # gh-2344: the enum values the aggregator publishes, one per Python name.
+    # Read the same way the aggregator reads its objects' entries (first
+    # object to name an enum wins, and only what its fragment defines), so
+    # the stub declares exactly what the extension adds.
+    _enum_pub: list[dict] = []
+    _enum_seen: set[str] = set()
+    for obj in objects:
+        for _e in _enumc.fragment_publication(
+            root,
+            C.module_paths(module).cname,
+            obj,
+            enum_publication(
+                obj,
+                C.resolved_class_name(cfg, obj),
+                C.methods(cfg, obj),
+                C.properties(cfg, obj),
+                C.enums(cfg),
+            ),
+        ):
+            if _e["py"] not in _enum_seen:
+                _enum_seen.add(_e["py"])
+                _enum_pub.append(_e)
+    if _enum_pub:
+        parts.append(_enumc.publish_pyi(_enum_pub).rstrip("\n"))
+        parts.append("")
     for obj in objects:
         parts.append(_obj_stub(cfg, obj, pkg=pkg, module=module))
         parts.append("")

@@ -28,6 +28,7 @@ from . import _color as Color
 from . import _borrow
 from . import _config as C
 from . import _csym as CSYM
+from . import _enumc
 from ._docstring import class_import_line, class_import_path
 from . import _modplatforms
 from . import _procglobal
@@ -81,6 +82,15 @@ from . import _inflight
 # must instead read the REAL project's sacred `_core.h`, so apply sets this
 # override to the real project root for the duration of the replay.
 _DOC_ROOT_OVERRIDE: Path | None = None
+
+# gh-2344: which project's sacred binding fragments a render reads to decide
+# what the module aggregator may publish. `status` deletes every fragment
+# from its scratch copy (gh-767) so the replay renders jm's current one for
+# comparison; the aggregator a real `apply` writes is decided by the fragment
+# that will actually be compiled, which is the user's. `status` sets this to
+# the real project for the duration of its replay; unset, the replay's own
+# root (`_DOC_ROOT_OVERRIDE`) is the project.
+_FRAGMENT_ROOT_OVERRIDE: Path | None = None
 
 
 # A project-local include: `#include "psd/psd_core.h"`. Angle-bracket includes
@@ -2010,6 +2020,20 @@ def render_module_ext_c(
         functions = C.module_functions(cfg, module)
     if extra_files is None:
         extra_files = _module_extra_files(root, mp.cname, comp_ctxs)
+    # gh-2344: publish only the enums each sacred fragment defines a table
+    # for; the module stub asks the same question of the same file.
+    comp_ctxs = [
+        {
+            **ctx,
+            "enum_publish_entries": _enumc.fragment_publication(
+                root,
+                mp.cname,
+                ctx.get("frag_id", ctx["component"]),
+                ctx.get("enum_publish_entries") or [],
+            ),
+        }
+        for ctx in comp_ctxs
+    ]
     return R.render_module_ext_aggregator(
         module,
         comp_ctxs,
