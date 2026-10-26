@@ -968,8 +968,14 @@ def _merge_module_init(
         existing_sub = _parse_import_names(sm.group(0)) if sm else []
         # Authoritative within the sub too (gh-329): drop names the manifest
         # dropped from this reexport, keep surviving order, append the rest.
+        # gh-2376: unless the sub is a package SIBLING module, which owns its
+        # own line and prunes it itself: there the reexport only adds, or the
+        # two writers cut each other's names (a sibling's published enums).
         declared = set(names)
-        sub_names = [n for n in existing_sub if n in declared]
+        owned_elsewhere = sub in (siblings or [])
+        sub_names = [
+            n for n in existing_sub if owned_elsewhere or n in declared
+        ]
         sub_seen = set(sub_names)
         for n in names:
             if n not in sub_seen:
