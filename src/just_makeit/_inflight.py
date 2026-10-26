@@ -46,11 +46,17 @@ Waiting rather than refusing ``close()`` is deliberate: "one thread records,
 another stops it" is the ordinary use of an object with a ``close()``, and a
 ``RuntimeError`` there would make it a race the caller has to win.
 
-Not covered here, and filed: a teardown reached from a Python callback
-*during argument conversion* -- after a method's guard ran, before its kernel
-call -- leaves the call a NULL state, with or without ``nogil`` (gh-2273);
-and a composer source's property setters free a buffer a running generator
-may borrow, and never invalidate it (gh-2274).
+A teardown reached from a Python callback *during argument conversion* --
+after a method's guard ran, before its kernel call -- leaves the call a NULL
+state, with or without ``nogil`` (gh-2273): converting an array argument can
+run an ``__array__``, and that may call ``destroy()``. `recheck` is the
+answer, and it is emitted by the one kernel-call emitter
+(``_methods._nogil_call``), so no call site spells its own: the guard is run
+again after the last conversion, the same ``RuntimeError`` is raised, and
+the references the call acquired are released first.
+
+Not covered here, and filed: a composer source's property setters free a
+buffer a running generator may borrow, and never invalidate it (gh-2274).
 """
 
 from __future__ import annotations
@@ -229,6 +235,64 @@ def hoist_handle(call_expr: str) -> tuple[str, str]:
     return (
         f"    void *{HANDLE_LOCAL} = self->handle;\n",
         call_expr.replace("self->handle", HANDLE_LOCAL),
+    )
+
+
+def recheck(
+    owner: str,
+    call_expr: str,
+    release: str,
+    gone: str = "destroyed",
+    indent: str = "    ",
+) -> str:
+    """The liveness guard again, just before the kernel call (gh-2273).
+
+    A method's guard runs at the top, then its arguments are converted, and
+    converting can run Python (an ``__array__``) that tears the object down.
+    Returns the empty string when *call_expr* reads no teardown-visible
+    state: an object's kernel call reads ``self->handle`` (NULLed by its
+    teardown), a wrapper's reads ``<owner>->state`` (kept until the free, but
+    flagged ``destroyed`` first), and anything else has nothing to check.
+
+    *release* is the statement(s) that undo what the call acquired -- the
+    array references, the allocated result -- run before the refusal, which
+    is the same ``RuntimeError`` the top guard raises. It is required of
+    every caller, as ``""`` when nothing was acquired, so a new call site
+    must state what it holds.
+
+    Examples
+    --------
+    >>> print(recheck("self", "k(self->handle, x)", "Py_DECREF(x_arr);"),
+    ...       end="")
+        if (!self->handle) {
+            Py_DECREF(x_arr);
+            PyErr_SetString(PyExc_RuntimeError, "destroyed");
+            return NULL;
+        }
+    >>> print(recheck("w", "k(w->state)", "", "w is gone"), end="")
+        if (w->destroyed) {
+            PyErr_SetString(PyExc_RuntimeError, "w is gone");
+            return NULL;
+        }
+    >>> recheck("self", "k(self->x)", "")
+    ''
+    """
+    if owner == "self":
+        if "self->handle" not in call_expr:
+            return ""
+        cond = "!self->handle"
+    elif f"{owner}->state" in call_expr:
+        cond = f"{owner}->destroyed"
+    else:
+        return ""
+    release = release.strip()
+    rel = f"{indent}    {release}\n" if release else ""
+    return (
+        f"{indent}if ({cond}) {{\n"
+        f"{rel}"
+        f'{indent}    PyErr_SetString(PyExc_RuntimeError, "{gone}");\n'
+        f"{indent}    return NULL;\n"
+        f"{indent}}}\n"
     )
 
 

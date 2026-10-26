@@ -347,8 +347,19 @@ def render_pack(
     from ._context._methods import _nogil_call, _reindent
 
     nogil = bool(m.get("nogil"))
-    call_scalar = _reindent(_nogil_call("int", "_rc", sink_scalar, nogil))
-    call_buffer = _nogil_call("int", "_rc", sink_buffer, nogil)
+    # gh-2273: the item conversions above run `__index__` / `__float__`, which
+    # is Python; the recheck releases what the call holds. The scalar path
+    # borrows its string from the argument and holds nothing.
+    call_scalar = _reindent(
+        _nogil_call("int", "_rc", sink_scalar, nogil, release="")
+    )
+    call_buffer = _nogil_call(
+        "int",
+        "_rc",
+        sink_buffer,
+        nogil,
+        release="free(_buf); Py_XDECREF(_seq);",
+    )
     fail = (
         f'        PyErr_SetString(PyExc_ValueError, "{name} failed");\n'
         "        return NULL;"
