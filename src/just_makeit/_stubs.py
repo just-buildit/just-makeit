@@ -3302,10 +3302,8 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # Read the same way the aggregator reads its objects' entries (first
     # object to name an enum wins, and only what its fragment defines), so
     # the stub declares exactly what the extension adds.
-    _enum_pub: list[dict] = []
-    _enum_seen: set[str] = set()
-    for obj in objects:
-        for _e in _enumc.fragment_publication(
+    _enum_pub = _enumc.module_publication(
+        _enumc.fragment_publication(
             root,
             C.module_paths(module).cname,
             obj,
@@ -3316,10 +3314,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
                 C.properties(cfg, obj),
                 C.enums(cfg),
             ),
-        ):
-            if _e["py"] not in _enum_seen:
-                _enum_seen.add(_e["py"])
-                _enum_pub.append(_e)
+        )
+        for obj in objects
+    )
     if _enum_pub:
         parts.append(_enumc.publish_pyi(_enum_pub).rstrip("\n"))
         parts.append("")

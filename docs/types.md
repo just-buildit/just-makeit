@@ -615,7 +615,9 @@ cannot read the constants' values, so only a literal `0, 1, ..., n-1` is
 known to be positional. An enum no object binding indexes is not published.
 Views, module-level `function` parameters and handle, capsule and composer
 modules publish nothing yet (gh-2369). A module publishes a shared enum once,
-under one name. The `.pyi` declares the attribute as `tuple[str, ...]` or
+under one name, and its package re-exports it with the module's types, so
+`from proj.filters import ENG_STATE` works as `from proj.filters import Fir`
+does (gh-2372). The `.pyi` declares the attribute as `tuple[str, ...]` or
 `dict[int, str]`.
 
 A module object publishes only the enums whose tables its binding fragment

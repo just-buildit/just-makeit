@@ -1988,6 +1988,31 @@ def _module_extra_files(
     return found
 
 
+def _fragment_enum_ctxs(
+    root: Path, cname: str, comp_ctxs: list[dict]
+) -> list[dict]:
+    """*comp_ctxs* with each object's enums cut to what its fragment defines.
+
+    gh-2344: a module object publishes only the enums its sacred fragment
+    defines a table for (:func:`_enumc.fragment_publication`). The aggregator
+    and the package ``__init__.py`` re-export (gh-2372) both read the module's
+    enums through this; the module stub asks the same question of the same
+    file, so all three name one list.
+    """
+    return [
+        {
+            **ctx,
+            "enum_publish_entries": _enumc.fragment_publication(
+                root,
+                cname,
+                ctx.get("frag_id", ctx["component"]),
+                ctx.get("enum_publish_entries") or [],
+            ),
+        }
+        for ctx in comp_ctxs
+    ]
+
+
 def render_module_ext_c(
     root: Path,
     cfg: dict,
@@ -2020,20 +2045,7 @@ def render_module_ext_c(
         functions = C.module_functions(cfg, module)
     if extra_files is None:
         extra_files = _module_extra_files(root, mp.cname, comp_ctxs)
-    # gh-2344: publish only the enums each sacred fragment defines a table
-    # for; the module stub asks the same question of the same file.
-    comp_ctxs = [
-        {
-            **ctx,
-            "enum_publish_entries": _enumc.fragment_publication(
-                root,
-                mp.cname,
-                ctx.get("frag_id", ctx["component"]),
-                ctx.get("enum_publish_entries") or [],
-            ),
-        }
-        for ctx in comp_ctxs
-    ]
+    comp_ctxs = _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
     return R.render_module_ext_aggregator(
         module,
         comp_ctxs,
@@ -2896,8 +2908,23 @@ def _regenerate_module_now(
     # import …` line (types from a hand-written sibling compiled into the same
     # .so). They must be in the keep-set or the gh-329 prune strips them from
     # both the import and __all__ (data loss of declared public types).
+    # gh-2372: each enum the extension publishes (gh-2344) is a module
+    # attribute the `.pyi` declares, and users import from the package, so it
+    # is re-exported like a record type -- the same filtered list the
+    # aggregator publishes, never a second reading of the manifest.
+    enum_names = [
+        e["py"]
+        for e in _enumc.module_publication(
+            ctx["enum_publish_entries"]
+            for ctx in _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
+        )
+    ]
     all_exports = (
-        Components + record_names + fn_names + list(C.extra_types(cfg, module))
+        Components
+        + record_names
+        + enum_names
+        + fn_names
+        + list(C.extra_types(cfg, module))
     )
     reexports = C.module_reexports(cfg, module)
     # Nested module: ensure the intermediate packages exist, then write under

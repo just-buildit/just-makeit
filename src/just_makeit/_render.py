@@ -2757,13 +2757,9 @@ def render_module_ext_aggregator(
     # gh-2344: one Python name per enum for the whole module. Two objects
     # that index the same [[enum]] each carry its table, but only the first
     # publishes it -- a second would overwrite the same attribute.
-    _enum_pub: list[dict] = []
-    _enum_seen: set[str] = set()
-    for ctx in comp_ctxs:
-        for _e in ctx.get("enum_publish_entries") or []:
-            if _e["py"] not in _enum_seen:
-                _enum_seen.add(_e["py"])
-                _enum_pub.append(_e)
+    _enum_pub = _enumc.module_publication(
+        ctx.get("enum_publish_entries") or [] for ctx in comp_ctxs
+    )
     for ctx in comp_ctxs:
         type_ready_lines.append(
             f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
