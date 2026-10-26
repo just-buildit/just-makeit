@@ -197,10 +197,12 @@ def sneaky(w):
     return Sneaky()
 
 
-for call in ("eat", "vo"):
+for call, kw in (("eat", {}), ("vo", {}), ("vo_out", {"out": 1})):
     w = W(k=1)
+    if kw:
+        kw = {"out": np.empty(8, np.float32)}
     try:
-        getattr(w, call)(sneaky(w))
+        getattr(w, call.split("_")[0])(sneaky(w), **kw)
     except RuntimeError as e:
         print(call, "RuntimeError", e)
     else:
@@ -240,6 +242,21 @@ def test_a_teardown_in_conversion_is_an_error_not_a_crash(tmp_path):
         "--variable-output",
         cwd=proj,
     )
+    # The scaffolded kernels never touch the state, so a NULL handed to one
+    # would pass. Each one reads it, as a real kernel does, so a missing
+    # recheck at ANY of the three reads (`eat`, `vo_max_out`, `vo`) is a
+    # SIGSEGV here, and each site is its own sabotage.
+    core = proj / "native" / "src" / "w" / "w_core.c"
+    text = core.read_text(encoding="utf-8")
+    for fn in ("w_eat", "w_vo_max_out", "w_vo"):
+        text, hits = re.subn(
+            rf"(\n{fn}\(w_state_t \*state[^)]*\)\n\{{\n)",
+            r"\1    volatile int _k = state->k; (void)_k;\n",
+            text,
+            count=1,
+        )
+        assert hits == 1, fn
+    core.write_text(text, encoding="utf-8")
     build = subprocess.run(
         ["make", f"PYTHON={sys.executable}"],
         cwd=proj,
@@ -259,3 +276,4 @@ def test_a_teardown_in_conversion_is_an_error_not_a_crash(tmp_path):
     assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
     assert "eat RuntimeError destroyed" in run.stdout, run.stdout
     assert "vo RuntimeError destroyed" in run.stdout, run.stdout
+    assert "vo_out RuntimeError destroyed" in run.stdout, run.stdout
