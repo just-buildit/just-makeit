@@ -285,13 +285,24 @@ def recheck(
             PyErr_SetString(PyExc_RuntimeError, "destroyed");
             return -1;
         }
+    >>> print(recheck("self", "k(self->h, x)", "Py_DECREF(x_arr);",
+    ...               "Ring is closed"), end="")
+        if (self->closed) {
+            Py_DECREF(x_arr);
+            PyErr_SetString(PyExc_RuntimeError, "Ring is closed");
+            return NULL;
+        }
     >>> recheck("self", "k(self->x)", "")
     ''
     """
     if owner == "self":
-        if "self->handle" not in call_expr:
+        if "self->handle" in call_expr:
+            cond = "!self->handle"
+        elif re.search(r"self->h\b", call_expr):
+            # a handle module's wrapper: `close()` sets `closed` and keeps `h`
+            cond = "self->closed"
+        else:
             return ""
-        cond = "!self->handle"
     elif f"{owner}->state" in call_expr:
         cond = f"{owner}->destroyed"
     else:
