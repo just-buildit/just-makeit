@@ -58,6 +58,15 @@ POSITIVE = {
         GUARD + "    PyArrayObject *a = _coerce_x(obj);\n"
         "    w_run(self->handle, PyArray_DATA(a));\n"
     ),
+    # generic protocol calls run `__len__` / `__getitem__` / `__hash__`
+    "conversion-by-length": (
+        GUARD + "    Py_ssize_t n = PyObject_Length(seq);\n"
+        "    w_run(self->handle, n);\n"
+    ),
+    "conversion-by-getitem": (
+        GUARD + "    PyObject *e = PyObject_GetItem(seq, key);\n"
+        "    w_run(self->handle, e);\n"
+    ),
     "array-conversion": (
         GUARD
         + "    PyArrayObject *a = jm_array_arg(o, NPY_FLOAT, 0, 'x', NULL);\n"
