@@ -3269,8 +3269,16 @@ def _numpy_sections(
                 out += [f"    {ln}" if ln else "" for ln in authored]
                 # gh-2379: an enum-backed parameter's choices follow the
                 # author's text, as they do on an init parameter.
+                # gh-2399: through the wrapper the no-doc path below uses,
+                # directly under the author's text, as an init parameter's
+                # are -- not a blank line and one unwrapped line.
                 if isinstance(ann, EnumAnn) and ann.choices:
-                    out += ["", f"    {enum_param_desc(ann.choices)}"]
+                    out += [
+                        f"    {w}"
+                        for w in _wrap(
+                            enum_param_desc(ann.choices), DESC_WIDTH
+                        )
+                    ]
                 continue
             # gh-1042: precedence is header > jm's per-name default >
             # the generic fallback. The middle rung exists because `count`
