@@ -51,7 +51,9 @@ CONV = re.compile(
     r"PyArg_Parse|PyObject_Call|PySequence_|PyObject_IsTrue|PyNumber_|"
     r"PyLong_As|PyFloat_As|PyComplex_As|PyObject_GetAttr|PyObject_GetIter|"
     r"PyIter_Next|jm_array_arg|PyArray_FROM|PyObject_RichCompare|"
-    r"PyObject_Str|PyObject_Bytes|PyObject_GetBuffer|_attach_|_coerce_"
+    r"PyObject_Str|PyObject_Bytes|PyObject_GetBuffer|PyObject_Length|"
+    r"PyObject_Size|PyObject_GetItem|PyObject_SetItem|PyObject_Hash|"
+    r"PyObject_Repr|PyObject_IsInstance|PyMapping_|_attach_|_coerce_"
 )
 GUARD = re.compile(
     r"if \((?:!?self->(?:handle|h|state|closed|destroyed)\b|"
