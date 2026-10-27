@@ -61,6 +61,8 @@ buffer a running generator may borrow, and never invalidate it (gh-2274).
 
 from __future__ import annotations
 
+import re
+
 #: The binding-struct field every kind keeps its in-flight count in. Named
 #: once: the struct, the region, the teardown and the dealloc spell it here,
 #: and `_docsync` reads a fragment for it.
@@ -294,6 +296,48 @@ def recheck(
         f"{indent}    return NULL;\n"
         f"{indent}}}\n"
     )
+
+
+#: An object's `recheck` block, as `_docsync` reads it on a comment-and-
+#: string-masked body: the guard, whatever it releases, the refusal.
+#: Anchored on the guard's CONDITION and block, not its message: strings are
+#: masked there, and `recheck`'s *gone* varies. The two conditions are the
+#: two `recheck` renders (an object's, a wrapper's); a test holds this to
+#: `recheck`'s own output, so there is one spelling of the guard.
+_RECHECK_BLOCK_RE = re.compile(
+    r"if\s*\(\s*(?:!self->handle|\w+->destroyed)\s*\)\s*\{[^{}]*\}"
+)
+
+
+def strip_rechecks(code: str) -> str:
+    """*code* without the rechecks, keeping the method's own top guard.
+
+    `_docsync` reads a body as "raising" when it holds more than one
+    ``PyErr_SetString`` -- the top guard is the one every wrapper has. A
+    recheck (gh-2273) is jm's own guard, not a result shape the manifest
+    asked for, so it is removed before that count, as the output-size guard
+    is (gh-1710): a fragment rendered before it has none, and would
+    otherwise be told "the manifest's result shape needs raises". The FIRST
+    guard in a body is the top one and stays.
+
+    Examples
+    --------
+    >>> body = ("if (!self->handle) { PyErr_SetString(E, ' '); return NULL; }"
+    ...         " k(); if (!self->handle) { Py_DECREF(a);"
+    ...         " PyErr_SetString(E, ' '); return NULL; } k2();")
+    >>> strip_rechecks(body).count("PyErr_SetString")
+    1
+    >>> strip_rechecks("k();")
+    'k();'
+    """
+    seen = 0
+
+    def _drop(m: "re.Match[str]") -> str:
+        nonlocal seen
+        seen += 1
+        return m.group(0) if seen == 1 else ""
+
+    return _RECHECK_BLOCK_RE.sub(_drop, code)
 
 
 def wait(owner: str, fail: str, indent: str = "        ") -> str:

@@ -277,3 +277,69 @@ def test_a_teardown_in_conversion_is_an_error_not_a_crash(tmp_path):
     assert "eat RuntimeError destroyed" in run.stdout, run.stdout
     assert "vo RuntimeError destroyed" in run.stdout, run.stdout
     assert "vo_out RuntimeError destroyed" in run.stdout, run.stdout
+
+
+def _as_rendered_before_the_recheck(ext: str) -> str:
+    """*ext* as a pre-gh-2273 jm wrote it: each wrapper's rechecks removed.
+
+    The first ``if (!self->handle)`` of a wrapper is its top guard and stays;
+    every later one is a recheck (or the ``max_out`` one) and goes.
+    """
+    block = re.compile(
+        r"[ \t]*if \(!self->handle\) \{\n(?:[^{}]*\n)*?[ \t]*\}\n"
+    )
+    out = []
+    for fn in ext.split("\nstatic PyObject *\n"):
+        seen = [0]
+
+        def drop(m: "re.Match[str]") -> str:
+            seen[0] += 1
+            return m.group(0) if seen[0] == 1 else ""
+
+        out.append(block.sub(drop, fn))
+    return "\nstatic PyObject *\n".join(out)
+
+
+@pytest.mark.parametrize(
+    "owner,call,release,gone",
+    [
+        ("self", "k(self->handle, x)", "Py_DECREF(a);", "destroyed"),
+        ("self", "k(self->handle)", "", "destroyed"),
+        ("w", "k(w->state)", "Py_DECREF(a); Py_DECREF(b);", "w was freed"),
+    ],
+)
+def test_the_strip_removes_exactly_what_recheck_renders(
+    owner, call, release, gone
+):
+    """One spelling of the guard: `strip_rechecks` is held to `recheck`.
+
+    Strings are masked where `_docsync` reads a body, so the guard's message
+    is blanked; the structure is what is matched. The first guard in a body
+    is the method's top guard and stays, the recheck after it goes.
+    """
+    from just_makeit import _docsync
+
+    block = _inflight.recheck(owner, call, release, gone)
+    assert block
+    cond = "!self->handle" if owner == "self" else f"{owner}->destroyed"
+    top = (
+        f'    if ({cond}) {{\n        PyErr_SetString(E, "top");\n'
+        "        return NULL;\n    }\n"
+    )
+    masked = _docsync._code_mask(top + "    parse();\n" + block + "    k();\n")
+    left = _inflight.strip_rechecks(masked)
+    assert left.count("PyErr_SetString") == 1, left
+    assert "k();" in left and "parse();" in left, left
+
+
+def test_a_fragment_rendered_before_the_recheck_is_not_drift(every_shape):
+    """A sacred module fragment keeps its body on `apply`; `status` compares
+    it to a fresh render. The recheck is jm's own guard, so a fragment
+    without it must not be told its "result shape needs raises" (the
+    `stale_project` example's `upgrade.golden` caught the first version).
+    """
+    from just_makeit import _docsync
+
+    old = _as_rendered_before_the_recheck(every_shape)
+    assert old != every_shape, "nothing was removed: the test is not armed"
+    assert _docsync.signature_drift_details(old, every_shape) == {}
