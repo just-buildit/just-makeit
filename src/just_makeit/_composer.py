@@ -735,7 +735,6 @@ def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
                 "_jm_obj",
                 "return 0;",
                 indent="        ",
-                explain_type_error=True,
             )
             + f"""
         _jm_new = {p.copy_fn}({n});

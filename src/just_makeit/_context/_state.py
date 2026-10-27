@@ -1010,8 +1010,6 @@ def _build_no_state_init_ctx(
                     # fabricating a sample rate into a file that outlives the
                     # process — and the Python face could not say it.
                     allow_none=_cap_nullable,
-                    # Always: this is a tp_init whatever the nullability.
-                    explain_type_error=True,
                 )
             )
             # gh-790, and the half that is easy to forget by hand: the C
