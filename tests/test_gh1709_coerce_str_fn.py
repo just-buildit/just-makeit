@@ -102,8 +102,11 @@ class TestTheGeneratedBinding:
         s = _composer.render_source_type(_hosted(), "wfm_compose")
         # gh-1736: the helper is named by the function, not the field.
         co = f"_coerce_{HOST}"
-        assert f"if (!{co}(&self->src.bits, &self->src.n_bits, bits))" in s
-        assert f"return {co}(&self->src.bits, &self->src.n_bits, value)" in s
+        # gh-2274: the constructor and the setter both reach it through the
+        # field's one replace, which converts into a copy of the source.
+        assert "if (!Synth_replace_bits(self, bits))" in s
+        assert "return Synth_replace_bits(self, value) ? 0 : -1;" in s
+        assert f"{co}(&_t.bits, &_t.n_bits, value)" in s
         assert f"size_t nb = {HOST}(s, NULL, 0, &why);" in s
         assert f"nb = {HOST}(s, buf, nb, &why);" in s
         assert "PyErr_SetString(PyExc_ValueError,\n" in s
