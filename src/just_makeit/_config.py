@@ -4078,19 +4078,29 @@ def object_ref_import(cfg: dict, ref: str) -> str:
     from ._docstring import class_import_path
 
     comp, _, _cls = ref.partition(".")
+    leaf = ""
     if comp in components(cfg):
         cls = resolve_object_ref(cfg, ref)[3]
         home = module_of(cfg, comp)
         if not home:
             return f"from .{comp} import {cls}"
-    elif module_kind(cfg, comp) == "handle":
+    elif module_kind(cfg, comp) in _MODULE_REF_KINDS:
         # gh-1227: a handle module's class lives in the module's own
         # package, the one its own `.pyi` lands in.
-        cls = resolve_handle_object_ref(cfg, ref)[3]
+        kind = module_kind(cfg, comp)
+        cls = _MODULE_REF_KINDS[kind](cfg, ref)[3]
         home = comp
+        if kind == "composer":
+            # gh-2354: a composer's class is in `<package>/<leaf>.pyi`, and
+            # nothing re-exports it from the package (its directory has no
+            # `__init__.py`), so the import names the file that holds it:
+            # `from .playlist.playlist import Mix`, not `.playlist`.
+            leaf = module_paths(comp).leaf
     else:
         return ""
     where = class_import_path("", module_package_resolved(cfg, home))
+    if leaf:
+        where = f"{where}.{leaf}" if where else leaf
     return f"from .{where} import {cls}"
 
 
@@ -4156,6 +4166,80 @@ def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
     return (f"{htype} *", capsule, handle_header_resolved(cfg, mod), tname)
 
 
+def resolve_composer_object_ref(cfg: dict, ref: str) -> tuple:
+    """Resolve an ``object`` reference naming a ``kind = "composer"`` module.
+
+    gh-2354. gh-2346 let a composer publish a ``_capsule`` and a consumer
+    METHOD param take it; the other consuming path, an ``init_param`` with
+    ``object = "<composer>"``, could not name one -- the resolver knew
+    components, views and handles, and refused a composer as 'not a valid
+    target'. Same sugar over the capsule triangle, so the consumer is written
+    the way a handle's is, and the ``.pyi`` and the constructor agree with the
+    producer by construction.
+
+    Returns the same ``(ctype, capsule_name, header, class_name)``, every slot
+    **read** from the module's own declarations (gh-1234):
+
+    ==============  ==========================================================
+    ``ctype``       ``<stem>_state_t *`` -- what the composer's capsule lends
+                    (``self->state``); ``<stem>`` is the ``backing``'s C stem,
+                    through :func:`~just_makeit._csym.backing_stem`, so a
+                    ``c_prefix`` moves it with the producer.
+    ``capsule``     :func:`published_capsule`.
+    ``header``      the backing's core header, the one the composer's own
+                    binding includes.
+    ``class_name``  the composer type (``oo.composer_type_name``, default
+                    ``Composer``).
+    ==============  ==========================================================
+
+    A composer generates one class here, so ``<module>.<Class>`` is accepted
+    only when the class matches. The consumer needs nothing to keep the
+    composer alive: a constructor's borrowed pointer already holds a strong
+    reference to the Python owner (gh-790), the ``retain`` of a method param.
+    """
+    mod, _, cls = ref.partition(".")
+    tname = composer_oo(cfg, mod).get("composer_type_name", "Composer")
+    if cls and cls != tname:
+        raise Refusal(
+            f"init_param object = '{ref}': composer module '{mod}' "
+            f"generates the class '{tname}', not '{cls}'. Name the module "
+            f"alone, or '{mod}.{tname}'."
+        )
+    capsule = published_capsule(cfg, mod)
+    if not capsule:
+        raise Refusal(
+            f"init_param object = '{ref}': composer module '{mod}' publishes "
+            f"no capsule, so there is no ABI-safe way to hand its state to "
+            f"another module. Declare one on the module table:\n"
+            f'    [module.{mod}]\n    capsule = "<name>"'
+        )
+    backing = capsule_backing(cfg, mod)
+    if not backing:
+        raise Refusal(
+            f"init_param object = '{ref}': composer module '{mod}' declares "
+            f"no `backing`, so jm cannot name the state its capsule lends."
+        )
+    from . import _csym
+
+    return (
+        f"{_csym.backing_stem(cfg, backing)}_state_t *",
+        capsule,
+        INC.core_include(backing, cfg),
+        tname,
+    )
+
+
+#: The module kinds an ``object`` reference may name, each with its resolver:
+#: a module that is built to be borrowed from. One table, read by
+#: :func:`resolve_object_ref` and :func:`object_ref_import`, so a kind cannot
+#: be resolvable and not importable (or the reverse); a new kind is a row here
+#: and, if its class lives somewhere else, a branch in the importer.
+_MODULE_REF_KINDS = {
+    "handle": resolve_handle_object_ref,
+    "composer": resolve_composer_object_ref,
+}
+
+
 def resolve_object_ref(cfg: dict, ref: str) -> tuple:
     """Resolve an init-param ``object = "<comp>"`` / ``"<comp>.<Class>"``.
 
@@ -4196,17 +4280,17 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
             # capsule through gh-794's module-level key rather than a
             # property, and it declares the pointer's type, so it resolves on
             # better evidence than the object path does.
-            if kind == "handle":
-                return resolve_handle_object_ref(cfg, ref)
+            if kind in _MODULE_REF_KINDS:
+                return _MODULE_REF_KINDS[kind](cfg, ref)
             if kind:
                 raise ValueError(
                     f"init_param object = '{ref}': '{comp}' is a declared "
                     f'kind = "{kind}" module, not a component. An `object` '
-                    f"reference names a component, one of its views, or a "
-                    f'kind = "handle" module; a {kind} module is not a valid '
-                    f"target. A capsule module's own pointer can still be "
-                    f"named the gh-790 way, with `capsule` and `header` "
-                    f"written out."
+                    f"reference names a component, one of its views, a "
+                    f'kind = "handle" module or a kind = "composer" module; '
+                    f"a {kind} module is not a valid target. A capsule "
+                    f"module's own pointer can still be named the gh-790 "
+                    f"way, with `capsule` and `header` written out."
                 )
             raise ValueError(
                 f"init_param object = '{ref}': '{comp}' is a declared "
