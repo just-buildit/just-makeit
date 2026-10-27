@@ -1686,6 +1686,10 @@ Generated binding semantics: `None` maps to `NULL` (the C-side detach
 idiom); a PyCapsule is name-checked with `PyCapsule_GetPointer`; any other
 object is unwrapped through its `_capsule` attribute first, so callers pass
 the friendly wrapper (`obj.set_telemetry(tlm, "agc")`), not the capsule.
+An object that is neither (an `int`, say) is a `TypeError` naming the param and
+the capsule it wants, as it is for a constructor param (gh-2355); the raw
+`AttributeError` from the internal `._capsule` lookup is never what a caller
+sees. A closed handle's own `RuntimeError` still propagates untouched.
 The `.pyi` annotates the param `object | None` (`object` under
 `required = true`, below). The `header` key injects
 `#include "path/hdr.h"` into the object's `_core.h` alongside the gh-170

@@ -386,7 +386,6 @@ def capsule_unwrap_c(
     fail: str,
     indent: str = "    ",
     allow_none: bool = True,
-    explain_type_error: bool = False,
 ) -> str:
     """C that turns *obj_var* into a borrowed C pointer named *name*.
 
@@ -426,18 +425,19 @@ def capsule_unwrap_c(
         the C-side detach idiom. When False, the pointer is mandatory and
         ``None`` is rejected up front rather than surfacing later as a failed
         ``create()`` with nothing pointing at the cause.
-    explain_type_error : bool
-        Replace the raw ``AttributeError`` from the ``._capsule`` lookup with
-        a ``TypeError`` naming what to pass. True for a **constructor**, where
-        it is the first thing a caller hits after passing the wrong object.
 
-        gh-805 §H split this out of ``allow_none``. Until then the two were
-        the same question by accident — every constructor was mandatory, so
-        ``allow_none=False`` could stand in for "this is a ``tp_init``". A
-        nullable constructor param breaks that coupling, and leaving them
-        fused silently downgraded exactly the message this exists to give:
-        ``'int' object has no attribute '_capsule'`` names an implementation
-        detail instead of the requirement. Two questions, two parameters.
+    A wrong object is always a ``TypeError`` naming the pointer and the capsule
+    it wants (gh-2355), on a method, a constructor and a composer's owned
+    pointer alike. The raw ``AttributeError`` from the ``._capsule`` lookup
+    names an implementation detail instead of the requirement.
+
+    That was once a parameter, ``explain_type_error``: gh-805 §H split it out
+    of ``allow_none`` because the two had been the same question by accident,
+    and a method kept the raw error "byte for byte" (gh-432). gh-2355 asked
+    why a method should differ -- a wrong-type argument is a ``TypeError``
+    everywhere else in the generated bindings -- and every caller then passed
+    True, so the parameter had no False left to select. A flag with one value
+    is a second question nobody is asking; it was removed.
     """
     disp = ctype
     if not disp.endswith("*"):
@@ -446,15 +446,10 @@ def capsule_unwrap_c(
     i = indent
     inner = i + "    " if allow_none else i
     # A missing `_capsule` attribute surfaces as AttributeError from
-    # PyObject_GetAttrString. On a METHOD that is fine and is what gh-432 has
-    # always raised. On a CONSTRUCTOR it is the first thing a caller hits
-    # after passing the wrong object, and "'int' object has no attribute
-    # '_capsule'" names an implementation detail rather than the requirement
-    # — so a constructor replaces it with a TypeError that says what to pass.
-    # gh-432's method behaviour is unchanged, byte for byte.
-    #
-    # Keyed on `explain_type_error`, NOT on `allow_none`. Those were the same
-    # question only while every constructor param was mandatory (gh-805 §H).
+    # PyObject_GetAttrString, and "'int' object has no attribute '_capsule'"
+    # names an implementation detail rather than the requirement -- so it is
+    # replaced with a TypeError that says what to pass, wherever the pointer
+    # is taken (gh-2355; it was constructors only, gh-790 / gh-805 §H).
     #
     # gh-794 made that replacement conditional. `_capsule` used to be a plain
     # attribute, so AttributeError was the ONLY way this lookup could fail and
@@ -476,8 +471,6 @@ def capsule_unwrap_c(
         f'{inner}            " not %s", Py_TYPE({obj_var})->tp_name);\n'
         f"{inner}        {fail}\n"
         f"{inner}    }}\n"
-        if explain_type_error
-        else f"{inner}    if (!{cap})\n{inner}        {fail}\n"
     )
     body = (
         f"{inner}PyObject *{cap} = {obj_var};\n"

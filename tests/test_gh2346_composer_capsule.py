@@ -271,8 +271,8 @@ print("kept through its capsule", rc(m) - base, pool.peek())
 pool.attach(None)
 try:
     pool.attach(Track(dur=1))  # no `_capsule`: a method param refuses it
-except (TypeError, AttributeError):
-    print("refused a non-composer")
+except TypeError as e:  # gh-2355: not an AttributeError naming `_capsule`
+    print("refused a non-composer", "t must be the studio.playlist.mix capsule" in str(e))
 print("still kept nothing", pool.peek())
 try:
     m._capsule = None
@@ -289,7 +289,7 @@ _EXPECT = [
     "kept the object 1 1",
     "detached 0 0",
     "kept through its capsule 1 1",
-    "refused a non-composer",
+    "refused a non-composer True",
     "still kept nothing 0",
     "read-only",
     "refused a closed composer",

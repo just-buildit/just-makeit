@@ -1797,7 +1797,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # demands, AND left it in declaration order behind a defaulted
             # scalar the kwlist hoists it above — so `Capn(4096)` bound 4096 to
             # `clock` while the stub promised `n`. Same accidental coupling as
-            # `allow_none`/`explain_type_error` in `_context/_parse.py`.
+            # `allow_none` and the (since removed) `explain_type_error` in
+            # `_context/_parse.py`.
             capsule = param[10] if len(param) > 10 else ""
             # gh-515: a path is required-positional by construction (a
             # filesystem path has no sensible default), so it is hoisted with
