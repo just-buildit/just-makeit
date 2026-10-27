@@ -255,6 +255,39 @@ def test_a_composer_source_delegating_a_method_documents_the_choices(tmp_path):
     assert seen, pyi[:2000]
 
 
+@pytest.mark.parametrize("where", ["standalone", "module"])
+def test_an_init_parameter_spelled_enum_name_documents_the_choices(
+    tmp_path, where
+):
+    """doppler spells its constructor enums `type = "enum:<name>"` (not
+    `string_enum:a,b`; no `enum =` key), e.g. `wfm_writer`'s `endian`.
+    `enum:<name>` flattens to `string_enum:` where the init params are read,
+    so the doc writers see the same type -- this pins that the spelling
+    reaches them, for an object and for a module object."""
+    _ok("new", "q", "--no-c-prefix", cwd=tmp_path)
+    q = tmp_path / "q"
+    cfg = C.load(q)
+    cfg["enum"] = [{"name": "endianE", "values": CHOICES}]
+    C.save(q, cfg)
+    where_args = []
+    if where == "module":
+        _ok("module", "dsp", cwd=q)
+        where_args = ["--module", "dsp"]
+    _ok("object", "w3", *where_args, "--init-param", "endian:enum:endianE:le",
+        cwd=q)  # fmt: skip
+    _prose(q / "native/inc/q/w3/w3_core.h", "endian")
+    _ok("apply", cwd=q)
+    pyi = _read(
+        q, "src/q/dsp/dsp.pyi" if where == "module" else "src/q/w3.pyi"
+    )
+    m = re.search(
+        r'endian : Literal\["le", "be"\], default "le"\n +([^\n]*)\n', pyi
+    )
+    assert m, pyi[:1500]
+    assert m.group(1) == ONE_OF, m.group(1)
+    assert C_PROSE not in pyi.split("endian :")[1].split("Examples")[0], pyi
+
+
 def test_a_capsule_cannot_declare_an_enum_backed_param():
     """A capsule's scalars are one of the C scalars `scalar_meta` knows; an
     enum is not, so there is no capsule face to document. If one is ever
