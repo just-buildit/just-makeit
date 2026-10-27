@@ -5,6 +5,10 @@
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
 [![codecov](https://codecov.io/gh/just-buildit/just-makeit/graph/badge.svg?token=29J7ACUITR)](https://codecov.io/gh/just-buildit/just-makeit)
+[![C99](https://img.shields.io/badge/C-99-informational?logo=c&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
+[![C++11](https://img.shields.io/badge/C%2B%2B-11-informational?logo=cplusplus&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
+[![MSVC ABI](https://img.shields.io/badge/MSVC_ABI-clang--cl-informational?logo=windows&logoColor=white)](https://just-buildit.github.io/just-makeit/windows/)
+[![jbx](https://img.shields.io/badge/jbx-bootstrap.toml-1a3050?labelColor=0d1b2a&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjIwIDUyIDE2NCA5NiI+PHBhdGggZD0iTTMwIDYyIEw4NiAxMDAgTDMwIDEzOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjU5ZTBiIiBzdHJva2Utd2lkdGg9IjE4IiBzdHJva2UtbGluZWNhcD0ic3F1YXJlIiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8+PHJlY3QgeD0iMTE4IiB5PSI3OCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjQ0IiBmaWxsPSIjZmZmIi8+PHJlY3QgeD0iMTQ4IiB5PSI3OCIgd2lkdGg9IjE0IiBoZWlnaHQ9IjQ0IiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9IjAuNTUiLz48cmVjdCB4PSIxNjgiIHk9Ijc4IiB3aWR0aD0iOCIgaGVpZ2h0PSI0NCIgZmlsbD0iI2ZmZiIgZmlsbC1vcGFjaXR5PSIwLjI1Ii8+PC9zdmc+Cg==)](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
 
 Getting an algorithm right is paramount. Yet it's rarely the bottleneck.
 Turning it into shippable code — a tested C library, a Python binding, a build
@@ -14,19 +18,6 @@ tedious, exacting work that repeats on every project.
 `just-makeit new` scaffolds the whole thing in one command: core C library, thin
 Python binding, CMake build system, and full test coverage — all passing before
 you write a single line of your algorithm.
-
-______________________________________________________________________
-
-## Try it now!
-
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/just-buildit/just-makeit)
-
-Click the badge to launch a pre-built sandbox in your browser — no install, no
-compiler, no Docker required. You'll land in a GitHub Codespaces environment
-with `just-makeit` installed, dozens of bundled examples already scaffolded and
-compiled, and a terminal ready to go. Run an example end-to-end, browse the
-generated C and Python source, or start a fresh project with
-`just-makeit new`.
 
 ______________________________________________________________________
 

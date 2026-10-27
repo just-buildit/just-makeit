@@ -4,6 +4,10 @@
 
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
+[![C99](https://img.shields.io/badge/C-99-informational?logo=c&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
+[![C++11](https://img.shields.io/badge/C%2B%2B-11-informational?logo=cplusplus&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
+[![MSVC ABI](https://img.shields.io/badge/MSVC_ABI-clang--cl-informational?logo=windows&logoColor=white)](https://just-buildit.github.io/just-makeit/windows/)
+[![jbx](https://img.shields.io/badge/jbx-bootstrap.toml-1a3050?labelColor=0d1b2a&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjIwIDUyIDE2NCA5NiI+PHBhdGggZD0iTTMwIDYyIEw4NiAxMDAgTDMwIDEzOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjU5ZTBiIiBzdHJva2Utd2lkdGg9IjE4IiBzdHJva2UtbGluZWNhcD0ic3F1YXJlIiBzdHJva2UtbGluZWpvaW49Im1pdGVyIi8+PHJlY3QgeD0iMTE4IiB5PSI3OCIgd2lkdGg9IjI0IiBoZWlnaHQ9IjQ0IiBmaWxsPSIjZmZmIi8+PHJlY3QgeD0iMTQ4IiB5PSI3OCIgd2lkdGg9IjE0IiBoZWlnaHQ9IjQ0IiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9IjAuNTUiLz48cmVjdCB4PSIxNjgiIHk9Ijc4IiB3aWR0aD0iOCIgaGVpZ2h0PSI0NCIgZmlsbD0iI2ZmZiIgZmlsbC1vcGFjaXR5PSIwLjI1Ii8+PC9zdmc+Cg==)](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
 
 The algorithm is the interesting part. The scaffolding around it — C library,
 Python bindings, CMake, tests, and packaging — is the same boilerplate every
@@ -53,6 +57,12 @@ you write a line of your algorithm. Fill in `step()` and ship.
 
 ## Get it
 
+<div class="jm-card" markdown>
+
+**<code class="jm-green">install</code>**{ .jm-card-title }
+
+Pick a method. Each one gets you `just-makeit` and its build dependencies.
+
 === "curl"
 
     ```sh
@@ -70,6 +80,21 @@ you write a line of your algorithm. Fill in `step()` and ship.
     ```sh
     uv tool install just-makeit && just-makeit install-deps [path]
     ```
+
+=== "Docker"
+
+    ```sh
+    docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
+    ```
+
+    **No install needed** - the container prints a welcome message with
+    everything you need:
+
+    - pre-built example projects in `~/examples/`
+    - commands to browse or re-run them
+    - a quickstart for your own project
+
+</div>
 
 ```termynal
 $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
@@ -117,24 +142,6 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 
     On any other distro it installs no system packages and names the missing
     ones for you to install yourself.
-
-______________________________________________________________________
-
-### Get it with Docker
-
-```sh
-docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
-```
-
-______________________________________________________________________
-
-!!! Tip
-
-    **No install needed** - the container prints a welcome message with everything you need:
-
-    - pre-built example projects in `~/examples/`
-    - commands to browse or re-run them
-    - a quickstart for your own project
 
 ______________________________________________________________________
 
