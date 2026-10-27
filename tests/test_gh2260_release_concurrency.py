@@ -113,15 +113,21 @@ def test_already_published_check_runs_before_build_and_gates_publish():
         "`publish` must itself be skipped when the version is already on "
         f"PyPI: `if: needs.{checker}.outputs.published != 'true'`"
     )
-    # Nothing but the check runs on a duplicate: every other job carries
-    # the condition or waits on a job that does (a skipped need skips it).
+    # Nothing that BUILDS OR PUBLISHES runs on a duplicate: `publish` and
+    # everything it waits on carry the condition, or wait on a job that does
+    # (a skipped need skips it). gh-2310 narrowed this from "nothing but the
+    # check runs": what comes AFTER `publish` (github-release, docker, and
+    # the read-only probe that feeds docker) now runs for a published
+    # version, idempotently, because skipping it ended a re-run green with
+    # the release or the image missing -- see test_gh2310_release_rerun.py.
     gated = {n for n, j in jobs.items() if _gated(j, checker)}
+    before_publish = (_upstream(jobs, "publish") | {"publish"}) - {checker}
     loose = sorted(
         n
-        for n in jobs
-        if n != checker and n not in gated and not (_upstream(jobs, n) & gated)
+        for n in before_publish
+        if n not in gated and not (_upstream(jobs, n) & gated)
     )
     assert loose == [], (
-        f"these release jobs still run when the version is already on "
-        f"PyPI: {loose}"
+        f"these jobs build or publish and still run when the version is "
+        f"already on PyPI: {loose}"
     )

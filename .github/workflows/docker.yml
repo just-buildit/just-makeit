@@ -22,6 +22,29 @@ on:
         type: boolean
         required: false
         default: false
+      # ...and whether this publish may move `:latest` (gh-2310). The manifest
+      # step overwrites every tag it is given, so a re-run or a dispatch for an
+      # OLDER release would repoint `:latest` at that old image. Only the
+      # caller knows whether its commit is the newest, so it says: release.yml
+      # passes whether its tag is the highest v* tag; an older tag gets its
+      # `sha-` tag and nothing else. Default true because the other caller,
+      # ci.yml's push to main, is by definition the newest thing there is.
+      latest:
+        type: boolean
+        required: false
+        default: true
+      # ...and which commit the image is NAMED for (gh-2310). The checkout
+      # above builds `ref`, but the tags were `github.sha`, the CALLER's
+      # commit. On a tag push or a re-run they are the same commit; on a
+      # DISPATCH from main for a tag that is not main's head they are not, and
+      # the old tag's code was pushed as `sha-<main's head>`, overwriting the
+      # image CI built for main. The caller says: release.yml passes the
+      # resolved tag's commit, so the probe's key and the push key are one
+      # value. Empty means the caller's own commit, which is ci.yml's case.
+      sha:
+        type: string
+        required: false
+        default: ""
 
 # No `push` or `pull_request` trigger of its own (gh-1643). ci.yml calls
 # this workflow from a job `CI passed` waits on, on every PR and every push to
@@ -127,10 +150,14 @@ jobs:
       # The manifest job below combines these into the public tags.
       - name: Tag and push arch-specific image to GHCR
         if: inputs.publish
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ inputs.sha || github.sha }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
-          docker tag jm-examples-linux:ci "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
-          docker push "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
+          BASE=ghcr.io/${OWNER}/jm-examples-linux
+          docker tag jm-examples-linux:ci "${BASE}:sha-${SHA}-${ARCH}"
+          docker push "${BASE}:sha-${SHA}-${ARCH}"
 
   # Combine the per-arch images pushed above into the public, multi-arch
   # :latest / :sha-<sha> manifest list — the same tag contract every existing
@@ -149,8 +176,19 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push combined manifest
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ inputs.sha || github.sha }}
+          # gh-2310: "true" only when this publish may move `:latest`.
+          LATEST: ${{ inputs.latest }}
         run: |
-          BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
+          BASE=ghcr.io/${OWNER}/jm-examples-linux
+          tags=(-t "${BASE}:sha-${SHA}")
+          if [ "${LATEST}" = "true" ]; then
+            tags+=(-t "${BASE}:latest")
+          else
+            echo "::notice::not the newest release: ${BASE}:latest is left where it is."
+          fi
           # Retry: this reads both arch manifests' blobs back out of GHCR, and
           # a reset there fails the job after BOTH images have already built
           # and pushed — the most expensive place to lose to a network blip:
@@ -162,10 +200,9 @@ jobs:
           ok=""
           for attempt in 1 2 3; do
             if docker buildx imagetools create \
-                 -t "${BASE}:latest" \
-                 -t "${BASE}:sha-${{ github.sha }}" \
-                 "${BASE}:sha-${{ github.sha }}-amd64" \
-                 "${BASE}:sha-${{ github.sha }}-arm64"; then
+                 "${tags[@]}" \
+                 "${BASE}:sha-${SHA}-amd64" \
+                 "${BASE}:sha-${SHA}-arm64"; then
               ok=1
               break
             fi
