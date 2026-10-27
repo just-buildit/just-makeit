@@ -249,6 +249,9 @@ def _emit_execute(backing: str, sym: str, method: dict) -> str:
         f"{sym}_{name}(w->state, in_data, n_in, out_data, max_out)",
         bool(method.get("nogil")),
         owner="w",
+        # gh-2273: both arrays are converted after `_get_wrap` ran.
+        release="Py_DECREF(x_arr); Py_DECREF(out_arr);",
+        gone=f"{backing}_state has already been destroyed",
     )
     _out_guard = _coerce.out_buffer_guard(
         "out_obj", out_npy, decrefs="Py_DECREF(x_arr);"
@@ -314,6 +317,8 @@ def _emit_void_method(backing: str, sym: str, method: dict) -> str:
         f"{sym}_{name}(w->state)",
         bool(method.get("nogil")),
         owner="w",
+        release="",
+        gone=f"{backing}_state has already been destroyed",
     )
     return f"""static PyObject *
 _fn_{backing}_{name}(PyObject *mod, PyObject *args)
