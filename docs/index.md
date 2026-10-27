@@ -53,6 +53,12 @@ you write a line of your algorithm. Fill in `step()` and ship.
 
 ## Get it
 
+<div class="jm-card" markdown>
+
+**<code class="jm-green">install</code>**{ .jm-card-title }
+
+Pick a method. Each one gets you `just-makeit` and its build dependencies.
+
 === "curl"
 
     ```sh
@@ -70,6 +76,8 @@ you write a line of your algorithm. Fill in `step()` and ship.
     ```sh
     uv tool install just-makeit && just-makeit install-deps [path]
     ```
+
+</div>
 
 ```termynal
 $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
@@ -117,24 +125,6 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 
     On any other distro it installs no system packages and names the missing
     ones for you to install yourself.
-
-______________________________________________________________________
-
-### Get it with Docker
-
-```sh
-docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
-```
-
-______________________________________________________________________
-
-!!! Tip
-
-    **No install needed** - the container prints a welcome message with everything you need:
-
-    - pre-built example projects in `~/examples/`
-    - commands to browse or re-run them
-    - a quickstart for your own project
 
 ______________________________________________________________________
 

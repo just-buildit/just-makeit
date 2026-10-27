@@ -17,19 +17,6 @@ you write a single line of your algorithm.
 
 ______________________________________________________________________
 
-## Try it now!
-
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/just-buildit/just-makeit)
-
-Click the badge to launch a pre-built sandbox in your browser — no install, no
-compiler, no Docker required. You'll land in a GitHub Codespaces environment
-with `just-makeit` installed, dozens of bundled examples already scaffolded and
-compiled, and a terminal ready to go. Run an example end-to-end, browse the
-generated C and Python source, or start a fresh project with
-`just-makeit new`.
-
-______________________________________________________________________
-
 ## Quickstart
 
 `install-deps` installs cmake, a C compiler, pkg-config and, on Linux,
@@ -57,12 +44,6 @@ pip install just-makeit && just-makeit install-deps [path]
 
 ```sh
 uv tool install just-makeit && just-makeit install-deps [path]
-```
-
-**Docker (no install needed):**
-
-```sh
-docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
 ```
 
 ______________________________________________________________________
