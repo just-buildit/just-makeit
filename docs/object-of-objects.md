@@ -569,7 +569,8 @@ A source can hand work back to the project as plain C, with no CPython in it:
     drops the generator, and only then frees the old buffer and installs the
     new one, so a `bridge_fn` that borrows a buffer never reads a freed one;
     the next `steps()` builds from the new configuration. A value that is
-    refused leaves the field as it was (gh-2274).
+    refused leaves the field as it was; it used to clear it, so a caller that
+    relied on that must assign `None` to clear the field (gh-2274).
 - **`methods = ["prod", ...]`** in the same table (gh-2259) puts named
     methods of the generator object on the source type too:
     `Synth(...).prod(x)` instead of building the generator yourself. Each

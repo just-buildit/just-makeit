@@ -5,7 +5,8 @@
     generator built from the old configuration in place. The setter and
     `__init__` now go through one generated replace per field: it converts
     the new value into a copy first (Python can run there; nothing live is
-    touched, so a refused value leaves the field as it was, where it used to
-    clear it), waits for the running `steps()`, drops the generator so the
+    touched), waits for the running `steps()`, drops the generator so the
     next `steps()` rebuilds it from the new configuration, then frees and
-    installs in pure C.
+    installs in pure C. **Behaviour change:** a refused value now leaves the
+    field as it was. It used to clear it, so a caller that relied on a failed
+    assignment emptying the field must now assign `None` to clear it.
