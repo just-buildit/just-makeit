@@ -188,7 +188,7 @@ class TestTheStubSaysItIsUnfinished:
         # `jm_bench_add` appeared in zero generated stubs: the API the
         # scaffold exists to standardise was never shown by the scaffold.
         src = _bench_src(_unfillable(tmp_path), "tlm")
-        assert "jm_bench_add(&_bench," in src
+        assert "jm_bench_add_unit(&_bench," in src
 
     def test_a_populated_bench_has_no_todo(self, tmp_path):
         root = tmp_path / "p"
@@ -198,7 +198,7 @@ class TestTheStubSaysItIsUnfinished:
         assert "TODO" not in src
         # ...and it really is populated, so the assertion above is not
         # passing because nothing was generated.
-        assert "jm_bench_add(&_bench," in src
+        assert "jm_bench_add_unit(&_bench," in src
 
     def test_the_comment_block_is_uniformly_indented(self, tmp_path):
         # A generated comment is not something clang-format straightens out,
@@ -234,7 +234,7 @@ class TestTheTodoDoesNotDisableTheDetector:
         assert [s.component for s in found] == ["tlm"]
         # ...and the TODO really does mention the call, so the assertion
         # above is passing despite the mention rather than in its absence.
-        assert "jm_bench_add(&_bench," in _bench_src(root, "tlm")
+        assert "jm_bench_add_unit(&_bench," in _bench_src(root, "tlm")
 
     def test_a_real_call_still_counts_as_populated(self, tmp_path):
         root = tmp_path / "p"

@@ -219,6 +219,18 @@ def property_getter(stem_: str, prop: str) -> str:
     return f"{stem_}_get_{prop}"
 
 
+def property_setter(stem_: str, prop: str) -> str:
+    """The derived setter of writable property *prop* on the component whose
+    stem is *stem_*: ``<stem>_set_<prop>`` -- what its binding calls, what
+    jm declares for it, and what a refused assignment's default message
+    names (gh-2182).
+
+    >>> property_setter("dp_acc_trace", "alpha")
+    'dp_acc_trace_set_alpha'
+    """
+    return f"{stem_}_set_{prop}"
+
+
 def container_accessors(stem_: str, p: dict) -> "dict[str, str]":
     """The C names container property *p*'s binding calls (gh-543), on the
     component whose stem is *stem_*: each key *p* declares, else the ONE
@@ -1350,6 +1362,7 @@ AUTHOR_NAMED_KEYS = (
     "steps_fn",
     "real_create_fn",
     "status_fn",
+    "consumed_fn",
     "out_len_fn",
     "count_fn",
     "key_fn",
@@ -1960,16 +1973,6 @@ def respell_manifest(
     return IMPL_FILE_VALUE.sub(lifted, text)
 
 
-def _manifest_files(root: Path) -> "list[Path]":
-    """The manifest and the fragments it includes -- gh-1583's list."""
-    from . import _upgrade
-
-    main = root / "just-makeit.toml"
-    return ([main] if main.is_file() else []) + _upgrade._manifest_fragments(
-        root
-    )
-
-
 def unrenamed(root: Path, names: "dict[str, str]") -> "dict[str, list[str]]":
     """``{file: [old names]}`` for the author's C under *root* that still
     spells a name in *names* (from :func:`renames`) -- in code, whole
@@ -2032,11 +2035,13 @@ def author_named(root: Path, cfg: dict, tree: Path) -> "list[str]":
     same map as :func:`unrenamed_all`, by `apply` and first thing in
     `jm upgrade`, so neither writes.
     """
+    from . import _config as C
+
     if prefix(cfg) is None:
         return []
     names = with_macro_names(renames(tree, cfg))
     out = []
-    for p in _manifest_files(root):
+    for p in C.manifest_files(root):
         rel = p.relative_to(root).as_posix()
         text = p.read_text(encoding="utf-8")
         for m in AUTHOR_NAMED_VALUE.finditer(text):
@@ -2055,6 +2060,8 @@ def author_named(root: Path, cfg: dict, tree: Path) -> "list[str]":
 
 
 def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
+    from . import _config as C
+
     if not names and not stems:
         return {}
     macros = project_macros(root) if stems else {}
@@ -2070,7 +2077,7 @@ def _unrenamed(root, names, stems, cfg=None) -> "dict[str, list[str]]":
             out[p.relative_to(root).as_posix()] = found
     if cfg is not None:
         followed = walked(root)
-        for p in _manifest_files(root):
+        for p in C.manifest_files(root):
             text = p.read_text(encoding="utf-8")
             frozen = unfollowed_bodies(text, root, followed)
             found = sorted(

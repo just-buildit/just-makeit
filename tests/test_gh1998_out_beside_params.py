@@ -306,7 +306,7 @@ def test_max_out_sizes_the_buffer(built, obj, member):
             r"def delay\(\s*self,\s*x: [^,]+,\s*mu: float,\s*"
             r"out: [^=]+\| None = None,?\s*\)",
         ),
-        ("farrow.pyi", r"def delay_max_out\(self, x_len: int\) -> int:"),
+        ("farrow.pyi", r"def delay_max_out\(self, x_len: int, /\) -> int:"),
         (
             "resampler.pyi",
             r"def execute_ctrl\(\s*self,\s*x: [^,]+,\s*ctrl: [^,]+,\s*"
@@ -314,7 +314,7 @@ def test_max_out_sizes_the_buffer(built, obj, member):
         ),
         (
             "resampler.pyi",
-            r"def execute_ctrl_max_out\(self, x_len: int\) -> int:",
+            r"def execute_ctrl_max_out\(self, x_len: int, /\) -> int:",
         ),
     ],
     ids=["delay", "delay_max_out", "execute_ctrl", "execute_ctrl_max_out"],

@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace as dc_replace
-from typing import NamedTuple, Sequence
+from typing import Collection, Iterator, NamedTuple, Sequence
 
 
 def extract_doctests(text: str) -> list[str]:
@@ -724,6 +724,7 @@ def property_doc(
     doc_blocks: "dict | None",
     *,
     csym: str,
+    enums: "dict | None" = None,
 ) -> tuple[str, bool]:
     """A property's documentation, and whether it is only its name.
 
@@ -738,6 +739,16 @@ def property_doc(
     name. gh-1300: the field's OWN struct, never a same-named field in
     whatever the header includes -- that inheritance gave doppler's
     `IMDMeasure.rbw_hz` a different record's formula.
+
+    gh-2388: for a property bound to an ``[[enum]]`` (*enums* is
+    ``C.enums(cfg)``) the struct member's comment is not used: it describes
+    the C ``int`` (``0 little, 1 big.``) beside a ``Literal["le", "be"]``
+    return, which is the defect gh-2379 closed for a parameter. The choices
+    take that rung -- the same sentence, from `enum_param_desc` -- and the
+    manifest ``doc`` and the getter's ``@brief``, both authored for the
+    property, still outrank it. Such a property is still reported as
+    undocumented (the second element), since the choices are generated, not
+    written: ``jm status --docs`` keeps asking for a ``doc``.
 
     Returns
     -------
@@ -755,19 +766,29 @@ def property_doc(
     >>> blocks = {struct_members_key(): {"psd_state_t": {"n": "Frame len."}}}
     >>> property_doc("psd", {"name": "n"}, blocks, csym="psd")
     ('Frame len.', False)
+    >>> blocks = {struct_members_key(): {"psd_state_t": {"e": "0 le, 1 be."}}}
+    >>> property_doc("psd", {"name": "e", "enum": "end"}, blocks, csym="psd",
+    ...              enums={"end": ["le", "be"]})
+    ('One of ``"le"``, ``"be"``.', True)
     """
     from ._csym import property_getter
 
     name = str(prop.get("name") or "")
     # The one spelling `_csym.renames` moves with a c_prefix (gh-1670).
     block = (doc_blocks or {}).get(property_getter(csym, name))
+    # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
+    # returned raw, so the runtime getset kept an indented TOML table's
+    # continuation indent while the stub beside it did not -- found when
+    # the gh-1493 gate learned to compare indentation.
+    authored = "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
+    brief = block.brief if (block and block.brief) else ""
+    choices = (enums or {}).get(prop.get("enum") or "") or []
+    if choices and not (authored or brief):
+        # gh-2388: generated, not written -- see above.
+        return enum_param_desc(choices), True
     text = (
-        # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
-        # returned raw, so the runtime getset kept an indented TOML table's
-        # continuation indent while the stub beside it did not -- found when
-        # the gh-1493 gate learned to compare indentation.
-        "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
-        or (block.brief if (block and block.brief) else "")
+        authored
+        or brief
         or struct_member_doc(doc_blocks, f"{csym}_state_t", name)
     )
     return (text, False) if text else (name_summary(name), True)
@@ -913,27 +934,90 @@ def extract_struct_member_docs(
     >>> sorted(docs)
     ['ring_t', 'rx_state', 'rx_state_t']
     """
+    out: dict[str, dict[str, str]] = {}
+    for names, _start, body in _struct_bodies(header_text):
+        fields = extract_member_docs(body)
+        for name in names:
+            out.setdefault(name, fields)
+    return _alias_structs(header_text, out)
+
+
+def _struct_bodies(
+    header_text: str,
+) -> "Iterator[tuple[list[str], int, str]]":
+    """``(names, start, body)`` for every struct body *header_text* defines.
+
+    The one structural walk both struct readers share: *names* is the tag and,
+    when typedef'd, the type name; *start* is where the ``struct`` (or its
+    ``typedef``) keyword begins; *body* is the text between the braces.
+    Scanned on a comment/string mask, so a brace in a comment cannot end a
+    body early.
+    """
     from ._docsync import _code_mask, _match_brace
 
     mask = _code_mask(header_text)
-    out: dict[str, dict[str, str]] = {}
     for m in _STRUCT_OPEN_RE.finditer(mask):
         open_idx = m.end() - 1
         close_idx = _match_brace(mask, open_idx)
         if close_idx < 0:
             continue
-        fields = extract_member_docs(header_text[open_idx + 1 : close_idx])
         names = [m.group("tag")] if m.group("tag") else []
         if m.group("td"):
             t = _STRUCT_TYPEDEF_NAME_RE.match(mask, close_idx + 1)
             if t:
                 names.append(t.group("name"))
-        for name in names:
-            out.setdefault(name, fields)
-    for tag, name in _STRUCT_ALIAS_RE.findall(mask):
+        yield names, m.start(), header_text[open_idx + 1 : close_idx]
+
+
+def _alias_structs(header_text: str, out: dict) -> dict:
+    """*out* with each ``typedef struct tag name;`` naming *tag*'s entry."""
+    from ._docsync import _code_mask
+
+    for tag, name in _STRUCT_ALIAS_RE.findall(_code_mask(header_text)):
         if tag in out:
             out.setdefault(name, out[tag])
     return out
+
+
+def extract_struct_doc_blocks(header_text: str) -> "dict[str, str]":
+    r"""``{struct: raw_block}`` -- the Doxygen block a struct opens with.
+
+    gh-2283. :func:`extract_doc_blocks` binds a block to a FUNCTION
+    declaration, and a struct definition has no parameter list, so the
+    ``@brief`` above ``typedef struct { ... } wfm_source_t;`` reached
+    nothing. This is the same struct walk :func:`extract_struct_member_docs`
+    makes (:func:`_struct_bodies`), asking for the comment that ends where
+    the definition starts instead of the comments inside it. The raw block
+    keeps its delimiters, ready for :func:`parse_doxygen_block`.
+
+    Examples
+    --------
+    >>> h = (
+    ...     "/** @brief One clip. */\n"
+    ...     "typedef struct {\n"
+    ...     "    double gain; /**< Linear gain. */\n"
+    ...     "} clip_t;\n"
+    ...     "typedef struct { int n; } bare_t;\n"
+    ... )
+    >>> extract_struct_doc_blocks(h)
+    {'clip_t': '/** @brief One clip. */'}
+    """
+    out: dict[str, str] = {}
+    for names, start, _body in _struct_bodies(header_text):
+        # The comment that ends where the definition starts, whitespace
+        # between -- Doxygen binds the nearest preceding block. A `/**<`
+        # opener is a trailing member doc of the line above, never this
+        # struct's, as in `_BLOCK_THEN_DECL_RE`.
+        head = header_text[:start].rstrip()
+        if not head.endswith("*/"):
+            continue
+        i = head.rfind("/*", 0, len(head) - 2)
+        raw = head[i:]
+        if i < 0 or raw[:3] not in ("/**", "/*!") or raw[:4] == "/**<":
+            continue
+        for name in names:
+            out.setdefault(name, raw)
+    return _alias_structs(header_text, out)
 
 
 def struct_members_key() -> str:
@@ -1115,6 +1199,20 @@ def max_out_arity_key() -> str:
     return _MAX_OUT_KEY
 
 
+# gh-2184: every `*_max_out` the header declares, whatever its arity -- the
+# `declared_max_outs` set, riding the same map as the arity set above and
+# for the same reason. A `variable_output` method always has one (jm declares
+# it), so for that shape the arity is the only question. A list-of-records
+# method has none unless the AUTHOR declared it, and whether they did is
+# what decides how its binding sizes the result buffer.
+_MAX_OUT_DECLARED_KEY = "<max_out_declared>"
+
+
+def max_out_declared_key() -> str:
+    """The reserved key `declared_max_outs`'s result rides under (gh-2184)."""
+    return _MAX_OUT_DECLARED_KEY
+
+
 def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     """True when *c_name*'s declaration takes only the state (gh-761).
 
@@ -1123,6 +1221,33 @@ def max_out_is_state_only(doc_blocks: "dict | None", c_name: str) -> bool:
     prototype to read, and keeps gh-607's count-bearing default.
     """
     return c_name in ((doc_blocks or {}).get(_MAX_OUT_KEY) or frozenset())
+
+
+def max_out_is_declared(doc_blocks: "dict | None", c_name: str) -> bool:
+    """True when the header declares *c_name* at all, at any arity (gh-2184).
+
+    The question a list-of-records method asks before sizing its result
+    buffer: jm declares no ``<c>_<m>_max_out`` for that shape, so one in the
+    header is the author's statement that the method's capacity is known
+    before the call. :func:`max_out_is_state_only` then answers which of the
+    two spellings to call, exactly as it does for ``variable_output``.
+
+    False with no header read (a method being scaffolded for the first time),
+    which keeps the fixed ``max_results`` buffer.
+
+    Examples
+    --------
+    >>> max_out_is_declared(None, "w_push_max_out")
+    False
+    >>> blocks = {max_out_declared_key(): frozenset({"w_push_max_out"})}
+    >>> max_out_is_declared(blocks, "w_push_max_out")
+    True
+    >>> max_out_is_declared(blocks, "w_pull_max_out")
+    False
+    """
+    return c_name in (
+        (doc_blocks or {}).get(_MAX_OUT_DECLARED_KEY) or frozenset()
+    )
 
 
 def _strip_comment(raw: str) -> list[str]:
@@ -2145,12 +2270,23 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     ``doc`` renders exactly as it did -- but is never wrapped, because an
     authored line's width is its author's.
 
+    The one line jm adds is a blank one before the closing quotes, and only
+    when the text ends inside a doctest (gh-2176). A text-mode ``.pyi``
+    doctest reads an example's expected output up to the next blank line, so
+    without it the last example swallows the closing quotes and the
+    declaration after them, and can never match: gh-691's failure, which
+    jm fixed for a class's authored ``@code`` and which an ``extra_methods``
+    row's numpy ``doc`` reached once gh-2059 allowed one. The author cannot
+    write the line: `authored_doc_lines` drops trailing blank lines.
+
     Examples
     --------
     >>> authored_docstring(["One."], 4)
     ['    \"\"\"One.\"\"\"']
     >>> authored_docstring(["One.", "", "Two."], 4)
     ['    \"\"\"One.', '', '    Two.', '    \"\"\"']
+    >>> authored_docstring(["Two.", "", ">>> 1 + 1", "2"], 4)[-2:]
+    ['', '    \"\"\"']
     """
     pad = " " * indent
     if len(lines) == 1:
@@ -2158,8 +2294,26 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     return (
         [f'{pad}"""{lines[0]}']
         + [f"{pad}{ln}" if ln else "" for ln in lines[1:]]
+        + ([""] if _ends_in_doctest(lines) else [])
         + [f'{pad}"""']
     )
+
+
+def _ends_in_doctest(lines: "Sequence[str]") -> bool:
+    """Whether *lines* end inside a doctest: no blank line after the last
+    ``>>>`` prompt, so its example runs to the end of the text.
+
+    >>> _ends_in_doctest([">>> 1 + 1", "2"])
+    True
+    >>> _ends_in_doctest([">>> 1 + 1", "2", "", "Prose after it."])
+    False
+    >>> _ends_in_doctest(["No example."])
+    False
+    """
+    prompts = [
+        i for i, ln in enumerate(lines) if ln.lstrip().startswith(">>>")
+    ]
+    return bool(prompts) and all(ln.strip() for ln in lines[prompts[-1] :])
 
 
 def docstring_body(lines: "Sequence[str]", indent: int) -> "list[str]":
@@ -2675,6 +2829,7 @@ def render_numpy_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return `.pyi` numpy-docstring lines for one method or free function.
 
@@ -2696,8 +2851,8 @@ def render_numpy_doc(
         Member name, used for the summary fallback.
     py_params : list of tuple(str, str)
         ``(name, annotation)`` for the Python-facing arguments to document,
-        in order. Only these appear in ``Parameters`` — a binding-level
-        argument such as ``out=`` is deliberately left out by the caller.
+        in order. Only these appear in ``Parameters``; since gh-1042 they
+        include the binding's own ``count`` / ``out=`` where it has them.
     ret_ann : str
         Python return annotation; ``"None"`` suppresses the ``Returns``
         section entirely.
@@ -2724,6 +2879,15 @@ def render_numpy_doc(
         raises, rendered as a numpy ``Raises`` section (gh-869). Distinct from
         a header ``@throws``, which the block carries and which is merged with
         these; both end up in the one section.
+    param_defaults : dict, optional
+        `_gluedoc.binding_param_docs`: jm's description of each binding
+        argument this member synthesized, used when the header has none.
+        Its keys are also what :func:`render_numpy_method_doc` keeps out of
+        the positional ``@param`` match (gh-2028).
+    none_when : str, optional
+        The sentence saying when an optional return is ``None``, appended
+        to the ``Returns`` description -- `_diagnostics.empty_is_none_doc`
+        for a method (gh-2183). Both faces take it, as they take *raises*.
 
     Returns
     -------
@@ -2754,6 +2918,7 @@ def render_numpy_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     # gh-652: a backslash in a plain triple-quoted string is an invalid escape
     # sequence — `\l` in `:math:`20\log_{10}(g)`` is the common case — and
@@ -2792,9 +2957,13 @@ def render_numpy_doc(
     if examples:  # @code ... @endcode -> runnable doctest
         out += ["", f"{pad}Examples", f"{pad}--------"]
         out += [f"{pad}{ex}".rstrip() for ex in examples]
-        # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
-        # text file, where expected output runs until a blank line — without
-        # this the closing `"""` is swallowed into the last example's output.
+    # Trailing blank: under pytest --doctest-glob the .pyi is parsed as a
+    # text file, where expected output runs until a blank line — without
+    # this the closing `"""` is swallowed into the last example's output.
+    # Whether the example came from `@code` or is the end of an authored
+    # `doc` (a handle method's, gh-2176): `_ends_in_doctest` is the one rule
+    # `authored_docstring` applies too.
+    if examples or _ends_in_doctest(lines):
         out.append("")
     out.append(f'{pad}"""')
     return out
@@ -3001,6 +3170,7 @@ def _numpy_sections(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> tuple[list[str], list[str]]:
     """Unindented numpy section lines, with ``Examples`` kept separate.
 
@@ -3019,8 +3189,11 @@ def _numpy_sections(
         delimiter.
     """
     if block is not None:
+        # gh-2028: `param_defaults` is `_gluedoc.binding_param_docs`, keyed
+        # by exactly the arguments this method's binding synthesized -- so
+        # its keys are the names the positional match must not consume.
         summary, body, descs, ret, examples = render_numpy_method_doc(
-            block, py_params
+            block, py_params, binding=frozenset(param_defaults or ())
         )
     else:
         summary, body, descs, ret, examples = "", [], {}, "", []
@@ -3094,6 +3267,10 @@ def _numpy_sections(
             authored = authored_doc_lines((param_docs or {}).get(pname, ""))
             if authored:
                 out += [f"    {ln}" if ln else "" for ln in authored]
+                # gh-2379: an enum-backed parameter's choices follow the
+                # author's text, as they do on an init parameter.
+                if isinstance(ann, EnumAnn) and ann.choices:
+                    out += ["", f"    {enum_param_desc(ann.choices)}"]
                 continue
             # gh-1042: precedence is header > jm's per-name default >
             # the generic fallback. The middle rung exists because `count`
@@ -3107,7 +3284,16 @@ def _numpy_sections(
             out += [f"    {w}" for w in _wrap(desc, DESC_WIDTH)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
-        out += [f"    {w}" for w in _wrap(ret or return_fallback, DESC_WIDTH)]
+        _ret_desc = ret or return_fallback
+        if none_when:
+            # gh-2183: WHEN the optional annotation above is None, after
+            # what the value is. A description without a closing stop gets
+            # one, so the two read as two sentences rather than one.
+            _ret_desc = _ret_desc.rstrip()
+            if _ret_desc and _ret_desc[-1] not in ".!?":
+                _ret_desc += "."
+            _ret_desc = f"{_ret_desc} {none_when}".strip()
+        out += [f"    {w}" for w in _wrap(_ret_desc, DESC_WIDTH)]
         # gh-652: `@retval <v> <desc>` rows read as additional Returns entries.
         # A C function returning 0/-1 becomes a Python method that raises or
         # returns a value, and numpy has no other home for the per-value rows.
@@ -3158,6 +3344,7 @@ def render_runtime_doc(
     authored_doc: str = "",
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
+    none_when: str = "",
 ) -> list[str]:
     """Return runtime ``__doc__`` lines for one method, class or property.
 
@@ -3203,6 +3390,9 @@ def render_runtime_doc(
     override : str, optional
         Summary that outranks the header ``@brief`` — the manifest ``doc=``,
         or the caller's own shape-specific default sentence.
+    none_when : str, optional
+        When an optional return is ``None``; see :func:`render_numpy_doc`.
+        Must be the same sentence the stub face is given (gh-2183).
 
     Returns
     -------
@@ -3229,15 +3419,66 @@ def render_runtime_doc(
         authored_doc=authored_doc,
         return_fallback=return_fallback,
         raises=raises,
+        none_when=none_when,
     )
     if examples:  # @code ... @endcode -> runnable doctest
         lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]
     return lines
 
 
+class EnumAnn(str):
+    """The annotation ``str`` of an enum-backed parameter, with its choices.
+
+    gh-2379. An enum-backed parameter is a C ``int`` and, in Python, one of a
+    set of strings. The header's ``@param`` prose describes the C ``int`` --
+    ``0 little, 1 big.`` -- so a docstring that repeated it told the caller
+    to pass a number the binding refuses. Every face already computes the
+    parameter's annotation (``str``); carrying the choices on that same
+    object lets the ONE place that picks a description,
+    `render_numpy_method_doc`, document the choices instead, without a
+    parallel argument threaded through every renderer.
+
+    It is a ``str`` equal to ``"str"``, so a signature, a comparison or a
+    format that reads it as an annotation is unchanged.
+
+    Examples
+    --------
+    >>> a = EnumAnn(["le", "be"])
+    >>> a, a == "str", a.choices
+    ('str', True, ('le', 'be'))
+    """
+
+    choices: "tuple[str, ...]"
+
+    def __new__(cls, choices: "Collection[str]") -> "EnumAnn":
+        obj = super().__new__(cls, "str")
+        obj.choices = tuple(choices)
+        return obj
+
+
+def enum_param_desc(choices: "Collection[str]") -> str:
+    """What documents an enum-backed parameter: the strings it takes.
+
+    The header's ``@param`` prose is not used (gh-2379): it describes the C
+    ``int`` the choice is looked up to. The one sentence is the one the
+    handle face has said since gh-2228.
+
+    Examples
+    --------
+    >>> enum_param_desc(["le", "be"])
+    'One of ``"le"``, ``"be"``.'
+    >>> enum_param_desc([])
+    ''
+    """
+    if not choices:
+        return ""
+    return "One of " + ", ".join(f'``"{c}"``' for c in choices) + "."
+
+
 def render_numpy_method_doc(
     block: DoxyBlock,
     py_params: list[tuple[str, str]],
+    binding: "Collection[str]" = (),
 ) -> tuple[str, list[str], dict[str, str], str, list[str]]:
     """Resolve a method's prose fields from *block* for numpy rendering.
 
@@ -3261,6 +3502,12 @@ def render_numpy_method_doc(
         listed above as C-only, which it is not: it is Python-facing, and
         treating it as C-only is what silently discarded an authored
         ``@param out``.
+    binding : collection of str, optional
+        The names in *py_params* that are jm's own binding arguments -- the
+        keys of `_gluedoc.binding_param_docs` for this method (``count``,
+        ``out``). An authored ``@param`` of the same name still documents
+        one, but they never take part in the positional match below
+        (gh-2028).
 
     Returns
     -------
@@ -3270,6 +3517,17 @@ def render_numpy_method_doc(
         grouped into flowing paragraphs, ``param_desc_by_name`` maps each Python
         arg name to its description (possibly empty), and ``example_lines`` are
         the verbatim ``@code`` doctest lines (empty if none).
+
+    Examples
+    --------
+    The header documents the block input by its C name, ``in``; the Python
+    argument is ``x``, and ``out`` is the binding's own buffer:
+
+    >>> b = DoxyBlock(brief="Run.", params=[("in", "Samples."),
+    ...                                     ("gain", "Scale.")])
+    >>> py = [("x", "ndarray"), ("gain", "float"), ("out", "ndarray")]
+    >>> render_numpy_method_doc(b, py, binding={"out"})[2]
+    {'gain': 'Scale.', 'x': 'Samples.', 'out': ''}
     """
     py_names = [n for n, _ in py_params]
     # exact-name matches first
@@ -3281,15 +3539,31 @@ def render_numpy_method_doc(
             desc_by_name[n] = d
             matched.add(n)
     # positional zip of the remaining (Doxygen names that aren't Python args,
-    # e.g. C `samples` -> Python `x`) only when the leftover counts align.
-    if len(matched) < len(py_names):
-        leftover_py = [n for n in py_names if n not in matched]
+    # e.g. C `in` -> Python `x`) only when the leftover counts align.
+    #
+    # gh-2028: the binding's own arguments are not leftovers. `count` and
+    # `out=` are jm's, appended after the author's arguments, and documented
+    # by name (`@param out`) or by jm's default -- never by whichever C
+    # `@param` happens to sit in their position. Counted in, they made every
+    # method that has one misalign: `run(x, gain, out)` against `@param in`,
+    # `@param gain` is two Python leftovers against one Doxygen, the zip was
+    # skipped, and `in`'s prose never reached `x`. Every input-only
+    # `variable_output` method has carried `out=` since gh-219, so its
+    # `@param in` reached `x` only when the header also spelled `@param out`.
+    leftover_py = [
+        n for n in py_names if n not in matched and n not in binding
+    ]
+    if leftover_py:
         leftover_dox = [d for nm, d in block.params if nm not in py_names]
         if len(leftover_dox) == len(leftover_py):
             for n, d in zip(leftover_py, leftover_dox):
                 desc_by_name[n] = d
     for n in py_names:
         desc_by_name.setdefault(n, "")
+    # gh-2379: an enum-backed parameter is documented by its choices.
+    for n, ann in py_params:
+        if isinstance(ann, EnumAnn) and ann.choices:
+            desc_by_name[n] = enum_param_desc(ann.choices)
     return (
         block.brief,
         group_paragraphs(block.body),
@@ -3463,7 +3737,9 @@ def _row_docstring(
         from ._handle import _backing_doc_blocks, method_doc_lines
 
         blocks = _backing_doc_blocks(cfg, owner, root)
-        return "\n".join(method_doc_lines(row, blocks))
+        from ._config import enums as _enums
+
+        return "\n".join(method_doc_lines(row, blocks, _enums(cfg)))
     if owner_kind == "handle" and table == ("factories",):
         from ._handle import _factory_doc_lines
 

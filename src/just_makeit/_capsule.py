@@ -23,6 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import _coerce
+from . import _inflight
 from . import _config as C
 from . import _csym as CSYM
 from ._builtins import require_scope_names
@@ -32,7 +33,12 @@ from . import _procglobal
 from . import _types as T
 from . import _incpath as INC
 from ._context._modpath import module_docstring_lines, module_m_doc
-from ._context._parse import _build_ml_doc
+from ._context._parse import (
+    _build_ml_doc,
+    scalar_arg_c,
+    scalar_parse_c,
+    scalar_raw_locals,
+)
 from ._report import Refusal
 
 # ── small type helpers ───────────────────────────────────────────────────────
@@ -48,7 +54,8 @@ CTOR_ARRAY_HOME = (
 def scalar_meta(ptype: str, where: str, home: str = "") -> dict:
     """The ``_CTYPE_META`` row of one scalar a kind module converts.
 
-    The one lookup behind :func:`_scalar_fmt` and :func:`_to_py`, which every
+    The one lookup behind a scalar's parse (gh-2144: through
+    ``_context/_parse.scalar_arg_c``) and :func:`_to_py`, which every
     capsule and handle row that crosses as a single C scalar reaches: a
     capsule's ``init_params`` and ``properties``; a handle's ``create_args``,
     factory ``init_params``, method scalar ``args`` and ``returns``, and
@@ -117,11 +124,6 @@ def scalar_meta(ptype: str, where: str, home: str = "") -> dict:
     raise Refusal(f"{where}: {why}.")
 
 
-def _scalar_fmt(ptype: str, where: str, home: str = "") -> str:
-    """PyArg_ParseTuple format char for a scalar C type; see `scalar_meta`."""
-    return scalar_meta(ptype, where, home)["fmt"]
-
-
 def _to_py(ptype: str, expr: str, where: str) -> str:
     """C expression converting a scalar C value to a new PyObject.
 
@@ -165,12 +167,14 @@ def arg_scopes(
     the manifest, so only ``create`` is here.
     """
     backing = C.capsule_backing(cfg, module)
+    ips = C.module_init_params(cfg, module)
     return [
         (
             f"capsule module '{module}' init_params",
             f"_fn_{backing}_create",
-            C.module_init_params(cfg, module),
-            CREATE_LOCALS,
+            ips,
+            # gh-2144: a narrow param parses into `<name>_raw`.
+            CREATE_LOCALS | scalar_raw_locals((p[0], p[1]) for p in ips),
         )
     ]
 
@@ -179,20 +183,28 @@ def _emit_create(
     backing: str, sym: str, init_params: list[tuple], module: str
 ) -> str:
     names = [p[0] for p in init_params]
-    fmt = "".join(
-        _scalar_fmt(
+    # gh-1952 / gh-2144: each param through the method face's one
+    # tuple-parse slot -- at its row's width, then narrowed with a range
+    # check. It parsed straight into the declared type, so an `int8_t` took
+    # the four bytes `i` writes.
+    decls, fmt, addrs, convs = "", "", [], ""
+    for p in init_params:
+        meta = scalar_meta(
             p[1],
             f"capsule module '{module}' init_params row '{p[0]}'",
             CTOR_ARRAY_HOME,
         )
-        for p in init_params
-    )
-    decls = "".join(f"    {p[1]} {p[0]};\n" for p in init_params)
-    addrs = ", ".join(f"&{n}" for n in names)
+        decl, f, addr, conv = scalar_arg_c(
+            p[0], p[1], fail="return NULL;", meta=meta
+        )
+        decls += f"{decl}\n"
+        fmt += f
+        addrs.append(addr)
+        convs += f"{conv}\n" if conv else ""
     call_args = ", ".join(names)
     parse = (
-        f'    if (!PyArg_ParseTuple(args, "{fmt}", {addrs}))\n'
-        "        return NULL;\n"
+        f'    if (!PyArg_ParseTuple(args, "{fmt}", {", ".join(addrs)}))\n'
+        f"        return NULL;\n{convs}"
         if init_params
         else "    (void)args;\n"
     )
@@ -201,7 +213,8 @@ _fn_{backing}_create(PyObject *mod, PyObject *args)
 {{
     (void)mod;
 {decls}{parse}
-    _wrap_t *w = (_wrap_t *)malloc(sizeof(_wrap_t));
+    /* calloc: the in-flight count (gh-2272) starts at zero. */
+    _wrap_t *w = (_wrap_t *)calloc(1, sizeof(_wrap_t));
     if (!w) return PyErr_NoMemory();
 
     w->state = {sym}_create({call_args});
@@ -226,9 +239,20 @@ def _emit_execute(backing: str, sym: str, method: dict) -> str:
     name = method["name"]
     in_elem, in_npy = _array_elem_npy(method["arg_type"])
     out_elem, out_npy = _array_elem_npy(method["return_type"])
-    nogil = bool(method.get("nogil"))
-    gil_open = "    Py_BEGIN_ALLOW_THREADS\n" if nogil else ""
-    gil_close = "    Py_END_ALLOW_THREADS\n" if nogil else ""
+    # gh-2272 (gh-2267): through the one emitter, so the released call is
+    # counted on the wrapper and `destroy` waits for it.
+    from ._context._methods import _nogil_call
+
+    call = _nogil_call(
+        "size_t",
+        "n_out",
+        f"{sym}_{name}(w->state, in_data, n_in, out_data, max_out)",
+        bool(method.get("nogil")),
+        owner="w",
+        # gh-2273: both arrays are converted after `_get_wrap` ran.
+        release="Py_DECREF(x_arr); Py_DECREF(out_arr);",
+        gone=f"{backing}_state has already been destroyed",
+    )
     _out_guard = _coerce.out_buffer_guard(
         "out_obj", out_npy, decrefs="Py_DECREF(x_arr);"
     )
@@ -262,9 +286,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 
     const {in_elem} *in_data  = (const {in_elem} *)PyArray_DATA(x_arr);
     {out_elem} *out_data = ({out_elem} *)PyArray_DATA(out_arr);
-    size_t n_out;
-{gil_open}    n_out = {sym}_{name}(w->state, in_data, n_in, out_data, max_out);
-{gil_close}    Py_DECREF(x_arr);
+{call}    Py_DECREF(x_arr);
 {_n_out_guard}
     /* Return out_arr[:n_out] — zero-copy view into the caller's buffer. */
     PyObject *stop  = PyLong_FromSsize_t((Py_ssize_t)n_out);
@@ -279,8 +301,25 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 """
 
 
-def _emit_void_method(backing: str, sym: str, name: str) -> str:
-    """A bare ``(state) -> None`` method (e.g. reset)."""
+def _emit_void_method(backing: str, sym: str, method: dict) -> str:
+    """A bare ``(state) -> None`` method (e.g. reset).
+
+    gh-2259: ``nogil`` releases the GIL around the call, as it does for
+    :func:`_emit_execute`; it was accepted here and ignored. Through the
+    emitter an object method's kernel call uses.
+    """
+    from ._context._methods import _nogil_call
+
+    name = method["name"]
+    call = _nogil_call(
+        "",
+        "",
+        f"{sym}_{name}(w->state)",
+        bool(method.get("nogil")),
+        owner="w",
+        release="",
+        gone=f"{backing}_state has already been destroyed",
+    )
     return f"""static PyObject *
 _fn_{backing}_{name}(PyObject *mod, PyObject *args)
 {{
@@ -289,8 +328,7 @@ _fn_{backing}_{name}(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    {sym}_{name}(w->state);
-    Py_RETURN_NONE;
+{call}    Py_RETURN_NONE;
 }}
 """
 
@@ -304,9 +342,10 @@ _fn_{backing}_destroy(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &cap)) return NULL;
     _wrap_t *w = _get_wrap(cap);
     if (!w) return NULL;
-    {sym}_destroy(w->state);
-    w->state     = NULL;
+    /* gh-2272: refuse new calls first, then wait for a running one. */
     w->destroyed = 1;
+{_inflight.wait("w", "w->destroyed = 0; return NULL;", "    ")}    {sym}_destroy(w->state);
+    w->state     = NULL;
     Py_RETURN_NONE;
 }}
 """
@@ -330,18 +369,31 @@ _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
 }}
 """
     if prop.get("writable"):
-        fmt = _scalar_fmt(ptype, where)
+        # gh-1952 / gh-2144: the value parses as one object and converts
+        # through the setter faces' one conversion, at its row's width and
+        # range-checked. It parsed straight into the declared type.
+        # The setter's own locals carry a leading underscore: the converted
+        # local is named for the property (`double value`), so a source
+        # object, handle or wrapper called `value`, `cap` or `w` would be
+        # declared twice and the module would not compile.
+        parse = scalar_parse_c(
+            ptype,
+            "_value_obj",
+            name,
+            "return NULL;",
+            label=name,
+            meta=scalar_meta(ptype, where),
+        )
         out += f"""
 static PyObject *
 _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
 {{
     (void)mod;
-    PyObject *cap;
-    {ptype} {name};
-    if (!PyArg_ParseTuple(args, "O{fmt}", &cap, &{name})) return NULL;
-    _wrap_t *w = _get_wrap(cap);
-    if (!w) return NULL;
-    {sym}_set_{name}(w->state, {name});
+    PyObject *_cap_obj, *_value_obj;
+    if (!PyArg_ParseTuple(args, "OO", &_cap_obj, &_value_obj)) return NULL;
+{parse}    _wrap_t *_w = _get_wrap(_cap_obj);
+    if (!_w) return NULL;
+    {sym}_set_{name}(_w->state, {name});
     Py_RETURN_NONE;
 }}
 """
@@ -398,13 +450,13 @@ def render_ext(cfg: dict, module: str) -> str:
 
 #include "{header}"
 
-{_coerce.ARRAY_ARG_C}
+{_coerce.TU_HELPERS_C}
 static const char _CAPS[] = "{caps}";
 
 typedef struct {{
     {sym}_state_t *state;
     int                destroyed;
-}} _wrap_t;
+{_inflight.struct_field()}}} _wrap_t;
 
 static void
 _wrap_destructor(PyObject *cap)
@@ -413,7 +465,7 @@ _wrap_destructor(PyObject *cap)
     if (!w) return;
     if (!w->destroyed)
         {sym}_destroy(w->state);
-    free(w);
+{_inflight.free("w")}    free(w);
 }}
 
 static _wrap_t *
@@ -435,7 +487,7 @@ _get_wrap(PyObject *cap)
         if m.get("caller_out") or m.get("arg_type"):
             parts.append(_emit_execute(backing, sym, m))
         else:
-            parts.append(_emit_void_method(backing, sym, m["name"]))
+            parts.append(_emit_void_method(backing, sym, m))
     parts.append(_emit_destroy(backing, sym))
     for p in C.module_properties(cfg, module):
         parts.append(_emit_getset(backing, sym, p, module))
@@ -445,7 +497,7 @@ _get_wrap(PyObject *cap)
     rows = []
     for fn in fn_names:
         doc_c = _fn_doc_c(cfg, module, fn)
-        rows.append(f'    {{"{fn}", _fn_{fn}, METH_VARARGS,\n     {doc_c}}},')
+        rows.append(f'    {{"{fn}", _fn_{fn}, {FN_FLAGS},\n     {doc_c}}},')
     method_table = "\n".join(rows)
 
     parts.append(f"""static PyMethodDef _methods[] = {{
@@ -620,6 +672,31 @@ endif()
 # ── .pyi type stub ───────────────────────────────────────────────────────────
 
 
+#: The flags every function in a capsule module's method table registers
+#: with: each wrapper parses with ``PyArg_ParseTuple``, so none takes a
+#: keyword. :func:`_params` asks this, so the stub cannot disagree with it.
+FN_FLAGS = "METH_VARARGS"
+
+
+def _params(params: str) -> str:
+    """A capsule function's ``.pyi`` parameter list, positional-only when its
+    binding takes no keywords (gh-2212).
+
+    Without the ``/`` a type checker accepts ``f(state=cap)``, which raises
+    ``TypeError`` at runtime.
+
+    Examples
+    --------
+    >>> _params("state: Any")
+    'state: Any, /'
+    >>> _params("")
+    ''
+    """
+    from ._stubs import positional_only
+
+    return positional_only(params, FN_FLAGS)
+
+
 def _pyi_scalar(ptype: str) -> str:
     """Python annotation for a scalar C init-param / property type."""
     if ptype in ("float", "double", "long double"):
@@ -673,7 +750,8 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"{n}: {_pyi_scalar(t)}" for (n, t, _d) in init_params
     )
     _def(
-        f"{backing}_create", f"def {backing}_create({ctor_args}) -> {state_t}:"
+        f"{backing}_create",
+        f"def {backing}_create({_params(ctor_args)}) -> {state_t}:",
     )
 
     for m in C.module_methods(cfg, module):
@@ -686,32 +764,39 @@ def render_pyi(cfg: dict, module: str) -> str:
                 f"{backing}_{name}",
                 # gh-1724: the declared dtypes, by the one helper; the
                 # return is the ndarray view of `out`.
-                f"def {backing}_{name}(state: {state_t}, "
-                f"x: {T.array_param_annotation(m['arg_type'])}, "
-                f"out: {_out_ann}) -> NDArray[Any]:",
+                f"def {backing}_{name}("
+                + _params(
+                    f"state: {state_t}, "
+                    f"x: {T.array_param_annotation(m['arg_type'])}, "
+                    f"out: {_out_ann}"
+                )
+                + ") -> NDArray[Any]:",
             )
         else:
             _def(
                 f"{backing}_{name}",
-                f"def {backing}_{name}(state: {state_t}) -> None:",
+                f"def {backing}_{name}({_params(f'state: {state_t}')})"
+                " -> None:",
             )
 
     _def(
         f"{backing}_destroy",
-        f"def {backing}_destroy(state: {state_t}) -> None:",
+        f"def {backing}_destroy({_params(f'state: {state_t}')}) -> None:",
     )
 
     for p in C.module_properties(cfg, module):
         pn, pt = p["name"], p["type"]
         _def(
             f"{backing}_get_{pn}",
-            f"def {backing}_get_{pn}(state: {state_t}) -> {_pyi_scalar(pt)}:",
+            f"def {backing}_get_{pn}({_params(f'state: {state_t}')})"
+            f" -> {_pyi_scalar(pt)}:",
         )
         if p.get("writable"):
             _def(
                 f"{backing}_set_{pn}",
-                f"def {backing}_set_{pn}(state: {state_t}, "
-                f"value: {_pyi_scalar(pt)}) -> None:",
+                f"def {backing}_set_{pn}("
+                + _params(f"state: {state_t}, value: {_pyi_scalar(pt)}")
+                + ") -> None:",
             )
     lines.append("")
     # gh-747: same door as every other `.pyi` producer. No capsule module in

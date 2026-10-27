@@ -164,12 +164,6 @@ TRIGGERS = [
         "o.run",
         id="void-return-batch",
     ),
-    pytest.param(
-        ["object o"],
-        "method o run --batch --variable-output --return-type void",
-        "o.run",
-        id="void-return-batch-variable-output",
-    ),
 ] + [
     pytest.param(
         [],

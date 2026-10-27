@@ -385,6 +385,10 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # test passes, because they call the emitters with a cfg that HAS the
         # key. Same shape as `destroy` below and gh-542's `no_reset`.
         "process_global": _procglobal.is_process_global(cfg, comp),
+        # gh-2316: manifest-only too. Dropped here, the replay scaffolds the
+        # `bench_<obj>.py` the object declined, `status` reports it MISSING
+        # and `apply` writes it back.
+        "no_python_bench": C.is_no_python_bench(cfg, comp),
         # gh-1448: manifest-only, for the reason every key above is. Dropped
         # here, the replayed tree renders every owned fragment SACRED -- the
         # "Hand-patches are preserved" banner and no ownership token -- and
@@ -394,6 +398,12 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # checked the body and not the banner.
         "fragment": C.fragment_kind(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
+        # gh-2215: neither was named here, so the scratch manifest every
+        # later replayed render reads said the object did neither. No file
+        # measured differently -- both shape only the `_core.h`, which is
+        # the author's -- which is why only the signature gate saw it.
+        "step_delegates": C.step_delegates(cfg, comp),
+        "opaque_state": C.is_opaque_state(cfg, comp),
         "serializable": C.is_serializable(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
         "async_stream": C.is_async_stream(cfg, comp),
@@ -449,6 +459,19 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # declaration there it answered no and demonstrated a reset the
         # author's body does not do: a doctest that fails.
         "reset_impl_decl": Ctx.declared_reset_impl(cfg, comp),
+        # gh-2215: `jm object --variable-output` adds a method AS it creates
+        # the object, and the manifest holds that method as a
+        # `[[<obj>.methods]]` row like any other, which `_replay_method`
+        # replays. So the shorthand is off here, or the method is added
+        # twice; named so the wiring gate reads it as decided.
+        "variable_output": False,
+        "multi_output": [],
+        "method_name": "run",
+        "max_out": 0,
+        "_hint": True,
+        # The replay creates a module's objects in its `objects` order, so
+        # appending each one rebuilds that list as declared.
+        "before": "",
     }
 
 
@@ -613,11 +636,41 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         temp_root,
         [],
         [],
+        # gh-2215: every parameter `_new.run` takes is named in this call,
+        # and `tests/test_manifest_wiring_gate.py` refuses one that is not --
+        # derived from the signature, so a key added there is a decision
+        # here, never a silent default. These seven are the CLI's shorthand
+        # for objects and modules created WITH the project; the replay
+        # creates none here (each is replayed below through its own
+        # command), so they are inert, and named as such.
+        modules=[],
+        mutable=False,
+        no_step=False,
+        no_reset=False,
+        no_state=False,
+        arg_type="float _Complex",
+        return_type=None,
+        # gh-2215: the `[project]` dependency keys, as declared, so the
+        # replay's manifest is the project's own.
+        find_packages=cfg.get("project", {}).get("find_packages"),
+        pkg_modules=cfg.get("project", {}).get("pkg_modules"),
+        # ...except `c_deps`: each is one `add_subdirectory` line, and its
+        # one writer on `apply` is `_splice_cmake_components`, which
+        # prepends it from the SOURCE manifest. Rendered into the replay as
+        # well, the line would sit wherever `_new.run` put it and be kept
+        # there instead -- two writers of one block (gh-1985's order test
+        # measures it).
+        c_deps=None,
+        platforms=cfg.get("project", {}).get("platforms"),
+        # The replay writes one manifest whatever layout the project uses:
+        # it is scratch, never read back (`_SKIP_FILES`), and its writers
+        # take the plain single-file path (gh-698).
+        fragments=False,
         build_system=C.build_system(cfg),
         perf=C.is_perf(cfg),
         pytest_=C.is_pytest(cfg),
         pytest_benchmark_=C.is_pytest_benchmark(cfg),
-        # gh-1368: no `platforms` -- it no longer changes what is rendered.
+        # gh-1368: `platforms` (above) no longer changes what is rendered.
         # gh-960: and the same C-formatting opt-in, so the replay renders its
         # own `.clang-format`. Without it the replay had none, `run` copied
         # the real one in, and the file `status` compared was therefore the
@@ -688,57 +741,31 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             _handle.materialize(cfg, temp_root, mod, project_root=project_root)
             continue
         # gh-523: `package` must reach the temp scaffold *at module-creation
-        # time* — it decides where every Python artifact is written, so the
-        # later metadata copy-down (extra_link_libs & co.) would be too late.
-        # gh-645: `doc` is read at module-creation time (it renders the
-        # re-export __init__.py's docstring), so it has to be forwarded
-        # here for the same reason `package` is -- the later metadata
-        # copy-down would be too late. This is the gh-663 shape: a new
-        # manifest key silently dropped by the replay.
+        # time* -- it decides where every Python artifact is written.
+        # gh-645: `doc` is read at module-creation time too (it renders the
+        # re-export __init__.py's docstring). This is the gh-663 shape: a
+        # new manifest key silently dropped by the replay.
+        #
+        # gh-2215: and every other key `_module.run` takes, named here. The
+        # `extra_*` keys and `functions_in_core` used to be copied into the
+        # temp manifest after this call, by a second writer of the same
+        # table; `_module.run` persists each exactly as `jm module` does, so
+        # the one call is the one writer. gh-247: `functions_in_core` must
+        # be in the temp manifest before the function replay below, which it
+        # now is from the module's first save.
         _module.run(
             temp_root,
             mod,
+            extra_include_dirs=C.extra_include_dirs(cfg, mod),
+            extra_link_libs=C.extra_link_libs(cfg, mod),
+            extra_types=C.extra_types(cfg, mod),
+            functions_in_core=C.functions_in_core(cfg, mod),
             package=C.module_package(cfg, mod),
             doc=C.module_doc(cfg, mod),
             # gh-1463: at creation too, so a module with no members yet still
             # renders its CMake guard in the temp tree.
             platforms=cfg.get("module", {}).get(mod, {}).get("platforms"),
         )
-
-    # After module scaffolding, copy module-level metadata (e.g.
-    # extra_link_libs) from the real project TOML into the temp TOML so
-    # _regenerate_module() inside object.run() picks it up.
-    _mods_need_update = [
-        m
-        for m in mods
-        if not C.is_no_generate_module(cfg, m)
-        and not C.is_capsule_module(cfg, m)
-        and not C.is_composer_module(cfg, m)
-        and not C.is_handle_module(cfg, m)
-        and (
-            cfg.get("module", {}).get(m, {}).get("extra_link_libs")
-            or cfg.get("module", {}).get(m, {}).get("extra_types")
-            or cfg.get("module", {}).get(m, {}).get("extra_include_dirs")
-            # gh-247: functions_in_core must reach the temp TOML *before* the
-            # function replay below, else _function.run() falls back to
-            # per-function .c files and the build double-defines the symbols.
-            or cfg.get("module", {}).get(m, {}).get("functions_in_core")
-        )
-    ]
-    if _mods_need_update:
-        tcfg2 = C.load(temp_root)
-        for mod in _mods_need_update:
-            mod_data = cfg["module"][mod]
-            tmod = tcfg2.setdefault("module", {}).setdefault(mod, {})
-            if mod_data.get("extra_types"):
-                tmod["extra_types"] = mod_data["extra_types"]
-            if mod_data.get("extra_link_libs"):
-                tmod["extra_link_libs"] = mod_data["extra_link_libs"]
-            if mod_data.get("extra_include_dirs"):
-                tmod["extra_include_dirs"] = mod_data["extra_include_dirs"]
-            if mod_data.get("functions_in_core"):
-                tmod["functions_in_core"] = mod_data["functions_in_core"]
-        C.save(temp_root, tcfg2)
 
     # Seed _extra.c files from the real project so _regenerate_module()
     # detects and re-includes them in the temp aggregator.
@@ -870,6 +897,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             out_type=m.get("out_type"),
             out_divisor=int(m.get("out_divisor", 1)),
             batch=bool(m.get("batch")),
+            # gh-2215: `jm method --no-bench` writes `bench = false`.
+            no_bench=m.get("bench") is False,
             impl_body=m_impl,
             none_on_empty=bool(m.get("none_on_empty")),
             strict=bool(m.get("strict")),  # gh-1426 B
@@ -893,6 +922,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # record one. gh-632's replace-by-name warning is what surfaced
             # it; before that it would have landed silently.
             record_dtype=m.get("record_dtype", ""),
+            consumed_fn=m.get("consumed_fn", ""),  # gh-2204
             # gh-1312: forwarded EXPLICITLY, like record_dtype above and
             # for the same reason -- this loop names keys one by one, so
             # an unnamed one is silently absent and the replayed method
@@ -915,6 +945,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             exact_max_out=bool(m.get("exact_max_out")),
             count_default=m.get("count_default", ""),
             count_name=m.get("count_name", ""),
+            no_count=bool(m.get("no_count")),  # gh-2233
+            out_cols=str(m.get("out_cols", "") or ""),
+            short_out=bool(m.get("short_out")),
             nogil=bool(m.get("nogil")),
             status_return=bool(m.get("status_return")),
             # gh-805 §A2/§B. `apply` enumerates method keys ONE BY ONE, so a
@@ -960,10 +993,19 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             codec=p.get("codec", ""),  # gh-554
             entry_fn=p.get("entry_fn", ""),
             capsule=p.get("capsule", ""),  # gh-788
+            # gh-2215: what the published pointer IS (gh-1235). Dropped, the
+            # replay's producer publishes over `expr` with no declared type,
+            # and a consumer's `object` reference refuses it.
+            capsule_type=p.get("capsule_type", ""),
+            py_type=p.get("py_type", ""),  # gh-2347
             entry_type=p.get("entry_type", ""),
             type_field=p.get("type_field", ""),
             count_field=p.get("count_field", ""),
             value_field=p.get("value_field", ""),
+            # gh-2182: a refusing setter. Keys are forwarded one by one, so
+            # one not named here is silently absent from the replay.
+            error=p.get("error", ""),
+            error_message=p.get("error_message", ""),
         )
 
     for comp in all_comps:
@@ -1010,6 +1052,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 category=w.get("category", "UserWarning"),
                 after=w.get("after", "__init__"),
                 stacklevel=int(w.get("stacklevel", 1) or 1),
+                view="",  # the object's own; a view's are replayed below
             )
         # gh-482: same reasoning as the warnings replay above — a declared
         # create_error must reach a fresh checkout from the manifest alone.
@@ -1020,6 +1063,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 C.create_error(cfg, comp),
                 C.create_error_message(cfg, comp),
                 module=mod,
+                view="",  # the object's own; a view's rides `_view.run`
             )
         # gh-504: same reasoning — a declared view (a second class over this
         # object's core) must rebuild from the manifest alone, or a fresh
@@ -3212,6 +3256,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
     prototype for them would be wrong rather than merely redundant.
     """
     from . import _types as _T
+    from ._context._diagnostics import setter_return_type
     from ._property import plain_accessor_decls
 
     out: list[str] = []
@@ -3229,7 +3274,9 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
         ):
             continue
         ctype = p.get("type", "")
-        if ctype not in _T._CTYPE_META:
+        # gh-2347: a json property's getter is declared like a plain one,
+        # returning the `char *` the binding parses and frees.
+        if ctype not in _T._CTYPE_META and not _T.is_json_type(ctype):
             continue  # dict/list/tuple and friends are declared by the user
         out += plain_accessor_decls(
             comp,
@@ -3237,6 +3284,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             ctype,
             str(p.get("writable", "")).lower() in ("true", "1", "yes"),
             csym=CSYM.stem(cfg, comp),
+            setter_type=setter_return_type(p),  # gh-2182
         )
     return out
 
@@ -3888,6 +3936,14 @@ def _apply_manifest(
     _extra_errors = _extramethods.manifest_errors(root, cfg)
     if _extra_errors:
         C._refuse(_extra_errors)
+    # gh-2302: a setter whose status the binding would discard. Before
+    # anything is written: a standalone header's declaration would be
+    # rewritten to `void` below, out of step with its definition.
+    from ._property import discarded_setter_status
+
+    _dropped_status = discarded_setter_status(root, cfg)
+    if _dropped_status:
+        C._refuse(_dropped_status)
 
     # gh-327: refuse to silently promote a former module object — whose
     # fragment was left behind after `objects = [...]` dropped it — into a
@@ -4157,6 +4213,20 @@ def _apply_manifest(
             f"{_orphan.split('/')[2].removesuffix('_procglobal.h')} does not "
             "declare `process_global`. jm does not delete files — remove it, "
             "or re-declare the key",
+            gates=True,
+            stream=sys.stdout,
+            indent="  ",
+        )
+
+    # gh-2316: and a Python benchmark the object declines. Warned on every
+    # apply while it is on disk, as gh-1142's orphan header is: apply is
+    # what an author runs after changing the manifest, so it is where the
+    # disagreement is first seen.
+    for _declined in C.declined_python_benches(root, cfg):
+        _report.warn(
+            f"{_declined} is a Python benchmark for an object that declares "
+            "`no_python_bench`, so jm no longer renders or reconciles it. "
+            "jm does not delete files — remove it, or drop the key",
             gates=True,
             stream=sys.stdout,
             indent="  ",

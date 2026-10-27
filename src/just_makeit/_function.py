@@ -392,6 +392,8 @@ def run(
             "out_size": out_size,
             "variable_output": variable_output,
             "result_fields": result_fields,
+            # gh-2205: a records capacity is `out_size` or this, not both.
+            "max_results_param": max_results_param,
         }
     )
     if _len_err:

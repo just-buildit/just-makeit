@@ -25,8 +25,10 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _color as Color
+from . import _borrow
 from . import _config as C
 from . import _csym as CSYM
+from . import _enumc
 from ._docstring import class_import_line, class_import_path
 from . import _modplatforms
 from . import _procglobal
@@ -56,6 +58,7 @@ from ._docstring import (
     DoxyBlock,
     extract_doc_blocks,
     extract_member_docs,
+    extract_struct_doc_blocks,
     extract_struct_member_docs,
     struct_members_key,
     member_doc_key,
@@ -63,18 +66,31 @@ from ._docstring import (
     authored_class_brief,
     inherit_ctor_params,
     is_scaffold_doc,
+    declared_max_outs,
     max_out_arity_key,
+    max_out_declared_key,
     max_out_is_state_only,
     parse_doxygen_block,
     scan_max_out_arity,
 )
 from ._context._parse import _build_ml_doc
+from ._context._destroy import PARK_FIELD
+from . import _inflight
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
 # temp tree whose headers carry only template Doxygen. Docstring derivation
 # must instead read the REAL project's sacred `_core.h`, so apply sets this
 # override to the real project root for the duration of the replay.
 _DOC_ROOT_OVERRIDE: Path | None = None
+
+# gh-2344: which project's sacred binding fragments a render reads to decide
+# what the module aggregator may publish. `status` deletes every fragment
+# from its scratch copy (gh-767) so the replay renders jm's current one for
+# comparison; the aggregator a real `apply` writes is decided by the fragment
+# that will actually be compiled, which is the user's. `status` sets this to
+# the real project for the duration of its replay; unset, the replay's own
+# root (`_DOC_ROOT_OVERRIDE`) is the project.
+_FRAGMENT_ROOT_OVERRIDE: Path | None = None
 
 
 # A project-local include: `#include "psd/psd_core.h"`. Angle-bracket includes
@@ -89,14 +105,20 @@ _LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
 # Keyed on identity AND stat, because a test (or a user mid-session) can
 # rewrite a header between two applies in one process; a path-only key would
 # serve the pre-edit text and the edit would look like it did nothing.
-_MEMBER_DOC_CACHE: dict[tuple[Path, int, int], tuple[dict, str, dict]] = {}
+_MEMBER_DOC_CACHE: dict[
+    tuple[Path, int, int], tuple[dict, str, dict, dict]
+] = {}
 
 
-def _header_member_docs(path: Path) -> tuple[dict[str, str], str, dict]:
-    """``(member_docs, text, struct_docs)`` for one header, memoized.
+def _header_member_docs(
+    path: Path,
+) -> tuple[dict[str, str], str, dict, dict[str, str]]:
+    """``(member_docs, text, struct_docs, struct_blocks)`` for one header.
 
-    Keyed on path+mtime+size. *struct_docs* is gh-1300's per-struct map,
-    parsed in the same pass so a shared header is still scanned once.
+    Memoized, keyed on path+mtime+size. *struct_docs* is gh-1300's
+    per-struct map, and *struct_blocks* gh-2283's block each struct opens
+    with, both parsed in the same pass so a shared header is still scanned
+    once.
     """
     st = path.stat()
     key = (path, st.st_mtime_ns, st.st_size)
@@ -107,6 +129,7 @@ def _header_member_docs(path: Path) -> tuple[dict[str, str], str, dict]:
             extract_member_docs(body),
             body,
             extract_struct_member_docs(body),
+            extract_struct_doc_blocks(body),
         )
         _MEMBER_DOC_CACHE[key] = hit
     return hit
@@ -114,7 +137,7 @@ def _header_member_docs(path: Path) -> tuple[dict[str, str], str, dict]:
 
 def _included_member_docs(
     inc_root: Path, text: str
-) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+) -> tuple[dict[str, str], dict[str, dict[str, str]], dict[str, str]]:
     """Member docs from the project headers *text* includes (gh-724).
 
     A struct a component returns is often declared in a *shared* header that
@@ -140,13 +163,16 @@ def _included_member_docs(
     in both keeps the component's own text — the same "nearest wins" rule the
     rest of derivation follows.
 
-    Returns ``(by_name, by_struct)``. *by_name* is the bare-name map above,
-    which an enumerator may use; a struct FIELD must use *by_struct*, because
-    following includes is exactly what let an unrelated struct's same-named
-    field document a property (gh-1300).
+    Returns ``(by_name, by_struct, struct_blocks)``. *by_name* is the
+    bare-name map above, which an enumerator may use; a struct FIELD must use
+    *by_struct*, because following includes is exactly what let an unrelated
+    struct's same-named field document a property (gh-1300). *struct_blocks*
+    is the raw Doxygen block each struct definition opens with, by struct
+    name (gh-2283): what a composer's source type says about itself.
     """
     out: dict[str, str] = {}
     structs: dict[str, dict[str, str]] = {}
+    blocks: dict[str, str] = {}
     seen: set[Path] = set()
     pending = [text]
     while pending:
@@ -155,13 +181,15 @@ def _included_member_docs(
             if path in seen or not path.is_file():
                 continue
             seen.add(path)
-            docs, body, by_struct = _header_member_docs(path)
+            docs, body, by_struct, by_block = _header_member_docs(path)
             pending.append(body)
             for name, doc in docs.items():
                 out.setdefault(name, doc)
             for sname, fields in by_struct.items():
                 structs.setdefault(sname, fields)
-    return out, structs
+            for sname, raw in by_block.items():
+                blocks.setdefault(sname, raw)
+    return out, structs, blocks
 
 
 def _load_doc_blocks(
@@ -200,7 +228,7 @@ def _load_doc_blocks(
     #
     # gh-724: included project headers first, so the component's own header
     # overwrites them below and wins any name it declares itself.
-    _inc_by_name, _inc_structs = _included_member_docs(inc_root, text)
+    _inc_by_name, _inc_structs, _ = _included_member_docs(inc_root, text)
     for _mname, _mdoc in _inc_by_name.items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for _mname, _mdoc in extract_member_docs(text).items():
@@ -261,6 +289,27 @@ def _load_doc_blocks(
     _arity = scan_max_out_arity(text)
     if _arity:
         out[max_out_arity_key()] = _arity
+    # gh-2184: and which list-of-records methods' `_max_out` it declares,
+    # from the same scan, under the same only-when-non-empty rule. That
+    # capacity is the author's to declare, and this is how the binding sees
+    # that they did. ONLY those: jm declares every `variable_output`
+    # method's `_max_out` itself, nothing reads them from here, and a map
+    # they made non-empty reads as an authored header to `apply`, whose
+    # post-replay re-render it would then trigger for every such project.
+    # gh-2233: and every `no_count` method's, whose binding refuses a
+    # declaration that still takes a count -- which the arity set alone
+    # cannot tell from no declaration at all. Its accepted declaration is
+    # state-only, so it is in the arity set already and makes nothing
+    # non-empty that was not.
+    _lists = {
+        f"{C.method_c_symbol(stem, m)}_max_out"
+        for m in C.methods(manifest, obj)
+        + [m for v in C.views(manifest, obj) for m in C.view_methods(v)]
+        if _record.is_record_list(m) or m.get("no_count")
+    }
+    _declared = declared_max_outs(text) & _lists
+    if _declared:
+        out[max_out_declared_key()] = _declared
     return out
 
 
@@ -343,6 +392,11 @@ def inert_pass_capacity(
     inert: list[tuple[str, str]] = []
     for m in C.methods(cfg, obj):
         if not m.get("pass_capacity") or m.get("exact_max_out"):
+            continue
+        # gh-2233: a `no_count` method's state-only bound IS its per-call
+        # bound -- the call has no count -- so its `pass_capacity` is live
+        # (`_context._methods`' `_moc_state_only`), not in the seam.
+        if m.get("no_count"):
             continue
         if not m.get("variable_output"):
             continue
@@ -914,8 +968,14 @@ def _merge_module_init(
         existing_sub = _parse_import_names(sm.group(0)) if sm else []
         # Authoritative within the sub too (gh-329): drop names the manifest
         # dropped from this reexport, keep surviving order, append the rest.
+        # gh-2376: unless the sub is a package SIBLING module, which owns its
+        # own line and prunes it itself: there the reexport only adds, or the
+        # two writers cut each other's names (a sibling's published enums).
         declared = set(names)
-        sub_names = [n for n in existing_sub if n in declared]
+        owned_elsewhere = sub in (siblings or [])
+        sub_names = [
+            n for n in existing_sub if owned_elsewhere or n in declared
+        ]
         sub_seen = set(sub_names)
         for n in names:
             if n not in sub_seen:
@@ -1203,6 +1263,63 @@ def _view_frag_id(view: dict) -> str:
     return view["class_name"].lower()
 
 
+def fragment_destroy_ctx(
+    cfg: dict,
+    obj: str,
+    ctx: dict,
+    *,
+    lends: bool,
+    releases: "bool | None" = None,
+) -> "dict[str, str]":
+    """A module fragment's destructor slots, for one lending status.
+
+    One call for the three renders that must agree on it: a module
+    object's fragment, each of its views' (which share the parent's
+    destructor contract, gh-541), and `jm_owned_functions`, which renders
+    the same teardown with the OTHER lending status to recognise a body jm
+    wrote before the object started or stopped lending views (gh-2187). A
+    second copy of these arguments there could recognise a teardown this
+    render never wrote.
+
+    Parameters
+    ----------
+    cfg : dict
+        The project manifest.
+    obj : str
+        The object the fragment wraps: a view's parent, for a view.
+    ctx : dict
+        The fragment's component context; ``component``, ``ComponentW`` and
+        ``csym`` are read from it.
+    lends : bool
+        Whether the teardown parks the state for ``tp_dealloc`` rather than
+        freeing it (`_borrow.lends`).
+    releases : bool, optional
+        Whether a method releases the GIL, so the teardown waits for it
+        (gh-2272). Derived from the manifest when omitted; passed only to
+        render the other status.
+
+    Returns
+    -------
+    dict of str to str
+        `_context.make_destroy_ctx`'s slots.
+    """
+    return Ctx.make_destroy_ctx(
+        ctx["component"],
+        ctx["ComponentW"],
+        C.destroy_spec(cfg, obj),
+        C.methods(cfg, obj),
+        class_name=C.class_name(cfg, obj) or "",
+        # gh-1323: so the destructor is the counterpart of whatever
+        # `create_fn` names, not always `<comp>_destroy`. gh-1326: the
+        # module path dropped it, so it derived nothing here even though
+        # the resolver was right.
+        create_fn=C.object_create_fn(cfg, obj) or "",
+        csym=ctx["csym"],
+        lends=lends,
+        releases=releases,
+    )
+
+
 def _make_view_ctx(
     root: Path,
     cfg: dict,
@@ -1357,17 +1474,7 @@ def _make_view_ctx(
     # failure the parent's reports would be the original bug wearing a
     # different class name.
     ctx.update(
-        Ctx.make_destroy_ctx(
-            ctx["component"],
-            ctx["ComponentW"],
-            C.destroy_spec(cfg, obj),
-            C.methods(cfg, obj),
-            class_name=C.class_name(cfg, obj) or "",
-            # gh-1323: so the destructor is the counterpart of whatever
-            # `create_fn` names, not always `<comp>_destroy`.
-            create_fn=C.object_create_fn(cfg, obj) or "",
-            csym=ctx["csym"],
-        )
+        fragment_destroy_ctx(cfg, obj, ctx, lends=_borrow.lends(cfg, obj))
     )
     ctx.update(
         Ctx.make_stream_ctx(
@@ -1615,17 +1722,7 @@ def build_component_ctxs(
         # gh-541/gh-544: a module object's declared destructor contract,
         # filled into its COMPONENT_TYPE_SECTION slots by the aggregator.
         ctx.update(
-            Ctx.make_destroy_ctx(
-                ctx["component"],
-                ctx["ComponentW"],
-                C.destroy_spec(cfg, obj),
-                C.methods(cfg, obj),
-                class_name=C.class_name(cfg, obj) or "",
-                # gh-1326: this path dropped it, so `create_fn` derived
-                # nothing here even though the resolver was right.
-                create_fn=C.object_create_fn(cfg, obj) or "",
-                csym=ctx["csym"],
-            )
+            fragment_destroy_ctx(cfg, obj, ctx, lends=_borrow.lends(cfg, obj))
         )
         # Stream generator (gh-203): a `--streamable` module object gets the
         # same stream()/__iter__ as a standalone, filled into its
@@ -1897,6 +1994,31 @@ def _module_extra_files(
     return found
 
 
+def _fragment_enum_ctxs(
+    root: Path, cname: str, comp_ctxs: list[dict]
+) -> list[dict]:
+    """*comp_ctxs* with each object's enums cut to what its fragment defines.
+
+    gh-2344: a module object publishes only the enums its sacred fragment
+    defines a table for (:func:`_enumc.fragment_publication`). The aggregator
+    and the package ``__init__.py`` re-export (gh-2372) both read the module's
+    enums through this; the module stub asks the same question of the same
+    file, so all three name one list.
+    """
+    return [
+        {
+            **ctx,
+            "enum_publish_entries": _enumc.fragment_publication(
+                root,
+                cname,
+                ctx.get("frag_id", ctx["component"]),
+                ctx.get("enum_publish_entries") or [],
+            ),
+        }
+        for ctx in comp_ctxs
+    ]
+
+
 def render_module_ext_c(
     root: Path,
     cfg: dict,
@@ -1929,6 +2051,7 @@ def render_module_ext_c(
         functions = C.module_functions(cfg, module)
     if extra_files is None:
         extra_files = _module_extra_files(root, mp.cname, comp_ctxs)
+    comp_ctxs = _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
     return R.render_module_ext_aggregator(
         module,
         comp_ctxs,
@@ -1956,7 +2079,12 @@ def render_module_ext_c(
 
 
 def jm_owned_functions(
-    cfg: dict, ctx: dict, rendered: str
+    cfg: dict,
+    ctx: dict,
+    rendered: str,
+    *,
+    kept: "dict[str, str]",
+    into: str,
 ) -> "tuple[str, ...]":
     """Fragment functions jm regenerates rather than keeps as the author's.
 
@@ -1968,9 +2096,24 @@ def jm_owned_functions(
     - gh-541: the teardown wrappers of an object that declares
       ``[<obj>.destroy]``. Whether ``__exit__`` propagates a failed close
       is the declaration, and a body from before it swallows the status.
+    - gh-2187: a teardown wrapper whose body is jm's own render for the
+      OTHER lending status (`_relent_teardown`). A lending object's
+      ``destroy()`` and ``__exit__`` park the state for ``tp_dealloc``;
+      every other object's free it. Kept, an object that started lending
+      after its fragment was written went on freeing under the views it
+      lends, and one that stopped kept a body parking into a field its
+      struct no longer has, which does not compile. Any other body is the
+      author's: kept, and named by `_docsync`'s ``deferred-free`` marker.
     - gh-2055: every record dtype builder (`_record.dtype_builders`). It is
       the declared columns, so a kept one describes the old element while
       the element contract asserts the new one.
+
+    A teardown that parks is taken from the render only where the text it
+    lands in declares `PARK_FIELD`. *into* is the fresh render for a verb,
+    so that always holds; for `jm apply` it is the fragment on disk, whose
+    struct apply first reconciles (`reconcile_struct_fields`, gh-2227), so
+    it holds there too unless the struct could not be read. There the body
+    stays as it is and the marker names it.
 
     One answer for both writers of a fragment: `_regenerate_module_now`
     regenerates these instead of restoring them, and `jm apply`
@@ -1987,6 +2130,12 @@ def jm_owned_functions(
     rendered : str
         A FRESH render of the fragment, so the names come from jm's own
         emission rather than from a file a formatter may have reshaped.
+    kept : dict of str to str
+        The function bodies the restore would keep, by name
+        (`_extract_c_function_bodies` of the fragment on disk).
+    into : str
+        The text the bodies are restored into: the fresh render for a verb
+        (`_regenerate_module_now`), the fragment on disk for `jm apply`.
 
     Returns
     -------
@@ -1994,12 +2143,311 @@ def jm_owned_functions(
         The function names, in the order above.
     """
     _w = ctx["ComponentW"]
+    names = (f"{_w}_destroy", f"{_w}_exit")
     teardown = (
-        (f"{_w}_destroy", f"{_w}_exit")
+        names
         if C.destroy_spec(cfg, ctx["component"])
-        else ()
+        else _relent_teardown(cfg, ctx, rendered, kept, names)
     )
+    if _declares_park(rendered) and not _declares_park(into):
+        teardown = ()
+    # gh-2272: the same for a teardown that waits on the in-flight count.
+    if _declares_inflight(rendered) and not _declares_inflight(into):
+        teardown = ()
     return teardown + _record.dtype_builders(rendered)
+
+
+#: One struct member declaration, its name captured. Read on comment-masked
+#: code, one declaration per line.
+_FIELD_DECL_RE = re.compile(r"[\w\s*]*?[\s*](\w+)\s*;")
+
+#: jm's own prefix: the borrow record, the parked state, the in-flight
+#: count, a retained owner. An author's member never starts with it.
+_JM_PREFIX = "_jm_"
+
+
+def _jm_field(name: str, owners: "frozenset[str]") -> bool:
+    """Whether struct member *name* is jm's (gh-2227).
+
+    A ``_jm_*`` name always is. A constructor capsule's ``_<param>_owner``
+    (gh-790) is jm's only when the render declares it -- *owners*, read from
+    the manifest's render -- because the shape alone also fits a member the
+    author named that way.
+
+    >>> _jm_field("_jm_inflight", frozenset())
+    True
+    >>> _jm_field("_cache_owner", frozenset())
+    False
+    >>> _jm_field("_clk_owner", frozenset({"_clk_owner"}))
+    True
+    """
+    return name.startswith(_JM_PREFIX) or name in owners
+
+
+def _render_owners(reference: str) -> "frozenset[str]":
+    """The ``_<param>_owner`` members a fresh render releases in dealloc."""
+    return frozenset(
+        re.findall(r"Py_XDECREF\(self->(_\w+_owner)\);", reference)
+    )
+
+
+def reconcile_struct_fields(text: str, reference: str, Component: str):
+    r"""*text* with its object struct's jm fields made *reference*'s (gh-2227).
+
+    A module fragment is sacred, and `apply` restores its members into it
+    rather than re-rendering it. Its ``typedef struct {...} <C>Object;``
+    was never revisited, so a binding apply added that writes a field jm
+    declares -- a borrow's ``_jm_borrowed``, a retained owner -- did not
+    compile, and a lending object could not be given ``_jm_parked``.
+
+    The fields are jm's (`_jm_field`): those the fresh render declares and
+    *text* lacks are added after ``handle``, where the template puts them;
+    those *text* declares and the render does not are removed. Every other
+    line is the author's and is left where it is. What is jm's is decided
+    by the ``_jm_`` prefix and, for a constructor capsule's owner, by the
+    render -- so an author's ``_cache_owner`` is never touched, and an owner
+    whose param the manifest dropped stays too, never set again and so
+    NULL, its dealloc release harmless.
+
+    Returns ``(text, added, removed)``, the field names that moved; *text*
+    unchanged when none did.
+
+    Examples
+    --------
+    >>> disk = ("typedef struct {\n    PyObject_HEAD\n"
+    ...         "    p_state_t *handle;\n    int mine;\n} PObject;\n")
+    >>> ref = ("typedef struct {\n    PyObject_HEAD\n"
+    ...        "    p_state_t *handle;\n"
+    ...        "    PyObject *_jm_retain_attach_t;  /* keeps t */\n"
+    ...        "} PObject;\n")
+    >>> out, added, removed = reconcile_struct_fields(disk, ref, "P")
+    >>> print(out, end="")
+    typedef struct {
+        PyObject_HEAD
+        p_state_t *handle;
+        PyObject *_jm_retain_attach_t;  /* keeps t */
+        int mine;
+    } PObject;
+    >>> added, removed
+    (['_jm_retain_attach_t'], [])
+    >>> reconcile_struct_fields(out, disk, "P")[1:]
+    ([], ['_jm_retain_attach_t'])
+    """
+    from ._docsync import _code_mask
+
+    pat = re.compile(
+        rf"typedef\s+struct\s*\{{\n(.*?)\}}\s*{Component}Object\s*;",
+        re.S,
+    )
+
+    owners = _render_owners(reference)
+
+    def fields(body: str) -> "list[tuple[str, str]]":
+        out = []
+        for line in body.splitlines(True):
+            m = _FIELD_DECL_RE.match(_code_mask(line))
+            if m and _jm_field(m.group(1), owners):
+                out.append((m.group(1), line))
+        return out
+
+    on_disk = list(pat.finditer(text))
+    rendered = list(pat.finditer(reference))
+    if len(on_disk) != 1 or len(rendered) != 1:
+        return text, [], []
+    body = on_disk[0].group(1)
+    have = fields(body)
+    want = fields(rendered[0].group(1))
+    if [n for n, _ in have] == [n for n, _ in want]:
+        return text, [], []
+    jm_lines = {line for _, line in have}
+    keep = [ln for ln in body.splitlines(True) if ln not in jm_lines]
+    at = next(
+        (
+            i + 1
+            for i, ln in enumerate(keep)
+            if re.search(r"\*\s*handle\s*;", ln)
+        ),
+        next((i + 1 for i, ln in enumerate(keep) if "PyObject_HEAD" in ln), 0),
+    )
+    new_body = "".join(keep[:at] + [ln for _, ln in want] + keep[at:])
+    s, e = on_disk[0].span(1)
+    have_n = {n for n, _ in have}
+    want_n = {n for n, _ in want}
+    return (
+        text[:s] + new_body + text[e:],
+        [n for n, _ in want if n not in have_n],
+        [n for n, _ in have if n not in want_n],
+    )
+
+
+#: A statement reading a struct member through ``self``, the name captured.
+_FIELD_USE_RE = re.compile(r"self\s*->\s*(\w+)\b")
+
+
+def reconcile_dealloc(text: str, reference: str, ComponentW: str):
+    r"""*text*'s ``tp_dealloc`` releasing exactly *reference*'s jm fields.
+
+    The partner of :func:`reconcile_struct_fields` (gh-2227): a field the
+    struct gains is released here, and one it loses is no longer touched.
+    Only the lines that read a jm field are jm's -- the parked state's free,
+    the in-flight count's, a kept owner's ``Py_XDECREF``. Every other line
+    stays as it is, which matters: a fragment from an older jm frees buffers
+    of its own here that its kept wrappers still allocate. jm's lines go
+    before ``tp_free``, after the destroy call, in the render's order.
+
+    Returns ``(text, changed)``.
+
+    Examples
+    --------
+    >>> disk = ("static void\nP_dealloc(PObject *self)\n{\n"
+    ...         "    if (self->handle)\n        p_destroy(self->handle);\n"
+    ...         "    free(self->_old_buf);\n"
+    ...         "    Py_TYPE(self)->tp_free((PyObject *)self);\n}\n")
+    >>> ref = ("static void\nP_dealloc(PObject *self)\n{\n"
+    ...        "    if (self->handle)\n        p_destroy(self->handle);\n"
+    ...        "    Py_XDECREF(self->_jm_retain_attach_t);\n"
+    ...        "    Py_TYPE(self)->tp_free((PyObject *)self);\n}\n")
+    >>> out, changed = reconcile_dealloc(disk, ref, "P")
+    >>> print(out, end="")
+    static void
+    P_dealloc(PObject *self)
+    {
+        if (self->handle)
+            p_destroy(self->handle);
+        free(self->_old_buf);
+        Py_XDECREF(self->_jm_retain_attach_t);
+        Py_TYPE(self)->tp_free((PyObject *)self);
+    }
+    >>> reconcile_dealloc(out, ref, "P")[1]
+    False
+    """
+    name = f"{ComponentW}_dealloc"
+    on_disk = _extract_c_function_bodies(text).get(name)
+    rendered = _extract_c_function_bodies(reference).get(name)
+    if not on_disk or not rendered:
+        return text, False
+    from ._docsync import _code_mask
+
+    owners = _render_owners(reference)
+
+    def jm(line: str) -> bool:
+        return any(
+            _jm_field(n, owners)
+            for n in _FIELD_USE_RE.findall(_code_mask(line))
+        )
+
+    lines = on_disk.splitlines(True)
+    want = [ln for ln in rendered.splitlines(True) if jm(ln)]
+    if [ln.strip() for ln in lines if jm(ln)] == [ln.strip() for ln in want]:
+        return text, False
+    keep = [ln for ln in lines if not jm(ln)]
+    at = next(
+        (i for i, ln in enumerate(keep) if "tp_free" in ln), len(keep) - 1
+    )
+    new = "".join(keep[:at] + want + keep[at:])
+    return text.replace(on_disk, new, 1), True
+
+
+def _declares_park(text: str) -> bool:
+    """Whether *text*'s object struct declares `PARK_FIELD` (gh-2187).
+
+    Read as code, comments and strings masked, in any layout: the
+    declaration is ``<stem>_state_t *_jm_parked;``, and every use of the
+    field is ``self->_jm_parked``, which never follows a ``*``.
+
+    Examples
+    --------
+    >>> _declares_park("typedef struct {\\n    p_o_state_t * _jm_parked ;")
+    True
+    >>> _declares_park("if (self->_jm_parked) f(self->_jm_parked);")
+    False
+    >>> _declares_park("/* p_o_state_t *_jm_parked; */")
+    False
+    """
+    from ._docsync import _code_mask
+
+    return re.search(rf"\*\s*{PARK_FIELD}\s*;", _code_mask(text)) is not None
+
+
+def _declares_inflight(text: str) -> bool:
+    """Whether *text*'s object struct declares the in-flight count (gh-2272).
+
+    Examples
+    --------
+    >>> _declares_inflight("    jm_inflight_t _jm_inflight;  /* x */")
+    True
+    >>> _declares_inflight("jm_inflight_wait(&self->_jm_inflight)")
+    False
+    """
+    from ._docsync import _code_mask
+
+    return (
+        re.search(
+            rf"\bjm_inflight_t\s+{_inflight.FIELD}\s*;", _code_mask(text)
+        )
+        is not None
+    )
+
+
+def _relent_teardown(
+    cfg: dict,
+    ctx: dict,
+    rendered: str,
+    kept: "dict[str, str]",
+    names: "tuple[str, ...]",
+) -> "tuple[str, ...]":
+    """The teardown wrappers in *kept* that jm wrote for ANOTHER lending
+    (gh-2187) or GIL-release (gh-2272) status, and so are jm's to re-render.
+
+    A teardown waits for a released call only on an object that releases
+    one, so a module object that gained a ``nogil`` method after its
+    fragment was written kept a ``destroy()`` that freed under it -- the
+    ordinary sequence, ``jm object --module`` then ``jm method --nogil``.
+
+    Compared token for token (`_docsync._norm_unit`): a formatter's layout,
+    a comment or a docstring is not an edit, and a body the author changed
+    in any other way is not this. The other render is
+    `fragment_destroy_ctx` with ``lends`` flipped over the same context --
+    the one call the fragment itself was rendered through -- and it is
+    rendered only for a wrapper that differs from *rendered* at all, which
+    on an up-to-date fragment is none.
+    """
+    from ._docsync import _norm_unit
+
+    now = _extract_c_function_bodies(rendered)
+    stale = [
+        n
+        for n in names
+        if n in kept and n in now and _norm_unit(kept[n]) != _norm_unit(now[n])
+    ]
+    if not stale:
+        return ()
+    obj = ctx["component"]
+    lends = _borrow.lends(cfg, obj)
+    releases = any(m.get("nogil") for m in C.methods(cfg, obj))
+    others = [
+        _extract_c_function_bodies(
+            R.render_module_ext_fragment(
+                {
+                    **ctx,
+                    **fragment_destroy_ctx(
+                        cfg, obj, ctx, lends=lnd, releases=rel
+                    ),
+                }
+            )
+        )
+        for lnd in (lends, not lends)
+        for rel in (releases, not releases)
+        if (lnd, rel) != (lends, releases)
+    ]
+    return tuple(
+        n
+        for n in stale
+        if any(
+            n in other and _norm_unit(kept[n]) == _norm_unit(other[n])
+            for other in others
+        )
+    )
 
 
 def _regenerate_module_now(
@@ -2105,9 +2553,13 @@ def _regenerate_module_now(
             preserved = monolith_bodies
         frag = R.render_module_ext_fragment(ctx)
         if preserved:
-            # gh-541 / gh-2055: functions that are jm's glue for the OLD
-            # manifest, not the author's -- see jm_owned_functions.
-            _force = jm_owned_functions(cfg, ctx, frag)
+            # gh-541 / gh-2055 / gh-2187: functions that are jm's glue for
+            # the OLD manifest, not the author's -- see jm_owned_functions.
+            # The struct here is the render's, so a parking teardown always
+            # finds its field.
+            _force = jm_owned_functions(
+                cfg, ctx, frag, kept=preserved, into=frag
+            )
             # gh-1012: same reasoning one feature over — a view's signature
             # override reuses a wrapper name the fragment already has, and
             # that existing body is jm's own glue for the OLD signature. The
@@ -2300,7 +2752,9 @@ def _regenerate_module_now(
             # ones — that is what a test-only dep is for. The core's PUBLIC link
             # must not, or the dependency propagates straight back into the
             # Python extension and ships after all, which is the bug.
-            _test_only_cores = C.depends_test_only_cores(cfg, obj)
+            _test_only_cores = C.test_only_dep_cores(
+                cfg, C.depends_on_raw(cfg, obj)
+            )
             _core_pub = [c for c in _colib if c not in _test_only_cores]
             # gh-160: also PUBLIC-link them onto the collocated OBJECT lib so
             # the deps propagate transitively to the Python extension. The
@@ -2460,8 +2914,23 @@ def _regenerate_module_now(
     # import …` line (types from a hand-written sibling compiled into the same
     # .so). They must be in the keep-set or the gh-329 prune strips them from
     # both the import and __all__ (data loss of declared public types).
+    # gh-2372: each enum the extension publishes (gh-2344) is a module
+    # attribute the `.pyi` declares, and users import from the package, so it
+    # is re-exported like a record type -- the same filtered list the
+    # aggregator publishes, never a second reading of the manifest.
+    enum_names = [
+        e["py"]
+        for e in _enumc.module_publication(
+            ctx["enum_publish_entries"]
+            for ctx in _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
+        )
+    ]
     all_exports = (
-        Components + record_names + fn_names + list(C.extra_types(cfg, module))
+        Components
+        + record_names
+        + enum_names
+        + fn_names
+        + list(C.extra_types(cfg, module))
     )
     reexports = C.module_reexports(cfg, module)
     # Nested module: ensure the intermediate packages exist, then write under
@@ -2550,6 +3019,7 @@ def run(
     no_step: bool = False,
     no_reset: bool = False,
     process_global: bool = False,
+    no_python_bench: bool = False,
     fragment: str = "",
     mutable: bool = False,
     step_delegates: bool = False,
@@ -2604,7 +3074,19 @@ def run(
     # gh-1882: the manifest's `reset_impl` / `reset_impl_file` as written,
     # from the replay alone -- see `_init.run`, which takes it too.
     reset_impl_decl: "dict[str, str] | None" = None,
+    # gh-2215: `jm object --before <obj>` -- place this object ahead of a
+    # member in the module's `objects` list (its gh-1985 load order)
+    # instead of appending it. Refused before anything is written.
+    before: str = "",
 ) -> None:
+    if before and (
+        why := C.before_why_not(
+            C.load(root) if (root / C.FILENAME).exists() else {},
+            module,
+            before,
+        )
+    ):
+        raise _report.Refusal(why)
     # gh-588: `opaque_state` forward-declares the struct, so anything that
     # dereferences it from the PUBLIC header is incoherent. Say so here rather
     # than let the user meet it as an incomplete-type error in generated C they
@@ -2692,6 +3174,7 @@ def run(
             core_family=core_family,
             no_reset=no_reset,
             process_global=process_global,
+            no_python_bench=no_python_bench,
             fragment=fragment,
             mutable=mutable,
             step_delegates=step_delegates,
@@ -2774,7 +3257,9 @@ def run(
     if no_state:
         vars_ = []
     elif state_vars is None:
-        vars_ = [("gain", "double", "0.0")]
+        # gh-2215: no starter in an opaque-managed struct, as `_init.run`.
+        _has_opaque = bool(opaque_fields) or opaque_state
+        vars_ = [] if _has_opaque else [("gain", "double", "0.0")]
     else:
         vars_ = list(state_vars)
     ctx = _make_object_ctx(
@@ -2846,6 +3331,11 @@ def run(
     )
     # gh-541/gh-544: same as the standalone path in _init.run — this render
     # stamps the sacred _core.h/_core.c destroy signature as well as the glue.
+    _methods_now = (
+        declared_methods
+        if declared_methods is not None
+        else C.methods(cfg, ctx["component"])
+    )
     ctx.update(
         # A freshly created object has no extra methods yet, so [] is the
         # truth here rather than "unknown" — and it makes a destroy spec that
@@ -2858,15 +3348,18 @@ def run(
             # gh-856: was a hardcoded []. `jm apply` REPLAYS creation for
             # existing objects, so [] was not "no methods yet" but the
             # opposite of the truth.
-            declared_methods
-            if declared_methods is not None
-            else C.methods(cfg, ctx["component"]),
+            _methods_now,
             class_name=class_name or "",
             # gh-1326: `jm apply` replays creation through here, and this was
             # the site that dropped `create_fn` -- the derivation was correct
             # in isolation and never reached the render.
             create_fn=create_fn or "",
             csym=ctx["csym"],
+            # gh-2187: from the state THIS render holds (`vars_`), not the
+            # manifest, which a fresh `jm object --state` has not written yet.
+            lends=_borrow.lends_from(
+                _methods_now, C.properties(cfg, ctx["component"]), vars_
+            ),
         )
     )
 
@@ -2903,10 +3396,7 @@ def run(
     # they would propagate into the Python extension and ship after all, which
     # is exactly what test_only exists to prevent. They remain on
     # extra_link_libs_block (test/bench) above.
-    _test_only = [
-        (n if n.endswith("_core") else f"{n}_core")
-        for n in C.dep_names([d for d in depends_on if C._dep_test_only(d)])
-    ]
+    _test_only = C.test_only_dep_cores(cfg, depends_on)
     _core_pub_libs = [lib for lib in _obj_libs if lib not in _test_only]
     ctx["extra_link_on_object_core"] = R.core_link_c(
         ctx["component"],
@@ -2956,7 +3446,7 @@ def run(
     # with a real header are included — a bare link target like `lo_core` is
     # skipped. gh-432: method params' `header` keys (a capsule param's
     # foreign type) are included the same way when the header exists.
-    from ._init import _dep_header_includes
+    from ._init import _dep_header_includes, _param_headers_at_create
 
     ctx["depends_includes"] = "".join(
         "\n" + inc
@@ -2970,7 +3460,10 @@ def run(
         )
         + [
             f'#include "{h}"'
-            for h in C.param_headers(cfg, object_name)
+            # gh-1893: the init-params' headers too, read off the argument --
+            # the object is not in the manifest yet, which is the gh-790 trap
+            # the standalone path in `_init.run` already reads around.
+            for h in _param_headers_at_create(cfg, object_name, init_params)
             if (INC.inc_dir(root) / h).exists()
         ]
     )
@@ -3097,13 +3590,15 @@ def run(
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
     # gh-1528: born owned, as the standalone benchmark is (`_init`).
-    _write(
-        pkg_mod_dir / "benchmarks" / f"bench_{comp}.py",
-        R.owned_scaffold(r_py(bench_py_tmpl), f"bench_{comp}.py"),
-    )
+    # gh-2316: and declined the same way.
+    if not no_python_bench:
+        _write(
+            pkg_mod_dir / "benchmarks" / f"bench_{comp}.py",
+            R.owned_scaffold(r_py(bench_py_tmpl), f"bench_{comp}.py"),
+        )
 
     # Update config before regenerating module (so module_objects is up-to-date)
-    C.add_to_module(cfg, module, comp)
+    C.add_to_module(cfg, module, comp, before=before)
     C.add_component(
         cfg,
         comp,

@@ -39,14 +39,21 @@ from . import _outbuf
 from . import _record
 from . import _context as Ctx
 from . import _types as T
-from dataclasses import replace as _replace
 
+from . import _enumc
+from ._context._methods import enum_publication
 from ._context._diagnostics import create_raises_doc as _create_raises_doc
+from ._context._diagnostics import empty_is_none_doc as _empty_is_none_doc
+from ._context._diagnostics import fixed_result_ann as _fixed_result_ann
+from ._context._diagnostics import optional_ann as _optional_ann
 from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
+from ._context._parse import capsule_annotation
 from ._context._types import _py_default
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    EnumAnn,
+    enum_param_desc,
     CLASS_INDENT,
     authored_doc_lines,
     authored_docstring,
@@ -1048,11 +1055,20 @@ def _build_class_docstring(
             if required
             else f"{name} constructor parameter."
         )
+        is_enum = ctype.startswith("string_enum:")
         hdr = create_blk.param_desc(name) if create_blk else None
         # gh-1493: an init param's manifest `doc` through the one rule,
         # `inspect.cleandoc` -- it was passed raw, so an indented TOML
         # table's continuation lines kept their indent.
-        desc = "\n".join(authored_doc_lines(manifest_doc)) or hdr or stub
+        authored = "\n".join(authored_doc_lines(manifest_doc))
+        names = T.string_enum_choices(ctype) if is_enum else []
+        if names:
+            # gh-2379: a string-enum's header `@param` describes the C int,
+            # so the choices replace it; the author's own `doc` stands, and
+            # the runtime peer (`_state`) says the same sentence.
+            desc = "\n".join(filter(None, [authored, enum_param_desc(names)]))
+        else:
+            desc = authored or hdr or stub
         # gh-901: an enum's per-choice `///<` docs, as a definition list under
         # the parameter they belong to. numpydoc has no `Choices` section, and
         # a parameter's description is free prose — so this is where a reader
@@ -1422,8 +1438,12 @@ def _method_doc_lines(
     param_defaults: "dict[str, str] | None" = None,
     param_docs: "dict[str, str] | None" = None,
     authored_doc: str = "",
+    none_when: str = "",
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
+
+    *none_when* is `_context._diagnostics.empty_is_none_doc` for the method,
+    for the same reason as *raises* below (gh-2183).
 
     *skeleton_fallback* selects what an UNDOCUMENTED member falls back to.
     Every method caller now passes True -- object, module object and view
@@ -1453,6 +1473,7 @@ def _method_doc_lines(
         param_defaults=param_defaults,
         param_docs=param_docs,
         authored_doc=authored_doc,
+        none_when=none_when,
     )
 
 
@@ -1776,7 +1797,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # demands, AND left it in declaration order behind a defaulted
             # scalar the kwlist hoists it above — so `Capn(4096)` bound 4096 to
             # `clock` while the stub promised `n`. Same accidental coupling as
-            # `allow_none`/`explain_type_error` in `_context/_parse.py`.
+            # `allow_none` and the (since removed) `explain_type_error` in
+            # `_context/_parse.py`.
             capsule = param[10] if len(param) > 10 else ""
             # gh-515: a path is required-positional by construction (a
             # filesystem path has no sensible default), so it is hoisted with
@@ -2073,6 +2095,12 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         m_multi = m.get("multi_output", [])
         m_result_fields = m.get("result_fields", [])
         m_py_return_type = m.get("py_return_type", "")
+        # gh-2259: peer of the batch reading in `make_methods_ctx` -- a batch
+        # binding reads a BLOCK and parses `x` (or a count) and `out=` and no
+        # declared param, so this stub describes exactly that.
+        m_batch = bool(m.get("batch"))
+        if m_batch:
+            m_params = []
 
         param_parts: list[str] = []
         # gh-385: a variable_output method consumes a *block* of arg_type
@@ -2085,15 +2113,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # gh-1724: an array `x` is spelled by the one helper.
             _x_ann = (
                 T.array_param_annotation(m_arg)
-                if (m_var or m_arg.endswith("[]"))
+                if (m_var or m_batch or m_arg.endswith("[]"))
                 else _py(m_arg)
             )
             param_parts.append(f"x: {_x_ann}")
         for p in m_params:
             # gh-432: a capsule param takes the named PyCapsule, a wrapper
-            # exposing `_capsule`, or None (detach).
+            # exposing `_capsule`, or None (detach) unless it is declared
+            # `required = true` (gh-2360).
             if p.get("capsule"):
-                param_parts.append(f"{p['name']}: object | None")
+                param_parts.append(f"{p['name']}: {capsule_annotation(p)}")
                 continue
             # gh-1021: an enum param (type "int" plus an `enum` name) takes
             # the choice STRING, exactly as a module function's does — see
@@ -2132,7 +2161,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 pann += f" = {repr(p['default']) if p.get('enum') else _py_default_stub(p['type'], _pdflt)}"
             param_parts.append(pann)
 
-        if _borrow.is_borrow(m):
+        if m_batch:
+            # gh-2259: peer of the batch branch in `make_methods_ctx`'s
+            # annotation chain, and first for the same reason: the binding
+            # renders a batch method ahead of every other shape. This said
+            # `complex` for an array of them.
+            ret_ann = f"NDArray[{_np(m_ret)}]"
+        elif _borrow.is_borrow(m):
             # gh-1312: peer of the borrow branch in `make_methods_ctx`'s
             # annotation chain -- a borrowed view is an ndarray of the
             # element type, not one element of it.
@@ -2146,23 +2181,18 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # borrow carries one. Peer of the same call in the annotation
             # chain; both go through `_borrow.element_type`.
             # gh-1418: and `none_on_empty` makes it optional, exactly as in
-            # the peer. Kept beside that branch rather than derived twice:
-            # the two annotations are gated to agree.
-            ret_ann = (
-                "NDArray[Any]"
-                if m.get("record_dtype")
-                else f"NDArray[{_np(m_ret)}]"
-            ) + (" | None" if m.get("none_on_empty") else "")
+            # the peer. gh-2183: both ask `optional_ann`, the predicate the
+            # binding's `Py_RETURN_NONE` is emitted from.
+            ret_ann = _optional_ann(
+                m,
+                (
+                    "NDArray[Any]"
+                    if m.get("record_dtype")
+                    else f"NDArray[{_np(m_ret)}]"
+                ),
+            )
         elif m_py_return_type:
             ret_ann = m_py_return_type
-        elif m.get("status_return"):
-            # gh-432: status returns bind as None (raise on failure).
-            #
-            # gh-805 §B: `error_negative` is deliberately NOT folded in here.
-            # It also raises, but the int is the VALUE on success, so its
-            # annotation is the ordinary scalar one and it must fall through.
-            # The two keys are mutually exclusive at declaration time.
-            ret_ann = "None"
         elif m_result_fields and not _record.is_record_array(
             m_var, m.get("record_dtype"), m.get("borrow")
         ):
@@ -2186,19 +2216,29 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # already yields for a type it does not know.
             all_rts = [m.get("record_dtype") or m_ret] + list(m_multi)
             ndarrays = [f"NDArray[{_np(rt)}]" for rt in all_rts]
-            ret_ann = (
-                f"tuple[{', '.join(ndarrays)}]"
-                if len(ndarrays) > 1
-                else ndarrays[0]
+            # gh-2183: peer of the same `optional_ann` in make_methods_ctx.
+            ret_ann = _optional_ann(
+                m,
+                (
+                    f"tuple[{', '.join(ndarrays)}]"
+                    if len(ndarrays) > 1
+                    else ndarrays[0]
+                ),
             )
-        elif m.get("out_type"):
+        elif m.get("status_return") or m_multi or m.get("out_type"):
             # gh-529: peer of the `out_type` branch in
             # make_methods_ctx's return-annotation resolution -- a method
             # with out_type returns a fresh ndarray, not the scalar m_ret.
             # This is the module-aggregated .pyi; the standalone one lives in
             # _context/_methods.py, and the two are pinned together by
             # tests/test_gh529_method_out_type_pyi.py.
-            ret_ann = f"NDArray[{_np(m['out_type'])}]"
+            # gh-432: a status alone binds as None (raise on failure).
+            # gh-805 §B: `error_negative` is deliberately NOT folded in: the
+            # int is the VALUE on success, so it falls through to the scalar.
+            # gh-2250: the shape is the binding's own list, asked of the one
+            # helper the peer asks -- a `multi_output` tuple read as the
+            # bare scalar here.
+            ret_ann = _fixed_result_ann(m, _py, lambda t: f"NDArray[{_np(t)}]")
         else:
             ret_ann = _py(m_ret)
 
@@ -2225,14 +2265,25 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # the whole behaviour of the zero-arg call. The stub omitted it
         # entirely, so the call that actually works (`obj.run(4)`) failed to
         # type-check while `obj.run(out=...)` passed. `count` precedes `out`
-        # to match the kwlist order.
-        _stub_count_arg = m_var and m_arg == "void" and not m_params
+        # to match the kwlist order. gh-2233: through the one predicate the
+        # binding's faces ask, which `no_count` turns off.
+        _stub_count_arg = _gluedoc.synthesizes_count(
+            variable_output=m_var,
+            arg_type=m_arg,
+            params=m_params,
+            no_count=m.get("no_count"),
+        )
         # gh-1074: and what it is CALLED, from the same accessor the binding
         # and the standalone stub use. This file is the module-aggregated
         # `.pyi`; the pair have already been found disagreeing about jm's own
         # binding arguments twice (gh-1042, gh-1051), so the name gets the
         # same treatment as the default did rather than a third local copy.
         _count_kw = _gluedoc.count_kwarg_name(m.get("count_name", ""))
+        if m_batch:
+            # gh-2259: peer of the same override in `make_methods_ctx` -- a
+            # batch binding takes `out=` always and a leading count when it
+            # has no input (gh-222).
+            _stub_count_arg, _stub_enable_out = m_arg == "void", True
         if _stub_count_arg:
             # gh-1051: `1` was hard-coded here while the comment above
             # described `count_default` and the standalone generator honoured
@@ -2273,9 +2324,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # defect gh-1021 exists to close, reappearing inside a single
             # generated file.
             if p.get("enum"):
-                _ann = "str"
+                # gh-2379: carries the choices, so the prose is theirs.
+                _ann = EnumAnn(C.enums(cfg).get(p["enum"]) or [])
             elif p.get("capsule"):
-                _ann = "object | None"
+                _ann = capsule_annotation(p)
             else:
                 _ann = T.py_param_annotation(
                     _py(p["type"]),
@@ -2307,13 +2359,19 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             authored_doc=m.get("doc", ""),
             param_docs=authored_param_docs(m),
             raises=_raises_doc(m),
+            none_when=_empty_is_none_doc(m),
             # gh-1292: the skeleton, as every other face of the same member
             # renders it -- the standalone stub and BOTH runtime docs. Without
             # it an undocumented method collapsed to its name here alone, so
             # a module object's `help()` listed parameters its stub did not.
             skeleton_fallback=True,
             param_defaults=_gluedoc.binding_param_docs(
-                _count_kw, count=_stub_count_arg, out=_stub_enable_out
+                _count_kw,
+                batch=m_batch,
+                count=_stub_count_arg,
+                out=_stub_enable_out,
+                out_cols=bool(m.get("out_cols")),
+                short_out=bool(m.get("short_out")),
             ),
         )
         header = (
@@ -2322,7 +2380,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             else f"    def {m_name}(self) -> {ret_ann}:"
         )
         lines += ["", header, *_doc]
-        if _stub_enable_out:
+        # gh-2259: no `_max_out()` sibling for a batch method's `out=`.
+        if _stub_enable_out and not m_batch:
             # gh-607: mirror make_methods_ctx's `_max_out_count_param_ctx` —
             # `*_max_out()` now takes the same count the binding is about to
             # pass to the kernel; the all-scalar-params shape has none to
@@ -2335,7 +2394,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                     if p["type"].endswith("[]"):
                         _stub_moc_name = f"{p['name']}_len"
                         break
-            else:
+            elif not m.get("no_count"):
+                # gh-2233: a `no_count` method's bound is the state's alone.
                 _stub_moc_name = "n"
             # gh-761: the header's prototype overrides all of the above, the
             # same way it does for the binding — a state-only
@@ -2373,7 +2433,11 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 _outbuf.interleave(m_arg != "void", m_params),
             )
             if _mo_blk is not None:
-                _mo_gm = _replace(_mo_gm, block=_mo_blk)
+                # gh-2343: through the constructor, which also records that
+                # this body is the header's LINES, not jm's paragraphs. A
+                # bare replace here left the blank-line spacing behind and
+                # printed every wrapped source line as its own paragraph.
+                _mo_gm = _mo_gm.with_header_block(_mo_blk)
             _mo_sig = (
                 f"self, {_stub_moc_name}: int" if _stub_moc_name else "self"
             )
@@ -2480,6 +2544,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # slot that does carry the symbol.
         create_fn=C.object_create_fn(cfg, obj) or "",
         csym=csym,
+        lends=_borrow.lends(cfg, obj),
     )
     lines += _dctx["pyi_destroy_methods"].split("\n")
     # gh-647: the context-manager protocol used to be the one part of the
@@ -2512,7 +2577,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 # ── module-level function stub ────────────────────────────────────────────────
 
 
-def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
+def fn_py_surface(
+    fn: dict, enums: "dict | None" = None
+) -> tuple[str, list[tuple[str, str]], list[str]]:
     """The Python-facing surface of one module free function.
 
     Returns the three things both faces need, derived once (gh-643). The
@@ -2556,7 +2623,8 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
         # spells it for every surface — gh-623); an enum arg (type "int" with
         # an `enum` name) accepts the choice string.
         if p.get("enum"):
-            ann = "str"
+            # gh-2379: carries the choices, so the prose is theirs.
+            ann = EnumAnn((enums or {}).get(p["enum"]) or [])
         else:
             ann = _py(p["type"])
         # gh-1271: the same two corrections as the method producer above, and
@@ -2616,13 +2684,17 @@ def function_stub(cfg: dict, root, module: str, fn: dict) -> str:
     restating `_fn_stub`'s rule: with no header Doxygen and no documented
     param it does not, and the `doc` duplicates nothing.
     """
-    return _fn_stub(fn, _fn_block(cfg, _module_fn_blocks(root, module), fn))
+    return _fn_stub(
+        fn,
+        _fn_block(cfg, _module_fn_blocks(root, module), fn),
+        C.enums(cfg),
+    )
 
 
-def _fn_stub(fn: dict, block=None) -> str:
+def _fn_stub(fn: dict, block=None, enums: "dict | None" = None) -> str:
     name = fn["name"]
     doc = fn.get("doc", "")
-    ret, py_params, parts = fn_py_surface(fn)
+    ret, py_params, parts = fn_py_surface(fn, enums)
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
     # gh-384: when the module header carries Doxygen for this free function,
     # synthesize the full numpy docstring (brief + params + a runnable Examples
@@ -2765,6 +2837,40 @@ def numpy_imports(body: str) -> "list[str]":
     return out
 
 
+def positional_only(params: str, flags: str, lead: str = "") -> str:
+    """A stub's parameter list, ending in ``/`` exactly when the binding's
+    ``METH_*`` *flags* take no keywords (gh-2212).
+
+    The one answer every stub writer asks, from the flags the method table
+    registers, so a stub cannot accept ``f(x=...)`` where the binding
+    raises ``TypeError`` -- nor refuse a keyword the binding takes. A
+    ``METH_VARARGS`` or ``METH_O`` binding parses positionally; only
+    ``METH_KEYWORDS`` takes names.
+
+    Parameters
+    ----------
+    params : str
+        The parameters a caller passes, comma-joined; ``""`` for none, which
+        gets no ``/``.
+    flags : str
+        The row's flags, as the ``PyMethodDef`` spells them.
+    lead : str, optional
+        ``self`` or ``cls``, which no caller names, placed first.
+
+    Examples
+    --------
+    >>> positional_only("x: float", "METH_VARARGS", "self")
+    'self, x: float, /'
+    >>> positional_only("x: float", "METH_VARARGS | METH_KEYWORDS", "self")
+    'self, x: float'
+    >>> positional_only("", "METH_VARARGS", "self")
+    'self'
+    """
+    if params and "METH_KEYWORDS" not in flags:
+        params += ", /"
+    return ", ".join(p for p in (lead, params) if p)
+
+
 def prune_stub_imports(lines: "list[str]") -> "list[str]":
     """*lines* without the numpy imports and ``Any`` the stub never names.
 
@@ -2816,6 +2922,171 @@ _NUMPY_IMPORT_LINES = (
 
 
 # ── public entry point ────────────────────────────────────────────────────────
+
+
+#: One ``{"name", <function, any cast>, <flags>,`` row of a ``PyMethodDef``
+#: table, from its ``{`` -- in any layout a formatter gives it: split over
+#: lines, a space inside the brace, a cast such as
+#: ``(PyCFunction)(void (*)(void))`` before the function.
+_PMD_ROW = _re.compile(
+    r'\{\s*"(\w+)"\s*,\s*[^,"]+,\s*(METH_[A-Z_]+(?:\s*\|\s*METH_[A-Z_]+)*)\s*,'
+)
+
+#: The ``{NULL, ...}`` / ``{0}`` row that ends a table.
+_PMD_SENTINEL = _re.compile(r"\{\s*(?:NULL|0)\b")
+
+
+def method_table_flags(c_text: str) -> "dict[str, str]":
+    """``{member: flags}`` for every ``PyMethodDef`` row in *c_text*.
+
+    *c_text* is one type's rendered binding -- a standalone ``_ext.c`` or a
+    module fragment, whose ``static PyMethodDef`` tables are read -- or the
+    rows of one table on their own. The flags are the ones the extension
+    registers, read rather than re-derived (gh-2212).
+
+    Every entry is accounted for. The table is walked by brace on the
+    code-masked text (`_docsync`'s walk, which strings and comments cannot
+    confuse), and each entry but the ``{NULL, ...}`` sentinel must parse as
+    a row. One that does not is a jm bug -- a layout this reader was never
+    taught -- and raises, rather than leaving its member out and its stub
+    unmarked.
+
+    Raises
+    ------
+    RuntimeError
+        Naming the entry that did not parse.
+
+    Examples
+    --------
+    >>> method_table_flags('''
+    ...     {"step",  (PyCFunction)Fir_step, METH_VARARGS,
+    ...      "step(x)"},
+    ...     {"steps", (PyCFunction)(void *)Fir_steps,
+    ...      METH_VARARGS | METH_KEYWORDS, NULL},''')
+    {'step': 'METH_VARARGS', 'steps': 'METH_VARARGS | METH_KEYWORDS'}
+    >>> method_table_flags('''static PyMethodDef H_methods[] = {
+    ...   { "op", (PyCFunction) (void (*) (void))H_op,
+    ...     METH_VARARGS
+    ...         | METH_KEYWORDS,
+    ...     "op() -> None" },
+    ...   { NULL, NULL, 0, NULL }
+    ... };''')
+    {'op': 'METH_VARARGS | METH_KEYWORDS'}
+    >>> try:
+    ...     method_table_flags('{"op", H_op, 3, NULL},')
+    ... except RuntimeError as exc:
+    ...     print('{"op", H_op, 3, NULL}' in str(exc))
+    True
+    """
+    from ._docsync import _METHODS_RE, _code_mask, _entry_spans, _match_brace
+
+    mask = _code_mask(c_text)
+    bodies = []
+    for m in _METHODS_RE.finditer(mask):
+        close = _match_brace(mask, m.end() - 1)
+        if close == -1:
+            raise RuntimeError(
+                "jm could not find the end of the PyMethodDef table at"
+                f" {c_text[m.start() : m.end()]!r}"
+            )
+        bodies.append((m.end(), close))
+    if not bodies:  # the rows of one table, without its declaration
+        bodies = [(0, len(mask))]
+    out: "dict[str, str]" = {}
+    for start, end in bodies:
+        for s, e in _entry_spans(mask, start, end):
+            if _PMD_SENTINEL.match(mask, s):
+                continue
+            row = _PMD_ROW.match(c_text, s, e + 1)
+            if row is None:
+                raise RuntimeError(
+                    "jm could not read this PyMethodDef row, so it cannot"
+                    " tell its stub whether the binding takes keywords"
+                    f" (gh-2212): {c_text[s : e + 1]!r}"
+                )
+            out[row.group(1)] = " ".join(row.group(2).split())
+    return out
+
+
+def mark_positional_only(
+    pyi: str, flags_by_class: "dict[str, dict[str, str]]"
+) -> str:
+    """*pyi* with ``/`` closing the positional parameters of every method
+    whose binding takes no keywords (gh-2212).
+
+    An object's ``step``, ``set_<field>``, ``__exit__``, ``set_state`` and
+    most declared methods register ``METH_VARARGS`` or ``METH_O``: they
+    parse positionally, so ``obj.step(x=1.0)`` raises ``TypeError``. Their
+    stubs named the parameters plainly, so a type checker accepted that
+    call. Each member's flags come from *flags_by_class* -- ``{class:
+    method_table_flags(<that class's rendered binding>)}`` -- so the stub
+    is told by the table, and both stub writers (the standalone
+    ``render_component_pyi`` and the module ``make_module_pyi``) call this
+    one function rather than each deciding per shape. The key ``""`` holds
+    the module's own table, for its top-level functions, which have no
+    ``self`` to pass over.
+
+    This is an adapter, not a second decision: it finds each member's
+    positional parameters in the rendered text -- from the first one a
+    caller names to the last one's default -- and hands that text and the
+    member's flags to :func:`positional_only`, which alone decides whether
+    a ``/`` closes it and where. A ``*args`` or keyword-only parameter after
+    them is therefore left in place. A member is left as written when it is
+    not in the table (a property accessor), or when the stub already ends
+    its positional parameters with ``/``.
+
+    Examples
+    --------
+    >>> stub = (
+    ...     "class Fir:\\n"
+    ...     "    def step(self, x: float) -> float: ...\\n"
+    ...     "    def steps(self, x: float, out: int = ...) -> None: ...\\n"
+    ...     "    def reset(self) -> None: ...\\n"
+    ... )
+    >>> print(mark_positional_only(stub, {"Fir": {
+    ...     "step": "METH_VARARGS",
+    ...     "steps": "METH_VARARGS | METH_KEYWORDS",
+    ...     "reset": "METH_NOARGS"}}), end="")
+    class Fir:
+        def step(self, x: float, /) -> float: ...
+        def steps(self, x: float, out: int = ...) -> None: ...
+        def reset(self) -> None: ...
+    >>> print(mark_positional_only(
+    ...     "def apply(x: float, g: int = 3) -> float: ...\\n",
+    ...     {"": {"apply": "METH_VARARGS"}}), end="")
+    def apply(x: float, g: int = 3, /) -> float: ...
+    """
+    raw = pyi.encode("utf-8")
+    # ast reports a line and a UTF-8 byte column; this is each line's start.
+    starts = [0]
+    for line in raw.split(b"\n"):
+        starts.append(starts[-1] + len(line) + 1)
+    edits: "list[tuple[int, int, str]]" = []
+    tree = ast.parse(pyi)
+    # (members, their flags, how many leading parameters no caller names)
+    scopes = [(tree.body, flags_by_class.get("", {}), 0)] + [
+        (node.body, flags_by_class.get(node.name, {}), 1)
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    ]
+    for body, flags, lead in scopes:
+        for f in body:
+            if not isinstance(f, ast.FunctionDef) or f.decorator_list:
+                continue  # a property's accessor is no PyMethodDef row
+            a = f.args
+            if f.name not in flags or a.posonlyargs or len(a.args) <= lead:
+                continue
+            first = a.args[lead]
+            last = a.defaults[-1] if a.defaults else a.args[-1]
+            lo = starts[first.lineno - 1] + first.col_offset
+            hi = starts[(last.end_lineno or 1) - 1] + (
+                last.end_col_offset or 0
+            )
+            params = raw[lo:hi].decode("utf-8")
+            edits.append((lo, hi, positional_only(params, flags[f.name])))
+    for lo, hi, text in sorted(edits, reverse=True):
+        raw = raw[:lo] + text.encode("utf-8") + raw[hi:]
+    return raw.decode("utf-8")
 
 
 def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
@@ -3047,6 +3318,28 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     )
     if _rec_block:
         parts.append(_rec_block)
+    # gh-2344: the enum values the aggregator publishes, one per Python name.
+    # Read the same way the aggregator reads its objects' entries (first
+    # object to name an enum wins, and only what its fragment defines), so
+    # the stub declares exactly what the extension adds.
+    _enum_pub = _enumc.module_publication(
+        _enumc.fragment_publication(
+            root,
+            C.module_paths(module).cname,
+            obj,
+            enum_publication(
+                obj,
+                C.resolved_class_name(cfg, obj),
+                C.methods(cfg, obj),
+                C.properties(cfg, obj),
+                C.enums(cfg),
+            ),
+        )
+        for obj in objects
+    )
+    if _enum_pub:
+        parts.append(_enumc.publish_pyi(_enum_pub).rstrip("\n"))
+        parts.append("")
     for obj in objects:
         parts.append(_obj_stub(cfg, obj, pkg=pkg, module=module))
         parts.append("")
@@ -3063,7 +3356,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             parts.append("")
 
     for fn in functions:
-        parts.append(_fn_stub(fn, _fn_block(cfg, fn_doc_blocks, fn)))
+        parts.append(
+            _fn_stub(fn, _fn_block(cfg, fn_doc_blocks, fn), C.enums(cfg))
+        )
         parts.append("")
 
     # strip trailing blank line
@@ -3099,4 +3394,38 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             if x
         )
         parts.insert(_typing_slot, f"from typing import {typing_imports}")
-    return reflow_pyi("\n".join(parts)) + "\n"
+    # gh-2212: positional-only where each class's row takes no keywords,
+    # told by the fragment that class renders to -- through the one
+    # function the standalone stub (`_render.render_component_pyi`) asks.
+    # A copy of the manifest, because building the contexts stashes header
+    # docs on it, which this stub must not start reading.
+    import copy
+
+    from . import _render as R
+    from ._object import build_component_ctxs
+
+    # With no project root there is no header to read, here or for the
+    # stub above, so the contexts are built in their header-free form. The
+    # module's own functions are told by the table the aggregator renders
+    # for them (key "").
+    _cname = C.module_paths(module).cname
+    _flags = {
+        c["Component"]: method_table_flags(R.render_module_ext_fragment(c))
+        for c in build_component_ctxs(
+            root,
+            copy.deepcopy(cfg),
+            module,
+            pkg,
+            force_fallback=root is None,
+        )
+    }
+    _flags[""] = method_table_flags(
+        R.make_functions_ctx(
+            _cname,
+            "".join(w.title() for w in _cname.split("_")),
+            list(functions),
+            C.enums(cfg),
+            owner=cfg,
+        )["module_methods_def"]
+    )
+    return reflow_pyi(mark_positional_only("\n".join(parts), _flags)) + "\n"

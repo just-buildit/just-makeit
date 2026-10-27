@@ -25,6 +25,9 @@ What the answer is
 `out=` is offered to a single-output `variable_output` method whose output
 length jm can size:
 
+* an ``arg_type`` input, with or without params beside it — sized from the
+  input's length, the ``n_in`` the kernel and ``<m>_max_out()`` are handed
+  (params beside it since gh-2028);
 * no params at all — the *generator* shape, sized from the synthesized count;
 * params with an array among them — sized from the FIRST array param's length
   (:func:`sizing_param`), in the samples its ``elements_per_sample`` declares
@@ -42,15 +45,22 @@ already hands ``<m>_max_out()`` (gh-607) and already allocates from when
 ``max_out()`` answers 0 (gh-421), for every one of these shapes, with or
 without ``out=``. The caller's buffer is validated against exactly what the
 binding would have allocated itself -- ``_capacity_exprs``' invariant -- so an
-``out=`` adds no bound the allocating path did not already trust.
+``out=`` adds no bound the allocating path did not already trust. The one
+exception is declared: a ``short_out`` method's buffer has no minimum, for a
+backpressure kernel that is told its true size and stops at it (gh-2230).
 
 What it is NOT
 --------------
-Params beside an ``arg_type`` input stay excluded. Their parse dropped them
-until gh-1960, so there was no call to thread an ``out=`` through; it goes
-through `_build_params_parse` now, and what keeps ``out=`` out is the doc:
-``out`` would join the Python arguments and break the positional match of
-the header's ``@param in`` onto ``x`` (gh-2028).
+A ``multi_output`` method: two output arrays would need two buffers, and one
+``out=`` cannot say which it is.
+
+Params beside an ``arg_type`` input were excluded until gh-2028. Their parse
+dropped them until gh-1960, so there was no call to thread an ``out=``
+through; then the doc held it: ``out`` joined the Python arguments and broke
+the positional match of the header's ``@param in`` onto ``x``. A binding
+argument no longer takes an authored ``@param``'s positional slot
+(`_docstring.render_numpy_method_doc`), and ``out=`` is the trailing
+optional argument of the parse every params shape uses.
 
 An array beside other params was excluded too, until gh-1998. gh-412 had
 carved it out of the `out=` feature while making those methods
@@ -239,7 +249,10 @@ def why_not(
     ''
     >>> why_not(variable_output=True, multi_output=False, has_arg=True,
     ...         params=[{"name": "mu", "type": "double"}])
-    'extra params beside the array input (gh-1079, gh-2028)'
+    ''
+    >>> why_not(variable_output=True, multi_output=True, has_arg=True,
+    ...         params=[])
+    'multi_output'
     """
     if not variable_output:
         return "not variable_output"
@@ -247,14 +260,16 @@ def why_not(
         # Two output arrays would need two buffers and a rule for pairing
         # them with the caller's; one `out=` cannot say which.
         return "multi_output"
-    if has_arg and params:
-        # An `arg_type` input plus params. Their parse read the input alone
-        # until gh-1960; it is `_build_params_parse` now, so the binding
-        # could take an `out=` sized from the input like the shapes below.
-        # The doc is what is not ready: `out` would join the Python args and
-        # the header's `@param in` would stop aligning onto `x` (gh-2028).
-        return "extra params beside the array input (gh-1079, gh-2028)"
     # Every remaining shape is offered `out=`.
+    #
+    # gh-2028: an `arg_type` input plus params. Its parse read the input
+    # alone until gh-1960; it is `_build_params_parse` now, whose trailing
+    # optional `out=` this is, and it is sized from the input exactly as
+    # the same method without params is: `n_in`, which `<m>_max_out()` is
+    # handed. What kept it out after gh-1960 was the doc -- `out` joining
+    # the Python args moved the header's `@param in` off `x` -- and
+    # `_docstring.render_numpy_method_doc` no longer lets a binding
+    # argument take an authored `@param`'s positional slot.
     #
     # gh-1998: an array param, alone or beside others -- `Farrow.delay(x,
     # mu)`, `Resampler.execute_ctrl(x, ctrl)`. Sized from the FIRST array
@@ -410,7 +425,10 @@ def element_why_not(
     variable_output, record_dtype, borrow, out_type, return_type
         As :func:`element` takes them.
     batch : bool
-        The method is a 1:1-rate array method (``--batch``).
+        The method is a 1:1-rate array method (``--batch``). Its element
+        must then be a scalar C type, so *return_type* is asked RESOLVED
+        (``_record.resolve_element``): a declared scalar element's name
+        would otherwise read as a record (gh-2261).
     remedy : str
         The closing advice, when the face asking has different flags from
         ``jm method`` (``jm object`` has no ``--out-type``). Empty takes
@@ -442,6 +460,10 @@ def element_why_not(
     ...     batch=True, record_dtype="", borrow=None, out_type="",
     ...     return_type="void").splitlines()[0])
     method 'o.run' is batch, but its output element is 'void'.
+    >>> print(element_why_not("method 'o.run'", variable_output=False,
+    ...     batch=True, record_dtype="", borrow=None, out_type="",
+    ...     return_type="rec_t").splitlines()[0])
+    method 'o.run' is batch, but its output element 'rec_t' is not a scalar.
     """
     if batch:
         shape, noun = "batch", "batch"
@@ -457,6 +479,21 @@ def element_why_not(
         )
     else:
         return ""
+    if batch and elem.strip() not in ("void", *_CTYPE_META):
+        # gh-2261: a batch result is an ndarray of the return type, built
+        # from its `_CTYPE_META` dtype -- and a record struct has none, so
+        # the render died on the lookup. Asked of the RESOLVED type: a
+        # declared scalar element is its C type by then.
+        return (
+            f"{what} is batch, but its output element {elem!r} is not a "
+            "scalar.\n"
+            "  A batch method returns an array of one scalar per input; a "
+            "record has\n"
+            "  no scalar dtype. Return records with --variable-output "
+            "--record-dtype\n"
+            "  (`variable_output`, `record_dtype`), or drop --batch "
+            "(`batch`)."
+        )
     if elem.strip() != "void":
         return ""
     return (

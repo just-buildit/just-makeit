@@ -41,9 +41,13 @@ from typing import NamedTuple
 from . import _coerce
 from . import _config as C
 from . import _gluedoc
+from . import _inflight
 from . import _record
 from . import _report
+from . import _retain
 from . import _render as R
+from ._context._destroy import PARK_FIELD
+from ._context._parse import INT_RANGE_GUARD_RE, REQUIRED_CAPSULE_RE
 
 # PyMethodDef / PyGetSetDef doc field is the 4th element (0-based index 3) in
 # both ``{name, meth, flags, DOC}`` and ``{name, get, set, DOC, closure}``.
@@ -412,7 +416,8 @@ def _head(field_text: str) -> list[str]:
 
 
 def _same_synopsis(cur_line: str, der_line: str) -> bool:
-    """Two synopsis lines that differ by at most a trailing period.
+    """Two synopsis lines that differ by at most a trailing period, or by
+    an optional return's ``| None``.
 
     jm has spelled the line both ways. gh-1039's canned single-record literal
     was a complete sentence — ``find(x) -> Hit record (found, offset).`` —
@@ -421,14 +426,25 @@ def _same_synopsis(cur_line: str, der_line: str) -> bool:
     another author's writing, which is exactly the misclassification that
     keeps a slot frozen.
 
+    gh-2183: a ``none_on_empty`` method's synopsis gained ``| None``, so the
+    line every earlier jm wrote for it ends without one. Compared literally,
+    that froze the very slot the fix was for: the runtime doc of every
+    existing module object kept saying the array is always there.
+
     Examples
     --------
     >>> _same_synopsis("run(x) -> float.", "run(x) -> float")
     True
     >>> _same_synopsis("run(x) -> float", "run(x, gain) -> float")
     False
+    >>> _same_synopsis("peek(n) -> ndarray", "peek(n) -> ndarray | None")
+    True
     """
-    return cur_line.rstrip(".") == der_line.rstrip(".")
+
+    def _bare(line: str) -> str:
+        return line.rstrip(".").removesuffix(" | None")
+
+    return _bare(cur_line) == _bare(der_line)
 
 
 def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
@@ -489,7 +505,13 @@ def _is_jm_shaped(cur: str, der: str, fb: str | None) -> bool:
     if len(cur_head) == 1:
         return True
     fb_head = _head(fb) if fb is not None else []
-    return cur_head == der_head or (bool(fb_head) and cur_head == fb_head)
+    # gh-2183: the synopsis was matched above, by `_same_synopsis`'s rules;
+    # what is left to separate jm's text from an author's is the summary.
+    # Comparing the whole head again re-asked the synopsis literally, and
+    # undid every spelling that function tolerates.
+    return cur_head[1:] == der_head[1:] or (
+        bool(fb_head) and cur_head[1:] == fb_head[1:]
+    )
 
 
 #: jm's generic `tp_doc`, from `_object.py`'s ``[f"{Component} type."]``
@@ -1131,8 +1153,16 @@ _OUT_CONTIG_RE = re.compile(
 #: the manifest asked for, so it is removed before the raise axis is read:
 #: every fragment rendered before gh-1710 lacks it, and reading it as a
 #: raise told each of them "the manifest's result shape needs raises" for
-#: a manifest nobody changed.
+#: a manifest nobody changed. gh-2144's range guard (`INT_RANGE_GUARD_RE`)
+#: raises the same way and is jm's too, so this removes its raise as well.
 _OUT_SIZE_RE = re.compile(r"PyErr_Format\s*\(\s*PyExc_OverflowError\s*,")
+
+#: The output-size guard's own test, ``<var>_need > (size_t)<limit>``: what
+#: says THAT guard is present. The raise above is not enough since gh-2144,
+#: whose range guard raises ``OverflowError`` the same way -- read as this
+#: one, every fragment predating it was told it lacked the output-size
+#: guard it visibly has.
+_OUT_SIZE_GUARD_RE = re.compile(r"\b[A-Za-z_]\w*_need\s*>\s*\(\s*size_t\s*\)")
 
 #: jm's one array-argument converter (gh-1700, `_coerce.ARRAY_ARG_C`), CALLED
 #: for a one-byte element type. Every generated acquisition of an array
@@ -1171,6 +1201,18 @@ _REFUSAL_VALUE_RE = re.compile(
     r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)"
 )
 
+#: A list-of-records result sized by its capacity function (gh-2184): a call
+#: to a ``*_max_out`` and the ``PyList_New`` only that shape's wrapper
+#: builds among the ``PyMethodDef`` rows. Both halves, because a
+#: ``variable_output`` wrapper calls its ``_max_out`` too and returns an
+#: ndarray -- a hand-written one that sizes some other way must not be told
+#: about records. Code, not text: read on the masked body, in any layout.
+#: In either order: a body that re-offers its input (gh-2204) creates the
+#: list before the loop that asks the capacity of each call.
+_RECORDS_CAPACITY_RE = re.compile(
+    r"^(?=[\s\S]*\b\w+_max_out\s*\()(?=[\s\S]*\bPyList_New\s*\()"
+)
+
 
 class _Feature(NamedTuple):
     """One declared-feature marker: how to see it, and what to say.
@@ -1204,6 +1246,30 @@ class _Feature(NamedTuple):
 #: Matched against the body with `_OUT_CONTIG` REMOVED, so a contiguity
 #: test that survives is one applied to something other than `out=`.
 _FEATURE_MARKERS = {
+    # gh-2259: a manifest declaration -- `nogil` -- that every shape jm
+    # writes now honours, and that a batch or fixed-size-result fragment
+    # rendered before it never did. Named for its consequence, which is
+    # silent: the call runs, holding the GIL.
+    "nogil": _Feature(
+        ("Py_BEGIN_ALLOW_THREADS", "PyEval_SaveThread"),
+        "the manifest declares nogil and this fragment calls the kernel "
+        "holding the GIL, so no other thread runs while it does",
+    ),
+    # gh-2272: jm's own guard, which a fragment rendered before it lacks --
+    # including one that does release the GIL. Named for its consequence:
+    # nothing tells the teardown a call is running.
+    "nogil-counted": _Feature(
+        ("jm_inflight_enter",),
+        "the manifest declares nogil and this fragment does not count the "
+        "released call, so a close()/destroy() on another thread frees the "
+        "state under it (gh-2272); delete the fragment and re-run apply",
+    ),
+    "teardown-waits": _Feature(
+        ("jm_inflight_wait",),
+        "this object releases the GIL and this fragment's teardown frees "
+        "without waiting for a call still running (gh-2272); delete the "
+        "fragment and re-run apply",
+    ),
     # gh-1426 A: the record a release defaults its count from.
     "borrow-release": _Feature(
         ("_jm_borrowed",),
@@ -1232,7 +1298,7 @@ _FEATURE_MARKERS = {
     # gh-1710: NOT a manifest declaration either -- jm's own guard, which a
     # fragment rendered before it lacks. Named for its consequence.
     "output-size": _Feature(
-        (_OUT_SIZE_RE,),
+        (_OUT_SIZE_GUARD_RE,),
         "jm's output-size guard refuses a size past NPY_MAX_INTP and this "
         "fragment does not, so an oversized result wraps to a negative "
         "dimension",
@@ -1246,6 +1312,15 @@ _FEATURE_MARKERS = {
         "jm converts a uint8_t[] / int8_t[] argument through jm_array_arg "
         "and this fragment does not, so a bytes, bytearray or memoryview "
         "is parsed as text rather than read as its bytes",
+    ),
+    # gh-2144: jm's own guard as well -- a fragment rendered before it casts
+    # an integer argument to its C type with no range test. Named for its
+    # consequence.
+    "int-range": _Feature(
+        (INT_RANGE_GUARD_RE,),
+        "jm refuses an integer argument outside its C type's range and "
+        "this fragment does not, so an out-of-range value wraps silently "
+        "(an int8_t given 300 arrives as 44)",
     ),
     # gh-1716: jm's own guard, the read-side twin of the output-size one
     # -- a fragment rendered before it trusts the count its kernel returns.
@@ -1276,6 +1351,55 @@ _FEATURE_MARKERS = {
         "(error_negative over a signed count_type, or error_sentinel) and "
         "this fragment does not test it, so a refusal reaches the overflow "
         "guard and raises RuntimeError instead of the declared error",
+    ),
+    # gh-2184: not a manifest key -- the AUTHOR's `<c>_<m>_max_out`, declared
+    # in the sacred header after the fragment was rendered. Named for its
+    # consequence, which is silent: the records past the fixed buffer.
+    "records-capacity": _Feature(
+        (_RECORDS_CAPACITY_RE,),
+        "the header declares this method's <name>_max_out capacity and "
+        "this fragment does not ask it, so a call returns at most the "
+        "fixed max_results records and drops the rest",
+    ),
+    # gh-2204: a manifest declaration -- `consumed_fn`, added to a
+    # list-of-records method after its sacred fragment was rendered. Named
+    # for its consequence, which is the silent loss the key exists to end.
+    "records-consumed": _Feature(
+        (_coerce.CONSUMED_GUARD_RE,),
+        "the manifest declares consumed_fn and this fragment calls the "
+        "kernel once, so the input it leaves when its result buffer fills "
+        "is never offered and those records are lost",
+    ),
+    # gh-2327: a manifest declaration -- `retain` on a capsule param, added
+    # after its sacred fragment was rendered. Named for its consequence,
+    # which is silent until the freed owner's pointer is used.
+    "retain": _Feature(
+        (_retain.FIELD_PREFIX,),
+        "the manifest declares retain on a capsule param and this fragment "
+        "does not keep its owner, so the object passed can be freed while "
+        "the kernel still holds its pointer (gh-2327); delete the fragment "
+        "and re-run apply",
+    ),
+    # gh-2360: a manifest declaration -- `required = true` on a capsule
+    # param, added after its sacred fragment was rendered. Named for its
+    # consequence: None still reaches the kernel as NULL.
+    "capsule-required": _Feature(
+        (REQUIRED_CAPSULE_RE,),
+        "the manifest declares required on a capsule param and "
+        "this fragment passes None to the kernel as NULL, so the call "
+        "fails in C instead of raising TypeError at the binding; delete "
+        "the fragment and re-run apply",
+    ),
+    # gh-2187: jm's own teardown for an object that lends views, which parks
+    # the state for tp_dealloc. A teardown jm wrote before the object lent is
+    # re-rendered (`_object.jm_owned_functions`). One the author edited is
+    # kept, as is one `apply` finds beside a struct with no park field to
+    # name, and this names both. Named for its consequence.
+    "deferred-free": _Feature(
+        (PARK_FIELD,),
+        "this object lends views and this teardown frees the state at "
+        "once, so a view read after destroy() reads freed memory "
+        "(gh-2187)",
     ),
 }
 
@@ -1321,6 +1445,13 @@ def _method_feature_symbols(text: str) -> dict:
             )
         }
         found |= {f"case:{m}" for m in _CASE_LABEL_RE.findall(code)}
+        # gh-2184: a capacity-sized records buffer is bounded by jm's
+        # output-size guard, which comes WITH the capacity and has no
+        # existence without it. Read as its own marker, every fragment
+        # predating a declared capacity was also told about "a negative
+        # dimension" -- an ndarray's failure, on a method returning a list.
+        if "records-capacity" in found:
+            found.discard("output-size")
         out[name] = frozenset(found)
     return out
 
@@ -1341,10 +1472,15 @@ def _method_return_shapes(text: str) -> dict:
             for label, spellings in _RETURN_SHAPE_MARKERS.items()
             if any(s in code for s in spellings)
         }
-        # gh-1710 / gh-1716: jm's output-size and returned-count guards are
-        # reported on the feature axis, so neither is also read here as a
-        # raise the manifest declared.
+        # gh-1710 / gh-1716 / gh-2144: jm's output-size, returned-count and
+        # range guards are reported on the feature axis, so none is also
+        # read here as a raise the manifest declared.
         jm_guards = _coerce.RETURNED_COUNT_BLOCK_RE.sub("", code)
+        # gh-2204: so is the guard on a re-offered input's progress.
+        jm_guards = _coerce.CONSUMED_BLOCK_RE.sub("", jm_guards)
+        # gh-2273: and the recheck before the kernel call, which a fragment
+        # rendered before it lacks.
+        jm_guards = _inflight.strip_rechecks(jm_guards)
         if _raises(_OUT_SIZE_RE.sub("", jm_guards)):
             found.add(_RAISE_MARKER)
         out[name] = frozenset(found)
@@ -1414,7 +1550,11 @@ def signature_drift_details(existing: str, reference: str) -> "dict[str, str]":
     ex_feat = _method_feature_symbols(existing)
     ref_feat = _method_feature_symbols(reference)
     for n, markers in ref_feat.items():
-        missing = markers - ex_feat.get(n, frozenset())
+        missing = set(markers - ex_feat.get(n, frozenset()))
+        # gh-2272: a body that holds the GIL has nothing to count; saying
+        # so as well as "holding the GIL" names one fix twice.
+        if "nogil" in missing:
+            missing.discard("nogil-counted")
         if not missing:
             continue
         # Each marker says why in its own words. Composing one sentence
@@ -2814,14 +2954,38 @@ def refresh_module_fragment_docs(
             # -- it is the declared columns and nothing else, so a kept one
             # describes the old element while the contract asserts the new.
             # The one list is `_object.jm_owned_functions`, which the
-            # regenerate path reads too.
-            _own_names = O.jm_owned_functions(cfg, ctx, reference)
+            # regenerate path reads too. gh-2187: a teardown jm wrote for
+            # the other lending status is on it, where this struct carries
+            # what the render's body needs -- reconciled just below.
+            # gh-2227: first the struct's jm fields, so every body restored
+            # below -- a parking teardown, the dealloc releasing an owner,
+            # a wrapper transplanted above -- finds the fields it uses.
+            updated, _added, _removed = O.reconcile_struct_fields(
+                updated, reference, ctx["Component"]
+            )
+            if _added or _removed:
+                print(
+                    f"  update  {_rel}: object struct fields"
+                    + (f" +{', +'.join(_added)}" if _added else "")
+                    + (f" -{', -'.join(_removed)}" if _removed else "")
+                )
+            # tp_dealloc releases what those fields hold, and only its
+            # lines that read them are jm's: an older fragment frees its own
+            # buffers there, which its kept wrappers still fill.
+            updated, _freed = O.reconcile_dealloc(
+                updated, reference, ctx["ComponentW"]
+            )
+            if _freed:
+                print(f"  update  {_rel}: {ctx['ComponentW']}_dealloc")
+            _was = O._extract_c_function_bodies(updated)
+            _own_names = O.jm_owned_functions(
+                cfg, ctx, reference, kept=_was, into=updated
+            )
             if _own_names:
                 _ref_funcs = O._extract_c_function_bodies(reference)
                 _own = {
                     n: _ref_funcs[n] for n in _own_names if n in _ref_funcs
                 }
-                _was = O._extract_c_function_bodies(updated)
                 if _own:
                     updated = O._restore_c_function_bodies(updated, _own)
                 # Loud, as the enum tables above are: a builder that moves is

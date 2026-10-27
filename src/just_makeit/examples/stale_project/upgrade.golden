@@ -86,7 +86,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 40 OK, 9 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
+summary: 39 OK, 9 missing, 9 stale, 1 unreconciled, 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
 
 $ jm apply   # exit 0
 warning: project schema is v7, current is v9. Run 'just-makeit upgrade' to get new features.
@@ -179,7 +179,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-OK — up to date; 58 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 5 outdated; 8 root-cmake; 2 packaging.
+OK — up to date; 57 manifest-owned file(s) match; 1 unreconciled; 1 silent bench; 5 outdated; 8 root-cmake; 2 packaging.
   create-only files: jm's own — the Makefile, .clang-tidy, jm_test.h,
         jm_bench.h, jm_perf.h, the common headers — are compared against
         this jm's render and reported as OUTDATED. NOT compared: the ones

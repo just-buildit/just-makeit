@@ -30,9 +30,48 @@ def _TO_PY_ULLONG(v):
     return f"PyLong_FromUnsignedLongLong((unsigned long long){v})"
 
 
-def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
-    """Build a fixed-width integer _CTYPE_META entry."""
-    return {
+def _fwint(
+    ctype,
+    fmt,
+    parse_type,
+    parse_zero,
+    np_type,
+    to_py,
+    zero="0",
+    narrow=False,
+    index="",
+):
+    """Build a fixed-width integer _CTYPE_META entry.
+
+    Every row carries ``limits``, the ``<stdint.h>`` macros naming its
+    range, derived from the spelling (``int8_t`` -> ``INT8_MIN`` /
+    ``INT8_MAX``, ``size_t`` -> ``SIZE_MAX``, an unsigned type's floor
+    ``0``). A generated command line refuses a flag outside them (gh-2225,
+    `_app.cli_number_c`), since it parses every integer through a
+    ``long long``.
+
+    *narrow* says the C type holds fewer values than *parse_type*, so a value
+    the parse accepts can still be out of range for *ctype*: the row then
+    also carries ``bounds``, the same pair. The binding refuses a value
+    outside them before the cast (gh-2144,
+    `_context._parse.scalar_narrow_c`). A cast alone wraps: ``int8_t`` given
+    300 arrived as 44.
+
+    *index* names the CPython function that converts an exact ``int`` into
+    *parse_type*, CHECKED, for a type no checked PyArg format char parses
+    (gh-2220). The row then parses the argument as an object (*fmt* ``O``)
+    and carries ``index``, that function. The binding converts through
+    ``PyNumber_Index`` and it, then compares the result with the maximum
+    ``limits`` names before the cast -- *parse_type* can be wider than the
+    type, as ``unsigned long long`` is than a 32-bit ``size_t`` (gh-2258)
+    -- and refuses a value outside ``limits`` with ``OverflowError``
+    (`_context._parse.scalar_parse_c` / ``scalar_arg_c``).
+
+    ``limits`` is the row's one range declaration: ``bounds``, ``index``'s
+    maximum and :func:`int_limits` all read it, so no reader spells a range
+    from the type's name a second time.
+    """
+    row = {
         "kind": "int",
         "fmt": fmt,
         "zero": zero,
@@ -44,6 +83,14 @@ def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
         "to_c": lambda n, t=ctype: f"({t}){n}_raw",
         "to_py": to_py,
     }
+    stem = ctype[: -len("_t")].upper()
+    floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
+    row["limits"] = (floor, f"{stem}_MAX")
+    if narrow:
+        row["bounds"] = row["limits"]
+    if index:
+        row["index"] = index
+    return row
 
 
 _CTYPE_META: dict[str, dict] = {
@@ -75,6 +122,9 @@ _CTYPE_META: dict[str, dict] = {
         "py_one": "1",
         "py_type": "np.int32",
         "to_py": _TO_PY_LONG,
+        # gh-2225: what `_fwint` derives for a fixed-width row; `int` is
+        # named by <limits.h> and `bool` holds 0 and 1.
+        "limits": ("INT_MIN", "INT_MAX"),
     },
     "bool": {
         "kind": "int",
@@ -83,51 +133,95 @@ _CTYPE_META: dict[str, dict] = {
         "py_zero": "False",
         "py_one": "True",
         "py_type": "np.bool_",
+        "limits": ("0", "1"),
         "parse_type": "int",
         "parse_zero": "0",
         "to_c": lambda n: f"(int){n}_raw",
         "to_py": lambda v: f"PyBool_FromLong((long)({v}))",
     },
     # Fixed-width signed
-    "int8_t": _fwint("int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG),
-    "int16_t": _fwint("int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG),
-    "int32_t": _fwint("int32_t", "l", "long", "0L", "np.int32", _TO_PY_LONG),
+    "int8_t": _fwint(
+        "int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG, narrow=True
+    ),
+    "int16_t": _fwint(
+        "int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG, narrow=True
+    ),
+    # gh-2269: `L`, as `uint32_t` below, never `l`: a C `long` is 32 bits
+    # on Windows, so a value past `int32_t` was refused by CPython's own
+    # "too large to convert to C long" before the range check could say
+    # "out of range for int32_t [lo, hi]" -- one message per platform.
+    "int32_t": _fwint(
+        "int32_t",
+        "L",
+        "long long",
+        "0LL",
+        "np.int32",
+        _TO_PY_LONG,
+        narrow=True,
+    ),
     "int64_t": _fwint(
         "int64_t", "L", "long long", "0LL", "np.int64", _TO_PY_LLONG
     ),
-    # Fixed-width unsigned
+    # Fixed-width unsigned. gh-2144: a narrow one parses with a CHECKED
+    # signed format char, never a masking one (`I`, `k`): a mask wraps the
+    # value before any range check can see it, so `uint8_t` given 2**32 + 5
+    # arrived as 5, and `uint32_t` given -1 as 4294967295 on a 32-bit
+    # `long`. `i` keeps the four bytes `I` wrote; `L` holds every
+    # `uint32_t` on every platform, which `l` does not on Windows.
     "uint8_t": _fwint(
-        "uint8_t", "I", "unsigned int", "0U", "np.uint8", _TO_PY_ULONG, "0U"
+        "uint8_t",
+        "i",
+        "int",
+        "0",
+        "np.uint8",
+        _TO_PY_ULONG,
+        "0U",
+        narrow=True,
     ),
     "uint16_t": _fwint(
-        "uint16_t", "I", "unsigned int", "0U", "np.uint16", _TO_PY_ULONG, "0U"
+        "uint16_t",
+        "i",
+        "int",
+        "0",
+        "np.uint16",
+        _TO_PY_ULONG,
+        "0U",
+        narrow=True,
     ),
     "uint32_t": _fwint(
         "uint32_t",
-        "k",
-        "unsigned long",
-        "0UL",
+        "L",
+        "long long",
+        "0LL",
         "np.uint32",
         _TO_PY_ULONG,
         "0U",
+        narrow=True,
     ),
+    # gh-2220: no checked unsigned 64-bit format char exists -- `K` masks,
+    # so -1 arrived as 2**64 - 1 and 2**64 as 0 -- so these two parse an
+    # object (`O`) and convert it through `PyNumber_Index` and the checked
+    # `PyLong_AsUnsignedLongLong`. `__index__` is also what takes a numpy
+    # integer, which `K` refused before Python 3.14.
     "uint64_t": _fwint(
         "uint64_t",
-        "K",
+        "O",
         "unsigned long long",
         "0ULL",
         "np.uint64",
         _TO_PY_ULLONG,
         "0U",
+        index="PyLong_AsUnsignedLongLong",
     ),
     "size_t": _fwint(
         "size_t",
-        "K",
+        "O",
         "unsigned long long",
         "0ULL",
         "np.uintp",
         _TO_PY_ULLONG,
         "0",
+        index="PyLong_AsUnsignedLongLong",
     ),
     "ptrdiff_t": _fwint(
         "ptrdiff_t", "L", "long long", "0LL", "np.intp", _TO_PY_LLONG, "0"
@@ -742,6 +836,101 @@ def param_fmt(ctype: str, default: str = "") -> str:
     if is_nullable_string(ctype, default):
         return "z"
     return _CTYPE_META[ctype]["fmt"]
+
+
+def wider_than_double(ctype: str) -> "str | None":
+    """The C type integer *ctype* parses through, when a double cannot hold it.
+
+    gh-2139. A ``double`` holds every integer of magnitude up to 2**53 and
+    not every one past it, so a face that carries an integer as a double --
+    cJSON's only number is one -- changes a wider type's value with no
+    error. Which types are wider is the type table's own statement, not a
+    list of names: every integer row names the C type its binding parses
+    through (``parse_type``), and that is a ``long long`` exactly when the
+    type needs more than 32 bits -- an ``int64_t``, a ``size_t`` or a
+    ``ptrdiff_t`` -- except a row that carries ``bounds``, which holds fewer
+    values than it parses through (a ``uint32_t`` parses through a
+    ``long long`` so its whole range survives the parse, gh-2144; an
+    ``int32_t`` does too, so no binding parses through the platform-wide
+    ``long``, gh-2269). No row
+    needs between 33 and 53 bits, which
+    ``tests/test_gh2139_composer_json_64bit.py`` holds against numpy's own
+    width for every row.
+
+    Parameters
+    ----------
+    ctype : str
+        A C type spelling; one with no ``_CTYPE_META`` row is not wider.
+
+    Returns
+    -------
+    str or None
+        ``"unsigned long long"`` or ``"long long"`` -- the C type that holds
+        every value of *ctype*, whose signedness is *ctype*'s -- or ``None``
+        for a type a double holds exactly (a narrower integer, a floating
+        type) or that is not a number.
+
+    Examples
+    --------
+    >>> wider_than_double("uint64_t")
+    'unsigned long long'
+    >>> wider_than_double("ptrdiff_t")
+    'long long'
+    >>> wider_than_double("uint32_t") is None
+    True
+    >>> wider_than_double("double") is None
+    True
+    """
+    meta = _CTYPE_META.get(ctype, {})
+    parse_type = meta.get("parse_type", "")
+    # A row with `bounds` holds fewer values than it parses through (gh-2144):
+    # a `uint32_t` parses through a `long long` so the whole range survives
+    # the parse, and is still 32 bits wide.
+    if (
+        meta.get("kind") == "int"
+        and parse_type.endswith("long long")
+        and "bounds" not in meta
+    ):
+        return parse_type
+    return None
+
+
+def int_limits(ctype: str) -> "tuple[str, str] | None":
+    """The C expressions naming integer *ctype*'s range, read off its row.
+
+    gh-2247. Every integer row carries ``limits`` (gh-2225): `_fwint`
+    derives it from a fixed-width spelling, and ``int`` declares
+    ``INT_MIN`` / ``INT_MAX``. This reads it, so the JSON reader, the
+    command line and the binding refuse one range. The compiler states the
+    range, not jm. ``bool`` is not a range -- converting any number to it
+    is defined -- and a non-integer row has none.
+
+    Parameters
+    ----------
+    ctype : str
+        A C type spelling; one with no ``_CTYPE_META`` row has no range.
+
+    Returns
+    -------
+    tuple of str or None
+        ``(floor, ceiling)``: ``<limits.h>`` / ``<stdint.h>`` macros, an
+        unsigned type's floor the literal ``0``; or ``None``.
+
+    Examples
+    --------
+    >>> int_limits("int8_t")
+    ('INT8_MIN', 'INT8_MAX')
+    >>> int_limits("uint32_t")
+    ('0', 'UINT32_MAX')
+    >>> int_limits("int")
+    ('INT_MIN', 'INT_MAX')
+    >>> int_limits("bool") is None, int_limits("double") is None
+    (True, True)
+    """
+    meta = _CTYPE_META.get(ctype, {})
+    if meta.get("kind") != "int" or ctype == "bool":
+        return None
+    return meta["limits"]
 
 
 def string_default_literal(default: str) -> str:
@@ -1849,6 +2038,80 @@ CONTAINER_KINDS: tuple[str, ...] = ("dict", "list", "tuple")
 # escape hatch for values jm cannot type statically -- e.g. a value whose
 # Python type is chosen by a type code stored in the file being read.
 OBJECT_VALUE_TYPE = "object"
+
+
+# gh-2347: a property whose value crosses the ABI as JSON text. Its C getter
+# returns a malloc'd `char *` that the binding parses with `json.loads` and
+# frees, so a core already holding a structured document (a SigMF sidecar's
+# annotations) hands Python the structure without a second reader. Not a
+# container kind: no count/key/value protocol backs it.
+JSON_KIND = "json"
+
+#: The one C return type a `json` property's getter has. Owned by the binding:
+#: the getter allocates it with `malloc` and the generated glue `free`s it.
+JSON_GETTER_CTYPE = "char *"
+
+#: The names a `json` property's `py_type` may use: builtin generics and
+#: `Any`, the one `typing` name every generated stub already imports on use.
+JSON_PY_TYPE_NAMES = frozenset(
+    {"Any", "None", "bool", "dict", "float", "int", "list", "str", "tuple"}
+)
+
+
+def is_json_type(ctype: str) -> bool:
+    """Return True if ctype names the JSON property kind (gh-2347).
+
+    >>> is_json_type("json")
+    True
+    >>> is_json_type("dict")
+    False
+    """
+    return ctype == JSON_KIND
+
+
+def json_py_type_error(py_type: str) -> str:
+    """Why *py_type* cannot annotate a `json` property, or ``""`` (gh-2347).
+
+    It lands in the ``.pyi`` verbatim, so it must be an expression of
+    :data:`JSON_PY_TYPE_NAMES` alone: a name the stub does not import would
+    leave a stub that does not type-check.
+
+    >>> json_py_type_error("list[dict[str, Any]]")
+    ''
+    >>> json_py_type_error("Sequence[int]")
+    "names 'Sequence', which a generated stub does not import"
+    >>> json_py_type_error("list[")
+    'is not a Python type expression'
+    >>> json_py_type_error("dict[str, Any] | None")
+    ''
+    >>> json_py_type_error("os.system('x')")
+    'is not a Python type expression'
+    """
+    import ast
+
+    try:
+        tree = ast.parse(py_type, mode="eval")
+    except SyntaxError:
+        return "is not a Python type expression"
+    allowed = (ast.Expression, ast.Name, ast.Subscript, ast.Tuple, ast.Load)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id not in JSON_PY_TYPE_NAMES:
+                return (
+                    f"names '{node.id}', which a generated stub does not "
+                    f"import"
+                )
+        elif isinstance(node, ast.BinOp):
+            if not isinstance(node.op, ast.BitOr):
+                return "is not a Python type expression"
+        elif isinstance(node, ast.BitOr):
+            pass
+        elif isinstance(node, ast.Constant):
+            if node.value is not None and node.value is not Ellipsis:
+                return "is not a Python type expression"
+        elif not isinstance(node, allowed):
+            return "is not a Python type expression"
+    return ""
 
 
 def is_container_type(ctype: str) -> bool:

@@ -8,6 +8,7 @@ pre-#219 stub signature — no `out=` param, no `<name>_max_out()` method —
 even though its `.c` binding correctly gained both.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -48,13 +49,13 @@ class TestModulePyiOutKwarg:
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
         # gh-607: max_out() mirrors the kernel's own count param.
-        assert "def execute_cf32_max_out(self, n_in: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, n_in: int, /) -> int:" in pyi
 
     def test_single_array_param_gets_out_kwarg_and_max_out(self, tmp_path):
         root = self._scaffold(tmp_path, params=[("x", "float _Complex[]")])
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, x_len: int, /) -> int:" in pyi
 
     def test_array_beside_a_scalar_gets_out_kwarg_and_max_out(self, tmp_path):
         # Farrow.delay-shaped: an array param beside a scalar. gh-412 left it
@@ -66,14 +67,41 @@ class TestModulePyiOutKwarg:
         )
         pyi = _module_pyi(root)
         assert "out:" in pyi and "| None = None" in pyi
-        assert "def execute_cf32_max_out(self, x_len: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, x_len: int, /) -> int:" in pyi
 
-    def test_params_beside_an_input_get_no_out_kwarg(self, tmp_path):
-        # An `arg_type` input plus a param: parsed since gh-1960, and still
-        # offered no `out=` until the header's `@param` zip can take one
-        # (gh-2028).
+    def test_params_beside_an_input_get_out_kwarg_and_max_out(self, tmp_path):
+        # An `arg_type` input plus a param: parsed since gh-1960, and offered
+        # `out=` since gh-2028, sized from the input as without the param --
+        # so `max_out()` takes the same `n_in` the bare input shape's does.
         root = self._scaffold(
             tmp_path, arg_type="float _Complex", params=[("mu", "double")]
         )
         pyi = _module_pyi(root)
+        assert re.search(
+            r"def execute_cf32\(\s*self,\s*x: [^,]+,\s*mu: float,\s*"
+            r"out: [^=]+\| None = None,?\s*\)",
+            pyi,
+        ), pyi
+        assert "def execute_cf32_max_out(self, n_in: int, /) -> int:" in pyi
+
+    def test_multi_output_gets_no_out_kwarg(self, tmp_path):
+        # Two output arrays would need two buffers; one `out=` cannot say
+        # which. The one variable_output shape still offered none.
+        root = tmp_path / "pkg"
+        new_run("pkg", root, modules=["dsp"])
+        object_run(root, "nco", "dsp", state_vars=[("freq", "float", "0.0f")])
+        method_run(
+            root,
+            "nco",
+            "execute_cf32",
+            "dsp",
+            "float _Complex",
+            "float _Complex",
+            True,
+            ["float"],
+        )
+        pyi = _module_pyi(root)
         assert "execute_cf32_max_out" not in pyi
+        sig = re.search(r"def execute_cf32\((.*?)\)\s*->", pyi, re.S)
+        assert sig is not None, pyi
+        assert "out:" not in sig.group(1)

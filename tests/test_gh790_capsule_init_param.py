@@ -158,8 +158,9 @@ class TestTheBinding:
         ext = _ext(_project(tmp_path))
         assert 'kwlist[] = {"tlm", "block_samples", NULL}' in ext
         assert "PyObject *tlm_obj = NULL;" in ext
-        # "O" for the capsule, then "|K" for the defaulted size_t.
-        assert '"O|K", kwlist' in ext
+        # "O" for the capsule, then "|O" for the defaulted size_t
+        # (gh-2220: converted through __index__ after the parse).
+        assert '"O|O", kwlist' in ext
 
     def test_it_name_checks_the_capsule(self, tmp_path):
         """The check that stops one module's pointer being accepted by
@@ -307,10 +308,10 @@ class TestDeclaredAfterADefaultedParam:
     def test_the_kwlist_hoists_the_required_param(self, tmp_path):
         ext = _ext(self._root(tmp_path))
         assert 'kwlist[] = {"tlm", "block_samples", NULL}' in ext
-        assert '"O|K", kwlist' in ext
+        assert '"O|O", kwlist' in ext
         # Hoisted, but assigned into NAMED locals — which is exactly why the
         # C order and the Python order are free to differ.
-        assert "&tlm_obj, &block_samples_raw" in ext
+        assert "&tlm_obj, &block_samples_obj" in ext
 
     def test_the_stub_agrees_with_the_kwlist(self, tmp_path):
         assert (
@@ -506,55 +507,23 @@ class TestTheSharedEmitter:
         assert "p_obj == Py_None" in c
         assert "return NULL;" not in c
 
-    def test_only_the_init_form_upgrades_the_attribute_error(self):
+    def test_every_form_names_what_to_pass(self):
         """A missing `_capsule` surfaces as AttributeError from
-        GetAttrString. On a method that is gh-432's long-standing behaviour
-        and is left byte-identical; on a CONSTRUCTOR it is the first thing a
-        caller hits after passing the wrong object, and naming an
-        implementation detail there is unhelpful."""
-        method = capsule_unwrap_c("p", PTR, CAP, "p_obj", "return NULL;")
-        init = capsule_unwrap_c(
-            "p",
-            PTR,
-            CAP,
-            "p_obj",
-            "return -1;",
-            allow_none=False,
-            explain_type_error=True,
-        )
-        assert "PyErr_Clear()" not in method
-        assert "PyErr_Clear()" in init
-        assert "Py_TYPE(p_obj)->tp_name" in init
-
-    def test_the_upgrade_follows_the_constructor_not_the_nullability(self):
-        """gh-805 §H split `explain_type_error` out of `allow_none`.
-
-        They were the same question only by accident: every constructor param
-        was mandatory, so `allow_none=False` could stand in for "this is a
-        tp_init". A NULLABLE constructor param breaks that coupling, and
-        leaving them fused silently downgraded the message this exists to
-        give — `'int' object has no attribute '_capsule'` on the very call
-        the upgrade was written for.
-        """
-        nullable_init = capsule_unwrap_c(
-            "p",
-            PTR,
-            CAP,
-            "p_obj",
-            "return -1;",
-            allow_none=True,
-            explain_type_error=True,
-        )
-        # Nullable AND explained: None is accepted, a wrong object is named.
-        assert "if (p_obj != Py_None) {" in nullable_init
-        assert "PyErr_Clear()" in nullable_init
-        assert "Py_TYPE(p_obj)->tp_name" in nullable_init
-        # And the knob is genuinely independent: mandatory without the
-        # upgrade is expressible too, which is what proves the two are not
-        # the same question wearing different names.
-        assert "PyErr_Clear()" not in capsule_unwrap_c(
-            "p", PTR, CAP, "p_obj", "return -1;", allow_none=False
-        )
+        GetAttrString, which names an implementation detail. It is a
+        TypeError naming the pointer and the capsule on a method, a
+        constructor, and either nullability (gh-2355; it was the
+        constructor's alone, and a nullable one had to be taught separately,
+        gh-805 section H)."""
+        for fail, none in (
+            ("return NULL;", True),
+            ("return -1;", False),
+            ("return -1;", True),
+            ("return NULL;", False),
+        ):
+            c = capsule_unwrap_c("p", PTR, CAP, "p_obj", fail, allow_none=none)
+            assert "PyErr_Clear()" in c, (fail, none)
+            assert "Py_TYPE(p_obj)->tp_name" in c, (fail, none)
+            assert f"p must be the {CAP} capsule" in c, (fail, none)
 
 
 # ── the claims only a compiler and a live interpreter can settle ────────────

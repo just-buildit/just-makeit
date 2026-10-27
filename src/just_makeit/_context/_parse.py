@@ -6,8 +6,11 @@ multiple make_*_ctx() builders.
 
 from __future__ import annotations
 
+import re
+
 from .. import _coerce
 from .. import _record
+from .. import _retain
 from .._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,
@@ -47,8 +50,10 @@ def capsule_new_c(
     capsule_name: str,
     owner: str,
     indent: str = "    ",
+    owner_expr: str = "(PyObject *)self",
+    lent_flag: str = "",
 ) -> str:
-    """The body that publishes *ptr_expr* as a borrowed named ``PyCapsule``.
+    """The body that lends *ptr_expr* as a named ``PyCapsule``.
 
     The producing half of the capsule triangle, and the peer of
     :func:`capsule_unwrap_c`. gh-788 gap 4 introduced it for an **object**
@@ -57,8 +62,8 @@ def capsule_new_c(
     and was the only one that could not give one.
 
     Extracted for the same reason the unwrap was: this is a *contract*, not a
-    call. The NULL destructor is the whole of it, and a second copy is a place
-    for that to be quietly changed on one side only.
+    call, and a second copy is a place for it to be quietly changed on one
+    side only.
 
     Parameters
     ----------
@@ -72,29 +77,56 @@ def capsule_new_c(
         Display name of the owning type, for the comment only.
     indent : str
         Leading whitespace for each emitted line.
+    owner_expr : str
+        C expression for the Python object that owns the pointer: the one the
+        capsule keeps alive.
+    lent_flag : str
+        C lvalue set to 1 whenever the pointer is lent (gh-2346), or ``""``
+        for none. An owner whose ``close()`` would otherwise free the pointer
+        reads it to defer that free to its deallocator: a consumer that keeps
+        the pointer (``retain``) keeps the owner alive, not its pointer, and
+        a ``close()`` that freed it anyway left the consumer reading freed
+        memory. Every lend reaches this one body -- the duck-typed
+        ``._capsule`` unwrap calls the same getter -- so this is the one
+        place the fact is recorded.
 
     Notes
     -----
-    **The destructor is NULL and is not configurable.** The capsule lends a
-    pointer the owner still owns; a capsule with a destructor would free it on
-    garbage collection and the owner would free it again in its deallocator. A
-    capsule that *owns* its pointer is a different feature and should look
-    different.
+    **The capsule never frees the pointer.** It lends a pointer the owner
+    still owns; a capsule that freed it on garbage collection would free it
+    a second time in the owner's deallocator. A capsule that *owns* its
+    pointer is a different feature and should look different.
+
+    **It does keep the owner alive** (gh-2328). The helper it calls,
+    ``jm_capsule_lend`` (``_coerce.CAPSULE_LEND_C``), stores a reference to the
+    owner as the capsule's context, and the capsule's destructor releases
+    only that reference. Before, the capsule held nothing: a consumer that
+    keeps what it is passed -- a constructor capsule param (gh-790), a
+    ``retain`` method param (gh-2327) -- kept the owner alive when passed the
+    owner, and kept only the capsule when passed ``owner._capsule``, so the
+    owner could be collected under it.
 
     Examples
     --------
     >>> print(capsule_new_c("self->h", "doppler.wfm.clk", "SampleClock"))
-        /* Borrowed: NULL destructor, so the capsule never
-           frees a pointer SampleClock still owns. */
-        return PyCapsule_New((void *)(self->h),
-                             "doppler.wfm.clk", NULL);
+        /* Lent, not owned: the capsule never frees the pointer, and
+           holds SampleClock, so the pointer lives as long as it. */
+        return jm_capsule_lend((void *)(self->h),
+                               "doppler.wfm.clk", (PyObject *)self);
     """
     i = indent
+    mark = (
+        f"{i}/* gh-2346: lent once, so close() leaves the free to dealloc. */\n"
+        f"{i}{lent_flag} = 1;\n"
+        if lent_flag
+        else ""
+    )
     return (
-        f"{i}/* Borrowed: NULL destructor, so the capsule never\n"
-        f"{i}   frees a pointer {owner} still owns. */\n"
-        f"{i}return PyCapsule_New((void *)({ptr_expr}),\n"
-        f'{i}                     "{capsule_name}", NULL);'
+        f"{i}/* Lent, not owned: the capsule never frees the pointer, and\n"
+        f"{i}   holds {owner}, so the pointer lives as long as it. */\n"
+        f"{mark}"
+        f"{i}return jm_capsule_lend((void *)({ptr_expr}),\n"
+        f'{i}                       "{capsule_name}", {owner_expr});'
     )
 
 
@@ -242,6 +274,110 @@ def borrow_view_c(
     )
 
 
+#: The method-param key that makes a capsule param mandatory (gh-2360).
+REQUIRED_KEY = "required"
+
+#: The test only a MANDATORY capsule unwrap emits (`capsule_unwrap_c` with
+#: ``allow_none=False``): what `_docsync` looks for in a fragment rendered
+#: before its param was declared ``required = true``. Code, not the error
+#: string, because the fragment reader masks string literals; whitespace-
+#: tolerant, because a fragment may have been reformatted.
+REQUIRED_CAPSULE_RE = re.compile(
+    r"\b(\w+)_obj\s*==\s*Py_None\s*\|\|\s*\1_obj\s*==\s*NULL\b"
+)
+
+
+def capsule_nullable(p: dict) -> bool:
+    """Whether a method's capsule param *p* accepts ``None`` (as ``NULL``).
+
+    True unless the param declares ``required = true``: ``None`` is the
+    C-side detach idiom (``set_telemetry(None)``), which is what a method
+    capsule param has always meant. A kernel that refuses ``NULL`` declares
+    the key, and then the binding rejects ``None`` up front with a
+    ``TypeError`` and the stub types the param ``object`` -- both from this
+    one answer, so the faces cannot disagree (gh-2360).
+
+    ``required`` is the constructor's spelling of the same choice (gh-805
+    §H), and it is declared ``true`` rather than ``nullable = false``
+    because every manifest reader treats a bool key's ``false`` as its
+    absence -- `jm script` would have replayed ``nullable = false`` away.
+
+    Examples
+    --------
+    >>> capsule_nullable({"name": "t", "capsule": "x.t"})
+    True
+    >>> capsule_nullable({"name": "t", "capsule": "x.t", "required": True})
+    False
+    """
+    return p.get(REQUIRED_KEY) is not True
+
+
+def capsule_annotation(p: dict) -> str:
+    """The ``.pyi`` and docstring annotation of a method's capsule param.
+
+    Every writer of a method signature or ``Parameters`` line asks this
+    rather than :func:`capsule_nullable`, so the spelling lives in one place.
+
+    Examples
+    --------
+    >>> capsule_annotation({"name": "t", "capsule": "x.t"})
+    'object | None'
+    >>> capsule_annotation({"name": "t", "capsule": "x.t", "required": True})
+    'object'
+    """
+    return "object | None" if capsule_nullable(p) else "object"
+
+
+def required_errors(cfg: dict) -> "list[str]":
+    """Every method-param ``required`` jm would not honour, by row.
+
+    Asked at load (`_config.load`), over every object's and view's method
+    params: the key must be a bool, and it means something only on a param
+    that declares a ``capsule`` (gh-2360). On any other method param it
+    would read as "has no default", which is a different question.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"methods": [{"name": "attach", "params": [
+    ...     {"name": "n", "type": "int", "required": True}]}]}}
+    >>> print(required_errors(cfg)[0])
+    [[o.methods.params]] attach.n: required says a capsule param refuses None, and n declares no `capsule`; drop the key
+    >>> cfg["o"]["methods"][0]["params"][0].update(capsule="x.t", type="t *")
+    >>> required_errors(cfg)
+    []
+    >>> cfg["o"]["methods"][0]["params"][0]["required"] = "yes"
+    >>> print(required_errors(cfg)[0])
+    [[o.methods.params]] attach.n: required = 'yes' must be true or false
+
+    A row that is not a table is the key walk's to name, not this one's:
+
+    >>> required_errors({"o": {"methods": [{"name": "m", "params": [1]}]}})
+    []
+    """
+    from .._config import declared_methods
+
+    out: "list[str]" = []
+    for table, m in declared_methods(cfg):
+        for p in m.get("params") or []:
+            if not isinstance(p, dict) or REQUIRED_KEY not in p:
+                continue
+            row = (
+                f"[[{table}.params]] {m.get('name', '?')}.{p.get('name', '?')}"
+            )
+            value = p[REQUIRED_KEY]
+            if not isinstance(value, bool):
+                out.append(
+                    f"{row}: required = {value!r} must be true or false"
+                )
+            elif value and not p.get("capsule"):
+                out.append(
+                    f"{row}: required says a capsule param refuses None, "
+                    f"and {p.get('name', '?')} declares no `capsule`; "
+                    "drop the key"
+                )
+    return out
+
+
 def capsule_unwrap_c(
     name: str,
     ctype: str,
@@ -250,7 +386,6 @@ def capsule_unwrap_c(
     fail: str,
     indent: str = "    ",
     allow_none: bool = True,
-    explain_type_error: bool = False,
 ) -> str:
     """C that turns *obj_var* into a borrowed C pointer named *name*.
 
@@ -290,18 +425,19 @@ def capsule_unwrap_c(
         the C-side detach idiom. When False, the pointer is mandatory and
         ``None`` is rejected up front rather than surfacing later as a failed
         ``create()`` with nothing pointing at the cause.
-    explain_type_error : bool
-        Replace the raw ``AttributeError`` from the ``._capsule`` lookup with
-        a ``TypeError`` naming what to pass. True for a **constructor**, where
-        it is the first thing a caller hits after passing the wrong object.
 
-        gh-805 §H split this out of ``allow_none``. Until then the two were
-        the same question by accident — every constructor was mandatory, so
-        ``allow_none=False`` could stand in for "this is a ``tp_init``". A
-        nullable constructor param breaks that coupling, and leaving them
-        fused silently downgraded exactly the message this exists to give:
-        ``'int' object has no attribute '_capsule'`` names an implementation
-        detail instead of the requirement. Two questions, two parameters.
+    A wrong object is always a ``TypeError`` naming the pointer and the capsule
+    it wants (gh-2355), on a method, a constructor and a composer's owned
+    pointer alike. The raw ``AttributeError`` from the ``._capsule`` lookup
+    names an implementation detail instead of the requirement.
+
+    That was once a parameter, ``explain_type_error``: gh-805 §H split it out
+    of ``allow_none`` because the two had been the same question by accident,
+    and a method kept the raw error "byte for byte" (gh-432). gh-2355 asked
+    why a method should differ -- a wrong-type argument is a ``TypeError``
+    everywhere else in the generated bindings -- and every caller then passed
+    True, so the parameter had no False left to select. A flag with one value
+    is a second question nobody is asking; it was removed.
     """
     disp = ctype
     if not disp.endswith("*"):
@@ -310,15 +446,10 @@ def capsule_unwrap_c(
     i = indent
     inner = i + "    " if allow_none else i
     # A missing `_capsule` attribute surfaces as AttributeError from
-    # PyObject_GetAttrString. On a METHOD that is fine and is what gh-432 has
-    # always raised. On a CONSTRUCTOR it is the first thing a caller hits
-    # after passing the wrong object, and "'int' object has no attribute
-    # '_capsule'" names an implementation detail rather than the requirement
-    # — so a constructor replaces it with a TypeError that says what to pass.
-    # gh-432's method behaviour is unchanged, byte for byte.
-    #
-    # Keyed on `explain_type_error`, NOT on `allow_none`. Those were the same
-    # question only while every constructor param was mandatory (gh-805 §H).
+    # PyObject_GetAttrString, and "'int' object has no attribute '_capsule'"
+    # names an implementation detail rather than the requirement -- so it is
+    # replaced with a TypeError that says what to pass, wherever the pointer
+    # is taken (gh-2355; it was constructors only, gh-790 / gh-805 §H).
     #
     # gh-794 made that replacement conditional. `_capsule` used to be a plain
     # attribute, so AttributeError was the ONLY way this lookup could fail and
@@ -340,8 +471,6 @@ def capsule_unwrap_c(
         f'{inner}            " not %s", Py_TYPE({obj_var})->tp_name);\n'
         f"{inner}        {fail}\n"
         f"{inner}    }}\n"
-        if explain_type_error
-        else f"{inner}    if (!{cap})\n{inner}        {fail}\n"
     )
     body = (
         f"{inner}PyObject *{cap} = {obj_var};\n"
@@ -424,12 +553,214 @@ def _build_ml_doc(lines: list[str]) -> str:
     return "\n     ".join(f'"{_esc(ln)}\\n"' for ln in flat)
 
 
+#: The opener of jm's own range guard (gh-2144, :func:`scalar_narrow_c`), in
+#: any layout a formatter gives it: an ``if`` testing a ``<name>_raw`` local
+#: against a ``<stdint.h>`` ``*_MAX`` bound, cast to the parse type. It is
+#: how ``_docsync`` tells a sacred fragment predating the guard.
+INT_RANGE_GUARD_RE = re.compile(
+    r"\bif\s*\([^;{}]*\b[A-Za-z_]\w*_raw\s*>\s*\(\s*[a-z][a-z ]*\)\s*"
+    r"[A-Z][A-Z0-9]*_MAX\s*\)\s*\{"
+)
+
+
+def scalar_narrow_c(
+    ctype: str,
+    var: str,
+    fail: str,
+    *,
+    label: str,
+    meta: "dict | None" = None,
+    indent: str = "    ",
+) -> str:
+    """Statements declaring *var* of *ctype* from its parsed ``<var>_raw``.
+
+    The one place a scalar parsed into its row's wider ``parse_type`` local
+    becomes the C type: every face that converts one -- a method or module
+    function param, a constructor param, a property or ``set_<field>``
+    setter, ``step()``'s input, a composer row -- ends here, and nothing
+    else calls a row's ``to_c``.
+
+    gh-2144: the cast alone wraps. ``int8_t`` given 300 parsed as an ``int``
+    and arrived as 44, on every face, with no error. A row whose C type is
+    narrower than its parse type carries ``bounds`` (`_types._fwint`), and
+    for it this first refuses a value outside them with ``OverflowError``
+    naming *label* -- as numpy 2 refuses ``np.int8(300)``. The bounds are the
+    ``<stdint.h>`` macros, so the compiler states the range, not jm. Every
+    other row with a parse local -- ``int64_t``, ``bool``, a complex -- is
+    the bare conversion, byte for byte what it was.
+
+    Parameters
+    ----------
+    ctype : str
+        The C type of the local, a ``_CTYPE_META`` key with a ``parse_type``.
+    var : str
+        The local's name; ``<var>_raw`` holds the parsed value.
+    fail : str
+        The C statement(s) that leave the wrapper once the exception is set,
+        e.g. ``return NULL;``, releasing whatever it already holds.
+    label : str
+        The Python-facing name the message leads with: the parameter, field
+        or property the caller passed the value as.
+    meta : dict, optional
+        The ``_CTYPE_META`` row, as for :func:`scalar_parse_c`.
+    indent : str, optional
+        Prefixed to every line.
+
+    Returns
+    -------
+    str
+        The statements, each line ending in a newline.
+
+    Examples
+    --------
+    >>> print(scalar_narrow_c("int64_t", "n", "return NULL;", label="n"),
+    ...       end="")
+        int64_t n = (int64_t)n_raw;
+    >>> print(scalar_narrow_c("int8_t", "v", "return -1;", label="gain"),
+    ...       end="")
+        if (v_raw < (int)INT8_MIN || v_raw > (int)INT8_MAX) {
+            PyErr_Format(PyExc_OverflowError,
+                "gain: %lld is out of range for int8_t [%lld, %lld]",
+                (long long)v_raw, (long long)INT8_MIN, (long long)INT8_MAX);
+            return -1;
+        }
+        int8_t v = (int8_t)v_raw;
+    >>> bool(INT_RANGE_GUARD_RE.search(
+    ...     scalar_narrow_c("uint16_t", "v", "return -1;", label="v")))
+    True
+    """
+    meta = _CTYPE_META[ctype] if meta is None else meta
+    cast = f"{indent}{ctype} {var} = {meta['to_c'](var)};\n"
+    if "bounds" not in meta:
+        return cast
+    lo, hi = meta["bounds"]
+    # Each bound is cast to the parse type, which is signed for every narrow
+    # row: a <stdint.h> may spell a bound unsigned (`UINT32_MAX` is
+    # `4294967295U`), and comparing that with a signed local draws
+    # -Wsign-compare. An unsigned type's floor is the literal 0.
+    pt, raw, i = meta["parse_type"], f"{var}_raw", indent
+    floor = f"{raw} < 0" if lo == "0" else f"{raw} < ({pt}){lo}"
+    msg = f"{label}: %lld is out of range for {ctype} [%lld, %lld]"
+    return (
+        f"{i}if ({floor} || {raw} > ({pt}){hi}) {{\n"
+        f"{i}    PyErr_Format(PyExc_OverflowError,\n"
+        f'{i}        "{msg}",\n'
+        f"{i}        (long long){raw}, (long long){lo}, (long long){hi});\n"
+        f"{i}    {fail}\n"
+        f"{i}}}\n"
+        f"{cast}"
+    )
+
+
+def _index_c(
+    src: str,
+    var: str,
+    fail: str,
+    opener: str,
+    *,
+    label: str,
+    ctype: str,
+    meta: dict,
+    indent: str = "    ",
+) -> str:
+    """A block converting the object *src* into ``<var>_raw``, checked.
+
+    For a row carrying ``index`` (`_types._fwint`): a type no checked PyArg
+    format char parses. ``uint64_t`` and ``size_t`` parsed through ``K``,
+    which MASKS, so ``-1`` arrived as ``2**64 - 1`` and ``2**64`` as 0 before
+    any check could see them (gh-2220). This takes the object instead:
+    ``PyNumber_Index`` -- which is also what accepts a numpy integer, and
+    refuses a ``float`` as every other integer row does -- then the row's
+    checked converter, whose ``OverflowError`` is replaced by one naming
+    *label*, the value and the type's range, in the words
+    :func:`scalar_narrow_c` refuses a narrow row with.
+
+    gh-2258: the converter checks the value against its own return type,
+    ``unsigned long long``, not against *ctype*. Where ``size_t`` is 32 bits
+    a value between ``SIZE_MAX`` and ``2**64`` passed it and wrapped on the
+    cast, so the converted value is also compared with the maximum the row's
+    ``limits`` names, before the cast, and refused with the same sentence.
+    Where *ctype* is as wide as *parse_type* the comparison is always false
+    and the compiler drops it.
+
+    Parameters
+    ----------
+    src : str
+        The C expression naming the ``PyObject *`` to convert.
+    var : str
+        The local's name; ``<var>_raw``, declared by the caller, receives
+        the value.
+    fail : str
+        The C statement(s) that leave the wrapper once the exception is set.
+    opener : str
+        The line opening the block, without its indent: ``{`` for an object
+        that is always there, ``if (<obj> != NULL) {`` for an optional
+        argument the parse may leave ``NULL``, keeping its seeded default.
+    label, ctype, meta, indent
+        As for :func:`scalar_narrow_c`.
+
+    Returns
+    -------
+    str
+        The block, each line ending in a newline. Its one local, ``_ix``,
+        is scoped to it, and a parameter cannot be spelled with a leading
+        ``_`` (`_builtins.param_name_clash`).
+
+    Examples
+    --------
+    >>> from just_makeit._types import _CTYPE_META
+    >>> print(_index_c("o", "n", "return -1;", "{", label="n",
+    ...                ctype="size_t", meta=_CTYPE_META["size_t"]), end="")
+        {
+            PyObject *_ix = PyNumber_Index(o);
+            if (_ix == NULL) {
+                return -1;
+            }
+            n_raw = PyLong_AsUnsignedLongLong(_ix);
+            if ((n_raw == (unsigned long long)-1 && PyErr_Occurred())
+                || n_raw > (unsigned long long)SIZE_MAX) {
+                PyErr_Format(PyExc_OverflowError,
+                    "n: %S is out of range for size_t [0, %llu]",
+                    _ix, (unsigned long long)SIZE_MAX);
+                Py_DECREF(_ix);
+                return -1;
+            }
+            Py_DECREF(_ix);
+        }
+    """
+    fn, hi = meta["index"], meta["limits"][1]
+    pt, raw, i = meta["parse_type"], f"{var}_raw", indent
+    # `PyErr_Format` clears the converter's exception before formatting, so
+    # `%S` may run `str()` on the index. Every `index` row is unsigned: its
+    # floor is 0 and its maximum prints as `%llu`.
+    msg = f"{label}: %S is out of range for {ctype} [0, %llu]"
+    return (
+        f"{i}{opener}\n"
+        f"{i}    PyObject *_ix = PyNumber_Index({src});\n"
+        f"{i}    if (_ix == NULL) {{\n"
+        f"{i}        {fail}\n"
+        f"{i}    }}\n"
+        f"{i}    {raw} = {fn}(_ix);\n"
+        f"{i}    if (({raw} == ({pt})-1 && PyErr_Occurred())\n"
+        f"{i}        || {raw} > ({pt}){hi}) {{\n"
+        f"{i}        PyErr_Format(PyExc_OverflowError,\n"
+        f'{i}            "{msg}",\n'
+        f"{i}            _ix, ({pt}){hi});\n"
+        f"{i}        Py_DECREF(_ix);\n"
+        f"{i}        {fail}\n"
+        f"{i}    }}\n"
+        f"{i}    Py_DECREF(_ix);\n"
+        f"{i}}}\n"
+    )
+
+
 def scalar_parse_c(
     ctype: str,
     src: str,
     var: str,
     fail: str,
     *,
+    label: str,
     meta: "dict | None" = None,
     indent: str = "    ",
 ) -> str:
@@ -440,9 +771,12 @@ def scalar_parse_c(
     own ``_CTYPE_META`` format char, and where that char writes a different
     width than *ctype* (``i`` writes an ``int``, ``D`` a 16-byte
     ``Py_complex``) it parses into the row's ``parse_type`` local
-    ``<var>_raw`` first and converts with ``to_c``. So a ``double`` keeps its
-    fraction, a ``float _Complex`` its imaginary part and an ``int8_t`` local
-    is never written four bytes wide.
+    ``<var>_raw`` first and converts through :func:`scalar_narrow_c`. So a
+    ``double`` keeps its fraction, a ``float _Complex`` its imaginary part, an
+    ``int8_t`` local is never written four bytes wide, and a value an
+    ``int8_t`` cannot hold is refused rather than wrapped (gh-2144). A row
+    no checked format char parses (``uint64_t``, ``size_t``) converts
+    through ``__index__`` instead, checked (:func:`_index_c`, gh-2220).
 
     gh-2035: written once, for an object's property setter; a composer's
     settings, segment fields and source fields each converted through
@@ -458,7 +792,11 @@ def scalar_parse_c(
     var : str
         The local's name. A ``parse_type`` row also declares ``<var>_raw``.
     fail : str
-        The C statement run when the parse raises, e.g. ``return -1;``.
+        The C statement run when the parse raises, e.g. ``return -1;``, and
+        when the parsed value is out of range (:func:`scalar_narrow_c`).
+    label : str
+        The Python-facing name of the value, which a range refusal's message
+        leads with.
     meta : dict, optional
         The ``_CTYPE_META`` row, when the caller already looked it up -- a
         caller that refuses an unknown type passes the row its refusal
@@ -473,21 +811,48 @@ def scalar_parse_c(
 
     Examples
     --------
-    >>> print(scalar_parse_c("double", "value", "v", "return -1;"), end="")
+    >>> print(scalar_parse_c("double", "value", "v", "return -1;",
+    ...                      label="gain"), end="")
         double v = 0.0;
         if (!PyArg_Parse(value, "d", &v)) return -1;
-    >>> print(scalar_parse_c("int8_t", "_o", "_v", "goto fail;"), end="")
-        int _v_raw = 0;
-        if (!PyArg_Parse(_o, "i", &_v_raw)) goto fail;
-        int8_t _v = (int8_t)_v_raw;
+    >>> print(scalar_parse_c("int64_t", "_o", "_v", "goto fail;",
+    ...                      label="n"), end="")
+        long long _v_raw = 0LL;
+        if (!PyArg_Parse(_o, "L", &_v_raw)) goto fail;
+        int64_t _v = (int64_t)_v_raw;
+    >>> got = scalar_parse_c("uint64_t", "value", "v", "return -1;",
+    ...                      label="seed")
+    >>> print(got.splitlines()[0]); print(got.splitlines()[-1])
+        unsigned long long v_raw = 0ULL;
+        uint64_t v = (uint64_t)v_raw;
     """
     meta = _CTYPE_META[ctype] if meta is None else meta
+    if "index" in meta:
+        # gh-2220: no format char parses it checked -- the object is
+        # converted through `__index__`, then cast.
+        return (
+            f"{indent}{meta['parse_type']} {var}_raw = {meta['parse_zero']};\n"
+            + _index_c(
+                src,
+                var,
+                fail,
+                "{",
+                label=label,
+                ctype=ctype,
+                meta=meta,
+                indent=indent,
+            )
+            + scalar_narrow_c(
+                ctype, var, fail, label=label, meta=meta, indent=indent
+            )
+        )
     if "parse_type" in meta:
         return (
             f"{indent}{meta['parse_type']} {var}_raw = {meta['parse_zero']};\n"
             f'{indent}if (!PyArg_Parse({src}, "{meta["fmt"]}", &{var}_raw))'
             f" {fail}\n"
-            f"{indent}{ctype} {var} = {meta['to_c'](var)};\n"
+        ) + scalar_narrow_c(
+            ctype, var, fail, label=label, meta=meta, indent=indent
         )
     return (
         f"{indent}{ctype} {var} = {meta['zero']};\n"
@@ -497,7 +862,14 @@ def scalar_parse_c(
 
 
 def scalar_arg_c(
-    pname: str, ptype: str, default: str = "", *, meta: "dict | None" = None
+    pname: str,
+    ptype: str,
+    default: str = "",
+    *,
+    fail: str,
+    meta: "dict | None" = None,
+    default_raw: str = "",
+    label: str = "",
 ) -> "tuple[str, str, str, str]":
     """One scalar a ``PyArg_ParseTuple*`` call fills: its four C pieces.
 
@@ -509,6 +881,13 @@ def scalar_arg_c(
     serializer params and source fields stop parsing through a peer table
     that wrote an ``int`` into an ``int64_t``.
 
+    gh-2220: a row no checked format char parses (``uint64_t``, ``size_t``:
+    ``K`` masks) is parsed as an object into ``<pname>_obj``, ``NULL`` until
+    the caller passes it, and converted into the seeded ``<pname>_raw``
+    through ``__index__``, checked (:func:`_index_c`). Every tuple parse of a
+    scalar comes here -- the constructor's, ``set_<field>()``'s, ``step()``'s
+    and its overrides' too -- so that conversion is written once.
+
     Parameters
     ----------
     pname : str
@@ -517,48 +896,118 @@ def scalar_arg_c(
         Its C type, a ``_CTYPE_META`` key.
     default : str, optional
         The declared default; empty for none.
+    fail : str
+        The C statement(s) leaving the wrapper when the parsed value is out
+        of range (:func:`scalar_narrow_c`), releasing whatever the parse
+        already produced: ``return NULL;`` in a method, ``return -1;`` in a
+        ``tp_init``. Required, because only the caller knows which.
     meta : dict, optional
         The ``_CTYPE_META`` row, as for :func:`scalar_parse_c`.
+    default_raw : str, optional
+        The default as C text emitted verbatim (gh-1099): an init param's
+        ``default_raw``, or the live field a ``step()`` override defaults
+        to. It wins over *default* as the local's seed, as in
+        :func:`~just_makeit._types.parse_seed`.
+    label : str, optional
+        The Python-facing name a refusal leads with, when it is not *pname*:
+        ``set_<field>()`` parses its value into ``v``.
 
     Returns
     -------
     tuple of str
-        ``(decl, fmt, addr, conv)``: the declaration before the parse, the
-        format char, the address the parse writes, and the conversion after
-        it -- empty when the type parses into its own local.
+        ``(decl, fmt, addr, conv)``: the declaration(s) before the parse,
+        the format char, the address the parse writes, and the conversion
+        after it -- empty when the type parses into its own local. A range
+        refusal's message leads with *label*, or *pname*.
 
     Examples
     --------
-    >>> scalar_arg_c("gain", "double", "1.0")
+    >>> scalar_arg_c("gain", "double", "1.0", fail="return NULL;")
     ('    double gain = 1.0;', 'd', '&gain', '')
-    >>> print(*scalar_arg_c("n", "size_t", "16"), sep="\\n")
+    >>> print(*scalar_arg_c("k", "int16_t", "16", fail="return NULL;")[:3],
+    ...       sep="\\n")
+        int k_raw = 16;
+    i
+    &k_raw
+    >>> decl, fmt, addr, conv = scalar_arg_c("n", "size_t", "16",
+    ...                                      fail="return NULL;")
+    >>> print(decl, fmt, addr, sep="\\n")
+        PyObject *n_obj = NULL;
         unsigned long long n_raw = 16;
-    K
-    &n_raw
+    O
+    &n_obj
+    >>> print(conv.splitlines()[0]); print(conv.splitlines()[-1])
+        if (n_obj != NULL) {
         size_t n = (size_t)n_raw;
     """
     meta = _CTYPE_META[ptype] if meta is None else meta
     fmt = param_fmt(ptype, default)
+    label = label or pname
     if "parse_type" in meta:
         # gh-432 drive-by: seed the raw local with the gh-240 default (not
         # parse_zero) so an omitted defaulted arg yields the default. gh-1887:
         # through the one seed, which spells a `Py_complex` default as the
         # struct's `{re, im}`; verbatim did not compile.
         raw = f"{pname}_raw"
+        decl = (
+            f"    {meta['parse_type']} {raw} = "
+            f"{parse_seed(ptype, default, default_raw)};"
+        )
+        narrow = scalar_narrow_c(ptype, pname, fail, label=label, meta=meta)
+        if "index" not in meta:
+            return decl, fmt, f"&{raw}", narrow.rstrip("\n")
+        obj = f"{pname}_obj"
+        conv = _index_c(
+            obj,
+            pname,
+            fail,
+            f"if ({obj} != NULL) {{",
+            label=label,
+            ctype=ptype,
+            meta=meta,
+        )
         return (
-            f"    {meta['parse_type']} {raw} = {parse_seed(ptype, default)};",
+            f"    PyObject *{obj} = NULL;\n{decl}",
             fmt,
-            f"&{raw}",
-            f"    {ptype} {pname} = {meta['to_c'](pname)};",
+            f"&{obj}",
+            (conv + narrow).rstrip("\n"),
         )
     # gh-240: a scalar with a `default` is optional -- seed its C local with
     # the default literal so an omitted arg yields it.
     return (
-        f"    {ptype} {pname} = {default or meta['zero']};",
+        f"    {ptype} {pname} = {default_raw or default or meta['zero']};",
         fmt,
         f"&{pname}",
         "",
     )
+
+
+def scalar_raw_locals(rows) -> "frozenset[str]":
+    """The locals :func:`scalar_arg_c` declares beside each of *rows*.
+
+    *rows* are ``(name, type)`` pairs. A scalar whose format char writes
+    another width -- an ``int8_t``, a ``size_t``, a ``bool``, a complex -- is
+    parsed into ``<name>_raw`` and narrowed, so a sibling arg named that
+    would redeclare it (gh-1525). A row no checked char parses -- a
+    ``size_t``, a ``uint64_t`` -- is parsed as an object into ``<name>_obj``
+    as well (gh-2220). A type jm does not know declares nothing here; the
+    render refuses it. gh-2035 wrote this for the composer; the handle and
+    capsule faces declare the same locals since gh-2144.
+
+    Examples
+    --------
+    >>> sorted(scalar_raw_locals([("n", "size_t"), ("g", "double"),
+    ...                           ("k", "int8_t")]))
+    ['k_raw', 'n_obj', 'n_raw']
+    """
+    out = set()
+    for name, ctype in rows:
+        meta = _CTYPE_META.get(ctype or "", {})
+        if "parse_type" in meta:
+            out.add(f"{name}_raw")
+        if "index" in meta:
+            out.add(f"{name}_obj")
+    return frozenset(out)
 
 
 def _build_params_parse(
@@ -568,6 +1017,8 @@ def _build_params_parse(
     records: "list[dict] | None" = None,
     sid_prefix: str = "",
     strict: bool = False,
+    *,
+    out_obj: str = "",
 ) -> tuple[str, str, str]:
     """Build parse block + C call args + cleanup for a named multi-param method.
 
@@ -580,6 +1031,14 @@ def _build_params_parse(
       Array types end with '[]', e.g. "float _Complex[]"; their element type
       must be in _CTYPE_TO_NPY.  Array params expand to two C args:
       (const elem_t *name, size_t name_len).
+
+    out_obj: the C local a variable-output binding's optional ``out=``
+      buffer is parsed into, after every param (gh-2028). It is the
+      trailing optional argument: it joins the optional group a defaulted
+      param opened, or opens one, and is left ``NULL`` when the caller
+      passes none. The binding validates and acquires the buffer itself, so
+      it adds no call argument and no cleanup here. Empty (the default)
+      parses no ``out=``.
 
     Returns (parse_block, call_args_c, cleanup):
       parse_block  — indented C code: declarations, PyArg_ParseTuple, array
@@ -600,6 +1059,17 @@ def _build_params_parse(
     # block -- unlike an array's, which `arr_acq` owns -- so it goes in the
     # `cleanup` the caller emits before every return, next to the DECREFs.
     path_names: list[str] = []
+    # gh-2144: a scalar's range refusal runs after the parse, which by then has
+    # made EVERY path borrow, declared before the scalar or after it; and
+    # before `arr_acq`, so no array is held yet.
+    range_fail = (
+        "".join(
+            f"{_coerce.path_release(p['name'])} "
+            for p in params
+            if p["type"] == "path"
+        )
+        + "return NULL;"
+    )
 
     for p in params:
         pname = p["name"]
@@ -766,13 +1236,16 @@ def _build_params_parse(
             #   anything with a `_capsule`  -> that attribute, then as above
             # The `_capsule` duck-typing lets callers pass the friendly
             # wrapper object rather than digging the capsule out themselves.
-            obj_var = f"{pname}_obj"
+            # gh-2327: named by `_retain.obj_var`, which the swap that keeps
+            # a retained param's owner reads too.
+            obj_var = _retain.obj_var(pname)
             decl_lines.append(f"    PyObject *{obj_var} = Py_None;")
             fmt_chars.append("O")
             addr_exprs.append(f"&{obj_var}")
             # gh-790: the unwrap moved to `capsule_unwrap_c` so tp_init can
-            # reuse it verbatim. A method param keeps `allow_none=True` (the
-            # detach idiom) and returns NULL on failure.
+            # reuse it verbatim. A method param takes None as NULL (the
+            # detach idiom) unless it declares `required = true` (gh-2360),
+            # and returns NULL on failure.
             conv_lines.append(
                 capsule_unwrap_c(
                     pname,
@@ -780,6 +1253,7 @@ def _build_params_parse(
                     p["capsule"],
                     obj_var,
                     "return NULL;",
+                    allow_none=capsule_nullable(p),
                 )
             )
             call_args.append(pname)
@@ -806,7 +1280,7 @@ def _build_params_parse(
             # stub's `str | None` and this char cannot disagree. gh-2035: the
             # one tuple-parse slot, which a composer's rows call too.
             decl, fmt, addr, conv = scalar_arg_c(
-                pname, ptype, p.get("default") or ""
+                pname, ptype, p.get("default") or "", fail=range_fail
             )
             decl_lines.append(decl)
             fmt_chars.append(fmt)
@@ -819,7 +1293,18 @@ def _build_params_parse(
     # and constructors). Each param name is a kwarg; a param with a `default`
     # goes after the `|` (optional). The wrapper must take a `PyObject *kwds`.
     kwnames = "".join(f'"{p["name"]}", ' for p in params)
-    fmt_str = _join_fmt_with_optional(fmt_chars, params)
+    joined, joined_fmt = params, fmt_chars
+    if out_obj:
+        # gh-2028: an optional argument after every param, which is the rule
+        # a defaulted param follows -- so it is asked of the same join rather
+        # than spelled again: `|O` when nothing was optional yet, `O` inside
+        # the group a `default` opened (gh-802).
+        decl_lines.append(f"    PyObject *{out_obj} = NULL;")
+        addr_exprs.append(f"&{out_obj}")
+        kwnames += '"out", '
+        joined = [*params, {"name": "out", "default": "NULL"}]
+        joined_fmt = [*fmt_chars, "O"]
+    fmt_str = _join_fmt_with_optional(joined_fmt, joined)
     addr_str = ", ".join(addr_exprs)
     lines = (
         [f"    static char *_kwlist[] = {{{kwnames}NULL}};"]
@@ -859,33 +1344,85 @@ def _step_parse_block(
     per-sample hot path. Each override defaults to the live ``self->handle->``
     field, so omitting it is free and the override is non-persistent. Empty
     ``ctrl`` reproduces the original byte-for-byte (the ``|`` is absent).
+    Each parses at its row's width (:func:`ctrl_parse_c`).
+
+    ``x`` is parsed through the one tuple-parse slot, :func:`scalar_arg_c`
+    (gh-2220): it parsed with its row's format char into a local it declared
+    itself, so a ``size_t`` input took the masking ``K`` after the slot
+    stopped using it, and ``-1`` arrived as ``2**64 - 1``.
     """
-    disp = sample_type
-    ctrl_locals = "".join(
-        f"    {cdisp} {name} = self->handle->{name};\n"
-        for name, cdisp, _ in ctrl
+    decl, fmt, addr, conv = scalar_arg_c(
+        "x", sample_type, fail="return NULL;", meta=samp
     )
-    ctrl_fmt = "|" + "".join(f for _, _, f in ctrl) if ctrl else ""
-    ctrl_refs = "".join(f", &{name}" for name, _, _ in ctrl)
-    if "parse_type" in samp:
-        parse_type = samp["parse_type"]
-        parse_zero = samp["parse_zero"]
-        fmt = samp["fmt"]
-        to_c_expr = samp["to_c"]("x")
-        return (
-            f"    {parse_type} x_raw = {parse_zero};\n"
-            f"{ctrl_locals}"
-            f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
-            f" &x_raw{ctrl_refs}))\n"
-            f"        return NULL;\n"
-            f"    {disp} x = {to_c_expr};"
+    if "parse_type" not in samp:
+        # `x` is required, so PyArg always writes it and the slot's seed is
+        # never read. Left unseeded, as every module object's sacred `step()`
+        # fragment spells it, so routing it here moves no fragment's unit.
+        decl = f"    {sample_type} x;"
+    ctrl_locals, ctrl_fmt, ctrl_refs, ctrl_narrow = ctrl_parse_c(ctrl)
+    ctrl_fmt = "|" + ctrl_fmt if ctrl else ""
+    return (
+        f"{decl}\n"
+        f"{ctrl_locals}"
+        f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
+        f" {addr}{ctrl_refs}))\n"
+        f"        return NULL;\n" + (f"{conv}\n" if conv else "") + ctrl_narrow
+    ).rstrip("\n")
+
+
+def ctrl_parse_c(
+    ctrl: "list[tuple[str, str, str]]", fail: str = "return NULL;"
+) -> "tuple[str, str, str, str]":
+    """The four pieces of parsing ``step()`` / ``steps()``'s controllable
+    overrides, one per ``(name, ctype, fmt)`` entry of *ctrl* (gh-240).
+
+    Each override defaults to the live ``self->handle-><name>`` field. It is
+    parsed through the one tuple-parse slot, :func:`scalar_arg_c`: a row
+    with a ``parse_type`` parses into ``<name>_raw`` at that width and is
+    narrowed after the parse, as every other face is. gh-1952 / gh-2144:
+    these parsed straight into the field's own type, so ``int8_t k`` took
+    the four bytes ``i`` writes -- a write past the local -- and a value it
+    cannot hold wrapped. gh-2220: then into a local of their own beside the
+    slot, so a ``size_t`` kept the masking ``K`` the slot had dropped.
+
+    Parameters
+    ----------
+    ctrl : list of tuple of str
+        ``(name, ctype, pyarg_fmt)`` per controllable field. The format char
+        is the slot's, :func:`scalar_arg_c`, whatever the tuple says, so it
+        always matches the address beside it.
+    fail : str, optional
+        The statement(s) leaving the wrapper on a range refusal.
+
+    Returns
+    -------
+    tuple of str
+        ``(locals, fmt, refs, narrow)``: the declarations before the parse,
+        the format chars, the ``, &<local>`` addresses, and the statements
+        after it. All empty for an empty *ctrl*.
+
+    Examples
+    --------
+    >>> loc, fmt, refs, narrow = ctrl_parse_c([("g", "float", "f")])
+    >>> print(loc, fmt, refs, repr(narrow), sep="|")
+        float g = self->handle->g;
+    |f|, &g|''
+    >>> loc, fmt, refs, narrow = ctrl_parse_c([("k", "int8_t", "i")])
+    >>> print(loc, refs, sep="|")
+        int k_raw = self->handle->k;
+    |, &k_raw
+    >>> "int8_t k = (int8_t)k_raw;" in narrow
+    True
+    >>> ctrl_parse_c([("n", "size_t", "O")])[1:3]
+    ('O', ', &n_obj')
+    """
+    locals_, fmt, refs, narrow = "", "", "", ""
+    for name, ctype, _f in ctrl:
+        decl, f, addr, conv = scalar_arg_c(
+            name, ctype, fail=fail, default_raw=f"self->handle->{name}"
         )
-    else:
-        fmt = samp["fmt"]
-        return (
-            f"    {disp} x;\n"
-            f"{ctrl_locals}"
-            f'    if (!PyArg_ParseTuple(args, "{fmt}{ctrl_fmt}",'
-            f" &x{ctrl_refs}))\n"
-            f"        return NULL;"
-        )
+        locals_ += f"{decl}\n"
+        fmt += f
+        refs += f", {addr}"
+        narrow += f"{conv}\n" if conv else ""
+    return locals_, fmt, refs, narrow

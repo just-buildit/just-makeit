@@ -34,8 +34,9 @@ bound at all, so a hand-written one there is still correct and must keep
 working. Reserving every `*_max_out` name would refuse exactly those. The
 issue's examples were doppler's `Farrow.delay_max_out` and
 `Resampler.execute_ctrl_max_out`, an array beside other params; gh-1998 made
-jm generate those, so the fence now stands on params beside an `arg_type`
-input, which still gets no `out=` and no bound (gh-2028).
+jm generate those, and gh-2028 params beside an `arg_type` input, so the fence
+now stands on a `multi_output` method, which gets no `out=` and no bound: two
+output arrays would need two buffers.
 """
 
 from __future__ import annotations
@@ -67,11 +68,15 @@ def _quiet(fn, *a, **kw):
 
 #: The all-scalar shape gh-1079 generates a bound for.
 SIZEABLE = dict(arg_type="void", params=[("x", "double")])
-#: A param beside an `arg_type` input (gh-2028). No bound is generated.
-EXCLUDED = dict(arg_type="float", params=[("mu", "double")])
+#: Two outputs, so no single `out=` and no bound is generated. Params beside
+#: an `arg_type` input were the fence until gh-2028 sized them from the input.
+EXCLUDED = dict(arg_type="float", params=[], multi_output=["double"])
 #: gh-1998: an array beside another param -- doppler's `Farrow.delay`. Its
 #: bound is generated now, so a hand-written one is refused like any other.
 BESIDE = dict(arg_type="void", params=[("x", "double[]"), ("mu", "double")])
+#: gh-2028: a param beside an `arg_type` input, sized from the input. Its
+#: bound is generated now too.
+INPUT_BESIDE = dict(arg_type="float", params=[("mu", "double")])
 
 
 def _project(tmp_path: Path, name: str, **method_kw) -> Path:
@@ -94,8 +99,7 @@ def _project(tmp_path: Path, name: str, **method_kw) -> Path:
         None,
         return_type="double",
         variable_output=True,
-        multi_output=[],
-        **method_kw,
+        **{"multi_output": [], **method_kw},
     )
     return root
 
@@ -104,7 +108,9 @@ class TestTheCollisionIsRefused:
     """jm owns `<m>_max_out`, so a method entry claiming it is refused."""
 
     @pytest.mark.parametrize(
-        "shape", [SIZEABLE, BESIDE], ids=["all-scalar", "array-beside"]
+        "shape",
+        [SIZEABLE, BESIDE, INPUT_BESIDE],
+        ids=["all-scalar", "array-beside", "input-beside"],
     )
     def test_the_generated_bound_is_reserved(self, tmp_path, shape):
         root = _project(tmp_path, "r", **shape)
@@ -159,9 +165,9 @@ class TestTheCollisionIsRefused:
 class TestTheExcludedShapeStillWorks:
     """The fence the issue asked for by name.
 
-    A param beside an `arg_type` input gets no `out=` (gh-2028), so no bound
-    is generated for it and a hand-written one is still the right answer. A
-    fix that reserved every `*_max_out` name would refuse it, which is why
+    A `multi_output` method gets no `out=`, so no bound is generated for it
+    and a hand-written one is still the right answer. A fix that reserved
+    every `*_max_out` name would refuse it, which is why
     the reservation is derived from `_outbuf.enabled` rather than from the
     name's shape.
     """

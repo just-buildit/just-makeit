@@ -16,6 +16,10 @@ is tested with changes only when a commit says so:
     the just-bashit release whose ``install-deps.sh`` installs the
     ``bootstrap.toml`` groups. Pinning ``jbx`` would pin nothing: it resolves
     install-deps through ``aliases.toml`` at run time.
+``CI_PACKAGER_BASE_AMD64`` / ``CI_PACKAGER_BASE_ARM64`` (HAS_PACKAGER_IMAGE)
+    each arch's manylinux_2_28 base, by digest. The packager is the one image
+    that must stay manylinux: its glibc 2.28 floor is the claim its packages
+    make. It is pinned beside the CI image and shares its installer pin.
 
 and what was built from them:
 
@@ -41,12 +45,19 @@ Subcommands
 -----------
 ``source-hash``
     Print this tree's ``CI_IMAGE_SOURCE_HASH``.
+``packager-source-hash``
+    Print this tree's ``CI_PACKAGER_SOURCE_HASH`` (HAS_PACKAGER_IMAGE only).
 ``inputs [--refresh]``
     Print the build inputs as ``KEY=VALUE`` lines: the pinned ones, or with
     ``--refresh`` today's (a new snapshot, each base's current digest, the
     latest just-bashit release and its asset's sha256).
 ``key BASE``
     Print a base's pin key (``ubuntu:24.04`` -> ``2404``).
+``source REF``
+    Print where to fetch pinned base REF from: REF itself, or with
+    ``CI_IMAGE_BASE_REGISTRY`` set, REF under that registry, or under
+    ``CI_IMAGE_BASE_MIRROR`` when the registry stays unreachable. The build
+    takes it as its ``BASE``.
 ``join-fingerprint FP...``
     Hash per-arch fingerprints, as ``arch=fp`` words, into one.
 ``write-pin --out FILE``
@@ -81,11 +92,13 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
 PIN = Path(".github/ci-images.env")
 DOCKERFILE = Path("docker/ci.Dockerfile")
+PACKAGER_DOCKERFILE = Path("docker/packager.Dockerfile")
 EXTRA = Path("docker/ci-extra.sh")
 BOOTSTRAP = Path("bootstrap.toml")
 JB_REPO = "just-buildit/just-bashit"
@@ -118,6 +131,32 @@ def key(base: str) -> str:
     if not digits:
         sys.exit(f"ci-image: cannot derive a pin key from {base!r}")
     return digits
+
+
+def packager_on() -> bool:
+    """Whether this adopter builds the packager image (HAS_PACKAGER_IMAGE).
+
+    Off by default, and off means every pin key, source hash and input here
+    is exactly what it was before the packager existed: an adopter that never
+    sets the flag sees no change at all.
+    """
+    return os.environ.get("PACKAGER_IMAGE_ENABLED") == "1"
+
+
+def packager_bases() -> "dict[str, str]":
+    """The packager's base tag per arch, from make (``PACKAGER_BASE_AMD64``).
+
+    The manylinux images are one per arch, not a multi-arch index, so the pin
+    holds one digest per arch, where the CI image holds one per base.
+    """
+    out = {}
+    for arch in ("AMD64", "ARM64"):
+        tag = os.environ.get(f"PACKAGER_BASE_{arch}", "")
+        if not tag:
+            sys.exit(f"ci-image: PACKAGER_BASE_{arch} is empty "
+                     "(set PACKAGER_IMAGE_BASE_* in the Makefile)")
+        out[arch] = tag
+    return out
 
 
 def read_pin(path: Path = PIN) -> "dict[str, str]":
@@ -168,17 +207,43 @@ def _image_bytes(path: Path) -> bytes:
         return b"<absent>"
     if path != BOOTSTRAP:
         return path.read_bytes()
-    keep, depth, out = True, 0, []
+    return _tables_kept(path, lambda name: not _unread_by_the_image(name), True)
+
+
+def _tables_kept(path: Path, keep, start: bool) -> bytes:
+    """The bytes of ``path`` whose table ``keep`` accepts, by its header's name.
+
+    ``start`` says whether lines above the first table are kept. This one
+    reading serves the image's view (every table an image layer reads) and a
+    group's view (one group's tables), so the two cannot disagree about where
+    a table begins.
+    """
+    kept, depth, out = start, 0, []
     for line in path.read_bytes().decode("utf-8").splitlines(keepends=True):
         m = _TABLE.match(line) if depth == 0 else None
         if m:
-            keep = not _unread_by_the_image(m.group(1))
+            kept = keep(m.group(1))
         else:
             bare = _NOT_BRACKETS.sub("", line)
             depth = max(0, depth + bare.count("[") - bare.count("]"))
-        if keep:
+        if kept:
             out.append(line)
     return "".join(out).encode("utf-8")
+
+
+def _group_bytes(path: Path, groups: "list[str]") -> bytes:
+    """``bootstrap.toml`` reduced to the tables of the named groups.
+
+    ``[<group>]`` and ``[<group>.<manager>]`` and nothing else: the packager is
+    fed by its own groups alone, so an edit to the dev group owes it nothing.
+    """
+    if not path.exists():
+        return b"<absent>"
+
+    def ours(name: str) -> bool:
+        return name.split(".", 1)[0].strip().strip("\"'") in groups
+
+    return _tables_kept(path, ours, False)
 
 
 def source_hash() -> str:
@@ -191,6 +256,34 @@ def source_hash() -> str:
     return h.hexdigest()
 
 
+def packager_source_hash() -> str:
+    """Hash what the packager image is built from: its Dockerfile, and its groups.
+
+    The packager's Dockerfile, and from ``bootstrap.toml`` only the tables of
+    ``PACKAGER_GROUPS`` -- the one declaration of what feeds the image. An edit
+    to the dev group, or a version bump, owes the packager nothing; the group
+    NAMES are hashed too, so changing which groups install moves the hash.
+    docker/ci-extra.sh is not an input: the packager installs no extras.
+
+    What the packages themselves are is NOT in this hash. dnf reads the live
+    distro mirrors at refresh time, with no snapshot to pin (unlike
+    CI_APT_SNAPSHOT); the fingerprint of the installed packages is what catches
+    a package that moved, and that is why a refresh owes a repin on it.
+    """
+    groups = os.environ.get("PACKAGER_GROUPS", "").split()
+    if not groups:
+        sys.exit("ci-image: PACKAGER_GROUPS is empty (set it in the Makefile)")
+    h = hashlib.sha256()
+    h.update(("groups " + " ".join(sorted(groups))).encode() + b"\0")
+    h.update(str(PACKAGER_DOCKERFILE).encode() + b"\0")
+    h.update(_image_bytes(PACKAGER_DOCKERFILE))
+    h.update(b"\0")
+    h.update(str(BOOTSTRAP).encode() + b"\0")
+    h.update(_group_bytes(BOOTSTRAP, groups))
+    h.update(b"\0")
+    return h.hexdigest()
+
+
 def join_fingerprint(words: "list[str]") -> str:
     """One fingerprint over every arch's, independent of their order."""
     return hashlib.sha256(
@@ -198,13 +291,131 @@ def join_fingerprint(words: "list[str]") -> str:
     ).hexdigest()
 
 
-def _digest(ref: str) -> str:
+#: What a retry can fix: a rate limit, a 5xx, a dropped or timed-out
+#: connection. Word-bounded codes, so a digest's hex is not a 429.
+_TRANSIENT = re.compile(
+    r"toomanyrequests|too many requests|rate exceeded"
+    r"|\b(?:429|500|502|503|504)\b|tls handshake timeout|i/o timeout"
+    r"|timed out|context deadline exceeded|request canceled"
+    r"|connection reset|connection refused|unexpected eof"
+    r"|temporarily unavailable",
+    re.IGNORECASE,
+)
+
+#: A volume quota no retry seconds later clears: ECR Public answers this
+#: once an IP has pulled its anonymous allowance, and it outlasted every
+#: retry window doppler logged (doppler-dsp/doppler#2256). It goes straight
+#: to the mirror.
+_QUOTA = re.compile(r"data limit exceeded", re.IGNORECASE)
+
+
+class _Unreachable(Exception):
+    """A transient failure that outlasted the retries, or a quota."""
+
+
+def _inspect(ref: str) -> str:
+    """``ref``'s index digest, fetched as a manifest: nothing is pulled.
+
+    A rate limit, a 5xx or a dropped connection is retried with backoff
+    (``CI_IMAGE_PULL_ATTEMPTS`` tries, default 5, ``CI_IMAGE_PULL_DELAY``
+    seconds before the first retry, default 5, doubling); a quota raises
+    ``_Unreachable`` at once, as does a transient failure that outlasts the
+    retries. Anything else -- a tag the registry does not have, a denied
+    repository -- exits with docker's own words, which are what the reader
+    needs, and is never sent to a mirror: a missing tag is a typo, not an
+    outage.
+    """
+    attempts = int(os.environ.get("CI_IMAGE_PULL_ATTEMPTS", "5"))
+    wait = float(os.environ.get("CI_IMAGE_PULL_DELAY", "5"))
+    for n in range(1, attempts + 1):
+        r = subprocess.run(
+            ["docker", "buildx", "imagetools", "inspect", ref,
+             "--format", "{{json .Manifest}}"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            return json.loads(r.stdout)["digest"]
+        err = (r.stderr or r.stdout).strip()
+        if _QUOTA.search(err):
+            print(err, file=sys.stderr)
+            raise _Unreachable(ref)
+        if not _TRANSIENT.search(err):
+            sys.exit(f"ci-image: {ref}: {err}")
+        if n == attempts:
+            print(err, file=sys.stderr)
+            raise _Unreachable(ref)
+        last = err.splitlines()[-1] if err else "failed"
+        print(f"ci-image: {ref}: {last} -- retry {n + 1}/{attempts} in "
+              f"{wait:g}s", file=sys.stderr)
+        time.sleep(wait)
+        wait *= 2
+
+
+def _official(ref: str) -> bool:
+    """Whether ``ref`` names a Docker Official Image: no ``/`` in its name.
+
+    Only those have a home on a registry mirror: ECR Public's
+    ``docker/library`` and ``mirror.gcr.io/library`` carry the official
+    images, under the same tags and index digests. Anything with a ``/`` --
+    another registry's image, or a Docker Hub user's -- is fetched as named.
+    """
+    return "/" not in ref.split("@", 1)[0]
+
+
+def source(ref: str) -> "tuple[str, str]":
+    """Where to fetch base ``ref`` from, and its index digest.
+
+    ``ref`` is a base as the pin holds it, registry-free
+    (``ubuntu:24.04@sha256:...``), or a tag as ``CI_IMAGE_BASES`` names it.
+    With ``CI_IMAGE_BASE_REGISTRY`` unset this is ``ref`` itself, fetched
+    once with no retry, exactly as before the setting existed. Set, an
+    official image is fetched from that registry, with retries, and from
+    ``CI_IMAGE_BASE_MIRROR`` when the registry stays unreachable.
+
+    Why: Docker Hub rate-limits anonymous pulls per IP, GitHub runners share
+    IPs, and a buildx docker-container build pulls its ``FROM`` inside
+    BuildKit's own container, where nothing retries it
+    (doppler-dsp/doppler#1982). Probing the manifest here, under retry, and
+    building from the registry that answered narrows the failure to a
+    refusal that begins in the seconds between the two.
+
+    A pinned digest is the same image on every registry that carries it,
+    so the pin stays registry-free and names the image, not where it was
+    fetched; a registry serving different bytes under that digest cannot
+    exist. A registry that does not carry the digest fails the probe.
+    """
+    registry = os.environ.get("CI_IMAGE_BASE_REGISTRY", "").rstrip("/")
+    mirror = os.environ.get("CI_IMAGE_BASE_MIRROR", "").rstrip("/")
+    if not registry or not _official(ref):
+        return ref, _inspect(ref) if registry else _digest_once(ref)
+    first = f"{registry}/{ref}"
+    try:
+        return first, _inspect(first)
+    except _Unreachable:
+        if not mirror:
+            sys.exit(f"ci-image: {first} unreachable, and "
+                     "CI_IMAGE_BASE_MIRROR is unset")
+    alt = f"{mirror}/{ref}"
+    print(f"ci-image: {first} unreachable; trying {alt}", file=sys.stderr)
+    try:
+        return alt, _inspect(alt)
+    except _Unreachable:
+        sys.exit(f"ci-image: neither {first} nor {alt} answered")
+
+
+def _digest_once(ref: str) -> str:
+    """The pre-registry fetch, kept byte-for-byte for an adopter without
+    ``CI_IMAGE_BASE_REGISTRY``: one call, docker's error as the failure."""
     out = subprocess.run(
         ["docker", "buildx", "imagetools", "inspect", ref,
          "--format", "{{json .Manifest}}"],
         check=True, capture_output=True, text=True,
     ).stdout
     return json.loads(out)["digest"]
+
+
+def _digest(ref: str) -> str:
+    return source(ref)[1]
 
 
 def _latest_jb() -> "tuple[str, str]":
@@ -248,6 +459,13 @@ def inputs(refresh: bool) -> "dict[str, str]":
     if refresh or not (ver and sha):
         ver, sha = _latest_jb()
     out["CI_JB_VERSION"], out["CI_JB_SHA256"] = ver, sha
+    if packager_on():
+        for arch, tag in packager_bases().items():
+            k = f"CI_PACKAGER_BASE_{arch}"
+            ref = pin.get(k, "")
+            if refresh or not ref.startswith(tag + "@"):
+                ref = f"{tag}@{_digest(tag)}"
+            out[k] = ref
     return out
 
 
@@ -256,7 +474,14 @@ def _pin_keys() -> "list[str]":
     for base in bases():
         k = key(base)
         keys += [f"CI_BASE_{k}", f"CI_IMAGE_{k}", f"CI_IMAGE_FINGERPRINT_{k}"]
-    return keys + ["CI_IMAGE_SOURCE_HASH"]
+    keys += ["CI_IMAGE_SOURCE_HASH"]
+    if packager_on():
+        # Appended after the CI block, never interleaved: an adopter without
+        # the packager keeps its pin byte-for-byte.
+        keys += ["CI_PACKAGER_BASE_AMD64", "CI_PACKAGER_BASE_ARM64",
+                 "CI_PACKAGER_IMAGE", "CI_PACKAGER_FINGERPRINT",
+                 "CI_PACKAGER_SOURCE_HASH"]
+    return keys
 
 
 def _shape(name: str, value: str) -> bool:
@@ -265,8 +490,9 @@ def _shape(name: str, value: str) -> bool:
         return re.fullmatch(_SNAPSHOT, value) is not None
     if name == "CI_JB_VERSION":
         return re.fullmatch(r"v?\d+\.\d+\.\d+", value) is not None
-    if name.startswith(("CI_BASE_", "CI_IMAGE_")) and not name.startswith(
-        ("CI_IMAGE_FINGERPRINT_", "CI_IMAGE_SOURCE")
+    if name in ("CI_PACKAGER_IMAGE",) or (
+        name.startswith(("CI_BASE_", "CI_IMAGE_", "CI_PACKAGER_BASE_"))
+        and not name.startswith(("CI_IMAGE_FINGERPRINT_", "CI_IMAGE_SOURCE"))
     ):
         return re.fullmatch(rf"[\w./:-]+@{_DIGEST}", value) is not None
     return re.fullmatch(_HEX64, value) is not None
@@ -291,6 +517,7 @@ def changed(new: Path) -> bool:
     moved = [
         k for k in _pin_keys()
         if k.startswith("CI_IMAGE_FINGERPRINT_") or k == "CI_IMAGE_SOURCE_HASH"
+        or k in ("CI_PACKAGER_FINGERPRINT", "CI_PACKAGER_SOURCE_HASH")
         if old.get(k) != fresh.get(k)
     ]
     for k in moved:
@@ -321,6 +548,14 @@ def check() -> int:
             "or dispatch the CI image workflow on it."
         )
         return 1
+    if packager_on() and pin["CI_PACKAGER_SOURCE_HASH"] != packager_source_hash():
+        print(
+            f"ci-image-check: the packager's sources ({PACKAGER_DOCKERFILE}, "
+            f"{BOOTSTRAP}) moved without a repin.\n"
+            f"  pinned: {pin['CI_PACKAGER_SOURCE_HASH']}\n"
+            f"  tree:   {packager_source_hash()}"
+        )
+        return 1
     print(f"ci-image-check: {PIN} pins images built from this tree")
     return 0
 
@@ -329,10 +564,13 @@ def main(argv: "list[str]") -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("source-hash")
+    sub.add_parser("packager-source-hash")
     p = sub.add_parser("inputs")
     p.add_argument("--refresh", action="store_true")
     p = sub.add_parser("key")
     p.add_argument("base")
+    p = sub.add_parser("source")
+    p.add_argument("ref")
     p = sub.add_parser("join-fingerprint")
     p.add_argument("fp", nargs="+")
     p = sub.add_parser("write-pin")
@@ -344,11 +582,20 @@ def main(argv: "list[str]") -> int:
 
     if a.cmd == "source-hash":
         print(source_hash())
+    elif a.cmd == "packager-source-hash":
+        print(packager_source_hash())
     elif a.cmd == "inputs":
         for k, v in inputs(a.refresh).items():
             print(f"{k}={v}")
     elif a.cmd == "key":
         print(key(a.base))
+    elif a.cmd == "source":
+        # Unset, there is nothing to choose: print REF without asking any
+        # registry, so an adopter without the setting makes no new call.
+        if os.environ.get("CI_IMAGE_BASE_REGISTRY"):
+            print(source(a.ref)[0])
+        else:
+            print(a.ref)
     elif a.cmd == "join-fingerprint":
         print(join_fingerprint(a.fp))
     elif a.cmd == "write-pin":

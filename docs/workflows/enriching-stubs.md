@@ -99,7 +99,7 @@ float <pkg>_gain_scale(const <pkg>_gain_state_t *state, float x);
 Regenerate and `gain.pyi` carries:
 
 ```python
-    def scale(self, x: float) -> float:
+    def scale(self, x: float, /) -> float:
         """Scale one sample by the gain and return it.
 
         Parameters

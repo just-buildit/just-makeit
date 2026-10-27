@@ -34,7 +34,7 @@ its `bench:` target and `C_BENCHES` list there).
 jm can only auto-populate the timing loop for a shape it can size: a `step()`,
 or a method that is not `variable_output` / `out_type` / `varargs` / `codec`.
 For anything else the file is a **scaffold with a `TODO:`** naming the
-candidate methods and showing a worked `jm_bench_add` call to copy — fill it in
+candidate methods and showing a worked `jm_bench_add_unit` call to copy — fill it in
 and the target measures. `jm status` lists the unfilled ones under `SILENT`.
 Once written, the file is yours: `jm method` does not add a timing loop to it
 and `jm remove method` does not take one out (gh-1987). On a standalone object,

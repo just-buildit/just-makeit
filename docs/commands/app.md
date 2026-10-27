@@ -34,9 +34,9 @@ jm app --target pep723 --object engine --name dsp_tool_script
 As of **0.15.0** the generated app is *complete*, not a stub, for the four
 object shapes listed below: each target emits a real argument parser **and**
 a working read → process → write loop, generated from the object model. The
-C `strtof`/`argv` parser and the Python `argparse` setup are produced from
-the same spec, so the C binary and the Python CLI accept the same flags and
-behave the same way. There is nothing to hand-edit before it runs.
+C `argv` parser and the Python `argparse` setup are produced from the same
+spec, so the C binary and the Python CLI accept the same flags and behave the
+same way. There is nothing to hand-edit before it runs.
 
 Every run **appends** an `[[app]]` row to `just-makeit.toml` — the app's
 target, its source, and any `[[app.flags]]` / `[[app.commands]]` — so a
@@ -105,7 +105,7 @@ numpy), so a capture is reproducible regardless of which face produced it.
 | Flag            | Values                            | Effect                                                                                                                                     |
 | --------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--sample_type` | `cf32` `cf64` `ci32` `ci16` `ci8` | wire type, converted on write (full-scale ±1.0 for the integer types)                                                                      |
-| `--file_type`   | `raw` `csv`                       | `raw` interleaved I/Q (default) or text `I,Q` lines (`%0.9f` cf32, `%0.17g` cf64, `%d` integer)                                            |
+| `--file_type`   | `raw` `csv`                       | `raw` interleaved I/Q (default) or text `I,Q` lines (`%.9g` cf32, `%.17g` cf64: each reads back exact; `%d` integer)                       |
 | `--endian`      | `le` `be`                         | byte order; `be` reverses each element (raw only — csv is text)                                                                            |
 | `--record FILE` | path                              | write a JSON record of the fully-resolved run (every flag after defaulting; choice flags as their chosen string) for reproducible captures |
 
@@ -125,8 +125,11 @@ ______________________________________________________________________
 ### `--target c`
 
 Generates `native/src/app/<name>.c` — a `main()` with an `argv` parser
-(`strtof`/`strtol` per flag type) and the shape-appropriate
-`create → loop → destroy`. jm's App block in `CMakeLists.txt` holds an
+and the shape-appropriate `create → loop → destroy`. A numeric flag is read
+whole at its declared type, or refused: an argument that is not a number,
+overflows, or is outside the type's range (`--gain 300` for an `int8_t`, `-1`
+for an unsigned) prints `<prog>: --<flag>: <reason>` and exits 2 rather than
+running with a wrapped value (gh-2225). jm's App block in `CMakeLists.txt` holds an
 `add_executable` / `target_link_libraries` / `install` group for every C app
 the manifest declares, and is rewritten from it on each run (idempotent;
 printed for manual addition if there is no `CMakeLists.txt`).

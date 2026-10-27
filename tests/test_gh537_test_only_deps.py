@@ -133,4 +133,7 @@ class TestManifestRoundTrip:
 
     def test_survives_a_save_load_cycle(self, proj):
         _declare(proj, TEST_ONLY)
-        assert C.depends_test_only_cores(C.load(proj), "rdr") == ["wtr_core"]
+        cfg = C.load(proj)
+        assert C.test_only_dep_cores(cfg, C.depends_on_raw(cfg, "rdr")) == {
+            "wtr_core"
+        }

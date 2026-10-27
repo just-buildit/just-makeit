@@ -412,7 +412,6 @@ class TestTheReplayCarriesTheKey:
 MANIFEST_ONLY_OBJECT_KEYS = {
     "doc": f'doc = "{MARKER}"',
     "process_global": "process_global = true",
-    "opaque_state": 'opaque_state = "true"',
     "step_delegates_to_steps": 'step_delegates_to_steps = "true"',
     "init_post_parse": 'init_post_parse = "/* post parse */"',
     "no_reset": 'no_reset = "true"',
@@ -444,3 +443,19 @@ class TestAHandAuthoredKeyReachesTheStub:
         applied = _cli("apply", cwd=scaffold)
         assert applied.returncode == 0, applied.stdout + applied.stderr
         _assert_stubs_match_the_direct_render(scaffold)
+
+    def test_an_incoherent_opaque_state_is_refused(
+        self, scaffold: Path
+    ) -> None:
+        """gh-2215: `opaque_state` on an object that inlines step().
+
+        The replay dropped `opaque_state`, so `apply` "accepted" this by
+        ignoring it. That is why the key used to sit in the table above.
+        Forwarded, it reaches `_object.run`, which refuses it the way
+        `jm object --opaque-state` does without `--no-step`: the public
+        `step()` dereferences a struct the header would not publish.
+        """
+        _put_object_key(scaffold, "o", 'opaque_state = "true"')
+        applied = _cli("apply", cwd=scaffold)
+        assert applied.returncode != 0
+        assert "requires --no-step" in applied.stderr

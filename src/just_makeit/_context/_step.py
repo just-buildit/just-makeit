@@ -16,7 +16,9 @@ from .._docstring import (
     render_numpy_doc,
     render_runtime_doc,
 )
+from ._methods import bench_record_c
 from ._parse import _build_ml_doc, _step_parse_block
+from ._parse import ctrl_parse_c as _ctrl_parse_c
 
 
 def make_perf_ctx(perf: bool) -> dict[str, str]:
@@ -386,10 +388,13 @@ def make_step_ctx(
     ctrl_obj_args = "".join(f", obj->{n}" for n, _, _ in _ctrl)
     # steps() keyword-parse bits.
     ctrl_kw_entries = "".join(f'"{n}", ' for n, _, _ in _ctrl)
-    ctrl_kw_fmt = "".join(f for _, _, f in _ctrl)
-    ctrl_parse_refs = "".join(f", &{n}" for n, _, _ in _ctrl)
-    ctrl_field_locals = "".join(
-        f"    {disp} {n} = self->handle->{n};\n" for n, disp, _ in _ctrl
+    # gh-1952 / gh-2144: each override parses at its row's width and is
+    # narrowed (range-checked) after the parse -- `ctrl_narrow`, emitted
+    # right after every parse below. It parsed straight into the field's
+    # type, so `int8_t k` took the four bytes `i` writes. gh-2220: the
+    # format chars are the parse slot's own, beside the addresses it wrote.
+    ctrl_field_locals, ctrl_kw_fmt, ctrl_parse_refs, ctrl_narrow = (
+        _ctrl_parse_c(_ctrl)
     )
     # step() positional-parse list (rebuilt by _step_parse_block per shape).
     _ctrl_parse = list(_ctrl)
@@ -576,6 +581,7 @@ def make_step_ctx(
             f'            "O|O{ctrl_kw_fmt}", kwlist,\n'
             f"            &x_obj, &out_obj{ctrl_parse_refs}))\n"
             f"        return NULL;\n"
+            f"{ctrl_narrow}"
         )
         # gh-581: reject a wrong-dtype `out=` before FROM_OTF can cast it into
         # a temp — the caller asked for THEIR buffer to be written.
@@ -685,15 +691,8 @@ def make_step_ctx(
             f"        t1 = jm_bench_now_ns();\n"
             f"        _times_steps[r] = jm_bench_elapsed_sec(t0, t1);\n"
             f"    }}\n"
-            f'    jm_bench_add(&_bench, "steps",'
-            f" _times_steps, ITERATIONS, BENCH_N);\n"
-            f"    {{\n"
-            f"        double _s = 0.0;\n"
-            f"        for (int r = 0; r < ITERATIONS; r++)"
-            f" _s += _times_steps[r];\n"
-            f'        printf("  steps()  %8.1f MSa/s\\n",\n'
-            f"               (double)BENCH_N / (_s / ITERATIONS) / 1e6);\n"
-            f"    }}"
+            # gh-2282: one steps() call over BENCH_N samples a round.
+            + bench_record_c("steps", "steps() ", "JM_BENCH_SAMPLE")
         )
         _bw_smoke = (
             f"    /* steps: verify it runs without crashing */\n"
@@ -824,6 +823,7 @@ def make_step_ctx(
                 f'    if (!PyArg_ParseTuple(args, "|{ctrl_kw_fmt}"'
                 f"{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
             )
             _gen_step_flags = "METH_VARARGS"
         else:
@@ -844,6 +844,7 @@ def make_step_ctx(
             f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,\n"
             f'            "|n{ctrl_kw_fmt}", kwlist, &n{ctrl_parse_refs}))\n'
             f"        return NULL;\n"
+            f"{ctrl_narrow}"
         )
         if is_void_return:
             if delegate:
@@ -1111,6 +1112,7 @@ def make_step_ctx(
                 f'    if (!PyArg_ParseTuple(args, "{_arr_parse_fmt}",'
                 f" &x_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
                 f"    PyArrayObject *x_arr = (PyArrayObject *)"
                 f"\n"
                 f"        {_coerce.array_arg('x_obj', in_np_enum, 'NPY_ARRAY_C_CONTIGUOUS', 'x')};\n"
@@ -1157,6 +1159,7 @@ def make_step_ctx(
                 f'    if (!PyArg_ParseTuple(args, "{_arr_parse_fmt}",'
                 f" &x_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
                 f"    PyArrayObject *x_arr = (PyArrayObject *)"
                 f"\n"
                 f"        {_coerce.array_arg('x_obj', in_np_enum, 'NPY_ARRAY_C_CONTIGUOUS', 'x')};\n"
@@ -1300,6 +1303,7 @@ def make_step_ctx(
                 f'            "{_sink_fmt}", kwlist,'
                 f" &in_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
             )
             steps_ext_fn = (
                 f"static PyObject *\n"
@@ -1467,6 +1471,7 @@ def make_step_ctx(
                 f'            "O|O{ctrl_kw_fmt}", kwlist,\n'
                 f"            &in_obj, &out_obj{ctrl_parse_refs}))\n"
                 f"        return NULL;\n"
+                f"{ctrl_narrow}"
                 f"\n"
                 f"    PyArrayObject *in_arr = (PyArrayObject *)"
                 f"\n"
@@ -1547,16 +1552,9 @@ def make_step_ctx(
         f"    for (int r = 0; r < ITERATIONS; r++) {{\n"
         f"{_inner}"
         f"        _times_step[r] = jm_bench_elapsed_sec(t0, t1);\n"
-        f"    }}\n"
-        f'    jm_bench_add(&_bench, "step",'
-        f" _times_step, ITERATIONS, BENCH_N);\n"
-        f"    {{\n"
-        f"        double _s = 0.0;\n"
-        f"        for (int r = 0; r < ITERATIONS; r++)"
-        f" _s += _times_step[r];\n"
-        f'        printf("  step()   %8.1f MSa/s\\n",\n'
-        f"               (double)BENCH_N / (_s / ITERATIONS) / 1e6);\n"
-        f"    }}"
+        f"    }}\n" + bench_record_c("step", "step()  ", "JM_BENCH_SAMPLE")
+        # gh-2282: a round is BENCH_N samples -- BENCH_N step() calls of
+        # one sample each, or one call over a BENCH_N-element array.
     )
 
     si_arg = ctx.get("bench_steps_in_arg", "")
@@ -1570,15 +1568,8 @@ def make_step_ctx(
             f"        t1 = jm_bench_now_ns();\n"
             f"        _times_steps[r] = jm_bench_elapsed_sec(t0, t1);\n"
             f"    }}\n"
-            f'    jm_bench_add(&_bench, "steps",'
-            f" _times_steps, ITERATIONS, BENCH_N);\n"
-            f"    {{\n"
-            f"        double _s = 0.0;\n"
-            f"        for (int r = 0; r < ITERATIONS; r++)"
-            f" _s += _times_steps[r];\n"
-            f'        printf("  steps()  %8.1f MSa/s\\n",\n'
-            f"               (double)BENCH_N / (_s / ITERATIONS) / 1e6);\n"
-            f"    }}"
+            # gh-2282: one steps() call over BENCH_N samples a round.
+            + bench_record_c("steps", "steps() ", "JM_BENCH_SAMPLE")
         )
     else:
         bench_steps_timing_block = ""

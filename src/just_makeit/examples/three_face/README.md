@@ -55,7 +55,7 @@ python -c "from gaintool import Gain; print(Gain(2.0).step(1.5))"  # module: 3.0
 `jm app` derives a `--<state-var>` flag per ctor state var (so `--gain` feeds
 `gaintool_gain_create(gain)`), adds `--input`/`--output`, and emits a
 read→`step()`→write loop over the object's sample dtype — generating the C
-`strtof`/argv parser and the Python `argparse` from the *same* object model.
+argv parser and the Python `argparse` from the *same* object model.
 Extra flags can be declared with `jm app --flag name:type[:default[:help]]`
 (persisted as `[[app.flags]]`) and appear in both parsers.
 

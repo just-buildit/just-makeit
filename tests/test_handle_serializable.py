@@ -76,7 +76,7 @@ def test_serializable_handle_emits_triplet(tmp_path):
     pyi = _pyi(tmp_path)
     assert "def state_bytes(self) -> int:" in pyi
     assert "def get_state(self) -> bytes:" in pyi
-    assert "def set_state(self, blob: bytes) -> None:" in pyi
+    assert "def set_state(self, blob: bytes, /) -> None:" in pyi
 
 
 def test_non_serializable_handle_has_no_triplet(tmp_path):

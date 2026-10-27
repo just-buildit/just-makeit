@@ -173,6 +173,7 @@ def _object_paths(
         # the removed class, and the project's Python tests failed to
         # collect on a tree `status --check` called clean.
         _invariants.file_for(root, cfg, obj, module or ""),
+        C.python_bench_file(root, cfg, obj, module or ""),
     ]
     if module:
         # gh-523: the module's Python artifacts may live in a `package`
@@ -180,13 +181,11 @@ def _object_paths(
         sub = root / "src" / pkg / C.module_package_resolved(cfg, module)
         paths += [
             sub / "tests" / f"test_{obj}.py",
-            sub / "benchmarks" / f"bench_{obj}.py",
         ]
     else:
         paths += [
             root / "src" / pkg / f"{obj}.pyi",
             root / "src" / pkg / "tests" / f"test_{obj}.py",
-            root / "src" / pkg / "benchmarks" / f"bench_{obj}.py",
         ]
     return paths
 

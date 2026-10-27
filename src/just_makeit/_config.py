@@ -79,6 +79,21 @@ def _resolve_includes(root: Path, includes: list[str]) -> list[Path]:
     return out
 
 
+def manifest_files(root: Path) -> list[Path]:
+    """The manifest and the fragment files its ``include`` names.
+
+    The one answer to "which files ARE the manifest", for every reader
+    that walks them: ``upgrade`` rewrites them, ``_csym`` respells them, and
+    ``status`` counts them as files jm owns although no replay renders them
+    (gh-2299). A missing ``just-makeit.toml`` is left out, not an error.
+    """
+    main = root / FILENAME
+    if not main.is_file():
+        return []
+    raw = load_manifest(root)
+    return [main, *_resolve_includes(root, raw.get("include") or [])]
+
+
 def _merge_fragment(cfg: dict, fragment: dict, source: Path) -> None:
     """Merge an included fragment into *cfg*.
 
@@ -260,12 +275,26 @@ def load(root: Path) -> dict:
     package_errors = module_package_errors(cfg)
     if package_errors:
         raise Refusal("\n".join(package_errors))
+    # gh-2215: a cycle of `object` init-param references leaks every object
+    # in it and has no construction order. Here, so every command that
+    # reads the manifest -- `status` included -- refuses it.
+    cycles = object_ref_cycles(cfg)
+    if cycles:
+        raise Refusal("\n".join(cycles))
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
     # wrong guess -- accepted as truthy, it rendered a two-argument call to
     # a one-argument reader and failed at C compile, far from this line.
     why_errors = _why_key_errors(cfg)
     if why_errors:
         _refuse(why_errors)
+    # gh-2259: a generating source's delegated generator methods, asked
+    # only of a manifest with a composer to ask about.
+    if any(is_composer_module(cfg, m) for m in modules(cfg)):
+        from ._composer import delegated_method_errors
+
+        delegated_errors = delegated_method_errors(cfg)
+        if delegated_errors:
+            _refuse(delegated_errors)
     _expand_init_groups(cfg)
     # gh-1756: a `str_hint` that would be accepted and never shown. After the
     # group expansion, so the init params it makes are checked too.
@@ -281,11 +310,35 @@ def load(root: Path) -> dict:
     shape_errors = shape_key_errors(cfg)
     if shape_errors:
         _refuse(shape_errors)
+    # gh-2327: a `retain` that would keep nothing alive -- on a param that
+    # is not a capsule, or a method whose binding has no one success point.
+    from ._retain import errors as retain_errors
+
+    retain_errs = retain_errors(cfg)
+    if retain_errs:
+        _refuse(retain_errs)
+    # gh-2360: a method-param `required` on a param that is not a capsule,
+    # or not a bool.
+    from ._context._parse import required_errors
+
+    required_errs = required_errors(cfg)
+    if required_errs:
+        _refuse(required_errs)
+    # gh-2204: a `consumed_fn` no binding would call -- on a method that is
+    # not a list of records, or has no input block to re-offer.
+    consumed_errors = _consumed_fn_errors(cfg)
+    if consumed_errors:
+        _refuse(consumed_errors)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
-    from ._keys import warn_unknown_keys
+    from ._keys import project_field_key_errors, warn_unknown_keys
 
+    # gh-1752: a project-declared field key jm itself reads is a mistake, and
+    # the walk below would take the declaration at its word.
+    field_key_errors = project_field_key_errors(cfg)
+    if field_key_errors:
+        _refuse(field_key_errors)
     warn_unknown_keys(cfg)
     # gh-1368: a retired switch still loads; it just says it does nothing.
     warn_retired_platforms(cfg)
@@ -470,6 +523,45 @@ def _why_key_errors(cfg: dict) -> "list[str]":
                         f"why = {v!r} must be true or false: it marks the "
                         "function as taking a trailing `const char **why`."
                     )
+    return errors
+
+
+def _consumed_fn_errors(cfg: dict) -> "list[str]":
+    """Every method ``consumed_fn`` no binding would call (gh-2204).
+
+    Each row is asked `_record.consumed_fn_why_not`, the predicate ``jm
+    method`` asks before it writes, over an object's methods and its views'
+    -- the two tables whose methods `make_methods_ctx` renders.
+
+    Examples
+    --------
+    >>> bad = {"det": {"methods": [{"name": "scan", "consumed_fn": "f"}]}}
+    >>> _consumed_fn_errors(bad)[0].split(":")[0]
+    "[[det.methods]] 'scan'"
+    >>> _consumed_fn_errors({"det": {"methods": [{"name": "scan"}]}})
+    []
+    """
+    from . import _record
+
+    errors: list[str] = []
+    for comp in components(cfg):
+        if not isinstance(cfg[comp], dict):
+            continue
+        rows = [(f"[[{comp}.methods]]", m) for m in methods(cfg, comp)]
+        rows += [
+            (f"[[{comp}.views]] {v.get('class_name', '?')!r} method", m)
+            for v in views(cfg, comp)
+            if isinstance(v, dict)
+            for m in view_methods(v)
+        ]
+        for where, m in rows:
+            if not isinstance(m, dict):
+                continue
+            why = _record.consumed_fn_why_not(
+                m, f"{where} {m.get('name', '?')!r}"
+            )
+            if why:
+                errors.append(why)
     return errors
 
 
@@ -1458,6 +1550,13 @@ def save(root: Path, cfg: dict) -> None:
     # deferred mutations later when the scope exits and the author has to work
     # out which one it was.
     require_declared_names(cfg)
+    # gh-2215: and the cycle `load` refuses, so the command whose edge
+    # closes one (`jm object --init-param x:object:<y>`, `jm view`) is
+    # refused too, and the mutating-command undo (gh-1867) puts back what
+    # it had written.
+    cycles = object_ref_cycles(cfg)
+    if cycles:
+        raise Refusal("\n".join(cycles))
     # gh-999: contract the group expansion, HERE, for the same reason `load`
     # expands there — this is the one place every manifest write passes
     # through. `save` and `load` are the symmetric pair: what `load` unfolds,
@@ -1523,11 +1622,7 @@ def save(root: Path, cfg: dict) -> None:
         if mod in module_owners:
             dst = module_owners[mod]
         elif split_layout:
-            # Sanitize a dotted module id to its cname for the fragment file
-            # name (modules/dsp_filters.toml) — one clean extension that still
-            # matches the modules/*.toml include glob; the dotted key lives
-            # inside the file.
-            dst = root / "modules" / f"{module_paths(mod).cname}.toml"
+            dst = module_fragment(root, mod)
         else:
             dst = manifest_path
         by_file.setdefault(dst, {}).setdefault("module", {})[mod] = data
@@ -1608,6 +1703,45 @@ RESERVED_SECTIONS = (
 def components(cfg: dict) -> list[str]:
     """Return component names — all top-level keys except reserved sections."""
     return [k for k in cfg if k not in RESERVED_SECTIONS]
+
+
+def declared_methods(cfg: dict) -> "list[tuple[str, dict]]":
+    """Every object's and view's ``[[...methods]]`` row, with its table.
+
+    The one walk the load-time param checks share (`_retain.errors`,
+    `_context/_parse.required_errors`): two copies of it, each skipping a
+    malformed entry, is the pair that drifts the day views gain a sibling.
+    Entries that are not tables -- a stray top-level scalar, a non-table
+    method or view -- are skipped here, for the key walk to name.
+
+    Examples
+    --------
+    >>> cfg = {
+    ...     "o": {"methods": [{"name": "a"}, 1],
+    ...           "views": [{"methods": [{"name": "b"}]}, "v"]},
+    ...     "stray": 1,
+    ... }
+    >>> [(t, m["name"]) for t, m in declared_methods(cfg)]
+    [('o.methods', 'a'), ('o.views.methods', 'b')]
+    """
+    out: "list[tuple[str, dict]]" = []
+    for comp in components(cfg):
+        body = cfg[comp]
+        if not isinstance(body, dict):
+            continue
+        out += [
+            (f"{comp}.methods", m)
+            for m in body.get("methods") or []
+            if isinstance(m, dict)
+        ]
+        for v in body.get("views") or []:
+            if isinstance(v, dict):
+                out += [
+                    (f"{comp}.views.methods", m)
+                    for m in v.get("methods") or []
+                    if isinstance(m, dict)
+                ]
+    return out
 
 
 def modules(cfg: dict) -> list[str]:
@@ -1715,12 +1849,66 @@ def scaffold_module(cfg: dict, module: str) -> dict:
     return cfg
 
 
-def add_to_module(cfg: dict, module: str, object_name: str) -> dict:
-    """Append object_name to an existing module's object list."""
-    cfg.setdefault("module", {}).setdefault(module, {}).setdefault(
-        "objects", []
-    ).append(object_name)
+def add_to_module(
+    cfg: dict, module: str, object_name: str, before: str = ""
+) -> dict:
+    """Add *object_name* to an existing module's object list.
+
+    Appended, or -- with *before* (``jm object --before``, gh-2215) --
+    inserted ahead of that member. The list is the module's load order
+    (gh-1985), which every writer sorts the root CMakeLists and the
+    umbrella header by, so placing the entry is all a writer has to do.
+    :func:`before_why_not` is the refusal; a caller asks it first.
+
+    >>> cfg = {"module": {"m": {"objects": ["a", "b"]}}}
+    >>> add_to_module(cfg, "m", "x", before="b")["module"]["m"]["objects"]
+    ['a', 'x', 'b']
+    """
+    objs = (
+        cfg.setdefault("module", {})
+        .setdefault(module, {})
+        .setdefault("objects", [])
+    )
+    if before:
+        objs.insert(objs.index(before), object_name)
+    else:
+        objs.append(object_name)
     return cfg
+
+
+def before_why_not(cfg: dict, module: "str | None", before: str) -> str:
+    """Why ``jm object --before <before>`` cannot place an object, or ``""``.
+
+    gh-2215. ``--before`` sets a position in a module's ``objects`` list,
+    so it needs a module, and it names a member of that module.
+
+    >>> cfg = {"module": {"m": {"objects": ["a"]}, "n": {"objects": ["b"]}}}
+    >>> before_why_not(cfg, "m", "a")
+    ''
+    >>> before_why_not(cfg, None, "a")[:30]
+    '--before a needs --module: it '
+    >>> before_why_not(cfg, "m", "b")
+    "--before b: 'b' is in module 'n', not 'm'"
+    >>> before_why_not(cfg, "m", "zz")
+    "--before zz: module 'm' has no object 'zz' (it has: a)"
+    """
+    if not before:
+        return ""
+    if not module:
+        return (
+            f"--before {before} needs --module: it places the object in a "
+            "module's load order, and a standalone object has none"
+        )
+    if before in module_objects(cfg, module):
+        return ""
+    home = component_module(cfg, before)
+    if home:
+        return f"--before {before}: '{before}' is in module '{home}', not '{module}'"
+    have = ", ".join(module_objects(cfg, module)) or "no objects"
+    return (
+        f"--before {before}: module '{module}' has no object '{before}' "
+        f"(it has: {have})"
+    )
 
 
 def module_of(cfg: dict, obj: str) -> str:
@@ -1817,6 +2005,25 @@ class ModulePaths(NamedTuple):
 def module_paths(module_id: str) -> ModulePaths:
     """Derived path/identifier forms for a (possibly dotted) module id."""
     return ModulePaths.of(module_id)
+
+
+def module_fragment(root: Path, module_id: str) -> Path:
+    """The split-layout fragment a module's ``[module.X]`` is written to.
+
+    ``modules/<cname>.toml``: a dotted id is spelled by its cname
+    (``dsp.filters`` -> ``modules/dsp_filters.toml``), one clean extension
+    the ``modules/*.toml`` include glob still reaches; the dotted id lives
+    inside the file. The one spelling of that path, for `save` routing a
+    new module and `migrate-to-fragments` moving an inline one (gh-2306):
+    the two disagreed, so one manifest gave differently named fragments
+    depending on how the project got there.
+
+    Examples
+    --------
+    >>> module_fragment(Path("p"), "dsp.filters").as_posix()
+    'p/modules/dsp_filters.toml'
+    """
+    return root / "modules" / f"{module_paths(module_id).cname}.toml"
 
 
 def module_cnames(cfg: dict) -> set[str]:
@@ -2405,6 +2612,95 @@ def validate_module_package(package: str) -> str | None:
     return msg
 
 
+def object_ref_edges(cfg: dict, component: str) -> "list[str]":
+    """The components *component*'s ``object`` init-params name, in order.
+
+    An edge per reference on the object's own ``init_params`` and on each
+    of its views' (gh-504: a view's init-params may name a producer too).
+    A reference names ``<comp>`` or ``<comp>.<Class>``; the component is
+    the part before the dot. Shared by :func:`object_ref_cycles` and
+    ``jm script``, which creates every producer before its consumers.
+
+    >>> cfg = {"a": {"init_params": [{"name": "x", "object": "b.B"}]},
+    ...        "b": {}}
+    >>> object_ref_edges(cfg, "a")
+    ['b']
+    """
+    sec = cfg.get(component)
+    if not isinstance(sec, dict):
+        return []
+    rows = [
+        *(sec.get("init_params") or []),
+        *(
+            p
+            for v in (sec.get("views") or [])
+            if isinstance(v, dict)
+            for p in (v.get("init_params") or [])
+        ),
+    ]
+    out: list[str] = []
+    for p in rows:
+        if not isinstance(p, dict):
+            continue
+        target = str(p.get("object") or "").partition(".")[0]
+        if target and target not in out:
+            out.append(target)
+    return out
+
+
+def object_ref_cycles(cfg: dict) -> "list[str]":
+    """Every cycle in the ``object`` init-param graph, as a refusal.
+
+    gh-2215. A consumer built from a producer's capsule keeps the producer
+    alive through a strong reference (gh-790's ``_<name>_owner``), and no
+    type jm generates takes part in Python's cyclic GC -- none has a
+    ``tp_traverse``. So objects whose references form a cycle can never be
+    collected: every one of them leaks. A cycle also has no construction
+    order, so no script could rebuild it. Each cycle is named in order,
+    from the first of its components the manifest lists.
+
+    >>> cfg = {"a": {"init_params": [{"name": "x", "object": "b"}]},
+    ...        "b": {"init_params": [{"name": "y", "object": "a"}]}}
+    >>> object_ref_cycles(cfg)[0].split(":")[1].split(".")[0].strip()
+    'a -> b -> a'
+    >>> object_ref_cycles({"a": {}, "b": {}})
+    []
+    """
+    comps = [c for c in components(cfg) if isinstance(cfg.get(c), dict)]
+    graph = {
+        c: [t for t in object_ref_edges(cfg, c) if t in comps] for c in comps
+    }
+    seen: "set[frozenset[str]]" = set()
+    out: list[str] = []
+    done: "set[str]" = set()
+
+    def walk(node: str, path: "list[str]") -> None:
+        for nxt in graph[node]:
+            if nxt in path:
+                cycle = path[path.index(nxt) :]
+                key = frozenset(cycle)
+                if key not in seen:
+                    seen.add(key)
+                    out.append(" -> ".join([*cycle, cycle[0]]))
+            elif nxt not in done:
+                walk(nxt, [*path, nxt])
+        done.add(node)
+
+    for c in comps:
+        if c not in done:
+            walk(c, [c])
+    return [
+        f"init_param `object` references form a cycle: {cycle}. Each "
+        "consumer holds a strong reference to its producer (gh-790's "
+        "`_<name>_owner`), and jm's types have no GC traverse, so objects "
+        "in a cycle can never be collected -- every one leaks. Break the "
+        "cycle: drop one side's `object` init-param and attach that side "
+        "after construction, through a method param declared with "
+        "`capsule` and `retain = true` (gh-2327)."
+        for cycle in out
+    ]
+
+
 def module_package_errors(cfg: dict) -> "list[str]":
     """Every ``[module.X] package`` that is not a directory below the package.
 
@@ -2654,6 +2950,62 @@ def is_no_reset(cfg: dict, component: str) -> bool:
     at all. Symmetric with `is_no_step` / `is_no_state`.
     """
     return _truthy(cfg.get(component, {}).get("no_reset"))
+
+
+def is_no_python_bench(cfg: dict, component: str) -> bool:
+    """Return True if *component* declares ``no_python_bench = true``.
+
+    gh-2316. An object may decline its Python benchmark -- a project whose
+    Python rows only re-measured the C kernel plus the binding's call cost
+    keeps the C bench and drops ``bench_<obj>.py``. Manifest-only, like
+    ``process_global``: `jm apply` replays it, so the replay renders no
+    file, `status` stops reporting one MISSING and `apply` stops
+    re-scaffolding it. The C ``bench_<obj>_core.c`` is unaffected; a
+    method's ``bench = false`` is the knob for that. A file still on disk
+    under the key is :func:`declined_python_benches`'s to report.
+    """
+    return _truthy(cfg.get(component, {}).get("no_python_bench"))
+
+
+def python_bench_file(
+    root: Path, cfg: dict, component: str, module: "str | None" = None
+) -> Path:
+    """Where *component*'s Python benchmark ``bench_<comp>.py`` lives.
+
+    The one spelling of the path, for `jm remove` and gh-2316's report: a
+    module object's lands in its module's package directory
+    (:func:`module_package_resolved`, where `jm object` writes it), a
+    standalone object's in ``src/<pkg>/benchmarks/``. *module* is looked
+    up when omitted; `jm remove` passes the one it was given, since the
+    manifest may already have dropped the object.
+    """
+    if module is None:
+        module = module_of(cfg, component)
+    base = root / "src" / project_name(cfg)
+    for part in module_package_resolved(cfg, module).split("/"):
+        if part:
+            base = base / part
+    return base / "benchmarks" / f"bench_{component}.py"
+
+
+def declined_python_benches(root: Path, cfg: dict) -> "list[str]":
+    """Python benchmarks on disk for objects that declare they have none.
+
+    gh-2316, the gh-1142 shape: the manifest says ``no_python_bench``, so
+    the replay renders no ``bench_<obj>.py`` and nothing compares the file
+    on disk against anything. The tree and the manifest disagree, and jm
+    deletes nothing (`apply` never does), so this reports it: delete the
+    file, or drop the key if declining it was the mistake. Read from the
+    tree, relative to *root*, in object order.
+    """
+    out = []
+    for comp in object_order(cfg):
+        if not is_no_python_bench(cfg, comp):
+            continue
+        f = python_bench_file(root, cfg, comp)
+        if f.is_file():
+            out.append(f.relative_to(root).as_posix())
+    return out
 
 
 def is_serializable(cfg: dict, component: str) -> bool:
@@ -3203,14 +3555,21 @@ def handle_type(cfg: dict, module: str) -> str:
     )
 
 
-def handle_capsule(cfg: dict, module: str) -> str:
-    """The ``PyCapsule`` name a handle module publishes, or ``""`` (gh-794).
+def published_capsule(cfg: dict, module: str) -> str:
+    """The ``PyCapsule`` name a handle or composer module publishes, or ``""``.
 
     When set, the generated type gains a ``_capsule`` property lending its
-    opaque ``<handle_type> *`` — borrowed and non-owning, exactly as an
-    object's gh-788 gap-4 property does, so a handle drops straight into a
+    pointer -- a handle's opaque ``<handle_type> *`` (gh-794), a composer's
+    ``<sym>_state_t *`` (gh-2346) -- borrowed and non-owning, exactly as an
+    object's gh-788 gap-4 property does, so either drops straight into a
     gh-432 method param or a gh-790 constructor with no change on the
     consuming side.
+
+    One reader for both kinds, so the two spellings below mean one thing
+    wherever they are written. A composer is the second shape built to be
+    borrowed from: a writer annotating a capture with a scene's segments
+    needs the scene, and before gh-2346 a composer accepted `capsule_name`
+    (a shared module key) and silently did nothing with it.
 
     A handle is the shape most likely to be on the *giving* end of a capsule —
     it exists to wrap a long-lived resource another component wants to borrow —
@@ -3620,6 +3979,17 @@ def resolve_init_param_tuples(cfg: dict, params: "list[tuple]") -> list[tuple]:
     An undefined enum name exits with :func:`resolve_enum_type`'s message,
     before anything is written.
 
+    An ``object`` reference (gh-1224, slot 15) nothing has resolved yet --
+    ``jm object --init-param src:object:nco``, whose parser leaves the
+    type, capsule and header slots empty -- is resolved by the manifest
+    path's own reading: the tuple is written as the dict the manifest will
+    hold and projected back through :func:`_project_init_params`, so the
+    first render and every later one read the reference one way. Before
+    gh-2215 the empty type reached the renderer as ``_CTYPE_META['']``. A
+    tuple that already carries its type -- `apply`'s replay passes the
+    source manifest's resolved ones -- is left alone, since the scratch
+    manifest it is replayed into may not hold the producer's capsule yet.
+
     >>> cfg = {"enum": [{"name": "lvl", "values": ["a", "b"]}]}
     >>> resolve_init_param_tuples(cfg, [("x", "enum:lvl", "b"), ("n", "int")])
     [('x', 'string_enum:a,b', 'b'), ('n', 'int')]
@@ -3627,6 +3997,10 @@ def resolve_init_param_tuples(cfg: dict, params: "list[tuple]") -> list[tuple]:
     out: list[tuple] = []
     for p in params:
         try:
+            if len(p) > 15 and p[15] and not p[1]:
+                rec = init_param_tuple_to_dict(p)
+                out.append(_project_init_params(cfg, [rec])[0])
+                continue
             out.append((p[0], resolve_enum_type(cfg, p[1]), *p[2:]))
         except ValueError as exc:
             print(f"error: --init-param '{p[0]}': {exc}", file=_sys.stderr)
@@ -3704,19 +4078,29 @@ def object_ref_import(cfg: dict, ref: str) -> str:
     from ._docstring import class_import_path
 
     comp, _, _cls = ref.partition(".")
+    leaf = ""
     if comp in components(cfg):
         cls = resolve_object_ref(cfg, ref)[3]
         home = module_of(cfg, comp)
         if not home:
             return f"from .{comp} import {cls}"
-    elif module_kind(cfg, comp) == "handle":
+    elif module_kind(cfg, comp) in _MODULE_REF_KINDS:
         # gh-1227: a handle module's class lives in the module's own
         # package, the one its own `.pyi` lands in.
-        cls = resolve_handle_object_ref(cfg, ref)[3]
+        kind = module_kind(cfg, comp)
+        cls = _MODULE_REF_KINDS[kind](cfg, ref)[3]
         home = comp
+        if kind == "composer":
+            # gh-2354: a composer's class is in `<package>/<leaf>.pyi`, and
+            # nothing re-exports it from the package (its directory has no
+            # `__init__.py`), so the import names the file that holds it:
+            # `from .playlist.playlist import Mix`, not `.playlist`.
+            leaf = module_paths(comp).leaf
     else:
         return ""
     where = class_import_path("", module_package_resolved(cfg, home))
+    if leaf:
+        where = f"{where}.{leaf}" if where else leaf
     return f"from .{where} import {cls}"
 
 
@@ -3738,7 +4122,7 @@ def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
     ``ctype``       ``<handle_type> *`` -- the generated struct stores exactly
                     ``{htype} *h`` and the capsule lends ``self->h``, so the
                     published pointer's type IS the declared `handle_type`.
-    ``capsule``     :func:`handle_capsule` -- the `capsule` key, or the
+    ``capsule``     :func:`published_capsule` -- the `capsule` key, or the
                     `capsule_name` a capsule module already spells it with.
     ``header``      :func:`handle_header` -- the module's own `header`.
     ``class_name``  :func:`handle_type_name` -- the generated CPython type.
@@ -3761,7 +4145,7 @@ def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
             f"the class '{tname}', not '{cls}'. A handle generates one type, "
             f"so the '.{cls}' suffix can only ever name it."
         )
-    capsule = handle_capsule(cfg, mod)
+    capsule = published_capsule(cfg, mod)
     if not capsule:
         raise ValueError(
             f"init_param object = '{ref}': handle module '{mod}' publishes "
@@ -3780,6 +4164,80 @@ def resolve_handle_object_ref(cfg: dict, ref: str) -> tuple:
             f"pointer its capsule lends."
         )
     return (f"{htype} *", capsule, handle_header_resolved(cfg, mod), tname)
+
+
+def resolve_composer_object_ref(cfg: dict, ref: str) -> tuple:
+    """Resolve an ``object`` reference naming a ``kind = "composer"`` module.
+
+    gh-2354. gh-2346 let a composer publish a ``_capsule`` and a consumer
+    METHOD param take it; the other consuming path, an ``init_param`` with
+    ``object = "<composer>"``, could not name one -- the resolver knew
+    components, views and handles, and refused a composer as 'not a valid
+    target'. Same sugar over the capsule triangle, so the consumer is written
+    the way a handle's is, and the ``.pyi`` and the constructor agree with the
+    producer by construction.
+
+    Returns the same ``(ctype, capsule_name, header, class_name)``, every slot
+    **read** from the module's own declarations (gh-1234):
+
+    ==============  ==========================================================
+    ``ctype``       ``<stem>_state_t *`` -- what the composer's capsule lends
+                    (``self->state``); ``<stem>`` is the ``backing``'s C stem,
+                    through :func:`~just_makeit._csym.backing_stem`, so a
+                    ``c_prefix`` moves it with the producer.
+    ``capsule``     :func:`published_capsule`.
+    ``header``      the backing's core header, the one the composer's own
+                    binding includes.
+    ``class_name``  the composer type (``oo.composer_type_name``, default
+                    ``Composer``).
+    ==============  ==========================================================
+
+    A composer generates one class here, so ``<module>.<Class>`` is accepted
+    only when the class matches. The consumer needs nothing to keep the
+    composer alive: a constructor's borrowed pointer already holds a strong
+    reference to the Python owner (gh-790), the ``retain`` of a method param.
+    """
+    mod, _, cls = ref.partition(".")
+    tname = composer_oo(cfg, mod).get("composer_type_name", "Composer")
+    if cls and cls != tname:
+        raise Refusal(
+            f"init_param object = '{ref}': composer module '{mod}' "
+            f"generates the class '{tname}', not '{cls}'. Name the module "
+            f"alone, or '{mod}.{tname}'."
+        )
+    capsule = published_capsule(cfg, mod)
+    if not capsule:
+        raise Refusal(
+            f"init_param object = '{ref}': composer module '{mod}' publishes "
+            f"no capsule, so there is no ABI-safe way to hand its state to "
+            f"another module. Declare one on the module table:\n"
+            f'    [module.{mod}]\n    capsule = "<name>"'
+        )
+    backing = capsule_backing(cfg, mod)
+    if not backing:
+        raise Refusal(
+            f"init_param object = '{ref}': composer module '{mod}' declares "
+            f"no `backing`, so jm cannot name the state its capsule lends."
+        )
+    from . import _csym
+
+    return (
+        f"{_csym.backing_stem(cfg, backing)}_state_t *",
+        capsule,
+        INC.core_include(backing, cfg),
+        tname,
+    )
+
+
+#: The module kinds an ``object`` reference may name, each with its resolver:
+#: a module that is built to be borrowed from. One table, read by
+#: :func:`resolve_object_ref` and :func:`object_ref_import`, so a kind cannot
+#: be resolvable and not importable (or the reverse); a new kind is a row here
+#: and, if its class lives somewhere else, a branch in the importer.
+_MODULE_REF_KINDS = {
+    "handle": resolve_handle_object_ref,
+    "composer": resolve_composer_object_ref,
+}
 
 
 def resolve_object_ref(cfg: dict, ref: str) -> tuple:
@@ -3822,17 +4280,17 @@ def resolve_object_ref(cfg: dict, ref: str) -> tuple:
             # capsule through gh-794's module-level key rather than a
             # property, and it declares the pointer's type, so it resolves on
             # better evidence than the object path does.
-            if kind == "handle":
-                return resolve_handle_object_ref(cfg, ref)
+            if kind in _MODULE_REF_KINDS:
+                return _MODULE_REF_KINDS[kind](cfg, ref)
             if kind:
                 raise ValueError(
                     f"init_param object = '{ref}': '{comp}' is a declared "
                     f'kind = "{kind}" module, not a component. An `object` '
-                    f"reference names a component, one of its views, or a "
-                    f'kind = "handle" module; a {kind} module is not a valid '
-                    f"target. A capsule module's own pointer can still be "
-                    f"named the gh-790 way, with `capsule` and `header` "
-                    f"written out."
+                    f"reference names a component, one of its views, a "
+                    f'kind = "handle" module or a kind = "composer" module; '
+                    f"a {kind} module is not a valid target. A capsule "
+                    f"module's own pointer can still be named the gh-790 "
+                    f"way, with `capsule` and `header` written out."
                 )
             raise ValueError(
                 f"init_param object = '{ref}': '{comp}' is a declared "
@@ -4519,24 +4977,6 @@ def depends_on(cfg: dict, component: str) -> list[str]:
     ]
 
 
-def depends_test_only_cores(cfg: dict, component: str) -> list[str]:
-    """``<name>_core`` targets declared ``test_only`` for a component (gh-537).
-
-    These link the component's C test and bench and nothing else — not the
-    core's PUBLIC link line (which would propagate them straight back into the
-    Python extension), not the ``.so``, not the aggregate library.
-    """
-    out: list[str] = []
-    for d in cfg.get(component, {}).get("depends_on", []):
-        if not _dep_test_only(d):
-            continue
-        name = _dep_name(d)
-        core = name if name.endswith("_core") else f"{name}_core"
-        if core not in out:
-            out.append(core)
-    return out
-
-
 def depends_on_raw(cfg: dict, component: str) -> list:
     """Raw depends_on entries — bare strings and/or ``{name, link}`` tables.
 
@@ -4624,10 +5064,36 @@ def transitive_dep_cores(
                 continue
             seen.add(core)
             out.append(core)
-            _visit(depends_on_raw(graph, core[:-5]))
+            # gh-2318: a dependency's own `test_only` edge links ITS C test
+            # and nothing else, so the walk never follows one past the first
+            # level. Followed, it put a sibling's test fixture on every
+            # dependent's core PUBLIC link line, test and bench.
+            _visit(
+                [
+                    d
+                    for d in depends_on_raw(graph, core[:-5])
+                    if not _dep_test_only(d)
+                ]
+            )
 
     _visit(entries)
     return out
+
+
+def test_only_dep_cores(cfg: dict, entries: list) -> "set[str]":
+    """The cores *entries* reach only through a ``test_only`` edge (gh-537).
+
+    What a component's C test and bench link and its core's PUBLIC link line
+    must not: from there a core propagates into the Python extension and
+    ships. It is the closure of every entry minus the closure of the shipped
+    ones, so a core a test-only dependency itself depends on is test-only
+    too (gh-2318), while one also reached through a real edge is not. The
+    one answer for both places that build a core's PUBLIC line.
+    """
+    shipped = [d for d in entries if not _dep_test_only(d)]
+    return set(transitive_dep_cores(cfg, entries)) - set(
+        transitive_dep_cores(cfg, shipped)
+    )
 
 
 def array_args(cfg: dict, component: str) -> list[tuple[str, str]]:
@@ -5280,6 +5746,282 @@ def _multi_output_errors(entry: dict, what: str) -> list[str]:
     return errors
 
 
+#: The method shapes whose CPython function jm does not write, so no ``nogil``
+#: can reach a generated kernel call (gh-2259): ``varargs`` registers a
+#: function the author writes; ``manual_stub`` leaves the binding whole.
+NOGIL_UNWRITTEN_SHAPES = ("varargs", "manual_stub")
+
+
+def _nogil_errors(entry: dict, what: str) -> list[str]:
+    """Refuse ``nogil`` on a method whose binding jm does not write.
+
+    gh-2259. ``nogil`` releases the GIL around the kernel call jm
+    generates, and every shape jm writes now honours it -- the emitter is
+    `_context._methods._nogil_call`. A :data:`NOGIL_UNWRITTEN_SHAPES`
+    method has no generated call: the key was accepted and ignored, so the
+    author believed the GIL released around a kernel that ran holding it.
+    The release belongs in the binding the author writes.
+
+    The ONE answer, asked by ``jm method --nogil`` before it writes and by
+    :func:`manifest_type_errors` before ``apply`` does.
+
+    Examples
+    --------
+    >>> _nogil_errors({"nogil": True, "variable_output": True}, "m")
+    []
+    >>> print(_nogil_errors({"nogil": True, "varargs": True}, "m")[0])
+    m: nogil releases the GIL around a kernel call jm writes, and a varargs
+      method's CPython function is yours. Release it there
+      (Py_BEGIN_ALLOW_THREADS ... Py_END_ALLOW_THREADS) and drop nogil.
+    """
+    if not entry.get("nogil"):
+        return []
+    return [
+        f"{what}: nogil releases the GIL around a kernel call jm writes, "
+        f"and a {shape}\n  method's CPython function is yours. Release it "
+        "there\n  (Py_BEGIN_ALLOW_THREADS ... Py_END_ALLOW_THREADS) and drop "
+        "nogil."
+        for shape in NOGIL_UNWRITTEN_SHAPES
+        if entry.get(shape)
+    ][:1]
+
+
+def _out_cols_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``out_cols``; [] when absent or usable.
+
+    gh-2115. ``out_cols`` makes a ``variable_output`` result a matrix: the
+    kernel still fills a flat buffer and returns an element count, and the
+    binding hands back ``(count / out_cols, out_cols)``. That only means
+    something for exactly one flat output array, so the shapes that have no
+    such array are refused here, at load, rather than rendered into a binding
+    that quietly ignores the key.
+
+    Parameters
+    ----------
+    entry : dict
+        One ``[[<component>.methods]]`` entry.
+    what : str
+        How the caller names the entry in a message.
+
+    Returns
+    -------
+    list of str
+        One message per problem.
+
+    Examples
+    --------
+    >>> _out_cols_errors({"name": "push"}, "x")
+    []
+    >>> _out_cols_errors({"out_cols": "state->n", "variable_output": True}, "x")
+    []
+    >>> _out_cols_errors({"out_cols": 8}, "x")[0]
+    'x: out_cols needs variable_output = true: a fixed-size result has no row count to derive from the kernel.'
+    >>> _out_cols_errors({"out_cols": 0, "variable_output": True}, "x")[0]
+    'x: out_cols must be a positive integer or a non-empty C expression, got 0.'
+    >>> _out_cols_errors(
+    ...     {"out_cols": 4, "variable_output": True, "multi_output": ["int"]},
+    ...     "x",
+    ... )[0]
+    'x: out_cols reshapes ONE output array; this method also declares multi_output.'
+    """
+    if "out_cols" not in entry:
+        return []
+    cols = entry["out_cols"]
+    if isinstance(cols, bool) or not (
+        (isinstance(cols, int) and cols >= 1)
+        or (isinstance(cols, str) and cols.strip())
+    ):
+        return [
+            f"{what}: out_cols must be a positive integer or a non-empty "
+            f"C expression, got {cols!r}."
+        ]
+    errors: list[str] = []
+    if not entry.get("variable_output"):
+        errors.append(
+            f"{what}: out_cols needs variable_output = true: a fixed-size "
+            f"result has no row count to derive from the kernel."
+        )
+    if entry.get("multi_output"):
+        errors.append(
+            f"{what}: out_cols reshapes ONE output array; this method also "
+            f"declares multi_output."
+        )
+    if entry.get("record_dtype"):
+        errors.append(
+            f"{what}: out_cols reshapes a flat array of scalars; "
+            f"record_dtype already gives every row its own columns."
+        )
+    return errors
+
+
+def _short_out_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``short_out``; [] when absent or usable.
+
+    gh-2230. ``short_out = true`` lifts the minimum an ``out=`` buffer must
+    hold: without it a caller's buffer must be at least what the binding
+    would have allocated itself (``_context._methods._capacity_exprs``),
+    which is what makes a short one an error. A backpressure kernel's
+    contract is the opposite -- a short buffer is how the caller asks for
+    less, the kernel writes what fits and the object reports how much input
+    it took -- and that contract needs two things the key cannot supply:
+
+    * ``pass_capacity``, because only a kernel TOLD the buffer's real size
+      can stop at it. Without it the kernel writes blind, and the minimum is
+      the only thing between a short buffer and an overrun;
+    * an ``out=`` buffer to relax, which is :func:`_outbuf.why_not`'s
+      answer. (A ``batch`` method refuses it with every other key its 1:1
+      binding does not read: ``_method.batch_why_not``, gh-2261.)
+
+    Each is refused here, at load, rather than rendered into a binding that
+    ignores the key -- or, without ``pass_capacity``, one that overruns.
+
+    Parameters
+    ----------
+    entry : dict
+        One ``[[<component>.methods]]`` entry.
+    what : str
+        How the caller names the entry in a message.
+
+    Returns
+    -------
+    list of str
+        One message per problem.
+
+    Examples
+    --------
+    >>> _short_out_errors({"name": "push"}, "x")
+    []
+    >>> _short_out_errors({"short_out": True, "variable_output": True,
+    ...                    "pass_capacity": True}, "x")
+    []
+    >>> errs = _short_out_errors(
+    ...     {"short_out": True, "variable_output": True}, "x")
+    >>> errs[0].startswith("x: short_out needs pass_capacity = true")
+    True
+    >>> errs = _short_out_errors(
+    ...     {"short_out": True, "pass_capacity": True}, "x")
+    >>> errs[0].startswith("x: short_out needs variable_output = true")
+    True
+    >>> _short_out_errors({"short_out": "yes"}, "x")
+    ["x: short_out must be true or false, got 'yes'."]
+    """
+    if "short_out" not in entry:
+        return []
+    flag = entry["short_out"]
+    if not isinstance(flag, bool):
+        return [f"{what}: short_out must be true or false, got {flag!r}."]
+    if not flag:
+        return []
+    from . import _outbuf
+
+    errors: list[str] = []
+    why = _outbuf.why_not(
+        variable_output=bool(entry.get("variable_output")),
+        multi_output=bool(entry.get("multi_output")),
+        has_arg=str(entry.get("arg_type") or "void") != "void",
+        params=list(entry.get("params") or []),
+    )
+    if not entry.get("variable_output"):
+        errors.append(
+            f"{what}: short_out needs variable_output = true: only a "
+            f"variable_output method takes an out= buffer to relax."
+        )
+    elif why:
+        errors.append(
+            f"{what}: short_out relaxes the out= buffer, and this method "
+            f"has none ({why})."
+        )
+    if not entry.get("pass_capacity"):
+        errors.append(
+            f"{what}: short_out needs pass_capacity = true: only a kernel "
+            f"told its buffer's real size can stop at it, and without that "
+            f"a buffer smaller than max_out() is an overrun."
+        )
+    return errors
+
+
+def _no_count_errors(entry: dict, what: str) -> list[str]:
+    """Validate one method's ``no_count``; [] when absent or usable.
+
+    gh-2233. A ``variable_output`` method with a ``void`` input and no
+    ``params`` is the generator shape: jm synthesizes a leading Python
+    ``count`` for it and hands the kernel ``size_t n``. ``no_count = true``
+    removes both, for a kernel whose result is sized by the object alone --
+    the kernel is called ``fn(state, out[, max_out])`` and its
+    ``<fn>_max_out(state)`` takes only the state. That only means something
+    on the one shape that HAS a synthesized count, so every other shape is
+    refused here, at load, rather than rendered into a binding that quietly
+    ignores the key. (A header whose ``_max_out`` still takes a count is the
+    render's refusal, because only the render reads the header.)
+
+    Parameters
+    ----------
+    entry : dict
+        One ``[[<component>.methods]]`` entry.
+    what : str
+        How the caller names the entry in a message.
+
+    Returns
+    -------
+    list of str
+        One message per problem.
+
+    Examples
+    --------
+    >>> _no_count_errors({"name": "flush"}, "x")
+    []
+    >>> _no_count_errors(
+    ...     {"no_count": True, "variable_output": True, "arg_type": "void"},
+    ...     "x",
+    ... )
+    []
+    >>> _no_count_errors({"no_count": "yes"}, "x")[0]
+    "x: no_count must be true or false, got 'yes'."
+    >>> print(_no_count_errors({"no_count": True}, "x")[0])
+    x: no_count needs variable_output = true: a fixed-size result has no count to drop.
+    >>> print(_no_count_errors(
+    ...     {"no_count": True, "variable_output": True, "arg_type": "float"},
+    ...     "x",
+    ... )[0])
+    x: no_count needs arg_type = "void": an input's length is the count, and the kernel is handed it.
+    """
+    if "no_count" not in entry:
+        return []
+    flag = entry["no_count"]
+    if not isinstance(flag, bool):
+        return [f"{what}: no_count must be true or false, got {flag!r}."]
+    if not flag:
+        return []
+    errors: list[str] = []
+    if not entry.get("variable_output"):
+        errors.append(
+            f"{what}: no_count needs variable_output = true: a fixed-size "
+            f"result has no count to drop."
+        )
+    if (entry.get("arg_type") or "void") != "void":
+        errors.append(
+            f'{what}: no_count needs arg_type = "void": an input\'s length '
+            f"is the count, and the kernel is handed it."
+        )
+    if entry.get("params") or entry.get("extra_args"):
+        errors.append(
+            f"{what}: no_count needs a method with no params: with params "
+            f"jm synthesizes no count, so there is nothing to drop."
+        )
+    for key in ("count_default", "count_name"):
+        if entry.get(key):
+            errors.append(
+                f"{what}: {key} describes the synthesized count, which "
+                f"no_count removes; drop one of the two."
+            )
+    if entry.get("result_fields") and not entry.get("record_dtype"):
+        errors.append(
+            f"{what}: no_count needs a variable_output array result; a "
+            f"record or list-of-records result takes no count."
+        )
+    return errors
+
+
 def manifest_type_errors(cfg: dict) -> list[str]:
     """Every unusable type declared anywhere in the manifest.
 
@@ -5381,7 +6123,11 @@ def manifest_type_errors(cfg: dict) -> list[str]:
             if err:
                 errors.append(err)
         if outputs == "method":
+            errors.extend(_nogil_errors(entry, what))
             errors.extend(_multi_output_errors(entry, what))
+            errors.extend(_out_cols_errors(entry, what))
+            errors.extend(_short_out_errors(entry, what))
+            errors.extend(_no_count_errors(entry, what))
 
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
@@ -7352,10 +8098,10 @@ def _shape(path: "tuple[str, ...]") -> str:
 _METHOD_ORDER = (
     "name", "doc", "arg_type", "return_type", "varargs", "manual_stub",
     "variable_output", "pass_capacity", "exact_max_out", "count_default",
-    "count_name", "nogil", "none_on_empty", "error_on_empty", "batch",
-    "multi_output", "extra_args", "params", "out_type", "out_divisor",
-    "bench", "max_results", "result_fields", "single", "py_return_type",
-    "max_out",
+    "count_name", "out_cols", "nogil", "none_on_empty", "error_on_empty",
+    "batch", "multi_output", "extra_args", "params", "out_type",
+    "out_divisor", "bench", "max_results", "result_fields", "single",
+    "py_return_type", "max_out", "short_out",
 )  # fmt: skip
 _PROPERTY_ORDER = (
     "name", "doc", "type", "enum", "writable", "field", "buf_field",
@@ -7403,7 +8149,8 @@ _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
 }  # fmt: skip
 _OBJECT_ORDER = (
     "module", "arg_type", "return_type", "mutable", "no_state", "no_step",
-    "no_reset", "opaque_state", "process_global", "header_only",
+    "no_reset", "opaque_state", "process_global", "no_python_bench",
+    "header_only",
     "core_macro", "core_header", "step_delegates_to_steps", "serializable",
     "streamable", "async_stream", "stream_block_default", "class_name",
     "create_fn", "create_error", "create_error_message", "doc",
@@ -7489,6 +8236,7 @@ _KEY_ORDER: "dict[str, tuple[str, ...]]" = {
     "<obj>.depends_on": ("name", "link", "test_only"),
     "<obj>.destroy": (
         "name", "aliases", "returns", "error", "error_message", "exit",
+        "wake",
     ),
     "<obj>.array_args": ("name", "type", "dtype"),
     "<obj>.state": _then_sorted(_STATE_ORDER, _STATE_KEYS),

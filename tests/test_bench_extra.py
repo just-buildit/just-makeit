@@ -42,15 +42,15 @@ class TestFmtTime:
 
 class TestFmtOps:
     def test_giga(self):
-        result = B._fmt_ops(2e9)
+        result = B._fmt_ops(2e9, "Sa/s")
         assert "GSa/s" in result
 
     def test_mega(self):
-        result = B._fmt_ops(2e6)
+        result = B._fmt_ops(2e6, "Sa/s")
         assert "MSa/s" in result
 
     def test_kilo(self):
-        result = B._fmt_ops(2e3)
+        result = B._fmt_ops(2e3, "Sa/s")
         assert "kSa/s" in result
 
 
@@ -215,26 +215,26 @@ class TestDisplayTable:
         }
 
     def test_no_benchmarks_prints_message(self, capsys):
-        B._display_table("C", {"benchmarks": []}, None)
+        B._display_table("C", {"benchmarks": []}, None, c_side=True)
         out = capsys.readouterr().out
         assert "no benchmarks" in out
 
     def test_prints_table_with_names(self, capsys):
         report = self._make_report(["test_fn"])
-        B._display_table("C", report, None)
+        B._display_table("C", report, None, c_side=True)
         out = capsys.readouterr().out
         assert "test_fn" in out
 
     def test_delta_column_with_prev(self, capsys):
         report = self._make_report(["test_fn"])
         prev = self._make_report(["test_fn"])
-        B._display_table("Python", report, prev)
+        B._display_table("Python", report, prev, c_side=False)
         out = capsys.readouterr().out
         assert "%" in out
 
     def test_machine_info_in_header(self, capsys):
         report = self._make_report(["fn"])
         report["machine_info"] = {"system": "Linux", "node": "myhost"}
-        B._display_table("C", report, None)
+        B._display_table("C", report, None, c_side=True)
         out = capsys.readouterr().out
         assert "Linux" in out or "myhost" in out

@@ -555,7 +555,12 @@ def _build_ctx(
     # `exit` to resolve and [] is the truth rather than a stand-in.
     ctx.update(
         Ctx.make_destroy_ctx(
-            ctx["component"], ctx["ComponentW"], None, [], csym=ctx["csym"]
+            ctx["component"],
+            ctx["ComponentW"],
+            None,
+            [],
+            csym=ctx["csym"],
+            lends=False,
         )
     )
 

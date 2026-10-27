@@ -47,7 +47,13 @@ jobs:
       inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
-    runs-on: ${{ matrix.os }}
+    # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has no
+    # 3.9 build ("The version '3.9' with architecture 'x64' was not found for
+    # Ubuntu 26.04"): the v0.109.0 release failed before publish on this one
+    # leg. `requires-python = ">=3.9"` still promises 3.9, so its Linux leg
+    # stays, on the newest image that ships it. Every other leg follows
+    # ubuntu-latest.
+    runs-on: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9') && 'ubuntu-24.04' || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -55,7 +61,7 @@ jobs:
         # gh-1632: `quick` is ci.yml's per-PR leg. Outside a workflow_call
         # the input is null, which reads as the full matrix.
         os: ${{ fromJSON(inputs.quick && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
-        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]') }}
+        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
 
     steps:
       - name: Set up Python
@@ -87,8 +93,18 @@ jobs:
 
       - name: Install just-makeit from PyPI (with retry)
         if: inputs.wheel-artifact == ''
+        env:
+          # After a release, the tag comes from the release run's title
+          # (release.yml `run-name`), not `head_branch`, which is `main` for a
+          # dispatched release.
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
-          VERSION="${{ github.event.inputs.version || github.event.workflow_run.head_branch }}"
+          VERSION="${INPUT_VERSION:-${RELEASE_TITLE#Release }}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::no release version to test: '$VERSION'"
+            exit 1
+          fi
           for i in $(seq 1 20); do
             pip install "just-makeit==${VERSION#v}" numpy --no-cache-dir && break
             echo "Not yet, retry $i/20..."
@@ -718,7 +734,7 @@ jobs:
         # The bounds jm supports plus the middle: every leg is a full Windows
         # build, so the POSIX job's six versions would be six times the cost
         # for the part of the matrix this job adds nothing to.
-        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.12", "3.14"]') }}
+        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.12", "3.15"]') }}
     defaults:
       run:
         shell: bash
@@ -766,8 +782,16 @@ jobs:
 
       - name: Install just-makeit from PyPI (with retry)
         if: inputs.wheel-artifact == ''
+        env:
+          # As the smoke job above: the release run's title, not head_branch.
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
-          VERSION="${{ github.event.inputs.version || github.event.workflow_run.head_branch }}"
+          VERSION="${INPUT_VERSION:-${RELEASE_TITLE#Release }}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::no release version to test: '$VERSION'"
+            exit 1
+          fi
           for i in $(seq 1 20); do
             python -m pip install "just-makeit==${VERSION#v}" numpy pytest \
               --no-cache-dir && break

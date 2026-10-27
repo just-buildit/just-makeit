@@ -224,7 +224,8 @@ class TestScope:
         }
         (msg,) = _msgs(cfg)
         assert "dsp.lerp" in msg
-        assert "it is a method key" in msg
+        # gh-2186: a handle method reads `status_return` too.
+        assert "it is a method or handle method key" in msg
 
     def test_transient_underscore_keys_are_skipped(self):
         cfg = {"meter": {"_doc_blocks": {}, "methods": [{"name": "m"}]}}

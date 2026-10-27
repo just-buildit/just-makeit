@@ -40,6 +40,9 @@ def run(args: list[str]) -> None:
     exact_max_out = False
     count_default = ""
     count_name = ""
+    no_count = False
+    out_cols = ""
+    short_out = False
     nogil = False
     varargs = False
     manual_stub = False
@@ -50,6 +53,7 @@ def run(args: list[str]) -> None:
     record_module = ""
     record_doc = ""
     record_dtype = ""
+    consumed_fn = ""
     borrow = False
     borrow_count = ""
     borrow_writeable = False
@@ -162,6 +166,11 @@ def run(args: list[str]) -> None:
         elif tok == "--exact-max-out":
             exact_max_out = True
             i += 1
+        elif tok == "--short-out":
+            # gh-2230: accept an `out=` smaller than `max_out()`, for a
+            # backpressure kernel. Checked below with the manifest's rules.
+            short_out = True
+            i += 1
         elif tok == "--count-default":
             # gh-657: C expression seeding a void-input variable_output
             # method's `count` kwarg, e.g. --count-default "state->num_taps".
@@ -173,6 +182,26 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             count_default = remaining[i]
+            i += 1
+        elif tok == "--no-count":
+            # gh-2233: a void-input --variable-output method takes NO count:
+            # no Python `count`, no `size_t n` in the kernel, and a
+            # `_max_out(state)` that sizes the result from the object alone.
+            no_count = True
+            i += 1
+        elif tok == "--out-cols":
+            # gh-2115: the width of a matrix result. A --variable-output
+            # kernel still fills a flat buffer; the binding hands back
+            # (count / width, width). A C expression like `state->nfft`
+            # (the same convention --count-default uses) or an integer.
+            i += 1
+            if i >= len(remaining) or not remaining[i].strip():
+                print(
+                    "error: --out-cols requires an integer or a C expression",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            out_cols = remaining[i].strip()
             i += 1
         elif tok == "--count-name":
             # gh-1074: what that synthesized kwarg is CALLED. `count_default`
@@ -504,6 +533,15 @@ def run(args: list[str]) -> None:
                 sys.exit(1)
             status_fn = remaining[i]
             i += 1
+        elif tok == "--consumed-fn":
+            # gh-2204: the C function saying how much input a
+            # list-of-records kernel took before its buffer filled.
+            i += 1
+            if i >= len(remaining):
+                print("error: --consumed-fn requires a name", file=sys.stderr)
+                sys.exit(1)
+            consumed_fn = remaining[i]
+            i += 1
         elif tok == "--status-error":
             # Repeatable, and a colon spec rather than a family of parallel
             # flags -- the `--result-field` precedent, and the division this
@@ -686,6 +724,77 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-2115: `out_cols` reshapes ONE flat variable_output array, so the
+    # shapes that have none are refused here, by the same validator the
+    # manifest loader runs -- the rules live in `_config._out_cols_errors`
+    # and are not restated.
+    if out_cols:
+        from ._config import _out_cols_errors
+
+        _errs = _out_cols_errors(
+            {
+                "out_cols": out_cols,
+                "variable_output": variable_output,
+                "multi_output": multi_output,
+                "record_dtype": record_dtype,
+                "batch": batch_method,
+            },
+            f"--out-cols on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
+    # gh-2230: the same rule as `out_cols` above -- the manifest loader's
+    # validator, asked before anything is written.
+    if short_out:
+        from ._config import _short_out_errors
+
+        _errs = _short_out_errors(
+            {
+                "short_out": True,
+                "variable_output": variable_output,
+                "pass_capacity": pass_capacity,
+                "multi_output": multi_output,
+                "batch": batch_method,
+                "arg_type": arg_type,
+                "params": [
+                    {"name": mp[0], "type": mp[1]} for mp in method_params
+                ],
+            },
+            f"--short-out on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
+    # gh-2233: `no_count` applies only to the shape that synthesizes a count;
+    # the rules live in `_config._no_count_errors`, which the manifest loader
+    # runs too, and are not restated.
+    if no_count:
+        from ._config import _no_count_errors
+
+        _errs = _no_count_errors(
+            {
+                "no_count": True,
+                "variable_output": variable_output,
+                "arg_type": arg_type,
+                "params": method_params,
+                "count_default": count_default,
+                "count_name": count_name,
+                "batch": batch_method,
+                "result_fields": result_fields,
+                "record_dtype": record_dtype,
+            },
+            f"--no-count on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
+
     # gh-428: manual_stub's C binding is entirely hand-owned, so combining it
     # with any flag that drives jm's own C-side codegen is nonsensical --
     # silently ignoring the extra flag would be a footgun.
@@ -704,6 +813,21 @@ def run(args: list[str]) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # gh-2259: `--nogil` on a method whose binding jm does not write, refused
+    # by the validator `apply` runs -- the shapes live in
+    # `_config._nogil_errors` and are not restated.
+    if nogil:
+        from ._config import _nogil_errors
+
+        _errs = _nogil_errors(
+            {"nogil": nogil, "varargs": varargs, "manual_stub": manual_stub},
+            f"--nogil on method {method_name!r}",
+        )
+        if _errs:
+            for _e in _errs:
+                print(f"error: {_e}", file=sys.stderr)
+            sys.exit(1)
 
     # gh-1011: this parser's defaults are values, not intent. `--return-type`
     # alone defaults to `float _Complex`, so
@@ -757,6 +881,7 @@ def run(args: list[str]) -> None:
         record_module=record_module,
         record_doc=record_doc,
         record_dtype=record_dtype,
+        consumed_fn=consumed_fn,
         borrow=borrow,
         borrow_count=borrow_count,
         borrow_writeable=borrow_writeable,
@@ -766,6 +891,9 @@ def run(args: list[str]) -> None:
         exact_max_out=exact_max_out,
         count_default=count_default,
         count_name=count_name,
+        no_count=no_count,
+        out_cols=out_cols,
+        short_out=short_out,
         nogil=nogil,
         fn=fn,
         error_negative=error_negative,

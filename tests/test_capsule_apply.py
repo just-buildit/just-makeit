@@ -114,15 +114,17 @@ class TestRenderPyi:
         # alias (`DDCRState = Any`) would read to stubtest as a runtime constant
         # the C extension never defines (slice-4 conformance fix).
         assert "State = Any" not in s
-        assert "def ddcr_create(norm_freq: float, rate: float) -> Any:" in s
+        assert "def ddcr_create(norm_freq: float, rate: float, /) -> Any:" in s
         assert (
             "def ddcr_execute(state: Any, x: npt.NDArray[np.float32], "
-            "out: npt.NDArray[np.complex64]) -> NDArray[Any]: ..." in s
+            "out: npt.NDArray[np.complex64], /) -> NDArray[Any]: ..." in s
         )
-        assert "def ddcr_reset(state: Any) -> None: ..." in s
-        assert "def ddcr_destroy(state: Any) -> None: ..." in s
-        assert "def ddcr_get_norm_freq(state: Any) -> float: ..." in s
-        assert "def ddcr_set_norm_freq(state: Any, value: float) -> None:" in s
+        assert "def ddcr_reset(state: Any, /) -> None: ..." in s
+        assert "def ddcr_destroy(state: Any, /) -> None: ..." in s
+        assert "def ddcr_get_norm_freq(state: Any, /) -> float: ..." in s
+        assert (
+            "def ddcr_set_norm_freq(state: Any, value: float, /) -> None:" in s
+        )
         # read-only property has no setter
         assert "ddcr_set_rate" not in s
 

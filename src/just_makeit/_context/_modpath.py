@@ -145,8 +145,22 @@ def _py_docstring(text: str) -> str:
     closing delimiter into ``\"\"\"\"``. Both are escaped rather than
     rejected: refusing an author's apostrophe-heavy sentence would be worse
     than quoting it.
+
+    A doc that ends in a doctest closes on its own line after a blank one
+    (gh-2176): a text-mode ``.pyi`` doctest reads an example's expected
+    output to the next blank line, so glued quotes are read as output, and
+    the handle, capsule and composer stubs open with this docstring.
+    `_docstring._ends_in_doctest` is the one rule every docstring layout
+    applies.
+
+    >>> _py_docstring("One.\\n\\n>>> 1 + 1\\n2")
+    '\"\"\"One.\\n\\n>>> 1 + 1\\n2\\n\\n\"\"\"\\n\\n'
     """
+    from .._docstring import _ends_in_doctest
+
     body = text.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    if _ends_in_doctest(text.split("\n")):
+        return f'"""{body}\n\n"""\n\n'
     if body.endswith('"'):
         body = body[:-1] + '\\"'
     return f'"""{body}"""\n\n'

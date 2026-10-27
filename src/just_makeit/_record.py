@@ -84,6 +84,117 @@ def is_record(m: dict) -> bool:
     return bool(m.get("single")) and bool(m.get("result_fields"))
 
 
+def is_record_list(m: dict) -> bool:
+    """True when *m* returns a LIST of records, a ``list[tuple]`` (gh-2184).
+
+    The third shape beside :func:`is_record` and :func:`is_record_array`:
+    ``result_fields`` with neither ``single`` nor a record array. Its
+    kernel fills ``rec_t *result`` up to ``max_results`` and returns the
+    count, and it is the one shape whose binding reads a header-declared
+    ``<c>_<m>_max_out`` as the size of that buffer.
+
+    Examples
+    --------
+    >>> rf = [{"name": "i", "type": "int"}]
+    >>> is_record_list({"result_fields": rf})
+    True
+    >>> is_record_list({"result_fields": rf, "single": True})
+    False
+    >>> is_record_list({"result_fields": rf, "variable_output": True,
+    ...                 "record_dtype": "rec_t"})
+    False
+    >>> is_record_list({"variable_output": True})
+    False
+    """
+    return (
+        bool(m.get("result_fields"))
+        and not is_record(m)
+        and not is_record_array(
+            m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+        )
+    )
+
+
+def consumed_fn(m: dict) -> str:
+    """The C function a list-of-records method re-offers its input through.
+
+    gh-2204. ``consumed_fn = "<fn>"`` names ``size_t <fn>(const <state> *)``:
+    how much of its input block the kernel's LAST call took. A kernel whose
+    output cannot be bounded before the call (a detector's hit count depends
+    on the data) stops when its ``result`` buffer is full; with this declared
+    the binding offers it the rest of the input, call after call, and returns
+    every record. Author-named, so it is spelled as written (the ``*_fn``
+    rule, `_csym.AUTHOR_NAMED_KEYS`). ``""`` when undeclared.
+
+    Examples
+    --------
+    >>> consumed_fn({"consumed_fn": " det_consumed "})
+    'det_consumed'
+    >>> consumed_fn({})
+    ''
+    """
+    return str(m.get("consumed_fn", "") or "").strip()
+
+
+def consumed_fn_why_not(m: dict, what: str) -> str:
+    """Why *m*'s ``consumed_fn`` cannot be honoured, or ``""`` (gh-2204).
+
+    Asked by the manifest loader and by ``jm method`` before it writes, so
+    every face refuses the same declarations. Each refusal is a key that
+    would otherwise be stored and then do nothing:
+
+    - the method is not a list of records. Only that shape's kernel fills a
+      fixed ``result`` buffer and returns the count, so only it can stop
+      short of its input; a ``single`` record, a record array or a plain
+      result has no records to concatenate across calls.
+    - the method has no array input (``arg_type`` void). What is re-offered
+      is the unconsumed rest of the input block; params ride along unchanged,
+      so without a block there is nothing to advance.
+    - the value is not a C identifier: it is emitted as a call.
+
+    Examples
+    --------
+    >>> rf = [{"name": "i", "type": "int"}]
+    >>> ok = {"arg_type": "float", "result_fields": rf, "consumed_fn": "f"}
+    >>> consumed_fn_why_not(ok, "m")
+    ''
+    >>> consumed_fn_why_not({**ok, "single": True}, "m").split(":")[0]
+    'm'
+    >>> "no array input" in consumed_fn_why_not({**ok, "arg_type": "void"},
+    ...                                         "m")
+    True
+    >>> "C function name" in consumed_fn_why_not({**ok, "consumed_fn": "1x"},
+    ...                                          "m")
+    True
+    """
+    fn = consumed_fn(m)
+    if not fn:
+        return ""
+    from ._borrow import _is_c_identifier
+
+    if not is_record_list(m):
+        return (
+            f"{what}: consumed_fn '{fn}' re-offers the input a "
+            "list-of-records kernel left when its result buffer filled, "
+            "and this method does not return a list of records "
+            "(result_fields with neither single nor record_dtype). Drop "
+            "consumed_fn."
+        )
+    if str(m.get("arg_type", "void") or "void").strip() == "void":
+        return (
+            f"{what}: consumed_fn '{fn}' advances the method's input block "
+            "past what the last call took, and this method has no array "
+            "input (arg_type is void). Give it an arg_type, or drop "
+            "consumed_fn."
+        )
+    if not _is_c_identifier(fn):
+        return (
+            f"{what}: consumed_fn '{fn}' is not a C function name; it is "
+            "emitted as a call in the generated binding."
+        )
+    return ""
+
+
 def is_record_array(
     variable_output: object, record_dtype: object, borrow: object
 ) -> bool:

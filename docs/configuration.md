@@ -304,7 +304,9 @@ puts `source_core` on the consuming extension's own link line, which a
 dependency whose functions you call needs (gh-225).
 `{ name = "x", test_only = true }` links `x_core` into the component's C test
 and benchmark only, so a sibling the test merely round-trips through never
-ships in the artifact (gh-537):
+ships in the artifact (gh-537). It stays the declaring component's alone: what
+`x` itself depends on is test-only along with it, and a component that depends
+on this one does not inherit `x` at all (gh-2318):
 
 ```toml
 [waveform_engine]
@@ -396,32 +398,33 @@ today).
 
 ### `[project]` keys
 
-| TOML key              | CLI flag                                  | Status       | Notes                                                                                                                                                                                                                                                                                                                                                    |
-| --------------------- | ----------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                | `jm new <NAME>`                           | ✅           | Required positional.                                                                                                                                                                                                                                                                                                                                     |
-| `version`             | `jm config version X`                     | ✅           | Written by `jm new`; omit it to defer to `pyproject.toml` (see [below](#omitting-version-defers-to-pyprojecttoml)).                                                                                                                                                                                                                                      |
-| `build`               | `jm new --build-system cmake\|make`       | ✅           |                                                                                                                                                                                                                                                                                                                                                          |
-| `perf`                | `jm new --perf` / `jm perf`               | ✅           | Retrofit available via `jm perf`.                                                                                                                                                                                                                                                                                                                        |
-| `pytest`              | `jm new --pytest`                         | ✅           |                                                                                                                                                                                                                                                                                                                                                          |
-| `pytest_benchmark`    | `jm new --pytest-benchmark`               | ✅           |                                                                                                                                                                                                                                                                                                                                                          |
-| `find_packages`       | `jm new --find-package NAME` (repeatable) | ✅ (0.13.23) | CMake `find_package(NAME REQUIRED)`; an entry may be `{ name, pkg_config }`, or `{ name, libs_private, cflags }` for a dependency with no `.pc`, for the installed `.pc` — see [c-library](c-library.md#when-your-library-depends-on-another-package).                                                                                                   |
-| `pkg_modules`         | `jm new --pkg-module NAME` (repeatable)   | ✅ (0.13.23) | pkg-config via `pkg_check_modules`; an entry may carry a version bound, `"zlib >= 1.2"`.                                                                                                                                                                                                                                                                 |
-| `public_link_libs`    | (manifest only)                           | ✅           | Link flags a consumer of the installed headers needs (`["-lpthread"]`): on this project's executables and extensions, both combined libraries' PUBLIC link, the exported targets and the `.pc`'s `Libs:` — see [c-library](c-library.md#flags-your-headers-need-of-every-consumer).                                                                      |
-| `public_defines`      | (manifest only)                           | ✅           | Definitions the installed headers need (`["_GNU_SOURCE"]`, no `-D`): on this project's own compile, both combined libraries' PUBLIC definitions, the exported targets and the `.pc`'s `Cflags:`.                                                                                                                                                         |
-| `c_deps`              | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper).                                                                                                                                                                                                                                                                                                                   |
-| `c_prefix`            | `jm new --c-prefix P` / `--no-c-prefix`   | ✅           | **Default for a new project: its package name.** Namespaces every C symbol jm derives (`fir_create` becomes `P_fir_create`, `FIR_CORE_H` becomes `P_FIR_CORE_H`), so two installed packages may share a component name; never an author-named symbol or macro, the Python names, or file names — see [c-library](c-library.md#two-packages-one-program). |
-| `schema`              | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.                                                                                                                                                                                                                                                                                                                           |
-| `jm_version`          | (managed)                                 | ✅           | Stamped by `jm new`; `jm apply` raises it to the running jm and never lowers it (gh-183).                                                                                                                                                                                                                                                                |
-| `c_style`             | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.                                                                                                                                                                                                                                                                                                                        |
-| `bench.timeout`       | `jm bench --timeout S` (one run)          | ✅           | `[project.bench] timeout`: seconds one benchmark run may take before `jm bench` skips it, keeps the rest and exits 1. Default 600; `0` = no limit (gh-1687).                                                                                                                                                                                             |
-| `bench.block_sizes`   | (manifest only)                           | ✅           | `[project.bench] block_sizes`: the block sizes the generated Python benchmarks run. Default `[1024, 65536]`; the C benchmark is unaffected.                                                                                                                                                                                                              |
-| `c_format_command`    | (manifest only)                           | ✅ (0.43.3)  | Which formatter binary — see below.                                                                                                                                                                                                                                                                                                                      |
-| `py_format_command`   | (manifest only)                           | ✅           | Formatter for the generated `.pyi` stubs — see [below](#generated-python-style-py_format_command).                                                                                                                                                                                                                                                       |
-| `status_allow`        | `jm status --allow PATH` (one run)        | ✅           | Paths / globs `jm status` reports as `ALLOWED` instead of counting as drift — see [`status`](commands/build.md#just-makeit-status).                                                                                                                                                                                                                      |
-| `strict_examples`     | `jm status --strict-examples` (one run)   | ✅ (gh-760)  | An authored `@code` line too wide for its stub fails `jm status --check` instead of being counted — see [below](#authored-code-examples-the-79-column-budget).                                                                                                                                                                                           |
-| `libraries`           | (manifest only)                           | ✅ (gh-1600) | `[project.libraries.<name>]`: one more installed library built from the OBJECT libraries it names — see [c-library](c-library.md#more-than-one-library).                                                                                                                                                                                                 |
-| `platforms`           | (none)                                    | retired      | No longer does anything (gh-1368): a `"windows"` entry prints a notice, and `jm apply` drops the old MinGW blocks. Delete the key. The module-level [`platforms`](#a-module-built-on-some-platforms-only) is a different, live key.                                                                                                                      |
-| `include` (top level) | `jm new` (fragment layout)                | ✅           | Globs naming the fragment files merged into the manifest: `["objects/*.toml", "modules/*.toml"]`. Absent under `jm new --no-fragments`.                                                                                                                                                                                                                  |
+| TOML key              | CLI flag                                  | Status       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------- | ----------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                | `jm new <NAME>`                           | ✅           | Required positional.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `version`             | `jm config version X`                     | ✅           | Written by `jm new`; omit it to defer to `pyproject.toml` (see [below](#omitting-version-defers-to-pyprojecttoml)).                                                                                                                                                                                                                                                                                                        |
+| `build`               | `jm new --build-system cmake\|make`       | ✅           |                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `perf`                | `jm new --perf` / `jm perf`               | ✅           | Retrofit available via `jm perf`.                                                                                                                                                                                                                                                                                                                                                                                          |
+| `pytest`              | `jm new --pytest`                         | ✅           |                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `pytest_benchmark`    | `jm new --pytest-benchmark`               | ✅           |                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `find_packages`       | `jm new --find-package NAME` (repeatable) | ✅ (0.13.23) | CMake `find_package(NAME REQUIRED)`; an entry may be `{ name, pkg_config }`, or `{ name, libs_private, cflags }` for a dependency with no `.pc`, for the installed `.pc` — see [c-library](c-library.md#when-your-library-depends-on-another-package).                                                                                                                                                                     |
+| `pkg_modules`         | `jm new --pkg-module NAME` (repeatable)   | ✅ (0.13.23) | pkg-config via `pkg_check_modules`; an entry may carry a version bound, `"zlib >= 1.2"`.                                                                                                                                                                                                                                                                                                                                   |
+| `public_link_libs`    | (manifest only)                           | ✅           | Link flags a consumer of the installed headers needs (`["-lpthread"]`): on this project's executables and extensions, both combined libraries' PUBLIC link, the exported targets and the `.pc`'s `Libs:` — see [c-library](c-library.md#flags-your-headers-need-of-every-consumer).                                                                                                                                        |
+| `public_defines`      | (manifest only)                           | ✅           | Definitions the installed headers need (`["_GNU_SOURCE"]`, no `-D`): on this project's own compile, both combined libraries' PUBLIC definitions, the exported targets and the `.pc`'s `Cflags:`.                                                                                                                                                                                                                           |
+| `c_deps`              | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper).                                                                                                                                                                                                                                                                                                                                                                                     |
+| `c_prefix`            | `jm new --c-prefix P` / `--no-c-prefix`   | ✅           | **Default for a new project: its package name.** Namespaces every C symbol jm derives (`fir_create` becomes `P_fir_create`, `FIR_CORE_H` becomes `P_FIR_CORE_H`), so two installed packages may share a component name; never an author-named symbol or macro, the Python names, or file names — see [c-library](c-library.md#two-packages-one-program).                                                                   |
+| `schema`              | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.                                                                                                                                                                                                                                                                                                                                                                                             |
+| `jm_version`          | (managed)                                 | ✅           | Stamped by `jm new`; `jm apply` raises it to the running jm and never lowers it (gh-183).                                                                                                                                                                                                                                                                                                                                  |
+| `c_style`             | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.                                                                                                                                                                                                                                                                                                                                                                                          |
+| `bench.timeout`       | `jm bench --timeout S` (one run)          | ✅           | `[project.bench] timeout`: seconds one benchmark run may take before `jm bench` skips it, keeps the rest and exits 1. Default 600; `0` = no limit (gh-1687).                                                                                                                                                                                                                                                               |
+| `bench.block_sizes`   | (manifest only)                           | ✅           | `[project.bench] block_sizes`: the block sizes the generated Python benchmarks run. Default `[1024, 65536]`; the C benchmark is unaffected.                                                                                                                                                                                                                                                                                |
+| `c_format_command`    | (manifest only)                           | ✅ (0.43.3)  | Which formatter binary — see below.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `py_format_command`   | (manifest only)                           | ✅           | Formatter for the generated `.pyi` stubs — see [below](#generated-python-style-py_format_command).                                                                                                                                                                                                                                                                                                                         |
+| `status_allow`        | `jm status --allow PATH` (one run)        | ✅           | Paths / globs `jm status` reports as `ALLOWED` instead of counting as drift — see [`status`](commands/build.md#just-makeit-status).                                                                                                                                                                                                                                                                                        |
+| `strict_examples`     | `jm status --strict-examples` (one run)   | ✅ (gh-760)  | An authored `@code` line too wide for its stub fails `jm status --check` instead of being counted — see [below](#authored-code-examples-the-79-column-budget).                                                                                                                                                                                                                                                             |
+| `libraries`           | (manifest only)                           | ✅ (gh-1600) | `[project.libraries.<name>]`: one more installed library built from the OBJECT libraries it names — see [c-library](c-library.md#more-than-one-library).                                                                                                                                                                                                                                                                   |
+| `composer_field_keys` | (manifest only)                           | ✅ (gh-1752) | Keys your OWN generator reads off a composer's `source.fields` / `segment.fields` rows (`["cli", "json", "metavar"]`). jm reads none of them, keeps them on a save, and stops warning that they have no effect -- on those rows only, so a misspelt jm key there still warns. A name jm itself reads on a field row (`doc`, `copy_fn`, ...) is refused — see [object-of-objects](object-of-objects.md#42-manifest-schema). |
+| `platforms`           | (none)                                    | retired      | No longer does anything (gh-1368): a `"windows"` entry prints a notice, and `jm apply` drops the old MinGW blocks. Delete the key. The module-level [`platforms`](#a-module-built-on-some-platforms-only) is a different, live key.                                                                                                                                                                                        |
+| `include` (top level) | `jm new` (fragment layout)                | ✅           | Globs naming the fragment files merged into the manifest: `["objects/*.toml", "modules/*.toml"]`. Absent under `jm new --no-fragments`.                                                                                                                                                                                                                                                                                    |
 
 ### Generated-C house style — `c_style` and `c_format_command`
 
@@ -636,40 +639,41 @@ still succeeds, and *neither* tree is formatted, so they still compare equal.
 
 ### `[<component>]` keys
 
-| TOML key                                 | CLI flag                                          | Status       | Notes                                                                                                                                                                                          |
-| ---------------------------------------- | ------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `arg_type`                               | `jm object --arg-type T`                          | ✅           |                                                                                                                                                                                                |
-| `return_type`                            | `jm object --return-type T`                       | ✅           |                                                                                                                                                                                                |
-| `mutable`                                | `jm object --mutable`                             | ✅           |                                                                                                                                                                                                |
-| `no_state`                               | `jm object --no-state`                            | ✅           |                                                                                                                                                                                                |
-| `no_step`                                | `jm object --no-step`                             | ✅           |                                                                                                                                                                                                |
-| `no_reset`                               | `jm object --no-reset`                            | ✅           | Removes `reset()` entirely — binding, C function, `.pyi` entry, tests.                                                                                                                         |
-| `class_name`                             | `jm object --class-name NAME`                     | ✅           |                                                                                                                                                                                                |
-| `doc`                                    | (manifest only)                                   | ✅ (gh-1172) | The class docstring, rendered [as you write it](#docstrings-doc-is-rendered-as-you-write-it).                                                                                                  |
-| `opaque_state`                           | `jm object --opaque-state`                        | ✅ (gh-588)  | Forward-declares the state struct; its definition stays in `_core.c`.                                                                                                                          |
-| `header_only`                            | `jm object --header-only`                         | ✅ (gh-1311) | The core is all `static inline` in `_core.h`; no `_core.c`, and the CMake core library is INTERFACE.                                                                                           |
-| `serializable`                           | `jm object --serializable`                        | ✅           | `state_bytes()` / `get_state()` / `set_state()` over a C triplet in `_core.c`.                                                                                                                 |
-| `streamable`                             | `jm object --streamable`                          | ✅           | `stream(block, *, count, on_block)` and `__iter__`.                                                                                                                                            |
-| `stream_block_default`                   | `jm object --stream-block N`                      | ✅           | Default block for `__iter__` / `stream()`; implies `streamable`.                                                                                                                               |
-| `async_stream`                           | `jm object --async-stream`                        | ✅           | Adds `__aiter__` / `__anext__`; implies `streamable`.                                                                                                                                          |
-| `step_delegates_to_steps`                | `jm object --step-delegates-to-steps`             | ✅ (gh-208)  | `step()` is a thin delegator to `steps()`.                                                                                                                                                     |
-| `create_fn`                              | `jm object --create-fn FN`                        | ✅           | The C constructor `tp_init` calls instead of `<pkg>_<comp>_create()`; same parameters.                                                                                                         |
-| `array_args`                             | `jm object --array-arg name:dtype` (repeatable)   | ✅           | See [`[[<object>.array_args]]`](#objectarray_args).                                                                                                                                            |
-| `create_error`, `create_error_message`   | `jm error <obj> --category EXC --message TEXT`    | ✅ (gh-482)  | Translate a `create()` failure into a Python exception.                                                                                                                                        |
-| `warnings`                               | `jm warning <obj> --condition F --message TEXT`   | ✅ (gh-481)  | Post-construction `PyErr_WarnEx`.                                                                                                                                                              |
-| `records`                                | `jm record <obj> <Struct> --field name:type`      | ✅ (gh-1405) | A C struct and its columns, named once for both directions.                                                                                                                                    |
-| `views`                                  | `jm view <obj> <Class> --module M --create-fn FN` | ✅ (gh-504)  | See [`[[<component>.views]]`](#componentviews-entries).                                                                                                                                        |
-| `fragment`                               | `jm adopt <obj>`                                  | ✅ (gh-1448) | Who owns a module object's binding fragment — see [below](#who-owns-a-modules-binding-fragment).                                                                                               |
-| `process_global`                         | (manifest only)                                   | ✅ (gh-1117) | One copy of a core's state across every extension module that links it — see [Shared process state](shared-state.md).                                                                          |
-| `core_macro`, `core_args`, `core_header` | (manifest only)                                   | ✅ (gh-1310) | A template family's one C macro — see [`core_macro`](#one-c-family-core_macro).                                                                                                                |
-| `init_groups`                            | (manifest only)                                   | ✅ (gh-999)  | Instantiate a `[[group]]` of init-params under a prefix — see [below](#group-and-objectinit_groups).                                                                                           |
-| `destroy`                                | (manifest only)                                   | ✅ (gh-541)  | `[<obj>.destroy]`: the destructor's name, aliases, return and error — see [declarative scaffolding](declarative-scaffolding.md).                                                               |
-| `extra_methods`                          | (manifest only)                                   | ✅ (gh-1997) | Rows for methods whose CPython function you write in the object's `_extra.c` — see [below](#componentextra_methods-entries).                                                                   |
-| `module`                                 | (manifest only)                                   | ✅           | In a fragment passed to `jm apply <fragment>`, the module the object joins.                                                                                                                    |
-| `impl`, `create_impl`, …                 | (manifest only)                                   | ✅           | Lifecycle bodies `jm apply` re-stamps — see [below](#component-lifecycle-impl-bodies).                                                                                                         |
-| `depends_on`                             | (manifest only)                                   | ✅           | Objects this one calls into: names, or `{ name, link = true }` / `{ name, test_only = true }` tables — see [`depends_on`](#depends_on-link-and-include-a-dependency). Never set automatically. |
-| `extra_link_libs`                        | (component scope: TOML only)                      | 🟡           | Per-module is `jm module --extra-link-libs`; per-component still TOML-only (rare case).                                                                                                        |
-| `extra_include_dirs`                     | `jm object --extra-include-dirs DIR` (repeatable) | ✅ (0.13.23) |                                                                                                                                                                                                |
+| TOML key                                 | CLI flag                                          | Status       | Notes                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `arg_type`                               | `jm object --arg-type T`                          | ✅           |                                                                                                                                                                                                                                                                                                                                                         |
+| `return_type`                            | `jm object --return-type T`                       | ✅           |                                                                                                                                                                                                                                                                                                                                                         |
+| `mutable`                                | `jm object --mutable`                             | ✅           |                                                                                                                                                                                                                                                                                                                                                         |
+| `no_state`                               | `jm object --no-state`                            | ✅           |                                                                                                                                                                                                                                                                                                                                                         |
+| `no_step`                                | `jm object --no-step`                             | ✅           |                                                                                                                                                                                                                                                                                                                                                         |
+| `no_reset`                               | `jm object --no-reset`                            | ✅           | Removes `reset()` entirely — binding, C function, `.pyi` entry, tests.                                                                                                                                                                                                                                                                                  |
+| `class_name`                             | `jm object --class-name NAME`                     | ✅           |                                                                                                                                                                                                                                                                                                                                                         |
+| `doc`                                    | (manifest only)                                   | ✅ (gh-1172) | The class docstring, rendered [as you write it](#docstrings-doc-is-rendered-as-you-write-it).                                                                                                                                                                                                                                                           |
+| `opaque_state`                           | `jm object --opaque-state`                        | ✅ (gh-588)  | Forward-declares the state struct; its definition stays in `_core.c`.                                                                                                                                                                                                                                                                                   |
+| `header_only`                            | `jm object --header-only`                         | ✅ (gh-1311) | The core is all `static inline` in `_core.h`; no `_core.c`, and the CMake core library is INTERFACE.                                                                                                                                                                                                                                                    |
+| `serializable`                           | `jm object --serializable`                        | ✅           | `state_bytes()` / `get_state()` / `set_state()` over a C triplet in `_core.c`.                                                                                                                                                                                                                                                                          |
+| `streamable`                             | `jm object --streamable`                          | ✅           | `stream(block, *, count, on_block)` and `__iter__`.                                                                                                                                                                                                                                                                                                     |
+| `stream_block_default`                   | `jm object --stream-block N`                      | ✅           | Default block for `__iter__` / `stream()`; implies `streamable`.                                                                                                                                                                                                                                                                                        |
+| `async_stream`                           | `jm object --async-stream`                        | ✅           | Adds `__aiter__` / `__anext__`; implies `streamable`.                                                                                                                                                                                                                                                                                                   |
+| `step_delegates_to_steps`                | `jm object --step-delegates-to-steps`             | ✅ (gh-208)  | `step()` is a thin delegator to `steps()`.                                                                                                                                                                                                                                                                                                              |
+| `create_fn`                              | `jm object --create-fn FN`                        | ✅           | The C constructor `tp_init` calls instead of `<pkg>_<comp>_create()`; same parameters.                                                                                                                                                                                                                                                                  |
+| `array_args`                             | `jm object --array-arg name:dtype` (repeatable)   | ✅           | See [`[[<object>.array_args]]`](#objectarray_args).                                                                                                                                                                                                                                                                                                     |
+| `create_error`, `create_error_message`   | `jm error <obj> --category EXC --message TEXT`    | ✅ (gh-482)  | Translate a `create()` failure into a Python exception.                                                                                                                                                                                                                                                                                                 |
+| `warnings`                               | `jm warning <obj> --condition F --message TEXT`   | ✅ (gh-481)  | Post-construction `PyErr_WarnEx`.                                                                                                                                                                                                                                                                                                                       |
+| `records`                                | `jm record <obj> <Struct> --field name:type`      | ✅ (gh-1405) | A C struct and its columns, named once for both directions.                                                                                                                                                                                                                                                                                             |
+| `views`                                  | `jm view <obj> <Class> --module M --create-fn FN` | ✅ (gh-504)  | See [`[[<component>.views]]`](#componentviews-entries).                                                                                                                                                                                                                                                                                                 |
+| `fragment`                               | `jm adopt <obj>`                                  | ✅ (gh-1448) | Who owns a module object's binding fragment — see [below](#who-owns-a-modules-binding-fragment).                                                                                                                                                                                                                                                        |
+| `process_global`                         | (manifest only)                                   | ✅ (gh-1117) | One copy of a core's state across every extension module that links it — see [Shared process state](shared-state.md).                                                                                                                                                                                                                                   |
+| `no_python_bench`                        | (manifest only)                                   | ✅ (gh-2316) | The object has no Python benchmark: `jm apply` does not scaffold `bench_<obj>.py` and `jm status` does not report it missing, but flags one still on disk. `jm regenerate <obj>` deletes it with the rest of the object's scaffold and does not bring it back. The C `bench_<obj>_core.c` is unaffected — a method's `bench = false` is the knob there. |
+| `core_macro`, `core_args`, `core_header` | (manifest only)                                   | ✅ (gh-1310) | A template family's one C macro — see [`core_macro`](#one-c-family-core_macro).                                                                                                                                                                                                                                                                         |
+| `init_groups`                            | (manifest only)                                   | ✅ (gh-999)  | Instantiate a `[[group]]` of init-params under a prefix — see [below](#group-and-objectinit_groups).                                                                                                                                                                                                                                                    |
+| `destroy`                                | (manifest only)                                   | ✅ (gh-541)  | `[<obj>.destroy]`: the destructor's name, aliases, return and error — see [declarative scaffolding](declarative-scaffolding.md).                                                                                                                                                                                                                        |
+| `extra_methods`                          | (manifest only)                                   | ✅ (gh-1997) | Rows for methods whose CPython function you write in the object's `_extra.c` — see [below](#componentextra_methods-entries).                                                                                                                                                                                                                            |
+| `module`                                 | (manifest only)                                   | ✅           | In a fragment passed to `jm apply <fragment>`, the module the object joins.                                                                                                                                                                                                                                                                             |
+| `impl`, `create_impl`, …                 | (manifest only)                                   | ✅           | Lifecycle bodies `jm apply` re-stamps — see [below](#component-lifecycle-impl-bodies).                                                                                                                                                                                                                                                                  |
+| `depends_on`                             | (manifest only)                                   | ✅           | Objects this one calls into: names, or `{ name, link = true }` / `{ name, test_only = true }` tables — see [`depends_on`](#depends_on-link-and-include-a-dependency). Never set automatically.                                                                                                                                                          |
+| `extra_link_libs`                        | (component scope: TOML only)                      | 🟡           | Per-module is `jm module --extra-link-libs`; per-component still TOML-only (rare case).                                                                                                                                                                                                                                                                 |
+| `extra_include_dirs`                     | `jm object --extra-include-dirs DIR` (repeatable) | ✅ (0.13.23) |                                                                                                                                                                                                                                                                                                                                                         |
 
 ### `[[<component>.state]]` entries
 
@@ -997,7 +1001,28 @@ Every slot is **read**: `handle_type` gives the C type (the generated struct
 stores exactly `<handle_type> *h`, and the capsule lends it), `capsule` the
 name, `header` the include, `type_name` the class. A handle generates one
 class, so `wfm_writer.Writer` is accepted and any other suffix is refused. A
-`capsule` or `composer` module is still not a target.
+`capsule` module is still not a target.
+
+A **`kind = "composer"` module is a legal target** (gh-2354) once it publishes a
+capsule (`capsule = "<name>"` on the module table, gh-2346), read the same
+way: the C type is `<backing stem>_state_t *` (the stem moves with a
+`c_prefix` when `backing` names a jm component), `capsule` the name, `header`
+the backing's core header, and the class is the composer type
+(`oo.composer_type_name`, default `Composer`). A composer that publishes no
+capsule is refused with the line that fixes it.
+
+```toml
+[[holder.init_params]]
+name   = "scene"
+object = "playlist"                 # -> playlist_state_t *, the composer's state
+```
+
+The consumer needs no `retain`: a constructor's borrowed pointer already holds
+a strong reference to the Python owner (gh-790), so a closed composer's state
+outlives the call. The generated `.pyi` imports the class from the file that
+holds it (`from .playlist.playlist import Mix`), since a composer's package has
+no `__init__.py` re-exporting it. Passing anything else is a `TypeError` naming
+the capsule it wants.
 
 The `type` is **read when the producer states it and inferred otherwise**.
 Undeclared, it is `<pkg>_<comp>_state_t *`, which is right for a producer
@@ -1058,8 +1083,11 @@ way.
 | `variable_output = true`               | `jm method --variable-output`                                                                       | ✅           |
 | `pass_capacity = true`                 | `jm method --pass-capacity`                                                                         | ✅ (0.14.4)  |
 | `exact_max_out = true`                 | `jm method --exact-max-out`                                                                         | ✅ (0.55.0)  |
+| `short_out = true`                     | `jm method --short-out`                                                                             | ✅ (gh-2230) |
 | `count_default = "EXPR"`               | `jm method --count-default EXPR`                                                                    | ✅ (0.34.0)  |
 | `count_name = "NAME"`                  | `jm method --count-name NAME`                                                                       | ✅ (gh-1074) |
+| `no_count = true`                      | `jm method --no-count`                                                                              | ✅ (gh-2233) |
+| `out_cols = "EXPR"`                    | `jm method --out-cols EXPR`                                                                         | ✅ (gh-2115) |
 | `nogil = true`                         | `jm method --nogil`                                                                                 | ✅ (0.15.2)  |
 | `max_out = N` (sibling stub)           | `jm method --max-out N`                                                                             | ✅ (0.13.23) |
 | `multi_output = ["T", ...]`            | `jm method --multi-output T` (repeatable)                                                           | ✅           |
@@ -1073,7 +1101,8 @@ way.
 | `record_module = "..."`                | `jm method --record-module MOD` (with `--single`)                                                   | ✅ (0.19.14) |
 | `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)                                                   | ✅ (0.41.0)  |
 | `record_dtype = "STRUCT"`              | `jm method --record-dtype STRUCT` (with `--variable-output`)                                        | ✅ (0.47.0)  |
-| `max_results = N`                      | (TOML only; default 64)                                                                             | 🟡           |
+| `max_results = N`                      | (TOML only; default 64. A header-declared `<name>_max_out` sizes it instead, gh-2184)               | 🟡           |
+| `consumed_fn = "SYMBOL"`               | `jm method --consumed-fn SYMBOL` (re-offer the input a list-of-records call left)                   | ✅ (gh-2204) |
 | `none_on_empty = true`                 | `jm method --none-on-empty` (an empty result is `None`)                                             | ✅ (gh-1418) |
 | `error_on_empty = true`                | `jm method --error-on-empty` (an empty result raises)                                               | ✅ (gh-1159) |
 | `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                    | ✅ (gh-2012) |
@@ -1104,6 +1133,7 @@ way.
 | `name`, `type`                                                                  | `jm property <obj> <prop> --type T`                                                              | ✅          |
 | `writable = true`                                                               | `jm property --writable`                                                                         | ✅          |
 | `field = true`                                                                  | `jm property --field`                                                                            | ✅          |
+| `error`, `error_message`                                                        | `jm property --writable --error EXC` / `--error-message TEXT` (a setter that refuses, gh-2182)   | ✅          |
 | `buf_field`, `len_field`, `valid_field`, `expr`                                 | `jm property --buf-field` / `--len-field` / `--valid-field` / `--expr`                           | ✅ (0.30.2) |
 | `doc = "..."`                                                                   | `jm property --doc "text"`                                                                       | ✅          |
 | `enum = "<name>"`                                                               | `jm property --enum NAME` (decode through a top-level `[[enum]]`)                                | ✅          |
@@ -1139,7 +1169,9 @@ doc     = "FFT of interleaved int16 I/Q."
 The `doc` is the method's whole docstring on both faces, the `.pyi` member
 and the runtime `__doc__`, and jm generates nothing beside it. So it can be
 a full numpy docstring with `Parameters`, `Returns` and an `Examples`
-doctest (gh-2059).
+doctest (gh-2059). A `doc` that ends in an example gets a blank line before
+the stub's closing quotes, so a text-mode `.pyi` doctest ends the example
+there (gh-2176).
 
 Write the function with exactly the signature its `flags` imply, `self`
 included as a `PyObject *` (cast it to the object's struct inside):
@@ -1154,7 +1186,9 @@ In a module the prototypes go in the aggregator, before the object's
 fragment, so a row works whether the fragment is sacred or `generated` — which
 is what lets a hand-written method survive [`jm adopt`](#who-owns-a-modules-binding-fragment):
 move the function into the `_extra.c`, declare its row, and the fragment's
-table loses nothing on the flip.
+table loses nothing on the flip. The core functions it calls stay
+link-checked: the object's `native/tests/test_<obj>_symbols.c` is read from
+the hook as well as the binding (gh-2175).
 
 The rows follow the generated ones in the table, in the order declared. `apply`
 refuses a row whose `name` a member jm generates already holds (`reset`, a
@@ -1297,6 +1331,7 @@ guard, so guard anything platform-specific in it yourself.
 | `why = true`                                  | `jm function --why` (with `--check-return`)                                       | ✅ (gh-1706) |
 | `status_errors = [{...}]`                     | `jm function --status-error STATUS:Exc[:msg]` (with `--check-return`; repeatable) | ✅ (gh-1614) |
 | `result_fields = [{name, type}]`              | `jm function --result-field name:type` (repeatable)                               | ✅ (0.13.23) |
+| `result_fields`, `out_size = "EXPR"`          | `jm function --result-field name:type --out-size EXPR`                            | ✅ (gh-2205) |
 | `max_results`                                 | (TOML only)                                                                       | 🟡           |
 | `max_results_param`                           | (TOML only)                                                                       | 🟡           |
 | `impl = "..."` body                           | (manifest only; `jm function --impl` lifts once and records nothing)              | ✅           |
@@ -1600,31 +1635,42 @@ two extents first, then the pointer) followed by `create()`'s.
 
 One entry per `just-makeit method` call.
 
-| Key               | Type                    | Notes                                                             |
-| ----------------- | ----------------------- | ----------------------------------------------------------------- |
-| `name`            | string                  | Method name                                                       |
-| `arg_type`        | string                  | Array-style input type                                            |
-| `return_type`     | string                  | C return type                                                     |
-| `params`          | array of `{name, type}` | Named scalar / array parameters                                   |
-| `variable_output` | bool                    | `--variable-output`                                               |
-| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)              |
-| `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly |
-| `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)     |
-| `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)     |
-| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                |
-| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)          |
-| `status_return`   | bool                    | `int` return is a status: `-> None`, ValueError on non-0 (gh-432) |
-| `batch`           | bool                    | `--batch`                                                         |
-| `multi_output`    | array of strings        | `--multi-output` types                                            |
-| `out_type`        | string                  | `--out-type`                                                      |
-| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)         |
+| Key               | Type                    | Notes                                                              |
+| ----------------- | ----------------------- | ------------------------------------------------------------------ |
+| `name`            | string                  | Method name                                                        |
+| `arg_type`        | string                  | Array-style input type                                             |
+| `return_type`     | string                  | C return type                                                      |
+| `params`          | array of `{name, type}` | Named scalar / array parameters                                    |
+| `variable_output` | bool                    | `--variable-output`                                                |
+| `pass_capacity`   | bool                    | `--pass-capacity` (5-arg `(…, out, max_out)` C form)               |
+| `exact_max_out`   | bool                    | `--exact-max-out`: `max_out` bounds any call, so allocate exactly  |
+| `short_out`       | bool                    | `--short-out`: `out=` has no minimum, for backpressure (gh-2230)   |
+| `count_default`   | string                  | C expression seeding `count` for a void-input method (gh-657)      |
+| `no_count`        | bool                    | drop the void-input `count`; `max_out(state)` sizes it (gh-2233)   |
+| `out_cols`        | string or int           | width of a matrix result: `(count / out_cols, out_cols)` (gh-2115) |
+| `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)      |
+| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                 |
+| `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)           |
+| `status_return`   | bool                    | integer return is a status: ValueError on non-0 (gh-432, gh-2250)  |
+| `batch`           | bool                    | `--batch`                                                          |
+| `multi_output`    | array of strings        | `--multi-output` types                                             |
+| `out_type`        | string                  | `--out-type`                                                       |
+| `out_divisor`     | int                     | `--out-divisor` (default `1`; omitted from TOML when `1`)          |
 
-`nogil` wraps the pure-C kernel of a `variable_output`, `--single` or
-`--borrow` method in `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy
-accessors hoisted out first), so a thread-per-shard worker — one object +
-output buffer per thread — scales across cores instead of serialising on the
-GIL. Opt-in: it is sound only when the object is not shared across threads
-concurrently (one object per stream).
+`nogil` wraps the pure-C kernel call of every method whose binding jm writes
+— `variable_output`, `batch`, `--single`, a list of records, `--borrow`, a
+codec-pack method, and a fixed-size result (a scalar, `void`,
+`status_return`, `error_negative`, `multi_output`, `out_type`) — in
+`Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` (numpy accessors hoisted
+out first), so a thread-per-shard worker — one object + output buffer per
+thread — scales across cores instead of serialising on the GIL. Opt-in: two
+released calls on ONE object run at once only if its kernel allows that (one
+object per stream is the contract jm assumes). Closing an object from another
+thread is safe: its `destroy()` / `close()` / `__exit__` refuses new calls
+(`RuntimeError`), waits with the GIL released for a call still running, then
+frees (gh-2272), so a released kernel must return in bounded time. On a
+`varargs` or `manual_stub` method, whose CPython function is yours, it is
+refused: release the GIL in that function (gh-2259).
 
 #### Capsule-typed params (gh-432)
 
@@ -1645,6 +1691,7 @@ name    = "tlm"
 type    = "dp_tlm_t *"
 capsule = "doppler.telemetry.dp_tlm"
 header  = "telemetry/telemetry.h"
+retain  = true      # set_telemetry keeps the pointer
 
 [[agc.methods.params]]
 name = "prefix"
@@ -1660,7 +1707,12 @@ Generated binding semantics: `None` maps to `NULL` (the C-side detach
 idiom); a PyCapsule is name-checked with `PyCapsule_GetPointer`; any other
 object is unwrapped through its `_capsule` attribute first, so callers pass
 the friendly wrapper (`obj.set_telemetry(tlm, "agc")`), not the capsule.
-The `.pyi` annotates the param `object | None`. The `header` key injects
+An object that is neither (an `int`, say) is a `TypeError` naming the param and
+the capsule it wants, as it is for a constructor param (gh-2355); the raw
+`AttributeError` from the internal `._capsule` lookup is never what a caller
+sees. A closed handle's own `RuntimeError` still propagates untouched.
+The `.pyi` annotates the param `object | None` (`object` under
+`required = true`, below). The `header` key injects
 `#include "path/hdr.h"` into the object's `_core.h` alongside the gh-170
 `depends_on` includes (skipped when the file doesn't exist under
 `native/inc`). `status_return = true` binds the C `int` status as
@@ -1670,24 +1722,74 @@ The `.pyi` annotates the param `object | None`. The `header` key injects
 method param only. A function spells a status return as
 `check_return = true` (`jm function --check-return`).
 
+**`retain = true`: the kernel keeps the pointer** (gh-2327). Without it the
+pointer is borrowed for the call only, which is right for a kernel that uses
+it while it runs. A kernel that stores it, as `set_telemetry` does, would
+otherwise hold a pointer into an object Python is free to collect:
+
+```python
+agc.set_telemetry(Telemetry(1 << 20), "agc")   # the Telemetry is collected
+agc.step(x)                                    # writes into freed memory
+```
+
+With `retain = true` the object keeps a reference to what it was passed:
+
+| the call                  | what the object holds afterwards        |
+| ------------------------- | --------------------------------------- |
+| succeeds                  | the object just passed                  |
+| passes `None`             | nothing (the detach)                    |
+| is refused by the kernel  | what it held before                     |
+| the object is deallocated | nothing, after the C state is destroyed |
+
+A call counts as refused when the kernel says so: a non-zero
+`status_return`, a negative `error_negative`, a count's `error_sentinel`,
+an empty count under `error_on_empty`, or a NULL `borrow`. Passing the
+owner's bare capsule (`tlm._capsule`) works too, since a capsule jm lends
+holds the object that lent it (gh-2328). `retain` is refused on a param
+with no `capsule`, on a `varargs` or `manual_stub` method (whose binding is
+yours), and on a method a composer source delegates.
+
+**`required = true`: the param is mandatory** (gh-2360). By default a
+capsule param takes `None` as `NULL`, the detach idiom above. A kernel that
+refuses `NULL` declares the param `required = true`, and then both faces
+say so from that one key: the binding raises `TypeError` for `None` before
+the kernel runs, and the `.pyi` types the param `object` rather than
+`object | None`, so a type checker refuses the call too.
+
+```toml
+[[writer.methods.params]]
+name     = "scene"
+type     = "wfm_compose_t *"
+capsule  = "proj.wfm.compose"
+retain   = true
+required = true     # annotate(None) is a TypeError, not a failed status
+```
+
+`required` is refused on a method param with no `capsule` (where it would
+read as "has no default"), and must be `true` or `false`. It reads exactly
+as it does on a constructor capsule param: nullable unless
+`required = true`.
+
 ### `[[<object>.properties]]`
 
 One entry per `just-makeit property` call.
 
-| Key                                     | Type   | Notes                                                                                                                                                           |
-| --------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                  | string | Property name                                                                                                                                                   |
-| `type`                                  | string | C type of the value                                                                                                                                             |
-| `writable`                              | bool   | `--writable`                                                                                                                                                    |
-| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                          |
-| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                            |
-| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                       |
-| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                              |
-| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                               |
-| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                            |
-| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`) |
-| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is                                                                              |
-| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                    |
+| Key                                     | Type   | Notes                                                                                                                                                                    |
+| --------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                                  | string | Property name                                                                                                                                                            |
+| `type`                                  | string | C type of the value                                                                                                                                                      |
+| `writable`                              | bool   | `--writable`                                                                                                                                                             |
+| `field`                                 | bool   | `--field` (adds struct member, auto-implements getter)                                                                                                                   |
+| `error`, `error_message`                | string | `--error` / `--error-message`: the C setter returns `int`, and a non-zero return refuses the value: the assignment raises `error` with `error_message`. Not with `field` |
+| `doc`                                   | string | `--doc`: the property's docstring, rendered verbatim                                                                                                                     |
+| `enum`                                  | string | `--enum`: decode the C int through a top-level `[[enum]]`                                                                                                                |
+| `buf_field`, `len_field`, `valid_field` | string | `--buf-field` / `--len-field` / `--valid-field`: an ndarray view of a buffer field                                                                                       |
+| `expr`                                  | string | `--expr`: an inline C expression backs the getter                                                                                                                        |
+| `value_type`                            | string | `--value-type`: element type of a `dict` / `list` / `tuple` property                                                                                                     |
+| `py_type`                               | string | `--py-type`: the stub annotation of a `type = "json"` property (default `Any`); builtin generics and `Any` only                                                          |
+| `count_fn`, `key_fn`, `value_fn`        | string | `--count-fn` / `--key-fn` / `--value-fn`: a container's C accessors (default `<pkg>_<comp>_num_<prop>`, `<pkg>_<comp>_<prop>_key`, `<pkg>_<comp>_<prop>_value`)          |
+| `capsule`, `capsule_type`               | string | `--capsule` / `--capsule-type`: publish a named PyCapsule, and what its pointer is. The capsule holds this object and never frees the pointer (gh-2328)                  |
+| `codec`, `entry_fn`, `entry_type`, …    | string | A codec container property — see [Variant codecs](#variant-codecs-codecname)                                                                                             |
 
 ### `[[<object>.views]]`
 
