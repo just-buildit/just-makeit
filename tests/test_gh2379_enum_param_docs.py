@@ -23,6 +23,7 @@ Each is rendered from the same header prose, and none may keep it.
 
 from __future__ import annotations
 
+import copy
 import re
 import sys
 from pathlib import Path
@@ -117,6 +118,18 @@ def proj(tmp_path_factory) -> Path:
         for prm in fn["params"]:
             prm["enum"] = "endianE"
     C.save(p, cfg)
+    # A view of the module object (a second class over the one C core): one
+    # that inherits `fin`, and one whose own `methods` entry overrides it
+    # (gh-1011), which is a different producer path.
+    _ok("view", "mx", "MxView", "--module", "dsp",
+        "--create-fn", "mx_create_v", cwd=p)  # fmt: skip
+    _ok("view", "mx", "MxOwn", "--module", "dsp",
+        "--create-fn", "mx_create_o", cwd=p)  # fmt: skip
+    cfg = C.load(p)
+    own = [m for m in cfg["mx"]["methods"] if m["name"] == "fin"]
+    assert own, cfg["mx"]
+    cfg["mx"]["views"][1]["methods"] = copy.deepcopy(own)
+    C.save(p, cfg)
     _ok("apply", cwd=p)
     return p
 
@@ -186,6 +199,84 @@ def test_a_runtime_doc_documents_the_choices(proj, rel):
     assert "endian : str" in doc, (rel, doc)
     assert C_PROSE not in doc, (rel, doc)
     assert ONE_OF in doc, (rel, doc)
+
+
+def _class_section(pyi: str, cls: str) -> str:
+    """The text of ``class <cls>`` in *pyi*, up to the next class."""
+    start = pyi.index(f"class {cls}")
+    nxt = re.search(r"\nclass \w+", pyi[start + 1 :])
+    return pyi[start : start + 1 + nxt.start()] if nxt else pyi[start:]
+
+
+@pytest.mark.parametrize("cls", ["Mx", "MxView", "MxOwn"])
+def test_a_view_class_documents_the_choices(proj, cls):
+    """A view is a second class over one C core. `MxView` inherits `fin`;
+    `MxOwn` declares its own entry, which takes a different producer path.
+    Both stubs, read from their own class, not from the file."""
+    section = _class_section(_read(proj, "src/p/dsp/dsp.pyi"), cls)
+    assert "def fin(" in section, section
+    fin = section[section.index("def fin(") :].split("\n    def ")[0]
+    assert "endian : str" in fin, (cls, fin)
+    assert ONE_OF in fin, (cls, fin)
+    assert C_PROSE not in fin, (cls, fin)
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["native/src/dsp/dsp_ext_mxview.c", "native/src/dsp/dsp_ext_mxown.c"],
+)
+def test_a_view_runtime_doc_documents_the_choices(proj, rel):
+    doc = _ml_doc(_read(proj, rel), "fin").replace('\\"', '"')
+    assert ONE_OF in doc and C_PROSE not in doc, (rel, doc)
+
+
+def test_a_composer_source_delegating_a_method_documents_the_choices(tmp_path):
+    """A composer source's `generates.methods` binds the GENERATOR's method
+    through the generator's emitter (gh-2259), so an enum-backed param there
+    rides the object-method producer. `mode` is that shape in the gh-2259
+    scaffold: an `int` param bound to an `[[enum]]`."""
+    import test_gh2259_source_delegates_methods as base
+
+    proj = base._scaffold(tmp_path, shapes=["mode"])
+    _prose(proj / "native/inc/dlg/gen/gen_core.h", "k")
+    base._ok(run_cli("apply", cwd=proj))
+    pyi = (proj / "src/dlg/mix/mix.pyi").read_text(encoding="utf-8")
+    seen = 0
+    for cls in ("Src", "Gen"):
+        try:
+            section = _class_section(pyi, cls)
+        except ValueError:
+            continue
+        if "def mode(" not in section:
+            continue
+        mode = section[section.index("def mode(") :].split("\n    def ")[0]
+        assert "One of" in mode and C_PROSE not in mode, (cls, mode)
+        seen += 1
+    assert seen, pyi[:2000]
+
+
+def test_a_capsule_cannot_declare_an_enum_backed_param():
+    """A capsule's scalars are one of the C scalars `scalar_meta` knows; an
+    enum is not, so there is no capsule face to document. If one is ever
+    allowed, this fails and the producer has to be written."""
+    from just_makeit import _capsule
+    from just_makeit._report import Refusal
+
+    for ptype in ("string_enum:a,b", "enum:level"):
+        with pytest.raises(Refusal):
+            _capsule.scalar_meta(
+                ptype, "capsule module 'cap' init_params row 'm'"
+            )
+
+
+def test_a_composer_extra_method_has_no_enum_key():
+    """An `extra_methods` row is the author's C and the author's `args` /
+    `doc` text; jm renders no parameter from it, so there is no annotation to
+    carry choices. The same trip-wire as the capsule's."""
+    from just_makeit import _keys
+
+    assert "enum" not in _keys.COMPOSER_EXTRA_METHOD_KEYS
+    assert "params" not in _keys.COMPOSER_EXTRA_METHOD_KEYS
 
 
 def test_an_init_parameter_stub_documents_the_choices(proj):
