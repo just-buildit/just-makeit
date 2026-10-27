@@ -9,5 +9,7 @@
     without clearing the pointer, so a closed composer's is not freed again).
     A composer whose state was lent as a capsule refuses a second `__init__`
     with a `RuntimeError`, since a borrower holds the pointer and there is
-    one slot. **Behaviour change:** that refusal is new for a composer that
-    publishes a capsule.
+    one slot. The refusal is sticky once the state has been lent, and it is checked
+    again after the arguments are converted (which can run Python that lends
+    it). **Behaviour change:** a composer that has published a capsule can
+    never be re-initialised.

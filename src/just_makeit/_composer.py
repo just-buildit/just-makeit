@@ -4320,6 +4320,7 @@ fail:
         if lends
         else "!self->destroyed && self->state"
     )
+
     # gh-2356: a second __init__ on a live composer built a new state and
     # never freed the old one -- it set `self->state = NULL` first. The
     # same contract a handle has (gh-178, gh-2346, gh-2272):
@@ -4331,18 +4332,30 @@ fail:
     # * only then is the old one released -- new calls refused, a GIL-free
     #   one in flight waited for -- and only if it is still live: `close()`
     #   frees without clearing the pointer, so a closed composer's is not.
-    reinit_refuse = (
-        "    if (self->lent) {\n"
-        "        PyErr_SetString(PyExc_RuntimeError,\n"
-        f'            "{obj}: its state was lent as a capsule; a second "\n'
-        '            "__init__ would free it under the borrower");\n'
-        "        return -1;\n"
-        "    }\n"
-        if lends
-        else ""
-    )
+    def _lent_refusal(indent: str, undo: str) -> str:
+        return (
+            f"{indent}if (self->lent) {{\n"
+            f"{undo}"
+            f"{indent}    PyErr_SetString(PyExc_RuntimeError,\n"
+            f'{indent}        "{obj}: its state was lent as a capsule; a second "\n'
+            f'{indent}        "__init__ would free it under the borrower");\n'
+            f"{indent}    return -1;\n"
+            f"{indent}}}\n"
+        )
+
+    # Checked twice, like the handle's liveness guard (gh-2273): at the top,
+    # as the cheap early refusal, and again in the swap, because converting
+    # the arguments runs Python (a seglist element's `__index__`, a kwarg)
+    # that can lend the state after the first look. The lend is sticky, so
+    # the second check only ever sees a lend the first one could not.
+    reinit_refuse = _lent_refusal("    ", "") if lends else ""
     reinit_swap = (
-        "    if (self->state && !self->destroyed) {\n"
+        (
+            _lent_refusal("    ", f"        {destroy_fn}(_jm_new);\n")
+            if lends
+            else ""
+        )
+        + "    if (self->state && !self->destroyed) {\n"
         f"        {sym}_state_t *_jm_old = self->state;\n"
         "        /* gh-2272: refuse new calls, then wait for a running one. */\n"
         "        self->destroyed = 1;\n"

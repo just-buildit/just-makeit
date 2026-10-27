@@ -142,6 +142,73 @@ def test_a_second_init_frees_what_it_replaces_exactly_once(tmp_path):
     assert got == _EXPECT, "\n".join(got)
 
 
+_LEND_IN_CONVERSION = """\
+import sys
+sys.path.insert(0, "src")
+from studio.playlist.playlist import Mix, Track
+
+
+def say(*a):
+    print(*a, file=sys.stderr, flush=True)
+
+
+m = Mix([Track(dur=4)])
+say("built")
+held = []
+
+
+class Lender:
+    # Converting the segments runs this, AFTER __init__ looked at `lent`.
+    def __iter__(self):
+        held.append(m._capsule)
+        return iter([Track(dur=1)])
+
+
+try:
+    m.__init__(Lender())
+    say("returned")
+except RuntimeError as e:
+    say("refused", "lent" in str(e))
+say("borrower-reads", len(held))
+del held[:]
+del m
+import gc
+
+gc.collect()
+say("dealloc")
+"""
+
+#: The new state is built (conversion done) and then thrown away; the old
+#: one, which the borrower holds, is freed once, by the last owner.
+_EXPECT_LEND_IN_CONVERSION = [
+    CREATE,
+    "built",
+    CREATE,
+    DESTROY,
+    "refused True",
+    "borrower-reads 1",
+    DESTROY,
+    "dealloc",
+]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_a_lend_during_conversion_is_refused_not_freed_under_the_borrower(
+    tmp_path,
+):
+    """The top check ran before the conversion lent the state (gh-2273's
+    shape): the swap rechecks, destroys what it built and refuses."""
+    proj = _pool_project(tmp_path)
+    _patch_author_c(proj)
+    _same_second_as_the_build(proj)
+    _cmake(proj, "--build", "build", "--parallel", "4")
+    out = _run(proj, _LEND_IN_CONVERSION)
+    got = out.stderr.split("\n")[:-1]
+    assert out.returncode == 0, (out.returncode, out.stderr[-2500:])
+    assert got == _EXPECT_LEND_IN_CONVERSION, "\n".join(got)
+
+
 def test_the_lent_refusal_is_only_rendered_for_a_composer_that_lends():
     from test_gh2346_composer_capsule import _cfg
 
@@ -150,7 +217,7 @@ def test_the_lent_refusal_is_only_rendered_for_a_composer_that_lends():
     sys.path  # noqa: B018 - the import above resolves tests/ first
     with_cap = _composer.render_ext(_cfg(), "wc")
     without = _composer.render_ext(_cfg(key=""), "wc")
-    assert 'a second "\n            "__init__ would free it' in with_cap
+    assert "__init__ would free it under the borrower" in with_cap
     assert "__init__ would free it" not in without
     # ...but the swap (build first, release after) is everyone's.
     for ext in (with_cap, without):

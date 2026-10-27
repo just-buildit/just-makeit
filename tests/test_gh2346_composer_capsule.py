@@ -175,6 +175,18 @@ class TestZeroChurn:
                 "    }\n",
                 "",
             ),
+            # ...and again before the swap, since converting the arguments
+            # can run Python that lends it after the first look.
+            (
+                "    if (self->lent) {\n"
+                "        wfm_compose_destroy(_jm_new);\n"
+                "        PyErr_SetString(PyExc_RuntimeError,\n"
+                '            "ComposerObject: its state was lent as a capsule; a second "\n'
+                '            "__init__ would free it under the borrower");\n'
+                "        return -1;\n"
+                "    }\n",
+                "",
+            ),
         ]
         for piece, plain in back:
             assert declared.count(piece) == 1, piece
