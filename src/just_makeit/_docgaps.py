@@ -102,7 +102,9 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
         # gh-1591: the C names a gap points at derive from the stem.
         csym = CSYM.stem(cfg, comp)
         for prop in C.properties(cfg, comp):
-            _, is_stub = property_doc(comp, prop, blocks, csym=csym)
+            _, is_stub = property_doc(
+                comp, prop, blocks, csym=csym, enums=C.enums(cfg)
+            )
             if is_stub:
                 name = str(prop.get("name") or "")
                 out.append(
@@ -156,7 +158,11 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
             cls = str(view.get("class_name") or synth)
             for prop in C.properties(cfg_v, synth):
                 _, is_stub = property_doc(
-                    synth, prop, vblocks, csym=CSYM.stem(cfg_v, synth)
+                    synth,
+                    prop,
+                    vblocks,
+                    csym=CSYM.stem(cfg_v, synth),
+                    enums=C.enums(cfg_v),
                 )
                 if is_stub:
                     pname = str(prop.get("name") or "")

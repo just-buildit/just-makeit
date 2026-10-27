@@ -6511,7 +6511,9 @@ def make_properties_ctx(
         # the same sentence maintained twice and drifting independently.
         # gh-1394: the one chain, shared with `jm status --docs`, which
         # reports whichever properties it answers with a name stub.
-        _pdoc = property_doc(component, p, doc_blocks, csym=csym)[0]
+        _pdoc = property_doc(component, p, doc_blocks, csym=csym, enums=enums)[
+            0
+        ]
         # gh-2182: a setter that may refuse documents what it raises, on
         # both faces, through the renderer a method's Raises goes through --
         # so the runtime text is the stub's text without its indent. A
