@@ -129,13 +129,35 @@ def _patch_author_c(proj: Path) -> None:
     core.write_text(text, encoding="utf-8")
 
 
+def _rebuild(proj: Path) -> None:
+    """Rebuild after `_patch_author_c`, from clean.
+
+    gh-2362, measured on macOS: make 3.81 compares mtimes to the second, so a
+    file patched within the second of the first build keeps its old object
+    and the probe runs the UNPATCHED C -- every `JM_CREATE` / `JM_DESTROY`
+    line missing while the Python lines are all there (this test's first CI
+    run on macOS). `--clean-first` is what survives it, as in
+    `test_gh2346_composer_capsule._pool_project`.
+    """
+    _cmake(proj, "--build", "build", "--parallel", "4", "--clean-first")
+    built = [
+        f
+        for f in (proj / "build").rglob("*")
+        if f.is_file() and CREATE.encode() in f.read_bytes()
+    ]
+    assert built, (
+        "the rebuild did not pick up the patched author C: no built file "
+        f"carries {CREATE!r} (a stale object, gh-2362)"
+    )
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
 def test_a_second_init_frees_what_it_replaces_exactly_once(tmp_path):
     proj = _pool_project(tmp_path)
     _patch_author_c(proj)
     _same_second_as_the_build(proj)
-    _cmake(proj, "--build", "build", "--parallel", "4")
+    _rebuild(proj)
     out = _run(proj, _PROBE)
     got = out.stderr.split("\n")[:-1]
     assert out.returncode == 0, (out.returncode, out.stderr[-2500:])
@@ -202,7 +224,7 @@ def test_a_lend_during_conversion_is_refused_not_freed_under_the_borrower(
     proj = _pool_project(tmp_path)
     _patch_author_c(proj)
     _same_second_as_the_build(proj)
-    _cmake(proj, "--build", "build", "--parallel", "4")
+    _rebuild(proj)
     out = _run(proj, _LEND_IN_CONVERSION)
     got = out.stderr.split("\n")[:-1]
     assert out.returncode == 0, (out.returncode, out.stderr[-2500:])
