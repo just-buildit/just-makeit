@@ -9,5 +9,5 @@
     showed as a `differs` unit, and `--accept` deleted the default the
     manifest line was written to carry. `status --check` could not see it,
     since it renders through the same path. A standalone object rendered by
-    delete-and-`apply` was also seen to lose the key; that path is not
-    changed here.
+    delete-and-`apply` also loses the key; that path is not changed here
+    (tracked in gh-2401).
