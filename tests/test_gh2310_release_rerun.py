@@ -262,10 +262,23 @@ def test_the_evaluator_reproduces_the_observed_run():
     }, res
 
 
-def test_the_first_run_runs_everything():
+def test_the_first_run_runs_everything_but_the_probe():
     res = _simulate(published="false", image_exists="false")
-    assert _ran(res) == set(_jobs()), res
-    assert all(r == "success" for r in res.values()), res
+    assert _ran(res) == set(_jobs()) - {"image-state"}, res
+    assert res["image-state"] == "skipped", res
+    assert all(r == "success" for n, r in res.items() if n != "image-state")
+
+
+def test_a_first_run_builds_even_when_main_ci_already_published_the_image():
+    """Measured on v0.111.2: main's push CI published `sha-<release commit>`
+    38 minutes before this workflow's docker job started. A probe taken late
+    in a first run would find it and skip the release's own build, and one
+    taken early would not; which path a first run takes must not depend on
+    how long `verify-ci` waited. After a `publish` that succeeded here, docker
+    runs, whatever the registry says -- the probe is not even asked."""
+    res = _simulate(published="false", image_exists="true")
+    assert res["docker"] == "success", res
+    assert res["image-state"] == "skipped", res
 
 
 @pytest.mark.parametrize(
@@ -377,7 +390,7 @@ def test_the_image_probe_asks_for_the_tag_docker_writes():
     # docker.yml pushes `sha-<commit>-<arch>` and combines them into
     # `sha-<commit>`: the tag the probe asks for.
     assert "jm-examples-linux" in docker
-    assert "sha-${{ github.sha }}-${{ matrix.arch }}" in docker
+    assert 'sha-${SHA}-${ARCH}"' in docker
     assert '"${BASE}:sha-${SHA}"' in docker
     # The probe fails toward building.
     assert 'echo "exists=false"' in run
@@ -483,12 +496,12 @@ def test_an_unreadable_tag_list_fails_instead_of_guessing(tmp_path):
     assert "not guessing" in run.stdout + run.stderr
 
 
-def _manifest(tmp: Path, latest: str) -> "list[str]":
+def _manifest(tmp: Path, latest: str, sha: str = "abc123") -> "list[str]":
     """The `-t` tags the manifest step hands `imagetools create`."""
     rec = tmp / "rec"
     run = _bash(
         _step_run(DOCKER, "manifest", "Create and push combined manifest"),
-        {"OWNER": "o", "SHA": "abc123", "LATEST": latest},
+        {"OWNER": "o", "SHA": sha, "LATEST": latest},
         tmp,
         {"docker": f'printf "%s\\n" "$@" > {rec}\n'},
     )
@@ -545,3 +558,129 @@ def test_an_older_tag_whose_probe_doubts_leaves_latest_untouched(tmp_path):
     # ...and for the newest release it does move.
     needs = {"resolve": ("success", {"newest": "true"})}
     assert str(_Eval(expr, needs).parse()).lower() == "true"
+
+
+# -- the GitHub "Latest release" badge never moves backwards ------------------
+#
+# `gh release create --latest` marks the release it creates as GitHub's
+# "Latest". `github-release` now creates a MISSING release on a re-run or a
+# dispatch, which for an older tag would move the badge backwards: the same
+# regression as `:latest`, with the same answer from the same `newest`.
+
+
+def _create_release(tmp: Path, newest: str, exists: bool = False):
+    """Run the `Create GitHub Release` step; return `gh release create`'s argv
+    (None if it was not called)."""
+    rec = tmp / "create_args"
+    stub = (
+        'if [ "$1 $2" = "release view" ]; then exit '
+        f"{0 if exists else 1}; fi\n"
+        'if [ "$1 $2" = "release create" ]; then '
+        f'printf "%s\\n" "$@" > {rec}; exit 0; fi\n'
+        "exit 2\n"
+    )
+    run = _bash(
+        _step_run(WF, "github-release", "Create GitHub Release"),
+        {"RELEASE_TAG": "v0.10.0", "NEWEST": newest, "GH_TOKEN": "x"},
+        tmp,
+        {"gh": stub},
+    )
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    return rec.read_text(encoding="utf-8").split() if rec.exists() else None
+
+
+def test_only_the_newest_release_takes_the_latest_badge(tmp_path):
+    assert "--latest=true" in _create_release(tmp_path / "a", "true")
+
+
+@pytest.mark.parametrize("newest", ["false", ""])
+def test_an_older_release_does_not_take_it_back(tmp_path, newest):
+    args = _create_release(tmp_path / "b", newest)
+    assert "--latest=false" in args and "--latest=true" not in args, args
+
+
+def test_an_existing_release_is_not_touched(tmp_path):
+    assert _create_release(tmp_path / "c", "true", exists=True) is None
+
+
+def test_github_release_is_handed_the_same_newest():
+    env = _step(_jobs()["github-release"], "Create GitHub Release")["env"]
+    assert env["NEWEST"] == "${{ needs.resolve.outputs.newest }}", env
+
+
+# -- the image is named for the commit that was built -------------------------
+#
+# docker.yml checks out `inputs.ref` (the tag) but used to NAME the image for
+# `github.sha`, the CALLER's commit. On a tag push or a re-run they coincide;
+# on a DISPATCH from main for any tag that is not main's head they do not, and
+# the old tag's code was pushed as `sha-<main's head>`, overwriting the image
+# CI built for main while the `image-state` probe, asking for the RESOLVED
+# tag's sha, never found it.
+
+MAIN_HEAD = "m" * 40
+TAG_COMMIT = "t" * 40
+
+
+def test_every_image_name_comes_from_one_value():
+    """Registration-free over docker.yml: `github.sha` appears only in the
+    two env lines that default the `sha` input, never in a tag line."""
+    text = DOCKER.read_text(encoding="utf-8")
+    uses = [ln.strip() for ln in text.splitlines() if "github.sha" in ln]
+    code = [ln for ln in uses if not ln.startswith("#")]
+    assert code == ["SHA: ${{ inputs.sha || github.sha }}"] * 2, code
+
+
+def test_release_names_the_image_for_the_resolved_tags_commit():
+    assert (
+        _jobs()["docker"]["with"]["sha"] == "${{ needs.resolve.outputs.sha }}"
+    )
+    (probe,) = [
+        x for x in _jobs()["image-state"]["steps"] if x.get("id") == "probe"
+    ]
+    assert probe["env"]["SHA"] == "${{ needs.resolve.outputs.sha }}", probe
+
+
+def _arch_push(tmp: Path, sha: str) -> "list[str]":
+    rec = tmp / "rec"
+    run = _bash(
+        _step_run(DOCKER, "linux", "Tag and push arch-specific image to GHCR"),
+        {"OWNER": "o", "SHA": sha, "ARCH": "amd64"},
+        tmp,
+        {"docker": f'printf "%s\\n" "$@" >> {rec}\n'},
+    )
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    return rec.read_text(encoding="utf-8").split()
+
+
+def test_a_dispatch_from_main_names_the_image_for_the_tag_not_for_main(
+    tmp_path,
+):
+    """The scenario: dispatched from main (github.sha = main's head) for an
+    older tag. `inputs.sha || github.sha` is the resolved tag's commit, and
+    every tag written carries it -- never main's head."""
+    value = "inputs.sha || github.sha"
+    for job, step in (
+        ("linux", "Tag and push arch-specific image to GHCR"),
+        ("manifest", "Create and push combined manifest"),
+    ):
+        doc = yaml.safe_load(DOCKER.read_text(encoding="utf-8"))
+        (s,) = [x for x in doc["jobs"][job]["steps"] if x.get("name") == step]
+        assert s["env"]["SHA"] == "${{ " + value + " }}", s["env"]
+    inputs = {"sha": TAG_COMMIT}
+    github = {"sha": MAIN_HEAD}
+    resolved = inputs["sha"] or github["sha"]
+    assert resolved == TAG_COMMIT
+    pushed = _arch_push(tmp_path / "p", resolved)
+    assert any(a.endswith(f":sha-{TAG_COMMIT}-amd64") for a in pushed), pushed
+    assert MAIN_HEAD not in " ".join(pushed), pushed
+    combined = _manifest(tmp_path / "m", "false", sha=resolved)
+    assert combined == [f"ghcr.io/o/jm-examples-linux:sha-{TAG_COMMIT}"]
+    assert all(MAIN_HEAD not in t for t in combined), combined
+
+
+def test_ci_still_names_the_image_for_its_own_commit():
+    """ci.yml passes no `sha`: the default is the caller's own commit."""
+    doc = yaml.safe_load(DOCKER.read_text(encoding="utf-8"))
+    on = doc.get("on") or doc.get(True)
+    spec = on["workflow_call"]["inputs"]["sha"]
+    assert spec["default"] == "" and spec["type"] == "string", spec

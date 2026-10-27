@@ -33,6 +33,18 @@ on:
         type: boolean
         required: false
         default: true
+      # ...and which commit the image is NAMED for (gh-2310). The checkout
+      # above builds `ref`, but the tags were `github.sha`, the CALLER's
+      # commit. On a tag push or a re-run they are the same commit; on a
+      # DISPATCH from main for a tag that is not main's head they are not, and
+      # the old tag's code was pushed as `sha-<main's head>`, overwriting the
+      # image CI built for main. The caller says: release.yml passes the
+      # resolved tag's commit, so the probe's key and the push key are one
+      # value. Empty means the caller's own commit, which is ci.yml's case.
+      sha:
+        type: string
+        required: false
+        default: ""
 
 # No `push` or `pull_request` trigger of its own (gh-1643). ci.yml calls
 # this workflow from a job `CI passed` waits on, on every PR and every push to
@@ -138,10 +150,14 @@ jobs:
       # The manifest job below combines these into the public tags.
       - name: Tag and push arch-specific image to GHCR
         if: inputs.publish
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ inputs.sha || github.sha }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
-          docker tag jm-examples-linux:ci "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
-          docker push "${BASE}:sha-${{ github.sha }}-${{ matrix.arch }}"
+          BASE=ghcr.io/${OWNER}/jm-examples-linux
+          docker tag jm-examples-linux:ci "${BASE}:sha-${SHA}-${ARCH}"
+          docker push "${BASE}:sha-${SHA}-${ARCH}"
 
   # Combine the per-arch images pushed above into the public, multi-arch
   # :latest / :sha-<sha> manifest list — the same tag contract every existing
@@ -162,7 +178,7 @@ jobs:
       - name: Create and push combined manifest
         env:
           OWNER: ${{ github.repository_owner }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ inputs.sha || github.sha }}
           # gh-2310: "true" only when this publish may move `:latest`.
           LATEST: ${{ inputs.latest }}
         run: |

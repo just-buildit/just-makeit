@@ -437,14 +437,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          # "true" only for the newest release. `--latest` moves GitHub's
+          # "Latest release" badge, and a release created now for an OLDER tag
+          # (a re-run or dispatch where it is missing) must not take it back.
+          NEWEST: ${{ needs.resolve.outputs.newest }}
         run: |
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             echo "::notice::${RELEASE_TAG} already has a GitHub Release; leaving it as it is."
             exit 0
           fi
+          latest=false
+          if [ "${NEWEST}" = "true" ]; then latest=true; fi
           if ! gh release create "${RELEASE_TAG}" \
             --title "${RELEASE_TAG}" \
-            --latest \
+            "--latest=${latest}" \
             --notes-file release-notes.md; then
             if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
               echo "::notice::${RELEASE_TAG} was released by another run while this one tried."
@@ -460,9 +466,18 @@ jobs:
   # an image (`imagetools create` overwrites its tags), and the cost of a
   # wrong "present" is a release with no image. The tag is the one docker.yml
   # writes, `sha-<commit>`; the commit is the resolved tag's.
+  #
+  # It matters only for a version already on PyPI. After a `publish` that
+  # succeeded in THIS run, docker runs whatever the registry says: main's push
+  # CI also publishes `sha-<commit>` for the release commit (measured on
+  # v0.111.2: its manifest job finished 38 minutes before this workflow's
+  # docker job began), so a probe taken later in the run would find the image
+  # and skip the release's own build. Which path a first run takes must not
+  # depend on how long `verify-ci` waited, so the probe is not asked.
   image-state:
     name: Is the image already published?
     needs: resolve
+    if: needs.resolve.outputs.published == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -492,15 +507,18 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Runs after a release that exists (gh-2310) unless the image does too. See
-  # `github-release`: `!cancelled()` stops a skipped `publish` cascading here,
-  # and `github-release` succeeding is what says the version is released.
+  # Runs after a release that exists (gh-2310): always after a `publish` that
+  # succeeded in this run, and for a version already on PyPI only when its
+  # image is absent. See `github-release`: `!cancelled()` stops a skipped
+  # `publish` cascading here, and `github-release` succeeding is what says
+  # the version is released.
   docker:
-    needs: [resolve, github-release, image-state]
+    needs: [resolve, publish, github-release, image-state]
     if: >-
       ${{ !cancelled() && needs.github-release.result == 'success' &&
-      needs.image-state.result == 'success' &&
-      needs.image-state.outputs.exists != 'true' }}
+      (needs.publish.result == 'success' ||
+      (needs.image-state.result == 'success' &&
+      needs.image-state.outputs.exists != 'true')) }}
     uses: ./.github/workflows/docker.yml
     with:
       # Explicit, because a called workflow otherwise inherits THIS workflow's
@@ -510,6 +528,9 @@ jobs:
       # Only the newest release may move `:latest` (gh-2310). docker runs for
       # a version already on PyPI, and the manifest step overwrites its tags.
       latest: ${{ needs.resolve.outputs.newest == 'true' }}
+      # The image is named for the RESOLVED tag's commit, the key `image-state`
+      # probes, not for whichever commit this workflow was dispatched from.
+      sha: ${{ needs.resolve.outputs.sha }}
     permissions:
       contents: read
       packages: write
