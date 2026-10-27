@@ -1,11 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 120" width="540" height="120">
 
+  <defs>
+    <!-- Same slate gradient as logo.svg -->
+    <linearGradient id="nut" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cbd5e1"/>
+      <stop offset="1" stop-color="#64748b"/>
+    </linearGradient>
+  </defs>
+
   <!-- Background -->
   <rect width="540" height="120" rx="20" fill="#0d1117"/>
 
   <!-- Hex-nut icon (flat-top, outer r≈40, center 55,60) -->
   <polygon
-    fill="#94a3b8"
+    fill="url(#nut)"
     points="95,60 75,94 35,94 15,60 35,26 75,26"
   />
   <polygon
@@ -13,9 +21,9 @@
     points="83,60 69,84 41,84 27,60 41,36 69,36"
   />
   <text
-    x="55" y="66"
+    x="55" y="68"
     font-family="'Courier New', Courier, monospace"
-    font-size="20"
+    font-size="24"
     font-weight="bold"
     fill="#ffffff"
     text-anchor="middle"
