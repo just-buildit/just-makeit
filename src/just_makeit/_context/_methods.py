@@ -6498,6 +6498,8 @@ def make_properties_ctx(
                 f"        return -1;\n"
                 f"    }}\n"
                 f"{parse_block}"
+                # gh-2380: the value is converted above, after the guard.
+                f"{_inflight.recheck('self', assign_line, '', fail='-1')}"
                 f"{assign_line}"
                 f"    return 0;\n"
                 f"}}"

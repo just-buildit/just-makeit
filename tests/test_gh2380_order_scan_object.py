@@ -19,7 +19,62 @@ from _order_scan import unrechecked
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
+from just_makeit import _config as C  # noqa: E402
 from test_gh2259_batch_method_faces import SHAPES  # noqa: E402
+
+
+#: The property flags the CLI offers, one declaration each. Tried and found
+#: NOT to exist or not to apply: `char[N]` and `str` state (refused: the
+#: type is unsupported), a container property without `--type
+#: dict|list|tuple` (refused). Containers and `--codec` need hand-written
+#: accessors, so they have their own tests.
+PROPERTIES: "dict[str, list[str]]" = {
+    "p1": ["--type", "double"],  # read-only, getter fn
+    "p2": ["--type", "double", "--writable"],  # getter + setter fn
+    "p3": ["--type", "double", "--field"],  # read-only field
+    "p4": ["--type", "int", "--field", "--writable"],
+    "p5": ["--type", "float _Complex", "--field", "--writable"],
+    "p6": ["--type", "bool", "--field", "--writable"],
+    "b1": ["--type", "float[]", "--buf-field", "buf"],
+    "b2": [
+        "--type",
+        "float[]",
+        "--buf-field",
+        "buf2",
+        "--len-field",
+        "n2",
+        "--valid-field",
+        "v2",
+    ],  # fmt: skip
+    "b3": ["--type", "float[]", "--buf-field", "buf3", "--writable"],
+    "e1": ["--type", "float[]", "--expr", "o_view(self->handle)"],
+    "c1": [
+        "--type",
+        "capsule",
+        "--capsule",
+        "o.thing",
+        "--capsule-type",
+        "thing_t *",
+    ],  # fmt: skip
+    "w1": [
+        "--type",
+        "double",
+        "--writable",
+        "--error",
+        "ValueError",
+        "--error-message",
+        "bad",
+    ],  # fmt: skip
+}
+
+STATES = [
+    "s:float[4]",
+    "v:uint8_t[8]",
+    "x:float _Complex",
+    "y:bool:false",
+    "z:size_t:0",
+    "q:int64_t:0",
+]
 
 
 def _ok(root: Path, *argv: str) -> None:
@@ -42,6 +97,18 @@ def project(tmp_path_factory) -> Path:
     )  # fmt: skip
     for name, flags in SHAPES.items():
         _ok(root, "method", "o", name, *flags)
+    for pname, flags in PROPERTIES.items():
+        _ok(root, "property", "o", pname, *flags)
+    # An [[enum]] has no CLI; the manifest declares it, a property names it.
+    cfg = C.load(root)
+    cfg["enum"] = [{"name": "mode", "values": ["a", "b"]}]
+    C.save(root, cfg)
+    _ok(
+        root, "property", "o", "en1", "--type", "int", "--field",
+        "--writable", "--enum", "mode",
+    )  # fmt: skip
+    # Every state type the CLI takes, scalar and array.
+    _ok(root, "object", "st", *[a for s in STATES for a in ("--state", s)])
     # Every preset: they change which step/steps wrappers are generated.
     for name, preset in (
         ("g", "generator"),

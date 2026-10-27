@@ -27,8 +27,8 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   sitting undelivered. Delete the file and re-run `jm apply` to receive it
   (any hand-written body in it is lost).
     ! native/src/dsp/dsp_ext_fir.c
-        units: 8 identical, 10 differ
-          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_set_scale, fn:Fir_shape, +4 more
+        units: 7 identical, 11 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_set_scale, fn:Fir_setprop_scale, +5 more
         decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
         shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
         steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
@@ -126,8 +126,8 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   sitting undelivered. Delete the file and re-run `jm apply` to receive it
   (any hand-written body in it is lost).
     ! native/src/dsp/dsp_ext_fir.c
-        units: 8 identical, 10 differ
-          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_set_scale, fn:Fir_shape, +4 more
+        units: 7 identical, 11 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_set_scale, fn:Fir_setprop_scale, +5 more
         decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
         shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
         steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
@@ -241,8 +241,8 @@ UNRECONCILED (1) — `jm apply` reconciles these in place, but not wholesale:
   sitting undelivered. Delete the file and re-run `jm apply` to receive it
   (any hand-written body in it is lost).
     ! native/src/dsp/dsp_ext_fir.c
-        units: 8 identical, 10 differ
-          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_set_scale, fn:Fir_shape, +4 more
+        units: 7 identical, 11 differ
+          fn:Fir_dealloc, fn:Fir_decimate, fn:Fir_init, fn:Fir_new, fn:Fir_set_scale, fn:Fir_setprop_scale, +5 more
         decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
         shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
         steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
@@ -372,6 +372,7 @@ adopt --check — would `fragment = "generated"` be safe?
         differs:   fn:Fir_init
         adds only: fn:Fir_new
         adds only: fn:Fir_set_scale
+        adds only: fn:Fir_setprop_scale
         differs:   fn:Fir_shape
         adds only: fn:Fir_step
         differs:   fn:Fir_steps

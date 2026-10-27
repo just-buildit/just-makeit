@@ -66,6 +66,16 @@ class Arr:
         return np.zeros(4, dtype=np.float32)
 
 
+class Flt:
+    def __init__(self, w):
+        self.w = w
+
+    def __float__(self):
+        self.w.destroy()
+        return 1.5
+
+
+attempt("gain", lambda w: setattr(w, "gain", Flt(w)))
 attempt("set_k", lambda w: w.set_k(Idx(w)))
 attempt("step", lambda w: w.step(Cplx(w)))
 attempt("set_taps", lambda w: w.set_taps(Arr(w)))
@@ -85,6 +95,10 @@ def test_a_teardown_in_conversion_is_an_error_not_a_crash(tmp_path):
     proj = tmp_path / "p"
     _ok(
         "object", "w", "--state", "k:int:0", "--state", "taps:float[4]",
+        cwd=proj,
+    )  # fmt: skip
+    _ok(
+        "property", "w", "gain", "--type", "double", "--field", "--writable",
         cwd=proj,
     )  # fmt: skip
     # The scaffolded setters write the state, so a NULL handed to one
@@ -118,6 +132,7 @@ def test_a_teardown_in_conversion_is_an_error_not_a_crash(tmp_path):
     )
     assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
     assert run.stdout.splitlines() == [
+        "gain: RuntimeError destroyed",
         "set_k: RuntimeError destroyed",
         "step: RuntimeError destroyed",
         "set_taps: RuntimeError destroyed",
