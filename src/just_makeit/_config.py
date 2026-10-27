@@ -4078,28 +4078,29 @@ def object_ref_import(cfg: dict, ref: str) -> str:
     from ._docstring import class_import_path
 
     comp, _, _cls = ref.partition(".")
+    leaf = ""
     if comp in components(cfg):
         cls = resolve_object_ref(cfg, ref)[3]
         home = module_of(cfg, comp)
         if not home:
             return f"from .{comp} import {cls}"
     elif module_kind(cfg, comp) in _MODULE_REF_KINDS:
+        # gh-1227: a handle module's class lives in the module's own
+        # package, the one its own `.pyi` lands in.
         kind = module_kind(cfg, comp)
         cls = _MODULE_REF_KINDS[kind](cfg, ref)[3]
-        where = class_import_path("", module_package_resolved(cfg, comp))
+        home = comp
         if kind == "composer":
             # gh-2354: a composer's class is in `<package>/<leaf>.pyi`, and
             # nothing re-exports it from the package (its directory has no
             # `__init__.py`), so the import names the file that holds it:
             # `from .playlist.playlist import Mix`, not `.playlist`.
             leaf = module_paths(comp).leaf
-            where = f"{where}.{leaf}" if where else leaf
-        # gh-1227: a handle module's class lives in the module's own
-        # package, the one its own `.pyi` lands in.
-        return f"from .{where} import {cls}"
     else:
         return ""
     where = class_import_path("", module_package_resolved(cfg, home))
+    if leaf:
+        where = f"{where}.{leaf}" if where else leaf
     return f"from .{where} import {cls}"
 
 
@@ -4199,14 +4200,14 @@ def resolve_composer_object_ref(cfg: dict, ref: str) -> tuple:
     mod, _, cls = ref.partition(".")
     tname = composer_oo(cfg, mod).get("composer_type_name", "Composer")
     if cls and cls != tname:
-        raise ValueError(
+        raise Refusal(
             f"init_param object = '{ref}': composer module '{mod}' "
             f"generates the class '{tname}', not '{cls}'. Name the module "
             f"alone, or '{mod}.{tname}'."
         )
     capsule = published_capsule(cfg, mod)
     if not capsule:
-        raise ValueError(
+        raise Refusal(
             f"init_param object = '{ref}': composer module '{mod}' publishes "
             f"no capsule, so there is no ABI-safe way to hand its state to "
             f"another module. Declare one on the module table:\n"
@@ -4214,7 +4215,7 @@ def resolve_composer_object_ref(cfg: dict, ref: str) -> tuple:
         )
     backing = capsule_backing(cfg, mod)
     if not backing:
-        raise ValueError(
+        raise Refusal(
             f"init_param object = '{ref}': composer module '{mod}' declares "
             f"no `backing`, so jm cannot name the state its capsule lends."
         )
