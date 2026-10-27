@@ -4,6 +4,10 @@
 
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
+[![C99](https://img.shields.io/badge/C-99-informational?logo=c&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
+[![C++11](https://img.shields.io/badge/C%2B%2B-11-informational?logo=cplusplus&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
+[![MSVC ABI](https://img.shields.io/badge/MSVC_ABI-clang--cl-informational?logo=windows&logoColor=white)](https://just-buildit.github.io/just-makeit/windows/)
+[![jbx](https://img.shields.io/badge/jbx-bootstrap.toml-2ea44f)](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
 
 The algorithm is the interesting part. The scaffolding around it — C library,
 Python bindings, CMake, tests, and packaging — is the same boilerplate every
