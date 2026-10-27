@@ -32,8 +32,14 @@ Examples
 >>> text, uses_np = case(fn)
 >>> print(text, end="")
     def test_fft_scale_contract(self):
-        result = module.fft_scale(n=1, x=1.0)
-        self.assertIsInstance(result, float)
+        try:
+            result = module.fft_scale(n=1, x=1.0)
+        except (ValueError, RuntimeError, OverflowError) as e:
+            self.skipTest(
+                f"the kernel refused the synthetic arguments: {e}"
+            )
+        else:
+            self.assertIsInstance(result, float)
 >>> uses_np
 False
 """
@@ -59,6 +65,13 @@ _SHAPE_FLAGS = (
     "max_results_param",
     "out_size",
 )
+
+
+#: What a REAL kernel may raise when it validates the synthetic arguments.
+#: These are a skip (the kernel's refusal, not the binding's). A TypeError is
+#: deliberately absent: it is how the binding reports a declared parameter it
+#: did not parse, which is the defect this test exists to catch.
+_REFUSALS = "(ValueError, RuntimeError, OverflowError)"
 
 
 def _arg(p: dict) -> "str | None":
@@ -152,11 +165,21 @@ def case(fn: dict) -> "tuple[str, bool]":
         T.is_array_param_type(p["type"]) for p in fn.get("params", [])
     )
     call = f"module.{name}({', '.join(args)})"
-    check = _result(fn.get("return_type", "void"))
+    # A two-line check is written at the method body's indent; it now sits
+    # one level deeper, in the try's else.
+    check = str(_result(fn.get("return_type", "void"))).replace(
+        "\n        ", "\n            "
+    )
     return (
         f"    def test_{name}_contract(self):\n"
-        f"        result = {call}\n"
-        f"        {check}\n"
+        "        try:\n"
+        f"            result = {call}\n"
+        f"        except {_REFUSALS} as e:\n"
+        "            self.skipTest(\n"
+        '                f"the kernel refused the synthetic arguments: {e}"\n'
+        "            )\n"
+        "        else:\n"
+        f"            {check}\n"
     ), uses_np
 
 

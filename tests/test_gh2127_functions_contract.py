@@ -71,6 +71,57 @@ _SCALE = {
 }
 
 
+class TestTolerantCall:
+    """The generated test run against a stand-in module (no build): a real
+    kernel's refusal of the synthetic arguments is a visible skip, and a
+    binding defect still fails."""
+
+    @staticmethod
+    def _outcome(behaviour) -> str:
+        import types
+        import unittest
+
+        text, _ = F.case(_SCALE)
+        mod = types.SimpleNamespace(fft_scale=behaviour)
+        ns: dict = {"unittest": unittest, "module": mod}
+        exec(  # noqa: S102 -- the generated text, run on a stub module
+            "class T(unittest.TestCase):\n" + text, ns
+        )
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(ns["T"])
+        res = unittest.TestResult()
+        suite.run(res)
+        if res.failures or res.errors:
+            return "fail"
+        return "skip" if res.skipped else "pass"
+
+    @staticmethod
+    def _raise(exc: Exception):
+        def f(n, x):
+            raise exc
+
+        return f
+
+    @pytest.mark.parametrize(
+        "exc", [ValueError("n"), RuntimeError("r"), OverflowError("o")]
+    )
+    def test_a_kernel_refusal_is_a_skip(self, exc: Exception) -> None:
+        assert self._outcome(self._raise(exc)) == "skip"
+
+    def test_a_typeerror_is_a_binding_defect_and_fails(self) -> None:
+        assert self._outcome(self._raise(TypeError("n"))) == "fail"
+
+    def test_a_wrong_return_type_fails(self) -> None:
+        assert self._outcome(lambda n, x: 1) == "fail"
+
+    def test_the_right_return_type_passes(self) -> None:
+        assert self._outcome(lambda n, x: 1.0) == "pass"
+
+    def test_the_text_names_the_refusals(self) -> None:
+        text, _ = F.case(_SCALE)
+        assert "except (ValueError, RuntimeError, OverflowError)" in text
+        assert "TypeError" not in text
+
+
 class TestCaseText:
     """The rendered call and check for each shape the contract covers."""
 

@@ -18,3 +18,10 @@
     An existing project with a module that declares functions gains
     `tests/test_<module>_functions.py` on its next `jm apply`. That is why the
     `stale_project` example's upgrade golden moved.
+    On upgrade the bodies are real kernels, not stubs, and are called with
+    synthetic arguments (a scalar `1`, a 4-element zero buffer for an array). A
+    kernel that refuses them by raising `ValueError`, `RuntimeError` or
+    `OverflowError` makes that test a visible skip naming the kernel's message;
+    a `TypeError` (the binding did not parse a declared parameter) and a wrong
+    return type still fail. A kernel that mishandles the arguments in some other
+    way is yours to settle: take the file over by deleting its ownership token.
