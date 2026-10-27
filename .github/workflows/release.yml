@@ -56,6 +56,10 @@ jobs:
       # (the release exists -> nothing to create; the image tag exists ->
       # nothing to build), so a duplicate run still ships nothing twice.
       published: ${{ steps.pypi.outputs.published }}
+      # "true" only when this tag is the highest vX.Y.Z tag in the repository.
+      # docker moves `:latest` only then (gh-2310): a re-run or a dispatch for
+      # an OLDER release must not repoint it backwards.
+      newest: ${{ steps.newest.outputs.newest }}
     steps:
       - id: r
         env:
@@ -88,6 +92,43 @@ jobs:
           echo "Releasing $TAG at $SHA"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # Is this the newest release? (gh-2310) docker.yml's manifest step
+      # OVERWRITES the tags it is given, and `github-release`/`docker` now run
+      # again for a version already on PyPI, so a re-run or a dispatch for an
+      # older tag would otherwise point `:latest` at an old image. It FAILS
+      # rather than guesses: an unreadable tag list makes this run red and
+      # re-runnable, where a guess could move `:latest` backwards, or leave it
+      # stale for the release that should have moved it. Only plain vX.Y.Z
+      # tags compete; anything else is not "the newest".
+      - id: newest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.r.outputs.tag }}
+        run: |
+          set -euo pipefail
+          refs=""
+          for attempt in 1 2 3; do
+            if refs="$(gh api --paginate "repos/${REPO}/git/matching-refs/tags/v" --jq '.[].ref')"; then
+              break
+            fi
+            refs=""
+            sleep 5
+          done
+          if [ -z "$refs" ]; then
+            echo "::error::could not list ${REPO}'s v* tags; not guessing whether ${TAG} is the newest release (a guess could move :latest backwards)"
+            exit 1
+          fi
+          top="$(printf '%s\n' "$refs" | sed 's|^refs/tags/||' \
+                 | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          if [ "${TAG}" = "${top}" ]; then
+            echo "${TAG} is the newest release; it may move :latest."
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${TAG} is not the newest release (${top:-none}); :latest is left where it is."
+            echo "newest=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # The distribution name is read from the tagged tree, not restated.
       - uses: actions/checkout@v7.0.1
@@ -466,6 +507,9 @@ jobs:
       # ref — the tag on a push, but the branch on a dispatch.
       ref: ${{ needs.resolve.outputs.tag }}
       publish: true
+      # Only the newest release may move `:latest` (gh-2310). docker runs for
+      # a version already on PyPI, and the manifest step overwrites its tags.
+      latest: ${{ needs.resolve.outputs.newest == 'true' }}
     permissions:
       contents: read
       packages: write

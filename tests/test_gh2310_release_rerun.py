@@ -36,6 +36,9 @@ reach ``gh release create`` together.
 from __future__ import annotations
 
 import re
+import shutil
+import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -371,7 +374,11 @@ def test_the_image_probe_asks_for_the_tag_docker_writes():
     ref = re.search(r'ref="([^"]+)"', run).group(1)
     assert ref.endswith("/jm-examples-linux:sha-${SHA}"), ref
     docker = DOCKER.read_text(encoding="utf-8")
-    assert "jm-examples-linux" in docker and 'sha-${{ github.sha }}"' in docker
+    # docker.yml pushes `sha-<commit>-<arch>` and combines them into
+    # `sha-<commit>`: the tag the probe asks for.
+    assert "jm-examples-linux" in docker
+    assert "sha-${{ github.sha }}-${{ matrix.arch }}" in docker
+    assert '"${BASE}:sha-${SHA}"' in docker
     # The probe fails toward building.
     assert 'echo "exists=false"' in run
 
@@ -380,3 +387,161 @@ def test_the_runs_for_one_tag_are_serialised_and_never_cancelled():
     conc = yaml.safe_load(WF.read_text(encoding="utf-8"))["concurrency"]
     assert conc["cancel-in-progress"] is False, conc
     assert "inputs.tag || github.ref_name" in conc["group"], conc
+
+
+# -- :latest never moves backwards -------------------------------------------
+#
+# `docker.yml`'s manifest step OVERWRITES the tags it is given, and the
+# post-publish jobs now run again for a version already on PyPI. The image
+# probe answers 'absent' on any doubt, so a re-run or a dispatch for an OLDER
+# tag whose probe hiccups would rebuild that old release and point `:latest`
+# at it. Only the newest release may move `:latest`; an older tag gets its
+# `sha-` tag and nothing else. These run the workflows' own shell, with `gh`
+# and `docker` stubbed, rather than reading it.
+
+
+def _stub(bin_dir: Path, name: str, body: str) -> None:
+    path = bin_dir / name
+    path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+
+def _step_run(path: Path, job: str, step: str) -> str:
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    (hit,) = [
+        s
+        for s in doc["jobs"][job]["steps"]
+        if s.get("id") == step or s.get("name") == step
+    ]
+    return hit["run"]
+
+
+def _bash(script: str, env: dict, tmp: Path, stubs: "dict[str, str]"):
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name, body in {"sleep": "exit 0\n", **stubs}.items():
+        _stub(bin_dir, name, body)
+    full = {"PATH": f"{bin_dir}:/usr/bin:/bin", **env}
+    return subprocess.run(
+        [shutil.which("bash") or "bash", "-c", script],
+        env=full,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def _newest(tmp: Path, tag: str, refs: "list[str] | None"):
+    """Run resolve's `newest` step for *tag*; `refs=None` makes `gh` fail."""
+    out = tmp / "out"
+    if refs is None:
+        gh = "exit 1\n"
+    else:
+        listing = "".join(f"refs/tags/{r}\\n" for r in refs)
+        gh = f"printf '{listing}'\n"
+    run = _bash(
+        _step_run(WF, "resolve", "newest"),
+        {
+            "TAG": tag,
+            "REPO": "o/r",
+            "GH_TOKEN": "x",
+            "GITHUB_OUTPUT": str(out),
+        },
+        tmp,
+        {"gh": gh},
+    )
+    return run, (out.read_text(encoding="utf-8") if out.exists() else "")
+
+
+TAGS = ["v0.9.0", "v0.10.0", "v0.111.2", "v0.112.0rc1", "nightly"]
+
+
+@pytest.mark.parametrize(
+    "tag,expected",
+    [
+        ("v0.111.2", "true"),
+        ("v0.10.0", "false"),
+        # A string sort puts v0.9.0 above v0.10.0 and v0.111.2: the version
+        # sort is the point.
+        ("v0.9.0", "false"),
+        # Not a plain vX.Y.Z tag: never "the newest".
+        ("v0.112.0rc1", "false"),
+    ],
+)
+def test_only_the_highest_release_tag_is_newest(tmp_path, tag, expected):
+    run, out = _newest(tmp_path, tag, TAGS)
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    assert out.strip() == f"newest={expected}", (tag, out)
+
+
+def test_an_unreadable_tag_list_fails_instead_of_guessing(tmp_path):
+    """A guess could move `:latest` backwards (or leave it stale for the
+    release that should have moved it). Red and re-runnable is the answer."""
+    run, out = _newest(tmp_path, "v0.111.2", None)
+    assert run.returncode != 0, (run.stdout, run.stderr)
+    assert out == "", out
+    assert "not guessing" in run.stdout + run.stderr
+
+
+def _manifest(tmp: Path, latest: str) -> "list[str]":
+    """The `-t` tags the manifest step hands `imagetools create`."""
+    rec = tmp / "rec"
+    run = _bash(
+        _step_run(DOCKER, "manifest", "Create and push combined manifest"),
+        {"OWNER": "o", "SHA": "abc123", "LATEST": latest},
+        tmp,
+        {"docker": f'printf "%s\\n" "$@" > {rec}\n'},
+    )
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    args = rec.read_text(encoding="utf-8").split()
+    return [args[i + 1] for i, a in enumerate(args) if a == "-t"]
+
+
+def test_the_manifest_moves_latest_only_when_told_to(tmp_path):
+    assert _manifest(tmp_path / "a", "true") == [
+        "ghcr.io/o/jm-examples-linux:sha-abc123",
+        "ghcr.io/o/jm-examples-linux:latest",
+    ]
+
+
+def test_the_manifest_leaves_latest_alone_otherwise(tmp_path):
+    tags = _manifest(tmp_path / "b", "false")
+    assert tags == ["ghcr.io/o/jm-examples-linux:sha-abc123"], tags
+    # ...and an empty or odd value is "no", not "yes".
+    assert _manifest(tmp_path / "c", "")[-1].endswith(":sha-abc123")
+
+
+def test_the_input_defaults_to_moving_latest():
+    """ci.yml's push to main calls docker.yml without it, and main's tip is
+    by definition the newest thing there is."""
+    doc = yaml.safe_load(DOCKER.read_text(encoding="utf-8"))
+    on = doc.get("on") or doc.get(True)
+    spec = on["workflow_call"]["inputs"]["latest"]
+    assert spec["type"] == "boolean" and spec["default"] is True, spec
+
+
+def test_release_passes_whether_its_tag_is_the_newest():
+    docker = _jobs()["docker"]
+    expr = str(docker["with"]["latest"])
+    assert "needs.resolve.outputs.newest == 'true'" in expr, expr
+
+
+def test_an_older_tag_whose_probe_doubts_leaves_latest_untouched(tmp_path):
+    """The scenario: v0.10.0 is re-run (or dispatched) while v0.111.2 is the
+    newest. The image probe cannot read the registry and answers 'absent', so
+    docker RUNS. The `latest` it is handed must be false, and the manifest
+    step, given that, must not write `:latest`."""
+    res = _simulate(published="true", image_exists="false")
+    assert res["docker"] == "success", res  # the doubt path does run docker
+    expr = re.fullmatch(
+        r"\$\{\{\s*(.*?)\s*\}\}", str(_jobs()["docker"]["with"]["latest"])
+    ).group(1)
+    needs = {"resolve": ("success", {"newest": "false"})}
+    latest = str(_Eval(expr, needs).parse()).lower()
+    assert latest == "false", latest
+    assert _manifest(tmp_path, latest) == [
+        "ghcr.io/o/jm-examples-linux:sha-abc123"
+    ]
+    # ...and for the newest release it does move.
+    needs = {"resolve": ("success", {"newest": "true"})}
+    assert str(_Eval(expr, needs).parse()).lower() == "true"

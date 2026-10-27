@@ -9,7 +9,13 @@
     skipped only because the version is already published, and each is
     idempotent: `github-release` leaves an existing release as it is, and
     `docker` runs only when the commit's image tag is absent from GHCR (a new
-    `image-state` job asks, and answers "absent" on any doubt). A failed
+    `image-state` job asks, and answers "absent" on any doubt). Because that
+    rebuilds an image whose tags the manifest step overwrites, a re-run or
+    dispatch for an OLDER release must not repoint `:latest` backwards: `resolve`
+    now says whether the tag is the highest `vX.Y.Z` tag (and fails, rather than
+    guesses, if it cannot list the tags), and `docker.yml` takes a `latest`
+    input, default true, that only the newest release sets; an older tag gets
+    its `sha-` tag and nothing else. A failed
     `publish`, or a smoke that failed before it, still skips both. The
     gh-2260 test now holds that nothing that builds or publishes runs for a
     published version, and a new test requires any job that escapes the skip

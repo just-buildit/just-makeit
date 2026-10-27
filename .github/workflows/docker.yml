@@ -22,6 +22,17 @@ on:
         type: boolean
         required: false
         default: false
+      # ...and whether this publish may move `:latest` (gh-2310). The manifest
+      # step overwrites every tag it is given, so a re-run or a dispatch for an
+      # OLDER release would repoint `:latest` at that old image. Only the
+      # caller knows whether its commit is the newest, so it says: release.yml
+      # passes whether its tag is the highest v* tag; an older tag gets its
+      # `sha-` tag and nothing else. Default true because the other caller,
+      # ci.yml's push to main, is by definition the newest thing there is.
+      latest:
+        type: boolean
+        required: false
+        default: true
 
 # No `push` or `pull_request` trigger of its own (gh-1643). ci.yml calls
 # this workflow from a job `CI passed` waits on, on every PR and every push to
@@ -149,8 +160,19 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push combined manifest
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+          # gh-2310: "true" only when this publish may move `:latest`.
+          LATEST: ${{ inputs.latest }}
         run: |
-          BASE=ghcr.io/${{ github.repository_owner }}/jm-examples-linux
+          BASE=ghcr.io/${OWNER}/jm-examples-linux
+          tags=(-t "${BASE}:sha-${SHA}")
+          if [ "${LATEST}" = "true" ]; then
+            tags+=(-t "${BASE}:latest")
+          else
+            echo "::notice::not the newest release: ${BASE}:latest is left where it is."
+          fi
           # Retry: this reads both arch manifests' blobs back out of GHCR, and
           # a reset there fails the job after BOTH images have already built
           # and pushed — the most expensive place to lose to a network blip:
@@ -162,10 +184,9 @@ jobs:
           ok=""
           for attempt in 1 2 3; do
             if docker buildx imagetools create \
-                 -t "${BASE}:latest" \
-                 -t "${BASE}:sha-${{ github.sha }}" \
-                 "${BASE}:sha-${{ github.sha }}-amd64" \
-                 "${BASE}:sha-${{ github.sha }}-arm64"; then
+                 "${tags[@]}" \
+                 "${BASE}:sha-${SHA}-amd64" \
+                 "${BASE}:sha-${SHA}-arm64"; then
               ok=1
               break
             fi
