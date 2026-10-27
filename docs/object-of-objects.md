@@ -562,7 +562,14 @@ A source can hand work back to the project as plain C, with no CPython in it:
     and `float _Complex`. A NULL from `bridge_fn` raises `RuntimeError`,
     unless the optional `bridge_error_fn`,
     `const char *fn(const <struct> *, double fs)`, returns a reason, which is
-    raised as `ValueError(reason)` (gh-1307).
+    raised as `ValueError(reason)` (gh-1307). The generator is built from
+    the source on first use. Assigning a `bytes`, complex-stream or
+    owned-pointer field (`src.bits = ...`, or `__init__` again) converts the
+    new value first, then waits for a `steps()` running on another thread,
+    drops the generator, and only then frees the old buffer and installs the
+    new one, so a `bridge_fn` that borrows a buffer never reads a freed one;
+    the next `steps()` builds from the new configuration. A value that is
+    refused leaves the field as it was (gh-2274).
 - **`methods = ["prod", ...]`** in the same table (gh-2259) puts named
     methods of the generator object on the source type too:
     `Synth(...).prod(x)` instead of building the generator yourself. Each
