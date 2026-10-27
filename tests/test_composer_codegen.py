@@ -146,7 +146,10 @@ class TestSourceType:
         # scalar assigned directly
         assert "self->src.freq = freq;" in s
         # bytes attached into its own field's destination
-        assert "_attach_bytes(&self->src.bits, &self->src.n_bits, bits)" in s
+        # (gh-2274: through the field's one replace, which converts into a
+        # copy of the struct and installs only once nothing can run Python.)
+        assert "Synth_replace_bits(self, bits)" in s
+        assert "_attach_bytes(&_t.bits, &_t.n_bits, value)" in s
 
     def test_getset_enum_as_string(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -175,7 +178,8 @@ class TestSourceType:
         fields.append({"name": "data_code", "type": "uint8_t*", "bytes": True})
         s = _composer.render_source_type(cfg, "wfm_compose")
         for n in ("bits", "acq_code", "data_code"):
-            assert f"_attach_bytes(&self->src.{n}, &self->src.n_{n}, {n})" in s
+            assert f"Synth_replace_{n}(self, {n})" in s
+            assert f"_attach_bytes(&_t.{n}, &_t.n_{n}, value)" in s
             assert f"free(self->src.{n});" in s
             # the getter reads its own field, not bits
             assert (
@@ -836,7 +840,8 @@ class TestComplexField:
 
     def test_init_attaches_and_dealloc_frees(self):
         s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
-        assert "if (!_attach_symbols(&self->src, symbols))" in s
+        assert "if (!Synth_replace_symbols(self, symbols))" in s
+        assert "_attach_symbols(&_t, value)" in s
         # dealloc frees every owned buffer — bits AND symbols
         assert "free(self->src.bits);" in s
         assert "free(self->src.symbols);" in s
@@ -845,7 +850,7 @@ class TestComplexField:
         s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
         assert "Synth_get_symbols(SynthObject *self, void *closure)" in s
         assert "PyArray_SimpleNew(1, _d, NPY_COMPLEX64)" in s
-        assert "return _attach_symbols(&self->src, value) ? 0 : -1;" in s
+        assert "return Synth_replace_symbols(self, value) ? 0 : -1;" in s
 
     def test_pyi_annotation(self):
         pyi = _composer.render_pyi(_complex_cfg(), "wfm_compose")

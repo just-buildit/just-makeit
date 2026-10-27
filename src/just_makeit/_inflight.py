@@ -55,8 +55,10 @@ answer, and it is emitted by the one kernel-call emitter
 again after the last conversion, the same ``RuntimeError`` is raised, and
 the references the call acquired are released first.
 
-Not covered here, and filed: a composer source's property setters free a
-buffer a running generator may borrow, and never invalidate it (gh-2274).
+A composer source's property setters free a buffer a running generator may
+borrow (gh-2274). They go through ``_composer._replace_c``, which converts
+the new value into a copy, waits here (`wait`), drops the generator, and only
+then frees and installs.
 """
 
 from __future__ import annotations

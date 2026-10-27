@@ -102,7 +102,7 @@ class TestTheDefaultIsUnchanged:
 
     def test_the_flat_members_are_still_the_default(self) -> None:
         c = _all_c(_cfg())
-        assert "_attach_bytes(&self->src.bits, &self->src.n_bits, bits)" in c
+        assert "_attach_bytes(&_t.bits, &_t.n_bits, value)" in c
         assert "free(self->src.bits);" in c
         assert "src->bits && src->n_bits" in c
 
@@ -123,9 +123,11 @@ class TestTheOverrideReachesEverySite:
         return _all_c(_with_bits(**RELOCATED))
 
     def test_the_constructor(self, c: str) -> None:
+        # gh-2274: the constructor and the setter both go through the
+        # field's one replace, which holds the cast.
+        assert "Synth_replace_sync(self, sync)" in c
         assert (
-            "_attach_bytes((uint8_t **)&self->src.sync.bits, "
-            "&self->src.sync.len, sync)"
+            "_attach_bytes((uint8_t **)&_t.sync.bits, &_t.sync.len, value)"
         ) in c
 
     def test_the_getter(self, c: str) -> None:
@@ -133,9 +135,9 @@ class TestTheOverrideReachesEverySite:
         assert "(const char *)self->src.sync.bits" in c
 
     def test_the_setter(self, c: str) -> None:
+        assert "return Synth_replace_sync(self, value) ? 0 : -1;" in c
         assert (
-            "_attach_bytes((uint8_t **)&self->src.sync.bits, "
-            "&self->src.sync.len, value)"
+            "_attach_bytes((uint8_t **)&_t.sync.bits, &_t.sync.len, value)"
         ) in c
 
     def test_the_dealloc_free(self, c: str) -> None:
@@ -253,6 +255,7 @@ def _compiles(tmp_path: Path, tag: str, call: str, free_line: str) -> int:
         "{ (void)d; (void)n; (void)o; return 1; }\n"
         "int use(obj_t *self, void *value)\n"
         "{\n"
+        "    src_t _t = self->src;\n"
         f"    int ok = {call};\n"
         f"    {free_line}\n"
         "    return ok;\n"
@@ -291,8 +294,7 @@ def test_the_relocated_expressions_compile(tmp_path: Path) -> None:
     attach = [
         ln.strip()
         for ln in c.splitlines()
-        if "_attach_bytes((uint8_t **)&self->src.sync.bits" in ln
-        and "value" in ln
+        if "_attach_bytes((uint8_t **)&_t.sync.bits" in ln and "value" in ln
     ]
     free_line = [
         ln.strip()
@@ -305,6 +307,8 @@ def test_the_relocated_expressions_compile(tmp_path: Path) -> None:
     )
     # The attach is the head of a multi-line return; take just the call.
     call = attach[0][attach[0].index("_attach_bytes") :].rstrip()
+    call = call.removesuffix(")")  # the `if (!` the call sits inside
+    assert call.endswith("value)"), call
     assert _compiles(tmp_path, "cast", call, free_line[0]) == 0
 
 
