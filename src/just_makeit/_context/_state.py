@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from .. import _coerce, _ctorsig
+from .. import _coerce, _ctorsig, _inflight
 from .. import _config as C
 from .._report import Refusal
 from .. import _csym as CSYM
@@ -3336,6 +3336,9 @@ def make_state_ctx(
             f'    if (!PyArg_ParseTuple(args, "{fmt}", {addr}))\n'
             f"        return NULL;\n"
             + (f"{conv}\n" if conv else "")
+            + _inflight.recheck(
+                "self", f"{csym}_set_{name}(self->handle, v)", ""
+            )
             + f"    {csym}_set_{name}(self->handle, v);\n"
             f"    Py_RETURN_NONE;\n"
             f"}}"
@@ -3411,7 +3414,12 @@ def make_state_ctx(
             f"        Py_DECREF(arr);\n"
             f"        return NULL;\n"
             f"    }}\n"
-            f"    {csym}_set_{name}(self->handle,\n"
+            + _inflight.recheck(
+                "self",
+                f"{csym}_set_{name}(self->handle, arr)",
+                "Py_DECREF(arr);",
+            )
+            + f"    {csym}_set_{name}(self->handle,\n"
             f"        {const_ptr_cast}PyArray_DATA(arr));\n"
             f"    Py_DECREF(arr);\n"
             f"    Py_RETURN_NONE;\n"

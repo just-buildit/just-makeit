@@ -383,8 +383,13 @@ def test_a_plain_setter_renders_as_before() -> None:
         [{"name": "p", "type": "double", "writable": True}],
         csym="rf_o",
     )
+    # gh-2380: the guard runs again after the value is converted.
     assert (
         '    if (!PyArg_Parse(value, "d", &v)) return -1;\n'
+        "    if (!self->handle) {\n"
+        '        PyErr_SetString(PyExc_RuntimeError, "destroyed");\n'
+        "        return -1;\n"
+        "    }\n"
         "    rf_o_set_p(self->handle, v);\n"
         "    return 0;\n"
         "}"
