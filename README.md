@@ -46,6 +46,12 @@ pip install just-makeit && just-makeit install-deps [path]
 uv tool install just-makeit && just-makeit install-deps [path]
 ```
 
+**Docker (no install needed):**
+
+```sh
+docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
+```
+
 ______________________________________________________________________
 
 ## Quick examples

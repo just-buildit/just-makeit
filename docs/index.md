@@ -77,6 +77,19 @@ Pick a method. Each one gets you `just-makeit` and its build dependencies.
     uv tool install just-makeit && just-makeit install-deps [path]
     ```
 
+=== "Docker"
+
+    ```sh
+    docker run --rm -it ghcr.io/just-buildit/jm-examples-linux:latest
+    ```
+
+    **No install needed** - the container prints a welcome message with
+    everything you need:
+
+    - pre-built example projects in `~/examples/`
+    - commands to browse or re-run them
+    - a quickstart for your own project
+
 </div>
 
 ```termynal
