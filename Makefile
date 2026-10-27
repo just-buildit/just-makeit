@@ -506,11 +506,15 @@ DOCS_PREPARE = $(PYTHON) scripts/copy_examples.py
 # only existed in CI. Here it is in the build, so `make docs` and `make
 # docs-serve` produce the real site.
 #
+# `aliases.toml` rides the same line of reasoning: `jbx just-makeit:NAME`
+# fetches it from the site root before it probes for NAME.sh.
+#
 # It has to run AFTER the build rather than in DOCS_PREPARE, because the
 # build's `--clean` wipes `site/` first.
 define DOCS_BUILD_CMD
 $(ZENSICAL) build --clean --strict
 cp install.sh site/install.sh
+cp aliases.toml site/aliases.toml
 endef
 
 # A post-gate, not DOCS_CHECK_CMD: the docs tests run after the strict build,
