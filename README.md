@@ -8,7 +8,7 @@
 [![C99](https://img.shields.io/badge/C-99-informational?logo=c&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
 [![C++11](https://img.shields.io/badge/C%2B%2B-11-informational?logo=cplusplus&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
 [![MSVC ABI](https://img.shields.io/badge/MSVC_ABI-clang--cl-informational?logo=windows&logoColor=white)](https://just-buildit.github.io/just-makeit/windows/)
-[![jbx](https://img.shields.io/badge/jbx-bootstrap.toml-2ea44f)](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
+[![jbx](https://img.shields.io/badge/jbx-bootstrap.toml-2ea44f?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjQwIDUyIDE0MCAxMDAiPjxwb2x5bGluZSBwb2ludHM9IjUyLDY0IDEwNCwxMDAgNTIsMTM2IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxsaW5lIHgxPSIxMTYiIHkxPSIxNDAiIHgyPSIxMzYiIHkyPSIxNDAiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGxpbmUgeDE9IjE0NiIgeTE9IjE0MCIgeDI9IjE1OCIgeTI9IjE0MCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utb3BhY2l0eT0iMC41NSIgc3Ryb2tlLXdpZHRoPSIxNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGxpbmUgeDE9IjE2NyIgeTE9IjE0MCIgeDI9IjE3MyIgeTI9IjE0MCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utb3BhY2l0eT0iMC4yNSIgc3Ryb2tlLXdpZHRoPSIxNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+Cg==)](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
 
 Getting an algorithm right is paramount. Yet it's rarely the bottleneck.
 Turning it into shippable code — a tested C library, a Python binding, a build

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+
+  <!-- Background (same tile as the jm logo) -->
+  <rect width="200" height="200" rx="32" fill="#0d1117"/>
+
+  <!-- Run: the prompt chevron -->
+  <polyline
+    points="52,64 104,100 52,136"
+    fill="none"
+    stroke="#4ade80"
+    stroke-width="16"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Discard: the cursor fades out and nothing is left behind -->
+  <line x1="116" y1="140" x2="136" y2="140" stroke="#4ade80" stroke-width="14" stroke-linecap="round"/>
+  <line x1="146" y1="140" x2="158" y2="140" stroke="#4ade80" stroke-opacity="0.55" stroke-width="14" stroke-linecap="round"/>
+  <line x1="167" y1="140" x2="173" y2="140" stroke="#4ade80" stroke-opacity="0.25" stroke-width="14" stroke-linecap="round"/>
+
+</svg>
