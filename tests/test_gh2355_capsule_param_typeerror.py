@@ -90,3 +90,25 @@ def test_a_methods_rendered_binding_raises_type_error(tmp_path):
     wrapper = ext[ext.index("W_attach") :]
     assert "scene must be the q.foo capsule" in wrapper, wrapper[:1800]
     assert "Py_TYPE(scene_obj)->tp_name" in wrapper, wrapper[:1800]
+
+
+def test_a_constructor_param_raises_type_error(tmp_path):
+    """The second consumer of the shared emitter: an object's `tp_init`."""
+    r = run_cli("new", "q", "--no-c-prefix", cwd=tmp_path)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    q = tmp_path / "q"
+    r = run_cli(
+        "object", "c", "--init-param", f"tlm:{PTR}:capsule:{CAP}", cwd=q
+    )
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    ext = (q / "native/src/c/c_ext.c").read_text(encoding="utf-8")
+    assert f"tlm must be the {CAP} capsule" in ext, ext[:1500]
+
+
+def test_a_composers_owned_pointer_raises_type_error():
+    """The third: a composer source's owned-pointer field, set from a
+    capsule (gh-1711)."""
+    from test_gh1711_composer_owned_pointer import FRAME, _all_c, _with
+
+    c = _all_c(_with(**FRAME))
+    assert f"frame must be the {FRAME['capsule']} capsule" in c, c[:1500]
