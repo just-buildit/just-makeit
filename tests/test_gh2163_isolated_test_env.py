@@ -51,14 +51,24 @@ def _checkout_interpreter() -> str:
     has nothing to do with the leak. Measured: a 3.14 venv under a 3.12
     `.python-version` is skipped, a 3.12 venv is seen.
     """
-    return subprocess.run(
+    found = subprocess.run(
         ["uv", "python", "find"],
         cwd=str(REPO),
-        check=True,
         capture_output=True,
         text=True,
         env=_inherited(),
-    ).stdout.strip()
+    )
+    if found.returncode == 0:
+        return found.stdout.strip()
+    # Measured on a CI runner: the interpreters it has are in
+    # UV_PYTHON_INSTALL_DIR and the leg's UV_PYTHON, neither of which this
+    # probe's environment keeps (see `_PROBE_ENV_KEEP`), so `uv python find`
+    # reports no interpreter for `.python-version` -- exit 2 -- though the
+    # probe's own `uv run` and the `uv venv` below fetch one on demand. Ask
+    # for the pinned version by name, which is what `find` would have said.
+    pinned = REPO / ".python-version"
+    assert pinned.is_file(), found.stderr
+    return pinned.read_text(encoding="utf-8").strip()
 
 
 def _venv_with_sentinel(tmp_path: Path) -> tuple[Path, str]:
