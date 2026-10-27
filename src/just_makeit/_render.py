@@ -25,9 +25,10 @@ from ._types import (
 )
 from . import _coerce
 from . import _config as C
-from . import _types as T
+from . import _enumc
 from . import _record
 from . import _borrow
+from . import _outbuf
 from . import _incpath as INC
 from . import _csym as CSYM
 from ._report import Refusal
@@ -685,7 +686,7 @@ def render(template: str, ctx: dict) -> str:
     # compile, and a per-generator slot is how one generator forgets.
     ctx = {
         **INC.layout_slots(ctx),
-        "jm_array_arg_c": _coerce.ARRAY_ARG_C,
+        "jm_array_arg_c": _coerce.TU_HELPERS_C,
         **ctx,
     }
     result = template
@@ -736,7 +737,12 @@ def render_component_pyi(ctx: dict) -> str:
     # gh-1478: numpy too, by the predicate the module peer asks -- the
     # template imported it unconditionally, an `F401` on every no-step stub.
     # The empty constructor also rendered `(self, )`, which ruff rewrites.
-    from ._stubs import _uses_any, numpy_imports
+    from ._stubs import (
+        _uses_any,
+        mark_positional_only,
+        method_table_flags,
+        numpy_imports,
+    )
 
     params = ctx.get("init_params_pyi", "")
     ctx = {
@@ -762,7 +768,15 @@ def render_component_pyi(ctx: dict) -> str:
             f"\n{line}" for line in numpy_imports(probe)
         ),
     }
-    return reflow_pyi(render(COMPONENT_PYI, ctx))
+    # gh-2212: a member whose row takes no keywords is positional-only in
+    # the stub, told by the binding this same context renders -- the module
+    # peer, `_stubs.make_module_pyi`, asks the same function of its
+    # fragments.
+    stub = mark_positional_only(
+        render(COMPONENT_PYI, ctx),
+        {ctx["Component"]: method_table_flags(render(COMPONENT_EXT_C, ctx))},
+    )
+    return reflow_pyi(stub)
 
 
 #: An assertion **statement** in the rendered C test. Anchored to the start of
@@ -882,7 +896,7 @@ PyInit_<<module_leaf>>(void)
 <<type_ready_checks>>
     PyObject *m = PyModule_Create(&<<module>>_moduledef);
     if (!m) return NULL;
-<<add_object_calls>><<procglobal>>
+<<add_object_calls>><<enum_publish>><<procglobal>>
     return m;
 }
 """
@@ -1506,35 +1520,30 @@ def _build_params_parse(
             )
             call_args.append(pname)
         else:
-            meta = _CTYPE_META[ptype]
-            disp = ptype
-            # gh-1271: same rule as the method face, one call away.
-            fmt_chars.append(T.param_fmt(ptype, p.get("default") or ""))
+            # gh-2144: the method face's one tuple-parse slot, which this
+            # face had a line-for-line copy of (format char, gh-240 default
+            # seed, gh-1887 complex seed, the cast) -- and so would have had
+            # to learn the range refusal a second time. The refusal runs
+            # after the parse has made every path borrow, before any array
+            # is acquired, so it releases exactly those.
+            from ._context._parse import scalar_arg_c
 
-            if "parse_type" in meta:
-                raw = f"{pname}_raw"
-                # gh-432 drive-by: seed the raw local with the gh-240
-                # default (not parse_zero) so an omitted defaulted arg
-                # yields the default — previously only the non-parse_type
-                # branch honoured `default` (mirrors _context/_parse.py).
-                # gh-1887: through the one seed, as that face is -- a
-                # `Py_complex` default is the struct's `{re, im}`.
-                _raw_init = T.parse_seed(ptype, p.get("default") or "")
-                decl_lines.append(
-                    f"    {meta['parse_type']} {raw} = {_raw_init};"
+            decl, fmt, addr, conv = scalar_arg_c(
+                pname,
+                ptype,
+                p.get("default") or "",
+                fail="".join(
+                    f"{_coerce.path_release(q['name'])} "
+                    for q in params
+                    if q["type"] == "path"
                 )
-                addr_exprs.append(f"&{raw}")
-                conv_lines.append(
-                    f"    {disp} {pname} = {meta['to_c'](pname)};"
-                )
-            else:
-                # gh-240: a scalar with a `default` is optional — its C local is
-                # initialised to the default literal so an omitted arg yields it
-                # (PyArg leaves it untouched). Required scalars init to zero.
-                init = p.get("default") or meta["zero"]
-                decl_lines.append(f"    {disp} {pname} = {init};")
-                addr_exprs.append(f"&{pname}")
-
+                + "return NULL;",
+            )
+            decl_lines.append(decl)
+            fmt_chars.append(fmt)
+            addr_exprs.append(addr)
+            if conv:
+                conv_lines.append(conv)
             call_args.append(pname)
 
     # gh-240: split required vs optional. A param with a `default` is optional;
@@ -1674,6 +1683,80 @@ def status_errors_why_not(fn: dict) -> str:
     )
 
 
+def _out_length_keys(fn: dict) -> dict:
+    """What a function's allocated output reads its length from (gh-1888).
+
+    The keys :func:`_outbuf.length` takes, as this face reads them: a
+    ``result_fields`` function's records are sized in their own branch --
+    by ``out_size`` when declared (gh-2205), else ``max_results`` -- and
+    read no ``out_type``, and of an array output ``out_size`` is the
+    capacity of a variable-output result only -- a fixed one never read it.
+    """
+    if not fn.get("out_type") or fn.get("result_fields"):
+        return {}
+    vo = bool(fn.get("variable_output"))
+    return {
+        "out_type": str(fn["out_type"]),
+        "out_size": str(fn.get("out_size", "")) if vo else "",
+    }
+
+
+def out_length_why_not(fn: dict) -> str:
+    """Why a function's allocated output has no length, or ``""``.
+
+    gh-1888: ``_outbuf.length_why_not`` over the row, read as this face
+    reads it. ``jm function`` asks before it writes anything -- ``apply``
+    replays through it, and ``status`` runs ``apply`` -- and the binding
+    asks again before it renders, so every face meets one refusal.
+
+    Examples
+    --------
+    >>> out_length_why_not({"name": "f", "out_type": "float[n]",
+    ...     "params": [{"name": "n", "type": "size_t"}]})
+    ''
+    >>> out_length_why_not({"name": "f", "out_type": "float",
+    ...     "params": [{"name": "n", "type": "size_t"}]}).split(",")[0]
+    "function 'f' returns a fresh out_type 'float'"
+    >>> out_length_why_not({"name": "f", "result_fields": [{"name": "a"}],
+    ...     "out_size": "x_len", "max_results_param": "n"}).split(":")[0]
+    "function 'f' declares both out_size and max_results_param"
+    """
+    # gh-2205: a list of records has ONE capacity. `max_results_param` names
+    # the param the C reads it from, so jm passes none and allocates that
+    # many; `out_size` is the count jm allocates and hands the C. Both, and
+    # the buffer would be sized one way while the C is told another.
+    if (
+        fn.get("result_fields")
+        and fn.get("out_size")
+        and fn.get("max_results_param")
+    ):
+        return (
+            f"function '{fn.get('name', '<function>')}' declares both "
+            "out_size and max_results_param: two capacities for one list of "
+            "records.\n"
+            "  max_results_param names the param the C reads its capacity "
+            "from; out_size is the\n"
+            "  count jm allocates and hands it. Keep one."
+        )
+    keys = _out_length_keys(fn)
+    if not keys:
+        return ""
+    return _outbuf.length_why_not(
+        f"function '{fn.get('name', '<function>')}'",
+        list(fn.get("params") or []),
+        variable_output=bool(fn.get("variable_output")),
+        **keys,
+    )
+
+
+def _out_length(fn: dict) -> str:
+    """The C length of a function's allocated output, or the refusal."""
+    why = out_length_why_not(fn)
+    if why:
+        raise Refusal(why)
+    return _outbuf.length(list(fn.get("params") or []), **_out_length_keys(fn))
+
+
 def _status_cases(
     fn_name: str, c_name: str, params: list[dict], rows: list[dict], why: bool
 ) -> str:
@@ -1752,18 +1835,32 @@ def _py_wrapper_for_function(
     function's C symbol (``_csym.stem``, gh-1591); *fn_name* is its
     manifest name, which names the static ``_bind_<fn_name>`` binder.
 
-    out_type: if set, allocates a 1-D ndarray of this type (length = first
-    array param's length) and passes it after the array args, before scalars.
+    out_type: if set, allocates a 1-D ndarray of this type and passes it
+    after the array args, before scalars. Its length is `_outbuf.length`'s:
+    the `[n]` of ``"T[n]"``, else the first array param's length; a row
+    with neither is refused (gh-1888).
 
-    result_fields: if set, calls C with a stack-allocated array of structs,
-    builds and returns list[tuple] from the fields. max_results_param names
+    result_fields: if set, calls C with a ``PyMem_Malloc``'d array of
+    structs, builds and returns list[tuple] from the fields. max_results_param names
     an existing param that already carries the capacity (already embedded in
     call_args, so it is not passed again); when empty (the common case),
     fn_c_decl appended a bare trailing `size_t max_results` param instead, so
-    the wrapper passes the literal `max_results` value for it.
+    the wrapper passes the capacity for it: `out_size` when declared
+    (gh-2205), else the literal `max_results` value.
     """
     result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
+    # gh-1888: the row as `out_length_why_not` reads it, for each branch
+    # below that allocates the output.
+    _out_row = {
+        "name": fn_name,
+        "params": params,
+        "out_type": out_type,
+        "out_size": out_size,
+        "variable_output": variable_output,
+        "result_fields": result_fields,
+        "max_results_param": max_results_param,
+    }
     if why and (not check_return or result_fields):
         raise ValueError(_why_unreadable(fn_name))
     status_errors = status_errors or []
@@ -1798,14 +1895,22 @@ def _py_wrapper_for_function(
         _bv = record_tuple_build(result_fields, "_results[_i]")
         _rt_disp = return_type
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        _cap_why = out_length_why_not(_out_row)
+        if _cap_why:
+            raise Refusal(_cap_why)
         # max_results_param names an existing param already in call_args (the
         # C signature has no extra trailing param for it); otherwise fn_c_decl
-        # appended a bare `size_t max_results`, so the call passes the literal.
+        # appended a bare `size_t max_results`, so the call passes the count.
         if max_results_param:
             _max_expr = f"(size_t){max_results_param}"
             _call = f"{c_name}({call_args}, _results)"
         else:
-            _max_expr = str(max_results)
+            # gh-2205: `out_size`, the function face's capacity -- a C
+            # expression over its params -- sizes the records and is what the
+            # C is told, as it sizes a `variable_output` array. Undeclared,
+            # the fixed `max_results` stands, and a call due more than that
+            # returns the first `max_results`.
+            _max_expr = out_size or str(max_results)
             _call = (
                 f"{c_name}({call_args}, _results, _max)"
                 if call_args
@@ -1814,6 +1919,12 @@ def _py_wrapper_for_function(
         # gh-1710: `_max` may be the caller's int. `_max * sizeof` below
         # wrapped for a large one, so malloc returned a SHORT buffer the
         # callee then filled `_max` records into; bounded before the product.
+        #
+        # gh-2205: through `PyMem_Malloc` / `PyMem_Free`, the method face's
+        # records buffer (gh-2184). An `out_size` of `x_len` asks for 0
+        # records on an empty input, and `malloc(0)` may return NULL -- a
+        # MemoryError for an empty call -- where `PyMem_Malloc(0)` returns a
+        # distinct non-NULL pointer by contract.
         ret_line = (
             _coerce.output_size_c(
                 "_max",
@@ -1824,22 +1935,23 @@ def _py_wrapper_for_function(
                 limit=f"(PY_SSIZE_T_MAX / sizeof({_rt_disp}))",
             )
             + f"    {_rt_disp} *_results ="
-            f" ({_rt_disp} *)malloc(_max * sizeof({_rt_disp}));\n"
+            f" ({_rt_disp} *)PyMem_Malloc(_max * sizeof({_rt_disp}));\n"
             f"    if (!_results) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             f"    size_t _n = {_call};\n"
             f"{cleanup}"
             # gh-1716: `_n` records were read from a buffer of `_max`.
             + _coerce.returned_count_c(
-                "_n", "_max", fn_name, "free(_results);"
+                "_n", "_max", fn_name, "PyMem_Free(_results);"
             )
             + "    PyObject *_lst = PyList_New((Py_ssize_t)_n);\n"
-            f"    if (!_lst) {{ free(_results); return NULL; }}\n"
+            "    if (!_lst) { PyMem_Free(_results); return NULL; }\n"
             f"    for (size_t _i = 0; _i < _n; _i++) {{\n"
             f"        PyObject *_tup = Py_BuildValue({_bv});\n"
-            f"        if (!_tup) {{ free(_results); Py_DECREF(_lst); return NULL; }}\n"
+            "        if (!_tup) {"
+            " PyMem_Free(_results); Py_DECREF(_lst); return NULL; }\n"
             f"        PyList_SET_ITEM(_lst, (Py_ssize_t)_i, _tup);\n"
             f"    }}\n"
-            f"    free(_results);\n"
+            f"    PyMem_Free(_results);\n"
             f"    return _lst;"
         )
     elif variable_output and out_type == "str":
@@ -1860,14 +1972,10 @@ def _py_wrapper_for_function(
         # it a legal scalar type everywhere and silently retire the hint that
         # steers `char` to `int8_t` for its platform-dependent signedness.
         # This is one output shape, not a new type.
-        if out_size:
-            len_expr = out_size
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        #
+        # gh-1888: `out_size`, else the first array's length -- refused
+        # when neither answers, where this allocated one character.
+        len_expr = _out_length(_out_row)
         _call_with_out = f"{call_args}, _buf" if call_args else "_buf"
         _call_with_out += _why_call_arg(why)
         _cleanup_inline = cleanup.replace("\n    ", " ").strip()
@@ -1896,22 +2004,25 @@ def _py_wrapper_for_function(
                 ctype="size_t",
                 limit="PY_SSIZE_T_MAX",
             )
-            + f"    char *_buf = (char *)malloc(_cap + 1);\n"
+            # gh-2205: the function face allocates through one primitive.
+            + f"    char *_buf = (char *)PyMem_Malloc(_cap + 1);\n"
             f"    if (!_buf) {{{_cleanup_inline} return PyErr_NoMemory(); }}\n"
             + _why_decl(why)
             + f"    size_t _n = (size_t){c_name}({_call_with_out});\n"
             f"{cleanup}"
             + (
-                _count_refusal(c_name, "free(_buf);", why)
+                _count_refusal(c_name, "PyMem_Free(_buf);", why)
                 if check_return
                 else ""
             )
             # gh-1716: a count past `_cap` was clamped here, silently --
             # hiding a kernel that had already written past the buffer.
-            + _coerce.returned_count_c("_n", "_cap", fn_name, "free(_buf);")
+            + _coerce.returned_count_c(
+                "_n", "_cap", fn_name, "PyMem_Free(_buf);"
+            )
             + "    PyObject *_s = PyUnicode_FromStringAndSize(_buf, "
             "(Py_ssize_t)_n);\n"
-            "    free(_buf);\n"
+            "    PyMem_Free(_buf);\n"
             "    return _s;"
         )
     elif variable_output and out_type:
@@ -1926,14 +2037,9 @@ def _py_wrapper_for_function(
         _base_ctype, _ = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
         out_disp = _base_ctype
-        if out_size:
-            len_expr = out_size
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        # gh-1888: `out_size`, else `[n]`, else the first array's length --
+        # refused when none answers, where this allocated one element.
+        len_expr = _out_length(_out_row)
         _out_ptr = f"({out_disp} *)PyArray_DATA((PyArrayObject *)_out)"
         _call_with_out = f"{call_args}, {_out_ptr}" if call_args else _out_ptr
         _call_with_out += _why_call_arg(why)
@@ -1981,17 +2087,13 @@ def _py_wrapper_for_function(
         # Allocate output array, insert after array args, before scalars.
         # out_type may carry a [param_name] suffix naming the scalar that
         # holds the output length (e.g. "float64[M]").
-        _base_ctype, _scalar_len_param = parse_out_type(out_type)
+        _base_ctype, _ = parse_out_type(out_type)
         out_npy = _CTYPE_TO_NPY[_base_ctype]
         out_disp = _base_ctype
-        if _scalar_len_param:
-            len_expr = _scalar_len_param
-        else:
-            first_arr = next(
-                (p["name"] for p in params if is_array_param_type(p["type"])),
-                None,
-            )
-            len_expr = f"{first_arr}_len" if first_arr else "1"
+        # gh-1888: the `[n]` the row names, else the first array's length.
+        # A scalar-only function allocated ONE element here, and a kernel
+        # filling the `n` it was called with wrote past it.
+        len_expr = _out_length(_out_row)
         # call_args is: arr_ptr, arr_len, [more_arr_ptr, arr_len,] scalar1, ...
         # Insert `out` after the last (ptr, len) pair.
         _arr_count = sum(1 for p in params if is_array_param_type(p["type"]))
@@ -2201,7 +2303,7 @@ def make_functions_ctx(
                 authored_doc_lines(fn.get("doc", "")) or [name_summary(name)]
             )
         else:
-            _ret_ann, _py_params, _ = fn_py_surface(fn)
+            _ret_ann, _py_params, _ = fn_py_surface(fn, enums)
             doc = _build_ml_doc(
                 render_runtime_doc(
                     _blk,
@@ -2652,6 +2754,12 @@ def render_module_ext_aggregator(
     # component, so a view and its parent sharing a record_name publish one
     # type object rather than two, the second of which frees the first.
     _rec_seen: dict[str, _record.RecordReg] = {}
+    # gh-2344: one Python name per enum for the whole module. Two objects
+    # that index the same [[enum]] each carry its table, but only the first
+    # publishes it -- a second would overwrite the same attribute.
+    _enum_pub = _enumc.module_publication(
+        ctx.get("enum_publish_entries") or [] for ctx in comp_ctxs
+    )
     for ctx in comp_ctxs:
         type_ready_lines.append(
             f"    if (PyType_Ready(&{ctx['ComponentW']}Type) < 0) return NULL;"
@@ -2694,6 +2802,10 @@ def render_module_ext_aggregator(
         "Module": Module,
         "type_ready_checks": type_ready_checks,
         "add_object_calls": add_object_calls,
+        # gh-2344: the enum values the module publishes, one per name.
+        "enum_publish": (
+            "\n" + _enumc.publish_c(_enum_pub) if _enum_pub else ""
+        ),
         # gh-645: m_doc. Defaulted here so no render path can leak a literal
         # <<module_doc_c>> into generated C; the caller passes the manifest
         # string when the module declares one.

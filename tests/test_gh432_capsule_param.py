@@ -153,12 +153,13 @@ class TestGeneratedParseGlue:
             encoding="utf-8"
         )
         # const char * prefix parses as "s"; the defaulted uint32_t goes
-        # through the parse_type path (unsigned long + "k") after `|`, and
-        # its raw local seeds from the gh-240 default (drive-by fix: it
-        # previously seeded parse_zero, so an omitted arg yielded 0).
-        assert '"Os|k"' in ext
+        # through the parse_type path (long long + the checked "L", gh-2144)
+        # after `|`, and its raw local seeds from the gh-240 default
+        # (drive-by fix: it previously seeded parse_zero, so an omitted arg
+        # yielded 0).
+        assert '"Os|L"' in ext
         assert "const char * prefix = NULL;" in ext
-        assert "unsigned long decim_raw = 1;" in ext
+        assert "long long decim_raw = 1;" in ext
         assert "uint32_t decim = (uint32_t)decim_raw;" in ext
 
 

@@ -64,9 +64,11 @@ from __future__ import annotations
 import re
 
 from .. import _config as C
+from .. import _inflight
 from .._gluedoc import glue_methods
 from ._diagnostics import _c_string_literal
 from ._parse import _build_ml_doc
+from .._report import Refusal
 
 # A method name is interpolated straight into a C string literal *and* into
 # Python stub source, so it is held to the Python identifier grammar.
@@ -79,6 +81,12 @@ _DEFAULT_MSG = "{component}_destroy reported failure"
 # the undeclared-create_error spirit: a generic runtime failure, not a guess at
 # something more specific.
 _DEFAULT_CATEGORY = "RuntimeError"
+
+#: The binding-side field a lending object's teardown parks its state in, for
+#: ``tp_dealloc`` to free (gh-2187). Named once: the struct, the teardown and
+#: the dealloc spell it here, and `_docsync`'s ``deferred-free`` marker and
+#: `_object.jm_owned_functions` read a fragment for it.
+PARK_FIELD = "_jm_parked"
 
 
 def c_fn(csym: str, spec: dict, create_fn: str = "") -> str:
@@ -200,6 +208,7 @@ def validate_destroy_spec(
         "error_message",
         "exit",
         "fn",
+        "wake",
     }
     unknown = sorted(set(spec) - known)
     if unknown:
@@ -334,11 +343,53 @@ def _inherited_error(spec: dict, exit_method: dict) -> tuple[str, str]:
     )
 
 
+#: The local a waiting teardown holds the state in once ``self->handle`` is
+#: NULL (gh-2272).
+_TAKEN = "_jm_st"
+
+
+def _take_and_wait(waits: bool) -> tuple[str, str]:
+    """``(prologue, state_expr)`` for a teardown inside ``if (self->handle)``.
+
+    gh-2272: an object with a GIL-free method must not free under a call
+    still running it. The prologue NULLs ``self->handle`` FIRST -- so every
+    method, a call starting now included, refuses through its existing
+    guard -- then waits for the running ones with the GIL released, and the
+    free reads the state from a local. Without a released method there is
+    nothing to wait for, and the body is the one it always was.
+
+    Examples
+    --------
+    >>> _take_and_wait(False)
+    ('', 'self->handle')
+    >>> pro, st = _take_and_wait(True)
+    >>> st
+    '_jm_st'
+    >>> print(pro, end="")
+    ... # doctest: +ELLIPSIS
+            void *_jm_st = self->handle;
+            self->handle = NULL;
+    ...
+            if (jm_inflight_wait(&self->_jm_inflight) < 0) {
+                self->handle = _jm_st; return NULL;
+            }
+    """
+    if not waits:
+        return "", "self->handle"
+    return (
+        f"        void *{_TAKEN} = self->handle;\n"
+        "        self->handle = NULL;\n"
+        + _inflight.wait("self", f"self->handle = {_TAKEN}; return NULL;"),
+        _TAKEN,
+    )
+
+
 def _teardown_body(
     component: str,
     spec: dict,
     exit_method: dict | None,
     dfn: str,
+    waits: bool = False,
 ) -> str:
     """The shared ``close()``/``__exit__`` body.
 
@@ -352,6 +403,15 @@ def _teardown_body(
     falling back to the generic default. See `_inherited_error`.
     """
     if spec.get("returns") != "int":
+        if waits:
+            prologue, st = _take_and_wait(True)
+            return (
+                "    if (self->handle) {\n"
+                f"{prologue}"
+                f"        {dfn}({st});\n"
+                "    }\n"
+                "    Py_RETURN_NONE;\n"
+            )
         return (
             "    if (self->handle) {\n"
             f"        {dfn}(self->handle);\n"
@@ -362,16 +422,81 @@ def _teardown_body(
     if exit_method:
         category, _inherited_msg = _inherited_error(spec, exit_method)
         message = _inherited_msg or _DEFAULT_MSG.format(component=component)
-        return _teardown_int_body(component, category, message, dfn)
+        return _teardown_int_body(component, category, message, dfn, waits)
     category = spec.get("error") or _DEFAULT_CATEGORY
     message = spec.get("error_message") or _DEFAULT_MSG.format(
         component=component
     )
-    return _teardown_int_body(component, category, message, dfn)
+    return _teardown_int_body(component, category, message, dfn, waits)
+
+
+def _lent_phrase(lends: "bool | str") -> "tuple[str, str]":
+    """What a lending object's teardown comments say was lent (gh-2346).
+
+    ``(park, dealloc)``: the subject of `_park_body`'s comment and of the
+    deallocator's. `_borrow.lends` answers ``"capsule"`` for an object that
+    lends only its pointer, which has no views to speak of.
+
+    >>> _lent_phrase(True)[0]
+    'the views this object lent point'
+    >>> _lent_phrase("capsule")[1]
+    'the capsule this object lent; it is'
+    """
+    if lends == "capsule":
+        return (
+            "the capsule this object lent points",
+            "the capsule this object lent; it is",
+        )
+    return (
+        "the views this object lent point",
+        "the views this object lent; they are",
+    )
+
+
+def _park_body(
+    wake_call: str, lent: str = "the views this object lent point"
+) -> str:
+    """The teardown of an object that lends views (gh-2187).
+
+    Not a free: every view the object handed out points into the state and
+    pins the object, not the state, so freeing here left them dangling, and
+    a GIL-free call still running on another thread freed under its feet.
+    The state moves to ``_jm_parked`` and ``tp_dealloc`` frees it, which
+    runs only once the last view and in-flight call have let go of self.
+    With the handle NULL, every method refuses through its existing guard.
+    *wake_call*, when declared, first ends a blocking call that would
+    otherwise wait on the parked state for ever.
+
+    *lent* names what points into the state, for the comment: the views
+    (gh-2187) by default, or the capsule an object lends its pointer through
+    (gh-2346), which `_lent_phrase` picks from `_borrow.lends`.
+
+    Examples
+    --------
+    >>> print(_park_body(""), end="")
+    ... # doctest: +ELLIPSIS
+        if (self->handle) {
+    ...
+            self->_jm_parked = self->handle;
+            self->handle = NULL;
+        }
+        Py_RETURN_NONE;
+    """
+    return (
+        "    if (self->handle) {\n"
+        f"{wake_call}"
+        f"        /* gh-2187: {lent} into the\n"
+        "           state; the free waits for tp_dealloc, and every method\n"
+        "           refuses from here on. */\n"
+        f"        self->{PARK_FIELD} = self->handle;\n"
+        "        self->handle = NULL;\n"
+        "    }\n"
+        "    Py_RETURN_NONE;\n"
+    )
 
 
 def _teardown_int_body(
-    component: str, category: str, message: str, dfn: str
+    component: str, category: str, message: str, dfn: str, waits: bool = False
 ) -> str:
     """The fallible teardown block, once — inherited and declared alike.
 
@@ -380,13 +505,25 @@ def _teardown_int_body(
     differing only in where their strings came from is precisely the shape
     this whole key is removing.
     """
+    if waits:
+        prologue, st = _take_and_wait(True)
+        call = (
+            f"{prologue}"
+            f"        int rc = {dfn}({st});\n"
+            "        /* gh-541: the handle is already clear, so a second\n"
+            "           call is a no-op rather than a double free. */\n"
+        )
+    else:
+        call = (
+            f"        int rc = {dfn}(self->handle);\n"
+            "        /* gh-541: clear the handle before reporting, so a second\n"
+            "           call is a no-op rather than a double free — the state is\n"
+            "           released whatever the status says. */\n"
+            "        self->handle = NULL;\n"
+        )
     return (
         "    if (self->handle) {\n"
-        f"        int rc = {dfn}(self->handle);\n"
-        "        /* gh-541: clear the handle before reporting, so a second\n"
-        "           call is a no-op rather than a double free — the state is\n"
-        "           released whatever the status says. */\n"
-        "        self->handle = NULL;\n"
+        f"{call}"
         "        if (rc != 0) {\n"
         f"            PyErr_SetString(PyExc_{category},\n"
         f"{_c_string_literal(message, 28)});\n"
@@ -517,6 +654,8 @@ def make_destroy_ctx(
     create_fn: str = "",
     *,
     csym: str,
+    lends: bool,
+    releases: "bool | None" = None,
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -571,7 +710,8 @@ def make_destroy_ctx(
 
     Examples
     --------
-    >>> ctx = make_destroy_ctx("acq", "AcqObj", None, [], csym="acq")
+    >>> ctx = make_destroy_ctx("acq", "AcqObj", None, [], csym="acq",
+    ...                        lends=False)
     >>> print(ctx["destroy_dealloc_call"], end="")
         if (self->handle)
             acq_destroy(self->handle);
@@ -579,7 +719,7 @@ def make_destroy_ctx(
     ('void', '')
     >>> ctx = make_destroy_ctx("w", "WObj", {"name": "close",
     ...                                      "aliases": ["destroy"]}, [],
-    ...                        csym="w")
+    ...                        csym="w", lends=False)
     >>> [ln for ln in ctx["destroy_pymethoddef"].splitlines()
     ...  if "PyCFunction" in ln]
     ['    {"close",  (PyCFunction)WObj_destroy,  METH_NOARGS,', \
@@ -598,6 +738,16 @@ def make_destroy_ctx(
     dfn = c_fn(csym, spec, create_fn)
     validate_destroy_spec(component, spec)
     fallible = spec.get("returns") == "int"
+    # gh-2272: a method that releases the GIL can still be running when an
+    # explicit teardown arrives on another thread. A lending object parks
+    # its state for tp_dealloc (gh-2187), which a running call's reference
+    # already holds off; every other object waits for the call here.
+    # *releases* is passed only to render the OTHER status, which is how a
+    # module fragment recognises a teardown jm wrote before the object
+    # started or stopped releasing (`_object._relent_teardown`).
+    if releases is None:
+        releases = any(m.get("nogil") for m in (methods or []))
+    waits = releases and not lends
 
     if fallible:
         # gh-541: the one path that must NOT raise. Stated in the generated C
@@ -614,6 +764,75 @@ def make_destroy_ctx(
         )
     else:
         dealloc = f"    if (self->handle)\n        {dfn}(self->handle);\n"
+
+    # gh-2187: an object that LENDS views (`_borrow.lends`) must not free
+    # under them. Each view pins this object, not its memory, so an explicit
+    # destroy()/__exit__ that freed left every outstanding view dangling.
+    # Its teardown parks the state instead and tp_dealloc frees it, once the
+    # last view and in-flight call have let go of self. A status has no
+    # caller in tp_dealloc, so a fallible destroy cannot be deferred: that
+    # pair is refused, pointing at the finalizer that can report one.
+    if lends and fallible:
+        raise Refusal(
+            f"object '{component}': [{component}.destroy] returns = \"int\" "
+            f"on an object that lends "
+            f"{'its pointer as a capsule (gh-2346)' if lends == 'capsule' else 'views (gh-2187)'}"
+            f". Its destroy() defers "
+            f"the free to tp_dealloc, where a status has no caller to reach. "
+            f"Report the failure from a finalizer instead: declare it as a "
+            f"method and name it with `exit` (gh-805 §H)."
+        )
+    wake_name = str(spec.get("wake") or "")
+    wake_call = ""
+    if wake_name:
+        if not lends:
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' on an object that lends no views. A wake "
+                f"exists for a deferred free (gh-2187): it ends a blocking "
+                f"call that still holds the object. This destroy() frees "
+                f"at once, so nothing is left to wake."
+            )
+        if methods is None:
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' was declared, but this render path did not "
+                f"supply the method list. Pass methods= to make_destroy_ctx."
+            )
+        wake_m = next((m for m in methods if m.get("name") == wake_name), None)
+        if wake_m is None:
+            declared = ", ".join(
+                sorted(m.get("name", "") for m in methods if m.get("name"))
+            )
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' is not a declared method. "
+                f"Declared: {declared or 'none'}."
+            )
+        if (
+            wake_m.get("arg_type", "void") != "void"
+            or wake_m.get("return_type", "void") != "void"
+            or wake_m.get("params")
+        ):
+            raise Refusal(
+                f"object '{component}': [{component}.destroy] wake "
+                f"'{wake_name}' must take the state alone and return "
+                f'nothing (arg_type and return_type "void", no params): '
+                f"destroy() calls it with the handle and no arguments."
+            )
+        wake_call = (
+            f"        {C.method_c_symbol(csym, wake_m)}(self->handle);"
+            "  /* gh-2187: wake */\n"
+        )
+    if lends:
+        dealloc = (
+            "    /* gh-2187: destroy() parks the state here instead of\n"
+            f"       freeing it under {_lent_phrase(lends)[1]}\n"
+            "       gone now, so the free is now. */\n"
+            f"    if (self->handle)\n        {dfn}(self->handle);\n"
+            f"    if (self->{PARK_FIELD})\n"
+            f"        {dfn}(self->{PARK_FIELD});\n"
+        )
 
     # gh-805 §H: `exit` redirects __exit__ at a finalizing method. Resolved
     # BEFORE the teardown body, because the destructor inherits the
@@ -643,7 +862,15 @@ def make_destroy_ctx(
                 f"Declared: {declared or 'none'}."
             )
 
-    body = _teardown_body(component, spec, exit_method or None, dfn)
+    body = (
+        _park_body(wake_call, _lent_phrase(lends)[0])
+        if lends
+        else _teardown_body(component, spec, exit_method or None, dfn, waits)
+    )
+    if releases:
+        # The count lives on every releasing object, lending or not: the
+        # region counts on it either way. A wait may have allocated its lock.
+        dealloc += _inflight.free("self")
 
     names = destroy_py_names(spec)
     # gh-647: one definition of the teardown prose, rendered to both faces.
@@ -686,7 +913,7 @@ def make_destroy_ctx(
 
     def _doc_for(n: str) -> tuple[str, str]:
         """``(pyi_docstring, c_string_literal)`` for teardown name *n*."""
-        gm = glue_methods(Component, close_name=n)[n]
+        gm = glue_methods(Component, close_name=n, lends=lends)[n]
         return (
             "\n".join(gm.pyi_doc(raises=_raises)) + "\n",
             _build_ml_doc(gm.c_doc_lines(raises=_raises)),
@@ -756,6 +983,16 @@ def make_destroy_ctx(
         ),
         "pyi_exit_sig": _exit_sig,
         "destroy_dealloc_call": dealloc,
+        # gh-2187: where a lending object's teardown parks its state.
+        "destroy_fields": (
+            (
+                f"    {csym}_state_t *{PARK_FIELD};"
+                "  /* gh-2187: freed by tp_dealloc */\n"
+                if lends
+                else ""
+            )
+            + (_inflight.struct_field() if releases else "")
+        ),
         "destroy_method_body": body,
         # gh-805 §H: the two were one string on purpose (gh-541 — the explicit
         # call and the context manager must agree about raising). They still

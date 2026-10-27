@@ -13,7 +13,8 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 complex-spelling-check code-span-check \
                 coverage-subprocess-check coverage-shard \
                 gates-index gates-declared-check \
-                doppler-pin-check consumer-smoke install-history-update
+                doppler-pin-check consumer-smoke install-history-update \
+                ci-test-legs site-files
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -224,3 +225,24 @@ consumer-smoke: ## Install jm packages, consume them by the official instruction
 install-history-update: ## Record the root install section's commands for adopt
 	@python3 scripts/install_history.py
 	@$(RUFF) format -q src/just_makeit/_installhistory.py
+
+# gh-2125: which `test` legs a ci.yml run owes, from the matrix the
+# toolchain job's `legs` step declares (MATRIX, TRIM) and the run's EVENT
+# and TESTED, all read from the environment as that step sets them. A PR
+# runs each TRIM os at its oldest and newest Python only; the push that lands
+# a PR whose tree it tested runs exactly what that PR trimmed; anything else
+# runs every leg. tests/test_own_ci_matrix.py runs it for each event.
+ci-test-legs: ## Print matrix= for ci.yml's test job (MATRIX, TRIM, EVENT, TESTED)
+	@python3 scripts/ci-test-legs.py
+
+# The files the published site carries that the docs build does not make:
+# `install.sh` (what `curl -fsSL <site>/install.sh` fetches) and
+# `aliases.toml` (what `jbx just-makeit:NAME` reads first). It is the ONE
+# recipe `DOCS_BUILD_CMD` runs after the zensical build, and the one
+# tests/test_aliases_toml_published.py runs into a temporary SITE_FILES_DIR,
+# so the test reads what the real build copies and needs no zensical.
+SITE_FILES_DIR ?= site
+site-files: ## Copy install.sh and aliases.toml into SITE_FILES_DIR (default site/)
+	mkdir -p $(SITE_FILES_DIR)
+	cp install.sh $(SITE_FILES_DIR)/install.sh
+	cp aliases.toml $(SITE_FILES_DIR)/aliases.toml

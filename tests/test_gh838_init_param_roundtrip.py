@@ -429,13 +429,16 @@ class TestTheTwoSyntaxesAgree:
     """The drift itself, asserted directly."""
 
     def test_they_write_the_same_key_set(self):
+        """gh-2045 made them one writer; what both read back is asserted,
+        so the table and the inline spelling cannot drift again."""
         param = _maximal_param()
-        block = {
-            line.split(" = ", 1)[0]
-            for line in C._init_param_block_lines(param)
+        cfg = {
+            "obj": {
+                "init_params": [param],
+                "views": [{"class_name": "V", "init_params": [param]}],
+            }
         }
-        inline = {
-            piece.split(" = ", 1)[0]
-            for piece in C._init_param_inline(param).strip("{}").split(", ")
-        }
+        back = C.tomllib.loads(C._dump(cfg))["obj"]
+        block = set(back["init_params"][0])
+        inline = set(back["views"][0]["init_params"][0])
         assert block == inline == set(param)

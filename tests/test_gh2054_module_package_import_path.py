@@ -153,7 +153,8 @@ def tree(tmp_path_factory):
         _edit(root, _declare)
         _ok(root, "apply")
         _ok(root, "app", "--object", "o", *_M, "--target", "pep723")
-        _ok(root, "app", "--object", "o", *_M, "--target", "console")
+        _ok(root, "app", "--object", "o", *_M, "--target", "console",
+            "--name", "o_cli")  # fmt: skip
     return root, calls
 
 

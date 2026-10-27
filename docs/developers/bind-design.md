@@ -218,7 +218,9 @@ ______________________________________________________________________
     package name), and `just-makeit.toml` when one exists — for the header
     layout and the C symbol stem, and to refuse a component it declares
     (gh-2072): a declared component's binding has one owner, `jm apply`,
-    and a header cannot say all the manifest does.
+    and a header cannot say all the manifest does. With no manifest, the
+    tree answers both (gh-1895): the layout is the one the header is found
+    in, and the C prefix is the one its `<prefix>_<comp>_state_t` declares.
 - **TOML is *one* front-end, header is another.** Both produce the
     same context dict; the renderer doesn't know which one emitted it.
 - **Imported libraries become bindable.** Drop a vendored

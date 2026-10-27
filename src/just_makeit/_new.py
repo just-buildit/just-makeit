@@ -12,6 +12,7 @@ from . import _textio
 
 import sys
 from pathlib import Path
+from typing import Callable
 
 from . import _color as Color
 from . import _config as C
@@ -41,6 +42,9 @@ def _make_project_ctx(
         "project": project.replace("_", "-"),
         "project_underscore": project,
         "version": version,
+        # gh-2083/gh-2084: the CMake copy's spelling, rendered beside the full
+        # version. `project(VERSION)` takes the release segment only.
+        "cmake_version": C.cmake_version(version),
         "ensure_pytest_win": ensure_win,
         "ensure_pytest_unix": ensure_unix,
         "py_test_cmd_win": cmd_win,
@@ -53,6 +57,49 @@ def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _textio.write_text(path, content)
     print(f"  create  {path}")
+
+
+def _write_project_wiring(root: Path, project: str, cfg: dict) -> None:
+    """Write the root wiring *cfg*'s ``[project]`` table declares.
+
+    Two things in the root ``CMakeLists.txt`` follow from ``[project]``
+    alone, with no component involved: an ``add_subdirectory`` for each
+    ``c_deps`` entry, and the ``# ── External deps`` block that
+    ``find_packages`` / ``pkg_modules`` (and the public defines and link
+    libraries) fill. `apply` writes both, and until gh-2062 nothing else
+    did: a project was born without them, and its first component left
+    the file STALE. That went unseen because `status` stopped early on a
+    manifest declaring no component, so the project read clean exactly
+    while nothing was being checked (gh-2076).
+
+    So the creating command writes them, through the writers that put the
+    same lines in an existing project -- never a copy of their text:
+
+    - each c_dep through :func:`_libwiring.splice_cmake_component`, the
+      writer every adder wires its own block with, which places it in the
+      order `apply` uses (:func:`_libwiring.section_order` lists the
+      c_deps first);
+    - the external-deps block through `apply`'s own splice of it, which
+      leaves the file untouched when the manifest declares nothing.
+
+    Parameters
+    ----------
+    root : Path
+        The new project's directory. Its manifest must already be saved:
+        the c_dep splice reads the order of the blocks from it.
+    project : str
+        The package name, which names the combined C library targets.
+    cfg : dict
+        The manifest just saved.
+    """
+    from ._apply import _splice_cmake_external_deps
+    from ._libwiring import splice_cmake_component
+
+    for dep in C.c_deps(cfg):
+        splice_cmake_component(root, project, dep, [])
+    cmake = root / "CMakeLists.txt"
+    if _splice_cmake_external_deps(cmake, cfg):
+        print(f"  update  {cmake}")
 
 
 #: The generated README's backend-specific text, one row per build backend,
@@ -107,6 +154,85 @@ README_BY_BACKEND = {
 DEFAULT_C_PREFIX = object()
 
 
+def makefile_text(
+    project: str,
+    build_system: str,
+    *,
+    pytest_: bool,
+    schema: int,
+    c_prefix: "str | None",
+) -> str:
+    """The Makefile `run` writes for *build_system*, as text.
+
+    gh-1899. One render path for both `run` and the backend check in
+    `makefile_backend`: a second copy of this context would be exactly the
+    peer implementation that drifts, so `run` calls this too. The context is
+    the one `run` builds for the Makefile: the project, the pytest flag, and the
+    owner the include slots read (schema, and the C prefix when there is one).
+    """
+    owner = {"project": {"name": project, "schema": str(schema)}}
+    if c_prefix is not None:
+        owner["project"]["c_prefix"] = c_prefix
+    ctx = _make_project_ctx(project, pytest_=pytest_)
+    ctx.update(INC.ctx_slots(owner))
+    tmpl = T.MAKEFILE if build_system == "cmake" else T.MAKEFILE_SIMPLE
+    return T.render(tmpl, ctx)
+
+
+#: A line that only one backend's Makefile carries, and that a patched
+#: rendering keeps: the make Makefile's TARGETS list, the cmake Makefile's
+#: cache rule. Each is checked against its template when used, so a template
+#: that loses its marker fails the gate rather than silently skipping the check.
+BACKEND_MARKER = {
+    "make": "TARGETS :=",
+    "cmake": "$(BUILD_DIR)/CMakeCache.txt:",
+}
+
+
+def other_backend(cfg: dict) -> str:
+    """The build backend *cfg* does NOT name: the one a stale Makefile could be.
+
+    gh-1899. Spelled once, because the flip is asked for in three places (the
+    other-backend replay, the reconcile step and the status check), and a
+    second spelling is where they would drift apart.
+    """
+    return "make" if C.build_system(cfg) == "cmake" else "cmake"
+
+
+def _marked(text: str, backend: str) -> bool:
+    """True when *text* has *backend*'s marker line (gh-1899)."""
+    prefix = BACKEND_MARKER[backend]
+    return any(line.lstrip().startswith(prefix) for line in text.splitlines())
+
+
+def is_other_backend_makefile(
+    root: Path,
+    current: str,
+    other_name: str,
+    other: "Callable[[], str | None]",
+) -> bool:
+    """True when the project's Makefile is the OTHER backend's render (gh-1899).
+
+    Switching `[project] build` leaves the old backend's Makefile in place: it
+    is create-only, and nothing ties it to the manifest. *current* is the
+    Makefile the replay renders for the manifest as it stands. A Makefile equal
+    to that is not a mismatch. A Makefile without *other_name*'s marker cannot
+    be that backend's render, so it is not one, and no replay is needed.
+    Otherwise *other* is called (a whole replay) for that backend's Makefile,
+    and a match with it is the mismatch. An author's edit matches neither, and
+    is theirs, so jm does not claim it. CRLF is compared as LF, as `status`
+    compares every other generated file (gh-1641).
+    """
+    path = root / "Makefile"
+    if not path.is_file():
+        return False
+    real = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    if real == current or not _marked(real, other_name):
+        return False
+    text = other()
+    return text is not None and real == text.replace("\r\n", "\n")
+
+
 def run(
     project: str,
     dest: Path | None = None,
@@ -132,6 +258,7 @@ def run(
     c_format_command: list[str] | None = None,
     schema: int | None = None,
     c_prefix: "str | None | object" = DEFAULT_C_PREFIX,
+    version: str = "0.1.0",
 ) -> None:
     C.require_name(project, "project")
     # gh-1583: the schema decides the header layout, and the manifest that
@@ -164,7 +291,7 @@ def run(
         )
         sys.exit(1)
 
-    ctx = _make_project_ctx(project, pytest_=pytest_)
+    ctx = _make_project_ctx(project, version=version, pytest_=pytest_)
     ctx.update(INC.ctx_slots(owner))
 
     def r(tmpl):
@@ -175,7 +302,16 @@ def run(
 
     if build_system == "cmake":
         _write(root / "CMakeLists.txt", r(T.CMAKE_LISTS_TOP))
-        _write(root / "Makefile", r(T.MAKEFILE))
+        _write(
+            root / "Makefile",
+            makefile_text(
+                project,
+                "cmake",
+                pytest_=pytest_,
+                schema=schema,
+                c_prefix=c_prefix,
+            ),
+        )
         # Only the cmake build emits a compile database, so only it can run
         # clang-tidy — and a config with nothing to run it is exactly the dead
         # file gh-941 was about. The `make` build system gets no .clang-tidy.
@@ -189,7 +325,16 @@ def run(
         _write(root / "CMakePresets.json", T.CMAKE_PRESETS_JSON)
         ctx.update(README_BY_BACKEND["cmake"])
     else:
-        _write(root / "Makefile", r(T.MAKEFILE_SIMPLE))
+        _write(
+            root / "Makefile",
+            makefile_text(
+                project,
+                "make",
+                pytest_=pytest_,
+                schema=schema,
+                c_prefix=c_prefix,
+            ),
+        )
         # The README describes the build its own Makefile runs: one README
         # for both backends advertised CMake, a Windows build and
         # `make docs` to a make-backend project, which has none of them.
@@ -238,9 +383,8 @@ def run(
     )
     if c_prefix is not None:
         cfg.setdefault("project", {})["c_prefix"] = c_prefix
-    # External-dep declarations land in [project] so jm apply's
-    # _splice_cmake_external_deps picks them up and writes the
-    # `# ── External deps` sentinel block in the top CMakeLists.txt.
+    # External-dep declarations land in [project]; the root wiring they
+    # declare is written below, once the manifest holding them is saved.
     if find_packages:
         cfg.setdefault("project", {})["find_packages"] = list(find_packages)
     if pkg_modules:
@@ -299,6 +443,8 @@ def run(
         )
     print(f"  create  {root / C.FILENAME}")
     _write(root / "bootstrap.toml", r(T.BOOTSTRAP_TOML))
+    if build_system == "cmake":
+        _write_project_wiring(root, project, cfg)
     print()
 
     if object_names:

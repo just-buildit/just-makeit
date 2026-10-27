@@ -229,7 +229,7 @@ def import_path(cfg: dict, module: str) -> str:
     mp = C.module_paths(module)
     # `[module.X] package` moves the `.so` into a sibling package, and the
     # CMake output dir follows it -- so the import path has to as well.
-    where = (C.module_package(cfg, module) or mp.pypath).replace("/", ".")
+    where = C.module_package_resolved(cfg, module).replace("/", ".")
     return f"{pkg}.{where}.{mp.leaf}"
 
 

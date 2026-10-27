@@ -41,6 +41,7 @@ def _dealloc(component="f32_buffer", spec=None, create_fn=""):
         [],
         create_fn=create_fn,
         csym=component,
+        lends=False,
     )["destroy_dealloc_call"]
 
 
@@ -83,6 +84,7 @@ class TestTheBindingCallsIt:
             [],
             create_fn="dp_wfm_create",
             csym="wfm_writer",
+            lends=False,
         )
         assert (
             "int rc = dp_wfm_destroy(self->handle);"

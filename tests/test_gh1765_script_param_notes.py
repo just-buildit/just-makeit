@@ -57,6 +57,7 @@ _REPRESENTATIVE: dict[str, object] = {
     "doc": "The tap count.",
     "capsule": "p.handle",
     "header": "p/handle.h",
+    "retain": True,
     "rank": 1,
     "elements_per_sample": 2,
     "role": "tag",

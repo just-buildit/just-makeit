@@ -277,6 +277,11 @@ CASES = {
             [("object", "x"), ("apply",), ("object", "y")],
         ),
     },
+    "_new._write_project_wiring": {
+        # gh-2062: `jm new` wires its own c_deps, each on top of the last,
+        # so two of them land in reverse until the sort.
+        "two-c-deps": (("--c-dep", "vend", "--c-dep", "alpha"), []),
+    },
     "_object.run": {
         # A module object's place follows its MODULE's, and modules/*.toml
         # load sorted too.

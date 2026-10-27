@@ -138,6 +138,22 @@ Notes:
     init-param and as a method / module-function `--param`, where Python
     passes a `str`. If you need a string in state, declare an opaque
     field and copy / strdup it in your `_core.c` `create()` body.
+
+- **An integer the C type cannot hold is refused, not wrapped**
+    (gh-2144). Passing `300` to an `int8_t` raises
+    `OverflowError: gain: 300 is out of range for int8_t [-128, 127]`,
+    on every face that takes a scalar: a constructor, a setter, a method
+    or function param, `step()` and its controllable overrides, a composer
+    row, a handle or capsule module. numpy refuses
+    `np.int8(300)` the same way. `uint64_t` and `size_t` included: `-1`
+    raises `OverflowError` rather than arriving as `2**64 - 1` (gh-2220).
+    Every integer face takes any object with `__index__`, a numpy integer
+    such as `np.uint64(5)` included, and refuses a `float` with
+    `TypeError`.
+    A generated C command line -- a `jm app` executable, a composer's CLI --
+    refuses a flag the same way, `-1` for a `uint64_t` included: it prints
+    `<prog>: --gain: '300' is out of range for int8_t [-128, 127]` and
+    exits 2 (gh-2225).
     `--state`, `jm add` and a manifest `[[<obj>.state]]` entry all refuse
     it, as a scalar and as a `T[N]` element, and say so. So do
     `--arg-type` / `--return-type` and a manifest `arg_type` /
@@ -380,6 +396,27 @@ Explicit defaults must be valid C literals for the type:
 > **Note:** Complex defaults are C complex literals:
 > `--state 'pole:double _Complex:1.0+2.0*I'` (the stub shows `(1+2j)`).
 
+A default is one value with two spellings. The C faces write it as declared;
+every Python face (the generated test, the stub's signature and doctest, the
+runtime docstring) writes the same value in Python (gh-1946):
+
+| Declared (C)           | Python spelling                       |
+| ---------------------- | ------------------------------------- |
+| `0.1L`, `1.5f`, `7ULL` | `0.1`, `1.5`, `7` (suffix dropped)    |
+| `017` (octal), `0x1F`  | `0o17`, `0x1F`                        |
+| `2` in a `double`      | `2.0`                                 |
+| `0.1f` in a `double`   | `0.10000000149011612` (what C stores) |
+
+Two literals have no Python spelling and are refused where they are declared:
+an octal with an 8 or 9 in it (`08`, which C refuses too), and a floating
+literal for an integer type (`1.5` or `1e3` into an `int`, which C converts
+silently and Python refuses).
+
+A stub's doctest prints what the getter returns, which for a `float` or
+`float _Complex` field is the declared value rounded to single precision:
+`--state 'z:float _Complex:0.1'` reads back `(0.10000000149011612+0j)`
+(gh-1947).
+
 ## C to Python mapping
 
 Getters return the matching Python scalar (`float`, `int`, `complex`, `bool`);
@@ -395,10 +432,10 @@ void    <pkg>_engine_set_channel(<pkg>_engine_state_t *state, uint8_t val);
 
 ```python
 def get_gain(self) -> float: ...
-def set_gain(self, value: float) -> None: ...
+def set_gain(self, value: float, /) -> None: ...
 
 def get_channel(self) -> int: ...
-def set_channel(self, value: int) -> None: ...
+def set_channel(self, value: int, /) -> None: ...
 ```
 
 ## Notes
@@ -557,6 +594,38 @@ list also attaches each constant's `///<` doc to its choice in the
 docstrings. Worked end to end:
 [Binding a C enum whose values are not 0..n-1](examples/enum_constants.md).
 
+#### Reading an enum from Python — the published value
+
+An integer from the C side can reach Python without going through an
+`enum = "<name>"` property: a struct-sequence field, a value read back from
+a file. Each `[[enum]]` that a module's or object's bindings index is
+therefore also published as an attribute of the extension module its object
+is built into, named by its `name` in upper case, so the reader decodes the
+integer with the same list the binding uses:
+
+```python
+from proj.eng import ENG_STATE   # [[enum]] name = "eng_state"
+
+ENG_STATE[2]                     # "tracking" (values in C order)
+```
+
+Without `enumerators` the attribute is a `tuple` indexed by the C int. With
+`enumerators` it is a `dict` from each C constant to its name, since jm
+cannot read the constants' values, so only a literal `0, 1, ..., n-1` is
+known to be positional. An enum no object binding indexes is not published.
+Views, module-level `function` parameters and handle, capsule and composer
+modules publish nothing yet (gh-2369). A module publishes a shared enum once,
+under one name, and its package re-exports it with the module's types, so
+`from proj.filters import ENG_STATE` works as `from proj.filters import Fir`
+does (gh-2372). The `.pyi` declares the attribute as `tuple[str, ...]` or
+`dict[int, str]`.
+
+A module object publishes only the enums whose tables its binding fragment
+(`<module>_ext_<object>.c`) defines. The fragment is yours, so `apply` does
+not add a table to it when you declare `enum =` on a param it already
+binds. That enum is published once the fragment has its table: delete the
+fragment and re-run `apply` to receive it, as `jm status` suggests.
+
 ______________________________________________________________________
 
 ## Module-function param types
@@ -572,10 +641,13 @@ choices or 2-D arrays.
 | `--out-param name:T[]` | Array shapes **only**. Drops `const`. Rejected for scalars (gh-72).                                                                                           |
 
 `jm function --out-type T` makes the function return a fresh ndarray sized
-from the first array param's length, or — when no array param is present —
-from the first integer scalar param (gh-65). With `--variable-output`,
+from the first array param's length. `--out-type 'T[n]'` names the integer
+param that holds the length instead (`make_window(512)` from
+`--param n:size_t --out-type 'float[n]'`). With `--variable-output`,
 `--out-size EXPR` sizes it with a C expression over the arguments instead,
-and the C function returns how many elements it wrote.
+and the C function returns how many elements it wrote. The C function is
+handed only the pointer, never the length, so an output with none of these
+is refused rather than guessed at (gh-1888).
 
 ______________________________________________________________________
 
@@ -635,6 +707,15 @@ frame.add_stage(2, "nope")         # ValueError: invalid kind 'nope'
 A `default` is the choice **string**, not the C index — an int default is
 refused at generation time rather than failing on the first call that omits
 the argument.
+
+**The docstring lists the choices, not the header's prose.** An enum-backed
+parameter is documented as `One of "none", "rs", "conv".` on
+every face that documents a parameter — a method, a module function, a
+handle method, and an object's or handle's constructor — in the runtime
+`__doc__` and the `.pyi` alike. The header's `@param` for that argument
+describes the C `int` (`0 none, 1 rs`), which is the one thing a Python
+caller must not pass, so it is not used. To say more about the argument,
+give it a manifest `doc`: it is shown first, with the choices after it.
 
 ______________________________________________________________________
 

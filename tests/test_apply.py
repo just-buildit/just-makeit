@@ -309,11 +309,15 @@ class TestApplyErrors:
         with pytest.raises(SystemExit):
             apply_run(tmp_path)
 
-    def test_empty_manifest_exits(self, tmp_path):
+    def test_empty_manifest_is_not_an_error(self, tmp_path, capsys):
+        """gh-2076: a manifest declaring no component still owns the
+        project's root files, so `apply` reconciles them rather than
+        refusing with "nothing to materialize"."""
         proj = tmp_path / "proj"
         new_run("proj", proj, c_prefix=None)
-        with pytest.raises(SystemExit):
-            apply_run(proj)
+        capsys.readouterr()
+        apply_run(proj)
+        assert "already matches" in capsys.readouterr().out
 
 
 _COUNTER_FRAGMENT = """\

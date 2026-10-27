@@ -659,7 +659,9 @@ c_deps = ["resamp", "fft"]
 
 `jm apply` emits an `add_subdirectory(native/src/<dep>)` block for each
 entry, **prepended before all component and module blocks** so that CMake
-sees the target definitions before any `target_sources(… TARGET_OBJECTS:<dep>_core)` that references them.
+sees the target definitions before any `target_sources(… TARGET_OBJECTS:<dep>_core)` that references them. `jm new --c-dep <dep>` writes the same
+line when it creates the project, so a new project is in sync before any
+component exists.
 
 No Python scaffolding is generated for `c_deps` entries — they are C-only
 libraries. Create their `CMakeLists.txt` by hand; `jm apply` only wires

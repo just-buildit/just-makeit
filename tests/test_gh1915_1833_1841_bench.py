@@ -145,9 +145,56 @@ def test_1841_one_slow_file_costs_only_itself(tmp_path):
     names = [b["fullname"] for b in snap["benchmarks"]]
     assert any("test_fast_bench" in n for n in names), names
     assert not any("test_slow_bench" in n for n in names), names
-    assert any(t.endswith("test_slow_bench.py") for t in snap["timed_out"]), (
-        snap["timed_out"]
+    # gh-2135: the slow file is retried one benchmark at a time, so the entry
+    # names the benchmark, not the file.
+    assert any(
+        t.endswith("test_slow_bench.py::test_slow_bench")
+        for t in snap["timed_out"]
+    ), snap["timed_out"]
+
+
+MIXED_BENCH = """\
+import time
+
+
+def test_fast_bench(benchmark):
+    benchmark(lambda: sum(range(100)))
+
+
+def test_slow_bench(benchmark):
+    benchmark(lambda: time.sleep(300))
+"""
+
+
+def test_2135_a_fast_and_a_slow_benchmark_in_one_file(tmp_path):
+    """gh-2135: a file with one fast and one slow benchmark keeps the fast
+    result and names the slow benchmark in timed_out.
+
+    On the file-level budget alone the whole file is lost, the fast result
+    too, because pytest-benchmark writes its JSON once per run. The file is
+    run again one benchmark at a time, each under the same budget, so only the
+    slow one costs anything.
+    """
+    proj = _bench_project(tmp_path)
+    (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
+    (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
+    (proj / "src" / "p" / "tests" / "test_mixed_bench.py").write_text(
+        MIXED_BENCH
     )
+    with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
+        f.write("\n[project.bench]\ntimeout = 15\n")
+
+    r = run_cli("bench", "--python-only", "--tag", "mixed", cwd=proj)
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    snap = _snapshot(proj, "mixed")
+    names = [b["fullname"] for b in snap["benchmarks"]]
+    assert any("test_fast_bench" in n for n in names), names
+    assert not any("test_slow_bench" in n for n in names), names
+    assert any(
+        t.endswith("test_mixed_bench.py::test_slow_bench")
+        for t in snap["timed_out"]
+    ), snap["timed_out"]
 
 
 def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
@@ -167,3 +214,65 @@ def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
 
     assert r.returncode == 1, r.stdout + r.stderr
     assert "bench_broken.py" in r.stderr, r.stderr
+
+
+IMPORT_SLEEP_S = 60
+
+IMPORT_SLEEP_BENCH = f"""\
+import time
+
+time.sleep({IMPORT_SLEEP_S})
+
+
+def test_never_reached(benchmark):
+    benchmark(lambda: None)
+"""
+
+
+def test_2135_a_file_slow_to_import_is_named_within_three_budgets(tmp_path):
+    """gh-2135: a file whose import outlasts the budget is named, and jm stops
+    in about three budgets: the whole-tree listing, the file's run, and the
+    file's own listing. Without the listings' timeouts it would wait out the
+    import, which is worse than main."""
+    import time as _time
+
+    proj = _bench_project(tmp_path)
+    (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
+    (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
+    (proj / "src" / "p" / "tests" / "test_import_slow.py").write_text(
+        IMPORT_SLEEP_BENCH
+    )
+    with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
+        f.write("\n[project.bench]\ntimeout = 8\n")
+    # Build before the clock starts. `jm bench` builds the project first, and
+    # that build is untimed by design (gh-1687), so it is no budget of the
+    # three this test bounds. Left inside the window, a cold build on a loaded
+    # macOS runner put the run at 33 s against the 32 s bound (CI run
+    # 38131413484); built here, the CLI's own build is a no-op.
+    from just_makeit._bench import _ensure_built, _project_python
+
+    _ensure_built(proj, proj / "build", _project_python(proj))
+
+    t0 = _time.monotonic()
+    r = run_cli("bench", "--python-only", "--tag", "slowimport", cwd=proj)
+    elapsed = _time.monotonic() - t0
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    # jm stops after three budgets (the whole-tree listing, the file's run and
+    # the file's own listing, each at most 8 s: about 24 s here). Without a
+    # listing's bound it waits out the import instead, so a broken run takes
+    # at least IMPORT_SLEEP_S plus two budgets. The bound sits at the import
+    # itself, the line between the two outcomes, not just above the good
+    # one: a slack of one budget over three was spent by runner overhead
+    # alone on macOS (38 s against 32, CI run 38387484640).
+    assert elapsed < IMPORT_SLEEP_S, (
+        f"took {elapsed:.0f} s: jm waited out the {IMPORT_SLEEP_S} s import"
+        " instead of stopping at its budgets"
+    )
+    # No benchmark is ever listed, so no snapshot is written; the file is named
+    # on the output, as every timed-out run is.
+    out = r.stdout + r.stderr
+    assert (
+        "timeout    pytest --benchmark-only src/p/tests/test_import_slow.py"
+        in out
+    ), out

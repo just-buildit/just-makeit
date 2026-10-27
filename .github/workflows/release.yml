@@ -1,4 +1,10 @@
 name: Release
+# The tag under release, in the run's title, for both triggers. A dispatch
+# (`-f tag=`, the recovery when a tag's own run failed) runs on `main`, so
+# `head_branch` names the branch, not the tag; artifact.yml's post-publish
+# smoke reads the version from this title instead (v0.109.0 installed
+# `just-makeit==main`).
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
 on:
   push:
@@ -16,6 +22,17 @@ on:
         required: true
         type: string
 
+# gh-2260: one tag push started TWO runs of this workflow (v0.104.0), both
+# past verify-ci and racing to publish. Keyed on the TAG, so a duplicate
+# push run and a dispatch for the same tag share one group (a dispatch's
+# `github.ref` is the branch, so it alone would not). cancel-in-progress
+# stays false: cancelling a run mid-publish could leave a version half
+# shipped. The later run waits instead, and the "already on PyPI" step in
+# `resolve` then ends it green without publishing again.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   # One place resolves what is being released, so every job below reads the
   # same answer. On a tag push these are exactly the values the jobs used
@@ -27,6 +44,22 @@ jobs:
     outputs:
       tag: ${{ steps.r.outputs.tag }}
       sha: ${{ steps.r.outputs.sha }}
+      # "true" only when PyPI already serves this exact version; verify-ci,
+      # build, the smokes and publish are skipped then, so a duplicate run
+      # cannot publish twice or fail on PyPI's "file exists" (gh-2260).
+      #
+      # It does NOT skip what comes AFTER publish (gh-2310). The same answer
+      # is also what "Re-run all jobs" reads after a release published to
+      # PyPI and then failed at github-release or docker: skipping those two
+      # on it ended the run green with the release or the image missing.
+      # github-release and docker run on it too, and each is idempotent
+      # (the release exists -> nothing to create; the image tag exists ->
+      # nothing to build), so a duplicate run still ships nothing twice.
+      published: ${{ steps.pypi.outputs.published }}
+      # "true" only when this tag is the highest vX.Y.Z tag in the repository.
+      # docker moves `:latest` only then (gh-2310): a re-run or a dispatch for
+      # an OLDER release must not repoint it backwards.
+      newest: ${{ steps.newest.outputs.newest }}
     steps:
       - id: r
         env:
@@ -60,6 +93,73 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
+      # Is this the newest release? (gh-2310) docker.yml's manifest step
+      # OVERWRITES the tags it is given, and `github-release`/`docker` now run
+      # again for a version already on PyPI, so a re-run or a dispatch for an
+      # older tag would otherwise point `:latest` at an old image. It FAILS
+      # rather than guesses: an unreadable tag list makes this run red and
+      # re-runnable, where a guess could move `:latest` backwards, or leave it
+      # stale for the release that should have moved it. Only plain vX.Y.Z
+      # tags compete; anything else is not "the newest".
+      - id: newest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.r.outputs.tag }}
+        run: |
+          set -euo pipefail
+          refs=""
+          for attempt in 1 2 3; do
+            if refs="$(gh api --paginate "repos/${REPO}/git/matching-refs/tags/v" --jq '.[].ref')"; then
+              break
+            fi
+            refs=""
+            sleep 5
+          done
+          if [ -z "$refs" ]; then
+            echo "::error::could not list ${REPO}'s v* tags; not guessing whether ${TAG} is the newest release (a guess could move :latest backwards)"
+            exit 1
+          fi
+          top="$(printf '%s\n' "$refs" | sed 's|^refs/tags/||' \
+                 | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          if [ "${TAG}" = "${top}" ]; then
+            echo "${TAG} is the newest release; it may move :latest."
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${TAG} is not the newest release (${top:-none}); :latest is left where it is."
+            echo "newest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The distribution name is read from the tagged tree, not restated.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ steps.r.outputs.tag }}
+          sparse-checkout: pyproject.toml
+          sparse-checkout-cone-mode: false
+
+      # The per-version JSON endpoint, as scripts/release-watch.sh checks
+      # it. Fails toward publishing: only an exact version match skips, so
+      # a PyPI outage or a 404 lets the release run, and PyPI itself still
+      # refuses a re-upload.
+      - name: Is this version already on PyPI?
+        id: pypi
+        env:
+          TAG: ${{ steps.r.outputs.tag }}
+        run: |
+          set -uo pipefail
+          VERSION="${TAG#v}"
+          PKG="$(python3 -c 'import tomllib
+          print(tomllib.load(open("pyproject.toml", "rb"))["project"]["name"])')"
+          got="$(curl -s "https://pypi.org/pypi/$PKG/$VERSION/json" \
+                 | jq -r '.info.version // "absent"' 2>/dev/null)"
+          if [[ "$got" == "$VERSION" ]]; then
+            echo "::notice::$PKG $VERSION is already on PyPI -- another run released it. Ending green; nothing is built or published again."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$PKG $VERSION is not on PyPI yet -- releasing."
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # A release tag must point at a commit `main` already certified green: ci.yml's
   # "CI passed" aggregator runs on every push to main, so re-running the full
   # 6x2 matrix here is a redundant third run (PR CI + main-push CI + this one).
@@ -69,6 +169,7 @@ jobs:
   verify-ci:
     name: Verify CI already passed for this commit
     needs: resolve
+    if: needs.resolve.outputs.published != 'true'
     runs-on: ubuntu-latest
     # Above the poll window below (ATTEMPTS x INTERVAL = 60 min), so the
     # poll's own timeout message fires first, not GitHub's bare cancel;
@@ -127,6 +228,7 @@ jobs:
 
   build:
     needs: [resolve, verify-ci]
+    if: needs.resolve.outputs.published != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -263,7 +365,8 @@ jobs:
       version: ${{ needs.resolve.outputs.tag }}
 
   publish:
-    needs: [smoke, artifact-smoke]
+    needs: [resolve, smoke, artifact-smoke]
+    if: needs.resolve.outputs.published != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pypi
@@ -278,8 +381,21 @@ jobs:
 
       - uses: pypa/gh-action-pypi-publish@release/v1
 
+  # gh-2310: runs after a publish that succeeded, AND when publish was skipped
+  # only because the version is already on PyPI -- a duplicate run, or
+  # "Re-run all jobs" after a release that published and then failed here.
+  # The skip used to cascade through `needs` and end such a run green with no
+  # GitHub Release. `!cancelled()` is the status function that stops that
+  # cascade, so the condition says which skips are acceptable: only publish's,
+  # and only for a published version. A publish that FAILED, or a smoke that
+  # failed before it, still skips this job.
   github-release:
     needs: [resolve, publish]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' &&
+      (needs.publish.result == 'success' ||
+      (needs.publish.result == 'skipped' &&
+      needs.resolve.outputs.published == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -311,24 +427,110 @@ jobs:
              found {print}' CHANGELOG.md > release-notes.md
           cat release-notes.md
 
+      # Idempotent (gh-2310): this job also runs for a version PyPI already
+      # serves, where the first run may have created the release. An existing
+      # release is left exactly as it is -- a re-run must not rewrite notes a
+      # person may have edited. The runs for one tag are serialised by the
+      # workflow's concurrency group, so two never reach this step together;
+      # the second check below only covers a create that lost a race anyway.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          # "true" only for the newest release. `--latest` moves GitHub's
+          # "Latest release" badge, and a release created now for an OLDER tag
+          # (a re-run or dispatch where it is missing) must not take it back.
+          NEWEST: ${{ needs.resolve.outputs.newest }}
         run: |
-          gh release create "${RELEASE_TAG}" \
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::notice::${RELEASE_TAG} already has a GitHub Release; leaving it as it is."
+            exit 0
+          fi
+          latest=false
+          if [ "${NEWEST}" = "true" ]; then latest=true; fi
+          if ! gh release create "${RELEASE_TAG}" \
             --title "${RELEASE_TAG}" \
-            --latest \
-            --notes-file release-notes.md
+            "--latest=${latest}" \
+            --notes-file release-notes.md; then
+            if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+              echo "::notice::${RELEASE_TAG} was released by another run while this one tried."
+              exit 0
+            fi
+            exit 1
+          fi
 
+  # gh-2310: is this commit's multi-arch image already in GHCR? `docker` is a
+  # called workflow, which has no steps of its own to ask, so the question is
+  # a job. It answers FALSE on any doubt -- no login, a registry error, a tag
+  # that cannot be read -- because the cost of a wrong "absent" is rebuilding
+  # an image (`imagetools create` overwrites its tags), and the cost of a
+  # wrong "present" is a release with no image. The tag is the one docker.yml
+  # writes, `sha-<commit>`; the commit is the resolved tag's.
+  #
+  # It matters only for a version already on PyPI. After a `publish` that
+  # succeeded in THIS run, docker runs whatever the registry says: main's push
+  # CI also publishes `sha-<commit>` for the release commit (measured on
+  # v0.111.2: its manifest job finished 38 minutes before this workflow's
+  # docker job began), so a probe taken later in the run would find the image
+  # and skip the release's own build. Which path a first run takes must not
+  # depend on how long `verify-ci` waited, so the probe is not asked.
+  image-state:
+    name: Is the image already published?
+    needs: resolve
+    if: needs.resolve.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      packages: read
+    outputs:
+      exists: ${{ steps.probe.outputs.exists }}
+    steps:
+      - uses: docker/login-action@v4.6.0
+        continue-on-error: true
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: probe
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -uo pipefail
+          ref="ghcr.io/${OWNER}/jm-examples-linux:sha-${SHA}"
+          if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            echo "::notice::$ref is already published; the image is not built again."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$ref is not published (or could not be read) -- the image is built."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Runs after a release that exists (gh-2310): always after a `publish` that
+  # succeeded in this run, and for a version already on PyPI only when its
+  # image is absent. See `github-release`: `!cancelled()` stops a skipped
+  # `publish` cascading here, and `github-release` succeeding is what says
+  # the version is released.
   docker:
-    needs: [resolve, github-release]
+    needs: [resolve, publish, github-release, image-state]
+    if: >-
+      ${{ !cancelled() && needs.github-release.result == 'success' &&
+      (needs.publish.result == 'success' ||
+      (needs.image-state.result == 'success' &&
+      needs.image-state.outputs.exists != 'true')) }}
     uses: ./.github/workflows/docker.yml
     with:
       # Explicit, because a called workflow otherwise inherits THIS workflow's
       # ref — the tag on a push, but the branch on a dispatch.
       ref: ${{ needs.resolve.outputs.tag }}
       publish: true
+      # Only the newest release may move `:latest` (gh-2310). docker runs for
+      # a version already on PyPI, and the manifest step overwrites its tags.
+      latest: ${{ needs.resolve.outputs.newest == 'true' }}
+      # The image is named for the RESOLVED tag's commit, the key `image-state`
+      # probes, not for whichever commit this workflow was dispatched from.
+      sha: ${{ needs.resolve.outputs.sha }}
     permissions:
       contents: read
       packages: write

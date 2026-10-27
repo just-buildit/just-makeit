@@ -126,7 +126,7 @@ class TestGeneratedBinding:
         root = _scaffold(tmp_path, count_default="state->num_taps")
         # A C expression is not a Python literal; both faces show `...`.
         assert "count: int = ..." in _pyi(root)
-        assert "ptr(count=...)" in _ext(root)
+        assert "ptr(count=..., out=None)" in _ext(root)
         assert "state->num_taps" not in _pyi(root)
 
     def test_runtime_doc_names_the_parameter_the_kwlist_binds(self, tmp_path):
@@ -134,7 +134,7 @@ class TestGeneratedBinding:
         # sent the gh-657 reporter looking for a rename that never happened.
         ext = _ext(_scaffold(tmp_path))
         assert '{"count", "out", NULL}' in ext
-        assert "ptr(count=1)" in ext
+        assert "ptr(count=1, out=None)" in ext
         assert "ptr(n=1)" not in ext
 
 

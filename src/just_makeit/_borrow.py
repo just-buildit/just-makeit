@@ -40,6 +40,14 @@ fixed mapping has neither: nothing is reallocated, so the worst case is stale
 values rather than a dangling pointer, and the invalidating call is the
 consumer's own explicit release rather than an unrelated later call.
 
+**Except at teardown, until gh-2187.** The paragraph above held for the
+release call and not for ``destroy()``: an explicit ``destroy()`` or
+``__exit__`` freed the memory every outstanding view points into, and the
+view's pin on ``self`` kept the *object* alive, not the memory. That is a
+dangling pointer, not stale values. A lending object -- one that hands out
+any view, see `lends` -- now defers the free to ``tp_dealloc``, which runs
+only once every view and every in-flight call has let go of ``self``.
+
 The element type, and integer IQ
 --------------------------------
 The view's element type is the method's ``return_type``, and it must be one
@@ -129,6 +137,106 @@ def is_borrow(m: dict) -> bool:
     False
     """
     return bool(m.get("borrow"))
+
+
+def lends(cfg: dict, component: str) -> "bool | str":
+    """True when *component* hands out views into memory it owns (gh-2187).
+
+    Three rows do, and each pins ``self`` as the view's base: a
+    ``borrow = true`` method, a ``buf_field`` property, and a fixed-length
+    array state's ``get_<name>_view()``. The pin keeps the object alive while
+    a view is, but not its memory: an explicit ``destroy()`` freed it anyway.
+    So a lending object's ``destroy()`` and ``__exit__`` defer the free to
+    ``tp_dealloc`` (`_context._destroy.make_destroy_ctx`), and this predicate
+    is the one place that decides which objects lend.
+
+    Examples
+    --------
+    >>> lends({"o": {"methods": [{"name": "wait", "borrow": True}]}}, "o")
+    True
+    >>> lends({"o": {"properties": [{"name": "b", "buf_field": True}]}}, "o")
+    True
+    >>> lends({"o": {"state": [{"name": "h", "type": "float[8]"}]}}, "o")
+    True
+    >>> lends({"o": {"state": [{"name": "g", "type": "double"}]}}, "o")
+    False
+
+    An object that publishes its pointer as a capsule lends too (gh-2346):
+    a consumer that keeps it (``retain``) keeps this object alive, not its
+    state, so a ``destroy()`` that freed the state left the consumer reading
+    freed memory. It answers ``"capsule"`` -- truthy, so every caller defers
+    the free exactly as for a view -- and the teardown's prose reads the
+    answer to say which it is.
+
+    >>> lends({"o": {"properties": [{"name": "_capsule", "type": "capsule",
+    ...                              "capsule": "p.o"}]}}, "o")
+    'capsule'
+    """
+    return lends_from(
+        C.methods(cfg, component),
+        C.properties(cfg, component),
+        C.state_vars(cfg, component),
+    )
+
+
+def lends_from(
+    methods: "list[dict]",
+    properties: "list[dict]",
+    state_vars: "list[tuple[str, str, str]]",
+) -> "bool | str":
+    """`lends`, from the declarations a render actually holds.
+
+    Creation renders the object before its state reaches the manifest --
+    ``jm object --state buf:float[8]`` passes the state as an argument -- so
+    asking the manifest there said "lends nothing" while ``jm apply``, which
+    reads it, said "lends": the verb and apply wrote different bindings.
+    The rule lives here once, and each render passes what it renders from.
+
+    Examples
+    --------
+    >>> lends_from([], [], [("buf", "float[8]", "0")])
+    True
+    >>> lends_from([{"name": "wait", "borrow": True}], [], [])
+    True
+    >>> lends_from([], [], [("g", "double", "1")])
+    False
+    """
+    from ._types import parse_array_type
+
+    if any(is_borrow(m) for m in methods):
+        return True
+    if any(p.get("buf_field") for p in properties):
+        return True
+    if any(parse_array_type(ct) for _, ct, _ in state_vars):
+        return True
+    # gh-2346: a capsule lends the pointer itself. Last, so an object that
+    # also lends views keeps answering True (and its prose) byte for byte.
+    if any(publishes_capsule(p) for p in properties):
+        return "capsule"
+    return False
+
+
+def publishes_capsule(p: dict) -> bool:
+    """Whether property *p* hands out its object's pointer as a capsule.
+
+    The ``capsule`` key decides it, not the ``type``: the getter renders
+    ``jm_capsule_lend`` for any property carrying the key
+    (`_context._methods`), so a ``type = "capsule"``, a pointer type and no
+    type at all all lend. One test for both, so the getter that lends and the
+    teardown that must defer cannot disagree -- keyed on the type, the other
+    two spellings freed in ``destroy()`` under a kept capsule.
+
+    >>> publishes_capsule({"name": "_capsule", "type": "capsule",
+    ...                    "capsule": "p.o"})
+    True
+    >>> publishes_capsule({"name": "_capsule", "capsule": "p.o"})
+    True
+    >>> publishes_capsule({"name": "t", "type": "t_t *", "capsule": "p.t"})
+    True
+    >>> publishes_capsule({"name": "g", "type": "double"})
+    False
+    """
+    return bool(p.get("capsule"))
 
 
 def is_writeable(m: dict) -> bool:
@@ -274,37 +382,48 @@ def release_count_param(m: dict) -> str:
     return ""
 
 
-def release_resolve_c(m: dict) -> str:
+def release_resolve_c(m: dict, *, kwlist: list[str]) -> str:
     """Resolve the release's count and clear the record (gh-1426 A).
 
     Emitted between the parse block and the call. Three shapes in one, and
     the middle one is the feature:
 
     - **no count param** (``reset()``): clear the record, nothing else.
-    - **omitted argument**: the parsed local is ``0`` (the render-time
-      default), so it takes the outstanding count.
+    - **omitted argument**: it takes the outstanding count.
     - **nothing outstanding and no argument**: a ``RuntimeError`` naming the
       method. The hand-written binding this replaces consumed 0 silently;
-      a release with no borrow behind it is a caller bug, and saying so is
-      kinder than a no-op that looks like it worked.
+      a bare release with no borrow behind it is a caller bug, and saying
+      so is kinder than a no-op that looks like it worked.
 
-    An explicit ``0`` is indistinguishable from an omitted argument here, and
-    deliberately so: releasing nothing is the same caller bug either way, and
-    a sentinel to tell them apart would buy a distinction with no behaviour
-    behind it.
+    **Omitted is decided by PRESENCE, not by value** (gh-2191). An explicit
+    count, 0 included, is passed to C as given. 0 is a count a streaming
+    consumer computes ordinarily -- ``consume(n_processed)`` after a frame
+    that yielded nothing -- and the C release decides what releasing 0
+    means (a ring's is a no-op). Testing the parsed local instead made an
+    explicit 0 take the outstanding count: ``peek(64); consume(0)``
+    released 64 samples nobody had processed. A sentinel default cannot
+    stand in for presence either: every value of the count's type is one a
+    caller may pass (and until gh-2220 ``K`` did not range-check, so
+    ``consume(-1)`` aliased ``SIZE_MAX``). So the count is looked for where the
+    parse found it: positionally at its index in ``kwlist`` -- the parse
+    block's own ``_kwlist``, in its order, handed over by the caller that
+    built it -- or by name in ``kwds``.
 
-    **The record is cleared BEFORE the call**, not after. It is a convenience
-    default and never a check -- `consume(k)` with ``k < n`` stays legal for
-    overlapped frames -- so a failing release leaving it clear costs the next
-    bare call its default and nothing else. Clearing it after would mean
-    threading this through every return shape for that.
+    **The record is cleared BEFORE the call**, not after, on every release.
+    It is a convenience default and never a check -- `consume(k)` with
+    ``k < n`` stays legal for overlapped frames -- so a failing release
+    leaving it clear costs the next bare call its default and nothing
+    else. Clearing it after would mean threading this through every return
+    shape for that.
 
     Examples
     --------
     >>> print(release_resolve_c(
     ...     {"name": "consume", "releases": ["wait"],
-    ...      "params": [{"name": "n", "type": "size_t"}]}), end="")
-        if (!n) {
+    ...      "params": [{"name": "n", "type": "size_t"}]},
+    ...     kwlist=["n"]), end="")
+        if (!(PyTuple_GET_SIZE(args) > 0
+              || (kwds && PyDict_GetItemString(kwds, "n")))) {
             n = self->_jm_borrowed;
             if (!n) {
                 PyErr_SetString(PyExc_RuntimeError,
@@ -315,7 +434,7 @@ def release_resolve_c(m: dict) -> str:
         }
         self->_jm_borrowed = 0;
     >>> print(release_resolve_c(
-    ...     {"name": "reset", "releases": ["wait"]}), end="")
+    ...     {"name": "reset", "releases": ["wait"]}, kwlist=[]), end="")
         self->_jm_borrowed = 0;
     """
     if not is_release(m):
@@ -324,9 +443,11 @@ def release_resolve_c(m: dict) -> str:
     clear = f"    self->{RELEASE_FIELD} = 0;\n"
     if not count:
         return clear
+    pos = kwlist.index(count)  # validated: the count names a param
     name = str(m.get("name", "<method>"))
     return (
-        f"    if (!{count}) {{\n"
+        f"    if (!(PyTuple_GET_SIZE(args) > {pos}\n"
+        f'          || (kwds && PyDict_GetItemString(kwds, "{count}")))) {{\n'
         f"        {count} = self->{RELEASE_FIELD};\n"
         f"        if (!{count}) {{\n"
         f"            PyErr_SetString(PyExc_RuntimeError,\n"

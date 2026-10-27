@@ -1,5 +1,3 @@
 kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_config_core.c
 kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_dsp_core.c — records no measurement; jm scaffolded it for this module's 1 function(s) and only you know what to time
 kitchen_sink	re-apply warns	warning ~: native/benchmarks/bench_resamp_core.c
-kitchen_sink	status --check	SILENT
-kitchen_sink	status --check	UNEXPLAINED OPT-OUT

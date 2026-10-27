@@ -444,8 +444,9 @@ REFUSED = [
     ("unsigned-count-type", ["--variable-output", "--count-type", "uint32_t"], "is not a count jm reads"),
     ("sentinel-not-variable-output", ["--error-sentinel", "SIZE_MAX"], "returns none"),
     ("count-type-not-variable-output", ["--count-type", "int64_t"], "returns none"),
-    ("sentinel-on-batch", ["--variable-output", "--batch", "--error-sentinel", "SIZE_MAX"], "--batch renders its own"),
-    ("error-on-empty-on-batch", ["--variable-output", "--batch", "--error-on-empty"], "--batch renders its own"),
+    # gh-2261: a batch method refuses these with every key it does not read.
+    ("sentinel-on-batch", ["--variable-output", "--batch", "--error-sentinel", "SIZE_MAX"], "error_sentinel and variable_output have no effect on a batch"),
+    ("error-on-empty-on-batch", ["--variable-output", "--batch", "--error-on-empty"], "error_on_empty and variable_output have no effect on a batch"),
 ]  # fmt: skip
 
 

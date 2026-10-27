@@ -161,7 +161,7 @@ def test_str_form_passes_and_raises_the_reason():
     assert "p_name(n, _buf, &_why);" in src
     i_check = src.index("if (_n == 0) {")
     block = src[i_check : src.index("return NULL;", i_check)]
-    assert "free(_buf);" in block
+    assert "PyMem_Free(_buf);" in block
     assert "PyErr_SetString(PyExc_ValueError, _why);" in block
 
 
@@ -331,17 +331,15 @@ def test_the_generated_json_path_refuses_the_keys():
 def test_the_json_table_writer_keeps_the_keys():
     from just_makeit import _config as C
 
-    lines = C._dump_composer_subtables(
-        "x",
-        {
-            "json": {
-                "enabled": True,
-                "to_json_fn": "w",
-                "from_json_why": True,
-                "from_file_why": True,
-            }
-        },
-    )
+    js = {
+        "enabled": True,
+        "to_json_fn": "w",
+        "from_json_why": True,
+        "from_file_why": True,
+    }
+    lines = C._dump(
+        {"module": {"x": {"kind": "composer", "json": js}}}
+    ).splitlines()
     assert "from_json_why = true" in lines
     assert "from_file_why = true" in lines
 

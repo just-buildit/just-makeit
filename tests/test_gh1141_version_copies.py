@@ -220,7 +220,11 @@ class TestEveryTemplateIsClassified:
         stamping = {
             p.relative_to(TEMPLATES).as_posix()
             for p in TEMPLATES.rglob("*")
-            if p.is_file() and "<<version>>" in p.read_text(encoding="utf-8")
+            if p.is_file()
+            and any(
+                s in p.read_text(encoding="utf-8")
+                for s in ("<<version>>", "<<cmake_version>>")
+            )
         }
         assert stamping == self.EXEMPT | self.CHECKED
 
@@ -247,16 +251,20 @@ class TestConfigVersionWritesEveryCopy:
         assert _carrying(project, OLD) == set()
         assert _cli("status", "--check", cwd=project).returncode == 0
 
-    def test_the_verb_names_a_copy_it_cannot_write(
+    def test_a_prerelease_is_written_as_its_release_in_cmake(
         self, project: Path
     ) -> None:
-        """A pre-release has no CMake spelling (gh-2084): the verb writes
-        every other copy, leaves `CMakeLists.txt` configuring, and says so
-        with the gating mark, because `status --check` still fails on it."""
+        """gh-2084: CMake has no spelling for a pre-release, so its copy
+        carries the release segment. Every copy is written, nothing is named
+        as unwritable, and `status --check` is clean."""
         r = _cli("config", "version", "1.1.2a47", cwd=project)
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "warning !: CMakeLists.txt:" in r.stderr, r.stderr
-        assert _carrying(project, OLD) == {"CMakeLists.txt"}
+        assert "warning !" not in r.stderr, r.stderr
+        assert _carrying(project, OLD) == set()
+        assert "VERSION 1.1.2\n" in (project / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        assert _cli("status", "--check", cwd=project).returncode == 0
 
     def test_a_deferred_version_moves_pyproject(self, project: Path) -> None:
         """gh-1283: a manifest that omits the version reads it from
@@ -313,10 +321,11 @@ class TestConfigVersionWritesEveryCopy:
     def test_a_value_its_slot_cannot_hold_is_not_written(
         self, tmp_path: Path
     ) -> None:
-        """CMake's ``project(VERSION)`` takes integers only and rejects a
-        PEP 440 pre-release at configure time. Writing one would break the
-        build to clear a status line, so the copy is left and named (its
-        spelling is gh-2084); the copies that can hold it are written."""
+        """CMake's ``project(VERSION)`` takes integers only, and an epoch
+        (``1!2.0``) has no CMake spelling at all (gh-2084 gives a pre-release
+        its release segment, but an epoch is a different version). Writing
+        one would break the build to clear a status line, so the copy is left
+        and named; the copies that can hold it are written."""
         from just_makeit import _projversion as V
 
         cmake = f"project(p\n  VERSION {OLD}\n  LANGUAGES C)\n"
@@ -324,7 +333,7 @@ class TestConfigVersionWritesEveryCopy:
         (tmp_path / "Doxyfile").write_text(
             f"PROJECT_NUMBER = {OLD}\n", encoding="utf-8"
         )
-        cfg = {"project": {"name": "p", "version": "1.1.2a47"}}
+        cfg = {"project": {"name": "p", "version": "1!2.0"}}
         written, unwritable = V.sync(tmp_path, cfg)
         assert written == ["Doxyfile"]
         assert len(unwritable) == 1 and "CMakeLists.txt" in unwritable[0]

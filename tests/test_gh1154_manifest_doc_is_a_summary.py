@@ -140,7 +140,8 @@ def _found(root: Path) -> dict:
     from just_makeit import _docstring as D
 
     return {
-        d.where: d.kind for d in D.manifest_docs_with_sections(C.load(root))
+        d.where: d.kind
+        for d in D.manifest_docs_with_sections(C.load(root), root)
     }
 
 
@@ -255,23 +256,20 @@ class TestTheDetector:
         _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
         # gh-2059: a property's `doc` is its whole docstring, with nothing
         # generated beside it, so `span` is not a finding -- measured for
-        # every table in tests/test_gh2059_doc_stands_alone.py. `fmap`
-        # (no Doxygen, no documented param) renders alone too, and is still
-        # reported: gh-2103.
+        # every table in tests/test_gh2059_doc_stands_alone.py. gh-2103:
+        # nor is `fmap`'s -- with no header Doxygen and no documented param
+        # its stub and `ml_doc` are the `doc` alone (given Doxygen, in
+        # `TestTheRecommendedPathActuallyWorks`, it is reported).
         assert _found(project) == {
             "eng.doc": "duplicated",
             "eng.methods.exec.doc": "duplicated",
-            "module.dsp.functions.fmap.doc": "duplicated",
         }
 
     def test_it_names_entries_readably(self, project: Path) -> None:
         """An index would not tell a reader which method it is."""
         _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
-        assert set(_found(project)) == {
-            "eng.methods.exec.doc",
-            "module.dsp.functions.fmap.doc",
-        }
+        _add_doc(project, "objects/eng.toml", "[eng]", HEADED)
+        assert set(_found(project)) == {"eng.methods.exec.doc", "eng.doc"}
 
     def test_a_single_paragraph_is_not_a_finding(self, project: Path) -> None:
         """For the truncated shape the predicate is the paragraph BREAK. A
@@ -310,15 +308,15 @@ class TestTheDetector:
 
 class TestBothReporters:
     def test_apply_warns_and_names_the_header(self, project: Path) -> None:
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
+        _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
         out = _cli("apply", cwd=project)
         assert out.returncode == 0, out.stdout
-        assert "module.dsp.functions.fmap.doc" in out.stdout
+        assert "eng.methods.exec.doc" in out.stdout
         assert "`_core.h`" in out.stdout, out.stdout
         assert "@code" in out.stdout, out.stdout
 
     def test_status_reports_and_check_fails(self, project: Path) -> None:
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
+        _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
         assert _cli("apply", cwd=project).returncode == 0
         out = _cli("status", cwd=project)
         assert "DOC (1)" in out.stdout, out.stdout
@@ -339,7 +337,7 @@ class TestBothReporters:
         """A project that has decided to live with one keeps the gate on the
         rest."""
         _add_doc(project, "objects/eng.toml", 'name = "exec"', HEADED)
-        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
+        _add_doc(project, "objects/eng.toml", "[eng]", HEADED)
         p = project / "just-makeit.toml"
         p.write_text(
             p.read_text(encoding="utf-8").replace(
@@ -351,7 +349,7 @@ class TestBothReporters:
         )
         out = _cli("status", cwd=project)
         assert "DOC (1)" in out.stdout, out.stdout
-        assert "module.dsp.functions.fmap.doc" in out.stdout
+        assert "eng.doc" in out.stdout, out.stdout
 
     def test_the_advice_has_one_source(self) -> None:
         """`apply` and `status` both say it; a message duplicated across two
@@ -409,3 +407,33 @@ class TestTheRecommendedPathActuallyWorks:
             ">>> fmap(3)",
         ):
             assert expected in pyi, f"{expected!r} missing from:\n{pyi}"
+
+    def test_with_header_doxygen_a_sectioned_function_doc_is_a_finding(
+        self, project: Path
+    ) -> None:
+        """gh-2103: the same `fmap` row is reported once its renderer
+        generates sections beside the `doc` -- which the HEADER decides, so
+        the detector has to ask with the project's header in reach."""
+        _add_doc(project, "modules/dsp.toml", 'name = "fmap"', HEADED)
+        assert "module.dsp.functions.fmap.doc" not in _found(project)
+        h = project / INC_ROOT / "dsp" / "dsp_core.h"
+        body = h.read_text(encoding="utf-8")
+        assert "int fmap(" in body, body
+        h.write_text(
+            body.replace(
+                "int fmap(",
+                "/**\n * @brief Map a bin.\n * @param b The bin.\n */\n"
+                "int fmap(",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        assert _found(project) == {
+            "module.dsp.functions.fmap.doc": "duplicated"
+        }
+        # Both reporters ask with the header in reach.
+        out = _cli("apply", cwd=project)
+        assert "module.dsp.functions.fmap.doc" in out.stdout, out.stdout
+        out = _cli("status", "--check", cwd=project)
+        assert out.returncode == 1, out.stdout
+        assert "module.dsp.functions.fmap.doc" in out.stdout, out.stdout

@@ -25,6 +25,9 @@ What the answer is
 `out=` is offered to a single-output `variable_output` method whose output
 length jm can size:
 
+* an ``arg_type`` input, with or without params beside it — sized from the
+  input's length, the ``n_in`` the kernel and ``<m>_max_out()`` are handed
+  (params beside it since gh-2028);
 * no params at all — the *generator* shape, sized from the synthesized count;
 * params with an array among them — sized from the FIRST array param's length
   (:func:`sizing_param`), in the samples its ``elements_per_sample`` declares
@@ -42,15 +45,22 @@ already hands ``<m>_max_out()`` (gh-607) and already allocates from when
 ``max_out()`` answers 0 (gh-421), for every one of these shapes, with or
 without ``out=``. The caller's buffer is validated against exactly what the
 binding would have allocated itself -- ``_capacity_exprs``' invariant -- so an
-``out=`` adds no bound the allocating path did not already trust.
+``out=`` adds no bound the allocating path did not already trust. The one
+exception is declared: a ``short_out`` method's buffer has no minimum, for a
+backpressure kernel that is told its true size and stops at it (gh-2230).
 
 What it is NOT
 --------------
-Params beside an ``arg_type`` input stay excluded. Their parse dropped them
-until gh-1960, so there was no call to thread an ``out=`` through; it goes
-through `_build_params_parse` now, and what keeps ``out=`` out is the doc:
-``out`` would join the Python arguments and break the positional match of
-the header's ``@param in`` onto ``x`` (gh-2028).
+A ``multi_output`` method: two output arrays would need two buffers, and one
+``out=`` cannot say which it is.
+
+Params beside an ``arg_type`` input were excluded until gh-2028. Their parse
+dropped them until gh-1960, so there was no call to thread an ``out=``
+through; then the doc held it: ``out`` joined the Python arguments and broke
+the positional match of the header's ``@param in`` onto ``x``. A binding
+argument no longer takes an authored ``@param``'s positional slot
+(`_docstring.render_numpy_method_doc`), and ``out=`` is the trailing
+optional argument of the parse every params shape uses.
 
 An array beside other params was excluded too, until gh-1998. gh-412 had
 carved it out of the `out=` feature while making those methods
@@ -63,9 +73,19 @@ its bound was unusable because ``max_out()`` may legally answer ``0``. gh-1079
 shipped that half and the text outlived it by one release. What the zero
 actually needs is not a refusal but a *bounded* kernel — see :func:`why_not`'s
 closing comment and gh-1091.
+
+The length of a buffer the kernel is never told
+-----------------------------------------------
+A module function's ``out_type`` and a method's fixed ``out_type`` hand the
+kernel a bare ``T *out`` and no capacity, so the length the binding
+allocates is a contract the kernel writes to blind. :func:`length` is that
+rule, once, for every such face (gh-1888); :func:`length_why_not` refuses a
+declaration it cannot answer for, before anything is written.
 """
 
 from __future__ import annotations
+
+from ._types import _CTYPE_META, is_array_param_type, parse_out_type
 
 
 def sizing_param(has_arg: bool, params: list[dict]) -> "dict | None":
@@ -229,7 +249,10 @@ def why_not(
     ''
     >>> why_not(variable_output=True, multi_output=False, has_arg=True,
     ...         params=[{"name": "mu", "type": "double"}])
-    'extra params beside the array input (gh-1079, gh-2028)'
+    ''
+    >>> why_not(variable_output=True, multi_output=True, has_arg=True,
+    ...         params=[])
+    'multi_output'
     """
     if not variable_output:
         return "not variable_output"
@@ -237,14 +260,16 @@ def why_not(
         # Two output arrays would need two buffers and a rule for pairing
         # them with the caller's; one `out=` cannot say which.
         return "multi_output"
-    if has_arg and params:
-        # An `arg_type` input plus params. Their parse read the input alone
-        # until gh-1960; it is `_build_params_parse` now, so the binding
-        # could take an `out=` sized from the input like the shapes below.
-        # The doc is what is not ready: `out` would join the Python args and
-        # the header's `@param in` would stop aligning onto `x` (gh-2028).
-        return "extra params beside the array input (gh-1079, gh-2028)"
     # Every remaining shape is offered `out=`.
+    #
+    # gh-2028: an `arg_type` input plus params. Its parse read the input
+    # alone until gh-1960; it is `_build_params_parse` now, whose trailing
+    # optional `out=` this is, and it is sized from the input exactly as
+    # the same method without params is: `n_in`, which `<m>_max_out()` is
+    # handed. What kept it out after gh-1960 was the doc -- `out` joining
+    # the Python args moved the header's `@param in` off `x` -- and
+    # `_docstring.render_numpy_method_doc` no longer lets a binding
+    # argument take an authored `@param`'s positional slot.
     #
     # gh-1998: an array param, alone or beside others -- `Farrow.delay(x,
     # mu)`, `Resampler.execute_ctrl(x, ctrl)`. Sized from the FIRST array
@@ -400,7 +425,10 @@ def element_why_not(
     variable_output, record_dtype, borrow, out_type, return_type
         As :func:`element` takes them.
     batch : bool
-        The method is a 1:1-rate array method (``--batch``).
+        The method is a 1:1-rate array method (``--batch``). Its element
+        must then be a scalar C type, so *return_type* is asked RESOLVED
+        (``_record.resolve_element``): a declared scalar element's name
+        would otherwise read as a record (gh-2261).
     remedy : str
         The closing advice, when the face asking has different flags from
         ``jm method`` (``jm object`` has no ``--out-type``). Empty takes
@@ -432,6 +460,10 @@ def element_why_not(
     ...     batch=True, record_dtype="", borrow=None, out_type="",
     ...     return_type="void").splitlines()[0])
     method 'o.run' is batch, but its output element is 'void'.
+    >>> print(element_why_not("method 'o.run'", variable_output=False,
+    ...     batch=True, record_dtype="", borrow=None, out_type="",
+    ...     return_type="rec_t").splitlines()[0])
+    method 'o.run' is batch, but its output element 'rec_t' is not a scalar.
     """
     if batch:
         shape, noun = "batch", "batch"
@@ -447,6 +479,21 @@ def element_why_not(
         )
     else:
         return ""
+    if batch and elem.strip() not in ("void", *_CTYPE_META):
+        # gh-2261: a batch result is an ndarray of the return type, built
+        # from its `_CTYPE_META` dtype -- and a record struct has none, so
+        # the render died on the lookup. Asked of the RESOLVED type: a
+        # declared scalar element is its C type by then.
+        return (
+            f"{what} is batch, but its output element {elem!r} is not a "
+            "scalar.\n"
+            "  A batch method returns an array of one scalar per input; a "
+            "record has\n"
+            "  no scalar dtype. Return records with --variable-output "
+            "--record-dtype\n"
+            "  (`variable_output`, `record_dtype`), or drop --batch "
+            "(`batch`)."
+        )
     if elem.strip() != "void":
         return ""
     return (
@@ -455,4 +502,199 @@ def element_why_not(
         "has\n"
         "  none: there is no dtype to allocate and no sizeof to fill.\n"
         f"  {remedy or NAME_THE_ELEMENT[shape]}"
+    )
+
+
+# -- the length of a buffer the kernel is never told (gh-1888) ---------------
+
+
+def is_count(param: dict) -> bool:
+    """Can *param* hold an output's length: is it an integer scalar?
+
+    gh-65's test, and the one reading of it: a method's fixed output falls
+    back to the first such param, and a function's ``out_type = "T[n]"``
+    must name one.
+
+    Examples
+    --------
+    >>> is_count({"name": "n", "type": "size_t"})
+    True
+    >>> is_count({"name": "x", "type": "int32_t[]"})
+    False
+    >>> is_count({"name": "g", "type": "double"})
+    False
+    """
+    t = str(param.get("type", ""))
+    return (
+        not is_array_param_type(t)
+        and _CTYPE_META.get(t, {}).get("kind") == "int"
+    )
+
+
+def length(
+    params: "list[dict]",
+    *,
+    out_type: str = "",
+    out_size: str = "",
+    count_fallback: bool = False,
+) -> str:
+    """The C length of an output the kernel fills blind, or ``""``.
+
+    gh-1888. A module function's ``out_type`` -- fixed, variable-output,
+    ``str`` -- and a method's fixed ``out_type`` all allocate their output
+    per call and hand the kernel a bare ``T *out``, never its length. So
+    the length is a contract: the binding allocates exactly it, and the
+    kernel writes exactly it. Each face had its own copy of this choice,
+    and each fell back to a constant -- one element for a function, none
+    for a method -- that no kernel can know to stay inside.
+
+    In order, the first that answers:
+
+    1. ``out_size``, a C expression the row declares (a variable-output
+       function's capacity, gh-335);
+    2. the ``[n]`` of ``out_type = "T[n]"``, naming the integer param that
+       holds it (gh-29; :func:`length_why_not` holds it to one);
+    3. the first array param's ``<name>_len`` -- the count
+       ``_coerce.array_count_c`` puts in that local, in samples under an
+       ``elements_per_sample``;
+    4. with *count_fallback*, the first integer scalar param -- a method's
+       ``read(n)`` (gh-65). The function face does not guess: a count
+       there is named with ``[n]``, or refused.
+
+    Parameters
+    ----------
+    params : list of dict
+        The call's arguments, ``{"name", "type"}`` each, in the order the
+        binding parses them -- a method's array ``arg_type`` input
+        included, as the ``x`` it is parsed as.
+    out_type, out_size : str
+        The row's keys, as declared; empty when absent.
+    count_fallback : bool
+        Read step 4.
+
+    Returns
+    -------
+    str
+        The C expression, or ``""`` when nothing the call carries gives
+        the length.
+
+    Examples
+    --------
+    >>> n = {"name": "n", "type": "size_t"}
+    >>> x = {"name": "x", "type": "float[]"}
+    >>> length([x, n], out_type="float")
+    'x_len'
+    >>> length([x, n], out_type="float[n]")
+    'n'
+    >>> length([n], out_type="float", out_size="2 * n + 1")
+    '2 * n + 1'
+    >>> length([n], out_type="float")
+    ''
+    >>> length([n], out_type="float", count_fallback=True)
+    'n'
+    """
+    if out_size:
+        return out_size
+    named = parse_out_type(out_type)[1] if out_type else None
+    if named:
+        return named
+    for p in params:
+        if is_array_param_type(str(p.get("type", ""))):
+            return f"{p['name']}_len"
+    if count_fallback:
+        for p in params:
+            if is_count(p):
+                return str(p["name"])
+    return ""
+
+
+def length_why_not(
+    what: str,
+    params: "list[dict]",
+    *,
+    out_type: str,
+    out_size: str = "",
+    variable_output: bool = False,
+) -> str:
+    """Why a module function's allocated output has no length, or ``""``.
+
+    gh-1888. Asked by ``jm function`` before it writes anything -- which
+    ``apply``'s replay and so ``status`` go through too -- and by the
+    binding before it renders, so a row an older jm wrote meets the same
+    words. Two ways a row fails :func:`length`:
+
+    * its ``[n]`` names no integer param of the function. Naming nothing
+      does not compile; naming a ``double`` truncates, and an array's
+      pointer is no count at all;
+    * nothing gives a length: no ``out_size``, no ``[n]``, no array param.
+      jm allocated ONE element, and a kernel filling the ``n`` it was
+      called with wrote past it.
+
+    Parameters
+    ----------
+    what : str
+        Names the function, e.g. ``"function 'ramp'"``.
+    params : list of dict
+        Its params, as :func:`length` takes them.
+    out_type, out_size : str
+        The row's keys; ``out_type`` is non-empty, or there is no output.
+    variable_output : bool
+        The output is a capacity the function reports a count within, so
+        the advice names ``out_size``.
+
+    Returns
+    -------
+    str
+        The refusal, without the ``error:`` prefix the CLI adds, or ``""``.
+
+    Examples
+    --------
+    >>> n = {"name": "n", "type": "int"}
+    >>> length_why_not("function 'ramp'", [n], out_type="float[n]")
+    ''
+    >>> print(length_why_not("function 'ramp'", [n],
+    ...                      out_type="float").splitlines()[0])
+    function 'ramp' returns a fresh out_type 'float', but nothing says how
+    >>> print(length_why_not("function 'ramp'", [n],
+    ...                      out_type="float[m]").splitlines()[0])
+    function 'ramp' sizes its output from 'm' (out_type 'float[m]'), but
+    """
+    named = parse_out_type(out_type)[1]
+    if named:
+        if any(p.get("name") == named and is_count(p) for p in params):
+            return ""
+        have = ", ".join(str(p["name"]) for p in params if is_count(p))
+        return (
+            f"{what} sizes its output from '{named}' (out_type "
+            f"'{out_type}'), but\n"
+            f"  '{named}' is not one of its integer parameters "
+            f"({'those are: ' + have if have else 'it has none'}).\n"
+            "  The length is read from that argument at the call, so it "
+            "must name an\n"
+            "  integer parameter the function takes."
+        )
+    if length(params, out_type=out_type, out_size=out_size):
+        return ""
+    elem = parse_out_type(out_type)[0]
+    remedy = (
+        "Give its capacity with --out-size EXPR (`out_size`), a C "
+        "expression over\n"
+        "  the arguments, or take an array parameter, whose length it "
+        "then is."
+        if variable_output
+        else f"Name the integer parameter that holds it -- --out-type "
+        f"'{elem}[n]'\n"
+        f'  (`out_type = "{elem}[n]"`) -- or take an array parameter, '
+        "whose length it\n"
+        "  then is."
+    )
+    return (
+        f"{what} returns a fresh out_type '{out_type}', but nothing says "
+        "how\n"
+        "  long it is. jm allocates it and the C function fills it through "
+        "a bare\n"
+        "  pointer, never told its length, so the length must come from "
+        "the call:\n"
+        "  this one has no array parameter and names no length.\n"
+        f"  {remedy}"
     )

@@ -33,6 +33,7 @@ from typing import NamedTuple, TYPE_CHECKING
 
 from . import _capsule
 from . import _coerce
+from . import _inflight
 from . import _config as C
 from . import _csym as CSYM
 from ._builtins import require_scope_names
@@ -43,25 +44,22 @@ from . import _context as Ctx
 from . import _types as T
 from . import _procglobal
 from . import _incpath as INC
+from ._stubs import positional_only
 from ._context import _diagnostics
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
 from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
 from ._context._parse import capsule_new_c as _capsule_new_c
+from ._context._parse import (
+    scalar_arg_c,
+    scalar_parse_c,
+    scalar_raw_locals,
+)
 
 if TYPE_CHECKING:
     from ._docstring import DoxyBlock
 
 # ── small type helpers (reused from _capsule / _types) ───────────────────────
-
-
-def _scalar_fmt(ctype: str, where: str, home: str = "") -> str:
-    """PyArg_ParseTuple format char for a scalar C type (reuses _CTYPE_META).
-
-    *where* names the row in the refusal of a type that is not a scalar jm
-    converts (gh-2009, :func:`_capsule.scalar_meta`).
-    """
-    return _capsule._scalar_fmt(ctype, where, home)
 
 
 def _to_py(ctype: str, expr: str, where: str) -> str:
@@ -78,14 +76,15 @@ def _array_elem_npy(array_type: str) -> tuple[str, str]:
 
 
 def _enums_used(cfg: dict, module: str) -> list[str]:
-    """Ordered, de-duplicated enum names referenced by a handle module — by its
-    ``create_args`` and any ``getters[].fields[].enum``. Mirrors the composer's
-    ``_enums_used`` (which scans the source/segment tables) for the handle
-    field set, so we emit only the tables the type actually needs."""
+    """Ordered, de-duplicated enum names referenced by a handle module — by
+    every argument row it looks a choice up for (:func:`_lookup_args`) and
+    any ``getters[].fields[].enum``. Mirrors the composer's ``_enums_used``
+    (which scans the source/segment tables) for the handle field set, so we
+    emit only the tables the type actually needs."""
     seen: list[str] = []
-    for a in C.handle_create_args(cfg, module):
-        e = a.get("enum")
-        if e and e not in seen:
+    for a in _lookup_args(cfg, module):
+        e = a["enum"]
+        if e not in seen:
             seen.append(e)
     for g in C.handle_getters(cfg, module):
         for f in g.get("fields", []):
@@ -96,15 +95,24 @@ def _enums_used(cfg: dict, module: str) -> list[str]:
 
 
 def _lookup_args(cfg: dict, module: str) -> list[dict]:
-    """The create-args whose choice string ``tp_init`` looks up (gh-1745).
+    """Every argument row whose choice string a wrapper looks up (gh-1745):
+    the ``create_args`` ``tp_init`` takes, each method's ``args`` and each
+    factory's ``init_params`` (gh-2228).
 
-    The one predicate for both halves: :func:`render_tp_init` emits a
-    `_enumc.validate_c` block for each of these, and
-    :func:`render_enum_tables` emits the ``_enum_index`` lookup only when
-    there is one. A getter only decodes, so a handle whose enums are all on
-    getters (doppler's ``wfm_plan``) used to carry a lookup nothing called.
+    The one predicate for both halves: :func:`render_tp_init`,
+    :func:`_method_arg` and :func:`_emit_factory` emit a `_enumc.validate_c`
+    block for each of these rows they parse, and :func:`render_enum_tables`
+    emits the ``_enum_index`` lookup only when there is one. A getter only
+    decodes, so a handle whose enums are all on getters (doppler's
+    ``wfm_plan``) used to carry a lookup nothing called -- and a method or
+    factory arg reached none of it, so its call named an undeclared local.
     """
-    return [a for a in C.handle_create_args(cfg, module) if a.get("enum")]
+    rows = list(C.handle_create_args(cfg, module))
+    for m in C.handle_methods(cfg, module):
+        rows += m.get("args", [])
+    for f in C.handle_factories(cfg, module):
+        rows += f.get("init_params", [])
+    return [a for a in rows if a.get("enum")]
 
 
 def _decoded_enum(f: dict) -> str:
@@ -169,8 +177,69 @@ def _stash_inits(cfg: dict, module: str) -> list[tuple[str, str]]:
 # ── tp_init (opaque create → handle; mirrors capsule create + composer init) ──
 
 
+def _is_scalar_arg(a: dict) -> bool:
+    """An arg that crosses as one C scalar: not a ``path``, ``bytes``,
+    ``string`` or enum choice, each of which has its own coercion."""
+    return a.get("type") not in ("path", "bytes", "string") and not a.get(
+        "enum"
+    )
+
+
+def _scalar_arg(
+    a: dict, where: str, fail: str, home: str = ""
+) -> "tuple[str, str, str, str]":
+    """``(decl, fmt, &addr, conversion)`` for one arg that crosses as a C
+    scalar.
+
+    Through the method face's one tuple-parse slot,
+    ``_context/_parse.scalar_arg_c``: into the row's ``parse_type`` local,
+    then narrowed after the parse with a range check, *fail* leaving the
+    wrapper on a refusal. gh-1952 / gh-2144: every handle shape parsed a
+    scalar straight into its declared type, so an ``int8_t`` or a ``bool``
+    took the four bytes ``i`` / ``p`` write -- past the local -- and a value
+    the type cannot hold wrapped.
+
+    *where* names the table, ``handle module 'h' create_args``: a type that
+    is not a scalar jm converts is refused naming the row, an array pointed
+    at *home* (gh-2009).
+    """
+    d = a.get("default")
+    meta = _capsule.scalar_meta(a["type"], f"{where} row '{a['name']}'", home)
+    return scalar_arg_c(
+        a["name"], a["type"], "" if d is None else str(d), fail=fail, meta=meta
+    )
+
+
+def _arg_parse(
+    a: dict, where: str, fail: str, home: str = ""
+) -> "tuple[str, str, str, str]":
+    """``(decl, fmt, &addr, conversion)`` for one create-arg or factory
+    param, of any kind: a scalar through :func:`_scalar_arg`, a ``path``,
+    ``bytes``, ``string`` or enum choice through its own coercion, which
+    converts nothing after the parse."""
+    if not _is_scalar_arg(a):
+        return _arg_decl(a), _arg_fmt(a), _arg_addr(a), ""
+    return _scalar_arg(a, where, fail, home)
+
+
+def _parse_fail(args: list[dict], ret: str) -> str:
+    """A range refusal's exit after the parse: release every path borrow
+    the parse made (gh-219), then *ret*."""
+    return (
+        "".join(
+            f"{_coerce.path_release(a['name'])} "
+            for a in args
+            if a.get("type") == "path"
+        )
+        + ret
+    )
+
+
 def _arg_decl(a: dict) -> str:
-    """C local decl for one create-arg, with its manifest default."""
+    """C local decl for one non-scalar create-arg, with its manifest default.
+
+    A scalar's is :func:`_arg_parse`'s.
+    """
     n = a["name"]
     if a.get("type") == "path":
         return "    " + _coerce.path_decl(n)
@@ -183,30 +252,22 @@ def _arg_decl(a: dict) -> str:
         # path but NOT an fspath — an in-memory string (e.g. a JSON spec). The
         # create_fn MUST copy/consume it before returning (borrowed, gh-219).
         return f"    const char *{n} = NULL;"
-    if a.get("enum"):
-        default = a.get("default", "")
-        return f'    const char *{n} = "{default}";'
-    default = a.get("default", "0")
-    return f"    {a['type']} {n} = {default};"
+    # An enum choice: the string, validated to its index after the parse.
+    default = a.get("default", "")
+    return f'    const char *{n} = "{default}";'
 
 
-def _arg_fmt(a: dict, where: str) -> str:
-    """PyArg_ParseTupleAndKeywords format char for one create-arg.
+def _arg_fmt(a: dict) -> str:
+    """PyArg_ParseTupleAndKeywords format char for one non-scalar create-arg.
 
-    *where* names the table (``handle module 'h' create_args``). A type that
-    reaches the scalar branch and is not a scalar jm converts is refused
-    there, naming the row, and an array is pointed at
-    :data:`_capsule.CTOR_ARRAY_HOME` (gh-2009).
+    A scalar's is :func:`_arg_parse`'s, which refuses a type that is not a
+    scalar jm converts, naming the row (gh-2009).
     """
     if a.get("type") == "path":
         return _coerce.path_fmt()
     if a.get("type") == "bytes":
         return _coerce.bytes_fmt()  # gh-565: y#
-    if a.get("enum") or a.get("type") == "string":
-        return "s"
-    return _scalar_fmt(
-        a["type"], f"{where} row '{a['name']}'", _capsule.CTOR_ARRAY_HOME
-    )
+    return "s"  # an enum choice or a string
 
 
 def _arg_addr(a: dict) -> str:
@@ -271,14 +332,25 @@ def render_tp_init(cfg: dict, module: str) -> str:
     # precede optional ones in the manifest, same as a Python signature.
     fmt_parts: list[str] = []
     opt_started = False
-    for a in args:
+    parts = [
+        _arg_parse(
+            a,
+            f"handle module '{module}' create_args",
+            _parse_fail(args, "return -1;"),
+            _capsule.CTOR_ARRAY_HOME,
+        )
+        for a in args
+    ]
+    for a, (_d, f, _a, _c) in zip(args, parts):
         if a.get("default") is not None and not opt_started:
             fmt_parts.append("|")
             opt_started = True
-        fmt_parts.append(_arg_fmt(a, f"handle module '{module}' create_args"))
+        fmt_parts.append(f)
     fmt = "".join(fmt_parts)
-    decls = "\n".join(_arg_decl(a) for a in args)
-    addrs = ", ".join(_arg_addr(a) for a in args)
+    decls = "\n".join(d for d, _f, _a, _c in parts)
+    addrs = ", ".join(ad for _d, _f, ad, _c in parts)
+    # gh-2144: each scalar narrowed once the parse has filled it.
+    narrow = "".join(f"{c}\n" for _d, _f, _a, c in parts if c)
     # gh-1131, the other half: with no args the call rendered as
     # `kwlist,\n            ))`, a dangling comma and an empty argument. The
     # whole parse is pointless for a no-argument constructor, so it collapses
@@ -308,7 +380,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
     # hard-coded NULL compiles and reports SUCCESS. The emitter takes the
     # failure statement for exactly that reason.
     _henums = C.enums(cfg)
-    for a in _lookup_args(cfg, module):
+    for a in (a for a in args if a.get("enum")):
         n, e = a["name"], a["enum"]
         enum_validate.append(
             _enumc.validate_c(
@@ -364,8 +436,30 @@ def render_tp_init(cfg: dict, module: str) -> str:
     # self->h and leak the prior handle. Release it first (mirrors tp_dealloc)
     # now that args parsed and validated, i.e. we are committed to rebuilding.
     # On the first init the struct is zeroed (tp_new), so this is a no-op.
-    reinit = f"""    if (!self->closed && self->h) {{
-        {_destroy_silent(cfg, module)}
+    # gh-2272: and not under a GIL-free call still running on the old one.
+    reinit_wait = (
+        "        self->closed = 1;\n"
+        + _inflight.wait("self", "self->closed = 0; return -1;")
+        if any(m.get("nogil") for m in C.handle_methods(cfg, module))
+        else ""
+    )
+    # gh-2346: a handle whose pointer was lent cannot be rebuilt in place --
+    # the teardown below would free the pointer a borrower still holds, and
+    # there is one slot, so the old handle cannot be deferred to dealloc
+    # either. Refused, releasing what the parse borrowed, as a failed parse
+    # does.
+    reinit_refuse = (
+        "    if (self->lent) {\n"
+        "        PyErr_SetString(PyExc_RuntimeError,\n"
+        f'            "{tname}: its pointer was lent as a capsule; '
+        'a second __init__ would free it under the borrower");\n'
+        f"{fs_decref}        return -1;\n"
+        "    }\n"
+        if C.published_capsule(cfg, module)
+        else ""
+    )
+    reinit = f"""{reinit_refuse}    if (!self->closed && self->h) {{
+{reinit_wait}        {_destroy_silent(cfg, module)}
         self->h = NULL;
         self->closed = 1;
     }}
@@ -421,7 +515,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
 {parse_call}
 {parse_fail}
     }}
-{enum_validate_s}
+{narrow}{enum_validate_s}
 {reinit}{construct}
     self->closed = 0;
 {stash_s}
@@ -481,8 +575,13 @@ def _method_kwargs(m: dict) -> bool:
         )
     arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     ret_arr = bool(returns) and str(returns).endswith("[]")
+    if ret_arr and not arrays and m.get("out_len_fn"):
+        return False  # (e) handle-length array-out
     if ret_arr and not arrays:
-        return False  # (c) int-in -> array-out
+        # (c) count-in -> array-out. The bare count is positional; with
+        # arguments after it (gh-2211) it parses with keywords, as (b) and
+        # (d) do once they carry trailing scalars.
+        return len(margs) > 1
     if any(a.get("writable") for a in arrays) and ret_arr:
         # (d) array-in + writable array-out. Bare form is positional; with
         # trailing scalars (gh-582) it parses with keywords exactly as (b)
@@ -495,61 +594,181 @@ def _method_kwargs(m: dict) -> bool:
     return True  # (a) scalar args
 
 
+def _method_arg(
+    a: dict, where: str, fail: str, enums: dict
+) -> "tuple[str, str, str, str, str]":
+    """``(decl, fmt, &addr, conversion, call)`` for one handle-method arg
+    that is not an array: a ``string``, an enum choice or a C scalar.
+
+    The one parse every method shape uses for these rows, so an ``enum``
+    means the same thing on each. gh-2228: a method arg declaring ``enum``
+    parsed as its declared ``int`` while the call passed ``_arg_<name>``,
+    a local no shape declared, so the module did not compile. It now takes
+    the choice string as a create-arg and a factory param do -- ``s``,
+    validated by :func:`_enumc.validate_c` into ``_arg_<name>`` after the
+    parse, the refusal naming the choices -- and *call* is that int.
+
+    A ``string`` is a borrowed ``const char *`` (``s``) on every shape,
+    valid for the call: shapes (e) and (f) took one and the rest refused
+    it as an unknown scalar, so a ``read(n, tag)`` could not be declared
+    (gh-2211 review).
+
+    *fail* leaves the wrapper on a refusal; a scalar is
+    :func:`_scalar_arg`'s, narrowed after the parse (gh-2144).
+    """
+    n = a["name"]
+    if a.get("type") == "string":
+        return _arg_decl(a), _arg_fmt(a), _arg_addr(a), "", n
+    if a.get("enum"):
+        check = _enumc.validate_c(n, a["enum"], enums, fail=fail)
+        return _arg_decl(a), _arg_fmt(a), _arg_addr(a), check, f"_arg_{n}"
+    d, f, ad, conv = _scalar_arg(a, where, fail)
+    return d, f, ad, conv, n
+
+
+def method_flags(m: dict) -> str:
+    """The ``METH_*`` flags handle method *m* registers with: the one
+    answer the method table and the ``.pyi``'s ``/`` both read (gh-2212).
+
+    Examples
+    --------
+    >>> method_flags({"name": "op", "args": [{"name": "g", "type": "float"}]})
+    'METH_VARARGS | METH_KEYWORDS'
+    >>> method_flags({"name": "op", "args": [{"name": "x", "type": "float[]"}]})
+    'METH_VARARGS'
+    """
+    if _method_kwargs(m):
+        return "METH_VARARGS | METH_KEYWORDS"
+    return "METH_VARARGS"
+
+
+#: A factory parses with ``PyArg_ParseTuple`` (:func:`_emit_factory`); the
+#: table registers this, and the ``.pyi`` asks it (gh-2212).
+FACTORY_FLAGS = "METH_VARARGS"
+
+#: ``set_state`` takes the blob as its one object; the table registers
+#: this, and the ``.pyi`` asks it (gh-2212).
+SET_STATE_FLAGS = "METH_O"
+
+
 def _scalar_string_argparse(
-    margs: list[dict], where: str
+    margs: list[dict], where: str, enums: dict
 ) -> tuple[str, str, list[str]]:
     """Positional parse of a handle method's scalar/``string`` args.
 
     Shared by the two ``out_len_fn`` shapes — (e) array-out and the (f)
     bytes-out below — so the arg marshaling can't drift between them. Returns
     ``(decls, parse, calls)``: C local declarations, the ``PyArg_ParseTuple``
-    block (``(void)args;`` when there are none), and the call-through
-    expressions (``string`` -> ``const char *``; a scalar -> its safe-width
-    ``parse_type`` narrowed by ``to_c``)."""
-    decls, fmt_parts, addrs, calls = "", [], [], []
+    block (``(void)args;`` when there are none) with each scalar narrowed
+    after it (:func:`_arg_parse`), and the names passed to the C call."""
+    decls, fmt_parts, addrs, calls, narrow = "", [], [], [], ""
     for a in margs:
-        an = a["name"]
-        if a.get("type") == "string":
-            decls += f"    const char *{an} = NULL;\n"
-            fmt_parts.append("s")
-            addrs.append(f"&{an}")
-            calls.append(an)
-        else:
-            meta = _capsule.scalar_meta(a["type"], f"{where} row '{an}'")
-            pt = meta.get("parse_type", a["type"])  # safe-width parse target
-            to_c = meta.get("to_c")
-            decls += f"    {pt} {an}_raw = 0;\n"
-            fmt_parts.append(meta["fmt"])
-            addrs.append(f"&{an}_raw")
-            calls.append(to_c(an) if to_c else f"{an}_raw")
+        d, f, ad, conv, call = _method_arg(a, where, "return NULL;", enums)
+        decls += f"{d}\n"
+        fmt_parts.append(f)
+        addrs.append(ad)
+        calls.append(call)
+        narrow += f"{conv}\n" if conv else ""
     parse = (
         f'    if (!PyArg_ParseTuple(args, "{"".join(fmt_parts)}", '
-        f"{', '.join(addrs)}))\n        return NULL;\n"
+        f"{', '.join(addrs)}))\n        return NULL;\n{narrow}"
         if margs
         else "    (void)args;\n"
     )
     return decls, parse, calls
 
 
+def _array_args(m: dict) -> list:
+    """The method's array arguments: the ``args`` rows typed ``T[]``."""
+    return [
+        a for a in m.get("args", []) if str(a.get("type", "")).endswith("[]")
+    ]
+
+
+def py_args(m: dict) -> list:
+    """Method *m*'s ``args`` rows in the order its Python signature takes them.
+
+    The one answer to what each parameter is called and where it sits. The
+    binding parses in this order and its ``kwlist`` is these names; the
+    ``.pyi`` signature, its one-line summary and both numpy ``Parameters``
+    blocks list them in it (gh-2207). The stub used to build its own: shape
+    (b)'s array was ``x`` whatever the manifest declared, so a stub over a
+    binding taking ``iq=`` offered ``x=``, which raises ``TypeError``.
+
+    An array leads, because a scalar after it may carry a default and a
+    required parameter cannot follow an optional one: shape (b) takes the
+    array then the scalars, and shape (d) the input, the caller's buffer,
+    then the scalars (gh-582). Every other shape takes the rows as declared.
+    The scalars keep their declared order, which is also their order in the
+    C call.
+
+    Examples
+    --------
+    >>> [a["name"] for a in py_args({"name": "send", "args": [
+    ...     {"name": "fs", "type": "double"},
+    ...     {"name": "iq", "type": "float _Complex[]"}]})]
+    ['iq', 'fs']
+    >>> [a["name"] for a in py_args({"name": "scale", "returns": "float[]",
+    ...     "args": [{"name": "k", "type": "float"},
+    ...              {"name": "out", "type": "float[]", "writable": True},
+    ...              {"name": "x", "type": "float[]"}]})]
+    ['x', 'out', 'k']
+    """
+    margs = list(m.get("args", []))
+    arrays = _array_args(m)
+    returns = m.get("returns")
+    writable = [a for a in arrays if a.get("writable")]
+    if writable and returns and str(returns).endswith("[]"):
+        lead = [a for a in arrays if not a.get("writable")][:1] + writable[:1]
+    else:
+        lead = arrays[:1]
+    return lead + [a for a in margs if not any(a is b for b in lead)]
+
+
+def _count_name(m: dict) -> str:
+    """The count parameter of shape (c), ``read(n) -> ndarray``: the first
+    declared argument, or ``n`` when the manifest declares none. Every
+    argument after it passes through to C behind the count (gh-2211)."""
+    margs = m.get("args", [])
+    return str(margs[0]["name"]) if margs else "n"
+
+
+def _data_return(returns: "str | None") -> bool:
+    """Whether the C return is the payload's LENGTH rather than a value.
+
+    An array or ``bytes`` result is sized by what the C call returns, so that
+    return is consumed before anything else could read it, and no declaration
+    can make it a status (gh-1118).
+    """
+    return returns == "bytes" or (
+        bool(returns) and str(returns).endswith("[]")
+    )
+
+
 def raises_instead_of_returning(m: dict) -> bool:
     """Whether this handle method's binding returns ``None`` rather than its rc.
 
-    One predicate for the emitter's shape (a) and the ``.pyi``'s return
-    annotation (gh-1116). Those two classify a method's shape independently —
-    `_emit_method` from `array_in` / `out_len_fn` / `returns`, `render_pyi`
-    from its own `arrays` / `ret_arr` / `writable_out` — and only the second
-    ever asked about ``error``. It asked in ONE of its six branches, so the
-    same declaration produced ``-> None`` with an argument and
-    ``-> <returns>`` without one, while both bindings raised and returned
-    ``None``. A caller trusting the zero-arg stub writes
+    One predicate for the emitter's shapes (a) and (b), the ``.pyi``'s return
+    annotation and the C locals a binding declares (gh-1116). Those classify
+    a method's shape independently — `_emit_method` from `array_in` /
+    `out_len_fn` / `returns`, `render_pyi` from its own `arrays` / `ret_arr` /
+    `writable_out` — and only the second ever asked about ``error``. It asked
+    in ONE of its six branches, so the same declaration produced ``-> None``
+    with an argument and ``-> <returns>`` without one, while both bindings
+    raised and returned ``None``. A caller trusting the zero-arg stub writes
     ``if sink.send_eos() != 0:`` and takes the error branch on every success.
 
     An ``error`` declaration only converts the C return into a raise where
-    that return is a **status**. The array and ``bytes`` shapes consume it as
-    DATA — a length, a count — so their rc is not a status, the binding never
-    raises on it, and the declared return is what crosses. (That those shapes
-    accept an ``error`` and silently ignore it is a separate defect; see
-    gh-1118.)
+    that return is a **status**. The array and ``bytes`` results consume it
+    as DATA, a length, so their rc is never a status, and `_check_error_decl`
+    refuses the declaration there (gh-1118).
+
+    An array ARGUMENT is the case only the manifest can settle. jm reads that
+    return as a count, samples taken, unless the method declares
+    ``status_return = true``, the object face's key and meaning: the ``int``
+    is a status, 0 is success, and the binding raises on anything else and
+    returns ``None`` (gh-2186). A ``send(iq, fs, fc)`` over a stream that can
+    refuse a block is that shape.
 
     Examples
     --------
@@ -565,26 +784,28 @@ def raises_instead_of_returning(m: dict) -> bool:
     ...     {"name": "op", "returns": "int", "error": "OSError",
     ...      "args": [{"name": "x", "type": "float[]"}]})
     False
+    >>> raises_instead_of_returning(
+    ...     {"name": "op", "returns": "int", "error": "OSError",
+    ...      "status_return": True,
+    ...      "args": [{"name": "x", "type": "float[]"}]})
+    True
     """
-    if not m.get("error"):
+    if not (m.get("error") or m.get("status_return")):
         return False
-    returns = m.get("returns")
-    if returns == "bytes" or (returns and str(returns).endswith("[]")):
+    if _data_return(m.get("returns")):
         return False
-    if any(str(a.get("type", "")).endswith("[]") for a in m.get("args", [])):
-        return False
-    return True
+    return bool(m.get("status_return")) or not _array_args(m)
 
 
-def _check_error_decl(
-    m: dict, name: str, returns: "str | None", margs: list
-) -> None:
-    """Refuse an ``error`` declaration this method's shape cannot honour.
+def _check_error_decl(m: dict, name: str, returns: "str | None") -> None:
+    """Refuse a status declaration this method's shape cannot honour.
 
-    Every check here used to live *after* the shape branches, and three of the
-    six shapes reach their own ``return`` before that point — so on an
-    array-in, array-out or ``bytes`` method an ``error`` was read, never
-    validated and never used. Two consequences, both measured (gh-1118):
+    A status is declared by ``error``, by ``status_return``, or by both
+    (gh-2186). Every check here used to live *after* the shape branches, and
+    three of the six shapes reach their own ``return`` before that point —
+    so on an array-in, array-out or ``bytes`` method an ``error`` was read,
+    never validated and never used. Two consequences, both measured
+    (gh-1118):
 
     - an **unrecognised exception name** was accepted in silence on exactly
       those three shapes, while being refused on the other three;
@@ -592,10 +813,17 @@ def _check_error_decl(
       those bindings return their value and no status is ever checked.
 
     The second is the quieter defect and the reason this is a refusal rather
-    than an implementation. For those shapes the C return is the payload
-    **length** — samples written, bytes filled — so there is no separate rc to
-    test. Honouring ``error`` there is not a feature jm declined to build; it
-    is not expressible.
+    than an implementation. For an array or ``bytes`` RESULT the C return is
+    the payload **length** — samples written, bytes filled — so there is no
+    separate rc to test. Honouring a status there is not a feature jm
+    declined to build; it is not expressible.
+
+    An array ARGUMENT is different: jm reads the return as a count, which is
+    wrong for a send whose ``int`` says whether the block was taken.
+    ``status_return = true`` says so, and the refusal of a bare ``error``
+    there names it, because it is the spelling nobody meeting this message
+    could guess (gh-2186). The key claims an integer to test against 0, so a
+    non-integer ``returns`` under it is refused rather than compared.
 
     Hoisting the checks is the whole fix for the first consequence. `jm` was
     already claiming this contract in its own message — "error requires an
@@ -604,43 +832,56 @@ def _check_error_decl(
 
     Raises
     ------
-    ValueError
-        Naming what consumes the return, and the two ways out: drop the key,
-        or move the check into a separate status method.
+    Refusal
+        Naming what consumes the return and the ways out: drop the key,
+        declare ``status_return = true`` where the return can be a status, or
+        move the check into a separate status method.
     """
-    err_cat = m.get("error")
-    if not err_cat:
+    from ._report import Refusal
+
+    declared = [k for k in ("error", "status_return") if m.get(k)]
+    if not declared:
         return
-    if err_cat not in C.ERROR_CATEGORIES:
+    keys = " and ".join(f"`{k}`" for k in declared)
+    err_cat = m.get("error")
+    if err_cat and err_cat not in C.ERROR_CATEGORIES:
         supported = ", ".join(sorted(C.ERROR_CATEGORIES))
-        raise ValueError(
+        raise Refusal(
             f"handle method '{name}': error '{err_cat}' is not a recognised"
             f" exception. Supported: {supported}."
         )
     if not returns:
-        raise ValueError(
-            f"handle method '{name}': error requires an `int` status return"
-            ' (declare returns = "int").'
+        raise Refusal(
+            f"handle method '{name}': {declared[0]} requires an `int` status"
+            ' return (declare returns = "int").'
+        )
+    if _data_return(returns):
+        what = (
+            "the blob's length" if returns == "bytes" else "the output length"
+        )
+        raise Refusal(
+            f"handle method '{name}': {keys} needs a status return to check,"
+            f' but with returns = "{returns}" the C return is {what}. Drop'
+            f" {keys}, or move the check into a separate status method."
+        )
+    if (
+        m.get("status_return")
+        and T._CTYPE_META.get(str(returns), {}).get("kind") != "int"
+    ):
+        raise Refusal(
+            f"handle method '{name}': `status_return` tests the C return"
+            f' against 0, but returns = "{returns}" is not an integer.'
+            " Declare the integer the C function returns"
+            ' (returns = "int"), or drop `status_return`.'
         )
     if not raises_instead_of_returning(m):
-        if returns == "bytes":
-            consumed = 'returns = "bytes"'
-            what = "the blob's length"
-        elif str(returns).endswith("[]"):
-            consumed = f'returns = "{returns}"'
-            what = "the output length"
-        else:
-            arr = next(
-                a["name"]
-                for a in margs
-                if str(a.get("type", "")).endswith("[]")
-            )
-            consumed = f"the array argument '{arr}'"
-            what = "a count, not a status"
-        raise ValueError(
+        raise Refusal(
             f"handle method '{name}': `error` needs a status return to check,"
-            f" but with {consumed} the C return is {what}. Drop `error`, or"
-            " move the check into a separate status method."
+            f" but with the array argument '{_array_args(m)[0]['name']}' jm"
+            " reads the C return as a count. If it is a status (0 ="
+            " success), declare `status_return = true` on the method. Drop"
+            " `error` if it is a count, or move the check into a separate"
+            " status method."
         )
 
 
@@ -648,6 +889,14 @@ def _bytes_len_locals(args: list) -> "frozenset[str]":
     """The ``<n>_len`` a ``bytes`` arg's ``y#`` parse declares beside it."""
     return frozenset(
         f"{a['name']}_len" for a in args if a.get("type") == "bytes"
+    )
+
+
+def _raw_locals(args: list) -> "frozenset[str]":
+    """The ``<n>_raw`` a narrow scalar create-arg or factory param parses
+    into (:func:`_arg_parse`, gh-2144)."""
+    return scalar_raw_locals(
+        (a["name"], a.get("type", "")) for a in args if _is_scalar_arg(a)
     )
 
 
@@ -675,18 +924,26 @@ def method_locals(m: dict) -> "frozenset[str]":
     returns = m.get("returns")
     ret_arr = bool(returns) and str(returns).endswith("[]")
     array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
-    # (e) and (f) parse each scalar at safe width into `<n>_raw`.
-    raw = frozenset(
-        f"{a['name']}_raw" for a in margs if a.get("type") != "string"
+    # gh-2144: every shape but (c) parses a narrow scalar into `<n>_raw`
+    # (:func:`_scalar_arg`). An enum arg parses its choice string instead
+    # (gh-2228), into the `_arg_<n>` the shared rule's prefix covers.
+    raw = scalar_raw_locals(
+        (a["name"], a.get("type", "")) for a in margs if not a.get("enum")
     )
     if m.get("out_len_fn") and ret_arr and not array_in:
         return raw | {"arr"}  # (e)
     if m.get("out_len_fn") and returns == "bytes":
         return raw  # (f)
     if ret_arr and not array_in:
-        return frozenset({"dims", "arr", "out", "got"})  # (c)
+        # (c): the count parses as `Py_ssize_t`, the arguments after it
+        # (gh-2211) as every other shape's scalars do.
+        return scalar_raw_locals(
+            (a["name"], a.get("type", ""))
+            for a in margs[1:]
+            if not a.get("enum")
+        ) | frozenset({"dims", "arr", "out", "got"})
     if ret_arr and any(a.get("writable") for a in array_in):
-        return frozenset(  # (d)
+        return raw | frozenset(  # (d)
             {
                 "n_in",
                 "max_out",
@@ -698,10 +955,14 @@ def method_locals(m: dict) -> "frozenset[str]":
                 "view",
             }
         )
-    result = frozenset({"r"}) if returns else frozenset()
+    # A status raise keeps its rc in `_rc`, under the shared rule's prefix.
+    status = raises_instead_of_returning(m)
+    result = raw | (
+        frozenset({"r"}) if returns and not status else frozenset()
+    )
     if array_in:
         return result | {"x_obj", "x_arr", "n_in", "in_data"}  # (b)
-    return frozenset() if m.get("error") else result  # (a)
+    return raw if m.get("error") else result  # (a)
 
 
 def arg_scopes(
@@ -725,7 +986,7 @@ def arg_scopes(
             f"handle module '{module}' create_args",
             f"{tname}_init",
             args,
-            _bytes_len_locals(args),
+            _bytes_len_locals(args) | _raw_locals(args),
         )
     ]
     for m in C.handle_methods(cfg, module):
@@ -744,10 +1005,36 @@ def arg_scopes(
                 f"handle module '{module}' factory '{f['name']}'",
                 f"{leaf}_{f['name']}",
                 ips,
-                _bytes_len_locals(ips),
+                _bytes_len_locals(ips) | _raw_locals(ips),
             )
         )
     return scopes
+
+
+def _status_call_c(
+    m: dict, call: str, gil_open: str, gil_close: str, release: str
+) -> str:
+    """The C that makes a status call, raises on a non-zero rc, else ``None``.
+
+    Shared by shape (a) and, under ``status_return``, shape (b) (gh-2186), so
+    the two cannot raise differently. *call* is the C call expression;
+    *release* frees what the arguments borrowed — a path's ``fsencode``, an
+    array's reference — after the call and before the raise can return.
+
+    gh-1111: the raise itself is `_context._diagnostics._rc_raise_c`, the same
+    emitter the object face uses -- so `error_message` is honoured here too,
+    and the author's prose reaches PyErr_Format as an ARGUMENT rather than as
+    the format string. The hand-written copy this replaced spliced `fn` into
+    the format directly, which dropped the message and would turn a `%` in
+    ordinary prose into a live conversion with no vararg behind it the moment
+    the message was read at all.
+    """
+    _cat, _msg = _diagnostics.handle_declared_raise(m)
+    return f"""    {m["returns"]} _rc;
+{gil_open}    _rc = {call};
+{gil_close}{release}    if (_rc != 0) {{
+{_diagnostics._rc_raise_c(_cat, _msg)}    }}
+    Py_RETURN_NONE;"""
 
 
 def _emit_method(cfg: dict, module: str, m: dict) -> str:
@@ -758,7 +1045,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
       (b) array-in (+ optional trailing scalars) → scalar return — ``write(iq)
           -> size_t`` and ``send(iq, fs, fc) -> None`` (reuses the capsule
           ``PyArray_FROM_OTF`` input marshaling; the scalars parse after the
-          array and pass straight through to ``fn(h, in_data, n_in, …)``, #308);
+          array and pass straight through to ``fn(h, in_data, n_in, …)``, #308;
+          under ``status_return`` the ``int`` is a status that raises,
+          gh-2186);
       (c) int-in → array-out — ``read(n) -> ndarray`` (allocates an out array of
           size n, calls ``fn(h, out, n) -> actual``, returns an INDEPENDENT
           numpy-owned array trimmed to ``actual`` — never a dangling view; the
@@ -773,8 +1062,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     margs = list(m.get("args", []))
     returns = m.get("returns")
     nogil = bool(m.get("nogil"))
-    gil_open = "    Py_BEGIN_ALLOW_THREADS\n" if nogil else ""
-    gil_close = "    Py_END_ALLOW_THREADS\n" if nogil else ""
+    # gh-2272: counted, so close() waits for a released call to finish.
+    gil_open = _inflight.opening("self") if nogil else ""
+    gil_close = _inflight.closing("self") if nogil else ""
 
     closed_guard = f"""    if (self->closed) {{
         PyErr_SetString(PyExc_RuntimeError, "{tname} is closed");
@@ -785,8 +1075,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # gh-2009: how a refusal names this method's argument rows and return.
     args_where = f"handle module '{module}' method '{name}' args"
     returns_where = f"handle module '{module}' method '{name}' returns"
+    # gh-2228: an enum arg's choices, for `_method_arg` on every shape.
+    enums = C.enums(cfg)
 
-    _check_error_decl(m, name, returns, margs)
+    _check_error_decl(m, name, returns)
 
     # (e) scalar/string args → HANDLE-length array-out. When a method returns an
     # array, takes no input array, and declares `out_len_fn`, the output length
@@ -805,7 +1097,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         )
     if returns and str(returns).endswith("[]") and not array_in and out_len_fn:
         out_elem, out_npy = _array_elem_npy(returns)
-        decls, parse, calls = _scalar_string_argparse(margs, args_where)
+        decls, parse, calls = _scalar_string_argparse(margs, args_where, enums)
         call_args = "".join(f", {c}" for c in calls)
         # gh-1710: `out_len_fn` returns a size_t; cast straight to npy_intp
         # a value past NPY_MAX_INTP wrapped to a negative dimension.
@@ -837,7 +1129,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # array shapes' deferred-free / view machinery applies. Positional
     # (METH_VARARGS) — _method_kwargs() returns False for a bytes return.
     if returns == "bytes" and out_len_fn:
-        decls, parse, calls = _scalar_string_argparse(margs, args_where)
+        decls, parse, calls = _scalar_string_argparse(margs, args_where, enums)
         call_args = "".join(f", {c}" for c in calls)
         # gh-1716: `_got` bytes are copied out of an `_n`-byte buffer.
         _got_guard = _coerce.returned_count_c(
@@ -858,20 +1150,76 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 }}
 """
 
-    # (c) int-in → array-out: an array return with a single integer arg.
+    # (c) count-in → array-out: an array return sized by its first argument.
+    # gh-2211: every argument declared after the count passes through to C
+    # behind it, `fn(h, out, n, <args>)` -- the order (b) threads its
+    # scalars in after `n_in`. The shape parsed the count alone and dropped
+    # the rest, so a `read(n, gain)` accepted `gain` and never used it.
     if returns and str(returns).endswith("[]") and not array_in:
         out_elem, out_npy = _array_elem_npy(returns)
-        cnt = margs[0]["name"] if margs else "n"
+        cnt = _count_name(m)
         # gh-1716: `got` becomes the dimension of a `cnt`-element array.
         _got_guard = _coerce.returned_count_c(
             "got", cnt, f"{tname}.{name}", "Py_DECREF(arr);"
         )
+        rest = margs[1:]
+        if margs and (
+            margs[0].get("enum") or margs[0].get("type") == "string"
+        ):
+            from ._report import Refusal
+
+            # gh-2228: every other arg takes its enum's choice string, or a
+            # `string` as text; the count sizes the result, so text has
+            # nothing to size it by.
+            what = (
+                f"enum '{margs[0]['enum']}'"
+                if margs[0].get("enum")
+                else "a string"
+            )
+            raise Refusal(
+                f"handle method '{name}': its first argument"
+                f" '{cnt}' is the count the array result is sized by, so"
+                f" it cannot take {what}. Declare the count first, then"
+                " that argument after it."
+            )
+        if rest:
+            c_decls, c_fmt, c_addrs, c_narrow = "", ["n"], "", ""
+            c_opt = False
+            for s in rest:
+                # gh-2144: at the row's width, narrowed after the parse.
+                sd, sf, sa, sc, _ = _method_arg(
+                    s, args_where, "return NULL;", enums
+                )
+                c_decls += f"{sd}\n"
+                if s.get("default") is not None and not c_opt:
+                    c_fmt.append("|")
+                    c_opt = True
+                c_fmt.append(sf)
+                c_addrs += f", {sa}"
+                c_narrow += f"{sc}\n" if sc else ""
+            c_kwlist = ", ".join(f'"{a["name"]}"' for a in margs)
+            c_sig = (
+                f"{tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)"
+            )
+            c_parse = (
+                f"    static char *kwlist[] = {{{c_kwlist}, NULL}};\n"
+                f"    Py_ssize_t {cnt};\n{c_decls}"
+                f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
+                f' "{"".join(c_fmt)}", kwlist,\n'
+                f"            &{cnt}{c_addrs}))\n"
+                f"        return NULL;\n{c_narrow}"
+            )
+        else:
+            c_sig = f"{tname}_{name}({obj} *self, PyObject *args)"
+            c_parse = (
+                f"    Py_ssize_t {cnt};\n"
+                f'    if (!PyArg_ParseTuple(args, "n", &{cnt})) return NULL;\n'
+            )
+        c_call = "".join(f", {_create_call_arg(s)}" for s in rest)
         return f"""static PyObject *
-{tname}_{name}({obj} *self, PyObject *args)
+{c_sig}
 {{
-    Py_ssize_t {cnt};
-    if (!PyArg_ParseTuple(args, "n", &{cnt})) return NULL;
-{closed_guard}
+{c_parse}{closed_guard}
     if ({cnt} < 0) {{
         PyErr_SetString(PyExc_ValueError, "count must be >= 0");
         return NULL;
@@ -883,7 +1231,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     if (!arr) return NULL;
     {out_elem} *out = ({out_elem} *)PyArray_DATA((PyArrayObject *)arr);
     size_t got;
-{gil_open}    got = {fn}(self->h, out, (size_t){cnt});
+{gil_open}    got = {fn}(self->h, out, (size_t){cnt}{c_call});
 {gil_close}{_got_guard}    PyArray_DIMS((PyArrayObject *)arr)[0] = (npy_intp)got; /* trim */
     return arr;
 }}
@@ -903,30 +1251,29 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # already existed, so the missing scalars were a gap rather than a decision.
     writable_out = [a for a in array_in if a.get("writable")]
     if writable_out and returns and str(returns).endswith("[]"):
-        o = writable_out[0]
         ins = [a for a in array_in if not a.get("writable")]
         if len(writable_out) > 1 or len(ins) != 1:
             raise NotImplementedError(
                 f"handle method '{name}': shape (d) takes exactly one input "
                 "array and one writable output array"
             )
-        a = ins[0]
-        xn, on = a["name"], o["name"]
-        in_elem, in_npy = _array_elem_npy(a["type"])
-        out_elem, out_npy = _array_elem_npy(o["type"])
         # gh-582: trailing scalars, the same feature shape (b) got in gh-308.
         # Everything that is neither the input nor the output array, in DECLARED
         # order — the Python signature follows the manifest, and the C call
         # threads them between n_in and out_data, which is where the natural C
         # signature puts them:
         #   fn(h, in, n_in, <scalars>, out, max_out)
-        d_others = [s for s in margs if s is not a and s is not o]
+        # gh-2207: `py_args` is that order, and the stub's.
+        a, o, *d_others = py_args(m)
+        xn, on = a["name"], o["name"]
+        in_elem, in_npy = _array_elem_npy(a["type"])
+        out_elem, out_npy = _array_elem_npy(o["type"])
         if any(str(s.get("type", "")).endswith("[]") for s in d_others):
             raise NotImplementedError(
                 f"handle method '{name}': shape (d) takes exactly one input "
                 "array and one writable output array"
             )
-        d_scal_call = "".join(f", {s['name']}" for s in d_others)
+        d_scal_call = "".join(f", {_create_call_arg(s)}" for s in d_others)
         # With no scalars the parse stays the historical positional "OO", so
         # every existing (d) method's generated C is byte-identical. With
         # scalars it becomes keyword-capable exactly as (b) is, `|` splitting
@@ -946,21 +1293,23 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
             d_decls = ""
             d_fmt = ["O", "O"]  # x, out — both required, both first
             d_inserted = False
+            d_addrs, d_narrow = "", ""
             for s in d_others:
-                dflt = s.get("default")
-                init = f" = {dflt}" if dflt is not None else ""
-                d_decls += f"    {s['type']} {s['name']}{init};\n"
-                if dflt is not None and not d_inserted:
+                # gh-2144: at the row's width, narrowed after the parse.
+                dd, df, da, dc, _ = _method_arg(
+                    s, args_where, "return NULL;", enums
+                )
+                d_decls += f"{dd}\n"
+                if s.get("default") is not None and not d_inserted:
                     d_fmt.append("|")
                     d_inserted = True
-                d_fmt.append(
-                    _scalar_fmt(s["type"], f"{args_where} row '{s['name']}'")
-                )
+                d_fmt.append(df)
+                d_addrs += f", {da}"
+                d_narrow += f"\n{dc}" if dc else ""
             d_fmt_s = "".join(d_fmt)
             d_kwlist = ", ".join(
                 f'"{n}"' for n in [xn, on] + [s["name"] for s in d_others]
             )
-            d_addrs = "".join(f", &{s['name']}" for s in d_others)
             d_sig = (
                 f"{tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)"
             )
@@ -971,7 +1320,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
                 f"    if (!PyArg_ParseTupleAndKeywords(args, kwds,"
                 f' "{d_fmt_s}", kwlist,\n'
                 f"            &{xn}_obj, &{on}_obj{d_addrs}))\n"
-                f"        return NULL;"
+                f"        return NULL;{d_narrow}"
             )
         else:
             d_sig = f"{tname}_{name}({obj} *self, PyObject *args)"
@@ -1027,31 +1376,41 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # after it and pass through to fn(self->h, in_data, n_in, <scalars>) — e.g.
     # ZmqSink.send(iq, fs, fc) -> wfm_zmq_sink_send(h, iq, n, fs, fc) (#308).
     if array_in:
-        a = array_in[0]
+        # gh-2207: the array, then the scalars in declared order -- `py_args`,
+        # the order the stub's signature reads too.
+        a, *others = py_args(m)
         in_elem, in_npy = _array_elem_npy(a["type"])
-        others = [s for s in margs if s is not a]
         if any(str(s.get("type", "")).endswith("[]") for s in others):
             raise NotImplementedError(
                 f"handle method '{name}': more than one array arg is "
                 "unsupported"
             )
-        scal_call = "".join(f", {s['name']}" for s in others)
-        ret_to_py = (
-            _to_py(returns, "r", returns_where)
-            if returns
-            else "(Py_INCREF(Py_None), Py_None)"
-        )
-        ret_decl = f"    {returns} r;\n" if returns else ""
-        assign = "r = " if returns else ""
+        scal_call = "".join(f", {_create_call_arg(s)}" for s in others)
+        b_call = f"{fn}(self->h, in_data, n_in{scal_call})"
+        if raises_instead_of_returning(m):
+            # gh-2186: `status_return` says this int is a status, not the
+            # count jm reads it as by default -- the same raise as (a).
+            b_ret = _status_call_c(
+                m, b_call, gil_open, gil_close, "    Py_DECREF(x_arr);\n"
+            )
+        else:
+            ret_to_py = (
+                _to_py(returns, "r", returns_where)
+                if returns
+                else "(Py_INCREF(Py_None), Py_None)"
+            )
+            ret_decl = f"    {returns} r;\n" if returns else ""
+            assign = "r = " if returns else ""
+            b_ret = f"""{ret_decl}{gil_open}    {assign}{b_call};
+{gil_close}    Py_DECREF(x_arr);
+    return {ret_to_py};"""
         body_tail = f"""{closed_guard}
     PyArrayObject *x_arr =
         {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", a["name"], _coerce.str_hint(a))};
     if (!x_arr) return NULL;
     size_t n_in = (size_t)PyArray_SIZE(x_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);
-{ret_decl}{gil_open}    {assign}{fn}(self->h, in_data, n_in{scal_call});
-{gil_close}    Py_DECREF(x_arr);
-    return {ret_to_py};"""
+{b_ret}"""
         # Trailing scalars parse with keywords + defaults (gh-178 review #6: the
         # hand-written send(iq, fs, fc=…) had an fc default the old positional
         # PyArg_ParseTuple dropped); a `default` inserts the `|` optional split,
@@ -1060,20 +1419,22 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
             scal_decls = ""
             fmt_parts = ["O"]
             inserted = False
+            scal_addrs, scal_narrow = "", ""
             for s in others:
-                d = s.get("default")
-                init = f" = {d}" if d is not None else ""
-                scal_decls += f"    {s['type']} {s['name']}{init};\n"
-                if d is not None and not inserted:
+                # gh-2144: at the row's width, narrowed after the parse.
+                sd, sf, sa, sc, _ = _method_arg(
+                    s, args_where, "return NULL;", enums
+                )
+                scal_decls += f"{sd}\n"
+                if s.get("default") is not None and not inserted:
                     fmt_parts.append("|")
                     inserted = True
-                fmt_parts.append(
-                    _scalar_fmt(s["type"], f"{args_where} row '{s['name']}'")
-                )
+                fmt_parts.append(sf)
+                scal_addrs += f", {sa}"
+                scal_narrow += f"{sc}\n" if sc else ""
             fmt_b = "".join(fmt_parts)
-            kwnames = [a["name"]] + [s["name"] for s in others]
+            kwnames = [s["name"] for s in (a, *others)]
             kwlist_b = ", ".join(f'"{n}"' for n in kwnames)
-            scal_addrs = "".join(f", &{s['name']}" for s in others)
             return f"""static PyObject *
 {tname}_{name}({obj} *self, PyObject *args, PyObject *kwds)
 {{
@@ -1082,7 +1443,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {scal_decls}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt_b}", kwlist,
             &x_obj{scal_addrs}))
         return NULL;
-{body_tail}
+{scal_narrow}{body_tail}
 }}
 """
         return f"""static PyObject *
@@ -1099,11 +1460,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # tp_init and module functions); a no-arg method stays a plain METH_VARARGS
     # stub. A `path` arg (gh-565) crosses as a borrowed `const char *` via the
     # ctor's `_arg_*` coercion, released after the call (gh-219). An `error =
-    # "<category>"` (gh-565) marks an `int`-returning method a status check: the
-    # method returns None and raises the declared exception on a non-zero rc,
-    # the handle-method mirror of the object side's `status_return` (gh-432) and
-    # of `wfm_writer.destroy`'s fallible close (gh-541).
-    err_cat = m.get("error")
+    # "<category>"` (gh-565) or a `status_return = true` (gh-2186) marks an
+    # `int`-returning method a status check: the method returns None and
+    # raises on a non-zero rc, as the object side's `status_return` (gh-432)
+    # and `wfm_writer.destroy`'s fallible close (gh-541) do.
     call = ", ".join(["self->h"] + [_create_call_arg(a) for a in margs])
     # path borrows are released only AFTER the C call has copied them (gh-219).
     fs_release = "".join(
@@ -1111,20 +1471,10 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         for a in margs
         if a.get("type") == "path"
     )
-    if err_cat:
-        # gh-1111: the raise itself is `_context._diagnostics._rc_raise_c`,
-        # the same emitter the object face uses -- so `error_message` is
-        # honoured here too, and the author's prose reaches PyErr_Format as an
-        # ARGUMENT rather than as the format string. This hand-written copy
-        # spliced `fn` into the format directly, which drops the message and
-        # would turn a `%` in ordinary prose into a live conversion with no
-        # vararg behind it the moment the message was read at all.
-        _cat, _msg = _diagnostics.handle_declared_raise(m)
-        ret = f"""    {returns} _rc;
-{gil_open}    _rc = {fn}({call});
-{gil_close}{fs_release}    if (_rc != 0) {{
-{_diagnostics._rc_raise_c(_cat, _msg)}    }}
-    Py_RETURN_NONE;"""
+    if raises_instead_of_returning(m):
+        ret = _status_call_c(
+            m, f"{fn}({call})", gil_open, gil_close, fs_release
+        )
     elif returns:
         ret = f"""    {returns} r;
 {gil_open}    r = {fn}({call});
@@ -1137,25 +1487,29 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         decls = ""
         fmt_parts = []
         addrs_list = []
+        narrow = ""
         inserted = False
         for a in margs:
-            if a.get("type") == "path":
-                # gh-565: the ctor's fspath coercion (O& + FSConverter), a
-                # required positional — no `default`, so it never trips the `|`.
-                decls += _arg_decl(a) + "\n"
-                fmt_parts.append(_arg_fmt(a, args_where))
-                addrs_list.append(_arg_addr(a))
-                continue
-            d = a.get("default")
-            init = f" = {d}" if d is not None else ""
-            decls += f"    {a['type']} {a['name']}{init};\n"
-            if d is not None and not inserted:
+            # gh-565: a path is the ctor's fspath coercion (O& +
+            # FSConverter), a required positional -- no `default`, so it
+            # never trips the `|`. gh-2144: a scalar parses at its row's
+            # width and is narrowed after the parse, releasing any path
+            # borrow on a refusal; an enum choice is validated there
+            # (gh-2228), releasing the same.
+            d, f, ad, conv = (
+                (_arg_decl(a), _arg_fmt(a), _arg_addr(a), "")
+                if a.get("type") == "path"
+                else _method_arg(
+                    a, args_where, _parse_fail(margs, "return NULL;"), enums
+                )[:4]
+            )
+            decls += f"{d}\n"
+            if a.get("default") is not None and not inserted:
                 fmt_parts.append("|")  # everything after is optional
                 inserted = True
-            fmt_parts.append(
-                _scalar_fmt(a["type"], f"{args_where} row '{a['name']}'")
-            )
-            addrs_list.append(f"&{a['name']}")
+            fmt_parts.append(f)
+            addrs_list.append(ad)
+            narrow += f"{conv}\n" if conv else ""
         fmt = "".join(fmt_parts)
         kwlist = ", ".join(f'"{a["name"]}"' for a in margs)
         addrs = ", ".join(addrs_list)
@@ -1176,7 +1530,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     static char *kwlist[] = {{{kwlist}, NULL}};
 {decls}    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}", kwlist,
             {addrs})){parse_fail}
-{closed_guard}
+{narrow}{closed_guard}
 {ret}
 }}
 """
@@ -1217,16 +1571,37 @@ def _emit_factory(cfg: dict, module: str, f: dict) -> str:
     create_fn = f["create_fn"]
     ips = list(f.get("init_params", []))
 
-    decls = "\n".join(_arg_decl(a) for a in ips)
-    fmt = "".join(
-        _arg_fmt(a, f"handle module '{module}' factory '{fname}' init_params")
+    # gh-2144: each scalar at its row's width, narrowed after the parse.
+    parts = [
+        _arg_parse(
+            a,
+            f"handle module '{module}' factory '{fname}' init_params",
+            _parse_fail(ips, "return NULL;"),
+            _capsule.CTOR_ARRAY_HOME,
+        )
         for a in ips
+    ]
+    decls = "\n".join(d for d, _f, _a, _c in parts)
+    fmt = "".join(f for _d, f, _a, _c in parts)
+    addrs = ", ".join(ad for _d, _f, ad, _c in parts)
+    narrow = "".join(f"{c}\n" for _d, _f, _a, c in parts if c)
+    # gh-2228: an enum param parsed its choice string and the call passed
+    # `_arg_<name>`, which nothing declared. Validated as `tp_init` does.
+    narrow += "".join(
+        _enumc.validate_c(
+            a["name"],
+            a["enum"],
+            C.enums(cfg),
+            fail=_parse_fail(ips, "return NULL;"),
+        )
+        + "\n"
+        for a in ips
+        if a.get("enum")
     )
-    addrs = ", ".join(_arg_addr(a) for a in ips)
     call_args = ", ".join(_create_call_arg(a) for a in ips)
     parse = (
         f'    if (!PyArg_ParseTuple(args, "{fmt}", {addrs}))\n'
-        "        return NULL;\n"
+        f"        return NULL;\n{narrow}"
         if ips
         else "    (void)args;\n"
     )
@@ -1493,7 +1868,16 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             # same member. NULL (as before) when none is declared.
             _doc_c = authored_c_doc(_field_doc(cfg, module, g, f))
             if set_fn:
-                fmt = _scalar_fmt(f["type"], f_where)
+                # gh-2144: the setter faces' one conversion -- at the row's
+                # width, range-checked. It parsed straight into the type.
+                parse = scalar_parse_c(
+                    f["type"],
+                    "value",
+                    "v",
+                    "return -1;",
+                    label=n,
+                    meta=_capsule.scalar_meta(f["type"], f_where),
+                )
                 funcs.append(f"""static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
@@ -1507,9 +1891,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             "cannot delete '{n}'");
         return -1;
     }}
-    {f["type"]} v;
-    if (!PyArg_Parse(value, "{fmt}", &v)) return -1;
-    {set_fn}(self->h, v);
+{parse}    {set_fn}(self->h, v);
     return 0;
 }}
 """)
@@ -1526,7 +1908,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
     # gh-794: `_capsule` — the handle lending its opaque pointer, borrowed.
     # Emitted last so it never disturbs the getter numbering above, and only
     # when declared, so every existing handle module renders byte-identically.
-    _cap = C.handle_capsule(cfg, module)
+    _cap = C.published_capsule(cfg, module)
     if _cap:
         funcs.append(
             f"static PyObject *\n"
@@ -1537,13 +1919,15 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             # over a closed handle is exactly the use-after-free the RAII
             # protocol exists to prevent, and the consumer has no way to
             # notice. Same reasoning as gh-788 gap 4's destroyed guard.
-            f"{closed_get}\n" + _capsule_new_c("self->h", _cap, tname) + "\n}"
+            f"{closed_get}\n"
+            + _capsule_new_c("self->h", _cap, tname, lent_flag="self->lent")
+            + "\n}"
         )
         rows.append(
             f'    {{"_capsule", (getter){tname}_get__capsule, NULL,\n'
             f'     "Borrowed {_cap} capsule for this handle.\\n\\n"\n'
-            f'     "Non-owning: the capsule does not free the handle, and\\n"\n'
-            f'     "is only valid while this object is alive and open.",\n'
+            f'     "It never frees the handle, and keeps this object alive;\\n"\n'
+            f'     "it is valid until the handle is closed.",\n'
             f"     NULL}},"
         )
 
@@ -1599,11 +1983,22 @@ def render_type(
         for gi, g in enumerate(C.handle_getters(cfg, module))
         if g.get("cache")
     )
+    # gh-2272: the in-flight count, on a handle with a GIL-free method.
+    releases = any(m.get("nogil") for m in C.handle_methods(cfg, module))
+    inflight_field = _inflight.struct_field() if releases else ""
+    # gh-2346: a handle that publishes a capsule records each lend, so that
+    # close() can leave the teardown to dealloc (see `close` below).
+    lends = bool(C.published_capsule(cfg, module))
+    lent_field = (
+        "    int       lent; /* gh-2346: the handle was lent */\n"
+        if lends
+        else ""
+    )
     struct = f"""typedef struct {{
     PyObject_HEAD
     {htype} *h;
     int       closed;
-{stash_fields}{cache_fields}}} {obj};
+{lent_field}{stash_fields}{cache_fields}{inflight_field}}} {obj};
 """
 
     # RAII — idempotent close + context-manager + dealloc (composer pattern).
@@ -1633,12 +2028,36 @@ def render_type(
     else:
         close_body = f"""        {destroy}
         self->closed = 1;"""
+    # gh-2346: once lent, close() only marks the handle closed (every method
+    # refuses from then on) and dealloc runs the teardown. A consumer that
+    # kept the pointer (`retain`) keeps this object alive, so dealloc cannot
+    # run under it; tearing down here left that consumer reading freed
+    # memory. A close_fn status is then not reported, as in dealloc.
+    if lends:
+        close_body = (
+            "        if (self->lent) {\n"
+            "            self->closed = 1;\n"
+            "        } else {\n"
+            + "\n".join(
+                "    " + ln if ln else ln for ln in close_body.split("\n")
+            )
+            + "\n        }"
+        )
 
+    # gh-2272: a method that released the GIL may still be running on
+    # self->h. Refuse new calls first (every method checks `closed`), then
+    # wait for it; the free below reads a handle nothing is using.
+    wait_s = (
+        "        self->closed = 1;\n"
+        + _inflight.wait("self", "self->closed = 0; return NULL;")
+        if releases
+        else ""
+    )
     close = f"""static PyObject *
 {tname}_close({obj} *self, PyObject *Py_UNUSED(ignored))
 {{
     if (!self->closed && self->h) {{
-{close_body}
+{wait_s}{close_body}
     }}
     Py_RETURN_NONE;
 }}
@@ -1668,10 +2087,10 @@ static PyObject *
     dealloc = f"""static void
 {tname}_dealloc({obj} *self)
 {{
-    if (!self->closed && self->h) {{
+    if ({"self->h && (!self->closed || self->lent)" if lends else "!self->closed && self->h"}) {{
         {destroy}
     }}
-    Py_TYPE(self)->tp_free((PyObject *)self);
+{_inflight.free("self") if releases else ""}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """
 
@@ -1694,12 +2113,8 @@ static PyObject *
     _blocks = doc_blocks or {}
     method_rows = []
     for m in C.handle_methods(cfg, module):
-        flags = (
-            "METH_VARARGS | METH_KEYWORDS"
-            if _method_kwargs(m)
-            else "METH_VARARGS"
-        )
-        _face = py_face(m)
+        flags = method_flags(m)
+        _face = py_face(m, C.enums(cfg))
         _block = _method_block(_blocks, m.get("fn"), m["name"])
         _override = str(m.get("doc", ""))
         _raises = _diagnostics.raises_doc(m, handle=True)
@@ -1738,7 +2153,7 @@ static PyObject *
         )
     method_rows.append(
         f'    {{"close", (PyCFunction){tname}_close, METH_NOARGS, '
-        f'"{CLOSE_DOC}"}},'
+        f'"{close_doc(cfg, module)}"}},'
     )
 
     # ── serializable: state-blob triplet over the backing handle (gh-403) ─────
@@ -1800,7 +2215,8 @@ static PyObject *
             ' "Serialize the handle\'s mutable state to bytes."},'
         )
         method_rows.append(
-            f'    {{"set_state", (PyCFunction){tname}_set_state, METH_O,'
+            f'    {{"set_state", (PyCFunction){tname}_set_state,'
+            f" {SET_STATE_FLAGS},"
             ' "Restore mutable state from a get_state() blob."},'
         )
     method_table = "\n".join(method_rows)
@@ -1880,7 +2296,7 @@ def render_ext(
 
 #include "{header}"
 {weak_decl}
-{_coerce.ARRAY_ARG_C}""",
+{_coerce.TU_HELPERS_C}""",
         render_enum_tables(cfg, module),
         render_type(cfg, module, doc_blocks),
     ]
@@ -1896,7 +2312,7 @@ def render_ext(
         # gh-1499: the stub's docstring, derived -- one text, both faces.
         _fn_entries = "".join(
             f'    {{"{f["name"]}", (PyCFunction){leaf}_{f["name"]},'
-            f" METH_VARARGS,\n"
+            f" {FACTORY_FLAGS},\n"
             f"     "
             f"{_build_ml_doc(docstring_body(_factory_doc_lines(cfg, module, f), 4))}"
             f"}},\n"
@@ -1987,8 +2403,12 @@ def _pyi_scalar(ctype: str) -> str:
     return _capsule._pyi_scalar(ctype)
 
 
-def _pyi_arg_ann(a: dict) -> str:
-    """Python annotation for a handle create_arg (path, string, enum, scalar)."""
+def _pyi_arg_ann(a: dict, enums: "dict | None" = None) -> str:
+    """Python annotation for a handle create_arg (path, string, enum, scalar).
+
+    An enum arg's annotation is an :class:`~_docstring.EnumAnn` when *enums*
+    is given: ``str``, carrying the choices, so a method's ``Parameters``
+    section documents them (gh-2379)."""
     if a.get("type") == "path":
         # gh-623: same PyUnicode_FSConverter coercion as every other path
         # surface (see _coerce), so the same annotation.
@@ -1998,7 +2418,9 @@ def _pyi_arg_ann(a: dict) -> str:
     if a.get("type") == "bytes":
         return "bytes"  # gh-565: opaque blob init-param
     if a.get("enum"):
-        return "str"
+        from ._docstring import EnumAnn
+
+        return EnumAnn((enums or {}).get(a["enum"]) or [])
     return _pyi_scalar(a.get("type", "int"))
 
 
@@ -2074,7 +2496,12 @@ def _pyi_class_docstring(
     whatever length they came out (108 columns in doppler's ``wfm_sink.pyi``).
     Layout now comes from `_docstring.class_docstring`; what remains here is
     deriving each argument's type line and notes."""
-    from ._docstring import ClassParam, class_docstring, group_paragraphs
+    from ._docstring import (
+        ClassParam,
+        class_docstring,
+        enum_param_desc,
+        group_paragraphs,
+    )
 
     summary = f"{tname} handle."
     body: list[str] = []
@@ -2099,13 +2526,14 @@ def _pyi_class_docstring(
         # It was accepted by `_keys` and read by nothing.
         authored = "\n".join(authored_doc_lines(str(a.get("doc") or "")))
         pdesc = create_block.param_desc(n) if create_block else None
-        if authored or pdesc:
+        choices = enum_reg.get(a["enum"], []) if a.get("enum") else []
+        # gh-2379: an enum arg's header `@param` describes the C int, so
+        # when the arg has choices they replace it; the author's own `doc`
+        # still stands.
+        if authored or (pdesc and not choices):
             notes.append(authored or pdesc)
-        if a.get("enum"):
-            choices = enum_reg.get(a["enum"], [])
-            if choices:
-                choice_str = ", ".join(f'``"{c}"``' for c in choices)
-                notes.append(f"One of {choice_str}.")
+        if choices:
+            notes.append(enum_param_desc(choices))
         params.append(ClassParam(type_line, tuple(notes)))
     return class_docstring(summary, body=body, params=params)
 
@@ -2156,6 +2584,23 @@ class PyFace(NamedTuple):
 #: that has no reason to exist once one place owns the answer.
 CLOSE_DOC = "Release the handle and free resources."
 
+#: gh-2346: what a handle that publishes a capsule adds. Once its pointer
+#: was lent, close() only marks it closed, so the teardown -- and the
+#: status a `close_fn` reports -- waits for dealloc.
+CLOSE_DOC_LENT = (
+    " Once its `_capsule` has been taken, close() only marks it closed: the"
+    " teardown waits until the last borrower lets go (gh-2346), so a file or"
+    " socket it holds is not released here, and a status the close function"
+    " would report is not raised."
+)
+
+
+def close_doc(cfg: dict, module: str) -> str:
+    """The handle's ``close()`` docstring, one text for both faces."""
+    return CLOSE_DOC + (
+        CLOSE_DOC_LENT if C.published_capsule(cfg, module) else ""
+    )
+
 
 def _arg_array_ann(a: dict) -> str:
     """The ``.pyi`` annotation of one array ``arg`` of a handle method.
@@ -2169,24 +2614,23 @@ def _arg_array_ann(a: dict) -> str:
     )
 
 
-def py_face(m: dict) -> PyFace:
-    """The Python-facing shape of one handle method."""
-    name = m["name"]
-    margs = list(m.get("args", []))
-    returns = m.get("returns")
+def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
+    """The Python-facing shape of one handle method.
+
+    Every parameter is named and placed by `py_args`, the order the binding
+    parses in, so the stub cannot offer a keyword the binding refuses
+    (gh-2207).
+    """
     name = m["name"]
     margs = list(m.get("args", []))
     returns = m.get("returns")
     arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     writable_out = [a for a in arrays if a.get("writable")]
-    scalars = [a for a in margs if a not in arrays]
     ret_arr = bool(returns) and str(returns).endswith("[]")
     if returns == "bytes":
         # (f) scalar/string args -> bytes (len from handle, gh-565).
         sig = "self" + "".join(
-            f", {a['name']}: "
-            + ("str" if a.get("type") == "string" else _pyi_scalar(a["type"]))
-            for a in margs
+            f", {a['name']}: " + _pyi_arg_ann(a) for a in margs
         )
         ann = "bytes"
         doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
@@ -2197,9 +2641,7 @@ def py_face(m: dict) -> PyFace:
         # parameter names are what a caller types — they must match the
         # kwlist. Order matches the binding's: x, out, then the scalars
         # (see _emit_method's (d) branch for why out precedes them).
-        _d_out = writable_out[0]
-        _d_in = [a for a in arrays if a is not _d_out][0]
-        _d_scalars = [a for a in margs if a not in arrays]
+        _d_in, _d_out, *_d_scalars = py_args(m)
         # gh-1724: each array arg by the one helper, of its declared type.
         sig = (
             f"self, {_d_in['name']}: {_arg_array_ann(_d_in)}"
@@ -2207,7 +2649,7 @@ def py_face(m: dict) -> PyFace:
         )
         for a in _d_scalars:
             dflt = a.get("default")
-            sig += f", {a['name']}: {_pyi_scalar(a['type'])}"
+            sig += f", {a['name']}: {_pyi_arg_ann(a)}"
             if dflt is not None:
                 sig += " = ..."
         ann = "NDArray[Any]"
@@ -2217,34 +2659,49 @@ def py_face(m: dict) -> PyFace:
         doc_call = f"{name}({', '.join(_d_names)})"
     elif ret_arr and not arrays and m.get("out_len_fn"):
         # (e) render(overrides_json) / at(snr, seed) -> ndarray (len from handle)
-        sig = "self, " + ", ".join(
-            f"{a['name']}: "
-            + ("str" if a.get("type") == "string" else _pyi_scalar(a["type"]))
-            for a in margs
+        # Joined after `self` as (f) is: with no args, `"self, " + ""` was
+        # a dangling comma, and the `/` below would make it a syntax error.
+        sig = "self" + "".join(
+            f", {a['name']}: " + _pyi_arg_ann(a) for a in margs
         )
         ann = "NDArray[Any]"
         doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
     elif ret_arr and not arrays:
-        # (c) read(n) -> ndarray
-        sig = "self, n: int"
+        # (c) read(n[, args...]) -> ndarray, the count named as the binding
+        # names it, then every argument the binding passes through behind
+        # it (gh-2211), a `default` shown as `= ...`.
+        _c_rest = margs[1:]
+        sig = f"self, {_count_name(m)}: int" + "".join(
+            f", {a['name']}: {_pyi_arg_ann(a)}"
+            + (" = ..." if a.get("default") is not None else "")
+            for a in _c_rest
+        )
         ann = "NDArray[Any]"
-        doc_call = f"{name}(n)"
+        _c_doc = [_count_name(m)] + [
+            f"{a['name']}={a['default']}"
+            if a.get("default") is not None
+            else a["name"]
+            for a in _c_rest
+        ]
+        doc_call = f"{name}({', '.join(_c_doc)})"
     elif arrays:
         # (b) x[, scalars] -> scalar / None; a trailing `default` shows as
-        # `= ...` (gh-178 review #6).
-        parts = ["self", f"x: {_arg_array_ann(arrays[0])}"] + [
-            f"{s['name']}: {_pyi_scalar(s['type'])}"
+        # `= ...` (gh-178 review #6). gh-2207: the array is named as declared,
+        # never `x` -- the binding's kwlist takes the declared name.
+        _b_arr, *_b_scalars = py_args(m)
+        parts = ["self", f"{_b_arr['name']}: {_arg_array_ann(_b_arr)}"] + [
+            f"{s['name']}: {_pyi_arg_ann(s)}"
             + (" = ..." if s.get("default") is not None else "")
-            for s in scalars
+            for s in _b_scalars
         ]
         sig = ", ".join(parts)
         ann = _pyi_scalar(returns) if returns else "None"
         # Inline actual scalar defaults in the docstring summary.
-        scalar_doc = ["x"] + [
+        scalar_doc = [_b_arr["name"]] + [
             f"{s['name']}={s['default']}"
             if s.get("default") is not None
             else s["name"]
-            for s in scalars
+            for s in _b_scalars
         ]
         doc_call = f"{name}({', '.join(scalar_doc)})"
     elif margs:
@@ -2273,6 +2730,11 @@ def py_face(m: dict) -> PyFace:
     # the opposite answer to the same declaration.
     if raises_instead_of_returning(m):
         ann = "None"
+    # gh-2212: a binding that takes no keywords (`METH_VARARGS` alone) has a
+    # positional-only signature, and says so with `/`, or a type checker
+    # accepts `write(iq=...)`, which raises `TypeError`. Asked of the flags
+    # the method table registers, never re-derived here.
+    sig = positional_only(sig[len("self, ") :], method_flags(m), "self")
     return PyFace(
         sig,
         ann,
@@ -2282,11 +2744,60 @@ def py_face(m: dict) -> PyFace:
                 a["name"],
                 _arg_array_ann(a)
                 if str(a.get("type", "")).endswith("[]")
-                else _pyi_arg_ann(a),
+                else _pyi_arg_ann(a, enums),
             )
-            for a in margs
+            for a in py_args(m)
         ],
     )
+
+
+def method_doc_lines(
+    m: dict, doc_blocks: "dict | None", enums: "dict | None" = None
+) -> "list[str]":
+    """The ``.pyi`` docstring of handle method *m*, at method-body indent.
+
+    `render_pyi` writes it under the method's signature, and gh-2103's
+    `_docstring.manifest_docs_with_sections` asks it whether a row's `doc`
+    gets a generated numpy section beside it: a method with no params and a
+    ``None`` return does not, so its `doc` duplicates nothing.
+    """
+    name = m["name"]
+    _face = py_face(m, enums)
+    ann, doc_call = _face.ann, _face.doc_call
+    # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
+    # stub to a full numpy docstring — @param/@return prose plus a runnable
+    # @code doctest. Python-facing args only: an array arg is NDArray, the
+    # rest map through _pyi_arg_ann (gh-374).
+    m_block = _method_block(doc_blocks, m.get("fn"), name)
+    # gh-1111: an `error = "<category>"` method raises, and said so
+    # nowhere on this face -- `grep -c Raises` on a handle stub returned
+    # 0, so `drain(self, timeout_ms: int = ...) -> None` read as a call
+    # that cannot fail. The section comes from the same pair the binding
+    # raises with, so the documented class cannot drift from the emitted
+    # one. A declared raise is enough on its own to earn the full numpy
+    # form: without it the one-line stub is unchanged byte-for-byte, which
+    # is what keeps `jm status --check` quiet on every existing project.
+    _raises = _diagnostics.raises_doc(m, handle=True)
+    # gh-1113: `doc` was read on the runtime face and dropped here, so a
+    # manifest-declared summary reached `help()` and never the stub --
+    # gh-1118's shape (a key honoured on one face) in the documentation
+    # layer. Found by comparing the two faces rather than by reading
+    # either one.
+    _override = str(m.get("doc", ""))
+    if m_block is not None or _raises or _override:
+        from ._docstring import render_numpy_doc
+
+        return render_numpy_doc(
+            m_block,
+            name,
+            _face.py_params,
+            ann,
+            override=_override,
+            authored_doc=_override,
+            indent=8,
+            raises=_raises,
+        )
+    return [f'        """{doc_call} -> {ann}."""']
 
 
 def render_pyi(
@@ -2360,47 +2871,9 @@ def render_pyi(
 
     # methods — one of the four shapes (a)-(d) (see _emit_method).
     for m in C.handle_methods(cfg, module):
-        name = m["name"]
-        _face = py_face(m)
-        sig, ann, doc_call = _face.sig, _face.ann, _face.doc_call
-        lines.append(f"    def {name}({sig}) -> {ann}:")
-        # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
-        # stub to a full numpy docstring — @param/@return prose plus a runnable
-        # @code doctest. Python-facing args only: an array arg is NDArray, the
-        # rest map through _pyi_arg_ann (gh-374).
-        m_block = _method_block(doc_blocks, m.get("fn"), name)
-        # gh-1111: an `error = "<category>"` method raises, and said so
-        # nowhere on this face -- `grep -c Raises` on a handle stub returned
-        # 0, so `drain(self, timeout_ms: int = ...) -> None` read as a call
-        # that cannot fail. The section comes from the same pair the binding
-        # raises with, so the documented class cannot drift from the emitted
-        # one. A declared raise is enough on its own to earn the full numpy
-        # form: without it the one-line stub is unchanged byte-for-byte, which
-        # is what keeps `jm status --check` quiet on every existing project.
-        _raises = _diagnostics.raises_doc(m, handle=True)
-        # gh-1113: `doc` was read on the runtime face and dropped here, so a
-        # manifest-declared summary reached `help()` and never the stub --
-        # gh-1118's shape (a key honoured on one face) in the documentation
-        # layer. Found by comparing the two faces rather than by reading
-        # either one.
-        _override = str(m.get("doc", ""))
-        if m_block is not None or _raises or _override:
-            from ._docstring import render_numpy_doc
-
-            lines.extend(
-                render_numpy_doc(
-                    m_block,
-                    name,
-                    _face.py_params,
-                    ann,
-                    override=_override,
-                    authored_doc=_override,
-                    indent=8,
-                    raises=_raises,
-                )
-            )
-        else:
-            lines.append(f'        """{doc_call} -> {ann}."""')
+        _face = py_face(m, C.enums(cfg))
+        lines.append(f"    def {m['name']}({_face.sig}) -> {_face.ann}:")
+        lines.extend(method_doc_lines(m, doc_blocks, C.enums(cfg)))
 
     # decoded-getter properties (a writable_fn field also gets a setter).
     for g in C.handle_getters(cfg, module):
@@ -2439,16 +2912,16 @@ def render_pyi(
     # gh-794: the borrowed-pointer capsule. `Any` is what gh-432's capsule
     # params and gh-788 gap 4's producing property already annotate to, so all
     # three faces of one pointer read alike.
-    _cap_pyi = C.handle_capsule(cfg, module)
+    _cap_pyi = C.published_capsule(cfg, module)
     if _cap_pyi:
         lines.append("    @property")
         lines.append("    def _capsule(self) -> Any:")
         lines.append(
             f'        """Borrowed `{_cap_pyi}` capsule for this handle.\n\n'
             f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
-            f"        capsule is accepted. Non-owning: it does not free the\n"
-            f"        handle, and is only valid while this object is alive\n"
-            f'        and open."""'
+            f"        capsule is accepted. It never frees the handle, and it\n"
+            f"        keeps this object alive; it is valid until the handle\n"
+            f'        is closed."""'
         )
 
     # serializable state triplet (gh-403).
@@ -2459,14 +2932,19 @@ def render_pyi(
         lines.append(
             '        """Serialize the handle\'s mutable state to bytes."""'
         )
-        lines.append("    def set_state(self, blob: bytes) -> None:")
+        # gh-2212: `METH_O`, so the blob is positional-only.
+        lines.append(
+            "    def set_state("
+            f"{positional_only('blob: bytes', SET_STATE_FLAGS, 'self')})"
+            " -> None:"
+        )
         lines.append(
             '        """Restore mutable state from a get_state() blob."""'
         )
 
     # RAII surface.
     lines.append("    def close(self) -> None:")
-    lines.append(f'        """{CLOSE_DOC}"""')
+    lines.append(f'        """{close_doc(cfg, module)}"""')
     if C.handle_context(cfg, module):
         lines.append(f"    def __enter__(self) -> {tname}:")
         lines.append('        """Enter context; return self."""')
@@ -2479,6 +2957,8 @@ def render_pyi(
     for f in C.handle_factories(cfg, module):
         ips = list(f.get("init_params", []))
         sig = ", ".join(f"{a['name']}: {_pyi_arg_ann(a)}" for a in ips)
+        # gh-2212: the flags the factory table registers decide the `/`.
+        sig = positional_only(sig, FACTORY_FLAGS)
         lines.append(f"def {f['name']}({sig}) -> {tname}:")
         lines.extend(_factory_doc_lines(cfg, module, f))
         lines.append("")

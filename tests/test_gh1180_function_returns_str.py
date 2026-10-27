@@ -137,8 +137,8 @@ class TestThePythonSurfaceIsStr:
     def test_it_sizes_from_out_size_and_frees(self) -> None:
         w = _wrapper()
         assert "size_t _cap_need = (size_t)(bits_len * 2);" in w, w
-        assert "char *_buf = (char *)malloc(_cap + 1);" in w, w
-        assert "free(_buf);" in w, w
+        assert "char *_buf = (char *)PyMem_Malloc(_cap + 1);" in w, w
+        assert "PyMem_Free(_buf);" in w, w
 
     def test_the_return_is_the_length(self) -> None:
         w = _wrapper()
@@ -151,7 +151,7 @@ class TestThePythonSurfaceIsStr:
         clamp silently -- a count past the buffer means it was overrun."""
         w = _wrapper()
         guard = _coerce.returned_count_c(
-            "_n", "_cap", "bin_to_hex", "free(_buf);"
+            "_n", "_cap", "bin_to_hex", "PyMem_Free(_buf);"
         )
         assert guard in w, w
         assert "_n = _cap;" not in w, w

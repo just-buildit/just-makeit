@@ -65,6 +65,40 @@ the `pytest-benchmark` suite under `src/`, prints a stats table per side with a
 `<tag>.json` (Python) and `<tag>-c.json` (C), where `<tag>` is a UTC timestamp.
 Commit them to keep the history.
 
+**Every row says what it counts (gh-2282).** A C row is `rounds` timings, each
+of one round of `iterations` units, and the benchmark names the unit when it
+records the row. The unit is a word: `jm_bench.h` defines the ones jm's
+generated benchmarks use (`JM_BENCH_SAMPLE`, `JM_BENCH_CALL`,
+`JM_BENCH_FRAME`), and a benchmark of your own passes any other without
+editing the vendored header:
+
+```c
+/* a steps() call over BENCH_N samples, timed ITERATIONS times */
+jm_bench_add_unit(&_bench, "steps", times, ITERATIONS, BENCH_N,
+                  JM_BENCH_SAMPLE);
+/* an FFT of NFFT bins a round */
+jm_bench_add_unit(&_bench, "fft", times, ITERATIONS, NFFT, "bin");
+```
+
+A unit is up to 31 characters of `[a-z0-9_]`, singular; anything else stops
+the run, naming the row and quoting the offending unit.
+`jm_bench_add(&_bench, name, times, rounds, iters)` still compiles and records
+calls. In the JSON, `stats` `min`, `max`, `mean`, `stddev` and `median` stay
+per round, and each gains a `<stat>_per_unit` beside it (divided by
+`iterations`). `ops` is units per second. `extra_info` names the `unit` and
+its `rate_unit`, which `jm_bench_rate_label` derives in one place: `Sa/s` for
+a sample, `<unit>s/s` otherwise (`calls/s`, `bins/s`).
+A sample row adds `MSa_s`. The table's `Per` column says what its times
+cover, and `Throughput` is in the row's own unit, as the JSON states it. A
+row that names no unit is shown for what its producer guarantees: a
+pytest-benchmark row per `call`, and a C row from an older `jm_bench.h` per
+`round`, in `ops/s`.
+
+So the same five-argument call reads differently by header: per `round` in
+`ops/s` against an older `jm_bench.h`, per `call` against this one. A project
+that re-vendors the header moves every row that counts samples (or bins,
+taps) to `jm_bench_add_unit` in the same change, or those rows report calls.
+
 **What gets run is what gets built (gh-1023).** The C side is not limited to
 manifest components. jm takes every `native/benchmarks/bench_<X>_core.c` that
 some build file compiles, so a benchmark for a `[project] c_deps` directory —
@@ -164,6 +198,24 @@ Python results for that run.
 The builds `jm bench` drives are **not** timed: a cold build on the same board
 took 603 s, and a build that is slow has not failed. Bound a CI job's wall
 clock with the job's own `timeout-minutes:`.
+
+**A benchmark that fails (gh-2189).** A `bench_<comp>_core` that exits
+non-zero, dies of a signal, or exits 0 without writing its JSON (or writing one
+that does not parse) is reported as `failed bench_<comp>_core (<why>)`, with
+its stderr quoted beneath. So is a target that built but whose binary jm cannot
+find. On the Python side, a `pytest` run that exits other than 0 (or 5,
+nothing collected) is reported as `failed pytest <file> (exit N)`: a benchmark
+that raised, or whose test failed after it ran. pytest's own report, printed
+above it, names the test. Like a timeout, a failure costs that benchmark and
+nothing else. The remaining benchmarks still run, the ones that finished are
+saved (the snapshot lists the failure under `"failed"`), and the command then
+exits 1 naming it. A JSON that a failed run did write is not read, since the
+run said it is not good; pytest-benchmark keeps the timing of a test that
+failed after its benchmark ran. Under `--check` the failed benchmark's
+baseline entries are `missing`, the JSON document lists it under `"failed"`,
+and the gate fails. There is no flag that skips a failure; to leave the C
+benchmarks out of a run, name the components you want, or pass
+`--python-only`.
 
 **`silent` from the artifact (gh-1691).** A benchmark that runs and writes an
 empty `"benchmarks": []` is named as `silent bench_<comp>_core`. That is
@@ -409,6 +461,13 @@ of them (gh-965, gh-2073); a hand-written `*_extra.c` is kept. `jm add` and
 first — the splice is best-effort text matching, not a guarantee. A single
 confirmation guards the deletion; `--force` skips it.
 
+A regenerate that fails does not cost you the component. When the rebuild's
+`apply` refuses after the delete — over another component's manifest row,
+say — jm puts back every file it had deleted or written and says so. An
+`impl_file` naming a file inside the component is refused before anything
+is deleted, since the rebuild could not read the body back from a file it
+had just removed (gh-1867).
+
 An object in a [`no_generate`](../configuration.md#no_generate-hand-written-extension-modules)
 module is refused, by `regenerate` and by every command that rebuilds through
 it, before anything is asked or written: `jm apply` writes none of that
@@ -502,6 +561,15 @@ binding is `jm apply`'s, rendered from the manifest, and a warning, a
 the header alone would drop it. `jm bind` exits 1 naming `jm regenerate <comp>`
 and `jm apply`, and writes nothing (gh-2072).
 
+**With no `just-makeit.toml`** -- a bare `native/` tree beside a
+`pyproject.toml` -- `jm bind` reads the project off the tree (gh-1895). The
+header layout is where the header is: `native/inc/<pkg>/<comp>/<comp>_core.h`
+(what `jm new` writes) or the older `native/inc/<comp>/<comp>_core.h`, and the
+binding's `#include`s are spelled for that layout. The C prefix is the one the
+header's `_state_t` declares: `<prefix>_<comp>_state_t` binds as
+`c_prefix = "<prefix>"`, a bare `<comp>_state_t` as none. When neither layout
+holds the header, or both do, it exits 1 naming both paths and writes nothing.
+
 **Current scope:** a state struct with scalar and opaque-pointer fields, or
 a forward-declared (opaque) one; a `<pkg>_<comp>_create()` taking the state
 fields in order, where a parameter that matches no field becomes an init
@@ -517,6 +585,8 @@ once the manifest declares the component its binding is `jm apply`'s.
 **`--check` as a CI gate:** run `jm bind <comp> --check` in CI to ensure
 the committed `_ext.c` never silently drifts from the header it was generated
 from. Green means byte-identical; non-zero exit means regenerate and commit.
+A binding that is not on disk at all is a finding too: `--check` exits 1 on
+one line naming the `_ext.c` `jm bind <comp>` would write (gh-2101).
 
 Not yet supported (see [roadmap](../roadmap.md#now-write-it-in-c-get-python-jm-bind)):
 methods with more than one parameter or with an array parameter, and
@@ -570,7 +640,7 @@ Prints a table of files, each in one of these states:
 | `ROOT CMAKE`          | A fix jm's root `CMakeLists.txt` template carries outside its marked blocks and the project's root file lacks (gh-1459, gh-1471): the combined library's `libm` link (gh-1452), and the Windows build's static library name, DLL exports, default build type, release CRT, complex-range flag and CRT/math defines (gh-1368), and `install-block`: the install section is not jm's managed block, so no packaging fix reaches it (gh-1589; `jm adopt --packaging`). Outside those blocks the file is yours, so `apply` never adds them; each line says what breaks without the fix and where, and `--diff` prints the file against today's render to merge from. Read as CMake commands rather than text, so a formatter's layout or your own equivalent spelling is not reported. Suppress one fix with `CMakeLists.txt:<fix>` in `status_allow`.                    | no        |
 | `LINE ENDINGS`        | A file that differs from jm's render **only** in CRLF versus LF (gh-1641) -- what a Windows checkout without the project's `.gitattributes` gives every file. No compiler, CMake, Python or formatter reads the two differently, so it is neither `STALE` nor `OUTDATED`; `--check` prints the count, the full report the files. `apply` rewrites the files it regenerates as LF and lists them as `eol`. See [Windows](../windows.md#line-endings).                                                                                                                                                                                                                                                                                                                                                                                                                  | no        |
 | `UNANCHORED`          | The top `CMakeLists.txt` has lost a sentinel jm splices against — `# ── Components` or `# ── Modules` (gh-975). Every splice treats a missing anchor as nothing to do, so the wiring was never written and a module with no `add_subdirectory()` is not built at all. Put the line back, or keep that wiring yourself and name the file in `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | yes       |
-| `UNWIRED`             | A component declares a `<X>_core` OBJECT library that the top `CMakeLists.txt` folds into no combined C library (gh-984), so its symbols ship in neither `lib<pkg>.so` nor `lib<pkg>.a` while its header installs anyway. Python is unaffected — the extension links each core directly — which is why this hides. For a core jm generates, `jm apply` writes the missing `target_sources()` line; for one it does not -- a `no_generate` module's or a c_dep's, which get only an `add_subdirectory()` -- the listing says `jm apply` writes no line and prints the lines to add to the root `CMakeLists.txt` yourself (gh-1626). Which applies is read from the replay `status` runs, so the advice is what `apply` actually does. Suppressible per component with `CMakeLists.txt:<core>`, or wholesale with `CMakeLists.txt` if you link your cores your own way. | yes       |
+| `UNWIRED`             | A component declares an OBJECT library (in its CMakeLists, or its `<dir>_extra.cmake` hook) that no `CMakeLists.txt` folds into a combined C library (gh-984), so its symbols ship in neither `lib<pkg>.so` nor `lib<pkg>.a` while its header installs anyway. Python is unaffected — the extension links each core directly — which is why this hides. For a core jm generates, `jm apply` writes the missing `target_sources()` line; for any other -- a `no_generate` module's, a c_dep's, your own -- the listing says `jm apply` writes no line and prints the lines to add to the root `CMakeLists.txt` (gh-1626). Which applies is read from the replay `status` runs: a core that replay still declares and wires (gh-1840). Suppressible per component with `CMakeLists.txt:<core>`, or wholesale with `CMakeLists.txt` if you link your cores your own way. | yes       |
 | `DANGLING`            | The top `CMakeLists.txt` wires a `<X>_core` that no component declares (gh-984) — an interrupted removal or a bad merge. cmake resolves `$<TARGET_OBJECTS:>` at **configure** time, so the project does not build at all. `jm apply` drops the line. Never suppressible.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | yes       |
 | `KWARGS`              | A binding fragment's constructor keywords disagree with the manifest, so the `.pyi` advertises a signature the compiled object rejects (gh-612, gh-823). jm regenerates a kwlist only with the body it belongs to: reconcile the manifest with the binding, or move the hand-written constructor into an `_extra.c`. Suppressible per file with `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | yes       |
 | `RECORDS`             | A record's fields disagree with the manifest: the `.pyi` documents a field the extension does not have, so `.field` raises `AttributeError` on a name a type checker accepts (gh-1290). Delete the record's wrapper and its row and re-run `jm apply`, or keep the binding in an `_extra.c`. Suppressible with `status_allow`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | yes       |
@@ -945,9 +1015,10 @@ ______________________________________________________________________
 ## `just-makeit migrate-to-fragments`
 
 Move every `[<obj>]` section of `just-makeit.toml` into `objects/<obj>.toml`
-and every `[module.X]` into `modules/<name>.toml`, leaving the manifest with
-`[project]` and the `include` globs — the layout `jm new` gives a project
-today. The merged manifest is unchanged, and running it again is a no-op. Must
+and every `[module.X]` into `modules/<name>.toml` (a dotted id by its C name,
+`dsp.filters` into `modules/dsp_filters.toml`, as `jm module` names it),
+leaving the manifest with `[project]` and the `include` globs — the layout
+`jm new` gives a project today. The merged manifest is unchanged, and running it again is a no-op. Must
 be run from the project root.
 
 Fragments load sorted by file name, so the order the manifest lists

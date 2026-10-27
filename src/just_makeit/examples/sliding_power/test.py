@@ -156,7 +156,7 @@ print("ok")
         )
     )
     assert "class PowerEst:" in pyi
-    assert "def step(self, x: complex) -> float:" in pyi
+    assert "def step(self, x: complex, /) -> float:" in pyi
     assert "def steps(self, x: npt.NDArray[np.complex64]" in pyi
 
     # The header-authored class summary (create()'s @brief) reached the stub,

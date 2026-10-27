@@ -5,8 +5,11 @@ has the right shape — capsule mechanics, the create/execute/reset/destroy/
 get_/set_ free functions, the GIL release, and the method table — against the
 ``ddc_fn`` reference shape (without needing a C compiler)."""
 
+import re
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -105,7 +108,7 @@ class TestFunctions:
     def test_property_accessors(self):
         s = _src()
         assert "PyFloat_FromDouble(ddcr_get_norm_freq(w->state))" in s  # read
-        assert "ddcr_set_norm_freq(w->state, norm_freq);" in s  # write
+        assert "ddcr_set_norm_freq(_w->state, norm_freq);" in s  # write
         assert "PyFloat_FromDouble(ddcr_get_rate(w->state))" in s
         # rate is read-only: no setter.
         assert "_fn_ddcr_set_rate" not in s
@@ -131,3 +134,39 @@ class TestModule:
         assert 'PyModuleDef_HEAD_INIT, "ddc_fn"' in s
         assert "PyMODINIT_FUNC\nPyInit_ddc_fn(void)" in s
         assert "import_array();" in s
+
+
+_DECL = re.compile(
+    r"^\s*(?:PyObject|_wrap_t|double|float|int|long|unsigned|u?int\d+_t"
+    r"|size_t|Py_ssize_t|Py_complex|bool)\b[^(;]*(?:\([^;]*)?;",
+    re.M,
+)
+
+
+def _declared(fn_text):
+    """Every identifier a function body declares as a local."""
+    names = []
+    for stmt in _DECL.findall(fn_text):
+        # drop initialisers, then read each declarator's trailing name
+        stmt = re.sub(r"=[^,;]*", "", stmt).rstrip(";")
+        names += [part.split()[-1].lstrip("*") for part in stmt.split(",")]
+    return names
+
+
+class TestASetterNamesNoPropertyLocal:
+    """gh-2144: the setter converts into a local named for the property, so
+    its own locals (the capsule, the value, the wrapper) must not be spelled
+    like one a property can be called. ``double value`` beside the source
+    object ``value`` is a redeclaration, and the module would not compile."""
+
+    @pytest.mark.parametrize("name", ["value", "cap", "w"])
+    @pytest.mark.parametrize("ptype", ["double", "int8_t", "float _Complex"])
+    def test_no_local_is_declared_twice(self, name, ptype):
+        src = _capsule._emit_getset(
+            "b", "sym", {"name": name, "type": ptype, "writable": True}, "m"
+        )
+        setter = src[src.index(f"_fn_b_set_{name}") :]
+        names = _declared(setter)
+        assert name in names, setter
+        dup = sorted({n for n in names if names.count(n) > 1})
+        assert not dup, (dup, setter)

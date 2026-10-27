@@ -515,13 +515,14 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
     #
     # Conditional on `_outbuf.enabled`, like five of the sources above, and
     # for the same reason a hardcoded list would be wrong in both directions:
-    # a shape it excludes (params beside an `arg_type` input, multi_output)
-    # generates no bound at all, so a hand-written `<m>_max_out` entry there
-    # is correct and must keep working. Reserving every `*_max_out` name
-    # would refuse exactly those. gh-1998 widened `enabled` to an array
-    # beside other params, so doppler's hand-written `Farrow.delay_max_out` /
+    # a shape it excludes (multi_output) generates no bound at all, so a
+    # hand-written `<m>_max_out` entry there is correct and must keep
+    # working. Reserving every `*_max_out` name would refuse exactly those.
+    # gh-1998 widened `enabled` to an array beside other params, so
+    # doppler's hand-written `Farrow.delay_max_out` /
     # `Resampler.execute_ctrl_max_out` entries are now jm's to emit, and are
-    # refused here with the instruction to drop them.
+    # refused here with the instruction to drop them; gh-2028 widened it to
+    # params beside an `arg_type` input, the same way.
     for m in C.methods(cfg, component):
         if not _outbuf.enabled(
             variable_output=bool(m.get("variable_output")),
@@ -533,8 +534,9 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
         taken[f"{m.get('name', '')}_max_out"] = (
             f"the output bound jm generates for {m.get('name', '')}()",
             "jm has emitted this since gh-1079 (for an array beside other"
-            " params since gh-1998), so drop the entry — the stub it"
-            " declared is now jm's own.",
+            " params since gh-1998, for params beside an input since"
+            " gh-2028), so drop the entry — the stub it declared is now"
+            " jm's own.",
         )
 
     # The absorbable six come out last, so a source above can never
@@ -573,7 +575,10 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
 #   rule that also covers a local added later.
 # - An array param `x` is marshalled through `x_obj` / `x_arr` / `x_raw` and
 #   reaches C with a derived `x_len`, so a sibling named one of those is
-#   refused. A scalar param derives nothing.
+#   refused. A scalar param `x` whose format char writes another width is
+#   parsed into `x_raw`, and a `size_t` / `uint64_t` into `x_obj` as well
+#   (gh-2220): those are refused too, as the parse slot's
+#   `scalar_raw_locals` names them.
 # - An out-buffer wrapper (`variable_output` or `out_type`) declares `out`,
 #   `n_out`, `out_obj`, `out_arr`, `arr<N>` and `v<N>`, and a multi-output one
 #   `out1..outN`; those are refused on those shapes ONLY. doppler's
@@ -702,6 +707,19 @@ def param_name_clash(
                     f"'{name}' is {what} for array param '{other}';"
                     f" name it '{other}_nbits' or '{other}_count' instead"
                 )
+    # gh-2220: a scalar derives locals too, on every face -- `<x>_raw` where
+    # its format char writes another width (gh-1952 / gh-2144), and `<x>_obj`
+    # where it parses as an object (`size_t`, `uint64_t`). The parse slot's
+    # own answer, so the rule cannot drift from what it declares. An enum
+    # param parses its choice string instead and derives neither.
+    from ._context._parse import scalar_raw_locals
+
+    for param in params or ():
+        other, otype = _param_name_type(param)
+        if other == name or (isinstance(param, dict) and param.get("enum")):
+            continue
+        if name in scalar_raw_locals([(other, otype)]):
+            return f"'{name}' is a local jm parses scalar param '{other}' into"
     if outbuf and (
         name in OUTBUF_LOCALS
         or any(_numbered(name, stem) for stem in _OUTBUF_NUMBERED)

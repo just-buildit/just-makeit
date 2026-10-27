@@ -154,3 +154,33 @@ def test_module_and_all_reach_the_object(proj: Path) -> None:
     r = run_cli("adopt", "--all", cwd=proj)
     assert r.returncode == 0
     assert "already jm's" in r.stdout
+
+
+def test_an_object_that_flips_keeps_its_files_beside_one_refused(
+    proj: Path,
+) -> None:
+    """All or nothing per OBJECT, not per command (gh-1867). `adopt`'s exit
+    status reports the object that did not flip; the one that did keeps
+    what `adopt` wrote for it, though a command that exits non-zero has
+    every write put back unless it commits first."""
+    r = run_cli(
+        "object", "iir", "--module", "dsp", "--arg-type", "float",
+        "--return-type", "float", cwd=proj,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    iir = proj / "native/src/dsp/dsp_ext_iir.c"
+    iir.write_text(
+        iir.read_text(encoding="utf-8")
+        + "\nstatic PyObject *\nIir_mine(PyObject *self)\n"
+        "{\n    Py_RETURN_NONE;\n}\n",
+        encoding="utf-8",
+    )
+    iir_toml = (proj / "objects/iir.toml").read_bytes()
+
+    r = run_cli("adopt", "--module", "dsp", cwd=proj)
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "flips                fir" in r.stdout, r.stdout
+    assert "REFUSES              iir" in r.stdout, r.stdout
+    assert _flipped(proj)
+    assert (proj / "objects/iir.toml").read_bytes() == iir_toml

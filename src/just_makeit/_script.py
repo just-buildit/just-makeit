@@ -318,6 +318,11 @@ def _object_flags(
     if C.is_no_step(cfg, comp):
         parts.append(_bool_flag("--no-step"))
 
+    # gh-2215: written by `jm object --opaque-state` and dropped here, so a
+    # replayed object published the struct it declared opaque.
+    if C.is_opaque_state(cfg, comp):
+        parts.append(_bool_flag("--opaque-state"))
+
     if C.is_no_reset(cfg, comp):
         parts.append(_bool_flag("--no-reset"))
 
@@ -410,6 +415,10 @@ def _record_flags(entry: dict) -> list[str]:
     # the two together.
     if entry.get("record_dtype"):
         parts.append(_flag("--record-dtype", str(entry["record_dtype"])))
+    # gh-2204: dropped on replay, the rebuilt method offers its input once and
+    # loses every record past the first full buffer -- exit 0.
+    if entry.get("consumed_fn"):
+        parts.append(_flag("--consumed-fn", str(entry["consumed_fn"])))
     # `_bool_flag`, not a bare append: the raw form emitted the flag with no
     # indent and no continuation, so it ran into whatever followed it on one
     # line. It happened to shell-split correctly and so was never wrong, only
@@ -648,6 +657,11 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     if m.get("batch"):
         parts.append(_bool_flag("--batch"))
 
+    # gh-2215: `jm method --no-bench` writes `bench = false`; dropped here,
+    # the replayed method was benchmarked again.
+    if m.get("bench") is False:
+        parts.append(_bool_flag("--no-bench"))
+
     if m.get("variable_output"):
         parts.append(_bool_flag("--variable-output"))
     if m.get("error_on_empty"):
@@ -661,10 +675,16 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--count-default", str(m["count_default"])))
     if m.get("count_name"):
         parts.append(_flag("--count-name", str(m["count_name"])))
+    if m.get("no_count"):  # gh-2233
+        parts.append(_bool_flag("--no-count"))
+    if m.get("out_cols"):
+        parts.append(_flag("--out-cols", str(m["out_cols"])))
     if m.get("pass_capacity"):
         parts.append(_bool_flag("--pass-capacity"))
     if m.get("exact_max_out"):
         parts.append(_bool_flag("--exact-max-out"))
+    if m.get("short_out"):
+        parts.append(_bool_flag("--short-out"))
     # gh-684: the worst-case output count. Dropping it replayed the method
     # with jm's derived default instead of the declared bound.
     if m.get("max_out"):
@@ -734,6 +754,9 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     ...                  "value_type": "object",
     ...                  "count_fn": "r_nkw"}, None)[1:]
     ['    --value-type object \\\\\\n', '    --count-fn r_nkw \\\\\\n']
+    >>> _property_flags({"name": "ann", "type": "json",
+    ...                  "py_type": "list[dict[str, Any]]"}, None)[1:]
+    ['    --py-type "list[dict[str, Any]]" \\\\\\n']
     """
     parts: list[str] = []
 
@@ -748,6 +771,14 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     if p.get("field"):
         parts.append(_bool_flag("--field"))
 
+    # gh-2182: a setter that refuses a value. Dropped, the replay rebuilds a
+    # setter that discards the C return -- the silent drop the key exists to
+    # end.
+    if p.get("error"):
+        parts.append(_flag("--error", p["error"]))
+    if p.get("error_message"):
+        parts.append(_flag("--error-message", p["error_message"]))
+
     if p.get("buf_field"):
         parts.append(_flag("--buf-field", p["buf_field"]))
         # len_field only means anything alongside buf_field, and defaults to
@@ -759,6 +790,11 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
 
     if p.get("expr"):
         parts.append(_flag("--expr", p["expr"]))
+
+    # gh-2347: a json property's stub annotation; dropped, the replay
+    # annotates it Any.
+    if p.get("py_type"):
+        parts.append(_flag("--py-type", p["py_type"]))
 
     # gh-519: the [[enum]] the property decodes through. Dropping it would
     # rebuild the property as a bare int — the exact silent-divergence the
@@ -1057,11 +1093,163 @@ def run(root: Path) -> None:
             " `just-makeit apply` (gh-1310).\n\n"
         )
 
+    all_comps = list(standalone)
+    for mod in mods:
+        all_comps += [
+            c for c in C.module_objects(cfg, mod) if c not in templated
+        ]
+
+    # gh-1893, gh-2215: an `object` init-param is resolved when its
+    # consumer's `jm object` line runs -- it has to be, because the type it
+    # resolves to goes into the consumer's `_core.c` and `_core.h`, which
+    # are written once. So the component it names (the PRODUCER) must be
+    # fully declared first: its object line, then its records, properties,
+    # methods and views (a reference may name a view class), each list in
+    # its own order so the replayed manifest is the same manifest. Those
+    # members are emitted right after the producer's object line and
+    # skipped in the sections below.
+    def _refs(comp: str) -> "list[str]":
+        """The emitted components *comp*'s `object` init-params name."""
+        return [
+            t
+            for t in C.object_ref_edges(cfg, comp)
+            if t in all_comps and t != comp
+        ]
+
+    producers = {p for c in all_comps for p in _refs(c)}
+
+    def _record_lines(comp: str) -> "list[str]":
+        out: list[str] = []
+        for rec in C.records(cfg, comp):
+            out.extend(_record_notes(rec))
+            out.append(
+                _render_cmd(
+                    ["just-makeit", "record", comp, str(rec["name"])],
+                    _record_decl_flags(rec),
+                )
+            )
+        return out
+
+    def _method_lines(comp: str, mod: "str | None") -> "list[str]":
+        out: list[str] = []
+        for m in C.methods(cfg, comp):
+            out.extend(_method_notes(m))
+            out.append(
+                _render_cmd(
+                    ["just-makeit", "method", comp, m["name"]],
+                    _method_flags(m, mod),
+                )
+            )
+        return out
+
+    def _property_lines(comp: str, mod: "str | None") -> "list[str]":
+        return [
+            _render_cmd(
+                ["just-makeit", "property", comp, p["name"]],
+                _property_flags(p, mod),
+            )
+            for p in C.properties(cfg, comp)
+        ]
+
+    def _view_lines(comp: str, mod: "str | None") -> "list[str]":
+        out: list[str] = []
+        for v in C.views(cfg, comp):
+            out += _init_param_notes(v.get("init_params", []))
+            out.append(
+                _render_cmd(
+                    ["just-makeit", "view", comp, v["class_name"]],
+                    _view_flags(v, mod),
+                )
+            )
+            # gh-504: the view's OWN added/overriding members, after its
+            # `jm view` line (methods before properties, matching apply
+            # replay).
+            cls = v["class_name"]
+            for m in C.view_methods(v):
+                out.extend(_method_notes(m))
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "method", comp, m["name"]],
+                        _method_flags(m, mod) + [_flag("--view", cls)],
+                    )
+                )
+            for p in C.view_properties(v):
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "property", comp, p["name"]],
+                        _property_flags(p, mod) + [_flag("--view", cls)],
+                    )
+                )
+            # gh-509: the view's OWN warnings, reusing the object-warning
+            # flag builder plus --view (mirrors the members above).
+            for w in C.view_warnings(v):
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "warning", comp],
+                        _warning_flags(w, mod) + [_flag("--view", cls)],
+                    )
+                )
+            # gh-580: the view's OWN create_error, if it declared one. Read
+            # the raw key rather than C.view_create_error() — the accessor
+            # resolves the parent's value, and re-emitting an inherited
+            # translation as an explicit `jm error --view` would turn
+            # inheritance into a frozen copy on every round-trip.
+            if v.get("create_error"):
+                err_flags = []
+                if mod:
+                    err_flags.append(_flag("--module", mod))
+                err_flags.append(_flag("--category", v["create_error"]))
+                err_flags.append(
+                    _flag("--message", v.get("create_error_message", ""))
+                )
+                out.append(
+                    _render_cmd(
+                        ["just-makeit", "error", comp],
+                        err_flags + [_flag("--view", cls)],
+                    )
+                )
+        return out
+
+    created: "set[str]" = set()
+    pending: "set[str]" = set()
+
+    def _create(comp: str, out: "list[str]") -> None:
+        """Emit *comp*'s object line, after every producer it names.
+
+        A producer the manifest lists LATER is pulled forward. For a
+        standalone object that changes nothing in the manifest (components
+        are keyed, and fragments load sorted by path). In a module it would
+        change the `objects` list, so a module object created ahead of a
+        member listed before it is placed with `--before <that member>`:
+        the first already-created object the manifest lists after it. A
+        project built by the CLI is created in its declared order, so its
+        script has no `--before` at all.
+        """
+        if comp in created or comp in pending:
+            return
+        pending.add(comp)
+        for producer in _refs(comp):
+            _create(producer, out)
+        pending.discard(comp)
+        mod = C.component_module(cfg, comp)
+        flags = _object_flags(cfg, comp, module=mod)
+        if mod:
+            order = C.module_objects(cfg, mod)
+            later = [o for o in order[order.index(comp) + 1 :] if o in created]
+            if later:
+                flags.append(_flag("--before", later[0]))
+        out += _init_param_notes(cfg[comp].get("init_params", []))
+        out.append(_render_cmd(["just-makeit", "object", comp], flags))
+        created.add(comp)
+        if comp in producers:
+            out += _record_lines(comp)
+            out += _property_lines(comp, mod)
+            out += _method_lines(comp, mod)
+            out += _view_lines(comp, mod)
+
     # ── standalone objects ───────────────────────────────────────────────────
     for comp in standalone:
-        flags = _object_flags(cfg, comp)
-        lines += _init_param_notes(cfg[comp].get("init_params", []))
-        lines.append(_render_cmd(["just-makeit", "object", comp], flags))
+        _create(comp, lines)
 
     if standalone:
         lines.append("\n")
@@ -1071,61 +1259,37 @@ def run(root: Path) -> None:
         for comp in C.module_objects(cfg, mod):
             if comp in templated:
                 continue
-            flags = _object_flags(cfg, comp, module=mod)
-            lines += _init_param_notes(cfg[comp].get("init_params", []))
-            lines.append(_render_cmd(["just-makeit", "object", comp], flags))
+            _create(comp, lines)
         lines.append("\n")
 
-    # ── methods ───────────────────────────────────────────────────────────────
-    all_comps = list(standalone)
-    for mod in mods:
-        all_comps += [
-            c for c in C.module_objects(cfg, mod) if c not in templated
-        ]
+    members = [c for c in all_comps if c not in producers]
 
     # ── records ───────────────────────────────────────────────────────────────
     # gh-1407: BEFORE the methods, because a method referencing a declared
     # record is refused until it exists -- `--arg-type 'iq16_t[]'` and
     # `--record-dtype iq16_t` both consult the declaration. Emitting these
     # after the methods, or not at all, is a script that dies on replay.
-    record_lines: list[str] = []
-    for comp in all_comps:
-        for rec in C.records(cfg, comp):
-            record_lines.extend(_record_notes(rec))
-            record_lines.append(
-                _render_cmd(
-                    ["just-makeit", "record", comp, str(rec["name"])],
-                    _record_decl_flags(rec),
-                )
-            )
+    record_lines = [ln for c in members for ln in _record_lines(c)]
     if record_lines:
         lines += record_lines
         lines.append("\n")
 
-    method_lines: list[str] = []
-    for comp in all_comps:
-        mod = C.component_module(cfg, comp)
-        for m in C.methods(cfg, comp):
-            flags = _method_flags(m, mod)
-            method_lines.extend(_method_notes(m))
-            method_lines.append(
-                _render_cmd(["just-makeit", "method", comp, m["name"]], flags)
-            )
+    # ── methods ───────────────────────────────────────────────────────────────
+    method_lines = [
+        ln
+        for c in members
+        for ln in _method_lines(c, C.component_module(cfg, c))
+    ]
     if method_lines:
         lines += method_lines
         lines.append("\n")
 
     # ── properties ────────────────────────────────────────────────────────────
-    prop_lines: list[str] = []
-    for comp in all_comps:
-        mod = C.component_module(cfg, comp)
-        for p in C.properties(cfg, comp):
-            flags = _property_flags(p, mod)
-            prop_lines.append(
-                _render_cmd(
-                    ["just-makeit", "property", comp, p["name"]], flags
-                )
-            )
+    prop_lines = [
+        ln
+        for c in members
+        for ln in _property_lines(c, C.component_module(cfg, c))
+    ]
     if prop_lines:
         lines += prop_lines
         lines.append("\n")
@@ -1133,63 +1297,11 @@ def run(root: Path) -> None:
     # ── views ─────────────────────────────────────────────────────────────────
     # After properties: a view's --exclude-property names properties that must
     # already be declared for the reconstruction to make sense.
-    view_lines: list[str] = []
-    for comp in all_comps:
-        mod = C.component_module(cfg, comp)
-        for v in C.views(cfg, comp):
-            view_lines += _init_param_notes(v.get("init_params", []))
-            view_lines.append(
-                _render_cmd(
-                    ["just-makeit", "view", comp, v["class_name"]],
-                    _view_flags(v, mod),
-                )
-            )
-            # gh-504: the view's OWN added/overriding members, after its
-            # `jm view` line (methods before properties, matching apply replay).
-            cls = v["class_name"]
-            for m in C.view_methods(v):
-                view_lines.extend(_method_notes(m))
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "method", comp, m["name"]],
-                        _method_flags(m, mod) + [_flag("--view", cls)],
-                    )
-                )
-            for p in C.view_properties(v):
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "property", comp, p["name"]],
-                        _property_flags(p, mod) + [_flag("--view", cls)],
-                    )
-                )
-            # gh-509: the view's OWN warnings, reusing the object-warning flag
-            # builder plus --view (mirrors the members above).
-            for w in C.view_warnings(v):
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "warning", comp],
-                        _warning_flags(w, mod) + [_flag("--view", cls)],
-                    )
-                )
-            # gh-580: the view's OWN create_error, if it declared one. Read the
-            # raw key rather than C.view_create_error() — the accessor resolves
-            # the parent's value, and re-emitting an inherited translation as an
-            # explicit `jm error --view` would turn inheritance into a frozen
-            # copy on every round-trip.
-            if v.get("create_error"):
-                err_flags = []
-                if mod:
-                    err_flags.append(_flag("--module", mod))
-                err_flags.append(_flag("--category", v["create_error"]))
-                err_flags.append(
-                    _flag("--message", v.get("create_error_message", ""))
-                )
-                view_lines.append(
-                    _render_cmd(
-                        ["just-makeit", "error", comp],
-                        err_flags + [_flag("--view", cls)],
-                    )
-                )
+    view_lines = [
+        ln
+        for c in members
+        for ln in _view_lines(c, C.component_module(cfg, c))
+    ]
     if view_lines:
         lines += view_lines
         lines.append("\n")
@@ -1276,4 +1388,65 @@ def run(root: Path) -> None:
         lines += fn_lines
         lines.append("\n")
 
+    # ── apps (gh-2074) ────────────────────────────────────────────────────────
+    # Last: an app is built from an object or a module function, which has to
+    # exist when its `jm app` line runs. One line per [[app]] row, in order,
+    # each naming itself, so no two replay to one default name.
+    app_lines: list[str] = []
+    for entry in C.apps(cfg):
+        app_lines += _app_notes(entry)
+        app_lines.append(
+            _render_cmd(["just-makeit", "app"], _app_flags(entry))
+        )
+    if app_lines:
+        lines += app_lines
+        lines.append("\n")
+
     sys.stdout.write("".join(lines))
+
+
+def _app_flags(entry: dict) -> list[str]:
+    """CLI flags reconstructing one ``[[app]]`` row (gh-2074).
+
+    >>> row = {"target": "c", "name": "t", "object": "o",
+    ...        "flags": [{"name": "g", "type": "double", "help": "gain"}]}
+    >>> for line in _app_flags(row):
+    ...     print(line.split()[:2])
+    ['--target', 'c']
+    ['--name', 't']
+    ['--object', 'o']
+    ['--flag', 'g:double::gain']
+    """
+    parts = [
+        _flag("--target", entry["target"]),
+        _flag("--name", entry["name"]),
+    ]
+    source = "function" if entry.get("function") is not None else "object"
+    if entry.get(source) is not None:
+        parts.append(_flag(f"--{source}", entry[source]))
+        if entry.get("module"):
+            parts.append(_flag("--module", entry["module"]))
+    for f in entry.get("flags", []):
+        spec = f"{f['name']}:{f['type']}"
+        if f.get("default") or f.get("help"):
+            spec += f":{f.get('default', '')}"
+        if f.get("help"):
+            spec += f":{f['help']}"
+        parts.append(_flag("--flag", spec))
+    for c in entry.get("commands", []):
+        spec = f"{c['name']}:{c['help']}" if c.get("help") else c["name"]
+        parts.append(_flag("--command", spec))
+    return parts
+
+
+def _app_notes(entry: dict) -> list[str]:
+    """NOTE lines for an app's command flags, which no CLI flag spells."""
+    named = [c["name"] for c in entry.get("commands", []) if c.get("flags")]
+    if not named:
+        return []
+    return [
+        f"# NOTE: the flags of app '{entry['name']}' command(s)"
+        f" {', '.join(named)} have no CLI flag — copy\n# those"
+        " [[app.commands]] rows into just-makeit.toml and run"
+        " `just-makeit apply`.\n"
+    ]

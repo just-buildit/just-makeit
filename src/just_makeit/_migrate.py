@@ -5,7 +5,7 @@ Convert a central-manifest project to the per-component fragment layout:
 
     just-makeit.toml      # [project] + include globs only
     objects/<obj>.toml    # one per standalone object
-    modules/<mod>.toml     # one per module (full [module.X] config)
+    modules/<cname>.toml  # one per module (full [module.X] config)
 
 Each component's spec becomes a self-contained file, so copying a component
 into another project is "copy its fragment + source dirs, run jm apply" —
@@ -57,35 +57,48 @@ def run(root: Path) -> None:
     print("just-makeit: migrating to the per-component fragment layout")
     print()
 
+    # The fragments this run writes, keyed by the glob that reaches them.
+    created: dict[str, list[Path]] = {}
     if components:
         objects_dir = root / "objects"
         objects_dir.mkdir(exist_ok=True)
         for comp in components:
             frag = objects_dir / f"{comp}.toml"
             _textio.write_text(frag, C._dump({comp: manifest[comp]}))
+            created.setdefault("objects/*.toml", []).append(frag)
             print(f"  create  {frag}")
 
     if modules:
-        modules_dir = root / "modules"
-        modules_dir.mkdir(exist_ok=True)
+        (root / "modules").mkdir(exist_ok=True)
         for mod, data in modules.items():
-            frag = modules_dir / f"{mod}.toml"
+            # gh-2306: where `save` writes a new module, so a migrated
+            # project names its fragments as a split one does.
+            frag = C.module_fragment(root, mod)
             _textio.write_text(frag, C._dump({"module": {mod: data}}))
+            created.setdefault("modules/*.toml", []).append(frag)
             print(f"  create  {frag}")
 
-    # Rebuild the include list: keep any existing globs, add objects/ and
-    # modules/ globs for the directories that now hold fragments.
+    # Rebuild the include list: the existing entries, plus a glob for each
+    # directory holding a new fragment those entries do not already reach.
+    # Reach is asked of `_resolve_includes`, the one reading of `include`
+    # that `load` makes, so an entry spelled any other way that already
+    # matches (`"*/*.toml"`, an explicit path) is not answered twice.
     globs = list(existing_globs)
-    if (root / "objects").is_dir() and "objects/*.toml" not in globs:
-        globs.append("objects/*.toml")
-    if (root / "modules").is_dir() and "modules/*.toml" not in globs:
-        globs.append("modules/*.toml")
+    covered = set(C._resolve_includes(root, globs))
+    for glob, frags in created.items():
+        if any(frag not in covered for frag in frags):
+            globs.append(glob)
 
     # Subtractive, for the reason in `_split_objects` (gh-763): an additive
     # list here has to stay in step with `components`' exclusion list above,
     # and nothing enforces that. `module` is relocated wholesale into
     # modules/, so it is named explicitly rather than left to the derivation.
-    _relocated = set(components) | ({"module"} if modules else set())
+    # `include` is not carried over either: it is merged above and written
+    # once, below (gh-2263). Carried over, it was written twice -- the old
+    # list and the merged one -- and the manifest no longer parsed.
+    _relocated = (
+        set(components) | ({"module"} if modules else set()) | {"include"}
+    )
     keep = {k: v for k, v in manifest.items() if k not in _relocated}
     manifest_text = C._dump(keep)
     if globs:

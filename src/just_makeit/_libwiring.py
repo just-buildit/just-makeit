@@ -82,7 +82,15 @@ MODULES_SENTINEL = "# ── Modules"
 # Deriving the answer from the tree (gh-988) is what makes a new component
 # KIND free here; a manifest table of which cores are wired would have needed
 # a row for it.
-_DECLARES_CORE = re.compile(r"^[ \t]*add_library\(\s*(\w+)\s+OBJECT\b", re.M)
+#
+# gh-1840: the generous readers match a command NAME in any case, because
+# CMake does -- `ADD_LIBRARY(...)` is cmake-format's `command_case: upper`,
+# and a reader blind to it called a declared core gone. The keywords
+# (`OBJECT`, `PRIVATE`, `SHARED`) stay exact: CMake reads `object` as a
+# source file name, not as the keyword.
+_DECLARES_CORE = re.compile(
+    r"^[ \t]*(?i:add_library)\(\s*(\w+)\s+OBJECT\b", re.M
+)
 _DECLARES_LIB = re.compile(
     r"^[ \t]*add_library\(\s*(\w+_lib(?:_static)?)\s", re.M
 )
@@ -98,7 +106,7 @@ _WIRING = re.compile(
 # only jm's own single-space spelling made it blind to the case it was added
 # for. jm's writer still emits one space; this only widens what is READ.
 _WIRING_ANY = re.compile(
-    r"^[ \t]*target_sources\(\s*(\w+)\s+PRIVATE\s+"
+    r"^[ \t]*(?i:target_sources)\(\s*(\w+)\s+PRIVATE\s+"
     r"\$<TARGET_OBJECTS:(\w+)>\s*\)",
     re.M,
 )
@@ -107,7 +115,8 @@ _WIRING_ANY = re.compile(
 # MODULE is excluded on purpose (see `shipped_cores`): counting a Python
 # extension would answer "shipped" for every core, forever.
 _DECLARES_SHIPPED_LIB = re.compile(
-    r"^[ \t]*add_library\(\s*(\w+)\s+(?:SHARED|STATIC)\b([^)]*)\)", re.M
+    r"^[ \t]*(?i:add_library)\(\s*(\w+)\s+(?:SHARED|STATIC)\b([^)]*)\)",
+    re.M,
 )
 _TARGET_OBJECTS = re.compile(r"\$<TARGET_OBJECTS:(\w+)>")
 
@@ -123,6 +132,65 @@ def wiring_line(target: str, core: str) -> str:
 
 
 # ── Reading the tree ─────────────────────────────────────────────────────────
+
+
+def object_libraries(text: str) -> list[str]:
+    """The OBJECT libraries one CMake file's *text* declares, in order.
+
+    The text form of :func:`component_core_libs`, for a caller holding a
+    file's contents rather than its path -- `apply`'s gh-1840 refusal asks it
+    of a component's CMakeLists before and after the rewrite it is about to
+    make.
+
+    Examples
+    --------
+    >>> object_libraries("add_library(a_core OBJECT a.c)\\n"
+    ...                  "ADD_LIBRARY(\\n  helper\\n  OBJECT h.c)\\n"
+    ...                  "add_library(a_iface INTERFACE)\\n")
+    ['a_core', 'helper']
+    """
+    return _DECLARES_CORE.findall(text)
+
+
+def with_hooks(cmakes: "list[Path]") -> "list[Path]":
+    """*cmakes*, each followed by the ``<d>_extra.cmake`` hook beside it.
+
+    gh-1840. Every CMakeLists jm renders under ``native/src/<d>/`` includes
+    that hook (gh-1351), and it is where jm sends an author's own CMake --
+    an OBJECT library included, since `apply` regenerates the CMakeLists
+    around it. A reader that scanned only ``CMakeLists.txt`` did not see a
+    core declared there: `status` reported its root wiring DANGLING, and
+    `apply` DELETED that wiring as naming a core that is gone, while the
+    project configured and linked it. cmake does not care which file
+    declared a target, so neither may this module.
+
+    The hook's name comes from :func:`_render.extra_cmake_name`, the one
+    spelling the include is written from, and whether it exists is a fact
+    about the directory -- the rule `_hollow` reads it by (gh-1432). So it
+    is looked for beside a hand-written CMakeLists too, which includes it
+    only if its author wrote the line; jm's own files always do.
+
+    Parameters
+    ----------
+    cmakes : list of Path
+        ``CMakeLists.txt`` files under ``native/``. The root file has no
+        hook and is not passed.
+
+    Returns
+    -------
+    list of Path
+        The same files, in order, each followed by its hook when the hook
+        is a file.
+    """
+    from ._render import extra_cmake_name
+
+    out: list[Path] = []
+    for cmake in cmakes:
+        out.append(cmake)
+        hook = cmake.parent / extra_cmake_name(cmake.parent.name)
+        if hook.is_file():
+            out.append(hook)
+    return out
 
 
 def component_core_libs(root: Path, comp: str) -> list[str]:
@@ -146,7 +214,7 @@ def component_core_libs(root: Path, comp: str) -> list[str]:
     path = root / "native" / "src" / comp / "CMakeLists.txt"
     if not path.exists():
         return []
-    return _DECLARES_CORE.findall(path.read_text(encoding="utf-8"))
+    return object_libraries(path.read_text(encoding="utf-8"))
 
 
 def declared_cores(root: Path) -> dict[str, str]:
@@ -167,7 +235,10 @@ def declared_cores(root: Path) -> dict[str, str]:
     # DELETES — the same failure as the indented declaration, reached by a
     # different route. One level was never a decision, only the shape jm's own
     # scaffolds happen to have; deriving from the tree means asking the tree.
-    for cmake in sorted(src.rglob("CMakeLists.txt")):
+    #
+    # gh-1840: and the `<d>_extra.cmake` hook beside each, where jm sends an
+    # author's own OBJECT library.
+    for cmake in with_hooks(sorted(src.rglob("CMakeLists.txt"))):
         text = cmake.read_text(encoding="utf-8")
         for core in _DECLARES_CORE.findall(text):
             found[core] = cmake.parent.relative_to(src).as_posix()
@@ -207,7 +278,7 @@ def _shipped_pairs(root: Path) -> "set[tuple[str, str]]":
     pairs: set[tuple[str, str]] = set()
     files = [root / "CMakeLists.txt"]
     if (root / "native").is_dir():
-        files += sorted((root / "native").rglob("CMakeLists.txt"))
+        files += with_hooks(sorted((root / "native").rglob("CMakeLists.txt")))
     for path in files:
         if not path.is_file():
             continue
@@ -231,7 +302,8 @@ def wired_pairs(root: Path) -> "set[tuple[str, str]]":
     files = [root / "CMakeLists.txt"]
     native = root / "native"
     if native.is_dir():
-        files += sorted(native.rglob("CMakeLists.txt"))
+        # gh-1840: the hooks too -- a core folded in from one is wired.
+        files += with_hooks(sorted(native.rglob("CMakeLists.txt")))
     for path in files:
         if path.is_file():
             pairs |= set(_WIRING_ANY.findall(path.read_text(encoding="utf-8")))

@@ -31,9 +31,11 @@ GATE: every string-kind type, as a scalar and as a ``T[]`` element, is
       naming it -- by ``jm new``, by ``jm object`` (the generator, consumer
       and blockwise presets, and a module object), by ``apply`` and
       ``status --check`` of a manifest (the three issue shapes and a module
-      object), by ``jm method`` over a hand-edited manifest and by
-      ``jm bind`` of a header -- with the tree byte-identical (the binding,
-      for ``jm method``); every other registered type remains a legal step
+      object), by ``jm method`` and ``jm property`` over a hand-edited
+      manifest and by ``jm bind`` of a header -- with the tree
+      byte-identical (for the member verbs, which write before the render
+      refuses, by the command's `_undo` record: gh-2040); every other
+      registered type remains a legal step
       type, and a string stays legal as an init param and as a method's or
       function's param or return.
 """
@@ -239,21 +241,36 @@ def test_the_manifest_refuses_it(
 # -- the renders that do not pass through apply ------------------------------
 
 
+#: The member verbs that save ``_core.c`` and the manifest before the
+#: render that refuses (gh-2040).
+MEMBER_VERBS = [
+    pytest.param(["method", "cc", "foo"], id="method"),
+    pytest.param(["property", "cc", "bar", "--type", "double"], id="property"),
+]
+
+
+@pytest.mark.parametrize("command", MEMBER_VERBS)
 @pytest.mark.parametrize("stype", STR_TYPES)
-def test_a_mutating_command_over_a_hand_edit_writes_no_binding(
-    blank, tmp_path, stype
+def test_a_member_verb_over_a_hand_edit_writes_nothing(
+    blank, tmp_path, stype, command
 ):
-    """``jm method`` re-renders the object's binding from the manifest
-    without asking ``apply``'s check; the render refuses it instead."""
+    """``jm method`` and ``jm property`` re-render the object's binding
+    from the manifest without asking ``apply``'s check; the render refuses
+    it instead -- after they have saved ``_core.c`` and the manifest,
+    which the command's `_undo` record puts back (gh-2040), the author's
+    own edit to ``_core.c`` with them."""
     root = _copy(blank, tmp_path)
     _poison(root, "cc", ("arg_type",), stype)
-    binding = [root / "native/src/cc/cc_ext.c", root / "src/p/cc.pyi"]
-    before = [p.read_bytes() for p in binding]
+    core_c = root / "native/src/cc/cc_core.c"
+    core_c.write_bytes(core_c.read_bytes() + b"/* the author's */\n")
+    before = _snapshot(root)
 
-    r = run_cli("method", "cc", "foo", cwd=root)
+    r = run_cli(*command, cwd=root)
 
     _refused(r, f"arg_type '{stype}' {REFUSED}")
-    assert [p.read_bytes() for p in binding] == before
+    # It wrote before it refused, so the comparison below is not vacuous.
+    assert "  update  " in r.stdout, r.stdout
+    assert _snapshot(root) == before, f"jm {' '.join(command)} wrote"
 
 
 @pytest.mark.parametrize("stype", STR_TYPES)

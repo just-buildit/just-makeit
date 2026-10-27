@@ -159,7 +159,7 @@ class TestPythonFacingMaxOut:
             [],
         )
         pyi = _pyi(root)
-        assert "def execute_max_out(self, n_in: int) -> int:" in pyi
+        assert "def execute_max_out(self, n_in: int, /) -> int:" in pyi
         ext = _ext_c(root)
         assert "Ddc_execute_max_out(DdcObject *self, PyObject *args)" in ext
         assert 'PyArg_ParseTuple(args, "n", &n_in)' in ext
@@ -179,7 +179,7 @@ class TestPythonFacingMaxOut:
             [],
             params=[("x", "float _Complex[]")],
         )
-        assert "def steps_max_out(self, x_len: int) -> int:" in _pyi(root)
+        assert "def steps_max_out(self, x_len: int, /) -> int:" in _pyi(root)
 
     def test_all_scalar_params_method_exposes_out_and_max_out(self, tmp_path):
         # Unaffected by gh-607 itself. The assertion flipped in gh-1079:

@@ -329,6 +329,33 @@ result_fields = [{name = "lag", type = "int"}]
 
 ______________________________________________________________________
 
+## `nothing says how long it is` on a function's `out_type`
+
+**Symptom:** `jm function`, `jm apply` or `jm status` stops with
+
+```
+error: function 'ramp' returns a fresh out_type 'float', but nothing says how
+  long it is. ...
+```
+
+**Cause:** the binding allocates the output and the C function fills it
+through a bare `float *out`, never told its length. So the length has to
+come from the call -- an array param's length, the integer param an
+`out_type = "T[n]"` names, or (with `variable_output`) an `out_size` -- and
+this function gives none. Before gh-1888 jm allocated ONE element here, and a
+body filling the `n` it was called with wrote past it.
+
+**Fix:** name the param that holds the length:
+
+```sh
+jm function ramp --module m --param n:size_t --out-type 'float[n]'
+```
+
+or, in the manifest, `out_type = "float[n]"`; a `variable_output` function
+gives `out_size = "EXPR"` instead.
+
+______________________________________________________________________
+
 ## `error:` with no stack trace, or a traceback
 
 **Symptom:** a command stops with one line, for example

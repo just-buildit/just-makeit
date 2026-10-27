@@ -183,6 +183,10 @@ class _Slot(NamedTuple):
     #: What holds the value, for a message naming it.
     where: str
     locate: Locate
+    #: How this file spells the manifest's version. Identity for every file
+    #: that takes PEP 440 as written; the CMake copy takes the release segment
+    #: (gh-2084). `drift` compares, and `sync` writes, in this spelling only.
+    spell: Callable[[str], str] = lambda v: v
 
 
 def _slots(cfg: dict) -> "list[_Slot]":
@@ -197,7 +201,12 @@ def _slots(cfg: dict) -> "list[_Slot]":
     return [
         _Slot("pyproject.toml", "[project] version", _toml_span),
         _Slot("bootstrap.toml", "[project] version", _toml_span),
-        _Slot("CMakeLists.txt", "project(VERSION)", _regex_span(_CMAKE_RE)),
+        _Slot(
+            "CMakeLists.txt",
+            "project(VERSION)",
+            _regex_span(_CMAKE_RE),
+            spell=C.cmake_version,
+        ),
         _Slot("Doxyfile", "PROJECT_NUMBER", _regex_span(_DOXY_RE)),
         _Slot(
             f"native/src/{pkg}_lib.c",
@@ -288,7 +297,7 @@ def drift(root: Path, cfg: dict) -> "list[VersionCopy]":
     return [
         VersionCopy(c.slot.rel, c.value, expected)
         for c in _copies(root, cfg)
-        if c.value != expected
+        if c.value != c.slot.spell(expected)
     ]
 
 
@@ -302,10 +311,10 @@ def sync(root: Path, cfg: dict) -> "tuple[list[str], list[str]]":
     Each write replaces the located value and nothing else, and is kept only
     if the file then reads back exactly *the version* through the same
     locator -- so a value its slot cannot hold is never written into it.
-    CMake's ``project(VERSION)`` takes integers only, so a PEP 440
-    pre-release such as ``1.0rc1`` is one (it has no CMake spelling yet,
-    gh-2084); a quote in a TOML string is another. Such a copy is left as it
-    was and named in the second list.
+    CMake's copy is written in CMake's spelling, the release segment, so a
+    pre-release manifest version is written as its release there (gh-2084);
+    what cannot be spelled at all -- an epoch, a quote in a TOML string -- is
+    left as it was and named in the second list.
 
     Returns
     -------
@@ -326,10 +335,11 @@ def sync(root: Path, cfg: dict) -> "tuple[list[str], list[str]]":
     >>> drift(root, cfg)
     []
     """
-    version = C.project_version(cfg)
+    manifest = C.project_version(cfg)
     written: "list[str]" = []
     unwritable: "list[str]" = []
     for c in _copies(root, cfg):
+        version = c.slot.spell(manifest)
         if c.value == version:
             continue
         s, e = c.span

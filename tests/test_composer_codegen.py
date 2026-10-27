@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _composer
+from just_makeit import _types as T
 
 
 def _cfg():
@@ -145,7 +146,10 @@ class TestSourceType:
         # scalar assigned directly
         assert "self->src.freq = freq;" in s
         # bytes attached into its own field's destination
-        assert "_attach_bytes(&self->src.bits, &self->src.n_bits, bits)" in s
+        # (gh-2274: through the field's one replace, which converts into a
+        # copy of the struct and installs only once nothing can run Python.)
+        assert "Synth_replace_bits(self, bits)" in s
+        assert "_attach_bytes(&_t.bits, &_t.n_bits, value)" in s
 
     def test_getset_enum_as_string(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -174,7 +178,8 @@ class TestSourceType:
         fields.append({"name": "data_code", "type": "uint8_t*", "bytes": True})
         s = _composer.render_source_type(cfg, "wfm_compose")
         for n in ("bits", "acq_code", "data_code"):
-            assert f"_attach_bytes(&self->src.{n}, &self->src.n_{n}, {n})" in s
+            assert f"Synth_replace_{n}(self, {n})" in s
+            assert f"_attach_bytes(&_t.{n}, &_t.n_{n}, value)" in s
             assert f"free(self->src.{n});" in s
             # the getter reads its own field, not bits
             assert (
@@ -476,7 +481,8 @@ class TestComposerCli:
         assert "--sample_type" in s and "--file-type" in s and "--endian" in s
         # source-field flags; enum validated via the SSOT table (no hand table)
         assert '"--type"' in s and '"--freq"' in s
-        assert "_enum_index(_enum_wfm_type, type)" in s
+        # gh-2140: the flag's text, looked up where it is read.
+        assert "_enum_index(_enum_wfm_type, _s)" in s
         # segment-field flag + --from-file (backing parser) + build/exec/destroy
         assert '"--num_samples"' in s and '"--from-file"' in s
         assert "wfm_compose_create(&seg, 1, repeat, continuous)" in s
@@ -561,9 +567,13 @@ class TestSourceComputed:
     def test_readonly_getset_emitted(self):
         s = _composer.render_source_type(_computed_cfg(), "wfm_compose")
         assert "Synth_get_n_samples(SynthObject *self" in s
-        # delegates to the project fn over the struct; size_t → PyLong
+        # delegates to the project fn over the struct, converted by the
+        # declared type's own `to_py` (gh-2035)
         assert (
-            "PyLong_FromSize_t((size_t)wfm_source_n_samples(&self->src))" in s
+            T._CTYPE_META["size_t"]["to_py"](
+                "wfm_source_n_samples(&self->src)"
+            )
+            in s
         )
         # read-only: NULL setter + the doc string in the getset row, laid
         # out by the one runtime-doc emitter (gh-1499: it was pasted raw).
@@ -608,7 +618,7 @@ class TestSourceComputed:
             {"name": "duration", "type": "double", "fn": "src_duration"}
         ]
         s = _composer.render_source_type(cfg, "wfm_compose")
-        assert "PyFloat_FromDouble((double)src_duration(&self->src))" in s
+        assert "PyFloat_FromDouble(src_duration(&self->src))" in s
         pyi = _composer.render_pyi(cfg, "wfm_compose")
         assert "    duration: float" in pyi
 
@@ -749,7 +759,7 @@ class TestSourceGenerates:
 
     def test_pyi_declares_generation_methods(self):
         pyi = _composer.render_pyi(_gen_cfg(), "wfm_compose")
-        assert "def steps(self, n: int) -> NDArray[np.complex64]:" in pyi
+        assert "def steps(self, n: int, /) -> NDArray[np.complex64]:" in pyi
         assert "def step(self) -> complex:" in pyi
         # absent without generates
         assert "def steps(" not in _composer.render_pyi(_cfg(), "wfm_compose")
@@ -830,7 +840,8 @@ class TestComplexField:
 
     def test_init_attaches_and_dealloc_frees(self):
         s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
-        assert "if (!_attach_symbols(&self->src, symbols))" in s
+        assert "if (!Synth_replace_symbols(self, symbols))" in s
+        assert "_attach_symbols(&_t, value)" in s
         # dealloc frees every owned buffer — bits AND symbols
         assert "free(self->src.bits);" in s
         assert "free(self->src.symbols);" in s
@@ -839,7 +850,7 @@ class TestComplexField:
         s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
         assert "Synth_get_symbols(SynthObject *self, void *closure)" in s
         assert "PyArray_SimpleNew(1, _d, NPY_COMPLEX64)" in s
-        assert "return _attach_symbols(&self->src, value) ? 0 : -1;" in s
+        assert "return Synth_replace_symbols(self, value) ? 0 : -1;" in s
 
     def test_pyi_annotation(self):
         pyi = _composer.render_pyi(_complex_cfg(), "wfm_compose")
@@ -1282,9 +1293,10 @@ class TestRealtimeStream:
         """
         s = _composer.render_composer_type(self._rt_cfg(), "wfm_compose")
 
-        # The docstring names the unit outright.
-        assert "SAMPLE RATE in Hz" in s
-        assert "not a speed multiplier" in s
+        # The docstring names the unit outright -- the stub's Parameters
+        # entry, one text on both faces since gh-2283.
+        assert "Sample rate in **Hz** to pace against" in s
+        assert "speed multiplier" in s
 
         # A negative rate cannot be one, and used to disable pacing silently.
         assert "realtime must be >= 0" in s
@@ -1526,7 +1538,8 @@ class TestPyiDocstrings:
     def test_factory_docstrings(self):
         pyi = _composer.render_pyi(_cfg(), "wfm_compose")
         assert "def tone(**kw: Any) -> Synth:" in pyi
-        assert '    """Return a Synth configured as a *tone* source."""' in pyi
+        # gh-2283: a numpy docstring now, the binding's text too.
+        assert '    """Return a Synth configured as a *tone* source.' in pyi
         assert "def qpsk(**kw: Any) -> Synth:" in pyi
 
     def test_close_docstring(self):
@@ -1641,14 +1654,18 @@ class TestRangedFields:
         s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
         # freq crosses as an object (O) and is decoded post-parse.
         assert "PyObject *freq = NULL;" in s
-        assert "_jm_parse_range(freq, &_lo, &_hi, &_r)" in s
+        # gh-2224: the helper splits the bounds; each parses by its type.
+        assert "_jm_parse_range(freq, &_a, &_b)" in s
+        assert 'PyArg_Parse(_b, "d", &_hi)' in s
         assert "self->src.ranged |= WFM_RANGE_FREQ;" in s
-        assert "self->src.freq_hi = (double)_hi;" in s
+        assert "self->src.freq_hi = _hi;" in s
 
     def test_source_getset_round_trips_range(self):
         s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
         assert "if (self->src.ranged & WFM_RANGE_FREQ)" in s
-        assert 'Py_BuildValue("(dd)"' in s
+        # gh-2224: the pair by the field's own to_py, not "(dd)".
+        assert 'Py_BuildValue("(NN)"' in s
+        assert "PyFloat_FromDouble(self->src.freq_hi)" in s
 
     def test_non_ranged_field_unchanged(self):
         s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
@@ -1659,9 +1676,14 @@ class TestRangedFields:
         s = _composer.render_segment_type(_ranged_cfg(), "wfm_compose")
         assert "unsigned ranged;" in s
         assert "size_t off_samples_hi;" in s
-        assert "_jm_parse_range(_o, &_lo, &_hi, &_r)" in s
+        assert "_jm_parse_range(_o, &_a, &_b)" in s
         assert "self->ranged |= WFM_RANGE_OFF_SAMPLES;" in s
-        assert 'Py_BuildValue("(nn)"' in s
+        # gh-2224: the pair by the field's own to_py, not "(nn)".
+        assert 'Py_BuildValue("(NN)"' in s
+        assert (
+            "PyLong_FromUnsignedLongLong((unsigned long long)"
+            "self->off_samples_hi)"
+        ) in s
 
     def test_pyi_uses_union_type(self):
         pyi = _composer.render_pyi(_ranged_cfg(), "wfm_compose")

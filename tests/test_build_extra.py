@@ -63,10 +63,13 @@ class TestCmakeBuild:
 
 
 class TestCmdBuild:
+    # gh-1896: packaging runs in the project's interpreter, so these mock the
+    # subprocess that does it, not an in-process `just_buildit` import.
     def test_no_rest_creates_dist_dir(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         with patch.object(B, "_ensure_built"):
-            with patch("just_buildit.build_wheel", return_value="pkg.whl"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
                 B.cmd_build([])
         assert (tmp_path / "dist").is_dir()
 
@@ -74,25 +77,28 @@ class TestCmdBuild:
         monkeypatch.chdir(tmp_path)
         custom = tmp_path / "out"
         with patch.object(B, "_ensure_built"):
-            with patch("just_buildit.build_wheel", return_value="pkg.whl"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
                 B.cmd_build([str(custom)])
         assert custom.is_dir()
 
-    def test_just_buildit_missing_exits(self, tmp_path, monkeypatch):
+    def test_packaging_failure_exits(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         with patch.object(B, "_ensure_built"):
-            with patch.dict(sys.modules, {"just_buildit": None}):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=1)
                 with pytest.raises(SystemExit):
                     B.cmd_build([])
 
     def test_calls_build_wheel(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         with patch.object(B, "_ensure_built"):
-            with patch(
-                "just_buildit.build_wheel", return_value="pkg.whl"
-            ) as mock:
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
                 B.cmd_build([])
-                mock.assert_called_once()
+                cmd = mock_run.call_args[0][0]
+                assert "build_wheel" in cmd[2]
+                assert cmd[0] == sys.executable
 
 
 class TestCmdTest:

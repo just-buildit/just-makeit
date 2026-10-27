@@ -21,6 +21,10 @@ PrefixHeaders()
     Schema 8 (gh-1583): move the project's headers under
     ``native/inc/<pkg>/`` and respell every reference to them.
 
+AppRows()
+    Schema 9 (gh-2074): the one ``[app]`` table becomes a one-row
+    ``[[app]]``.
+
 Usage
 -----
     just-makeit upgrade          # advance to CURRENT_SCHEMA
@@ -98,6 +102,42 @@ class PrefixHeaders:
     (:func:`_prefix_headers`), so a hand-written header is carried along and
     a vendored library's own ``"config.h"`` is not.
     """
+
+
+@dataclass
+class AppRows:
+    """Schema 9 (gh-2074): a manifest holds any number of apps.
+
+    Schema 8 and earlier spelled the one app a manifest could hold as a
+    single ``[app]`` table, so a second `jm app` replaced the first. From
+    schema 9 each app is a row of ``[[app]]``, keyed by its name, and
+    `_config.apps` reads that spelling alone. This rewrites the table as a
+    one-row array (:func:`_app_rows`); nothing else about the app moves.
+    """
+
+
+def _app_rows(root: Path) -> None:
+    """Rewrite the manifest's ``[app]`` table as a one-row ``[[app]]``.
+
+    In place, through tomlkit: the table itself becomes the array's only
+    row, so its keys, comments and the ``[[app.flags]]`` /
+    ``[[app.commands]]`` under it keep their text -- only the header
+    changes. Idempotent: a manifest with no ``[app]`` table, or already
+    spelling ``[[app]]``, is left as it is.
+    """
+    import tomlkit
+    from tomlkit.items import Table
+
+    path = root / C.FILENAME
+    doc = tomlkit.loads(path.read_text(encoding="utf-8"))
+    table = doc.get("app")
+    if not isinstance(table, Table):
+        return
+    rows = tomlkit.aot()
+    rows.append(table)
+    doc["app"] = rows
+    _textio.write_text(path, tomlkit.dumps(doc))
+    print(f"  update  {C.FILENAME}  ([app] -> [[app]])")
 
 
 # `make bench` after migration: a one-line delegation to the jm CLI,
@@ -266,7 +306,7 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
     # gh-1647: and the bodies jm renders a header FROM. Respelling only the
     # header left `apply` to put `float complex` back from the manifest, and
     # every later upgrade re-reported the same file.
-    for path in CSYM._manifest_files(root):
+    for path in C.manifest_files(root):
         text = path.read_text(encoding="utf-8")
         # gh-1684: a `replace` key is matched against its body, so it moves
         # only when the body did -- not when that body is an `impl_file`
@@ -325,6 +365,11 @@ MIGRATIONS: dict[int, list] = {
         # native/inc/<pkg>/ and every include of one is spelled "<pkg>/...".
         PrefixHeaders(),
     ],
+    8: [
+        # Schema 9 holds several apps (gh-2074): the one [app] table becomes
+        # a one-row [[app]].
+        AppRows(),
+    ],
 }
 
 
@@ -374,6 +419,9 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
 
     elif isinstance(step, PrefixHeaders):
         _prefix_headers(root)
+
+    elif isinstance(step, AppRows):
+        _app_rows(root)
 
     elif isinstance(step, RegenBench):
         cfg = C.load(root)
@@ -580,7 +628,7 @@ def _prefix_headers(root: Path) -> None:
             _textio.write_text(f, new)
             touched.append(f.relative_to(root).as_posix())
 
-    manifests = [root / C.FILENAME] + _manifest_fragments(root)
+    manifests = C.manifest_files(root)
     for f in manifests:
         text = f.read_text(encoding="utf-8")
         new = _TOML_STRING.sub(
@@ -634,12 +682,6 @@ def _prefix_headers(root: Path) -> None:
             f" project: run `jm upgrade` there; an include of this"
             f' project\'s headers becomes "{INC.prefix(to)}...")'
         )
-
-
-def _manifest_fragments(root: Path) -> "list[Path]":
-    """The fragment files the manifest's ``include`` names."""
-    raw = C.load_manifest(root)
-    return C._resolve_includes(root, raw.get("include") or [])
 
 
 def _where_declared(root: Path, unknown) -> str:
@@ -748,7 +790,7 @@ def _respell_c_prefix(root: Path) -> "tuple[list[Path], dict[str, str]]":
     # An `*_impl_file`'s function follows its file when the walk above
     # respelled that file (`CSYM.IMPL_FILE_VALUE`).
     followed = CSYM.walked(root)
-    for path in CSYM._manifest_files(root):
+    for path in C.manifest_files(root):
         text = path.read_text(encoding="utf-8")
         new = CSYM.respell_manifest(text, names, stems, root, followed, macros)
         if new != text:

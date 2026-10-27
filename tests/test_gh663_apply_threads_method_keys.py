@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _apply  # noqa: E402
-from just_makeit._config import _KNOWN_METHOD_KEYS  # noqa: E402
+from just_makeit._keys import METHOD_KEYS  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
@@ -37,8 +37,11 @@ _EXEMPT = {
     # Read under either spelling and passed as `params=`.
     "extra_args",
     "params",
-    # Documentation-only manifest keys with no _method.run parameter.
-    "bench",
+    # The body's provenance: `_resolve_impl(m, ...)` reads all three off the
+    # entry, and passes the body it resolves as `impl_body=`.
+    "impl",
+    "impl_file",
+    "replace",
 }
 
 
@@ -126,7 +129,7 @@ class TestReplayForwardsEveryKnownKey:
 
     def test_no_manifest_method_key_is_silently_dropped(self):
         read = self._keys_read_by_replay()
-        missing = sorted(_KNOWN_METHOD_KEYS - read - _EXEMPT)
+        missing = sorted(METHOD_KEYS - read - _EXEMPT)
         assert not missing, (
             "jm apply regenerates a method's binding from the manifest, but "
             "_apply._replay_method never reads these declared keys, so a "
@@ -137,5 +140,5 @@ class TestReplayForwardsEveryKnownKey:
 
     def test_exempt_list_has_no_stale_entries(self):
         # An exemption for a key that no longer exists hides the next gap.
-        stale = sorted(_EXEMPT - _KNOWN_METHOD_KEYS)
+        stale = sorted(_EXEMPT - METHOD_KEYS)
         assert not stale, f"_EXEMPT names unknown method keys: {stale}"

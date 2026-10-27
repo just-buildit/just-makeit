@@ -154,7 +154,12 @@ def _c_string_literal(message: str, indent: int) -> str:
 
 
 def _rc_raise_c(
-    category: str, message: str, indent: int = 21, *, pad: int = 8
+    category: str,
+    message: str,
+    indent: int = 21,
+    *,
+    pad: int = 8,
+    fail: str = "return NULL;",
 ) -> str:
     """The ``PyErr_Format`` that turns a failing return code into an exception.
 
@@ -198,6 +203,12 @@ def _rc_raise_c(
         ``out=`` branch, gh-2012) passes 12, with *indent* moved by the same
         4, so the literal is wrapped for the column it is printed at rather
         than shifted past 79 after wrapping.
+    fail : str, keyword-only
+        The statement that leaves the function once the exception is set.
+        ``return NULL;`` in a wrapper returning a ``PyObject *``; a
+        property's setter is a ``setter`` slot returning ``int``, so it
+        passes ``return -1;`` (gh-2182) -- the same knob, for the same
+        reason, as `_parse.capsule_unwrap_c`'s.
 
     Notes
     -----
@@ -222,7 +233,7 @@ def _rc_raise_c(
         f' "%s (rc=%lld)",\n'
         f"{_c_string_literal(message, indent)},\n"
         f"{' ' * indent}(long long)_rc);\n"
-        f"{lead}return NULL;\n"
+        f"{lead}{fail}\n"
     )
 
 
@@ -659,11 +670,14 @@ def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     """`declared_raise` for a ``kind = "handle"`` module method (gh-1111).
 
     A handle method declares "a non-zero return is a failure" as ``error =
-    "<category>"`` over an ``int`` ``returns`` — there is no
-    ``status_return`` on this face, and `_handle._emit_method` refuses an
-    ``error`` without a return to check. So the trigger differs and only the
-    trigger: the category and the message come from `_raise_pair`, the same
-    one the object face reads.
+    "<category>"`` over an ``int`` ``returns``, or as ``status_return =
+    true``, the object face's key and meaning (gh-2186). The second is the
+    one an array-argument method needs: there jm reads the C return as a
+    count unless the author says it is a status, and `_handle._emit_method`
+    refuses an ``error`` it has no status to check against. So the trigger
+    is wider than ``error`` alone and the rest is shared: the category and
+    the message come from `_raise_pair`, the same one the object face reads,
+    so ``status_return`` with no ``error`` raises ``ValueError`` here too.
 
     It exists because those keys were accepted on both faces and honoured on
     one. The binding here spliced the C ``fn`` straight into the
@@ -683,10 +697,101 @@ def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     ...                        "returns": "int", "error": "OSError",
     ...                        "error_message": "budget ran out"})
     ('OSError', 'budget ran out')
+    >>> handle_declared_raise({"name": "send", "fn": "sink_send",
+    ...                        "returns": "int", "status_return": True})
+    ('ValueError', 'sink_send failed')
     """
-    if not m.get("error"):
+    if not (m.get("error") or m.get("status_return")):
         return None
     return _raise_pair(m, str(m.get("fn") or m.get("name", "")))
+
+
+def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
+    """`declared_raise` for a writable property's setter (gh-2182).
+
+    The trigger is ``error`` alone, as on a handle method: a setter has no
+    other use for its C return, so declaring the exception IS declaring that
+    a non-zero return refuses the value. Without it the setter discards the
+    return -- the binding a property had before this key existed -- and an
+    assignment the core refused succeeded silently while the property kept
+    reading its old value.
+
+    *setter* is the C function the binding calls, `_csym.property_setter`.
+    It names the failure in the derived message for the reason
+    `handle_declared_raise` uses ``fn``: it is what a caller reading the
+    traceback can grep for, where the Python name would read ``alpha
+    failed``.
+
+    `validate_property_error` refuses ``error`` wherever there is no C
+    setter call to check, so a pair here is always a pair the binding
+    raises with.
+
+    Examples
+    --------
+    >>> property_declared_raise({"name": "alpha"}, "acc_set_alpha") is None
+    True
+    >>> property_declared_raise({"name": "alpha", "writable": True,
+    ...                          "error": "ValueError"}, "acc_set_alpha")
+    ('ValueError', 'acc_set_alpha failed')
+    """
+    if not p.get("error"):
+        return None
+    return _raise_pair(p, setter)
+
+
+def setter_return_type(p: dict) -> str:
+    """The C type property *p*'s setter returns: ``int`` when it may refuse.
+
+    Read by every writer of the setter's prototype -- the ``_core.h``
+    declaration and the stub `jm property` appends -- so the prototype and
+    the binding that tests the return cannot disagree (gh-2182). A
+    property declaring no ``error`` keeps ``void``, so its render is the
+    one it had before the key existed.
+
+    Examples
+    --------
+    >>> setter_return_type({"name": "alpha", "writable": True})
+    'void'
+    >>> setter_return_type({"name": "alpha", "writable": True,
+    ...                     "error": "ValueError"})
+    'int'
+    """
+    return "int" if property_declared_raise(p, "") else "void"
+
+
+def property_raises_doc(p: dict, setter: str) -> "list[tuple[str, str]]":
+    """The ``raises=`` argument for a refusing property's two doc faces.
+
+    `raises_doc`'s reading for a property, built from the same pair
+    `property_declared_raise` hands the binding, so the documented class is
+    the class the setter raises. The sentence says *assignment* because a
+    property's docstring documents the getter too, and only the setter
+    raises.
+
+    Examples
+    --------
+    >>> property_raises_doc({"name": "alpha"}, "acc_set_alpha")
+    []
+    >>> cat, desc = property_raises_doc(
+    ...     {"name": "alpha", "writable": True, "error": "ValueError",
+    ...      "error_message": "alpha must lie in (0, 1]"}, "acc_set_alpha")[0]
+    >>> cat
+    'ValueError'
+    >>> desc.startswith("On assignment, if ``acc_set_alpha`` refuses")
+    True
+    """
+    pair = property_declared_raise(p, setter)
+    if pair is None:
+        return []
+    category, message = pair
+    return [
+        (
+            category,
+            f"On assignment, if ``{setter}`` refuses the value by returning "
+            f"non-zero. The exception message is ``{message}``, with the "
+            f"return code appended.",
+        )
+    ]
 
 
 def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
@@ -776,6 +881,194 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
             f"is ``{message}``, with the return code appended (gh-869).",
         )
     ]
+
+
+def empty_is_none(m: dict) -> bool:
+    """Whether *m*'s binding answers ``None`` for an empty result (gh-2183).
+
+    The one reading of ``none_on_empty``, the sibling `declared_raise` gives
+    ``error_on_empty``. The binding's empty-result branches emit
+    ``Py_RETURN_NONE`` when this is true, every return annotation -- both
+    ``.pyi`` producers and the runtime synopsis line -- adds ``| None``
+    through `optional_ann`, and both ``Returns`` sections say when through
+    `empty_is_none_doc`. One answer for all of them, so a stub cannot
+    promise an array the binding may not return.
+
+    That is what gh-2183 was: the borrow route asked the key at its own
+    annotation, the ``variable_output`` route never did, and doppler's nine
+    readouts were stubbed ``-> NDArray[np.float32]`` above a binding that
+    returns ``None`` on both its allocating and its ``out=`` path. A type
+    checker then accepted ``x.value().shape`` and rejected
+    ``if x.value() is None`` -- the opposite of what the binding does.
+
+    Two routes read the key, and they are the two this answers ``True`` for:
+
+    * a ``variable_output`` result, when the kernel's count is zero -- on
+      the allocating route and the ``out=`` route alike;
+    * a ``borrow``, when the kernel lends ``NULL`` and no ``status_errors``
+      row raises first (gh-1418).
+
+    A ``batch`` method is dispatched ahead of both and is 1:1, so it has no
+    empty result to read; the key is inert there, as on every other shape,
+    and the answer is ``False`` so that no face advertises a ``None`` the
+    binding never returns.
+
+    Parameters
+    ----------
+    m : dict
+        One ``[[<comp>.methods]]`` entry.
+
+    Examples
+    --------
+    >>> empty_is_none({"name": "value", "variable_output": True,
+    ...                "none_on_empty": True})
+    True
+    >>> empty_is_none({"name": "peek", "borrow": True, "none_on_empty": True})
+    True
+    >>> empty_is_none({"name": "value", "variable_output": True})
+    False
+    >>> empty_is_none({"name": "gain", "none_on_empty": True})
+    False
+    >>> empty_is_none({"name": "run", "batch": True, "variable_output": True,
+    ...                "none_on_empty": True})
+    False
+    """
+    if not m.get("none_on_empty") or m.get("batch"):
+        return False
+    # Deferred: `_borrow` imports this module for its raise emitters.
+    from .._borrow import is_borrow
+
+    return bool(m.get("variable_output")) or is_borrow(m)
+
+
+def optional_ann(m: dict, ann: str) -> str:
+    """*ann*, made optional when *m*'s binding can return ``None``.
+
+    Every face that annotates a method's return spells the optional form
+    through here, from `empty_is_none` -- the ``.pyi`` producers and the
+    runtime synopsis line alike (gh-2183).
+
+    Examples
+    --------
+    >>> optional_ann({"name": "peek", "borrow": True, "none_on_empty": True},
+    ...              "NDArray[np.complex64]")
+    'NDArray[np.complex64] | None'
+    >>> optional_ann({"name": "peek", "borrow": True}, "ndarray")
+    'ndarray'
+    """
+    return f"{ann} | None" if empty_is_none(m) else ann
+
+
+def fixed_result_parts(m: dict) -> "list[tuple[str, str]]":
+    """The values a fixed-output method returns, in order, as ``(kind, C)``.
+
+    gh-2250. A fixed-output binding (`_method.result_shape` ``"fixed"``,
+    not a borrow) hands back:
+
+    - its kernel's return -- unless ``status_return`` claims that int as a
+      status, or ``out_type`` replaces it with the fresh array the kernel
+      fills (``("array", <out_type>)``);
+    - then one value per ``multi_output`` entry (gh-600).
+
+    One value is returned bare; several as a tuple; none (a status alone)
+    as ``None``. The binding builds exactly this list, and both ``.pyi``
+    producers and the runtime synopsis annotate it (`fixed_result_ann`), so
+    the three cannot disagree. They did: a ``multi_output`` method returned
+    a tuple, its ``.pyi`` said the scalar and its ``__doc__`` an ndarray,
+    and ``status_return`` beside either form did not compile.
+
+    Examples
+    --------
+    >>> fixed_result_parts({"name": "m", "return_type": "float"})
+    [('scalar', 'float')]
+    >>> fixed_result_parts({"name": "m", "return_type": "int",
+    ...                     "status_return": True, "multi_output": ["double"]})
+    [('scalar', 'double')]
+    >>> fixed_result_parts({"name": "m", "return_type": "void",
+    ...                     "out_type": "float", "multi_output": ["int"]})
+    [('array', 'float'), ('scalar', 'int')]
+    >>> fixed_result_parts({"name": "m", "return_type": "int",
+    ...                     "status_return": True})
+    []
+    """
+    out_type = m.get("out_type")
+    parts: "list[tuple[str, str]]" = []
+    if out_type:
+        parts.append(("array", str(out_type)))
+    elif not m.get("status_return"):
+        parts.append(("scalar", str(m.get("return_type") or "float _Complex")))
+    parts += [("scalar", str(rt)) for rt in m.get("multi_output") or []]
+    return parts
+
+
+def fixed_result_ann(m: dict, scalar, array) -> str:
+    """The return annotation of a fixed-output method's result (gh-2250).
+
+    *scalar* and *array* spell one C type as a scalar and as an ndarray of
+    it -- each face passes its own (`str` vs ``NDArray[...]`` spellings
+    differ by face), and the SHAPE comes from `fixed_result_parts`, the
+    list the binding builds.
+
+    Examples
+    --------
+    >>> ann = fixed_result_ann(
+    ...     {"name": "m", "return_type": "float", "multi_output": ["int"]},
+    ...     lambda t: {"float": "float", "int": "int"}[t],
+    ...     lambda t: "ndarray")
+    >>> ann
+    'tuple[float, int]'
+    >>> fixed_result_ann({"name": "m", "return_type": "int",
+    ...                   "status_return": True}, str, str)
+    'None'
+    """
+    anns = [
+        array(ct) if kind == "array" else scalar(ct)
+        for kind, ct in fixed_result_parts(m)
+    ]
+    if not anns:
+        return "None"
+    return anns[0] if len(anns) == 1 else f"tuple[{', '.join(anns)}]"
+
+
+def empty_is_none_doc(m: dict) -> str:
+    """The ``Returns`` sentence saying when *m* returns ``None``, or ``""``.
+
+    gh-2183: an optional annotation says THAT the call may return ``None``;
+    this says WHEN, on both doc faces, from the one predicate the binding and
+    the annotation read. It is appended to the ``Returns`` description --
+    the header's ``@return`` or jm's fallback -- rather than replacing it,
+    because the author's prose says what the value is and this says what
+    the binding does when there is none.
+
+    Examples
+    --------
+    >>> empty_is_none_doc({"name": "value", "variable_output": True,
+    ...                    "none_on_empty": True})
+    'None when the C call writes no output.'
+    >>> empty_is_none_doc({"name": "peek", "borrow": True,
+    ...                    "none_on_empty": True})
+    'None when the C call lends nothing (returns NULL).'
+    >>> empty_is_none_doc({"name": "peek", "borrow": True,
+    ...                    "none_on_empty": True, "status_fn": "ring_why",
+    ...                    "status_errors": [{"status": "RING_CLOSED",
+    ...                                       "error": "EOFError"}]})
+    'None when the C call lends nothing (returns NULL) and its status has no exception row.'
+    >>> empty_is_none_doc({"name": "value", "variable_output": True})
+    ''
+    """
+    if not empty_is_none(m):
+        return ""
+    from .._borrow import is_borrow, status_rows
+
+    if not is_borrow(m):
+        return "None when the C call writes no output."
+    # gh-1418: a status with a row raises before the fallback is reached,
+    # so with a table the None is the answer for the statuses it omits.
+    return (
+        "None when the C call lends nothing (returns NULL)"
+        + (" and its status has no exception row" if status_rows(m) else "")
+        + "."
+    )
 
 
 def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":

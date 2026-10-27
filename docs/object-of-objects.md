@@ -397,6 +397,17 @@ pointer member, or by the first step of a `c_ptr` path. If a row's `doc` and
 the member's doc both exist and differ, `jm status` lists the row under `DOC`
 and `jm status --check` fails (gh-1703).
 
+**A type's docstring is its struct's, on both faces.** The `/** ... */`
+block above the source or segment `struct` gives the class summary (its
+`@brief`) and description, and the fields follow as `Parameters`. That one
+docstring is the `.pyi` class docstring and the runtime `tp_doc`, so
+`help(Synth)` lists the same keywords the stub does. A factory says what it
+makes the same way on both faces: the source type it returns, the
+discriminant value it presets and, when that value's `[[enum]]` declares
+`enumerators`, the enumerator's header doc (`WFM_SYNTH_TONE = 0, /**< ... */`).
+Every other method jm writes for the composer types has one docstring too,
+and its runtime text is the stub's after a leading signature line (gh-2283).
+
 A `bytes` field is **owned**: jm generates the coercion from a Python `bytes`,
 the getter, the setter, the `free` in `dealloc`, the deep-copy when a source is
 rebuilt from a resolved segment, and both halves of the JSON codec. By default
@@ -551,7 +562,31 @@ A source can hand work back to the project as plain C, with no CPython in it:
     and `float _Complex`. A NULL from `bridge_fn` raises `RuntimeError`,
     unless the optional `bridge_error_fn`,
     `const char *fn(const <struct> *, double fs)`, returns a reason, which is
-    raised as `ValueError(reason)` (gh-1307).
+    raised as `ValueError(reason)` (gh-1307). The generator is built from
+    the source on first use. Assigning a `bytes`, complex-stream or
+    owned-pointer field (`src.bits = ...`, or `__init__` again) converts the
+    new value first, then waits for a `steps()` running on another thread,
+    drops the generator, and only then frees the old buffer and installs the
+    new one, so a `bridge_fn` that borrows a buffer never reads a freed one;
+    the next `steps()` builds from the new configuration. A value that is
+    refused leaves the field as it was; it used to clear it, so a caller that
+    relied on that must assign `None` to clear the field (gh-2274).
+- **`methods = ["prod", ...]`** in the same table (gh-2259) puts named
+    methods of the generator object on the source type too:
+    `Synth(...).prod(x)` instead of building the generator yourself. Each
+    runs against the same generator `steps()` uses, built on the first call
+    (with the same refusal) and continued after, so the two interleave on
+    one state. The binding, its docstring and its `.pyi` member are the
+    generator's own, written by the same emitter, with one addition: their
+    `Raises` also lists the refusal of that first build, as `steps()`'s
+    does. An error the binding raises names the source (`Synth.prod: ...`).
+    Only the names listed are delegated. A name is refused at load when the
+    generator does not declare it, when it is already a source member (a
+    field, `fs`, a computed property, `steps`, `step`, `reset`), or when
+    the source cannot carry it: a built-in member of the generator, a
+    `varargs` or `manual_stub` method (hand-written bindings), a borrow or
+    its release (they lend the generator's memory), a `single` record, or
+    a `codec` method (its docstring has no `Raises` to list the build in).
 - **`[[module.X.source.computed]]`** (`name`, `type`, `fn`, `doc`) is a
     read-only property computed in C on every read:
     `<type> fn(const <struct> *)`.
@@ -643,6 +678,44 @@ keeps a plain four-argument create for its own C callers names the
 reason-naming one in `create_fn` (doppler: `create_fn = "dp_wfm_compose_create_why"`). A `create_why` that is not `true`/`false` is
 refused at load.
 
+A composer can **lend its state to another module** (gh-2346), the way a
+handle lends its pointer (gh-794): `[module.X] capsule = "<name>"` (or the
+shared `capsule_name`) gives the composer type a read-only `_capsule`
+holding its `<state_t> *`, borrowed -- it never frees the state -- and
+holding the composer alive. A closed composer refuses it with
+`RuntimeError`. Another module's method then takes the `Composer` itself,
+or its `_capsule`, through an ordinary capsule param:
+
+```toml
+[module.wfm_compose]
+kind    = "composer"
+capsule = "proj.wfm.composer"
+
+[[writer.methods]]
+name   = "annotate"
+params = [{ name = "scene", type = "wfm_compose_state_t *",
+            capsule = "proj.wfm.composer",
+            header = "proj/wfm/wfm_compose.h", retain = true }]
+```
+
+`retain = true` keeps the composer for as long as the consumer holds the
+pointer (gh-2327). A composer that declares neither key renders exactly as
+before.
+
+**A lent pointer outlives `close()`.** `retain` keeps the *object* alive,
+so a `close()` that freed the state would leave the consumer reading freed
+memory. Once `_capsule` has been taken, `close()` only marks the composer
+closed -- every method, and `_capsule` itself, refuses from then on -- and
+dealloc frees the state when the last borrower lets go (gh-2346). A handle
+that publishes a capsule (gh-794) does the same, with a trade worth knowing:
+its `close_fn` waits for dealloc too, so a file or socket the handle holds is
+**not released at `close()`** while it is borrowed, and a status the close
+function would report is **not raised**. Its `close()` docstring says so on
+both faces. A lent handle also refuses a second `__init__`, which would free
+the pointer under the borrower. An object that publishes `_capsule` (gh-788
+gap 4) parks its state at `destroy()` exactly as an object that lends views
+does (gh-2187).
+
 ### 4.7 JSON faces (generated vs delegated)
 
 With `[module.X.json] enabled = true` the composer gets
@@ -651,8 +724,20 @@ With `[module.X.json] enabled = true` the composer gets
 - **Generated (default)** — a generic, SSOT-driven ser/de built from
     `source.fields`/`segment.fields`. One uniform schema:
     `{version, repeat, continuous, segments: [ {<scalar fields>, sources: [{<source fields>}]} ]}`; enum fields serialize as their SSOT string, a `bytes` field as
-    a JSON int array, everything else numeric. Round-trips by construction;
-    reusable by any composer with zero hand-written wire code. (Uses cJSON; the
+    a JSON int array, everything else numeric. `from_json` / `from_file`
+    read an integer field narrower than 64 bits only as a whole number
+    within its type's range, and a `bytes` element only from 0 to 255; anything else is
+    refused with a `ValueError` naming the field (gh-2247). A field of a 64-bit integer
+    type is a JSON number while its value is within ±(2^53 - 1), the range a
+    double holds exactly (I-JSON, RFC 7493), and a decimal string such as
+    `"18446744073709551615"` past it (gh-2139). `from_json` / `from_file` read either form exactly, and
+    refuse with a `ValueError` naming the field a number outside that range
+    or with a fraction, a string that is not a decimal integer or is out of
+    the type's range, and a sign on an unsigned field. The JSON face round-trips by
+    construction, as the Python face does: a ranged field's bounds parse and
+    read back at the field's own type, so a 64-bit pair is exact there too
+    (gh-2224); reusable by any composer with zero
+    hand-written wire code. (Uses cJSON; the
     project provides the header via `json.include_dir` and links its json lib via
     `extra_link_libs`.)
 - **Delegated (escape hatch)** — set `json.to_json_fn` (plus optional
@@ -688,7 +773,12 @@ command-line tool** (`render_cli`): a pure-C `main()` — no Python — that
 - streams samples in the chosen wire format, reusing **`jm app`'s output axes**
     verbatim (`--sample_type` / `--file-type` / `--endian`);
 - validates enum flags against the SSOT `_enum_*` tables — no hand-written flag
-    tables.
+    tables;
+- reads a numeric flag whole at its field's declared type (decimal, `0x` hex
+    or leading-`0` octal for an integer), or refuses it: text that is not a
+    number, overflows, or is outside the type's range prints
+    `<prog>: --<field>: <reason>` and exits 2, through the same checked parser
+    as [`jm app`](commands/app.md#just-makeit-app) (gh-2225).
 
 The CMake `add_executable` target is emitted **outside** the `BUILD_PYTHON`
 guard (it is a C tool, not a Python module).
@@ -740,8 +830,9 @@ The generated type carries:
 - **methods** mapping `name → fn(self->h, …)`, in six shapes: scalar args
     (honoring `default` / keyword args, gh-319); an array-in arg (numpy-marshaled
     like the capsule path), optionally followed by trailing scalars
-    (`send(iq, fs, fc)`, gh-308); an int-in→array-out shape returning an
-    **independent** numpy-owned array; an **array-in + writable array-out**
+    (`send(iq, fs, fc)`, gh-308); a count-in→array-out shape returning an
+    **independent** numpy-owned array, whose arguments after the count pass
+    through behind it (`fill(n, gain)` → `fn(h, out, n, gain)`, gh-2211); an **array-in + writable array-out**
     execute (`execute(x, out)` → the zero-copy `out[:n_out]` view, gh-311),
     which may itself carry trailing scalars for a control port
     (`execute_ctrl(x, out, rate, freq=0.0)` → `fn(h, in, n_in, rate, freq, out, max_out)`, gh-582 — note `out` stays *second* in Python so it remains
@@ -750,7 +841,7 @@ The generated type carries:
     result); and a scalar/string-args → handle-length **`bytes`** shape
     (`returns = "bytes"` + `out_len_fn`: a temp buffer filled by
     `fn(self->h, …, void *out)`, copied into an immutable `bytes` — `save()`, the
-    write half of §5.5 save/restore, gh-565);
+    write half of §5.5 save/restore, gh-565). On every shape, and on a factory, an arg declaring `enum` takes that enum's choice string and reaches C as its int, as a create-arg does (gh-2228);
 - **module-level factories** (§5.5) — alternate constructors that build a
     *fresh* handle from a blob or file;
 - **decoded-getter properties** (§5.2), including **writable** scalar
@@ -1000,6 +1091,16 @@ refused before anything is written, with one `error:` line naming the module,
 the table and the row (gh-2009). A constructor array is supported on an
 object's [`[[<object>.init_params]]`](configuration.md#objectinit_params).
 
+A composer's `settings`, `segment.fields`, `source.computed`, source fields
+and serializer `params` convert each value by its declared `type`, through
+the same conversion an object's property and method use: a `double` keeps
+its fraction, a `bool` reads back as a `bool`, a complex keeps both parts,
+and the `.pyi` says so (gh-2035). The same refusal covers them. Beyond it,
+a `settings`, `segment.fields` or `source.computed` row holds a number, so a
+string `type` is refused there; and a complex segment field is refused when
+the JSON or CLI face is on, since each carries a segment field as one real
+number.
+
 **Capsule only:** `capsule_name` (the `PyCapsule` name string; default
 `<pkg>.<module>.<backing>_state`), `[[module.X.init_params]]`
 (`name`/`type`), `[[module.X.methods]]` (`name`, `arg_type?`,
@@ -1014,7 +1115,7 @@ object's [`[[<object>.init_params]]`](configuration.md#objectinit_params).
 | `create_why`        | the create takes a trailing `const char **why`; every face that creates raises or prints its reason (gh-1755)                                                                                                                                                                                                                                    |
 | `[X.source]`        | `object`, `struct`, `type_name`, `fields[]`; optional `computed[]` and `generates` (the straight-C seams, §4.3) and `ranged`                                                                                                                                                                                                                     |
 | `[X.segment]`       | `type_name`, `struct`, `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`), `flat_sources` (a one-source segment proxies that source's fields as read-only attributes), `ranged`                                                                                                                                |
-| `ranged`            | on `[X.source]` / `[X.segment]`: `[{name, flag}, …]`, fields that also take a `(lo, hi)` pair, redrawn uniformly each repeat; the struct carries a `<name>_hi` companion                                                                                                                                                                         |
+| `ranged`            | on `[X.source]` / `[X.segment]`: `[{name, flag}, …]`, fields that also take a `(lo, hi)` pair, redrawn uniformly each repeat; the struct carries a `<name>_hi` companion. Each bound converts at the field's own type, so an integer one keeps every bit and is refused out of range (gh-2224)                                                   |
 | `[X.timeline]`      | `type_name` (the `Timeline` type is emitted only when it is set)                                                                                                                                                                                                                                                                                 |
 | `[X.oo]`            | `factories[]`, `discriminant`, `composer_type_name`                                                                                                                                                                                                                                                                                              |
 | `[[X.serializers]]` | an extra delegated serializer `{name, fn, returns?, params?[], header?}`: a `<Composer>.<name>(<params>)` method calling the project's C `fn(<params>, segs, n)` over the resolved segments, for a domain wire format jm does not generate (gh-317)                                                                                              |
@@ -1035,26 +1136,46 @@ leaves undocumented. A source field may instead be an owned pointer (§4.2,
 gh-1711):
 `{ name, object? | type + capsule? + header?, c_ptr?, copy_fn, free_fn, parse_fn, format_fn, parse_why? }`.
 
+A project that generates its own faces from these rows (a CLI table, a JSON
+schema) may put its own keys on them, and declare them once so jm does not
+warn that each one has no effect (gh-1752):
+
+```toml
+[project]
+composer_field_keys = ["cli", "json", "metavar"]
+
+[[module.wfm_compose.source.fields]]
+name = "freq"
+type = "double"
+cli = "--freq"      # read by the project's generator, not by jm
+metavar = "HZ"
+```
+
+Any other unknown key on a field row still warns, so a misspelt jm key stays
+visible; a declared name on any other table still warns too. A name jm itself
+reads on a field row is refused.
+
 **Handle only:**
 
-| table / key                             | meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `handle_type`                           | the opaque C handle type (default `<backing>_t`)                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `type_name`                             | the generated CPython class name (`Plan`)                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `create_fn`                             | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?, doc?}` (`type = "path"` → `os.fspath`)                                                                                                                                                                                                                                                                                                                                              |
-| `init_fn`                               | init-in-place ctor over a caller-allocated struct (jm mallocs + frees); mutually exclusive with `create_fn` (gh-315)                                                                                                                                                                                                                                                                                                                                                     |
-| `[[X.create_post]]`                     | conditional post-create setter `{fn, when?, arg?}`                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `create_error` / `create_error_message` | exception + message raised when `create_fn` returns NULL; undeclared → `RuntimeError: "<create_fn> failed"` (gh-514)                                                                                                                                                                                                                                                                                                                                                     |
-| `[[X.methods]]`                         | `{name, fn, args[], returns?, nogil?, error?, error_message?, out_len_fn?, doc?}` — scalar (args honor `default`); array-in (+ trailing scalars); int-in→array-out; array-in + a `writable=true` array-out execute (gh-311/319); `out_len_fn` sizes a handle-length array or `bytes` result (§5.5)                                                                                                                                                                       |
-| `[[X.factories]]`                       | module-level alternate constructors `{name, create_fn, init_params[]}` that build a fresh handle (§5.5, gh-565)                                                                                                                                                                                                                                                                                                                                                          |
-| `close_returns`                         | `"int"`: `close()` raises `RuntimeError` on a non-zero `close_fn` return; `tp_dealloc` still ignores it                                                                                                                                                                                                                                                                                                                                                                  |
-| `serializable`                          | `true`: `state_bytes()` / `get_state()` / `set_state()` over the handle, from the backing's `<backing>_state_bytes` / `_get_state` / `_set_state` (gh-403)                                                                                                                                                                                                                                                                                                               |
-| `capsule` (or `capsule_name`)           | publish a borrowed `_capsule` property lending the handle's pointer, so another component can take it as a capsule parameter (gh-794)                                                                                                                                                                                                                                                                                                                                    |
-| `error` / `error_message` (on a method) | over an `int` `returns`, a non-zero rc raises `error` with `error_message` (the rc appended) instead of crossing as an int; undeclared message → `"<fn> failed"`. The `.pyi` says `-> None` and documents a numpy `Raises` section, from the same pair the binding raises with (gh-565/gh-1111/gh-1116). **Needs a status return**: on an array or `bytes` shape the C return is the payload length, so there is no rc to check and the declaration is refused (gh-1118) |
-| `[[X.getters]]`                         | a shared struct getter `{fn, out, cache?, fields[]}`, or per-field scalar getters (each field a `getter`); field `{name, from?, type, enum?, scale?, expr?, getter?, writable_fn?}` (gh-311/314)                                                                                                                                                                                                                                                                         |
-| `close_fn`                              | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                                                                                                                                                                                                                                                                                                                                                                         |
-| `context_manager`                       | *also* emit `__enter__`/`__exit__` (`__exit__` calls `close()`)                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `optional_backend`                      | a weak-symbol backend; absent → `NotImplementedError`                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| table / key                             | meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handle_type`                           | the opaque C handle type (default `<backing>_t`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `type_name`                             | the generated CPython class name (`Plan`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `create_fn`                             | the backing constructor; `create_args[]` are `{name, type, enum?, default?, kwonly?, doc?}` (`type = "path"` → `os.fspath`)                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `init_fn`                               | init-in-place ctor over a caller-allocated struct (jm mallocs + frees); mutually exclusive with `create_fn` (gh-315)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `[[X.create_post]]`                     | conditional post-create setter `{fn, when?, arg?}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `create_error` / `create_error_message` | exception + message raised when `create_fn` returns NULL; undeclared → `RuntimeError: "<create_fn> failed"` (gh-514)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `[[X.methods]]`                         | `{name, fn, args[], returns?, nogil?, error?, error_message?, status_return?, out_len_fn?, doc?}` — scalar (args honor `default`); array-in (+ trailing scalars); count-in→array-out (+ trailing scalars, gh-2211); array-in + a `writable=true` array-out execute (gh-311/319); `out_len_fn` sizes a handle-length array or `bytes` result (§5.5)                                                                                                                                                                                                                             |
+| `[[X.factories]]`                       | module-level alternate constructors `{name, create_fn, init_params[]}` that build a fresh handle (§5.5, gh-565)                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `close_returns`                         | `"int"`: `close()` raises `RuntimeError` on a non-zero `close_fn` return; `tp_dealloc` still ignores it                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `serializable`                          | `true`: `state_bytes()` / `get_state()` / `set_state()` over the handle, from the backing's `<backing>_state_bytes` / `_get_state` / `_set_state` (gh-403)                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `capsule` (or `capsule_name`)           | publish a borrowed `_capsule` property lending the handle's pointer, so another component can take it as a capsule parameter (gh-794)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `error` / `error_message` (on a method) | over an `int` `returns`, a non-zero rc raises `error` with `error_message` (the rc appended) instead of crossing as an int; undeclared message → `"<fn> failed"`. The `.pyi` says `-> None` and documents a numpy `Raises` section, from the same pair the binding raises with (gh-565/gh-1111/gh-1116). **Needs a status return**: on an array or `bytes` result the C return is the payload length, so there is no rc to check and the declaration is refused (gh-1118); with an array argument jm reads the return as a count unless the method says `status_return = true` |
+| `status_return` (on a method)           | `true`: the `int` `returns` is a status, as on an object method: non-zero raises `error` (`ValueError` when undeclared) and the method returns `None`. The one way an array-argument method such as `send(iq, fs, fc)` raises on a refused block; refused over a non-integer `returns` or an array / `bytes` result (gh-2186)                                                                                                                                                                                                                                                  |
+| `[[X.getters]]`                         | a shared struct getter `{fn, out, cache?, fields[]}`, or per-field scalar getters (each field a `getter`); field `{name, from?, type, enum?, scale?, expr?, getter?, writable_fn?}` (gh-311/314)                                                                                                                                                                                                                                                                                                                                                                               |
+| `close_fn`                              | the idempotent `close()` / `tp_dealloc` destructor (always generated; default `<backing>_close`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `context_manager`                       | *also* emit `__enter__`/`__exit__` (`__exit__` calls `close()`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `optional_backend`                      | a weak-symbol backend; absent → `NotImplementedError`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ______________________________________________________________________
 

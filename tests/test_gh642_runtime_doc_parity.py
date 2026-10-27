@@ -267,10 +267,11 @@ class TestGeneratedProject:
 
         The variable_output shape hard-coded `x` and dropped declared params,
         so rendering Parameters made one docstring advertise `run(x)` above a
-        block documenting `gain` -- the gh-657 failure shape.
+        block documenting `gain` -- the gh-657 failure shape. gh-2028 gave
+        the shape its `out=`, which the line lists as well.
         """
         ext_c = (project / "native/src/fir/fir_ext.c").read_text()
-        assert _runtime_doc(ext_c, "run")[0].startswith("run(x, gain)")
+        assert _runtime_doc(ext_c, "run")[0].startswith("run(x, gain, out)")
 
     def test_authored_example_replaces_the_synthesised_demo(self, project):
         """One Examples section, not the author's plus jm's placeholder."""
@@ -296,7 +297,8 @@ class TestGeneratedProject:
             "kaiser_window",
             "win",
             params=[("n", "size_t"), ("beta", "double")],
-            out_type="double",
+            # gh-1888: the window's length is `n`, and says so.
+            out_type="double[n]",
         )
         hdr = root / INC_ROOT / "win" / "win_core.h"
         text = hdr.read_text(encoding="utf-8")
@@ -341,7 +343,8 @@ class TestGeneratedProject:
             "win",
             doc='Apply the "raised cosine" taper.',
             params=[("n", "size_t")],
-            out_type="double",
+            # gh-1888: the window's length is `n`, and says so.
+            out_type="double[n]",
         )
         ext_c = (root / "native/src/win/win_ext.c").read_text()
         assert r"\"raised cosine\"" in ext_c, (

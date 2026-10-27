@@ -98,7 +98,7 @@ class TestCodegen:
             [_req("block_size", "size_t"), _opt("gain", "double", "1.5")],
         )
         ext = _ext(dest)
-        assert '"K|d"' in ext
+        assert '"O|d"' in ext
         assert '{"block_size", "gain", NULL}' in ext
         assert "writer_create(block_size, gain)" in ext
 
@@ -107,8 +107,8 @@ class TestCodegen:
             tmp_path, [_req("rows", "size_t"), _req("cols", "size_t")]
         )
         ext = _ext(dest)
-        # Two required size_t -> "KK", no optional separator at all.
-        assert '"KK"' in ext
+        # Two required size_t -> "OO" (gh-2220), no optional separator.
+        assert '"OO"' in ext
         assert '"KK|"' not in ext
 
     def test_required_seeds_zero_local(self, tmp_path):
@@ -142,7 +142,7 @@ class TestRoundTrip:
         # Drop the generated binding and re-materialize from the manifest.
         (dest / "native/src/writer/writer_ext.c").unlink()
         apply_run(dest)
-        assert '"K"' in _ext(dest)
+        assert '"O"' in _ext(dest)
 
 
 @pytest.mark.skipif(

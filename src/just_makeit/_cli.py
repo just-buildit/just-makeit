@@ -67,6 +67,9 @@ Commands:
                                 equivalent flag combination; passing the
                                 flags directly is always equivalent.
     --module name               Place object inside this module's .so.
+    --before OBJ                With --module: insert ahead of OBJ in the
+                                module's objects list (its load order)
+                                instead of appending.
     --state name:type[:default] State variable; repeatable.
     --arg-type TYPE             step() input type (default: float _Complex).
     --return-type TYPE          step() return type (default: --arg-type).
@@ -159,9 +162,11 @@ Commands:
                                 casting, copying and flattening it.
                                 TypeError for dtype, ValueError for shape.
     --releases A[,B]            This method RELEASES the named --borrow
-                                method(s). Its count param then defaults
-                                to the outstanding borrow's count; with
-                                no count param it just clears the record.
+                                method(s). Its count param then defaults,
+                                when omitted, to the outstanding borrow's
+                                count; an explicit 0 is passed through.
+                                With no count param it just clears the
+                                record.
     --release-count NAME        Which param carries that count, when the
                                 method has more than one. Must be last.
     --status-fn NAME            C function saying WHY a --borrow returned
@@ -182,6 +187,11 @@ Commands:
                                 call-independent -- a `max_out(state)` that
                                 never sees the count cannot claim it, and is
                                 clamped without this flag (gh-920).
+    --short-out                 Accept an out= SMALLER than max_out(), any
+                                size down to empty (whole rows, with
+                                --out-cols), for a backpressure kernel: it
+                                writes what fits and the object reports the
+                                input it took. Needs --pass-capacity.
     --nogil                     Release the GIL across the pure-C kernel so a
                                 thread-per-shard worker scales across cores.
                                 Numpy accessors are hoisted out first. Sound
@@ -210,6 +220,18 @@ Commands:
                                 "count"). Say it when your C API names the quantity
                                 something else -- the paired <comp>_<name>_max_out()
                                 already takes its name from the C signature.
+    --no-count                  Drop that synthesized argument altogether: the
+                                method is called f(), the kernel f(state, out
+                                [, max_out]), and <comp>_<name>_max_out(state)
+                                alone sizes the result. For a kernel that
+                                writes one result sized by the object (gh-2233).
+    --out-cols EXPR             Make a --variable-output result a MATRIX: the
+                                kernel still fills a flat buffer and returns an
+                                element count, and the binding returns
+                                (count / EXPR, EXPR). EXPR is an integer or a C
+                                expression over the object ("state->nfft").
+                                A caller-supplied out= must then be 2-D with
+                                that many columns.
     --varargs                   Generate a *args/**kwargs binding. Mutually
                                 exclusive with --arg-type, --param and
                                 --variable-output.
@@ -237,9 +259,16 @@ Commands:
     --max-out N                 Worst-case output count returned by <comp>_<name>_max_out().
                                 Composes with --variable-output (skips the IMPLEMENT stub).
     --multi-output TYPE         Emit a second output array of this type.
-    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor.
+    --out-type TYPE             Allocate an output array per call; length = in_len / out-divisor,
+                                in_len being the first array input's length, else the
+                                first integer --param.
     --out-divisor N             Divide input length by N for output array (default: 1).
     --result-field name:type    Append a field to a returned record list; repeatable.
+    --consumed-fn NAME          With --result-field and an --arg-type input: the C
+                                function saying how much input the last call took
+                                (size_t NAME(const state *)). The binding re-offers
+                                the rest until none is left, so a kernel that stops
+                                at a full buffer loses no records.
     --record-dtype STRUCT       With --variable-output: return ONE numpy structured
                                 array whose dtype is that C struct's own layout
                                 (offsetof/sizeof), one row per record. The
@@ -300,6 +329,10 @@ Commands:
     --count-fn name             Entry count accessor  (default <stem>_num_<name>).
     --key-fn name               Key accessor, dict only (default <stem>_<name>_key).
     --value-fn name             Value accessor      (default <stem>_<name>_value).
+    --error EXC                 With --writable: the setter's C function returns
+                                int, and a non-zero return refuses the value and
+                                raises EXC (e.g. ValueError). Not with --field.
+    --error-message text        Text for that exception (rc appended).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a
@@ -330,13 +363,17 @@ Commands:
     --param name:type           Input parameter; repeatable.
     --out-param name:type[]     Writable output array param (drops const); repeatable.
     --return-type TYPE          Return type (default: void).
-    --out-type TYPE             Return a fresh ndarray of TYPE; size from first array
-                                param's length, or the first integer scalar param.
+    --out-type TYPE[N]          Return a fresh ndarray of TYPE, as long as the
+                                integer param N says ('float[n]'); without [N],
+                                as long as the first array param. One of the two
+                                is required.
     --out-size EXPR             Length of that output, as a verbatim C expression
                                 over the function's own arguments — each array
                                 param's generated <name>_len included
-                                (e.g. "x_len * factor").
-    --check-return              Treat a non-zero int return as failure: raise
+                                (e.g. "x_len * factor"). With --result-field,
+                                the number of records the C is handed room
+                                for (default: max_results, 64).
+    --check-return             Treat a non-zero int return as failure: raise
                                 RuntimeError(rc), return None on success.
                                 Requires an integer --return-type.
     --why                       The C function takes a trailing
@@ -363,18 +400,19 @@ Commands:
     --force, -f                 Skip the rebuild confirmation.
 
   remove <kind> <name> [OPTIONS]  Delete a scaffolded object/module/method/etc.
-    kind is object|module|method|property|function.
+    kind is object|module|state|method|property|warning|error|function|app.
     --object name               Object the method/property lives on (required for those).
     --module name               Module the function lives in (required for function).
     --force, -f                 Skip the confirmation prompt.
 
-  app [OPTIONS]                 Scaffold a shippable standalone application from an object.
+  app [OPTIONS]                 Add a shippable standalone application ([[app]] row).
     --target c|console|pep723   Output target (default: c).
     --object name               Component to scaffold from (default: first object).
     --function name             Bind the app to a module-level function
                                 instead of an object.
     --module name               Module the object or function lives in.
-    --name name                 App/script name (default: project name).
+    --name name                 App/script name, unique per project (default:
+                                the function's, else the project's name).
     --flag name:type[:default[:help]]
                                 Extra CLI flag wired into both the C and
                                 Python parsers ([[app.flags]]); repeatable.
@@ -559,10 +597,10 @@ Examples:
   jm app --target c --object engine --name dsp_tool
 
   # scaffold a Python console script (updates pyproject.toml [project.scripts])
-  jm app --target console --object engine --name dsp_tool
+  jm app --target console --object engine --name dsp_tool_py
 
   # scaffold a PEP 723 inline script (runnable via uv run, no install needed)
-  jm app --target pep723 --object engine --name dsp_tool
+  jm app --target pep723 --object engine --name dsp_tool_script
 
   # config, build, test
   jm config
@@ -754,17 +792,41 @@ def main() -> None:
     Only that subclass is caught. A plain ``ValueError`` -- or anything else
     jm did not raise deliberately -- is a bug, and still tracebacks. With
     ``JM_DEBUG=1`` a refusal tracebacks too.
+
+    A command that changes the project (`COMMANDS`, MUTATING) and does not
+    return leaves the tree as it found it, whatever it had written by then:
+    a refusal, an exit, a crash (gh-1867, gh-2040). `_undo` holds the
+    record, and returning is what commits it.
     """
     from ._report import Refusal
+    from . import _undo
 
-    try:
-        _main()
-    except Refusal as exc:
-        if _debug():
-            raise
-        sys.stdout.flush()
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    with _undo.guard(_project_changed_by(sys.argv[1:])):
+        try:
+            _main()
+            _undo.commit()
+        except Refusal as exc:
+            if _debug():
+                raise
+            sys.stdout.flush()
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+
+def _project_changed_by(args: "list[str]") -> "Path | None":
+    """The project *args* would change, if they name a MUTATING command.
+
+    The working directory, when it holds a manifest: every mutating
+    command reads its project there. Without one there is no project to
+    protect, and a walk of an arbitrary directory (a home directory, say)
+    is not one to take; the command refuses for want of a manifest anyway.
+    """
+    from . import _config as C
+
+    if not args or COMMANDS.get(args[0]) != MUTATING:
+        return None
+    root = Path.cwd()
+    return root if (root / C.FILENAME).is_file() else None
 
 
 def _main() -> None:
@@ -934,6 +996,9 @@ def _main() -> None:
         value_fn = ""
         capsule = ""  # gh-788
         capsule_type = ""  # gh-1235
+        error = ""  # gh-2182
+        error_message = ""
+        py_type = ""  # gh-2347
 
         remaining = args[3:]
         i = 0
@@ -1003,6 +1068,11 @@ def _main() -> None:
                 # gh-1235: and what that pointer IS, so a consumer naming
                 # this producer with `object` can line up against it.
                 "--capsule-type",
+                # gh-2182: the exception a refused assignment raises.
+                "--error",
+                "--error-message",
+                # gh-2347: a json property's stub annotation.
+                "--py-type",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -1029,6 +1099,12 @@ def _main() -> None:
                     capsule = val  # gh-788
                 elif tok == "--capsule-type":
                     capsule_type = val  # gh-1235
+                elif tok == "--error":
+                    error = val  # gh-2182
+                elif tok == "--error-message":
+                    error_message = val
+                elif tok == "--py-type":
+                    py_type = val  # gh-2347
                 else:
                     expr = val
                 i += 1
@@ -1079,6 +1155,9 @@ def _main() -> None:
             value_fn=value_fn,
             capsule=capsule,
             capsule_type=capsule_type,
+            error=error,
+            error_message=error_message,
+            py_type=py_type,
         )
 
     elif cmd == "warning":
@@ -1269,6 +1348,7 @@ def _main() -> None:
         # not default to "everything".
         from . import _adopt
         from . import _config as _C
+        from . import _undo
 
         _usage = (
             "Usage: just-makeit adopt --check [--module <id> | --all]\n"
@@ -1338,11 +1418,13 @@ def _main() -> None:
                 + " — jm owns cmake/'s packaging templates where nothing"
                 " is lost"
             )
-            sys.exit(
-                _adopt.adopt_packaging(
-                    _root, _cfg, check=_chk, accept=frozenset(_accept)
-                )
+            _code = _adopt.adopt_packaging(
+                _root, _cfg, check=_chk, accept=frozenset(_accept)
             )
+            # gh-1867: a template refused is reported in the exit status,
+            # and the ones written beside it are kept.
+            _undo.commit()
+            sys.exit(_code)
         if _mod is not None and _mod not in _C.modules(_cfg):
             print(f"error: --module: no module '{_mod}'.", file=sys.stderr)
             sys.exit(2)
@@ -1367,15 +1449,17 @@ def _main() -> None:
             )
             sys.exit(2)
         print('adopt — `fragment = "generated"` where it is safe')
-        sys.exit(
-            _adopt.adopt(
-                _root,
-                _objs,
-                only_mod=_mod,
-                accept=frozenset(_accept),
-                accept_additions="--accept-additions" in args,
-            )
+        _code = _adopt.adopt(
+            _root,
+            _objs,
+            only_mod=_mod,
+            accept=frozenset(_accept),
+            accept_additions="--accept-additions" in args,
         )
+        # gh-1867: all or nothing per OBJECT. One that did not flip is
+        # reported in the exit status; the ones that did keep their files.
+        _undo.commit()
+        sys.exit(_code)
 
     elif cmd == "record":
         from . import _recorddecl
@@ -1656,14 +1740,9 @@ def _main() -> None:
             )
             sys.exit(1)
         if check:
-            rendered = _bind.run(Path.cwd(), comp, write=False)
-            existing = (
-                Path.cwd() / "native" / "src" / comp / f"{comp}_ext.c"
-            ).read_text(encoding="utf-8")
-            if rendered != existing:
-                print(f"error: {comp}_ext.c is out of date with {comp}_core.h")
-                sys.exit(1)
-            print(f"  ok  {comp}_ext.c matches {comp}_core.h")
+            code = _bind.check(Path.cwd(), comp)
+            if code:
+                sys.exit(code)
         else:
             _bind.run(Path.cwd(), comp)
 
@@ -1918,10 +1997,12 @@ def _main() -> None:
 # One classification of every command `_main` dispatches, held complete
 # against the dispatch by `tests/test_gh2057_verb_leaves_what_apply_writes.py`
 # (an unclassified command fails it). Everything that asks "which commands
-# change the tree" reads this table: the post-command format pass below, and
-# that gate, which requires every MUTATING command to leave the tree `jm
-# apply` would write. A second, hand-kept list of the same answer had already
-# lost `record` and `app`.
+# change the tree" reads this table: the post-command format pass below,
+# `_project_changed_by` (whose answer `main` records, to put back if the
+# command fails: gh-1867), and that gate, which requires every MUTATING
+# command to leave the tree `jm apply` would write -- or, failing, the tree
+# it found. A second, hand-kept list of the same answer had already lost
+# `record` and `app`.
 
 #: Writes a NEW project, in a subdirectory of the working directory. Not
 #: swept by the format pass, whose root is the working directory: `_new.run`
@@ -1930,7 +2011,8 @@ CREATES = "creates"
 
 #: Changes the project in the working directory. After one, the tree is the
 #: one `jm apply` would write -- `status --check` exits 0 and `apply` changes
-#: nothing -- and the format pass runs over it. A read-only MODE of one
+#: nothing -- and the format pass runs over it. One that fails leaves the
+#: tree it found (`_undo`, gh-1867). A read-only MODE of one
 #: (`adopt --check`, `bind --check`, a bare `config`) does not change what
 #: the command is.
 MUTATING = "mutating"

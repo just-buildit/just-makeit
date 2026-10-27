@@ -6,12 +6,14 @@ lookups needed by the make_*_ctx() builders.
 
 from __future__ import annotations
 
+from .._report import Refusal
 from .._types import (
     _CTYPE_META,
     STATE_ARRAY_NPY,
     bool_default_py,
-    complex_default_py,
+    field_default_py,
     is_c_only_default,
+    literal_default_error,
     string_default_literal,
     strip_c_literal_suffix,
 )
@@ -95,6 +97,16 @@ def _c_held_default(ctype: str, default: str) -> str:
 def _py_default(ctype: str, default: str) -> str:
     """Convert a C default literal to a valid Python literal.
 
+    gh-1946: THE Python spelling of a declared default. A default is one
+    value with two spellings; the C faces write the manifest's, and every
+    Python face -- the generated test, the stub's signature, its Parameters
+    entry and construction doctest, the runtime docstring, a method or
+    function parameter -- asks this function, the module stub generator
+    through :func:`just_makeit._stubs._py_default_stub`. A numeric literal
+    Python has no spelling of for *ctype* (``08``; ``1.5`` into an ``int``)
+    is refused here, :func:`~just_makeit._types.literal_default_error`'s
+    answer, rather than rendered into Python that fails.
+
     When a branch cannot form a literal — the ``str`` and integer paths given
     an absent default — the result is the ``...`` sentinel (gh-515) rather than
     the empty string. ``...`` is the idiomatic stub placeholder and the same
@@ -103,10 +115,23 @@ def _py_default(ctype: str, default: str) -> str:
     SyntaxError that broke the entire stub. Callers must treat ``...`` as "not
     constructible" and suppress any generated construction example.
 
-    The float and complex branches already synthesise a valid zero literal that
-    mirrors the C side's zero-seed, so they are left untouched and their output
-    stays byte-identical.
+    Given no default, the float and complex branches synthesise the zero
+    literal that mirrors the C side's zero-seed (``.0``, ``0j``).
+
+    Examples
+    --------
+    >>> _py_default("double", "0.1L"), _py_default("float", "2")
+    ('0.1', '2.0')
+    >>> _py_default("uint64_t", "10ULL"), _py_default("int", "017")
+    ('10', '0o17')
+    >>> _py_default("int", "1.5")  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+      ...
+    just_makeit._report.Refusal: default `1.5` is not an integer, ...
     """
+    why = literal_default_error(ctype, default)
+    if why:
+        raise Refusal(why)
     kind = _CTYPE_META[ctype]["kind"]
     if ctype == "bool":
         # gh-610: bool's `kind` is "int" (there is no distinct "bool" kind),
@@ -124,15 +149,17 @@ def _py_default(ctype: str, default: str) -> str:
         # `M_PI.0`, a SyntaxError. `...` is the answer `default_raw` already
         # gives for the same value, and every caller reads it as "no literal".
         return "..."
+    if kind in ("float", "complex") and default.strip():
+        # gh-1946: through the one rule for a value that rounds. Stripping
+        # only `fF` here sent `0.1L` into Python verbatim, a SyntaxError on
+        # every face. gh-1561: a complex default is the declared value, not
+        # always zero.
+        return field_default_py(ctype, default)
     if kind == "float":
-        s = default.rstrip("fF")
-        if "." not in s and "e" not in s.lower():
-            s += ".0"
-        return s
+        # No default is the zero-seed, as the C side seeds it.
+        return ".0"
     if kind == "complex":
-        # gh-1561: the declared value, not always zero. No default is still
-        # the zero-seed `0j`, as the C side seeds it.
-        return complex_default_py(default) or "0j"
+        return "0j"
     if kind == "str":
         # gh-1271: `NULL` is `None`, through the shared answer. It used to be
         # `""` here, and the comment said exactly why: *"None would fit the
@@ -144,8 +171,9 @@ def _py_default(ctype: str, default: str) -> str:
         return string_default_literal(default)
     # gh-1043: the integer bucket. `0U` is a C literal and a SyntaxError in
     # Python, and this function ALREADY knew C literals carry suffixes — the
-    # float branch two above strips `fF`. The knowledge was in the function
-    # and simply had not been applied to the other kind.
+    # float branch stripped `fF`. The knowledge was in the function and
+    # simply had not been applied to the other kind. gh-1946: one helper
+    # reads every suffix for both, and spells an octal `010` as `0o10`.
     return strip_c_literal_suffix(default) if default.strip() else "..."
 
 

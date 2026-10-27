@@ -196,7 +196,7 @@ class TestClassStub:
 class TestStepStubs:
     def test_step_scalar_arg_return(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
-        assert "def step(self, x: float) -> float:" in pyi
+        assert "def step(self, x: float, /) -> float:" in pyi
 
     def test_steps_ndarray_arg_return(self, basic_project):
         pyi = _pyi(basic_project, "dsp", "myproj")
@@ -205,7 +205,7 @@ class TestStepStubs:
 
     def test_step_void_return(self, void_return_project):
         pyi = _pyi(void_return_project, "dsp", "myproj")
-        assert "def step(self, x: float) -> None:" in pyi
+        assert "def step(self, x: float, /) -> None:" in pyi
 
     def test_steps_void_return(self, void_return_project):
         pyi = _pyi(void_return_project, "dsp", "myproj")
@@ -304,7 +304,7 @@ class TestTypeAnnotations:
             return_type="float _Complex",
         )
         pyi = _pyi(root, "dsp", "p")
-        assert "def step(self, x: complex) -> complex:" in pyi
+        assert "def step(self, x: complex, /) -> complex:" in pyi
 
     def test_double_maps_to_float(self, tmp_path):
         root = tmp_path / "p"
@@ -313,7 +313,7 @@ class TestTypeAnnotations:
             root, "filt", "dsp", arg_type="double", return_type="double"
         )
         pyi = _pyi(root, "dsp", "p")
-        assert "def step(self, x: float) -> float:" in pyi
+        assert "def step(self, x: float, /) -> float:" in pyi
 
     def test_size_t_maps_to_int(self, array_param_project):
         pyi = _pyi(array_param_project, "dsp", "myproj")
@@ -351,7 +351,7 @@ class TestArrayArgTypeStubs:
 
     def test_step_annotation(self, arr_arg_project):
         pyi = _pyi(arr_arg_project, "dsp", "myproj")
-        assert "def step(self, x: npt.NDArray[np.complex64]) -> int:" in pyi
+        assert "def step(self, x: npt.NDArray[np.complex64], /) -> int:" in pyi
 
     def test_no_steps(self, arr_arg_project):
         pyi = _pyi(arr_arg_project, "dsp", "myproj")

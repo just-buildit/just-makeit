@@ -123,8 +123,9 @@ def object_pair_names(objects: "list[str]") -> frozenset[str]:
     """The ``test_``/``bench_<obj>_core`` pair each of *objects* emits.
 
     gh-1055. An object carries this pair wherever it lives, and a **collocated
-    module-object** — a module whose ``objects`` list contains its own name —
-    writes it into the very same ``CMakeLists.txt`` the module writes to. So
+    module-object** — the one named for its module's cname
+    (:func:`_config.collocated_object`) — writes it into the very same
+    ``CMakeLists.txt`` the module writes to. So
     gh-1034's module pair, named for the same string, is a second
     ``add_executable`` with one name in one file, and ``cmake`` refuses to
     configure at all. (It breaks ``add_test`` the same way, one line further
@@ -172,7 +173,7 @@ def emitted(cfg: dict) -> list[str]:
         module_objects |= set(objs)
         names.append(cname)
         # gh-1055: skipped when a same-named object already emits the pair.
-        if C.module_functions(cfg, mod) and cname not in objs:
+        if C.module_functions(cfg, mod) and not C.collocated_object(cfg, mod):
             names += [f"test_{cname}_core", f"bench_{cname}_core"]
     for comp in C.components(cfg):
         names += [

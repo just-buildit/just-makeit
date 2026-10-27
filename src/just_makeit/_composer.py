@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import _coerce
+from . import _inflight
 from . import _config as C
 from . import _modplatforms
 from ._builtins import require_scope_names
@@ -39,7 +40,15 @@ from . import _incpath as INC
 from . import _csym as CSYM
 from . import _types as T
 from ._context._modpath import module_docstring_lines, module_m_doc
-from ._context._parse import _build_ml_doc, capsule_unwrap_c
+from ._capsule import scalar_meta
+from ._context._parse import (
+    _build_ml_doc,
+    capsule_new_c as _capsule_new_c,
+    capsule_unwrap_c,
+    scalar_arg_c,
+    scalar_parse_c,
+    scalar_raw_locals,
+)
 from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
 from ._docstring import (
     ClassParam,
@@ -50,21 +59,20 @@ from ._docstring import (
     class_docstring,
     render_numpy_doc,
     render_runtime_doc,
+    summary_docstring,
 )
 from ._pyfmt import reflow_pyi
 
 # ── C type / format helpers ──────────────────────────────────────────────────
 
-# PyArg_ParseTupleAndKeywords format char per C scalar type. Enum fields cross
-# as Python strings ("s"); a bytes buffer crosses opaquely ("O").
-_FMT = {
-    "int": "i",
-    "double": "d",
-    "float": "f",
-    "uint32_t": "I",
-    "uint64_t": "K",
-    "size_t": "n",
-}
+#: The C scalar types a SOURCE field may declare. Which types, not how they
+#: convert: every face converts a field through its `_CTYPE_META` row
+#: (`scalar_arg_c`, `scalar_parse_c`, `to_py`). gh-2035: this was a table of
+#: format chars beside `_CTYPE_META`'s, and a serializer param looked its
+#: type up here with `"i"` as the fallback -- so an `int64_t` was parsed
+#: four bytes wide and `-1` reached C as 4294967295. Enum fields cross as
+#: Python strings ("s"); a bytes buffer crosses opaquely ("O").
+_SOURCE_SCALARS = ("double", "float", "int", "size_t", "uint32_t", "uint64_t")
 
 
 #: Keys a composer field row legitimately carries -- the registry's set, not
@@ -118,20 +126,20 @@ def _field_fmt(field: dict) -> str:
         raise ValueError(
             f"composer source field '{name}': no `type`.{why} A field crosses "
             f"as a C scalar, so it needs `type` -- one of "
-            f"{', '.join(sorted(_FMT))} -- or one of the shapes that stands in "
-            f"for one: `enum`, `bytes = true`, `complex = true`, or an owned pointer "
-            f"(`{'`, `'.join(OWNED_PTR_FNS)}`, gh-1711)."
+            f"{', '.join(_SOURCE_SCALARS)} -- or one of the shapes that "
+            f"stands in for one: `enum`, `bytes = true`, `complex = true`, or "
+            f"an owned pointer (`{'`, `'.join(OWNED_PTR_FNS)}`, gh-1711)."
         )
-    if field["type"] not in _FMT:
+    if field["type"] not in _SOURCE_SCALARS:
         raise ValueError(
             f"composer source field '{field.get('name', '<unnamed>')}': "
             f'`type = "{field["type"]}"` is not a type a field can cross '
-            f"as; jm marshals {', '.join(sorted(_FMT))}, or use `enum`, "
+            f"as; jm marshals {', '.join(_SOURCE_SCALARS)}, or use `enum`, "
             f"`bytes = true` or `complex = true`. A pointer the source owns "
             f"is an owned pointer: name {', '.join(OWNED_PTR_FNS)} beside "
             f"it (gh-1711)."
         )
-    return _FMT[field["type"]]
+    return T.param_fmt(field["type"])
 
 
 def _field_is_buffer(field: dict) -> bool:
@@ -597,6 +605,100 @@ def _owned_ptr_prototypes(cfg: dict, module: str) -> "list[_Seam]":
     return out
 
 
+def _replace_c(
+    tname: str,
+    obj: str,
+    struct: str,
+    name: str,
+    members: "list[tuple[str, str]]",
+    attach: str,
+    free: str,
+    gen_destroy: str,
+) -> str:
+    """``<tname>_replace_<name>``: swap one owned buffer on a live source.
+
+    gh-2274. A source's ``bytes`` / complex-stream / owned-pointer field is a
+    heap buffer the source owns, and a generator built from the source
+    (``generates``, run with the GIL released by ``steps()``) may borrow it.
+    The ``_attach_*`` functions free the old buffer and install the new one,
+    and the setters called them on ``self->src`` directly: a setter on thread
+    B freed a buffer thread A's generator was reading, and left the
+    generator, built from the OLD config, in place.
+
+    This is the one place a field is replaced, for the property setter and
+    for ``__init__`` alike:
+
+    1. the new value is converted into a COPY of the source struct whose
+       member is cleared -- converting can run Python (``__array__``,
+       ``__index__``), which may run any other thread, so it touches nothing
+       a generator can see (and a refused value leaves the field as it was);
+    2. with the GIL held and nothing yielding from here on, wait for the
+       running ``steps()`` (`_inflight.wait`) and drop the generator, so the
+       next ``steps()`` rebuilds it from the new config, as a re-``__init__``
+       does;
+    3. then free the old buffer and install the new one -- pure C.
+
+    Parameters
+    ----------
+    members : list of (member, zero)
+        The struct members the field lives in (``c_ptr`` / ``c_len`` may name
+        a nested path), each with the value that means "empty".
+    attach : str
+        The call converting ``value`` into ``_t``, as an expression.
+    free : str
+        The statement freeing a buffer, with ``{src}`` for the struct it is
+        read from.
+    gen_destroy : str
+        The generator's destroy function when the source declares
+        ``generates``; ``""`` otherwise, when there is nothing to wait for
+        and no generator to drop.
+
+    Examples
+    --------
+    >>> print(_replace_c("S", "SObject", "s_t", "bits",
+    ...     [("bits", "NULL"), ("n_bits", "0")],
+    ...     "_attach_bytes(&_t.bits, &_t.n_bits, value)",
+    ...     "free({src}.bits);", ""), end="")
+    static int
+    S_replace_bits(SObject *self, PyObject *value)
+    {
+        s_t _t = self->src;
+        _t.bits = NULL;
+        _t.n_bits = 0;
+        if (!_attach_bytes(&_t.bits, &_t.n_bits, value))
+            return 0;
+        free(self->src.bits);
+        self->src.bits = _t.bits;
+        self->src.n_bits = _t.n_bits;
+        return 1;
+    }
+    """
+    clear = "".join(f"    _t.{m} = {z};\n" for m, z in members)
+    commit = ""
+    if gen_destroy:
+        commit = (
+            _inflight.wait(
+                "self",
+                free.format(src="_t") + " return 0;",
+                "    ",
+            )
+            + "    if (self->_gen) {\n"
+            "        /* Built from the config being replaced; the next\n"
+            "           steps() builds it again from the new one. */\n"
+            f"        {gen_destroy}(self->_gen);\n"
+            "        self->_gen = NULL;\n"
+            "    }\n"
+        )
+    install = "".join(f"    self->src.{m} = _t.{m};\n" for m, _ in members)
+    return (
+        f"static int\n{tname}_replace_{name}({obj} *self, PyObject *value)\n"
+        f"{{\n    {struct} _t = self->src;\n{clear}"
+        f"    if (!{attach})\n        return 0;\n"
+        f"{commit}    {free.format(src='self->src')}\n{install}"
+        "    return 1;\n}\n"
+    )
+
+
 def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
     """``_attach_<name>``: bind one owned-pointer field from a Python value.
 
@@ -633,7 +735,6 @@ def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
                 "_jm_obj",
                 "return 0;",
                 indent="        ",
-                explain_type_error=True,
             )
             + f"""
         _jm_new = {p.copy_fn}({n});
@@ -682,17 +783,76 @@ def _field_is_enum(field: dict) -> bool:
     return bool(field.get("enum"))
 
 
-def _to_py_scalar(ctype: str, expr: str) -> str:
-    """C expression building a PyObject from a scalar struct member."""
-    if ctype in ("double", "float"):
-        return f"PyFloat_FromDouble((double){expr})"
-    if ctype == "uint64_t":
-        return f"PyLong_FromUnsignedLongLong((unsigned long long){expr})"
-    if ctype == "uint32_t":
-        return f"PyLong_FromUnsignedLong((unsigned long){expr})"
-    if ctype == "size_t":
-        return f"PyLong_FromSize_t((size_t){expr})"
-    return f"PyLong_FromLong((long){expr})"
+def _row(module: str, table: str, name: str) -> str:
+    """How a refusal names one composer row.
+
+    >>> _row("mix", "settings", "gain")
+    "composer module 'mix' settings row 'gain'"
+    """
+    return f"composer module '{module}' {table} row '{name}'"
+
+
+def _number_meta(ctype: str, where: str) -> dict:
+    """The ``_CTYPE_META`` row of a composer row that crosses as one number.
+
+    gh-2035: a composer's settings, segment fields, computed properties and
+    source fields converted their value without reading its declared type --
+    every setting through ``PyLong_AsLong`` / ``PyLong_FromLong``, the rest
+    through two private helpers that knew five types and sent every other one
+    through ``long``. So a ``double`` setting read back truncated, a ``bool``
+    read back as an ``int`` and a complex lost its imaginary part, all
+    without an error. Every one of those faces now converts by this row, the
+    one each object face converts by: ``to_py`` out, and
+    :func:`~just_makeit._context._parse.scalar_parse_c` /
+    :func:`~just_makeit._context._parse.scalar_arg_c` in.
+
+    The lookup is :func:`~just_makeit._capsule.scalar_meta`, so an array or a
+    spelling jm does not know is refused, naming the row (gh-2009), before
+    anything is written. A string is refused too: these rows hold a number,
+    and a ``const char *`` a segment kept would point into a Python object
+    that does not outlive the call.
+
+    Raises
+    ------
+    Refusal
+        When *ctype* is not a number jm converts.
+
+    Examples
+    --------
+    >>> _number_meta("double", "x")["fmt"]
+    'd'
+    >>> try:
+    ...     _number_meta("const char *", "composer module 'm' settings row 's'")
+    ... except Refusal as e:
+    ...     print(e)
+    composer module 'm' settings row 's': `type = "const char *"` is a string, and this row crosses as one number: a numeric C scalar.
+    """
+    meta = scalar_meta(ctype, where)
+    if meta["kind"] == "str":
+        raise Refusal(
+            f'{where}: `type = "{ctype}"` is a string, and this row crosses '
+            f"as one number: a numeric C scalar."
+        )
+    return meta
+
+
+def _one_real_number(f: dict, module: str, face: str) -> None:
+    """Refuse a segment field *face* would carry as one real number.
+
+    gh-2035: the JSON face writes every segment field as a ``double``
+    (``cJSON_AddNumberToObject``) and the CLI face reads one with
+    ``strtod`` / ``strtoull``; a complex field compiled through both and
+    lost its imaginary part on every round trip. The Python face converts a
+    complex now, so the field is refused only where it would be truncated.
+    """
+    where = _row(module, "segment.fields", f["name"])
+    if _number_meta(f["type"], where)["kind"] == "complex":
+        raise Refusal(
+            f'{where}: `type = "{f["type"]}"` is complex, and the {face} '
+            f"carries a segment field as one real number, so its imaginary "
+            f"part would be dropped. Declare the real and imaginary parts as "
+            f"two fields."
+        )
 
 
 # ── enum SSOT → C tables ─────────────────────────────────────────────────────
@@ -893,43 +1053,36 @@ def _has_ranged(cfg: dict, module: str) -> bool:
     )
 
 
-# Shared scalar-or-(lo, hi) parser for ranged composer fields. Returns lo/hi as
-# doubles + a flag; the caller casts to the field's C type. A scalar leaves
-# *is_range 0; a 2-sequence (not str/bytes) sets it. Reproducible draws happen
-# in the composer core — this only records the bounds the user passed.
+# Shared scalar-or-(lo, hi) splitter for ranged composer fields. It returns
+# the bound OBJECTS, never their values: each converts at the call site by
+# its field's own type row (`_range_parse_c`). -1 is an error; 0 a scalar,
+# in *lo; 1 a 2-sequence (not str/bytes), in *lo and *hi. Every bound it
+# hands back is a new reference. Reproducible draws happen in the composer
+# core -- this only records the bounds the user passed.
 _RANGE_PARSE_FN = "\n".join(
     [
         "static int",
-        "_jm_parse_range(PyObject *o, double *lo, double *hi, int *is_range)",
+        "_jm_parse_range(PyObject *o, PyObject **lo, PyObject **hi)",
         "{",
         "    if (PySequence_Check(o) && !PyUnicode_Check(o)",
         "        && !PyBytes_Check(o)) {",
         "        if (PySequence_Size(o) != 2) {",
         "            PyErr_SetString(PyExc_ValueError,",
         '                            "range must be a (low, high) pair");',
-        "            return 0;",
+        "            return -1;",
         "        }",
-        "        PyObject *a = PySequence_GetItem(o, 0);",
-        "        PyObject *b = PySequence_GetItem(o, 1);",
-        "        double dlo = a ? PyFloat_AsDouble(a) : -1.0;",
-        "        double dhi = b ? PyFloat_AsDouble(b) : -1.0;",
-        "        Py_XDECREF(a);",
-        "        Py_XDECREF(b);",
-        "        if (PyErr_Occurred())",
-        "            return 0;",
-        "        *lo = dlo;",
-        "        *hi = dhi;",
-        "        *is_range = 1;",
+        "        *lo = PySequence_GetItem(o, 0);",
+        "        *hi = *lo ? PySequence_GetItem(o, 1) : NULL;",
+        "        if (!*hi) {",
+        "            Py_XDECREF(*lo);",
+        "            return -1;",
+        "        }",
         "        return 1;",
         "    }",
-        "    {",
-        "        double v = PyFloat_AsDouble(o);",
-        "        if (PyErr_Occurred())",
-        "            return 0;",
-        "        *lo = v;",
-        "        *is_range = 0;",
-        "    }",
-        "    return 1;",
+        "    Py_INCREF(o);",
+        "    *lo = o;",
+        "    *hi = NULL;",
+        "    return 0;",
         "}",
         "",
     ]
@@ -939,6 +1092,110 @@ _RANGE_PARSE_FN = "\n".join(
 def render_range_helper(cfg: dict, module: str) -> str:
     """Emit the shared ranged-field parser once, when the module uses ranges."""
     return _RANGE_PARSE_FN if _has_ranged(cfg, module) else ""
+
+
+def _range_parse_c(
+    f: dict,
+    meta: dict,
+    src: str,
+    dst: str,
+    mask: str,
+    fail: str,
+    indent: str = "    ",
+) -> str:
+    """Statements storing ranged field *f* from the ``PyObject *`` *src*.
+
+    gh-2224: each bound converts by the field's own ``_CTYPE_META`` row,
+    through :func:`~just_makeit._context._parse.scalar_parse_c` -- the parse
+    a plain field of that type takes, so an integer keeps every bit and one
+    its type cannot hold is refused (gh-2144). This read both bounds as
+    doubles and cast them, so a 64-bit value past 2**53 changed and an
+    ``int8_t`` given 300 wrapped. Nothing is stored until both bounds have
+    converted, so a refused pair leaves the field as it was.
+
+    Parameters
+    ----------
+    f : dict
+        The field row, annotated ``_ranged`` with its flag macro.
+    meta : dict
+        Its ``_CTYPE_META`` row (:func:`_number_meta`).
+    src : str
+        The C expression naming the value: a scalar or a ``(lo, hi)`` pair.
+    dst : str
+        The field's lvalue; its companion is ``<dst>_hi``.
+    mask : str
+        The ``ranged`` bitmask lvalue the field's flag is set in.
+    fail : str
+        The C statement leaving the wrapper once an exception is set.
+    indent : str, optional
+        Prefixed to every line. The statements declare locals, so the
+        caller puts them in a block of their own.
+
+    Returns
+    -------
+    str
+        The statements, each line ending in a newline.
+    """
+    n, flag, i = f["name"], f["_ranged"], indent
+    j = i + "    "
+    lo = scalar_parse_c(
+        f["type"],
+        "_a",
+        "_lo",
+        f"{{ Py_DECREF(_a); Py_XDECREF(_b); {fail} }}",
+        label=n,
+        meta=meta,
+        indent=i,
+    )
+    hi = scalar_parse_c(
+        f["type"],
+        "_b",
+        "_hi",
+        f"{{ Py_DECREF(_b); {fail} }}",
+        label=n,
+        meta=meta,
+        indent=j,
+    )
+    return (
+        f"{i}PyObject *_a = NULL, *_b = NULL;\n"
+        f"{i}int _r = _jm_parse_range({src}, &_a, &_b);\n"
+        f"{i}if (_r < 0)\n"
+        f"{i}    {fail}\n"
+        f"{lo}"
+        f"{i}Py_DECREF(_a);\n"
+        f"{i}if (_r) {{\n"
+        f"{hi}"
+        f"{j}Py_DECREF(_b);\n"
+        f"{j}{dst}_hi = _hi;\n"
+        f"{j}{mask} |= {flag};\n"
+        f"{i}}} else {{\n"
+        f"{j}{mask} &= ~(unsigned){flag};\n"
+        f"{i}}}\n"
+        f"{i}{dst} = _lo;\n"
+    )
+
+
+def _range_return_c(meta: dict, dst: str, indent: str = "        ") -> str:
+    """The statement returning ranged field *dst* as its ``(lo, hi)`` tuple.
+
+    gh-2224: each bound by its type's own ``to_py``. ``"(dd)"`` on a source
+    and ``"(nn)"`` on a segment changed a 64-bit value past 2**53, read an
+    integer source pair back as floats and truncated a ``double`` segment
+    pair. ``N`` hands the new references to the tuple, which releases them
+    if either conversion failed.
+
+    >>> from just_makeit._types import _CTYPE_META
+    >>> print(_range_return_c(_CTYPE_META["int64_t"], "s->f", ""))
+    return Py_BuildValue("(NN)",
+                         PyLong_FromLongLong((long long)s->f),
+                         PyLong_FromLongLong((long long)s->f_hi));
+    """
+    cont = indent + " " * len("return Py_BuildValue(")
+    return (
+        f'{indent}return Py_BuildValue("(NN)",\n'
+        f"{cont}{meta['to_py'](dst)},\n"
+        f"{cont}{meta['to_py'](dst + '_hi')});"
+    )
 
 
 #: gh-1525: what the source type's ``tp_init`` declares beside the source
@@ -972,19 +1229,42 @@ def arg_scopes(
             f"composer module '{module}' source field",
             f"{src['type_name']}_init",
             list(src.get("fields", [])),
-            SOURCE_INIT_LOCALS,
+            SOURCE_INIT_LOCALS
+            | _raw_locals(
+                f for f in _source_fields(cfg, module) if _is_plain_scalar(f)
+            ),
         )
     ]
     for s in C.composer_serializers(cfg, module):
+        params = list(s.get("params", []))
         scopes.append(
             (
                 f"composer module '{module}' serializer '{s['name']}'",
                 f"{cname}_{s['name']}",
-                list(s.get("params", [])),
-                SERIALIZER_LOCALS,
+                params,
+                SERIALIZER_LOCALS
+                | _raw_locals(p for p in params if not p.get("enum")),
             )
         )
     return scopes
+
+
+def _is_plain_scalar(f: dict) -> bool:
+    """A source field that crosses as one C scalar: none of the shapes
+    (enum string, bytes / complex buffer, ranged pair, owned pointer) that
+    parse a Python object of their own."""
+    return not (
+        _field_is_enum(f)
+        or _field_is_buffer(f)
+        or f.get("_ranged")
+        or _field_is_owned_ptr(f)
+    )
+
+
+def _raw_locals(rows) -> "frozenset[str]":
+    """The ``<name>_raw`` locals :func:`scalar_arg_c` declares for the
+    manifest *rows* (`scalar_raw_locals`, gh-2035)."""
+    return scalar_raw_locals((r["name"], r.get("type", "")) for r in rows)
 
 
 def _source_fields(cfg: dict, module: str) -> list[dict]:
@@ -1031,6 +1311,11 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
                      same inputs -- a sample rate too low for the config is a
                      reason too.
 
+    ``methods``      optional (gh-2259): names of the generator's declared
+                     methods the source exposes too, each bound against the
+                     generator ``steps`` builds (:func:`_source_delegated`).
+                     Only the names listed: nothing is inherited implicitly.
+
     Defaults (overridable): ``state_type = <generator>_state_t``,
     ``steps_fn/step_fn/reset_fn/destroy_fn = <generator>_{steps,step,reset,
     destroy}``, ``header = <generator>/<generator>_core.h``,
@@ -1054,7 +1339,58 @@ def _source_generates(cfg: dict, module: str) -> dict | None:
         "destroy_fn": g.get("destroy_fn", f"{sym}_destroy"),
         "header": g.get("header", INC.core_include(gen, cfg)),
         "output_type": g.get("output_type", "float _Complex"),
+        "methods": list(g.get("methods") or []),
     }
+
+
+def _bridge_refused(gen: dict) -> "list[tuple[str, str]]":
+    """What a call that builds the generator raises when ``bridge_fn`` refuses.
+
+    The ``Raises`` entries of every source member that builds the generator
+    on its first call: ``steps`` and ``step`` (gh-1356), and each method the
+    source delegates (gh-2259), whose own entries these join. They follow
+    the generated C exactly: with ``bridge_error_fn`` declared (gh-1307) a
+    refusal with a reason is ``ValueError`` carrying it and one without is
+    ``RuntimeError``; without it every refusal is ``RuntimeError``.
+
+    >>> [e for e, _ in _bridge_refused({"bridge_fn": "b"})]
+    ['RuntimeError']
+    >>> for e, why in _bridge_refused({"bridge_fn": "b", "bridge_error_fn": 1}):
+    ...     print(e, "--", why)
+    ValueError -- If `b` refuses this configuration; the message is its reason.
+    RuntimeError -- If `b` fails and gives no reason.
+    """
+    if gen.get("bridge_error_fn"):
+        return [
+            (
+                "ValueError",
+                f"If `{gen['bridge_fn']}` refuses this configuration; the "
+                "message is its reason.",
+            ),
+            (
+                "RuntimeError",
+                f"If `{gen['bridge_fn']}` fails and gives no reason.",
+            ),
+        ]
+    return [
+        (
+            "RuntimeError",
+            f"If `{gen['bridge_fn']}` cannot build the generator from "
+            "this configuration.",
+        )
+    ]
+
+
+#: The flags each fixed member of the composer type registers with, by
+#: name. The method table renders them and the ``.pyi`` asks
+#: `_stubs.positional_only` of them, so one entry decides both whether the
+#: binding takes keywords and whether the stub says ``/`` (gh-2212).
+COMPOSER_FLAGS = {
+    "execute": "METH_VARARGS",
+    "compose": "METH_VARARGS | METH_KEYWORDS",
+    "from_json": "METH_VARARGS | METH_CLASS",
+    "from_file": "METH_VARARGS | METH_CLASS",
+}
 
 
 def _source_gen_members(gen: dict) -> "list[dict]":
@@ -1080,26 +1416,7 @@ def _source_gen_members(gen: dict) -> "list[dict]":
         f"The first call builds the generator from this configuration, "
         f"through `{gen['bridge_fn']}`; later calls continue it."
     )
-    if gen.get("bridge_error_fn"):
-        refused = [
-            (
-                "ValueError",
-                f"If `{gen['bridge_fn']}` refuses this configuration; the "
-                "message is its reason.",
-            ),
-            (
-                "RuntimeError",
-                f"If `{gen['bridge_fn']}` fails and gives no reason.",
-            ),
-        ]
-    else:
-        refused = [
-            (
-                "RuntimeError",
-                f"If `{gen['bridge_fn']}` cannot build the generator from "
-                "this configuration.",
-            )
-        ]
+    refused = _bridge_refused(gen)
     return [
         {
             "name": "steps",
@@ -1182,6 +1499,218 @@ def _source_gen_method_rows(tname: str, gen: dict) -> str:
             f"{m['flags']},\n     {doc}}},"
         )
     return "\n".join(rows)
+
+
+def _source_delegated(cfg: dict, module: str) -> dict:
+    """The generator methods a generating source delegates, rendered.
+
+    gh-2259. ``[module.X.source.generates] methods`` names methods the
+    generator object declares; each is bound on the source type too, so a
+    caller holding a ``Synth`` reaches ``prod`` without building a
+    ``WfmSynth`` themselves. The binding is not re-written here: it is
+    `make_methods_ctx`'s, the emitter that binds the method on the generator,
+    called with the generator's own arguments and a
+    :class:`~._context._methods.MethodHost` that moves only the C it is
+    built around -- ``self`` is the source, the state is the generator
+    ``steps`` builds and caches, and the guard builds it on first call
+    through ``ensure_gen``, with ``steps``'s refusal. Its docs and ``.pyi``
+    member are therefore the generator's, word for word.
+
+    Returns the emitter's context (``extra_methods_c``,
+    ``extra_methods_pymethoddef``, ``pyi_extra_methods``, ...) plus
+    ``enum_tables`` for the lookups an enum parameter calls; ``{}`` when the
+    source delegates nothing. What may be delegated is
+    :func:`delegated_method_errors`'s to decide, at load.
+    """
+    gen = _source_generates(cfg, module)
+    if not gen or not gen["methods"]:
+        return {}
+    from ._context import make_enum_tables_ctx, make_methods_ctx
+    from ._context._methods import MethodHost
+    from ._glue import component_ctx
+
+    gname = gen["generator"]
+    pkg = C.project_name(cfg)
+    # The generator's class name, C stem, package and constructor example,
+    # from the one builder its own binding renders from.
+    gctx = component_ctx(cfg, gname, pkg)
+    declared = {m["name"]: m for m in C.methods(cfg, gname)}
+    methods = [declared[n] for n in gen["methods"]]
+    tname = C.composer_source(cfg, module)["type_name"]
+    host = MethodHost(
+        prefix=f"{tname}_gen",
+        self_class=tname,
+        state="self->_gen",
+        guard=(
+            f"    if ({tname}_ensure_gen(self) < 0)\n        return NULL;\n"
+        ),
+        # The caller called the source, so its errors name the source; and
+        # its first call builds the generator, so it can raise what that
+        # build raises (the entries `steps` documents).
+        who=tname,
+        raises=tuple(_bridge_refused(gen)),
+    )
+    out = make_methods_ctx(
+        gname,
+        gctx["Component"],
+        methods,
+        pkg=pkg,
+        module_dir=gctx["module_dir"],
+        py_create_args=gctx.get("py_create_args", ""),
+        no_state=C.is_no_state(cfg, gname),
+        doc_blocks=cfg.get(gname, {}).get("_doc_blocks", {}),
+        codecs=C.codecs(cfg),
+        enums=C.enums(cfg),
+        records=C.records(cfg, gname),
+        properties=C.properties(cfg, gname),
+        csym=gctx["csym"],
+        host=host,
+    )
+    out.update(
+        make_enum_tables_ctx(
+            gname, gctx["Component"], methods, enums=C.enums(cfg)
+        )
+    )
+    return out
+
+
+def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
+    """Why a source cannot bind its generator's method *m*, or ``""``.
+
+    The source carries the generator's wrapper and its state, nothing more,
+    so a method needing anything else from the generator's own type is
+    refused rather than bound to half of it.
+    """
+    from . import _borrow
+    from . import _codec
+    from . import _record
+    from . import _retain
+    from ._builtins import absorbable_members
+
+    if m["name"] in absorbable_members(cfg, gname):
+        return (
+            "it is one of the generator's built-in members, which the source "
+            "does not delegate"
+        )
+    if m.get("varargs") or m.get("manual_stub"):
+        return (
+            "its binding is hand-written in the generator's own extension, "
+            "so jm has none to render onto the source"
+        )
+    if _borrow.is_borrow(m) or _borrow.is_release(m):
+        return (
+            "it lends memory the generator owns, and the source destroys its "
+            "generator when it is re-initialised"
+        )
+    if _retain.retained(m):
+        # gh-2327: the owner slot lives on the type the wrapper is bound to,
+        # and the source rebuilds the generator that keeps the pointer.
+        return (
+            "it retains a capsule param, whose owner must outlive the "
+            "generator, and the source destroys and rebuilds its generator"
+        )
+    if _record.is_record(m):
+        return (
+            "it returns a record type the generator's module publishes, "
+            "which a second module cannot publish as the same type"
+        )
+    if _codec.is_codec_method(m):
+        return (
+            "its docstring is the author's text alone, with no Raises "
+            "section for what building the generator raises"
+        )
+    return ""
+
+
+def delegated_method_errors(cfg: dict) -> "list[str]":
+    """Every ``[module.X.source.generates] methods`` entry jm cannot bind.
+
+    gh-2259. Asked at load (`_config.load`), so a wrong name stops before
+    anything is written. Each refusal names the entry:
+
+    - ``methods`` that is not an array of strings, or names one twice;
+    - a name the generator does not declare (``[[<generator>.methods]]``) --
+      only a declared method has a binding to delegate;
+    - a name that is already the source's own member: a field, ``fs``, a
+      computed property, or the ``steps``/``step``/``reset`` generation
+      binds -- two ``PyMethodDef`` rows or a row over a getset under one key,
+      the second silently shadowing the first;
+    - a declared method whose binding the source cannot carry
+      (:func:`_delegation_refusal`).
+
+    Examples
+    --------
+    >>> cfg = {"g": {"methods": [{"name": "prod", "batch": True}]},
+    ...        "module": {"m": {"kind": "composer", "source": {
+    ...            "type_name": "S", "fields": [{"name": "gain"}],
+    ...            "generates": {"generator": "g", "bridge_fn": "b",
+    ...                          "methods": ["prod", "gain", "nope"]}}}}}
+    >>> for e in delegated_method_errors(cfg):
+    ...     print(e.splitlines()[0])
+    [module.m.source.generates] methods: 'gain' is already the source's field.
+    [module.m.source.generates] methods: generator 'g' declares no method 'nope'.
+    """
+    errors: list[str] = []
+    for mod in C.modules(cfg):
+        if not C.is_composer_module(cfg, mod):
+            continue
+        src = C.composer_source(cfg, mod)
+        g = src.get("generates")
+        if not isinstance(g, dict) or "methods" not in g:
+            continue
+        where = f"[module.{mod}.source.generates] methods"
+        names = g["methods"]
+        if not isinstance(names, list) or not all(
+            isinstance(n, str) for n in names
+        ):
+            errors.append(
+                f"{where} = {names!r} must be an array of the generator's "
+                "method names."
+            )
+            continue
+        gname = str(g.get("generator") or "")
+        declared = {
+            str(m.get("name")): m
+            for m in C.methods(cfg, gname)
+            if isinstance(m, dict)
+        }
+        own = dict.fromkeys(
+            (str(f.get("name")) for f in src.get("fields", []) or []),
+            "field",
+        )
+        own["fs"] = "field"
+        for c in src.get("computed", []) or []:
+            own[str(c.get("name"))] = "computed property"
+        # The names only: what each says does not depend on the bridge.
+        for m in _source_gen_members({"bridge_fn": ""}):
+            own[m["name"]] = "generation method"
+        seen: set[str] = set()
+        for n in names:
+            if n in seen:
+                errors.append(f"{where}: {n!r} is listed twice.")
+                continue
+            seen.add(n)
+            if n in own:
+                errors.append(
+                    f"{where}: {n!r} is already the source's {own[n]}.\n"
+                    "  Delegating it would bind a second member under that "
+                    "name; drop it from the list."
+                )
+            elif n not in declared:
+                errors.append(
+                    f"{where}: generator {gname!r} declares no method {n!r}."
+                    "\n  Only a [[" + gname + ".methods]] entry has a "
+                    "binding to delegate; declared: "
+                    + (", ".join(sorted(declared)) or "none")
+                    + "."
+                )
+            else:
+                why = _delegation_refusal(cfg, gname, declared[n])
+                if why:
+                    errors.append(
+                        f"{where}: {n!r} cannot be delegated: {why}."
+                    )
+    return errors
 
 
 def _bridge_refusal_c(gen: dict) -> str:
@@ -1369,7 +1898,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     tname = src["type_name"]  # Python class name, e.g. "Synth"
     fields = _source_fields(cfg, module)
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
 
     obj = f"{tname}Object"
@@ -1418,7 +1947,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     PyObject_HEAD
     {struct} src;
     double   fs;{gen_field}
-}} {obj};
+{_inflight.struct_field() if gen else ""}}} {obj};
 """)
 
     # dealloc — destroy any built generator, then free every owned buffer
@@ -1446,7 +1975,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
 {{
-{gen_dtor}{free_bufs}    Py_TYPE(self)->tp_free((PyObject *)self);
+{gen_dtor}{free_bufs}{_inflight.free("self") if gen else ""}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 """)
 
@@ -1455,6 +1984,9 @@ def render_source_type(cfg: dict, module: str) -> str:
     fmt = "|" + "".join(_field_fmt(f) for f in fields) + "d"  # trailing fs
     decls: list[str] = []
     addrs: list[str] = []
+    # gh-2035: a scalar's conversion out of its `parse_type` local, emitted
+    # before the field is stored; empty where the type parses into its own.
+    convs: dict[str, str] = {}
     for f in fields:
         n = f["name"]
         if _field_is_enum(f):
@@ -1465,9 +1997,13 @@ def render_source_type(cfg: dict, module: str) -> str:
             decls.append(f"    PyObject *{n} = NULL;")
             addrs.append(f"&{n}")
         else:
-            default = f.get("default", "0")
-            decls.append(f"    {f['type']} {n} = {default};")
-            addrs.append(f"&{n}")
+            # gh-2035: the one tuple-parse slot, whose format char is the
+            # one `_field_fmt` put in `fmt` above.
+            decl, _fc, addr, convs[n] = scalar_arg_c(
+                n, f["type"], f.get("default") or "", fail="return -1;"
+            )
+            decls.append(decl)
+            addrs.append(addr)
     decls_s = "\n".join(decls)
     addrs_s = ", ".join(addrs)
 
@@ -1494,33 +2030,33 @@ def render_source_type(cfg: dict, module: str) -> str:
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             assign.append(
-                f"    if (!{_attacher(f)}({_cast}&self->src.{_p}, "
-                f"&self->src.{_l}, {n}))\n        return -1;"
+                f"    if (!{tname}_replace_{n}(self, {n}))\n        return -1;"
             )
         elif f.get("complex") or _field_is_owned_ptr(f):
-            assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
+            assign.append(f"""    if (!{tname}_replace_{n}(self, {n}))
         return -1;""")
         elif f.get("_ranged"):
-            flag = f["_ranged"]
             ct = f["type"]
             default = f.get("default", "0")
+            # gh-2224: each bound by the field's own type row.
+            parse = _range_parse_c(
+                f,
+                _number_meta(ct, _row(module, "source.fields", n)),
+                n,
+                f"self->src.{n}",
+                "self->src.ranged",
+                "return -1;",
+                indent="        ",
+            )
             assign.append(f"""    if ({n} != NULL) {{
-        double _lo, _hi;
-        int    _r;
-        if (!_jm_parse_range({n}, &_lo, &_hi, &_r))
-            return -1;
-        self->src.{n} = ({ct})_lo;
-        if (_r) {{
-            self->src.{n}_hi = ({ct})_hi;
-            self->src.ranged |= {flag};
-        }} else {{
-            self->src.ranged &= ~(unsigned){flag};
-        }}
-    }} else {{
+{parse}    }} else {{
         self->src.{n} = ({ct}){default};
     }}""")
         else:
-            assign.append(f"    self->src.{n} = {n};")
+            assign.append(
+                (f"{convs[n]}\n" if convs[n] else "")
+                + f"    self->src.{n} = {n};"
+            )
     assign_s = "\n".join(assign)
 
     store_bits = """    *dst   = buf;
@@ -1738,9 +2274,55 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
 {attach_body}
 }}
 """
+    # gh-2274: the one replacement of an owned buffer, for the property
+    # setter and `__init__` both (see `_replace_c`).
+    replace_c = ""
+    for f in fields:
+        n = f["name"]
+        gd = gen["destroy_fn"] if gen else ""
+        if f.get("bytes"):
+            _p, _l = buffer_members(f)
+            _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
+            _cfree = "(void *)" if buffer_is_relocated(f) else ""
+            replace_c += "\n" + _replace_c(
+                tname,
+                obj,
+                struct,
+                n,
+                [(_p, "NULL"), (_l, "0")],
+                f"{_attacher(f)}({_cast}&_t.{_p}, &_t.{_l}, value)",
+                "free(" + _cfree + "{src}." + _p + ");",
+                gd,
+            )
+        elif f.get("complex"):
+            _p, _l = buffer_members(f)
+            _cfree = "(void *)" if buffer_is_relocated(f) else ""
+            replace_c += "\n" + _replace_c(
+                tname,
+                obj,
+                struct,
+                n,
+                [(_p, "NULL"), (_l, "0")],
+                f"_attach_{n}(&_t, value)",
+                "free(" + _cfree + "{src}." + _p + ");",
+                gd,
+            )
+        elif _field_is_owned_ptr(f):
+            op = owned_ptr(cfg, f)
+            replace_c += "\n" + _replace_c(
+                tname,
+                obj,
+                struct,
+                n,
+                [(op.member, "NULL")],
+                f"_attach_{n}(&_t, value)",
+                f"{op.free_fn}(({op.ctype})" + "{src}." + op.member + ");",
+                gd,
+            )
+
     parts.append(
         attach_bytes_c
-        + f"""{host_attach}
+        + f"""{host_attach}{replace_c}
 static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
@@ -1752,7 +2334,7 @@ static int
 {parse_fail}
     }}
 {parse_ok}    self->fs = fs;
-{(f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
+{(_inflight.wait("self", "return -1;", "    ") + f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
     return 0;
 }}
 """
@@ -1814,9 +2396,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {_attacher(f)}({_cast}&self->src.{_p}, &self->src.{_l}, value)
-               ? 0
-               : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -1847,7 +2427,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_{n}(&self->src, value) ? 0 : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -1873,64 +2453,51 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_{n}(&self->src, value) ? 0 : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         elif f.get("_ranged"):
-            # scalar, or (lo, hi) when the field's ranged bit is set.
+            # scalar, or (lo, hi) when the field's ranged bit is set; each
+            # bound by the field's own type row (gh-2224).
             flag = f["_ranged"]
-            ct = f["type"]
-            to_py = _to_py_scalar(ct, f"self->src.{n}")
+            meta = _number_meta(f["type"], _row(module, "source.fields", n))
+            dst = f"self->src.{n}"
+            pair = _range_return_c(meta, dst)
+            parse = _range_parse_c(
+                f, meta, "value", dst, "self->src.ranged", "return -1;"
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
     if (self->src.ranged & {flag})
-        return Py_BuildValue("(dd)", (double)self->src.{n},
-                             (double)self->src.{n}_hi);
-    return {to_py};
+{pair}
+    return {meta["to_py"](dst)};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    double _lo, _hi;
-    int    _r;
-    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
-        return -1;
-    self->src.{n} = ({ct})_lo;
-    if (_r) {{
-        self->src.{n}_hi = ({ct})_hi;
-        self->src.ranged |= {flag};
-    }} else {{
-        self->src.ranged &= ~(unsigned){flag};
-    }}
-    return 0;
+{parse}    return 0;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
         else:
+            # gh-2035: the constructor's conversion, by the declared type.
+            # This hand-picked `PyLong_AsLong` for a `size_t` and a
+            # `uint32_t`, so a value past LONG_MAX was refused here and
+            # accepted by the type's own format char.
             ctype = f["type"]
-            to_py = _to_py_scalar(ctype, f"self->src.{n}")
-            if ctype in ("double", "float"):
-                store = (
-                    f"    self->src.{n} = ({ctype})PyFloat_AsDouble(value);"
-                )
-                guard = ""
-            elif ctype in ("uint64_t",):
-                store = (
-                    f"    self->src.{n} = "
-                    f"({ctype})PyLong_AsUnsignedLongLong(value);"
-                )
-                guard = ""
-            else:
-                store = f"    self->src.{n} = ({ctype})PyLong_AsLong(value);"
-                guard = ""
+            meta = _number_meta(ctype, _row(module, "source.fields", n))
+            to_py = meta["to_py"](f"self->src.{n}")
+            parse = scalar_parse_c(
+                ctype, "value", "_v", "return -1;", label=n, meta=meta
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -1940,9 +2507,8 @@ static int
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
-    (void)closure;{guard}
-{store}
-    if (PyErr_Occurred()) return -1;
+    (void)closure;
+{parse}    self->src.{n} = _v;
     return 0;
 }}""")
             getset_rows.append(
@@ -1976,7 +2542,11 @@ static int
     # [[module.X.source.computed]]. Read-only (NULL setter).
     for c in _source_computed(cfg, module):
         n, ct = c["name"], c["type"]
-        to_py = _to_py_scalar(ct, f"{c['fn']}(&self->src)")
+        # gh-2035: by the declared type. A `bool` read back as an `int` and
+        # a complex as its real part, through `long`.
+        to_py = _number_meta(ct, _row(module, "source.computed", n))["to_py"](
+            f"{c['fn']}(&self->src)"
+        )
         # gh-1499: this pasted the `doc` raw, so a two-line one was an
         # unterminated C string and the module did not compile.
         doc_c = authored_c_doc(str(c.get("doc") or ""))
@@ -2005,6 +2575,14 @@ static PyGetSetDef {tname}_getset[] = {{
     tp_methods_slot = ""
     if gen:
         out_t = gen["output_type"]
+        # gh-2259: the generator's own methods the source names, bound by
+        # the generator's emitter against the generator built just below.
+        dlg = _source_delegated(cfg, module)
+        dlg_c = "".join(
+            f"\n{dlg[k]}\n"
+            for k in ("enum_tables", "extra_methods_c")
+            if dlg.get(k)
+        )
         parts.append(f"""/* Lazily build the composed generator from this source's config. */
 static int
 {tname}_ensure_gen({obj} *self)
@@ -2035,10 +2613,7 @@ static PyObject *
     if (!arr)
         return NULL;
     {out_t} *out = ({out_t} *)PyArray_DATA((PyArrayObject *)arr);
-    Py_BEGIN_ALLOW_THREADS
-    {gen["steps_fn"]}(self->_gen, out, (size_t)n);
-    Py_END_ALLOW_THREADS
-    return arr;
+{_inflight.region("self", f"    {gen['steps_fn']}(self->_gen, out, (size_t)n);" + chr(10))}    return arr;
 }}
 
 static PyObject *
@@ -2057,10 +2632,10 @@ static PyObject *
         {gen["reset_fn"]}(self->_gen);
     Py_RETURN_NONE;
 }}
-
+{dlg_c}
 static PyMethodDef {tname}_methods[] = {{
 {_source_gen_method_rows(tname, gen)}
-    {{NULL, NULL, 0, NULL}}
+{dlg.get("extra_methods_pymethoddef", "")}    {{NULL, NULL, 0, NULL}}
 }};
 """)
         tp_methods_slot = f"\n    .tp_methods   = {tname}_methods,"
@@ -2074,7 +2649,8 @@ static PyMethodDef {tname}_methods[] = {{
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
     .tp_getset    = {tname}_getset,{tp_methods_slot}
-    .tp_doc       = PyDoc_STR("{tname} — one composable source configuration."),
+    .tp_doc       = PyDoc_STR(
+        {_tp_doc_c(cfg, module, tname)}),
 }};
 """)
 
@@ -2118,30 +2694,18 @@ _factory_{fac}(PyObject *mod, PyObject *args, PyObject *kwds)
 def factory_method_rows(cfg: dict, module: str) -> list[str]:
     """PyMethodDef rows for the source factories (for the module table)."""
     oo = C.composer_oo(cfg, module)
+    src_t = C.composer_source(cfg, module)["type_name"]
     rows = []
     for fac in oo.get("factories", []):
         rows.append(
             f'    {{"{fac}", (PyCFunction)(void (*)(void))_factory_{fac}, '
             f"METH_VARARGS | METH_KEYWORDS,\n"
-            f'     "{fac}(**kw) -> {C.composer_source(cfg, module)["type_name"]}"}},'
+            f"     {_ml_doc_c(cfg, module, fac, f'{fac}(**kw) -> {src_t}')}}},"
         )
     return rows
 
 
 # ── segment type (e.g. Segment) ──────────────────────────────────────────────
-
-
-def _from_py_scalar(ctype: str, obj: str) -> str:
-    """C expression converting a PyObject to a scalar C value."""
-    if ctype in ("double", "float"):
-        return f"({ctype})PyFloat_AsDouble({obj})"
-    if ctype == "uint64_t":
-        return f"(uint64_t)PyLong_AsUnsignedLongLong({obj})"
-    if ctype == "uint32_t":
-        return f"(uint32_t)PyLong_AsUnsignedLong({obj})"
-    if ctype == "size_t":
-        return f"(size_t)PyLong_AsSize_t({obj})"
-    return f"({ctype})PyLong_AsLong({obj})"
 
 
 def _segment_fields(cfg: dict, module: str) -> list[dict]:
@@ -2199,7 +2763,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     src_tname = C.composer_source(cfg, module)["type_name"]  # e.g. "Synth"
     fields = _segment_fields(cfg, module)
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
 
     obj = f"{tname}Object"
@@ -2286,22 +2850,29 @@ def render_segment_type(cfg: dict, module: str) -> str:
                 f"            self->{n} = _i;\n"
             )
         elif f.get("_ranged"):
-            flag = f["_ranged"]
-            body = (
-                "            double _lo, _hi;\n"
-                "            int    _r;\n"
-                "            if (!_jm_parse_range(_o, &_lo, &_hi, &_r))\n"
-                "                goto fail;\n"
-                f"            self->{n} = ({ct})_lo;\n"
-                f"            if (_r) {{ self->{n}_hi = ({ct})_hi;"
-                f" self->ranged |= {flag}; }}\n"
-                f"            else {{ self->ranged &= ~(unsigned){flag}; }}\n"
+            # gh-2224: each bound by the field's own type row.
+            body = _range_parse_c(
+                f,
+                _number_meta(ct, _row(module, "segment.fields", n)),
+                "_o",
+                f"self->{n}",
+                "self->ranged",
+                "goto fail;",
+                indent=" " * 12,
             )
         else:
-            conv = _from_py_scalar(ct, "_o")
+            # gh-2035: by the declared type, the setter's conversion below.
             body = (
-                f"            self->{n} = {conv};\n"
-                "            if (PyErr_Occurred()) goto fail;\n"
+                scalar_parse_c(
+                    ct,
+                    "_o",
+                    "_v",
+                    "goto fail;",
+                    label=n,
+                    meta=_number_meta(ct, _row(module, "segment.fields", n)),
+                    indent=" " * 12,
+                )
+                + f"            self->{n} = _v;\n"
             )
         return (
             f'    {{\n        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
@@ -2312,6 +2883,19 @@ def render_segment_type(cfg: dict, module: str) -> str:
 
     init_extracts = "\n".join(_extract_block(f, delete=True) for f in fields)
     sum_extracts = "\n".join(_extract_block(f, delete=False) for f in fields)
+
+    # gh-2264: the `fail:` tail exists only for a field's parse to jump to.
+    # A segment with no fields has no `goto fail`, and an unreached label is
+    # -Wunused-label, which a -Werror build of glue `jm apply` regenerates
+    # cannot fix -- so each function carries the tail only when its own
+    # extraction code can reach it.
+    def _fail_tail(extracts: str, release: str, ret: str) -> str:
+        if "goto fail;" not in extracts:
+            return ""
+        return f"fail:\n    {release}\n    return {ret};\n"
+
+    init_fail = _fail_tail(init_extracts, "Py_DECREF(kw);", "-1")
+    sum_fail = _fail_tail(sum_extracts, "Py_DECREF(self);", "NULL")
 
     # tp_init — single-source inline: forward leftover args/kwds to the source
     # type, wrap the one source.
@@ -2335,10 +2919,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     PyList_SET_ITEM(list, 0, one); /* steals */
     Py_XSETREF(self->sources, list);
     return 0;
-fail:
-    Py_DECREF(kw);
-    return -1;
-}}
+{init_fail}}}
 """)
 
     # sum classmethod — *sources positional + segment kwargs.
@@ -2378,10 +2959,7 @@ fail:
 {sum_extracts}
     }}
     return (PyObject *)self;
-fail:
-    Py_DECREF(self);
-    return NULL;
-}}
+{sum_fail}}}
 """)
 
     # getsets: sources (read-only) + each segment scalar.
@@ -2399,36 +2977,30 @@ fail:
     ]
     for f in fields:
         n, ct = f["name"], f["type"]
-        to_py = _to_py_scalar(ct, f"self->{n}")
         if f.get("_ranged"):
-            # scalar, or (lo, hi) when the field's ranged bit is set. Segment
-            # ranged fields are integer counts → build/parse via Py_ssize_t.
+            # scalar, or (lo, hi) when the field's ranged bit is set; each
+            # bound by the field's own type row (gh-2224: this built the pair
+            # through Py_ssize_t, so a `double` pair read back truncated).
             flag = f["_ranged"]
+            meta = _number_meta(ct, _row(module, "segment.fields", n))
+            dst = f"self->{n}"
+            pair = _range_return_c(meta, dst)
+            parse = _range_parse_c(
+                f, meta, "value", dst, "self->ranged", "return -1;"
+            )
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
     if (self->ranged & {flag})
-        return Py_BuildValue("(nn)", (Py_ssize_t)self->{n},
-                             (Py_ssize_t)self->{n}_hi);
-    return {to_py};
+{pair}
+    return {meta["to_py"](dst)};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    double _lo, _hi;
-    int    _r;
-    if (!_jm_parse_range(value, &_lo, &_hi, &_r))
-        return -1;
-    self->{n} = ({ct})_lo;
-    if (_r) {{
-        self->{n}_hi = ({ct})_hi;
-        self->ranged |= {flag};
-    }} else {{
-        self->ranged &= ~(unsigned){flag};
-    }}
-    return 0;
+{parse}    return 0;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -2471,7 +3043,13 @@ static int
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
             continue
-        store = f"    self->{n} = {_from_py_scalar(ct, 'value')};"
+        # gh-2035: both ways by the declared type. A `bool` read back as an
+        # `int`, and a complex parsed through `PyLong_AsLong`.
+        meta = _number_meta(ct, _row(module, "segment.fields", n))
+        to_py = meta["to_py"](f"self->{n}")
+        parse = scalar_parse_c(
+            ct, "value", "_v", "return -1;", label=n, meta=meta
+        )
         getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -2482,8 +3060,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-{store}
-    if (PyErr_Occurred()) return -1;
+{parse}    self->{n} = _v;
     return 0;
 }}""")
         getset_rows.append(
@@ -2547,7 +3124,7 @@ static PyObject *
 """
         add_row = (
             f'    {{"add", (PyCFunction){tname}_add, METH_VARARGS,\n'
-            f'     "add(*others) -> {tl_tname}"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{tname}.add', f'add(*others) -> {tl_tname}')}}},\n"
         )
     parts.append(add_fn)
     parts.append(f"""
@@ -2559,7 +3136,7 @@ static PyGetSetDef {tname}_getset[] = {{
 static PyMethodDef {tname}_methods[] = {{
     {{"sum", (PyCFunction)(void (*)(void)){tname}_sum,
      METH_VARARGS | METH_KEYWORDS | METH_CLASS,
-     "sum(*sources, **segment_fields) -> {tname}"}},
+     {_ml_doc_c(cfg, module, f"{tname}.sum", f"sum(*sources, **segment_fields) -> {tname}")}}},
 {add_row}    {{NULL, NULL, 0, NULL}}
 }};
 """)
@@ -2575,7 +3152,7 @@ static PyMethodDef {tname}_methods[] = {{
     .tp_getset    = {tname}_getset,
     .tp_methods   = {tname}_methods,
     .tp_doc       = PyDoc_STR(
-        "{tname} — one segment: a list of sources + its span."),
+        {_tp_doc_c(cfg, module, tname)}),
 }};
 """)
     return "\n".join(parts)
@@ -2592,7 +3169,7 @@ def render_timeline_type(cfg: dict, module: str) -> str:
     tl = C.composer_timeline(cfg, module)
     tname = tl.get("type_name", "Timeline")
     pkg = C.project_name(cfg)
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
     obj = f"{tname}Object"
     type_obj = f"{tname}Type"
@@ -2672,7 +3249,7 @@ static PyGetSetDef {tname}_getset[] = {{
 
 static PyMethodDef {tname}_methods[] = {{
     {{"add", (PyCFunction){tname}_add, METH_VARARGS,
-     "add(*segments) -> {tname}"}},
+     {_ml_doc_c(cfg, module, f"{tname}.add", f"add(*segments) -> {tname}")}}},
     {{NULL, NULL, 0, NULL}}
 }};
 
@@ -2688,9 +3265,53 @@ static PyTypeObject {type_obj} = {{
     .tp_as_mapping = &{tname}_as_mapping,
     .tp_getset    = {tname}_getset,
     .tp_methods   = {tname}_methods,
-    .tp_doc       = PyDoc_STR("{tname} — segments played back-to-back."),
+    .tp_doc       = PyDoc_STR(
+        {_tp_doc_c(cfg, module, tname)}),
 }};
 """
+
+
+def _capsule_getset_c(
+    cfg: dict, module: str, cname: str, obj: str
+) -> tuple[str, str]:
+    """The composer's ``_capsule`` getter and its getset row (gh-2346).
+
+    Declared by ``[module.X] capsule = "<name>"`` (or the shared
+    ``capsule_name``), read through :func:`_config.published_capsule`, the one
+    reader a handle uses too. The getter lends ``self->state`` -- the
+    ``<sym>_state_t *`` -- through the shared
+    :func:`~._context._parse.capsule_new_c`, so the capsule never frees the
+    state and holds the composer alive (gh-2328), as every other producer's.
+
+    The ``destroyed`` guard is the one ``close()`` sets: a capsule carries no
+    liveness of its own, so lending a closed composer's state would hand a
+    consumer a freed pointer it cannot detect.
+
+    Returns ``("", "")`` when nothing is declared, so every existing composer
+    renders byte-identically.
+    """
+    cap = C.published_capsule(cfg, module)
+    if not cap:
+        return "", ""
+    fn = (
+        f"static PyObject *\n"
+        f"{cname}_get__capsule({obj} *self, void *Py_UNUSED(closure))\n"
+        f"{{\n"
+        f"    if (self->destroyed || !self->state) {{\n"
+        f'        PyErr_SetString(PyExc_RuntimeError, "composer already closed");\n'
+        f"        return NULL;\n"
+        f"    }}\n"
+        + _capsule_new_c("self->state", cap, cname, lent_flag="self->lent")
+        + "\n}\n\n"
+    )
+    row = (
+        f'    {{"_capsule", (getter){cname}_get__capsule, NULL,\n'
+        f'     "Borrowed {cap} capsule for this composer.\\n\\n"\n'
+        f'     "It never frees the composer, and keeps this object alive;\\n"\n'
+        f'     "it is valid until the composer is closed.",\n'
+        f"     NULL}},\n"
+    )
+    return fn, row
 
 
 def render_serializers(
@@ -2718,6 +3339,7 @@ def render_serializers(
         returns = s.get("returns", "str")
         params = list(s.get("params", []))
         decls, kwl, addrs, enum_val, call = [], [], [], [], []
+        convs: list[str] = []
         fmt, barred = "", False
         for p in params:
             pn, pt = p["name"], p["type"]
@@ -2725,8 +3347,8 @@ def render_serializers(
             bar = "|" if (p.get("default") is not None and not barred) else ""
             if bar:
                 barred = True
-            addrs.append(f"&{pn}")
             if p.get("enum"):
+                addrs.append(f"&{pn}")
                 e = p["enum"]
                 decls.append(
                     f'    const char *{pn} = "{p.get("default", "")}";'
@@ -2741,11 +3363,30 @@ def render_serializers(
                 )
                 call.append(f"_e_{pn}")
             else:
-                decls.append(f"    {pt} {pn} = {p.get('default', '0')};")
-                fmt += bar + _FMT.get(pt, "i")
+                # gh-2035: the one tuple-parse slot, by the declared type.
+                # This looked the format char up in a five-type table with
+                # "i" as the fallback, so an `int64_t` was parsed four bytes
+                # wide and -1 reached C as 4294967295.
+                default = p.get("default")
+                decl, fc, addr, conv = scalar_arg_c(
+                    pn,
+                    pt,
+                    "" if default is None else str(default),
+                    fail="return NULL;",
+                    meta=scalar_meta(
+                        pt,
+                        f"composer module '{module}' serializer '{name}' "
+                        f"params row '{pn}'",
+                    ),
+                )
+                decls.append(decl)
+                fmt += bar + fc
+                addrs.append(addr)
+                if conv:
+                    convs.append(conv)
                 call.append(pn)
         decls_s = "\n".join(decls)
-        enum_s = ("\n".join(enum_val) + "\n") if enum_val else ""
+        enum_s = "".join(f"{c}\n" for c in convs + enum_val)
         call_prefix = (", ".join(call) + ", ") if call else ""
         if params:
             py_sig = "PyObject *args, PyObject *kwds"
@@ -2915,8 +3556,22 @@ def _struct_field_docs(
     answer (gh-1300). ``{}`` without a *root*, which is every caller that
     renders for comparison rather than to write.
     """
+    return _included_docs(cfg, module, root)[1]
+
+
+def _included_docs(
+    cfg: dict, module: str, root: "Path | None"
+) -> "tuple[dict[str, str], dict[str, dict[str, str]], dict[str, str]]":
+    """``(by_name, by_struct, struct_blocks)`` from the binding's headers.
+
+    The one read of the headers :func:`render_ext` ``#include``s, transitively
+    (``_object._included_member_docs``): member docs by bare name (what an
+    enumerator's doc is), by struct (what a field's is), and the block each
+    struct definition opens with (what a source or segment type's class doc
+    is, gh-2283). All three empty without a *root*.
+    """
     if root is None:
-        return {}
+        return {}, {}, {}
     from ._object import _included_member_docs
 
     header = C.capsule_header(cfg, module) or INC.core_include(
@@ -2925,7 +3580,7 @@ def _struct_field_docs(
     gen = _source_generates(cfg, module)
     seeds = [header] + ([gen["header"]] if gen else [])
     text = "".join(f'#include "{h}"\n' for h in seeds)
-    return _included_member_docs(INC.inc_dir(Path(root)), text)[1]
+    return _included_member_docs(INC.inc_dir(Path(root)), text)
 
 
 def _header_field_docs(
@@ -2969,7 +3624,17 @@ def resolve_field_docs(cfg: dict, module: str, root: "Path | None") -> dict:
         for table, f, _s, doc in _header_field_docs(cfg, module, root)
         if doc
     ]
-    if not found:
+    # gh-2283: the type's own documentation is its struct's, read in the
+    # same pass and resolved into the same copy, so the `.pyi` class
+    # docstring and `tp_doc` read the one answer -- as the fields do.
+    by_name, _structs, blocks = _included_docs(cfg, module, root)
+    classes = {
+        table: blocks[str(get(cfg, module).get("struct") or "")]
+        for table, get in _FIELD_TABLES
+        if str(get(cfg, module).get("struct") or "") in blocks
+    }
+    values = _factory_value_docs(cfg, module, by_name)
+    if not (found or classes or values):
         return cfg
     out = copy.deepcopy(cfg)
     tables = dict(_FIELD_TABLES)
@@ -2977,7 +3642,67 @@ def resolve_field_docs(cfg: dict, module: str, root: "Path | None") -> dict:
         for f in tables[table](out, module).get("fields", []):
             if f.get("name") == name:
                 f["doc"] = doc
+    out.setdefault(_HEADER_DOCS_KEY, {})[module] = {
+        **classes,
+        "factories": values,
+    }
     return out
+
+
+#: Where :func:`resolve_field_docs` leaves the header-derived docs that are
+#: not a field's on the resolved copy: ``{module: {"source": raw_block,
+#: "segment": raw_block, "factories": {factory: doc}}}``. Transient render
+#: state at the top level, beside no manifest table, so no table's
+#: vocabulary gate reads it as a key the renderer takes (gh-1236).
+_HEADER_DOCS_KEY = "_composer_header_docs"
+
+
+def _header_docs(cfg: dict, module: str) -> dict:
+    """*module*'s entry under :data:`_HEADER_DOCS_KEY`, or ``{}``."""
+    return dict(cfg.get(_HEADER_DOCS_KEY, {}).get(module, {}))
+
+
+def _factory_value_docs(
+    cfg: dict, module: str, by_name: "dict[str, str]"
+) -> "dict[str, str]":
+    """``{factory: doc}`` -- what each factory's discriminant value means.
+
+    gh-2283. A factory presets the discriminant to its own name, and that
+    value is an ``[[enum]]`` choice; when the enum declares ``enumerators``,
+    the enumerator's header doc is what the choice means. The mapping is the
+    declared one gh-901 built for every other enum face
+    (``C.enum_choice_docs``), never inferred from the discriminant field's
+    prose: ``"tone: complex sinusoid."`` read out of a sentence is the guess
+    gh-901 rules out.
+    """
+    from ._docstring import DoxyBlock, member_doc_key
+
+    disc = C.composer_oo(cfg, module).get("discriminant")
+    field = next(
+        (
+            f
+            for f in C.composer_source(cfg, module).get("fields", [])
+            if f.get("name") == disc
+        ),
+        None,
+    )
+    if not field or not field.get("enum"):
+        return {}
+    blocks = {
+        member_doc_key(k): DoxyBlock(brief=v) for k, v in by_name.items()
+    }
+    values = C.enum_choice_docs(cfg, blocks).get(
+        C.enum_doc_key(
+            "string_enum:" + ",".join(C.enums(cfg).get(field["enum"], []))
+        ),
+        [],
+    )
+    docs = dict(values)
+    return {
+        fac: docs[fac]
+        for fac in C.composer_oo(cfg, module).get("factories", [])
+        if docs.get(fac)
+    }
 
 
 def field_doc_drift(root: Path, cfg: dict) -> "list":
@@ -3102,7 +3827,7 @@ def render_composer_type(cfg: dict, module: str) -> str:
             for i, op in enumerate(_ptrs)
         )
         src_bytes_copy += "            }\n"
-    pkg_path = C.capsule_package(cfg, module) or C.module_paths(module).pypath
+    pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{cname}"
     obj = f"{cname}Object"
     type_obj = f"{cname}Type"
@@ -3282,13 +4007,13 @@ static PyObject *
     if C.composer_json(cfg, module):
         json_rows = (
             f'    {{"from_json", (PyCFunction){cname}_from_json,\n'
-            f"     METH_VARARGS | METH_CLASS,"
-            f' "from_json(json) -> {cname}"}},\n'
+            f"     {COMPOSER_FLAGS['from_json']},\n"
+            f"     {_ml_doc_c(cfg, module, f'{cname}.from_json', f'from_json(json) -> {cname}')}}},\n"
             f'    {{"from_file", (PyCFunction){cname}_from_file,\n'
-            f"     METH_VARARGS | METH_CLASS,"
-            f' "from_file(path) -> {cname}"}},\n'
+            f"     {COMPOSER_FLAGS['from_file']},\n"
+            f"     {_ml_doc_c(cfg, module, f'{cname}.from_file', f'from_file(path) -> {cname}')}}},\n"
             f'    {{"to_json", (PyCFunction){cname}_to_json, METH_NOARGS,\n'
-            f'     "to_json() -> str"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{cname}.to_json', 'to_json() -> str')}}},\n"
         )
 
     # Feature 3 — a generated stream() iterator (drains execute into blocks),
@@ -3301,11 +4026,11 @@ static PyObject *
         # (void *), created lazily on the first block, paced by sample count,
         # and destroyed with the iterator. Only emitted when the `realtime`
         # sub-table names the clock create/pace/destroy fns.
-        rt = C.composer_stream(cfg, module).get("realtime") or {}
+        rt = realtime_clock(cfg, module)
         rt_create = rt.get("clock_create", "")
         rt_pace = rt.get("pace", "")
         rt_destroy = rt.get("destroy", "")
-        has_rt = bool(rt_create and rt_pace and rt_destroy)
+        has_rt = bool(rt)
         rt_fields = "    double realtime;\n    void *clk;\n" if has_rt else ""
         rt_dealloc = (
             f"    if (self->clk)\n        {rt_destroy}(self->clk);\n"
@@ -3321,10 +4046,8 @@ static PyObject *
             f"""    if (self->realtime > 0.0) {{
         if (!self->clk)
             self->clk = {rt_create}(self->realtime, 0);
-        Py_BEGIN_ALLOW_THREADS
-        {rt_pace}(self->clk, (size_t)n);
-        Py_END_ALLOW_THREADS
-    }}
+{_inflight.opening("self", "        ")}        {rt_pace}(self->clk, (size_t)n);
+{_inflight.closing("self", "        ")}    }}
 """
             if has_rt
             else ""
@@ -3369,18 +4092,11 @@ static PyObject *
             if has_rt
             else ""
         )
-        # `realtime` is a SAMPLE RATE in Hz, and saying so is the whole job
-        # of this line. The previous wording -- "(realtime=fs paces)" -- reads
-        # as prose about what happens when pacing is on rather than as a
-        # statement that the argument's value IS fs, and the natural misread
-        # (a 0.0-1.0 scale factor, or a boolean-ish enable) is silent: passing
-        # 1.0 asks for one sample per second, so the first block blocks for
-        # `block` seconds with no error and nothing to grep for.
-        rt_doc = (
-            "stream(block=4096, realtime=0.0) -> iterator\\n\\n"
-            "realtime is the SAMPLE RATE in Hz to pace against -- pass "
-            "your fs (e.g. realtime=10e6), not a speed multiplier. "
-            "0 streams as fast as possible."
+        # gh-2283: the signature line only. What `realtime` means -- a
+        # SAMPLE RATE in Hz, never a speed multiplier -- is the docstring's
+        # `Parameters` entry, one text for both faces (`member_doc_lines`).
+        rt_sig = (
+            "stream(block=4096, realtime=0.0) -> iterator"
             if has_rt
             else "stream(block=4096) -> iterator of complex64 blocks"
         )
@@ -3389,14 +4105,14 @@ typedef struct {{
     PyObject_HEAD
     PyObject  *composer; /* strong ref to the {cname} */
     Py_ssize_t block;
-{rt_fields}}} {cname}StreamObject;
+{rt_fields}{_inflight.struct_field() if has_rt else ""}}} {cname}StreamObject;
 
 static PyTypeObject {cname}StreamType;
 
 static void
 {cname}Stream_dealloc({cname}StreamObject *self)
 {{
-{rt_dealloc}    Py_XDECREF(self->composer);
+{rt_dealloc}{_inflight.free("self") if has_rt else ""}    Py_XDECREF(self->composer);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 
@@ -3450,8 +4166,11 @@ static PyObject *
         return NULL;
     }}
 {rt_check}
-    {cname}StreamObject *it =
-        PyObject_New({cname}StreamObject, &{cname}StreamType);
+    /* tp_alloc ZEROES the object, so a field nobody below names (gh-2272's
+       inflight count and lock) starts empty rather than as garbage that
+       dealloc would free (gh-2292). */
+    {cname}StreamObject *it = ({cname}StreamObject *)
+        {cname}StreamType.tp_alloc(&{cname}StreamType, 0);
     if (!it)
         return NULL;
     Py_INCREF(self);
@@ -3464,7 +4183,7 @@ static PyObject *
         stream_row = (
             f'    {{"stream", (PyCFunction)(void (*)(void)){cname}_stream,\n'
             f"     METH_VARARGS | METH_KEYWORDS,\n"
-            f'     "{rt_doc}"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{cname}.stream', rt_sig)}}},\n"
         )
 
     # Feature 5 — a generic `to_dict()`: serialize the *resolved* composition
@@ -3557,7 +4276,7 @@ fail:
 """
         to_dict_row = (
             f'    {{"to_dict", (PyCFunction){cname}_to_dict, METH_NOARGS,\n'
-            f'     "to_dict() -> dict (resolved repeat/continuous/segments)"}},\n'
+            f"     {_ml_doc_c(cfg, module, f'{cname}.to_dict', 'to_dict() -> dict')}}},\n"
         )
 
     # gh-317: additional delegated serializers (to_sigmf, …) over the segments.
@@ -3576,6 +4295,31 @@ fail:
     settings_getset, settings_getset_rows = _settings_getset_c(
         cfg, module, cname, obj
     )
+    capsule_getset, capsule_getset_row = _capsule_getset_c(
+        cfg, module, cname, obj
+    )
+    # gh-2346: once the state has been lent, close() marks the composer
+    # closed and leaves the free to dealloc -- a consumer that kept the
+    # pointer (`retain`) keeps this object alive, so dealloc cannot run under
+    # it. Rendered only for a composer that publishes a capsule.
+    lends = bool(C.published_capsule(cfg, module))
+    lent_field = (
+        "    int                lent; /* gh-2346: the state was lent */\n"
+        if lends
+        else ""
+    )
+    close_free = (
+        "        /* gh-2346: lent -> a borrower may still read it; dealloc\n"
+        "           frees it once the last one lets go. */\n"
+        f"        if (!self->lent)\n            {destroy_fn}(self->state);\n"
+        if lends
+        else f"        {destroy_fn}(self->state);\n"
+    )
+    dealloc_live = (
+        "self->state && (!self->destroyed || self->lent)"
+        if lends
+        else "!self->destroyed && self->state"
+    )
 
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
@@ -3583,7 +4327,7 @@ typedef struct {{
     PyObject_HEAD
     {sym}_state_t *state;
     int                destroyed;
-}} {obj};
+{lent_field}{_inflight.struct_field()}}} {obj};
 
 /* Build a transient {seg_struct}[] from a list of {seg_t} objects. Each
  * source's bits pointer ALIASES the {src_t}'s owned buffer; {create_fn}
@@ -3674,9 +4418,9 @@ _{backing}_segments_to_list(const {seg_struct} *src, size_t n)
 static void
 {cname}_dealloc({obj} *self)
 {{
-    if (!self->destroyed && self->state)
+    if ({dealloc_live})
         {destroy_fn}(self->state);
-    Py_TYPE(self)->tp_free((PyObject *)self);
+{_inflight.free("self")}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 
 static int
@@ -3825,10 +4569,8 @@ static PyObject *
     float _Complex *out =
         (float _Complex *)PyArray_DATA((PyArrayObject *)arr);
     size_t got;
-    Py_BEGIN_ALLOW_THREADS
-    got = {execute_fn}(self->state, out, (size_t)max);
-    Py_END_ALLOW_THREADS
-{execute_got_guard}    PyObject *stop = PyLong_FromSsize_t((Py_ssize_t)got);
+{_inflight.opening("self")}    got = {execute_fn}(self->state, out, (size_t)max);
+{_inflight.closing("self")}{execute_got_guard}    PyObject *stop = PyLong_FromSsize_t((Py_ssize_t)got);
     PyObject *slice = stop ? PySlice_New(NULL, stop, NULL) : NULL;
     Py_XDECREF(stop);
     PyObject *view = slice ? PyObject_GetItem(arr, slice) : NULL;
@@ -3871,10 +4613,8 @@ static PyObject *
         float _Complex *out =
             (float _Complex *)PyArray_DATA((PyArrayObject *)arr);
         size_t got;
-        Py_BEGIN_ALLOW_THREADS
-        got = {execute_fn}(self->state, out, (size_t)block);
-        Py_END_ALLOW_THREADS
-        if (got == 0) {{
+{_inflight.opening("self", "        ")}        got = {execute_fn}(self->state, out, (size_t)block);
+{_inflight.closing("self", "        ")}        if (got == 0) {{
             Py_DECREF(arr);
             break;
         }}
@@ -3961,9 +4701,9 @@ static PyObject *
 {cname}_close({obj} *self, PyObject *Py_UNUSED(ignored))
 {{
     if (!self->destroyed && self->state) {{
-        {destroy_fn}(self->state);
+        /* gh-2272: refuse new calls, then wait for a running one. */
         self->destroyed = 1;
-    }}
+{_inflight.wait("self", "self->destroyed = 0; return NULL;")}{close_free}    }}
     Py_RETURN_NONE;
 }}
 
@@ -3981,19 +4721,21 @@ static PyObject *
     return {cname}_close(self, NULL);
 }}
 {json_fns}
-{settings_getset}static PyGetSetDef {cname}_getset[] = {{
+{settings_getset}{capsule_getset}static PyGetSetDef {cname}_getset[] = {{
     {{"segments", (getter){cname}_get_segments, NULL, NULL, NULL}},
     {{"repeat", (getter){cname}_get_repeat, NULL, NULL, NULL}},
     {{"continuous", (getter){cname}_get_continuous, NULL, NULL, NULL}},
-{settings_getset_rows}    {{NULL, NULL, NULL, NULL, NULL}}
+{settings_getset_rows}{capsule_getset_row}    {{NULL, NULL, NULL, NULL, NULL}}
 }};
 
 {stream_code}{to_dict_code}{serializer_code}static PyMethodDef {cname}_methods[] = {{
-    {{"execute", (PyCFunction){cname}_execute, METH_VARARGS,
-     "execute(n) -> ndarray[complex64]"}},
+    {{"execute", (PyCFunction){cname}_execute, {COMPOSER_FLAGS["execute"]},
+     {_ml_doc_c(cfg, module, f"{cname}.execute", "execute(n) -> ndarray[complex64]")}}},
     {{"compose", (PyCFunction)(void (*)(void)){cname}_compose,
-     METH_VARARGS | METH_KEYWORDS, "compose(block=4096) -> ndarray[complex64]"}},
-    {{"close", (PyCFunction){cname}_close, METH_NOARGS, "close() -> None"}},
+     {COMPOSER_FLAGS["compose"]},
+     {_ml_doc_c(cfg, module, f"{cname}.compose", "compose(block=4096) -> ndarray[complex64]")}}},
+    {{"close", (PyCFunction){cname}_close, METH_NOARGS,
+     {_ml_doc_c(cfg, module, f"{cname}.close", "close() -> None")}}},
     {{"__enter__", (PyCFunction){cname}_enter, METH_NOARGS, NULL}},
     {{"__exit__", (PyCFunction){cname}_exit, METH_VARARGS, NULL}},
 {stream_row}{to_dict_row}{serializer_rows}{json_rows}{extra_rows}    {{NULL, NULL, 0, NULL}}
@@ -4009,7 +4751,8 @@ static PyTypeObject {type_obj} = {{
     .tp_dealloc   = (destructor){cname}_dealloc,
     .tp_getset    = {cname}_getset,
     .tp_methods   = {cname}_methods,
-    .tp_doc       = PyDoc_STR("{cname} — multi-segment composer."),
+    .tp_doc       = PyDoc_STR(
+        {_tp_doc_c(cfg, module, cname)}),
 }};
 """
 
@@ -4094,14 +4837,17 @@ def _settings_getset_c(
                 f"    return 0;\n"
             )
         else:
-            get_body = (
-                f"    return PyLong_FromLong("
-                f"(long){st['getter_fn']}(self->state));\n"
-            )
+            # gh-2035: by the declared type, both ways. This was
+            # `PyLong_AsLong` / `PyLong_FromLong` whatever the type, so a
+            # `double` setting read back truncated.
+            meta = _number_meta(ctype, _row(module, "settings", n))
+            got = f"{st['getter_fn']}(self->state)"
+            get_body = f"    return {meta['to_py'](got)};\n"
             set_body = (
-                f"    long _v = PyLong_AsLong(value);\n"
-                f"    if (_v == -1 && PyErr_Occurred()) return -1;\n"
-                f"    {st['setter_fn']}(self->state, ({ctype})_v);\n"
+                scalar_parse_c(
+                    ctype, "value", "_v", "return -1;", label=n, meta=meta
+                )
+                + f"    {st['setter_fn']}(self->state, _v);\n"
                 f"    return 0;\n"
             )
         fns.append(
@@ -4177,11 +4923,19 @@ def _settings_pop_c(cfg: dict, module: str) -> str:
                 f"            {val} = ({ctype})_arg_{n};\n"
             )
         else:
+            # gh-2035: the attribute's conversion, so the constructor and
+            # the setter cannot disagree about a value.
             body = (
-                f"            long _v = PyLong_AsLong(_o);\n"
-                f"            if (_v == -1 && PyErr_Occurred())"
-                f" {{ Py_DECREF(kw); return -1; }}\n"
-                f"            {val} = ({ctype})_v;\n"
+                scalar_parse_c(
+                    ctype,
+                    "_o",
+                    "_v",
+                    "{ Py_DECREF(kw); return -1; }",
+                    label=n,
+                    meta=_number_meta(ctype, _row(module, "settings", n)),
+                    indent=" " * 12,
+                )
+                + f"            {val} = _v;\n"
             )
         out.append(
             f"    {{\n"
@@ -4276,7 +5030,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     # Standalone generation pulls in the composed generator's header and the
     # project's straight-C bridge declaration (source config -> generator state).
     # gh-317: the realtime stream's clock fns need their header.
-    _rt = C.composer_stream(cfg, module).get("realtime") or {}
+    _rt = realtime_clock(cfg, module)
     # <stdio.h> for the pacing warning's snprintf. It is emitted here rather
     # than left to json_includes above, because the two features are
     # independent: a composer with realtime and without JSON would otherwise
@@ -4334,7 +5088,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
 
 #include "{header}"
 {gen_includes}{json_includes}{rt_includes}{serializer_includes}
-{_coerce.ARRAY_ARG_C}""",
+{_coerce.TU_HELPERS_C}""",
         _extra_method_protos(cfg, module),
         render_enum_tables(cfg, module),
         render_range_helper(cfg, module),
@@ -4401,7 +5155,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     Mirrors the capsule CMake generator."""
     mp = C.module_paths(module)
     leaf, cname = mp.leaf, mp.cname
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
     link_cores = C.dep_link_libs(C.capsule_depends_on(cfg, module))
     extra = C.capsule_extra_link_libs(cfg, module)
     link_lines = "".join(f"    {lib}\n" for lib in link_cores + extra)
@@ -4478,10 +5232,26 @@ def _pyi_field_type(f: dict) -> str:
         # gh-1724: a complex stream is an array argument, spelled by the one
         # helper every face calls.
         return f"{T.array_param_annotation('float _Complex')} | None"
-    scalar = "float" if f["type"] in ("double", "float") else "int"
+    # gh-2035: the one answer to "what does this scalar read as" -- a
+    # `bool` field reads back a bool, a complex one a complex.
+    scalar = T.scalar_py_annotation(f["type"])
     if f.get("_ranged"):  # scalar, or a (lo, hi) per-repeat uniform draw
         return f"{scalar} | tuple[{scalar}, {scalar}]"
     return scalar
+
+
+def _setting_py_type(st: dict) -> str:
+    """What a setting reads as and accepts: its ``[[enum]]`` choice string,
+    or its declared type's Python type (gh-2035: every one said ``int``).
+
+    >>> _setting_py_type({"type": "double"})
+    'float'
+    >>> _setting_py_type({"type": "int", "enum": "mode"})
+    'str'
+    """
+    if st.get("enum"):
+        return "str"
+    return T.scalar_py_annotation(st.get("type", "int"))
 
 
 def _pyi_field_read_type(f: dict) -> str:
@@ -4519,12 +5289,24 @@ def _pyi_doc_lines(
     type_name: str,
     fields: list[dict],
     enum_reg: dict[str, list[str]],
+    raw_block: str = "",
 ) -> list[str]:
     """4-space-indented numpy-style class docstring from a field list (gh-375).
 
     gh-747: layout, wrapping and delimiters are `_docstring.class_docstring`'s;
     this function's job is deriving each field's type line and notes.
+
+    gh-2283: *raw_block* is the Doxygen block the type's struct opens with
+    (:func:`resolve_field_docs`). Its ``@brief`` is the summary and its body
+    the extended description -- the shape a handle takes from its
+    ``create_fn`` (``_handle._pyi_class_docstring``) -- and without one the
+    summary is ``"<Type>."``, as it always was.
     """
+    from ._docstring import group_paragraphs, parse_doxygen_block
+
+    block = parse_doxygen_block(raw_block) if raw_block else None
+    summary = block.brief if block and block.brief else f"{type_name}."
+    body = group_paragraphs(block.body) if block and block.brief else []
     params: list[ClassParam] = []
     for f in fields:
         ann = _pyi_field_type(f)
@@ -4556,7 +5338,293 @@ def _pyi_doc_lines(
                 choice_str = ", ".join(f'``"{c}"``' for c in choices)
                 notes.append(f"One of {choice_str}.")
         params.append(ClassParam(type_line, tuple(notes)))
-    return class_docstring(f"{type_name}.", params=params)
+    return class_docstring(summary, body=body, params=params)
+
+
+def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
+    """``{type_name: docstring lines}`` for every type the module defines.
+
+    gh-2283. The ONE definition of each composer type's class docstring:
+    :func:`render_pyi` splices these lines into the class body, and each
+    type's ``tp_doc`` is derived from them (:func:`_tp_doc_c`), the rule
+    gh-642 set for an object and gh-1499 for a handle. ``tp_doc`` was a fixed
+    sentence per type -- ``"Synth — one composable source configuration."``
+    -- beside a stub documenting every field, so ``help(Synth)`` listed no
+    keyword the stub did.
+
+    Lines are the stub's: delimiters included, 4-space indented.
+    """
+    enum_reg = C.enums(cfg)
+    src = C.composer_source(cfg, module)
+    seg = C.composer_segment(cfg, module)
+    src_fields = _source_fields(cfg, module)
+    seg_fields = _segment_fields(cfg, module)
+    # The fs segment field also appears at the end of Synth.__init__.
+    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
+    out = {
+        src["type_name"]: _pyi_doc_lines(
+            src["type_name"],
+            src_fields + ([fs_field] if fs_field else []),
+            enum_reg,
+            str(_header_docs(cfg, module).get("source") or ""),
+        ),
+        seg["type_name"]: _pyi_doc_lines(
+            seg["type_name"],
+            src_fields + seg_fields,
+            enum_reg,
+            str(_header_docs(cfg, module).get("segment") or ""),
+        ),
+    }
+    tl_t = C.composer_timeline(cfg, module).get("type_name")
+    if tl_t:
+        out[tl_t] = class_docstring(f"{tl_t}.")
+    seg_t = seg["type_name"]
+    seg_or_tl = (
+        f"{seg_t} | {tl_t} | list[{seg_t}] | None"
+        if tl_t
+        else (f"{seg_t} | list[{seg_t}] | None")
+    )
+    cname = C.composer_oo(cfg, module).get("composer_type_name", "Composer")
+    # gh-747: the composer's own class docstring was a fourth hand-written
+    # copy of this layout. Its strings are short, but `seg_or_tl` interpolates
+    # the project's type names — long ones overflow the `segments :` line, and
+    # `reflow_pyi` reflows signatures, not docstring type lines.
+    out[cname] = class_docstring(
+        f"{cname}.",
+        params=[
+            ClassParam(
+                f"segments : {seg_or_tl}, default None",
+                ("Initial segment list.",),
+            ),
+            ClassParam(
+                "repeat : bool, default False",
+                ("Loop the sequence after the last segment.",),
+            ),
+            ClassParam(
+                "continuous : bool, default False",
+                ("Never finish; execute always returns the requested count.",),
+            ),
+            # gh-1499: a setting is a keyword of `__init__` like the
+            # three above, and its `doc` is read on the getset beside
+            # it -- this is its stub face. None of them were listed.
+            *[
+                ClassParam(
+                    f"{st['name']} : {_setting_py_type(st)}, optional",
+                    tuple(
+                        ["\n".join(authored_doc_lines(str(st["doc"])))]
+                        if st.get("doc")
+                        else []
+                    ),
+                )
+                for st in C.composer_settings(cfg, module)
+            ],
+        ],
+    )
+    return out
+
+
+def _tp_doc_c(cfg: dict, module: str, type_name: str) -> str:
+    """*type_name*'s ``tp_doc`` literal: its stub class docstring's text."""
+    from ._docstring import CLASS_INDENT, docstring_body
+
+    return _build_ml_doc(
+        docstring_body(type_doc_lines(cfg, module)[type_name], CLASS_INDENT)
+    )
+
+
+def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
+    """``{member: docstring lines}`` for every callable jm writes the doc of.
+
+    gh-2283. Keyed ``"<Type>.<method>"`` for a method and by bare name for a
+    module-level factory; the lines are the stub's, delimiters and indent
+    included (8 for a method, 4 for a factory). :func:`render_pyi` splices
+    them, and the method table's ``ml_doc`` is derived from them by
+    :func:`_ml_doc_c` -- each had been two fixed strings, a signature line at
+    runtime and a sentence in the stub, describing one member twice.
+
+    A factory's text comes from the doc engine
+    (``_docstring.render_numpy_doc``): what it makes, what its discriminant
+    value means when the header says (:func:`_factory_value_docs`), and that
+    its keywords are the source type's.
+    """
+    src_t = C.composer_source(cfg, module)["type_name"]
+    seg_t = C.composer_segment(cfg, module)["type_name"]
+    tl_t = C.composer_timeline(cfg, module).get("type_name")
+    oo = C.composer_oo(cfg, module)
+    cname = oo.get("composer_type_name", "Composer")
+    stream = C.composer_stream(cfg, module)
+
+    def one(text: str) -> list[str]:
+        # Wrapped HERE, so the runtime text is the stub's line for line:
+        # `reflow_pyi` would otherwise wrap a long one on the stub alone.
+        return summary_docstring(text, indent=8)
+
+    def para(text: str) -> list[str]:
+        # An authored paragraph, wrapped to fit the stub at a method's
+        # indent; `authored_docstring` keeps each line as given.
+        return textwrap.wrap(text, 79 - 8)
+
+    # gh-2296: the backing C has ONE read position (create -> execute* ->
+    # destroy, no reset), and execute, compose and every stream() iterator
+    # all advance it. Each face says so, or `compose()` after a preview
+    # `execute(n)` is a silently short "full sequence".
+    def cursor(*others: str) -> str:
+        return (
+            f"Reads the {cname}'s one cursor, shared with "
+            f"{' and '.join(f'``{o}``' for o in others)}: it continues "
+            f"where the last read stopped, and a drained {cname} yields "
+            f"nothing. Build a new {cname} to start over."
+        )
+
+    out = {
+        f"{seg_t}.sum": one(f"Combine *sources* into a single {seg_t}."),
+        f"{cname}.execute": authored_docstring(
+            [
+                "Execute for the next *n* samples.",
+                "",
+                *para(
+                    cursor("compose()", "stream()")
+                    + " A short or empty array means the sequence ended."
+                ),
+            ],
+            8,
+        ),
+        f"{cname}.compose": authored_docstring(
+            [
+                "Compose what remains of the sequence into one array.",
+                "",
+                *para(
+                    "On a fresh "
+                    + cname
+                    + " that is the full sequence; after ``execute(n)`` it "
+                    "is the rest. " + cursor("execute()", "stream()")
+                ),
+                # The generated compose() refuses a continuous spec up
+                # front: it has no end to compose to.
+                "",
+                "Raises",
+                "------",
+                "ValueError",
+                "    On a continuous spec, which never ends; use",
+                "    ``execute()`` or ``stream()``.",
+            ],
+            8,
+        ),
+        f"{cname}.close": one("Release native resources."),
+    }
+    if tl_t:
+        out[f"{seg_t}.add"] = one(f"Append segments; return a {tl_t}.")
+        out[f"{tl_t}.add"] = one("Append and return self.")
+    if stream.get("stream"):
+        # `realtime` is a SAMPLE RATE in Hz, and saying so is the whole job
+        # of its entry: the natural misread (a 0.0-1.0 scale factor) is
+        # silent -- 1.0 asks for one sample per second, so the first block
+        # blocks for `block` seconds with no error and nothing to grep for.
+        out[f"{cname}.stream"] = authored_docstring(
+            [
+                "Iterate the sequence in blocks.",
+                "",
+                *para(
+                    cursor("execute()", "compose()")
+                    + " Two live iterators interleave over one sequence."
+                ),
+                *(
+                    [
+                        "",
+                        "Parameters",
+                        "----------",
+                        "block : int",
+                        "    Samples per yielded array.",
+                        "realtime : float",
+                        "    Sample rate in **Hz** to pace against — pass",
+                        "    your ``fs`` (e.g. ``realtime=10e6``), not a",
+                        "    speed multiplier. ``0`` (the default) streams",
+                        "    as fast as possible.",
+                    ]
+                    if realtime_clock(cfg, module)
+                    else []
+                ),
+            ],
+            8,
+        )
+    if stream.get("to_dict"):
+        out[f"{cname}.to_dict"] = one(
+            "Serialise the resolved composition (repeat, continuous, "
+            "segments) to a dict."
+        )
+    if C.composer_json(cfg, module):
+        out[f"{cname}.from_json"] = one(f"Build a {cname} from a JSON spec.")
+        out[f"{cname}.from_file"] = one(
+            f"Build a {cname} from a JSON spec file."
+        )
+        out[f"{cname}.to_json"] = one("Serialise the spec as JSON.")
+    disc = oo.get("discriminant")
+    values = _header_docs(cfg, module).get("factories") or {}
+    for fac in oo.get("factories", []):
+        preset = f' with ``{disc}="{fac}"``' if disc else ""
+        out[fac] = render_numpy_doc(
+            DoxyBlock(
+                brief=f"Return a {src_t} configured as a *{fac}* source.",
+                body=[values[fac]] if values.get(fac) else [],
+                params=[
+                    (
+                        "**kw",
+                        f"Any keyword {src_t} takes{preset}; "
+                        f"``help({src_t})`` lists them.",
+                    )
+                ],
+                returns=f"The configured {src_t}.",
+            ),
+            fac,
+            [("**kw", "Any")],
+            src_t,
+            indent=4,
+        )
+    return out
+
+
+def realtime_clock(cfg: dict, module: str) -> dict:
+    """The ``[module.X.composer] realtime`` table, when ``stream()`` paces.
+
+    ``stream(realtime=)`` exists only when the table names all three clock
+    functions -- ``clock_create``, ``pace`` and ``destroy`` -- because the
+    iterator creates, paces and frees the clock. ``{}`` otherwise, including
+    for a table naming one or two of them.
+
+    The ONE answer to "does ``stream`` take ``realtime``": the keyword list,
+    the iterator's clock fields, the includes, the runtime doc and the stub
+    all ask it (gh-2283). The docs had asked whether the table was
+    non-empty, so a partial table documented a keyword the call refused.
+
+    Examples
+    --------
+    >>> m = {"module": {"m": {"composer": {"realtime": {"pace": "p"}}}}}
+    >>> realtime_clock(m, "m")
+    {}
+    >>> full = {"clock_create": "c", "pace": "p", "destroy": "d"}
+    >>> m["module"]["m"]["composer"]["realtime"] = full
+    >>> realtime_clock(m, "m") == full
+    True
+    """
+    rt = C.composer_stream(cfg, module).get("realtime") or {}
+    if not isinstance(rt, dict):
+        return {}
+    named = all(rt.get(k) for k in ("clock_create", "pace", "destroy"))
+    return dict(rt) if named else {}
+
+
+def _ml_doc_c(cfg: dict, module: str, member: str, sig: str) -> str:
+    """*member*'s ``ml_doc`` literal: *sig*, then its stub docstring's text.
+
+    The signature line leads, as on every jm method (gh-642): a
+    ``METH_VARARGS`` callable has no ``__text_signature__``, so it is the
+    only place ``help()`` shows the call.
+    """
+    from ._docstring import docstring_body
+
+    lines = member_doc_lines(cfg, module)[member]
+    indent = len(lines[0]) - len(lines[0].lstrip())
+    return _build_ml_doc([sig, "", *docstring_body(lines, indent)])
 
 
 def render_pyi(cfg: dict, module: str) -> str:
@@ -4565,7 +5633,8 @@ def render_pyi(cfg: dict, module: str) -> str:
     Covers the source / segment / timeline / composer types, the factories,
     and — when enabled — the JSON faces. Docstrings include defaults and enum
     choices from the manifest (gh-375)."""
-    enum_reg = C.enums(cfg)
+    from ._stubs import positional_only
+
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
     oo = C.composer_oo(cfg, module)
@@ -4583,9 +5652,9 @@ def render_pyi(cfg: dict, module: str) -> str:
     # whenever a timeline exists — not only for the composer's stream().
     typing_imports = "Any, Iterator" if (has_stream or tl_t) else "Any"
 
-    # The fs segment field also appears at the end of Synth.__init__.
-    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
-    synth_doc_fields = src_fields + ([fs_field] if fs_field else [])
+    # gh-2283: one definition per docstring, which the binding reads too.
+    type_docs = type_doc_lines(cfg, module)
+    docs = member_doc_lines(cfg, module)
 
     lines = [
         f"# {C.module_paths(module).leaf}.pyi — composer OO types (jm; gh-287).",
@@ -4611,7 +5680,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         "@disjoint_base",
         f"class {src_t}:",
     ]
-    lines.extend(_pyi_doc_lines(src_t, synth_doc_fields, enum_reg))
+    lines.extend(type_docs[src_t])
     lines += [
         f"    def __init__(self, {src_sig}{', ' if src_sig else ''}"
         "fs: float = ...) -> None: ...",
@@ -4629,8 +5698,14 @@ def render_pyi(cfg: dict, module: str) -> str:
     if _gen:
         # gh-1356: the same declaration the runtime rows render from.
         for m in _source_gen_members(_gen):
-            args = "".join(f", {n}: {a}" for n, a in m["params"])
-            lines.append(f"    def {m['name']}(self{args}) -> {m['ret']}:")
+            # gh-2212: positional-only exactly when the row's own flags
+            # take no keywords.
+            args = positional_only(
+                ", ".join(f"{n}: {a}" for n, a in m["params"]),
+                m["flags"],
+                "self",
+            )
+            lines.append(f"    def {m['name']}({args}) -> {m['ret']}:")
             lines += render_numpy_doc(
                 m["block"],
                 m["name"],
@@ -4639,9 +5714,28 @@ def render_pyi(cfg: dict, module: str) -> str:
                 indent=8,
                 raises=m["raises"],
             )
+        # gh-2259: a delegated method's member, as the generator's emitter
+        # writes it for the generator.
+        _dctx = _source_delegated(cfg, module)
+        _dlg = _dctx.get("pyi_extra_methods", "")
+        if _dlg.strip():
+            # gh-2212: positional-only where the source's row is, told by
+            # the rows this same emitter renders onto the source type --
+            # the one function the object's stub writers ask.
+            from ._stubs import mark_positional_only, method_table_flags
+
+            _member = mark_positional_only(
+                "class _Src:\n" + _dlg.strip("\n"),
+                {
+                    "_Src": method_table_flags(
+                        _dctx.get("extra_methods_pymethoddef", "")
+                    )
+                },
+            )
+            lines += _member.split("\n")[1:]
     # Feature 6 — computed read-only properties (derived in C; never stale).
     for c in _source_computed(cfg, module):
-        pytype = "float" if c["type"] in ("double", "float") else "int"
+        pytype = T.scalar_py_annotation(c["type"])  # gh-2035
         # gh-1499: a documented one is a read-only property carrying its
         # `doc`, the text its getset has at runtime; an attribute cannot
         # hold one. Undocumented, it keeps the annotation it always had.
@@ -4655,7 +5749,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         else:
             lines.append(f"    {c['name']}: {pytype}")
     lines += ["", "@disjoint_base", f"class {seg_t}:"]
-    lines.extend(_pyi_doc_lines(seg_t, src_fields + seg_fields, enum_reg))
+    lines.extend(type_docs[seg_t])
     lines += [
         f"    sources: list[{src_t}]",
         # gh-560: the segment's own scalar fields are getsets too (same
@@ -4671,20 +5765,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         f"{seg_scalar_sig}) -> None: ...",
         "    @classmethod",
         f"    def sum(cls, *sources: {src_t}, {seg_scalar_sig}) -> {seg_t}:",
-        f'        """Combine *sources* into a single {seg_t}."""',
+        *docs[f"{seg_t}.sum"],
     ]
     if tl_t:
         lines += [
             f"    def add(self, *others: {seg_t}) -> {tl_t}:",
-            f'        """Append segments; return a {tl_t}."""',
+            *docs[f"{seg_t}.add"],
             "",
             "@disjoint_base",
             f"class {tl_t}:",
-            f'    """{tl_t}."""',
+            *type_docs[tl_t],
             f"    segments: list[{seg_t}]",
             f"    def __init__(self, segments: list[{seg_t}]) -> None: ...",
             f"    def add(self, *segments: {seg_t}) -> {tl_t}:",
-            '        """Append and return self."""',
+            *docs[f"{tl_t}.add"],
             f"    def __iter__(self) -> Iterator[{seg_t}]: ...",
             "    def __len__(self) -> int: ...",
             # gh-560: `/` — a tp_as_sequence slot takes its index positionally
@@ -4696,49 +5790,11 @@ def render_pyi(cfg: dict, module: str) -> str:
         if tl_t
         else (f"{seg_t} | list[{seg_t}] | None")
     )
-    # gh-747: the composer's own class docstring was a fourth hand-written
-    # copy of this layout. Its strings are short, but `seg_or_tl` interpolates
-    # the project's type names — long ones overflow the `segments :` line, and
-    # `reflow_pyi` reflows signatures, not docstring type lines.
     lines += [
         "",
         "@disjoint_base",
         f"class {cname}:",
-        *class_docstring(
-            f"{cname}.",
-            params=[
-                ClassParam(
-                    f"segments : {seg_or_tl}, default None",
-                    ("Initial segment list.",),
-                ),
-                ClassParam(
-                    "repeat : bool, default False",
-                    ("Loop the sequence after the last segment.",),
-                ),
-                ClassParam(
-                    "continuous : bool, default False",
-                    (
-                        "Never finish; execute always returns the "
-                        "requested count.",
-                    ),
-                ),
-                # gh-1499: a setting is a keyword of `__init__` like the
-                # three above, and its `doc` is read on the getset beside
-                # it -- this is its stub face. None of them were listed.
-                *[
-                    ClassParam(
-                        f"{st['name']} : "
-                        f"{'str' if st.get('enum') else 'int'}, optional",
-                        tuple(
-                            ["\n".join(authored_doc_lines(str(st["doc"])))]
-                            if st.get("doc")
-                            else []
-                        ),
-                    )
-                    for st in C.composer_settings(cfg, module)
-                ],
-            ],
-        ),
+        *type_docs[cname],
         f"    segments: list[{seg_t}]",
         "    repeat: bool",
         "    continuous: bool",
@@ -4746,21 +5802,28 @@ def render_pyi(cfg: dict, module: str) -> str:
             # gh-1126: read/write, unlike the three above. A setting is set
             # once before the first execute(); the pair behind it is the
             # backing's own setter/getter.
-            f"    {st['name']}: {'str' if st.get('enum') else 'int'}"
+            f"    {st['name']}: {_setting_py_type(st)}"
             for st in C.composer_settings(cfg, module)
         ],
         f"    def __init__(self, segments: {seg_or_tl} = ..., *, "
         "repeat: bool = ..., continuous: bool = ..."
         + "".join(
-            f", {st['name']}: {'str' if st.get('enum') else 'int'} = ..."
+            f", {st['name']}: {_setting_py_type(st)} = ..."
             for st in C.composer_settings(cfg, module)
         )
         + ", **segment_kwargs"
         ") -> None: ...",
-        "    def execute(self, n: int) -> NDArray[np.complex64]:",
-        '        """Execute for *n* samples."""',
-        "    def compose(self, block: int = ...) -> NDArray[np.complex64]:",
-        '        """Compose the full sequence into one array."""',
+        # gh-2212: each `/` from the flags the method table registers.
+        "    def execute("
+        f"{positional_only('n: int', COMPOSER_FLAGS['execute'], 'self')})"
+        " -> NDArray[np.complex64]:",
+        *docs[f"{cname}.execute"],
+        "    def compose("
+        + positional_only(
+            "block: int = ...", COMPOSER_FLAGS["compose"], "self"
+        )
+        + ") -> NDArray[np.complex64]:",
+        *docs[f"{cname}.compose"],
     ]
     # gh-1190: a declared hand-written method needs a stub too, or a type
     # checker rejects the call that works. `args` and `returns` are raw Python
@@ -4774,36 +5837,17 @@ def render_pyi(cfg: dict, module: str) -> str:
         lines.extend(_extramethods.pyi_member(_em))
     if C.composer_stream(cfg, module).get("stream"):
         rt_arg = (
-            ", realtime: float = ..."
-            if C.composer_stream(cfg, module).get("realtime")
-            else ""
+            ", realtime: float = ..." if realtime_clock(cfg, module) else ""
         )
         lines += [
             f"    def stream(self, block: int = ...{rt_arg})"
             " -> Iterator[NDArray[np.complex64]]:",
-            '        """Iterate the sequence in blocks.',
-            "",
-            *(
-                [
-                    "        Parameters",
-                    "        ----------",
-                    "        block : int",
-                    "            Samples per yielded array.",
-                    "        realtime : float",
-                    "            Sample rate in **Hz** to pace against — pass",
-                    "            your ``fs`` (e.g. ``realtime=10e6``), not a",
-                    "            speed multiplier. ``0`` (the default) streams",
-                    "            as fast as possible.",
-                ]
-                if C.composer_stream(cfg, module).get("realtime")
-                else []
-            ),
-            '        """',
+            *docs[f"{cname}.stream"],
         ]
     if C.composer_stream(cfg, module).get("to_dict"):
         lines += [
             "    def to_dict(self) -> dict:",
-            '        """Serialise the composer state to a dict."""',
+            *docs[f"{cname}.to_dict"],
         ]
     for s in C.composer_serializers(cfg, module):
         sig = "".join(
@@ -4821,25 +5865,44 @@ def render_pyi(cfg: dict, module: str) -> str:
                 8,
             ),
         ]
+    # gh-2346: the borrowed-state capsule, stubbed as a handle's is (gh-794).
+    _cap_pyi = C.published_capsule(cfg, module)
+    if _cap_pyi:
+        lines += [
+            "    @property",
+            "    def _capsule(self) -> Any:",
+            f'        """Borrowed `{_cap_pyi}` capsule for this composer.\n\n'
+            f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
+            f"        capsule is accepted. It never frees the composer, and\n"
+            f"        it keeps this object alive; it is valid until the\n"
+            f'        composer is closed."""',
+        ]
     lines += [
         "    def close(self) -> None:",
-        '        """Release native resources."""',
+        *docs[f"{cname}.close"],
         f"    def __enter__(self) -> {cname}: ...",
         "    def __exit__(self, *exc) -> None: ...",
     ]
     if C.composer_json(cfg, module):
         lines += [
             "    @classmethod",
-            f"    def from_json(cls, json: str) -> {cname}: ...",
+            "    def from_json("
+            f"{positional_only('json: str', COMPOSER_FLAGS['from_json'], 'cls')})"
+            f" -> {cname}:",
+            *docs[f"{cname}.from_json"],
             "    @classmethod",
-            f"    def from_file(cls, path: str) -> {cname}: ...",
-            "    def to_json(self) -> str: ...",
+            "    def from_file("
+            f"{positional_only('path: str', COMPOSER_FLAGS['from_file'], 'cls')})"
+            f" -> {cname}:",
+            *docs[f"{cname}.from_file"],
+            "    def to_json(self) -> str:",
+            *docs[f"{cname}.to_json"],
         ]
     lines.append("")
     for fac in oo.get("factories", []):
         lines += [
             f"def {fac}(**kw: Any) -> {src_t}:",
-            f'    """Return a {src_t} configured as a *{fac}* source."""',
+            *docs[fac],
         ]
     lines.append("")
     # gh-744: the third stub producer, reflowed like the other two
@@ -5108,9 +6171,18 @@ def materialize(
     # gh-1703: a field's doc is its struct member's, read from the real
     # project's headers -- the replay tree holds no hand-written backing.
     cfg = resolve_field_docs(cfg, module, project_root or root)
+    # gh-2259: a delegated method is documented where the generator's own
+    # binding reads it, the generator's sacred header -- the real project's.
+    _gen = _source_generates(cfg, module)
+    if _gen and _gen["methods"]:
+        from ._object import _load_doc_blocks
+
+        _g = _gen["generator"]
+        _blocks = _load_doc_blocks(project_root or root, _g, cfg)
+        cfg = {**cfg, _g: {**cfg.get(_g, {}), "_doc_blocks": _blocks}}
     pkg = C.project_name(cfg)
     mp = C.module_paths(module)
-    out_pkg = C.capsule_package(cfg, module) or mp.pypath
+    out_pkg = C.module_package_resolved(cfg, module)
 
     # gh-998: the project's straight-C seams, published before the binding
     # that calls them. Absent when the source declares none, so a composer
@@ -5155,42 +6227,365 @@ def _default_literal(f: dict) -> str:
     return d if d not in (None, "") else "0"
 
 
-def _ser_ranged(jobj: str, cobj: str, name: str, flag: str) -> str:
+#: gh-2139: the widest integer magnitude the generated JSON face carries as a
+#: JSON number -- I-JSON's interoperable range (RFC 7493, section 2.2),
+#: 2**53 - 1. A double holds every integer up to 2**53, but the text
+#: 9007199254740993 parses TO 2**53, so a reader that accepted 2**53 as a
+#: number would read that text as its neighbour without an error: the bug
+#: this bound exists to refuse. Both directions use it, so everything the
+#: writer emits as a number the reader takes back exactly.
+JSON_SAFE_INT = 2**53 - 1
+
+#: The generated JSON face's reader for a number a double holds -- every
+#: numeric field but a 64-bit one (:func:`_json_get`).
+_JSON_NUM_C = """static double
+_json_num(const cJSON *o, const char *key, double fallback)
+{
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(o, key);
+    return cJSON_IsNumber(it) ? it->valuedouble : fallback;
+}
+"""
+
+
+def _json_wide_names(parse_type: str) -> "tuple[str, str]":
+    """``(writer, reader)``: the C helpers carrying *parse_type* exactly.
+
+    Examples
+    --------
+    >>> _json_wide_names("unsigned long long")
+    ('_json_ull_item', '_json_ull')
+    >>> _json_wide_names("long long")
+    ('_json_ll_item', '_json_ll')
+    """
+    tag = "ull" if parse_type.startswith("unsigned") else "ll"
+    return f"_json_{tag}_item", f"_json_{tag}"
+
+
+def _json_out_of_range_c(conv: str, what: str, value: str, indent: str) -> str:
+    """The statement refusing *value* as out of its field's range, unended.
+
+    The one sentence the generated JSON reader refuses a too-wide integer
+    with: the 64-bit reader's, when ``strtoull`` / ``strtoll`` overflows,
+    and :func:`_json_get`'s, when the field's C type cannot hold what that
+    reader parsed (gh-2236). *conv* is the ``printf`` conversion of *value*;
+    *what* is the C expression naming the field.
+
+    >>> print(_json_out_of_range_c("%lld", '"n"', "_w", ""))
+    PyErr_Format(PyExc_ValueError, "%s: \\"%lld\\" is out of range",
+                 "n", _w);
+    """
+    return (
+        f'{indent}PyErr_Format(PyExc_ValueError, "%s: \\"{conv}\\" is out '
+        f'of range",\n'
+        f"{indent}             {what}, {value});"
+    )
+
+
+def _json_wide_c(parse_type: str) -> str:
+    """The C writer and reader for one signedness of a 64-bit integer field.
+
+    gh-2139: cJSON's only number is a ``double``, so a JSON face that wrote
+    every field through one changed a ``uint64_t`` past 2**53 on the round
+    trip with no error. The writer emits a value within
+    :data:`JSON_SAFE_INT` as a JSON number, which keeps every small value --
+    a length, a count -- the number it always was, and anything wider as a
+    decimal string. The reader takes either: a number only when it is a
+    whole number within that range, since a wider one may already have been
+    rounded by the parser; a string by ``strtoull`` / ``strtoll``, refusing
+    junk, overflow and, for an unsigned field, a sign. A refusal raises
+    ``ValueError`` naming the field (*what*, from the call site); a value
+    that is neither a number nor a string keeps the field's default, as
+    ``_json_num`` does for every other number.
+
+    *parse_type* is what :func:`~just_makeit._types.wider_than_double`
+    answers for the field's type, so its helper pair follows its type row.
+    """
+    writer, reader = _json_wide_names(parse_type)
+    lim = JSON_SAFE_INT
+    if parse_type.startswith("unsigned"):
+        in_range = f"v <= {lim}ULL"
+        d_range = f"d >= 0.0 && d <= {lim}.0"
+        lo, conv, strto = "0", "%llu", "strtoull"
+        sign = """        if (*s == '-') {
+            PyErr_Format(PyExc_ValueError,
+                         "%s: \\"%s\\" is negative, and the field is "
+                         "unsigned", what, s);
+            return -1;
+        }
+"""
+        digits = "s"
+    else:
+        in_range = f"v >= -{lim}LL && v <= {lim}LL"
+        d_range = f"d >= -{lim}.0 && d <= {lim}.0"
+        lo, conv, strto = f"-{lim}", "%lld", "strtoll"
+        sign = ""
+        digits = "s + (*s == '-')"
+    return f"""static cJSON *
+{writer}({parse_type} v)
+{{
+    char b[24];
+    if ({in_range})
+        return cJSON_CreateNumber((double)v);
+    snprintf(b, sizeof b, "{conv}", v);
+    return cJSON_CreateString(b);
+}}
+
+static int
+{reader}(const cJSON *it, const char *what, {parse_type} *v)
+{{
+    if (cJSON_IsNumber(it)) {{
+        double d = it->valuedouble;
+        if (!({d_range})
+            || (double)({parse_type})d != d) {{
+            PyErr_Format(PyExc_ValueError,
+                         "%s: a JSON number here must be a whole number "
+                         "from {lo} to {lim} (2^53 - 1), the range a "
+                         "double holds exactly; write a wider value as a "
+                         "decimal string", what);
+            return -1;
+        }}
+        *v = ({parse_type})d;
+    }} else if (cJSON_IsString(it)) {{
+        const char *s = cJSON_GetStringValue(it);
+        const char *p = {digits};
+        char *end;
+        {parse_type} x;
+{sign}        if (*p < '0' || *p > '9') {{
+            PyErr_Format(PyExc_ValueError,
+                         "%s: \\"%s\\" is not a decimal integer", what, s);
+            return -1;
+        }}
+        errno = 0;
+        x = {strto}(s, &end, 10);
+        if (*end) {{
+            PyErr_Format(PyExc_ValueError,
+                         "%s: \\"%s\\" is not a decimal integer", what, s);
+            return -1;
+        }}
+        if (errno == ERANGE) {{
+{_json_out_of_range_c("%s", "what", "s", " " * 12)}
+            return -1;
+        }}
+        *v = x;
+    }}
+    return 0;
+}}
+"""
+
+
+def _json_put(
+    jobj: str, name: "str | None", ctype: str, value: str, wide: "set[str]"
+) -> str:
+    """The statement writing numeric *value* of *ctype* into *jobj*.
+
+    The ONE write decision of the generated JSON face (gh-2139): member
+    *name* of an object, or the next item of an array when *name* is
+    ``None``. A type a double holds is a JSON number, spelled as it always
+    was; a :func:`~just_makeit._types.wider_than_double` one goes through
+    its exact writer, whose parse type is recorded in *wide* so the caller
+    emits the helpers it calls and no other.
+
+    Examples
+    --------
+    >>> used = set()
+    >>> _json_put("so", "gain", "double", "src->gain", used)
+    'cJSON_AddNumberToObject(so, "gain", (double)src->gain);'
+    >>> _json_put("so", "n", "size_t", "x", used)
+    'cJSON_AddItemToObject(so, "n", _json_ull_item((unsigned long long)x));'
+    >>> sorted(used)
+    ['unsigned long long']
+    """
+    pt = T.wider_than_double(ctype)
+    if pt is None:
+        if name is None:
+            return (
+                f"cJSON_AddItemToArray({jobj},"
+                f" cJSON_CreateNumber((double){value}));"
+            )
+        return f'cJSON_AddNumberToObject({jobj}, "{name}", (double){value});'
+    wide.add(pt)
+    item = f"{_json_wide_names(pt)[0]}(({pt}){value})"
+    if name is None:
+        return f"cJSON_AddItemToArray({jobj}, {item});"
+    return f'cJSON_AddItemToObject({jobj}, "{name}", {item});'
+
+
+def _json_get(
+    src: str,
+    name: "str | None",
+    ctype: str,
+    dest: str,
+    default: str,
+    what: str,
+    fail: str,
+    wide: "set[str]",
+) -> str:
+    """The statement reading a number of *ctype* into *dest*, unindented.
+
+    The ONE read decision of the generated JSON face (gh-2139), the peer of
+    :func:`_json_put`: member *name* of object *src*, or the item *src*
+    itself when *name* is ``None`` (a ranged pair's element). A type a
+    double holds reads as it always did. A wider one reads through its
+    exact reader into the parse type, starting from *default*; a refusal
+    names the field (*what*) and runs *fail*, which leaves the function the
+    way any other malformed record does.
+
+    gh-2236: the parse type is wider than the field's C type wherever that
+    type is narrower than 64 bits -- a ``size_t`` or a ``ptrdiff_t`` on a
+    32-bit target -- so the value is converted back and compared before it
+    is stored, and one the cast would change is refused with the reader's
+    own range sentence (:func:`_json_out_of_range_c`). Without it
+    ``"4294967296"`` passed the reader and lost its high bits in the cast.
+
+    gh-2247: an integer type a double holds -- every one narrower than 64
+    bits -- must read a whole number within its range
+    (:func:`~just_makeit._types.int_limits`) before the cast, or it is
+    refused with that same sentence. The cast alone accepted ``1.5`` as
+    ``1``, and a value past the type is undefined behaviour in C:
+    ``4294967296`` arrived in a ``uint32_t`` as ``0``. Each test is exact
+    in a double: a bound of a type this narrow is, and so is the ceiling
+    plus one.
+
+    Examples
+    --------
+    >>> used = set()
+    >>> _json_get("so", "gain", "double", "src->gain", "1.0", "", "", used)
+    'src->gain = (double)_json_num(so, "gain", 1.0);'
+    >>> print(_json_get("so", "k", "int8_t", "src->k", "0",
+    ...                 "source field 'k' (int8_t)", "return -1;", used))
+    {
+        double _d = _json_num(so, "k", 0);
+        if (!(_d >= (double)INT8_MIN && _d < (double)INT8_MAX + 1.0)
+            || (double)(int8_t)_d != _d) {
+            char _txt[32];
+            snprintf(_txt, sizeof _txt, "%.17g", _d);
+            PyErr_Format(PyExc_ValueError, "%s: \\"%s\\" is out of range",
+                         "source field 'k' (int8_t)", _txt);
+            return -1;
+        }
+        src->k = (int8_t)_d;
+    }
+    >>> print(_json_get("so", "n", "int64_t", "src->n", "0",
+    ...                 "source field 'n' (int64_t)", "return -1;", used))
+    {
+        long long _w = (long long)0;
+        if (_json_ll(cJSON_GetObjectItemCaseSensitive(so, "n"),
+                     "source field 'n' (int64_t)", &_w) != 0)
+            return -1;
+        if ((long long)(int64_t)_w != _w) {
+            PyErr_Format(PyExc_ValueError, "%s: \\"%lld\\" is out of range",
+                         "source field 'n' (int64_t)", _w);
+            return -1;
+        }
+        src->n = (int64_t)_w;
+    }
+    """
+    pt = T.wider_than_double(ctype)
+    if pt is None:
+        num = (
+            f"cJSON_GetNumberValue({src})"
+            if name is None
+            else f'_json_num({src}, "{name}", {default})'
+        )
+        limits = T.int_limits(ctype)
+        if limits is None:
+            return f"{dest} = ({ctype}){num};"
+        # The range first: only then is the cast in the whole-number test
+        # defined. A NaN -- a pair element that is not a number -- fails it.
+        lo, hi = limits
+        refuse = _json_out_of_range_c("%s", f'"{what}"', "_txt", " " * 8)
+        return (
+            "{\n"
+            f"    double _d = {num};\n"
+            f"    if (!(_d >= (double){lo} && _d < (double){hi} + 1.0)\n"
+            f"        || (double)({ctype})_d != _d) {{\n"
+            "        char _txt[32];\n"
+            '        snprintf(_txt, sizeof _txt, "%.17g", _d);\n'
+            f"{refuse}\n"
+            f"        {fail}\n"
+            "    }\n"
+            f"    {dest} = ({ctype})_d;\n"
+            "}"
+        )
+    wide.add(pt)
+    reader = _json_wide_names(pt)[1]
+    item = (
+        src
+        if name is None
+        else f'cJSON_GetObjectItemCaseSensitive({src}, "{name}")'
+    )
+    conv = "%llu" if pt.startswith("unsigned") else "%lld"
+    refuse = _json_out_of_range_c(conv, f'"{what}"', "_w", " " * 8)
+    return (
+        "{\n"
+        f"    {pt} _w = ({pt}){default};\n"
+        f"    if ({reader}({item},\n"
+        f'{" " * (len(reader) + 9)}"{what}", &_w) != 0)\n'
+        f"        {fail}\n"
+        f"    if (({pt})({ctype})_w != _w) {{\n"
+        f"{refuse}\n"
+        f"        {fail}\n"
+        "    }\n"
+        f"    {dest} = ({ctype})_w;\n"
+        "}"
+    )
+
+
+def _json_what(table: str, f: dict) -> str:
+    """How a JSON refusal names field *f* of the source or segment *table*.
+
+    >>> _json_what("source", {"name": "poly", "type": "uint64_t"})
+    "source field 'poly' (uint64_t)"
+    """
+    return f"{table} field '{f['name']}' ({f['type']})"
+
+
+def _ser_ranged(jobj: str, cobj: str, f: dict, wide: "set[str]") -> str:
     """Generic-JSON serialize for a ranged field: a [lo, hi] array when the
     field's ranged bit is set, else a plain number."""
+    name, flag, ct = f["name"], f["_ranged"], f["type"]
     return (
         f"        if ({cobj}->ranged & {flag}) {{\n"
         f'            cJSON *_r = cJSON_AddArrayToObject({jobj}, "{name}");\n'
-        f"            cJSON_AddItemToArray(_r,"
-        f" cJSON_CreateNumber((double){cobj}->{name}));\n"
-        f"            cJSON_AddItemToArray(_r,"
-        f" cJSON_CreateNumber((double){cobj}->{name}_hi));\n"
+        f"            {_json_put('_r', None, ct, f'{cobj}->{name}', wide)}\n"
+        f"            {_json_put('_r', None, ct, f'{cobj}->{name}_hi', wide)}\n"
         f"        }} else {{\n"
-        f'            cJSON_AddNumberToObject({jobj}, "{name}",'
-        f" (double){cobj}->{name});\n"
+        f"            {_json_put(jobj, name, ct, f'{cobj}->{name}', wide)}\n"
         f"        }}"
     )
 
 
 def _parse_ranged(
-    jobj: str, cobj: str, name: str, ct: str, flag: str, default: str
+    jobj: str,
+    cobj: str,
+    f: dict,
+    what: str,
+    fail: str,
+    wide: "set[str]",
 ) -> str:
     """Generic-JSON parse for a ranged field: a two-element [lo, hi] array sets
     the ranged bit + companion; a scalar (or absence) is the constant."""
+    name, flag, ct = f["name"], f["_ranged"], f["type"]
+    default = _default_literal(f)
+
+    def _get(src: str, member: "str | None", dest: str, pad: int) -> str:
+        return textwrap.indent(
+            _json_get(src, member, ct, dest, default, what, fail, wide),
+            " " * pad,
+        )
+
     return (
         f"        {{\n"
         f"            const cJSON *_it ="
         f' cJSON_GetObjectItemCaseSensitive({jobj}, "{name}");\n'
         f"            if (cJSON_IsArray(_it)"
         f" && cJSON_GetArraySize(_it) == 2) {{\n"
-        f"                {cobj}->{name} = ({ct})cJSON_GetNumberValue("
-        f"cJSON_GetArrayItem(_it, 0));\n"
-        f"                {cobj}->{name}_hi = ({ct})cJSON_GetNumberValue("
-        f"cJSON_GetArrayItem(_it, 1));\n"
+        f"{_get('cJSON_GetArrayItem(_it, 0)', None, f'{cobj}->{name}', 16)}\n"
+        f"{_get('cJSON_GetArrayItem(_it, 1)', None, f'{cobj}->{name}_hi', 16)}"
+        f"\n"
         f"                {cobj}->ranged |= {flag};\n"
         f"            }} else {{\n"
-        f'                {cobj}->{name} = ({ct})_json_num({jobj}, "{name}",'
-        f" {default});\n"
+        f"{_get(jobj, name, f'{cobj}->{name}', 16)}\n"
         f"            }}\n"
         f"        }}"
     )
@@ -5205,9 +6600,11 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     is ``{<segment scalar fields>, "sources": [ {<source fields>}, … ]}``; enum
     fields serialize as their SSOT string (via the generated ``_enum_*`` tables —
     one definition, no duplicated table), a ``bytes`` field as a JSON int array,
-    everything else as a number. Round-trips by construction. Uses cJSON for
-    robust parsing/formatting (the project links its json lib via
-    ``extra_link_libs`` and exposes ``cJSON.h``)."""
+    everything else as a number -- except a value of an integer type wider
+    than a double (:func:`~just_makeit._types.wider_than_double`) past
+    :data:`JSON_SAFE_INT`, which is a decimal string (gh-2139). Round-trips
+    by construction. Uses cJSON for robust parsing/formatting (the project
+    links its json lib via ``extra_link_libs`` and exposes ``cJSON.h``)."""
     backing = C.capsule_backing(cfg, module)
     sym = CSYM.backing_stem(cfg, backing)  # gh-1685: C symbols
     src = C.composer_source(cfg, module)
@@ -5223,6 +6620,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     obj = f"{cname}Object"
     segments_fn = f"{sym}_segments"
     destroy_fn = f"{sym}_destroy"
+    # gh-2139: the parse types of the 64-bit fields `_json_put` / `_json_get`
+    # emitted a call for -- so exactly the helpers called are defined, and a
+    # composer with none is byte-identical to before.
+    wide: set[str] = set()
 
     # gh-1184/gh-560: freeing `[k].bits` freed ONE hardcoded member — the
     # wrong one for a source whose bytes field is named anything else, and no
@@ -5316,26 +6717,29 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             }}
         }}""")
         elif f.get("_ranged"):
-            src_ser.append(_ser_ranged("so", "src", n, f["_ranged"]))
+            src_ser.append(_ser_ranged("so", "src", f, wide))
         else:
             src_ser.append(
-                f'        cJSON_AddNumberToObject(so, "{n}", '
-                f"(double)src->{n});"
+                f"        {_json_put('so', n, f['type'], f'src->{n}', wide)}"
             )
     src_ser_s = "\n".join(src_ser)
 
     def _seg_enum_name(f: dict) -> str:
         return _enumc.name_expr(f["enum"], "g->" + f["name"], C.enums(cfg))
 
+    for f in seg_fields:
+        if not f.get("enum"):
+            _one_real_number(f, module, "JSON face (`[module.X.json]`)")
+
     seg_ser = "\n".join(
-        _ser_ranged("sj", "g", f["name"], f["_ranged"])
+        _ser_ranged("sj", "g", f, wide)
         if f.get("_ranged")
         else (
             f'        cJSON_AddStringToObject(sj, "{f["name"]}", '
             f"{_seg_enum_name(f)});"
             if f.get("enum")
-            else f'        cJSON_AddNumberToObject(sj, "{f["name"]}", '
-            f"(double)g->{f['name']});"
+            else "        "
+            + _json_put("sj", f["name"], f["type"], f"g->{f['name']}", wide)
         )
         for f in seg_fields
     )
@@ -5359,6 +6763,23 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             # the store half did, so a round trip through JSON wrote one
             # field's array back into another's members.
             _bp, _bl = buffer_members(f)
+            # gh-2247: each element by the one integer read, so 256 or 1.5
+            # is refused naming the field rather than cast into a byte.
+            elem = textwrap.indent(
+                _json_get(
+                    "_e",
+                    None,
+                    "uint8_t",
+                    "_buf[_k]",
+                    "0",
+                    _json_what(
+                        "source", {**f, "type": f.get("type", "bytes")}
+                    ),
+                    "{ free(_buf); return -1; }",
+                    wide,
+                ),
+                " " * 20,
+            )
             src_parse.append(f"""        {{
             const cJSON *_b = cJSON_GetObjectItemCaseSensitive(so, "{n}");
             if (cJSON_IsArray(_b) && cJSON_GetArraySize(_b) > 0) {{
@@ -5367,8 +6788,10 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 if (!_buf) return -1;
                 size_t _k = 0;
                 const cJSON *_e = NULL;
-                cJSON_ArrayForEach(_e, _b)
-                    _buf[_k++] = (uint8_t)cJSON_GetNumberValue(_e);
+                cJSON_ArrayForEach(_e, _b) {{
+{elem}
+                    _k++;
+                }}
                 src->{_bp} = _buf;
                 src->{_bl} = _nb;
             }}
@@ -5393,19 +6816,24 @@ def render_json_funcs(cfg: dict, module: str) -> str:
         elif f.get("_ranged"):
             src_parse.append(
                 _parse_ranged(
-                    "so",
-                    "src",
-                    n,
-                    f["type"],
-                    f["_ranged"],
-                    _default_literal(f),
+                    "so", "src", f, _json_what("source", f), "return -1;", wide
                 )
             )
         else:
-            ct = f["type"]
             src_parse.append(
-                f'        src->{n} = ({ct})_json_num(so, "{n}", '
-                f"{_default_literal(f)});"
+                textwrap.indent(
+                    _json_get(
+                        "so",
+                        n,
+                        f["type"],
+                        f"src->{n}",
+                        _default_literal(f),
+                        _json_what("source", f),
+                        "return -1;",
+                        wide,
+                    ),
+                    " " * 8,
+                )
             )
     src_parse_s = "\n".join(src_parse)
     # gh-1735: a `parse_why` reader's sentence is raised by `from_json` /
@@ -5434,7 +6862,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
 
     seg_parse = "\n".join(
         _parse_ranged(
-            "sj", "sg", f["name"], f["type"], f["_ranged"], _default_literal(f)
+            "sj", "sg", f, _json_what("segment", f), "goto fail;", wide
         )
         if f.get("_ranged")
         else (
@@ -5446,20 +6874,40 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             sg->{f["name"]} = _v < 0 ? 0 : _v;
         }}"""
             if f.get("enum")
-            else f"        sg->{f['name']} = ({f['type']})_json_num(sj, "
-            f'"{f["name"]}", {_default_literal(f)});'
+            else textwrap.indent(
+                _json_get(
+                    "sj",
+                    f["name"],
+                    f["type"],
+                    f"sg->{f['name']}",
+                    _default_literal(f),
+                    _json_what("segment", f),
+                    "goto fail;",
+                    wide,
+                ),
+                " " * 8,
+            )
         )
         for f in seg_fields
     )
 
-    return f"""/* ── generic SSOT-driven JSON (de)serialization ── */
-static double
-_json_num(const cJSON *o, const char *key, double fallback)
-{{
-    const cJSON *it = cJSON_GetObjectItemCaseSensitive(o, key);
-    return cJSON_IsNumber(it) ? it->valuedouble : fallback;
-}}
+    # gh-2139: a 64-bit field's reader raises the ValueError that names it,
+    # so the factory keeps that exception rather than replacing it with the
+    # generic one. gh-2247: so does every integer read (`_json_get`), and a
+    # bytes element, so it is kept whatever the fields; the 64-bit helpers
+    # are still emitted only with such a field.
+    wide_c = ""
+    if wide:
+        wide_c = "\n#include <errno.h>\n\n" + "\n".join(
+            _json_wide_c(pt) for pt in sorted(wide, reverse=True)
+        )
+    keep_raised = (
+        "        if (PyErr_Occurred()) /* a field the reader refused */\n"
+        "            return NULL;\n"
+    )
 
+    text = f"""/* ── generic SSOT-driven JSON (de)serialization ── */
+{_JSON_NUM_C}{wide_c}
 static void
 _json_add_source(cJSON *so, const {src_struct} *src)
 {{
@@ -5566,7 +7014,7 @@ static PyObject *
 _{cname}_wrap_state(PyTypeObject *type, {sym}_state_t *st{wrap_param})
 {{
     if (!st) {{
-{wrap_raise}        return NULL;
+{keep_raised}{wrap_raise}        return NULL;
     }}
     {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
@@ -5626,6 +7074,10 @@ static PyObject *
     return _{cname}_wrap_state((PyTypeObject *)cls, st{why_pass}); /* cls: subclass round-trips */
 }}
 """
+    # gh-2139: a composer whose every plain number is a 64-bit field calls
+    # `_json_num` nowhere, and an uncalled static is -Wunused-function
+    # (gh-1863's rule, by asking the finished text).
+    return _drop_uncalled(text, _JSON_NUM_C, "_json_num")
 
 
 # ── generic composer CLI (c face, gh-287 — retires a hand-written wfmgen) ─────
@@ -5640,6 +7092,67 @@ def composer_cli(cfg: dict, module: str) -> dict:
     backing parser), and the ``jm app`` output axes (``--sample_type`` /
     ``--file-type`` / ``--endian``). Generic — reusable by any composer."""
     return dict(cfg.get("module", {}).get(module, {}).get("cli", {}))
+
+
+def _cli_enum_flag(f: dict, enums: dict) -> "tuple[str, str]":
+    """An enum field's ``--<name>`` flag on the generated CLI.
+
+    gh-2140: the one treatment for a source and a segment enum field. The
+    segment loop had none and read the field as a number -- ``int gap =
+    (int)auto;`` does not compile, and ``--gap off`` was
+    ``strtoull("off")``, 0 -- while the source branch kept its own copy of
+    the lookup, which stored a constant-bound enum's position (gh-1450) and,
+    for a field with no default, refused every run that named no choice.
+
+    The local holds the field's C value, starting at the manifest default
+    as every face spells it (`_enumc.default_c`). The flag's text is looked
+    up through `_enumc.validate_c`, the one choice-string emitter (gh-1026),
+    whose command-line refusal is ``<prog>: --<name>: invalid choice '<s>'
+    (choices: ...)`` and exit 2. The caller assigns the local to the struct
+    member.
+
+    Parameters
+    ----------
+    f : dict
+        The source or segment field row; it declares ``enum``.
+    enums : dict
+        The ``[[enum]]`` registry, `_config.enums`.
+
+    Returns
+    -------
+    tuple of str
+        The local's declaration and the flag's ``else if`` argv case.
+
+    Examples
+    --------
+    >>> decl, case = _cli_enum_flag(
+    ...     {"name": "gap", "type": "int", "enum": "gap", "default": "off"},
+    ...     {"gap": ["auto", "off"]})
+    >>> decl
+    '    int gap = 1;'
+    >>> "_enum_index(_enum_gap, _s)" in case, "gap = _v;" in case
+    (True, True)
+    """
+    n, e = f["name"], f["enum"]
+    decl = f"    int {n} = {_enumc.default_c(e, f.get('default', ''), enums)};"
+    check = _enumc.validate_c(
+        n,
+        e,
+        enums,
+        src="_s",
+        result="_v",
+        fail="return 2;",
+        cli_flag=n,
+        indent="            ",
+    )
+    case = (
+        f'        else if (!strcmp(a, "--{n}") && i+1<argc) {{\n'
+        "            const char *_s = argv[++i];\n"
+        f"{check}\n"
+        f"            {n} = _v;\n"
+        "        }"
+    )
+    return decl, case
 
 
 def render_cli(cfg: dict, module: str) -> str:
@@ -5687,21 +7200,17 @@ def render_cli(cfg: dict, module: str) -> str:
     sample_types = " ".join(_app._SAMPLE_TYPES)
 
     # per-field flag decls (defaults), argv parse cases, struct assembly.
+    enums = C.enums(cfg)
     decls, parse, assign = [], [], []
     for f in src_fields:
         n = f["name"]
         if f.get("complex"):
             continue  # complex streams can't cross a generated CLI flag
-        if f.get("enum"):
-            decls.append(f'    const char *{n} = "{f.get("default", "")}";')
-            parse.append(
-                f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = argv[++i];'
-            )
-            assign.append(f"""    {{
-        int _v = _enum_index(_enum_{f["enum"]}, {n});
-        if (_v < 0) {{ fprintf(stderr, "bad --{n} %s\\n", {n}); return 2; }}
-        src.{n} = _v;
-    }}""")
+        if _field_is_enum(f):
+            decl, case = _cli_enum_flag(f, enums)  # gh-2140
+            decls.append(decl)
+            parse.append(case)
+            assign.append(f"        src.{n} = {n};")
         elif _field_is_owned_ptr(f):
             # gh-1711: the text form, through the host's parser; freed after
             # create, which deep-copies it like a bytes buffer.
@@ -5769,11 +7278,8 @@ def render_cli(cfg: dict, module: str) -> str:
             ct = f["type"]
             dflt = f.get("default", "0")
             decls.append(f"    {ct} {n} = ({ct}){dflt};")
-            conv = (
-                f"({ct})strtod(argv[++i], NULL)"
-                if ct in ("double", "float")
-                else f"({ct})strtoull(argv[++i], NULL, 0)"
-            )
+            # gh-2225: read whole and range-checked, or refused (exit 2).
+            conv = _app.cli_number_c(ct, n, "argv[++i]", base=0)
             parse.append(
                 f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = {conv};'
             )
@@ -5782,13 +7288,17 @@ def render_cli(cfg: dict, module: str) -> str:
     seg_decls, seg_parse, seg_assign = [], [], []
     for f in seg_fields:
         n, ct = f["name"], f["type"]
+        if _field_is_enum(f):
+            # gh-2140: a choice, as a source enum field is -- not a number.
+            decl, case = _cli_enum_flag(f, enums)
+            seg_decls.append(decl)
+            seg_parse.append(case)
+            seg_assign.append(f"        seg.{n} = {n};")
+            continue
+        _one_real_number(f, module, "generated CLI (`[module.X.cli]`)")
         dflt = f.get("default", "0")
         seg_decls.append(f"    {ct} {n} = ({ct}){dflt};")
-        conv = (
-            f"({ct})strtod(argv[++i], NULL)"
-            if ct in ("double", "float")
-            else f"({ct})strtoull(argv[++i], NULL, 0)"
-        )
+        conv = _app.cli_number_c(ct, n, "argv[++i]", base=0)  # gh-2225
         seg_parse.append(
             f'        else if (!strcmp(a, "--{n}") && i+1<argc) {n} = {conv};'
         )
@@ -5796,6 +7306,11 @@ def render_cli(cfg: dict, module: str) -> str:
 
     decls_s = "\n".join(decls + seg_decls)
     parse_s = "\n".join(parse + seg_parse)
+    # gh-2225: the checked number parsers those flags call, and only those
+    # -- a composer whose flags are all enums or buffers carries none.
+    number_helpers = _app.cli_number_helpers(parse_s)
+    if number_helpers:
+        number_helpers = "\n" + number_helpers
     assign_s = "\n".join(assign)
     seg_assign_s = "\n".join(seg_assign)
     # The flag path mallocs each bytes field's buffer; <backing>_create
@@ -5868,7 +7383,7 @@ usage(const char *prog)
         "          [--endian le|be] [--out FILE] [--repeat] [--continuous]\\n",
         prog);
 }}
-
+{number_helpers}
 int
 main(int argc, char **argv)
 {{

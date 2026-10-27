@@ -7,7 +7,10 @@ and all type-query helper functions used throughout the code generator.
 
 from __future__ import annotations
 
+import ast as _ast
+import math as _math
 import re as _re
+import struct as _struct
 
 
 # Shared to_py lambdas reused across fixed-width integer groups.
@@ -27,9 +30,48 @@ def _TO_PY_ULLONG(v):
     return f"PyLong_FromUnsignedLongLong((unsigned long long){v})"
 
 
-def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
-    """Build a fixed-width integer _CTYPE_META entry."""
-    return {
+def _fwint(
+    ctype,
+    fmt,
+    parse_type,
+    parse_zero,
+    np_type,
+    to_py,
+    zero="0",
+    narrow=False,
+    index="",
+):
+    """Build a fixed-width integer _CTYPE_META entry.
+
+    Every row carries ``limits``, the ``<stdint.h>`` macros naming its
+    range, derived from the spelling (``int8_t`` -> ``INT8_MIN`` /
+    ``INT8_MAX``, ``size_t`` -> ``SIZE_MAX``, an unsigned type's floor
+    ``0``). A generated command line refuses a flag outside them (gh-2225,
+    `_app.cli_number_c`), since it parses every integer through a
+    ``long long``.
+
+    *narrow* says the C type holds fewer values than *parse_type*, so a value
+    the parse accepts can still be out of range for *ctype*: the row then
+    also carries ``bounds``, the same pair. The binding refuses a value
+    outside them before the cast (gh-2144,
+    `_context._parse.scalar_narrow_c`). A cast alone wraps: ``int8_t`` given
+    300 arrived as 44.
+
+    *index* names the CPython function that converts an exact ``int`` into
+    *parse_type*, CHECKED, for a type no checked PyArg format char parses
+    (gh-2220). The row then parses the argument as an object (*fmt* ``O``)
+    and carries ``index``, that function. The binding converts through
+    ``PyNumber_Index`` and it, then compares the result with the maximum
+    ``limits`` names before the cast -- *parse_type* can be wider than the
+    type, as ``unsigned long long`` is than a 32-bit ``size_t`` (gh-2258)
+    -- and refuses a value outside ``limits`` with ``OverflowError``
+    (`_context._parse.scalar_parse_c` / ``scalar_arg_c``).
+
+    ``limits`` is the row's one range declaration: ``bounds``, ``index``'s
+    maximum and :func:`int_limits` all read it, so no reader spells a range
+    from the type's name a second time.
+    """
+    row = {
         "kind": "int",
         "fmt": fmt,
         "zero": zero,
@@ -41,6 +83,14 @@ def _fwint(ctype, fmt, parse_type, parse_zero, np_type, to_py, zero="0"):
         "to_c": lambda n, t=ctype: f"({t}){n}_raw",
         "to_py": to_py,
     }
+    stem = ctype[: -len("_t")].upper()
+    floor = "0" if np_type.startswith("np.uint") else f"{stem}_MIN"
+    row["limits"] = (floor, f"{stem}_MAX")
+    if narrow:
+        row["bounds"] = row["limits"]
+    if index:
+        row["index"] = index
+    return row
 
 
 _CTYPE_META: dict[str, dict] = {
@@ -72,6 +122,9 @@ _CTYPE_META: dict[str, dict] = {
         "py_one": "1",
         "py_type": "np.int32",
         "to_py": _TO_PY_LONG,
+        # gh-2225: what `_fwint` derives for a fixed-width row; `int` is
+        # named by <limits.h> and `bool` holds 0 and 1.
+        "limits": ("INT_MIN", "INT_MAX"),
     },
     "bool": {
         "kind": "int",
@@ -80,51 +133,95 @@ _CTYPE_META: dict[str, dict] = {
         "py_zero": "False",
         "py_one": "True",
         "py_type": "np.bool_",
+        "limits": ("0", "1"),
         "parse_type": "int",
         "parse_zero": "0",
         "to_c": lambda n: f"(int){n}_raw",
         "to_py": lambda v: f"PyBool_FromLong((long)({v}))",
     },
     # Fixed-width signed
-    "int8_t": _fwint("int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG),
-    "int16_t": _fwint("int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG),
-    "int32_t": _fwint("int32_t", "l", "long", "0L", "np.int32", _TO_PY_LONG),
+    "int8_t": _fwint(
+        "int8_t", "i", "int", "0", "np.int8", _TO_PY_LONG, narrow=True
+    ),
+    "int16_t": _fwint(
+        "int16_t", "i", "int", "0", "np.int16", _TO_PY_LONG, narrow=True
+    ),
+    # gh-2269: `L`, as `uint32_t` below, never `l`: a C `long` is 32 bits
+    # on Windows, so a value past `int32_t` was refused by CPython's own
+    # "too large to convert to C long" before the range check could say
+    # "out of range for int32_t [lo, hi]" -- one message per platform.
+    "int32_t": _fwint(
+        "int32_t",
+        "L",
+        "long long",
+        "0LL",
+        "np.int32",
+        _TO_PY_LONG,
+        narrow=True,
+    ),
     "int64_t": _fwint(
         "int64_t", "L", "long long", "0LL", "np.int64", _TO_PY_LLONG
     ),
-    # Fixed-width unsigned
+    # Fixed-width unsigned. gh-2144: a narrow one parses with a CHECKED
+    # signed format char, never a masking one (`I`, `k`): a mask wraps the
+    # value before any range check can see it, so `uint8_t` given 2**32 + 5
+    # arrived as 5, and `uint32_t` given -1 as 4294967295 on a 32-bit
+    # `long`. `i` keeps the four bytes `I` wrote; `L` holds every
+    # `uint32_t` on every platform, which `l` does not on Windows.
     "uint8_t": _fwint(
-        "uint8_t", "I", "unsigned int", "0U", "np.uint8", _TO_PY_ULONG, "0U"
+        "uint8_t",
+        "i",
+        "int",
+        "0",
+        "np.uint8",
+        _TO_PY_ULONG,
+        "0U",
+        narrow=True,
     ),
     "uint16_t": _fwint(
-        "uint16_t", "I", "unsigned int", "0U", "np.uint16", _TO_PY_ULONG, "0U"
+        "uint16_t",
+        "i",
+        "int",
+        "0",
+        "np.uint16",
+        _TO_PY_ULONG,
+        "0U",
+        narrow=True,
     ),
     "uint32_t": _fwint(
         "uint32_t",
-        "k",
-        "unsigned long",
-        "0UL",
+        "L",
+        "long long",
+        "0LL",
         "np.uint32",
         _TO_PY_ULONG,
         "0U",
+        narrow=True,
     ),
+    # gh-2220: no checked unsigned 64-bit format char exists -- `K` masks,
+    # so -1 arrived as 2**64 - 1 and 2**64 as 0 -- so these two parse an
+    # object (`O`) and convert it through `PyNumber_Index` and the checked
+    # `PyLong_AsUnsignedLongLong`. `__index__` is also what takes a numpy
+    # integer, which `K` refused before Python 3.14.
     "uint64_t": _fwint(
         "uint64_t",
-        "K",
+        "O",
         "unsigned long long",
         "0ULL",
         "np.uint64",
         _TO_PY_ULLONG,
         "0U",
+        index="PyLong_AsUnsignedLongLong",
     ),
     "size_t": _fwint(
         "size_t",
-        "K",
+        "O",
         "unsigned long long",
         "0ULL",
         "np.uintp",
         _TO_PY_ULLONG,
         "0",
+        index="PyLong_AsUnsignedLongLong",
     ),
     "ptrdiff_t": _fwint(
         "ptrdiff_t", "L", "long long", "0LL", "np.intp", _TO_PY_LLONG, "0"
@@ -272,40 +369,133 @@ _C_NUMERIC_LITERAL = _re.compile(
 _C_NUMBER = r"(?:0[xX][0-9a-fA-F]+|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)"
 #: gh-1561: the complex literals jm can restate in Python -- ``re``,
 #: ``im * I`` and ``re + im * I`` / ``re - im * I``, each number carrying any
-#: C suffix. jm's own zero (``0.0 + 0.0 * I``) is the third form.
+#: C suffix. jm's own zero (``0.0 + 0.0 * I``) is the third form. Each group
+#: keeps its number's suffix, which C reads (gh-1946): ``0.1f`` is a
+#: ``float`` constant.
 _C_COMPLEX_LITERAL = _re.compile(
     rf"""^\s*(?:
-        (?P<re>[+-]?{_C_NUMBER})[uUlLfF]*\s*(?P<sign>[+-])\s*
-            (?P<im>{_C_NUMBER})[uUlLfF]*\s*\*\s*I
-      | (?P<im_only>[+-]?{_C_NUMBER})[uUlLfF]*\s*\*\s*I
-      | (?P<re_only>[+-]?{_C_NUMBER})[uUlLfF]*
+        (?P<re>[+-]?{_C_NUMBER}[uUlLfF]*)\s*(?P<sign>[+-])\s*
+            (?P<im>{_C_NUMBER}[uUlLfF]*)\s*\*\s*I
+      | (?P<im_only>[+-]?{_C_NUMBER}[uUlLfF]*)\s*\*\s*I
+      | (?P<re_only>[+-]?{_C_NUMBER}[uUlLfF]*)
     )\s*$""",
     _re.VERBOSE,
 )
 
 
-def _c_number(text: str) -> float:
-    """A C number's value; hex is an integer constant."""
-    body = text.lstrip("+-")
-    sign = -1.0 if text.startswith("-") else 1.0
-    if body[:2].lower() == "0x":
-        return sign * int(body, 16)
-    return sign * float(body)
+def _py_number(text: str) -> "str | None":
+    """A C numeric literal's Python spelling, or ``None`` when it has none.
+
+    gh-1946. The value without its suffix is already Python for every form
+    but one: an integer with a leading ``0`` is OCTAL in C (``010`` is 8)
+    and a SyntaxError in Python, which spells the same value ``0o10``.
+    ``None`` when *text* is not a numeric literal at all, and for an octal
+    with a digit octal does not have (``08``), which C rejects as well.
+
+    >>> [_py_number(t) for t in ("0.1L", "5ULL", "0x1Fu", "-017", "00")]
+    ['0.1', '5', '0x1F', '-0o17', '00']
+    >>> _py_number("08") is None, _py_number("M_PI") is None
+    (True, True)
+    """
+    m = _C_NUMERIC_LITERAL.match(text)
+    if not m:
+        return None
+    value = m.group("value")
+    body = value.lstrip("+-")
+    if not (body.isdigit() and body[0] == "0" and body.strip("0")):
+        return value
+    if body.strip("01234567"):
+        return None
+    return f"{value[: len(value) - len(body)]}0o{body.lstrip('0')}"
 
 
-def _complex_default(default: str) -> "complex | None":
-    """A complex *default*'s value, or ``None`` when it is not a literal."""
+#: The numpy dtypes of a C type whose storage is IEEE binary32. A value
+#: assigned to one rounds to single precision, and its getter widens what
+#: was stored, so that rounded value is what Python is handed back.
+_BINARY32_PY_TYPES = ("np.float32", "np.complex64")
+
+
+def _binary32(x: float) -> float:
+    """*x* rounded to the nearest binary32, as a Python float.
+
+    Past binary32's range the nearest is an infinity, which is what an IEEE
+    conversion gives.
+    """
+    try:
+        return float(_struct.unpack("f", _struct.pack("f", x))[0])
+    except OverflowError:
+        return _math.copysign(_math.inf, x)
+
+
+def _readings(text: str) -> "tuple[int | float, int | float] | None":
+    """Python's and C's reading of a numeric literal; ``None`` if not one.
+
+    The first is the value of its Python spelling (:func:`_py_number`),
+    read by Python itself. The second is C's: the same, except that an
+    ``f`` suffix makes a floating literal a ``float`` constant, rounded to
+    binary32 wherever it is assigned -- ``0.1f`` into a ``double`` holds
+    0.10000000149011612 (gh-1946).
+
+    >>> _readings("010"), _readings("0x10u"), _readings("2.")
+    ((8, 8), (16, 16), (2.0, 2.0))
+    >>> _readings("0.5f"), _readings("0.1f")
+    ((0.5, 0.5), (0.1, 0.10000000149011612))
+    """
+    py = _py_number(text)
+    if py is None:
+        return None
+    value = _ast.literal_eval(py)
+    suffix = _C_NUMERIC_LITERAL.match(text).group("suffix")  # type: ignore[union-attr]
+    if isinstance(value, float) and "f" in suffix.lower():
+        return value, _binary32(value)
+    return value, value
+
+
+def c_literal_value(text: str) -> "int | float | None":
+    """The value C gives a numeric literal, or ``None`` when it is not one.
+
+    An integer literal is an ``int`` and anything with a point or an
+    exponent a ``float``, as in C; an ``f`` suffix rounds the float to
+    binary32, as C does.
+
+    >>> c_literal_value("010"), c_literal_value("0x10u"), c_literal_value("2.")
+    (8, 16, 2.0)
+    >>> c_literal_value("1e3L"), c_literal_value("0.1f")
+    (1000.0, 0.10000000149011612)
+    >>> c_literal_value("hann") is None
+    True
+    """
+    readings = _readings(text)
+    return None if readings is None else readings[1]
+
+
+def _complex_readings(default: str) -> "tuple[complex, complex] | None":
+    """Python's and C's reading of a complex *default* (see :func:`_readings`).
+
+    ``None`` when it is not a complex literal, and for one with a part that
+    is no number (an octal ``08``).
+    """
     m = _C_COMPLEX_LITERAL.match(default)
     if not m:
         return None
+    zero = (0.0, 0.0)
     if m.group("re_only") is not None:
-        return complex(_c_number(m.group("re_only")), 0.0)
-    if m.group("im_only") is not None:
-        return complex(0.0, _c_number(m.group("im_only")))
-    im = _c_number(m.group("im"))
-    return complex(
-        _c_number(m.group("re")), -im if m.group("sign") == "-" else im
-    )
+        re_, im = _readings(m.group("re_only")), zero
+    elif m.group("im_only") is not None:
+        re_, im = zero, _readings(m.group("im_only"))
+    else:
+        re_, im = _readings(m.group("re")), _readings(m.group("im"))
+        if im is not None and m.group("sign") == "-":
+            im = (-im[0], -im[1])
+    if re_ is None or im is None:
+        return None
+    return complex(re_[0], im[0]), complex(re_[1], im[1])
+
+
+def _complex_default(default: str) -> "complex | None":
+    """A complex *default*'s value as C reads it, or ``None`` if not one."""
+    readings = _complex_readings(default)
+    return None if readings is None else readings[1]
 
 
 def complex_default_py(default: str) -> "str | None":
@@ -321,6 +511,8 @@ def complex_default_py(default: str) -> "str | None":
 
     The literal is Python's own ``repr`` of the value, so it is valid Python
     and zero stays ``0j``, byte-identical to what every face emitted before.
+    It is the value as WRITTEN, suffixes aside; a field type whose storage a
+    suffix changes is :func:`field_default_py`'s business.
 
     Examples
     --------
@@ -330,11 +522,13 @@ def complex_default_py(default: str) -> "str | None":
     ('(1.5+0j)', '2j')
     >>> complex_default_py("1.0 - 0.5f * I"), complex_default_py("-3")
     ('(1-0.5j)', '(-3+0j)')
+    >>> complex_default_py("017 + 0x1 * I")
+    '(15+1j)'
     >>> complex_default_py("CPLX_ONE") is None
     True
     """
-    value = _complex_default(default)
-    return None if value is None else repr(value)
+    readings = _complex_readings(default)
+    return None if readings is None else repr(readings[0])
 
 
 def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
@@ -350,6 +544,10 @@ def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
     every declared default for the struct's zero, so an omitted keyword
     silently read 0.
 
+    gh-1946: the parts are C's reading of the literal, so an omitted keyword
+    seeds what ``reset()`` assigns -- ``0.1f`` is a ``float`` constant in a
+    ``double _Complex`` field too.
+
     Examples
     --------
     >>> parse_seed("size_t", "16"), parse_seed("size_t", "", "N_MAX")
@@ -358,6 +556,8 @@ def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
     ('{0.0, 0.0}', '{0.0, 0.0}')
     >>> parse_seed("double _Complex", "1.0 - 0.5 * I")
     '{1.0, -0.5}'
+    >>> parse_seed("double _Complex", "0.1f")
+    '{0.10000000149011612, 0.0}'
     >>> parse_seed("float _Complex", "", "CPLX_ONE")
     '{crealf(CPLX_ONE), cimagf(CPLX_ONE)}'
     """
@@ -379,9 +579,11 @@ def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
 def strip_c_literal_suffix(default: str) -> str:
     """A C numeric literal's Python spelling: the value without its suffix.
 
-    ``"0U"`` -> ``"0"``, ``"5ULL"`` -> ``"5"``, ``"1.5f"`` -> ``"1.5"``.
-    Anything that is not a numeric literal is returned untouched, so an
-    identifier default keeps every character of its name.
+    ``"0U"`` -> ``"0"``, ``"5ULL"`` -> ``"5"``, ``"0.1L"`` -> ``"0.1"``, and
+    an octal ``"010"`` -> ``"0o10"`` (gh-1946), the one form whose value text
+    Python reads differently. Anything that is not a numeric literal is
+    returned untouched, so an identifier default keeps every character of its
+    name.
 
     gh-1043: this existed three times over — `_app._py_default` got it right
     while `_context/_types._py_default` and `_stubs._py_default_stub` returned
@@ -390,9 +592,196 @@ def strip_c_literal_suffix(default: str) -> str:
     both the `.pyi` and the runtime docstring. ``0U`` is not Python, and the
     `.pyi` copy is a hard *collection* error for a downstream running
     ``pytest --doctest-glob='*.pyi'``. One implementation, three callers.
+
+    gh-1946: the float bucket was the copy left. Both ``_py_default`` peers
+    stripped only ``f``/``F`` there, so ``0.1L`` reached the generated test,
+    the stub and its doctest verbatim -- a SyntaxError in all three.
+    :func:`field_default_py` asks this function now.
+
+    >>> [strip_c_literal_suffix(t) for t in ("0U", "1.5f", "0.1L", "010")]
+    ['0', '1.5', '0.1', '0o10']
     """
-    m = _C_NUMERIC_LITERAL.match(default)
-    return m.group("value") if m else default.strip()
+    py = _py_number(default)
+    return py if py is not None else default.strip()
+
+
+def _store(ctype: str, value: "int | float | complex") -> "float | complex":
+    """What a float- or complex-kind *ctype* field holds once *value* is
+    assigned: binary32 where the type stores one, else the value."""
+    meta = _CTYPE_META[ctype]
+    single = meta["py_type"] in _BINARY32_PY_TYPES
+    if meta["kind"] == "complex":
+        z = complex(value)
+        return complex(_binary32(z.real), _binary32(z.imag)) if single else z
+    return _binary32(float(value)) if single else float(value)
+
+
+def field_default_py(ctype: str, default: str) -> str:
+    """A float- or complex-kind field's Python spelling of a literal default.
+
+    gh-1946. The declared value is ONE value with two spellings, and this is
+    the Python one: what the stub's signature says, what the generated test
+    and the doctest pass to the constructor, and what the test compares the
+    getter against. It is the default as written, through
+    :func:`strip_c_literal_suffix` (or :func:`complex_default_py`), with
+    ``.0`` appended to a decimal integer so it reads as the float it is --
+    unless C's reading stores something different in this field, which only
+    an ``f`` suffix in a double-precision field does: ``0.1f`` into a
+    ``double`` holds 0.10000000149011612, and that is then the spelling. In
+    a ``float`` field the two readings store the same binary32, so the
+    written value stays.
+
+    A hex or octal integer keeps its integer spelling: Python passes it to a
+    float parameter as C converts it, and appending ``.0`` to ``0x10`` made
+    ``0x10.0``, a SyntaxError.
+
+    Examples
+    --------
+    >>> [field_default_py("double", t) for t in ("2", "0.1L", "1e-3", "0x10")]
+    ['2.0', '0.1', '1e-3', '0x10']
+    >>> field_default_py("float", "0.1f"), field_default_py("double", "0.1f")
+    ('0.1', '0.10000000149011612')
+    >>> field_default_py("double _Complex", "1.0 - 0.5f * I")
+    '(1-0.5j)'
+    """
+    if _CTYPE_META[ctype]["kind"] == "complex":
+        readings: "tuple | None" = _complex_readings(default)
+        text = complex_default_py(default) or ""
+    else:
+        readings = _readings(default)
+        text = strip_c_literal_suffix(default)
+        if text.lstrip("+-").isdigit():
+            text += ".0"
+    if readings is None:
+        return text
+    held = _store(ctype, readings[1])
+    return text if _store(ctype, readings[0]) == held else repr(held)
+
+
+def held_default_py(ctype: str, default: str) -> "str | None":
+    """What a *ctype* getter returns once *default* is assigned, as its repr.
+
+    gh-1947. The doctest a stub writes after ``>>> obj.get_z()`` must be
+    what the getter prints, and that is not always the declared literal: a
+    ``float _Complex`` given ``0.1`` stores ``(float)0.1`` in each part, so
+    its getter returns ``(0.10000000149011612+0j)`` and a doctest expecting
+    ``(0.1+0j)`` fails on a fresh scaffold. gh-1883 fixed that rounding on
+    the C and Python TEST faces; this is the same rule for the doctest face.
+
+    The value is C's reading of the literal (:func:`c_literal_value`),
+    stored as the type stores it -- rounded to binary32 where the type holds
+    one (:data:`_BINARY32_PY_TYPES`, read off the vocabulary). The rounding
+    models C's conversion of the literal's double value, which is exact for
+    every default jm writes and every short decimal; it could differ from a
+    literal parsed straight to single precision only for a decimal lying
+    within one double ulp of a binary32 tie.
+
+    ``None`` when jm cannot know the value: a C constant (``M_PI``), a
+    ``const char *``, a type outside the vocabulary, or an integer type
+    given a value that is not an integer.
+
+    Examples
+    --------
+    >>> held_default_py("float _Complex", "0.1")
+    '(0.10000000149011612+0j)'
+    >>> held_default_py("double _Complex", "0.1 - 0.5 * I")
+    '(0.1-0.5j)'
+    >>> held_default_py("float", "0.1L"), held_default_py("double", "0.1L")
+    ('0.10000000149011612', '0.1')
+    >>> held_default_py("uint32_t", "017U"), held_default_py("double", "0x10")
+    ('15', '16.0')
+    >>> held_default_py("bool", "true")
+    'True'
+    >>> held_default_py("double", "M_PI") is None
+    True
+    """
+    meta = _CTYPE_META.get(ctype)
+    if meta is None or meta["kind"] == "str":
+        return None
+    if is_c_only_default(ctype, default):
+        return None
+    if ctype == "bool":
+        return bool_default_py(default or "0")
+    if meta["kind"] == "complex":
+        value: "int | float | complex | None" = (
+            _complex_default(default) if default.strip() else 0j
+        )
+    else:
+        value = c_literal_value(default) if default.strip() else 0
+    if meta["kind"] == "int":
+        return repr(value) if isinstance(value, int) else None
+    return None if value is None else repr(_store(ctype, value))
+
+
+def literal_default_error(ctype: str, default: str) -> str:
+    """Why a numeric *default* has no Python spelling for *ctype*, else ``""``.
+
+    gh-1946. A declared default is ONE value with two spellings, C's and
+    Python's, and every Python face -- the generated test, the stub's
+    signature and its doctest, the runtime docstring -- writes the Python
+    one. Two literals jm accepted as numbers had none:
+
+    * an octal with a digit octal lacks, ``08``. C refuses it too;
+    * a floating literal for an integer type, ``1.5`` or ``1e3`` into an
+      ``int``. C converts it silently, and Python refuses a float for an
+      integer parameter, so the generated test cannot construct the object.
+
+    Refused where the default is declared -- a state field, an init-param,
+    a method or function parameter, on the command line and in a manifest --
+    and by :func:`~._context._types._py_default`, which every Python face
+    reads, rather than rendered into Python that fails.
+
+    A default that is not a numeric literal at all is not this function's
+    business: a C constant is :func:`is_c_only_default`'s, and an init-param
+    refuses one through :func:`default_type_error`.
+
+    Returns
+    -------
+    str
+        Empty when the default has a Python spelling, else a sentence
+        naming the declared type and the offending value.
+
+    Examples
+    --------
+    >>> literal_default_error("double", "0.1L"), literal_default_error("int", "017")
+    ('', '')
+    >>> literal_default_error("int", "LVL_INFO")
+    ''
+    >>> print(literal_default_error("size_t", "1e3"))
+    default `1e3` is not an integer, and `size_t` holds one: C converts it to 1000, and Python refuses a float for an integer parameter. Write it as an integer literal (`1000`).
+    >>> print(literal_default_error("int", "09"))
+    default `09` is not a C number: a leading 0 makes an integer octal, and 8 and 9 are not octal digits. Write it without the leading zero.
+    """
+    meta = _CTYPE_META.get(ctype)
+    if meta is None or ctype == "bool" or not default.strip():
+        return ""
+    kind = meta["kind"]
+    octal = (
+        f"default `{default.strip()}` is not a C number: a leading 0 makes"
+        " an integer octal, and 8 and 9 are not octal digits. Write it"
+        " without the leading zero."
+    )
+    if kind == "complex":
+        bad = _C_COMPLEX_LITERAL.match(default) and (
+            _complex_readings(default) is None
+        )
+        return octal if bad else ""
+    if kind not in ("int", "float") or not _C_NUMERIC_LITERAL.match(default):
+        return ""
+    value = c_literal_value(default)
+    if value is None:
+        return octal
+    if kind == "int" and not isinstance(value, int):
+        whole = _math.isfinite(value) and value == int(value)
+        return (
+            f"default `{default.strip()}` is not an integer, and `{ctype}`"
+            " holds one: C converts it"
+            + (f" to {int(value)}" if _math.isfinite(value) else "")
+            + ", and Python refuses a float for an integer parameter."
+            " Write it as an integer literal"
+            + (f" (`{int(value)}`)." if whole else ".")
+        )
+    return ""
 
 
 #: The one ``const char *`` default that is not text: the null pointer.
@@ -447,6 +836,101 @@ def param_fmt(ctype: str, default: str = "") -> str:
     if is_nullable_string(ctype, default):
         return "z"
     return _CTYPE_META[ctype]["fmt"]
+
+
+def wider_than_double(ctype: str) -> "str | None":
+    """The C type integer *ctype* parses through, when a double cannot hold it.
+
+    gh-2139. A ``double`` holds every integer of magnitude up to 2**53 and
+    not every one past it, so a face that carries an integer as a double --
+    cJSON's only number is one -- changes a wider type's value with no
+    error. Which types are wider is the type table's own statement, not a
+    list of names: every integer row names the C type its binding parses
+    through (``parse_type``), and that is a ``long long`` exactly when the
+    type needs more than 32 bits -- an ``int64_t``, a ``size_t`` or a
+    ``ptrdiff_t`` -- except a row that carries ``bounds``, which holds fewer
+    values than it parses through (a ``uint32_t`` parses through a
+    ``long long`` so its whole range survives the parse, gh-2144; an
+    ``int32_t`` does too, so no binding parses through the platform-wide
+    ``long``, gh-2269). No row
+    needs between 33 and 53 bits, which
+    ``tests/test_gh2139_composer_json_64bit.py`` holds against numpy's own
+    width for every row.
+
+    Parameters
+    ----------
+    ctype : str
+        A C type spelling; one with no ``_CTYPE_META`` row is not wider.
+
+    Returns
+    -------
+    str or None
+        ``"unsigned long long"`` or ``"long long"`` -- the C type that holds
+        every value of *ctype*, whose signedness is *ctype*'s -- or ``None``
+        for a type a double holds exactly (a narrower integer, a floating
+        type) or that is not a number.
+
+    Examples
+    --------
+    >>> wider_than_double("uint64_t")
+    'unsigned long long'
+    >>> wider_than_double("ptrdiff_t")
+    'long long'
+    >>> wider_than_double("uint32_t") is None
+    True
+    >>> wider_than_double("double") is None
+    True
+    """
+    meta = _CTYPE_META.get(ctype, {})
+    parse_type = meta.get("parse_type", "")
+    # A row with `bounds` holds fewer values than it parses through (gh-2144):
+    # a `uint32_t` parses through a `long long` so the whole range survives
+    # the parse, and is still 32 bits wide.
+    if (
+        meta.get("kind") == "int"
+        and parse_type.endswith("long long")
+        and "bounds" not in meta
+    ):
+        return parse_type
+    return None
+
+
+def int_limits(ctype: str) -> "tuple[str, str] | None":
+    """The C expressions naming integer *ctype*'s range, read off its row.
+
+    gh-2247. Every integer row carries ``limits`` (gh-2225): `_fwint`
+    derives it from a fixed-width spelling, and ``int`` declares
+    ``INT_MIN`` / ``INT_MAX``. This reads it, so the JSON reader, the
+    command line and the binding refuse one range. The compiler states the
+    range, not jm. ``bool`` is not a range -- converting any number to it
+    is defined -- and a non-integer row has none.
+
+    Parameters
+    ----------
+    ctype : str
+        A C type spelling; one with no ``_CTYPE_META`` row has no range.
+
+    Returns
+    -------
+    tuple of str or None
+        ``(floor, ceiling)``: ``<limits.h>`` / ``<stdint.h>`` macros, an
+        unsigned type's floor the literal ``0``; or ``None``.
+
+    Examples
+    --------
+    >>> int_limits("int8_t")
+    ('INT8_MIN', 'INT8_MAX')
+    >>> int_limits("uint32_t")
+    ('0', 'UINT32_MAX')
+    >>> int_limits("int")
+    ('INT_MIN', 'INT_MAX')
+    >>> int_limits("bool") is None, int_limits("double") is None
+    (True, True)
+    """
+    meta = _CTYPE_META.get(ctype, {})
+    if meta.get("kind") != "int" or ctype == "bool":
+        return None
+    return meta["limits"]
 
 
 def string_default_literal(default: str) -> str:
@@ -669,6 +1153,12 @@ def default_type_error(ctype: str, default: str) -> str:
       Otherwise spell the value.
     >>> default_type_error("bool", "yes")
     'default `yes` is not a bool. Write `true` or `false`.'
+
+    gh-1946: a numeric literal must also have a Python spelling for the type
+    (:func:`literal_default_error`).
+
+    >>> default_type_error("int", "1.5").split(":")[0]
+    'default `1.5` is not an integer, and `int` holds one'
     """
     if not default.strip():
         return ""
@@ -678,6 +1168,9 @@ def default_type_error(ctype: str, default: str) -> str:
     kind = meta["kind"]
     if kind == "str":
         return ""
+    why = literal_default_error(ctype, default)
+    if why:
+        return why
     if kind == "complex":
         # gh-1561: one parser, shared with every Python face.
         if complex_default_py(default) is not None:
@@ -1545,6 +2038,80 @@ CONTAINER_KINDS: tuple[str, ...] = ("dict", "list", "tuple")
 # escape hatch for values jm cannot type statically -- e.g. a value whose
 # Python type is chosen by a type code stored in the file being read.
 OBJECT_VALUE_TYPE = "object"
+
+
+# gh-2347: a property whose value crosses the ABI as JSON text. Its C getter
+# returns a malloc'd `char *` that the binding parses with `json.loads` and
+# frees, so a core already holding a structured document (a SigMF sidecar's
+# annotations) hands Python the structure without a second reader. Not a
+# container kind: no count/key/value protocol backs it.
+JSON_KIND = "json"
+
+#: The one C return type a `json` property's getter has. Owned by the binding:
+#: the getter allocates it with `malloc` and the generated glue `free`s it.
+JSON_GETTER_CTYPE = "char *"
+
+#: The names a `json` property's `py_type` may use: builtin generics and
+#: `Any`, the one `typing` name every generated stub already imports on use.
+JSON_PY_TYPE_NAMES = frozenset(
+    {"Any", "None", "bool", "dict", "float", "int", "list", "str", "tuple"}
+)
+
+
+def is_json_type(ctype: str) -> bool:
+    """Return True if ctype names the JSON property kind (gh-2347).
+
+    >>> is_json_type("json")
+    True
+    >>> is_json_type("dict")
+    False
+    """
+    return ctype == JSON_KIND
+
+
+def json_py_type_error(py_type: str) -> str:
+    """Why *py_type* cannot annotate a `json` property, or ``""`` (gh-2347).
+
+    It lands in the ``.pyi`` verbatim, so it must be an expression of
+    :data:`JSON_PY_TYPE_NAMES` alone: a name the stub does not import would
+    leave a stub that does not type-check.
+
+    >>> json_py_type_error("list[dict[str, Any]]")
+    ''
+    >>> json_py_type_error("Sequence[int]")
+    "names 'Sequence', which a generated stub does not import"
+    >>> json_py_type_error("list[")
+    'is not a Python type expression'
+    >>> json_py_type_error("dict[str, Any] | None")
+    ''
+    >>> json_py_type_error("os.system('x')")
+    'is not a Python type expression'
+    """
+    import ast
+
+    try:
+        tree = ast.parse(py_type, mode="eval")
+    except SyntaxError:
+        return "is not a Python type expression"
+    allowed = (ast.Expression, ast.Name, ast.Subscript, ast.Tuple, ast.Load)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id not in JSON_PY_TYPE_NAMES:
+                return (
+                    f"names '{node.id}', which a generated stub does not "
+                    f"import"
+                )
+        elif isinstance(node, ast.BinOp):
+            if not isinstance(node.op, ast.BitOr):
+                return "is not a Python type expression"
+        elif isinstance(node, ast.BitOr):
+            pass
+        elif isinstance(node, ast.Constant):
+            if node.value is not None and node.value is not Ellipsis:
+                return "is not a Python type expression"
+        elif not isinstance(node, allowed):
+            return "is not a Python type expression"
+    return ""
 
 
 def is_container_type(ctype: str) -> bool:

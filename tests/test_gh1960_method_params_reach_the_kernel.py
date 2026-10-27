@@ -17,8 +17,8 @@ Three method shapes read a declared ``param`` differently from their siblings:
 The single-record shape closed the same gap in gh-594 by parsing its params
 through `_build_params_parse`. The two shapes above now take that route, and
 both examples come from `_demo_call_args`, the one builder every other shape's
-example already used. (The second shape is still offered no ``out=``: that
-waits on the header ``@param`` alignment, gh-2028.)
+example already used. (The second shape is offered ``out=`` since gh-2028,
+as its parse's trailing optional argument; tests/test_gh2028_*.py gates it.)
 
 GATE. Every row below is a method whose kernel computes its result FROM its
 params, compiled with ``-Wall -Wextra -Werror`` (binding, ``_core.c`` and
@@ -37,8 +37,9 @@ each, renders every row through the marked copy and refuses a call no row
 reaches. A new shape's call is a new site, so it cannot land without a row,
 and the row brings the checks above with it.
 
-The ``batch`` shape drops its params the same way and is carried as a strict
-xfail (gh-2021), so this file turns red the day it is fixed.
+The ``batch`` shape reads no params, and refuses one (gh-2021, gh-2261:
+``tests/test_gh2261_batch_keys.py``); its rows carry none, and are here so
+the batch kernel call is reached and built like every other shape's.
 """
 
 from __future__ import annotations
@@ -177,21 +178,20 @@ ROWS = [
         "    return n + (size_t)k <= 8 ? buf + k : NULL;",
         (("o.lend(3, 1).tolist()", "[2.0, 3.0, 4.0]"),),
     ),
-    # -- batch: drops its params too (gh-2021). The kernels do not read `k`
-    # because the prototype has none; they add it when that is fixed.
+    # -- batch: takes no params, and refuses one (gh-2021, gh-2261) --------
     Row(
         "batch",
         "block",
-        f'arg_type = "float"\nreturn_type = "float"\nbatch = true\n{_K}',
+        'arg_type = "float"\nreturn_type = "float"\nbatch = true',
         "(void)state;\n    for (size_t i = 0; i < n; i++) out[i] = in[i];",
-        (("o.block(np.ones(2, np.float32), 3).tolist()", "[4.0, 4.0]"),),
+        (("o.block(np.ones(2, np.float32)).tolist()", "[1.0, 1.0]"),),
     ),
     Row(
         "batch",
         "count",
-        f'arg_type = "void"\nreturn_type = "float"\nbatch = true\n{_K}',
-        "(void)state;\n    for (size_t i = 0; i < n; i++) out[i] = 0;",
-        (("o.count(2, 3).tolist()", "[3.0, 3.0]"),),
+        'arg_type = "void"\nreturn_type = "float"\nbatch = true',
+        "(void)state;\n    for (size_t i = 0; i < n; i++) out[i] = 3;",
+        (("o.count(2).tolist()", "[3.0, 3.0]"),),
     ),
     # -- variable_output with an input: gh-1960 ------------------------------
     Row(
@@ -361,6 +361,44 @@ ROWS = [
         "    return 1;",
         (("o.bare_in(np.zeros(3, np.float32))", "[(3, 0)]"),),
     ),
+    # -- the same list, re-offered the input a full buffer left (gh-2204):
+    # `rows_used` is the author's, in `_AUTHOR`. 100 elements past a buffer
+    # of 64 come back whole, and `k` reaches the second call too.
+    Row(
+        "rows",
+        "more",
+        f'arg_type = "float"\n{_DIV}\nconsumed_fn = "rows_used"\n{_K}',
+        "(void)state;\n"
+        "    size_t j = 0;\n"
+        "    for (; j < n_in && j < max_results; j++) {\n"
+        "        result[j].quot = (int)in[j];\n"
+        "        result[j].rem = k;\n"
+        "    }\n"
+        "    rows_note_used(j);\n"
+        "    return j;",
+        (
+            ("o.more(np.ones(2, np.float32), 4)", "[(1, 4), (1, 4)]"),
+            (
+                "sorted(set(o.more(np.ones(100, np.float32), 4))),"
+                " len(o.more(np.ones(100, np.float32), k=4))",
+                "([(1, 4)], 100)",
+            ),
+        ),
+    ),
+    Row(
+        "rows",
+        "more_in",
+        f'arg_type = "float"\n{_DIV}\nconsumed_fn = "rows_used"',
+        "(void)state;\n"
+        "    size_t j = 0;\n"
+        "    for (; j < n_in && j < max_results; j++) {\n"
+        "        result[j].quot = (int)in[j];\n"
+        "        result[j].rem = 0;\n"
+        "    }\n"
+        "    rows_note_used(j);\n"
+        "    return j;",
+        (("len(o.more_in(np.ones(100, np.float32)))", "100"),),
+    ),
 ]
 
 #: The objects, in declaration order.
@@ -369,16 +407,23 @@ OBJECTS = list(dict.fromkeys(r.obj for r in ROWS))
 #: `[[enum]]` tables a fragment declares, by object.
 _ENUMS = {"rows": '[[enum]]\nname = "mode"\nvalues = ["a", "b"]\n\n'}
 
+#: C the AUTHOR writes beside an object's kernels, by object: declarations
+#: for the sacred header, then definitions for `_core.c` (`{stem}` is the
+#: object's C stem). gh-2204: a `consumed_fn` is the author's function.
+_AUTHOR = {
+    "rows": (
+        "void rows_note_used(size_t n);\n"
+        "size_t rows_used(const {stem}_state_t *state);\n",
+        "\nstatic size_t rows_last_used;\n\n"
+        "void\nrows_note_used(size_t n)\n{{\n    rows_last_used = n;\n}}\n\n"
+        "size_t\nrows_used(const {stem}_state_t *state)\n{{\n"
+        "    (void)state;\n    return rows_last_used;\n}}\n",
+    ),
+}
+
 #: Known breakage, ratcheted: (object, method) -> {check: issue}. A strict
 #: xfail, so a fix turns the check red until the entry is removed.
-CARVED = {
-    ("batch", name): {
-        "prototype": "gh-2021: a batch method's prototype drops its params",
-        "call": "gh-2021: a batch method's binding drops its params",
-        "stub": "gh-1905: a standalone batch method has no .pyi member",
-    }
-    for name in ("block", "count")
-}
+CARVED: "dict[tuple[str, str], dict[str, str]]" = {}
 
 
 def _title(obj: str) -> str:
@@ -422,6 +467,19 @@ def project(tmp_path_factory) -> Path:
         frag.write_text(_fragment(obj), encoding="utf-8")
         r = run_cli("apply", str(frag), cwd=root)
         assert r.returncode == 0, f"apply {obj}:\n{r.stdout}\n{r.stderr}"
+    for obj, (decls, defs) in _AUTHOR.items():
+        stem = CSYM.stem(C.load(root), obj)
+        h = next((root / "native" / "inc").rglob(f"{obj}_core.h"))
+        text = h.read_text(encoding="utf-8")
+        cut = text.rindex("#ifdef __cplusplus")
+        h.write_text(
+            text[:cut] + decls.format(stem=stem) + text[cut:], encoding="utf-8"
+        )
+        c = root / "native" / "src" / obj / f"{obj}_core.c"
+        c.write_text(
+            c.read_text(encoding="utf-8") + defs.format(stem=stem),
+            encoding="utf-8",
+        )
     return root
 
 
@@ -433,10 +491,42 @@ def _method(root: Path, row: Row) -> dict:
 
 # -- which rows must exist: every kernel call jm spells -----------------------
 
-#: The functions that spell a call of the author's kernel: the binding and
-#: the benchmark.
-_KERNEL_CALLERS = ("make_methods_ctx", "_bench_method_block")
+#: The primitives a generated kernel call goes through: the binding's
+#: release-aware call blocks, and the benchmark's prototype-driven call.
+#: A function that calls one of them EMITS kernel calls (`_emitters`).
+_KERNEL_HELPERS = (
+    "_nogil_call",
+    "_kernel_call_block",
+    "_single_kernel_block",
+    "_bench_call",
+)
 _SITE = re.compile(r"/\*@site:(\d+\.\d+)\*/")
+
+
+def _emitters(tree: ast.Module) -> "dict[str, set[str]]":
+    """Each function that emits a kernel call, and where its calls are spelled.
+
+    Read off the source, not kept here: every top-level function of
+    ``_context/_methods`` that calls a :data:`_KERNEL_HELPERS` primitive
+    emits kernel calls, and its call text is spelled in itself or in the
+    helper it hands it to (the benchmark's in `_bench_call`). Returns
+    ``{emitter: {functions whose f-strings may hold its call sites}}``.
+    """
+    fns = {f.name: f for f in tree.body if isinstance(f, ast.FunctionDef)}
+    missing = set(_KERNEL_HELPERS) - set(fns)
+    assert not missing, f"kernel-call helpers no longer defined: {missing}"
+    out: "dict[str, set[str]]" = {}
+    for name, fn in fns.items():
+        if name in _KERNEL_HELPERS:
+            continue
+        called = {
+            c.func.id
+            for c in ast.walk(fn)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        } & set(_KERNEL_HELPERS)
+        if called:
+            out[name] = {name} | called
+    return out
 
 
 def _is_declaration(node: ast.JoinedStr, parents: dict) -> bool:
@@ -464,7 +554,9 @@ def _is_declaration(node: ast.JoinedStr, parents: dict) -> bool:
     return False
 
 
-def _marked_methods_module() -> "tuple[types.ModuleType, dict[str, str]]":
+def _marked_methods_module() -> (
+    "tuple[types.ModuleType, dict[str, str], dict[str, set[str]]]"
+):
     """``_context/_methods`` with every kernel call it spells marked.
 
     A kernel call is an f-string that spells the method's C symbol
@@ -472,17 +564,18 @@ def _marked_methods_module() -> "tuple[types.ModuleType, dict[str, str]]":
     ``/*@site:<line>.<n>*/`` comment after the symbol, in an AST-transformed
     copy of the module -- so a rendered binding or benchmark names the site
     that wrote each of its calls, and the site list is read off the source
-    rather than kept here. Returns the copy and ``{site: source line}``.
+    rather than kept here. Returns the copy, ``{site: source line}`` and
+    the emitters (:func:`_emitters`), whose functions are the ones scanned.
     """
     path = SRC / "just_makeit" / "_context" / "_methods.py"
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
     lines = source.splitlines()
+    emitters = _emitters(tree)
+    scanned = set().union(*emitters.values())
     sites: dict[str, str] = {}
     for fn in tree.body:
-        if not (
-            isinstance(fn, ast.FunctionDef) and fn.name in _KERNEL_CALLERS
-        ):
+        if not (isinstance(fn, ast.FunctionDef) and fn.name in scanned):
             continue
         parents = {
             child: node
@@ -518,7 +611,7 @@ def _marked_methods_module() -> "tuple[types.ModuleType, dict[str, str]]":
     mod.__package__ = "just_makeit._context"
     mod.__file__ = str(path)
     exec(compile(tree, str(path), "exec"), mod.__dict__)
-    return mod, sites
+    return mod, sites, emitters
 
 
 def test_every_kernel_call_is_reached_by_a_row(project):
@@ -529,10 +622,18 @@ def test_every_kernel_call_is_reached_by_a_row(project):
     added with its own kernel call fails here until it has a row -- and so
     the prototype, build, call, stub and example checks.
     """
-    mod, sites = _marked_methods_module()
-    # Armed: the binding spells a kernel call in every result shape, and the
-    # benchmark in five more.
-    assert len(sites) >= 20, sites
+    mod, sites, emitters = _marked_methods_module()
+    # Armed: every function that emits kernel calls contributes at least one
+    # marked site, in itself or the helper it spells them in. Not a count of
+    # sites -- consolidating several call spellings into one emitter is what
+    # this repo wants, and must not read as the scan going blind.
+    assert {"make_methods_ctx", "_bench_method_block"} <= set(emitters), (
+        emitters
+    )
+    for emitter, spelled_in in sorted(emitters.items()):
+        assert any(
+            where.split(":", 1)[0] in spelled_in for where in sites.values()
+        ), f"the scan found no kernel call emitted by {emitter}"
     cfg = C.load(project)
     reached: dict[str, str] = {}
     for obj in OBJECTS:

@@ -94,6 +94,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "destroy_fn": "nco_destroy",
     "header": "nco/nco_core.h",
     "output_type": "float _Complex",
+    # gh-2259: generator methods the source delegates.
+    "methods": [],
     # segment
     "sources": "wfm_source_t",
     "sources_member": "srcs",

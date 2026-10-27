@@ -8,7 +8,7 @@ Distribute this file — recipients run it with:
     uv run <<name>>.py --help
 
 Requires <<project>>==<<version>> on PyPI.
-Scaffolded by just-makeit. Regenerated from `[app]` by `just-makeit app` AND
+Scaffolded by just-makeit. Regenerated from `[[app]]` by `just-makeit app` AND
 by every `just-makeit apply` — edits here are discarded. Put custom logic in
 a component and call it from here.
 """

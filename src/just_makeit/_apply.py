@@ -189,6 +189,41 @@ def is_nested_checkout(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+def walk(root: Path):
+    """Each directory of the project's own tree, with the files in it.
+
+    Yields ``(directory, file names)``, *root* first, top down. Never
+    descended into: a skipped name (``_SKIP_DIRS``), a build tree
+    (:func:`is_build_tree`, gh-1473) and another checkout
+    (:func:`is_nested_checkout`, gh-1713). Every file name in a directory
+    it yields is listed, whatever :func:`is_skipped` says of it -- that is
+    the caller's question.
+
+    The one reading of "the project's tree": :func:`_tree_digests` (what
+    `apply` reports) and `_undo` (what a failed command puts back,
+    gh-1867) both walk it through here, so the two cannot disagree about
+    which files a command might have changed.
+
+    >>> import tempfile
+    >>> d = Path(tempfile.mkdtemp())
+    >>> (d / "build").mkdir()
+    >>> _ = (d / "build" / "x.o").write_bytes(b"")
+    >>> _ = (d / "a.c").write_bytes(b"")
+    >>> [(p.relative_to(d).as_posix(), names) for p, names in walk(d)]
+    [('.', ['a.c'])]
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in _SKIP_DIRS
+            and not is_build_tree(base / d)
+            and not is_nested_checkout(base / d)
+        ]
+        yield base, filenames
+
+
 def _tree_digests(root: Path) -> dict:
     """Digest of every project file, keyed by POSIX path relative to *root*.
 
@@ -201,8 +236,8 @@ def _tree_digests(root: Path) -> dict:
     and changed no bytes; and two modules sharing one package merged its
     ``__init__.py`` in turn, so it was announced twice.
 
-    Taken once, before anything is written, from the same walk rules
-    `status` uses: skipped names, build trees and nested checkouts
+    Taken once, before anything is written, over :func:`walk`: the same walk
+    rules `status` uses, so skipped names, build trees and nested checkouts
     (gh-1713) are never descended into.
 
     Each value is a pair, the digest of the bytes and of the bytes through
@@ -212,15 +247,7 @@ def _tree_digests(root: Path) -> dict:
     the time it is asked.
     """
     out: dict = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        base = Path(dirpath)
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if d not in _SKIP_DIRS
-            and not is_build_tree(base / d)
-            and not is_nested_checkout(base / d)
-        ]
+    for base, filenames in walk(root):
         for name in filenames:
             p = base / name
             rel = p.relative_to(root)
@@ -358,6 +385,10 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # test passes, because they call the emitters with a cfg that HAS the
         # key. Same shape as `destroy` below and gh-542's `no_reset`.
         "process_global": _procglobal.is_process_global(cfg, comp),
+        # gh-2316: manifest-only too. Dropped here, the replay scaffolds the
+        # `bench_<obj>.py` the object declined, `status` reports it MISSING
+        # and `apply` writes it back.
+        "no_python_bench": C.is_no_python_bench(cfg, comp),
         # gh-1448: manifest-only, for the reason every key above is. Dropped
         # here, the replayed tree renders every owned fragment SACRED -- the
         # "Hand-patches are preserved" banner and no ownership token -- and
@@ -367,6 +398,12 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # checked the body and not the banner.
         "fragment": C.fragment_kind(cfg, comp),
         "mutable": C.is_mutable(cfg, comp),
+        # gh-2215: neither was named here, so the scratch manifest every
+        # later replayed render reads said the object did neither. No file
+        # measured differently -- both shape only the `_core.h`, which is
+        # the author's -- which is why only the signature gate saw it.
+        "step_delegates": C.step_delegates(cfg, comp),
+        "opaque_state": C.is_opaque_state(cfg, comp),
         "serializable": C.is_serializable(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
         "async_stream": C.is_async_stream(cfg, comp),
@@ -422,6 +459,19 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # declaration there it answered no and demonstrated a reset the
         # author's body does not do: a doctest that fails.
         "reset_impl_decl": Ctx.declared_reset_impl(cfg, comp),
+        # gh-2215: `jm object --variable-output` adds a method AS it creates
+        # the object, and the manifest holds that method as a
+        # `[[<obj>.methods]]` row like any other, which `_replay_method`
+        # replays. So the shorthand is off here, or the method is added
+        # twice; named so the wiring gate reads it as decided.
+        "variable_output": False,
+        "multi_output": [],
+        "method_name": "run",
+        "max_out": 0,
+        "_hint": True,
+        # The replay creates a module's objects in its `objects` order, so
+        # appending each one rebuilds that list as declared.
+        "before": "",
     }
 
 
@@ -586,11 +636,41 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         temp_root,
         [],
         [],
+        # gh-2215: every parameter `_new.run` takes is named in this call,
+        # and `tests/test_manifest_wiring_gate.py` refuses one that is not --
+        # derived from the signature, so a key added there is a decision
+        # here, never a silent default. These seven are the CLI's shorthand
+        # for objects and modules created WITH the project; the replay
+        # creates none here (each is replayed below through its own
+        # command), so they are inert, and named as such.
+        modules=[],
+        mutable=False,
+        no_step=False,
+        no_reset=False,
+        no_state=False,
+        arg_type="float _Complex",
+        return_type=None,
+        # gh-2215: the `[project]` dependency keys, as declared, so the
+        # replay's manifest is the project's own.
+        find_packages=cfg.get("project", {}).get("find_packages"),
+        pkg_modules=cfg.get("project", {}).get("pkg_modules"),
+        # ...except `c_deps`: each is one `add_subdirectory` line, and its
+        # one writer on `apply` is `_splice_cmake_components`, which
+        # prepends it from the SOURCE manifest. Rendered into the replay as
+        # well, the line would sit wherever `_new.run` put it and be kept
+        # there instead -- two writers of one block (gh-1985's order test
+        # measures it).
+        c_deps=None,
+        platforms=cfg.get("project", {}).get("platforms"),
+        # The replay writes one manifest whatever layout the project uses:
+        # it is scratch, never read back (`_SKIP_FILES`), and its writers
+        # take the plain single-file path (gh-698).
+        fragments=False,
         build_system=C.build_system(cfg),
         perf=C.is_perf(cfg),
         pytest_=C.is_pytest(cfg),
         pytest_benchmark_=C.is_pytest_benchmark(cfg),
-        # gh-1368: no `platforms` -- it no longer changes what is rendered.
+        # gh-1368: `platforms` (above) no longer changes what is rendered.
         # gh-960: and the same C-formatting opt-in, so the replay renders its
         # own `.clang-format`. Without it the replay had none, `run` copied
         # the real one in, and the file `status` compared was therefore the
@@ -606,6 +686,11 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # gh-1591: and the C symbol prefix, for the same reason: a replay that
         # renders bare names makes the real project's prefixed ones "missing".
         c_prefix=C.c_prefix(cfg),
+        # gh-2083: and the real version, for the same reason. Rendered at the
+        # `new` default, the replay's Doxyfile and bootstrap.toml read as
+        # `0.1.0` and disagree with an in-sync project, and `apply` materialised
+        # a missing copy at `0.1.0`. The stamp below only reached the manifest.
+        version=C.project_version(cfg),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.
@@ -656,57 +741,31 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             _handle.materialize(cfg, temp_root, mod, project_root=project_root)
             continue
         # gh-523: `package` must reach the temp scaffold *at module-creation
-        # time* — it decides where every Python artifact is written, so the
-        # later metadata copy-down (extra_link_libs & co.) would be too late.
-        # gh-645: `doc` is read at module-creation time (it renders the
-        # re-export __init__.py's docstring), so it has to be forwarded
-        # here for the same reason `package` is -- the later metadata
-        # copy-down would be too late. This is the gh-663 shape: a new
-        # manifest key silently dropped by the replay.
+        # time* -- it decides where every Python artifact is written.
+        # gh-645: `doc` is read at module-creation time too (it renders the
+        # re-export __init__.py's docstring). This is the gh-663 shape: a
+        # new manifest key silently dropped by the replay.
+        #
+        # gh-2215: and every other key `_module.run` takes, named here. The
+        # `extra_*` keys and `functions_in_core` used to be copied into the
+        # temp manifest after this call, by a second writer of the same
+        # table; `_module.run` persists each exactly as `jm module` does, so
+        # the one call is the one writer. gh-247: `functions_in_core` must
+        # be in the temp manifest before the function replay below, which it
+        # now is from the module's first save.
         _module.run(
             temp_root,
             mod,
+            extra_include_dirs=C.extra_include_dirs(cfg, mod),
+            extra_link_libs=C.extra_link_libs(cfg, mod),
+            extra_types=C.extra_types(cfg, mod),
+            functions_in_core=C.functions_in_core(cfg, mod),
             package=C.module_package(cfg, mod),
             doc=C.module_doc(cfg, mod),
             # gh-1463: at creation too, so a module with no members yet still
             # renders its CMake guard in the temp tree.
             platforms=cfg.get("module", {}).get(mod, {}).get("platforms"),
         )
-
-    # After module scaffolding, copy module-level metadata (e.g.
-    # extra_link_libs) from the real project TOML into the temp TOML so
-    # _regenerate_module() inside object.run() picks it up.
-    _mods_need_update = [
-        m
-        for m in mods
-        if not C.is_no_generate_module(cfg, m)
-        and not C.is_capsule_module(cfg, m)
-        and not C.is_composer_module(cfg, m)
-        and not C.is_handle_module(cfg, m)
-        and (
-            cfg.get("module", {}).get(m, {}).get("extra_link_libs")
-            or cfg.get("module", {}).get(m, {}).get("extra_types")
-            or cfg.get("module", {}).get(m, {}).get("extra_include_dirs")
-            # gh-247: functions_in_core must reach the temp TOML *before* the
-            # function replay below, else _function.run() falls back to
-            # per-function .c files and the build double-defines the symbols.
-            or cfg.get("module", {}).get(m, {}).get("functions_in_core")
-        )
-    ]
-    if _mods_need_update:
-        tcfg2 = C.load(temp_root)
-        for mod in _mods_need_update:
-            mod_data = cfg["module"][mod]
-            tmod = tcfg2.setdefault("module", {}).setdefault(mod, {})
-            if mod_data.get("extra_types"):
-                tmod["extra_types"] = mod_data["extra_types"]
-            if mod_data.get("extra_link_libs"):
-                tmod["extra_link_libs"] = mod_data["extra_link_libs"]
-            if mod_data.get("extra_include_dirs"):
-                tmod["extra_include_dirs"] = mod_data["extra_include_dirs"]
-            if mod_data.get("functions_in_core"):
-                tmod["functions_in_core"] = mod_data["functions_in_core"]
-        C.save(temp_root, tcfg2)
 
     # Seed _extra.c files from the real project so _regenerate_module()
     # detects and re-includes them in the temp aggregator.
@@ -838,6 +897,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             out_type=m.get("out_type"),
             out_divisor=int(m.get("out_divisor", 1)),
             batch=bool(m.get("batch")),
+            # gh-2215: `jm method --no-bench` writes `bench = false`.
+            no_bench=m.get("bench") is False,
             impl_body=m_impl,
             none_on_empty=bool(m.get("none_on_empty")),
             strict=bool(m.get("strict")),  # gh-1426 B
@@ -861,6 +922,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # record one. gh-632's replace-by-name warning is what surfaced
             # it; before that it would have landed silently.
             record_dtype=m.get("record_dtype", ""),
+            consumed_fn=m.get("consumed_fn", ""),  # gh-2204
             # gh-1312: forwarded EXPLICITLY, like record_dtype above and
             # for the same reason -- this loop names keys one by one, so
             # an unnamed one is silently absent and the replayed method
@@ -883,6 +945,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             exact_max_out=bool(m.get("exact_max_out")),
             count_default=m.get("count_default", ""),
             count_name=m.get("count_name", ""),
+            no_count=bool(m.get("no_count")),  # gh-2233
+            out_cols=str(m.get("out_cols", "") or ""),
+            short_out=bool(m.get("short_out")),
             nogil=bool(m.get("nogil")),
             status_return=bool(m.get("status_return")),
             # gh-805 §A2/§B. `apply` enumerates method keys ONE BY ONE, so a
@@ -928,10 +993,19 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             codec=p.get("codec", ""),  # gh-554
             entry_fn=p.get("entry_fn", ""),
             capsule=p.get("capsule", ""),  # gh-788
+            # gh-2215: what the published pointer IS (gh-1235). Dropped, the
+            # replay's producer publishes over `expr` with no declared type,
+            # and a consumer's `object` reference refuses it.
+            capsule_type=p.get("capsule_type", ""),
+            py_type=p.get("py_type", ""),  # gh-2347
             entry_type=p.get("entry_type", ""),
             type_field=p.get("type_field", ""),
             count_field=p.get("count_field", ""),
             value_field=p.get("value_field", ""),
+            # gh-2182: a refusing setter. Keys are forwarded one by one, so
+            # one not named here is silently absent from the replay.
+            error=p.get("error", ""),
+            error_message=p.get("error_message", ""),
         )
 
     for comp in all_comps:
@@ -978,6 +1052,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 category=w.get("category", "UserWarning"),
                 after=w.get("after", "__init__"),
                 stacklevel=int(w.get("stacklevel", 1) or 1),
+                view="",  # the object's own; a view's are replayed below
             )
         # gh-482: same reasoning as the warnings replay above — a declared
         # create_error must reach a fresh checkout from the manifest alone.
@@ -988,6 +1063,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 C.create_error(cfg, comp),
                 C.create_error_message(cfg, comp),
                 module=mod,
+                view="",  # the object's own; a view's rides `_view.run`
             )
         # gh-504: same reasoning — a declared view (a second class over this
         # object's core) must rebuild from the manifest alone, or a fresh
@@ -1502,6 +1578,62 @@ def _owned_scaffolds(temp_root: Path, root: Path) -> set:
             ):
                 out.add(rel)
     return out
+
+
+def _other_backend_makefile(cfg: dict, project_root: Path) -> "str | None":
+    """The Makefile this project would have under the OTHER build backend.
+
+    gh-1899. The make Makefile is patched object by object (its TARGETS and
+    rules), so it is not a function of the manifest's flags. The reliable
+    answer is a replay of the whole manifest with `build` flipped, which is the
+    replay `apply` already runs, through :func:`replay_project`, so it is
+    silent and in apply's scopes like every other replay.
+    """
+    import copy
+    import tempfile
+
+    from . import _new
+
+    other = _new.other_backend(cfg)
+    flipped = copy.deepcopy(cfg)
+    flipped["project"]["build"] = other
+    with tempfile.TemporaryDirectory(prefix="jm-backend-") as tmp:
+        troot = Path(tmp)
+        replay_project(flipped, troot, project_root)
+        mf = troot / "Makefile"
+        return mf.read_text(encoding="utf-8") if mf.is_file() else None
+
+
+def reconcile_backend_makefile(
+    root: Path, cfg: dict, temp_root: Path
+) -> "str | None":
+    """Replace a Makefile that is the other backend's render (gh-1899).
+
+    `apply`'s step for a backend switch. The replay has rendered this
+    manifest's own Makefile into *temp_root*; a real Makefile equal to the
+    other backend's render is replaced with it, and nothing else is touched:
+    an author's edit is left, and `status` keeps reporting it. Returns the line
+    `apply` prints, or None.
+    """
+    from . import _new
+
+    mf = temp_root / "Makefile"
+    if not mf.is_file():
+        return None
+    current = mf.read_text(encoding="utf-8")
+    other = _new.other_backend(cfg)
+    if not _new.is_other_backend_makefile(
+        root,
+        current.replace("\r\n", "\n"),
+        other,
+        lambda: _other_backend_makefile(cfg, root),
+    ):
+        return None
+    _textio.write_text(root / "Makefile", current)
+    return (
+        f"  update  {root / 'Makefile'} (build = {C.build_system(cfg)}; "
+        "was the other backend's)"
+    )
 
 
 def _sync_missing(
@@ -2217,17 +2349,40 @@ def _reconcile_object_core_cmake(
     ``set_source_files_properties`` the manifest can't express — gh-275) is left
     untouched, since re-rendering it would drop those rules.
 
-    Returns True if the file changed."""
+    Returns True if the file changed. What it writes is
+    :func:`_reconciled_object_core_cmake`'s, which `apply`'s gh-1840
+    refusal reads before anything is written."""
     if not real.exists() or not temp.exists():
         return False
+    original = real.read_text(encoding="utf-8")
+    new = _reconciled_object_core_cmake(
+        original, temp.read_text(encoding="utf-8"), comp, include_dirs
+    )
+    if new == original:
+        return False
+    _warn_dropped_cmake(real, original, new)
+    _textio.write_text(real, new)
+    return True
+
+
+def _reconciled_object_core_cmake(
+    original: str, rendered: str, comp: str, include_dirs: "list[str]"
+) -> str:
+    """The text :func:`_reconcile_object_core_cmake` writes over *original*.
+
+    *rendered* is jm's replay render of the same file. A hand-owned
+    *original* (gh-275) comes back unchanged; otherwise *rendered*, with the
+    two things the manifest-driven render cannot reproduce put back. Pure,
+    so `apply` can ask what a rewrite would leave before it writes anything
+    (gh-1840), and the writer cannot drift from the question.
+    """
     from ._object import _external_cmake_blocks
 
-    original = real.read_text(encoding="utf-8")
-    new = temp.read_text(encoding="utf-8")
+    new = rendered
     # gh-275: never re-render a hand-owned file (vendored sources, per-source
     # build properties) — the canonical render cannot reproduce them.
     if _is_hand_owned_object_cmake(original, comp, rendered=new):
-        return False
+        return original
     # (1) re-add component extra_include_dirs as a second PUBLIC include block,
     # just before the test executable (matches _inject_object_core_cmake).
     if include_dirs and include_dirs[0] not in new:
@@ -2243,11 +2398,102 @@ def _reconcile_object_core_cmake(
     for block in _external_cmake_blocks(original):
         if block not in new:
             new = new.rstrip("\n") + "\n\n" + block + "\n"
-    if new == original:
-        return False
-    _warn_dropped_cmake(real, original, new)
-    _textio.write_text(real, new)
-    return True
+    return new
+
+
+def _reconciled_cmake_dirs(cfg: dict) -> "set[str]":
+    """The ``native/src/<d>`` whose CMakeLists `apply` reconciles.
+
+    A standalone component's and a module object's that is not its module's
+    own, both through :func:`_reconcile_object_core_cmake` (gh-271,
+    gh-1301). Every other directory jm renders -- a module's own, which a
+    collocated object shares, and a capsule / handle / composer module's --
+    is overwritten whole by :func:`_overwrite_if_changed`. The distinction is
+    what `apply` keeps of an author's text, and only gh-1840's refusal asks.
+    """
+    cnames = {C.module_paths(m).cname for m in C.modules(cfg)}
+    return {c for c in C.components(cfg) if c not in cnames}
+
+
+def _refuse_cmake_that_would_lose(
+    temp_root: Path, root: Path, cfg: dict
+) -> None:
+    """Refuse an apply that would erase an author's OBJECT library (gh-1840).
+
+    A ``native/src/<d>/CMakeLists.txt`` jm renders is glue: `apply` rewrites
+    it from the replay. An ``add_library(<x> OBJECT ...)`` the author added
+    there was erased with it, and nothing said so -- gh-1351's warning names
+    a dropped command only when jm never writes that command, and jm writes
+    ``add_library`` itself. Whatever the root wired to the library was left
+    naming a target that no longer exists, which cmake rejects at configure
+    time, and the next apply deleted that wiring too.
+
+    So the rewrite is asked about before the first write: the OBJECT
+    libraries the file declares that the text `apply` would write does not.
+    That text is the replay's render, put through the same reconcile the
+    writer runs (a hand-owned file, an ``if()`` block) where the directory
+    is reconciled, so a library `apply` keeps is never refused. A file
+    `[project] status_allow` names is one `apply` never writes, so it is
+    never asked about -- in the `status` replay too, which writes it anyway
+    to classify it.
+
+    The way out is the hook jm already gives a directory's own CMake,
+    ``<d>_extra.cmake``: the generated file includes it and jm never writes
+    it (gh-1351), and `_libwiring` reads a core declared there (gh-1840).
+
+    Every rendered directory is asked, ``--only`` or not: a library this
+    run would not reach is lost by the next one.
+
+    Raises
+    ------
+    _report.Refusal
+        Naming each file and library, and the hook to move it to. Nothing
+        has been written.
+    """
+    reconciled = _reconciled_cmake_dirs(cfg)
+    lost: "list[tuple[str, list[str]]]" = []
+    src = temp_root / "native" / "src"
+    for temp in sorted(src.glob("*/CMakeLists.txt")) if src.is_dir() else []:
+        d = temp.parent.name
+        rel = f"native/src/{d}/CMakeLists.txt"
+        real = root / rel
+        if not real.is_file() or _status_allowed(cfg, rel):
+            continue
+        original = real.read_text(encoding="utf-8")
+        written = temp.read_text(encoding="utf-8")
+        if d in reconciled:
+            # No include dirs: the block they add declares no library.
+            written = _reconciled_object_core_cmake(original, written, d, [])
+        kept = set(_libwiring.object_libraries(written))
+        gone = [
+            lib
+            for lib in _libwiring.object_libraries(original)
+            if lib not in kept
+        ]
+        if gone:
+            lost.append((d, gone))
+    if not lost:
+        return
+    from ._render import extra_cmake_name
+
+    lines = [
+        "`jm apply` would erase an OBJECT library it does not write, so it"
+        " wrote\nnothing:"
+    ]
+    for d, gone in lost:
+        lines.append(
+            f"  native/src/{d}/CMakeLists.txt: {', '.join(gone)}"
+            f" -> native/src/{d}/{extra_cmake_name(d)}"
+        )
+    lines.append(
+        "Each CMakeLists.txt here is regenerated from the manifest, and a"
+        " line wiring\nthe library would be left naming a target that is"
+        " gone. Move the library,\nwith the statements that configure it,"
+        " into the hook named beside it: the\ngenerated file includes it and"
+        " jm never writes it (gh-1351). Wire it into the\nC library there or"
+        " in the root CMakeLists.txt, then re-run (gh-1840)."
+    )
+    raise _report.Refusal("\n".join(lines))
 
 
 def _refresh_core_h_decls(
@@ -2560,7 +2806,7 @@ def _sync_aggregates(
             or C.is_handle_module(cfg, mod)
         ):
             mp = C.module_paths(mod)
-            out_pkg = C.module_package(cfg, mod) or mp.pypath
+            out_pkg = C.module_package_resolved(cfg, mod)
             glue = [
                 f"native/src/{mp.cname}/{mp.cname}_ext.c",
                 f"native/src/{mp.cname}/CMakeLists.txt",
@@ -2599,7 +2845,7 @@ def _sync_aggregates(
         # gh-523: an object module may declare `package` to land its Python
         # artifacts inside a sibling package; unset it is the module's own
         # pypath, so unpackaged modules reconcile exactly as before.
-        out_pkg = C.module_package(cfg, mod) or mp.pypath
+        out_pkg = C.module_package_resolved(cfg, mod)
         # Re-create any intermediate package markers the user may have deleted
         # (create-only — never clobbers a hand-edited marker).
         from ._init import ensure_parent_packages
@@ -2668,8 +2914,15 @@ def _sync_aggregates(
             # the link block once it already existed, dropping new deps). The
             # reconcile preserves component extra_include_dirs and user external
             # if(VAR) blocks. Collocated objects share the module CMakeLists
-            # (handled above).
-            if obj != mod:
+            # (handled above); gh-1949: which one that is, the writers' rule.
+            #
+            # gh-1840: and, like every peer, never a file `status_allow`
+            # names (gh-441) -- this one alone was rewritten anyway, so an
+            # author keeping their module object's CMakeLists lost it.
+            _obj_cml = f"native/src/{obj}/CMakeLists.txt"
+            if obj != C.collocated_object(cfg, mod) and not (
+                honor_status_allow and _status_allowed(cfg, _obj_cml)
+            ):
                 obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
                 temp_cmake = (
                     temp_root / "native" / "src" / obj / "CMakeLists.txt"
@@ -3003,6 +3256,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
     prototype for them would be wrong rather than merely redundant.
     """
     from . import _types as _T
+    from ._context._diagnostics import setter_return_type
     from ._property import plain_accessor_decls
 
     out: list[str] = []
@@ -3020,7 +3274,9 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
         ):
             continue
         ctype = p.get("type", "")
-        if ctype not in _T._CTYPE_META:
+        # gh-2347: a json property's getter is declared like a plain one,
+        # returning the `char *` the binding parses and frees.
+        if ctype not in _T._CTYPE_META and not _T.is_json_type(ctype):
             continue  # dict/list/tuple and friends are declared by the user
         out += plain_accessor_decls(
             comp,
@@ -3028,6 +3284,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             ctype,
             str(p.get("writable", "")).lower() in ("true", "1", "yes"),
             csym=CSYM.stem(cfg, comp),
+            setter_type=setter_return_type(p),  # gh-2182
         )
     return out
 
@@ -3531,62 +3788,6 @@ def _dangling_object_fragments(root: Path, cfg: dict) -> list[str]:
     return dangling
 
 
-class _ComposeUndo:
-    """What composing a fragment wrote, undone if the apply refuses (gh-1660).
-
-    A refused apply writes nothing. The refusals are asked before the first
-    write, so for them that holds by ordering alone -- the `jm_version`
-    stamp included, which is why it is written after the last of them. The
-    exception is a composed fragment (``jm apply <fragment.toml>``): it
-    copies the file into ``objects/`` and edits the manifest, and it has to
-    come first, because every refusal after it reads the manifest WITH the
-    fragment. So those writes are recorded here, before they happen, and
-    undone byte for byte when a refusal (or a crash) follows them.
-
-    :meth:`disarm` is called just before the reconcile's first write into the
-    tree; from there on the tree is no longer the one the fragment was
-    composed into, and restoring the manifest alone would describe neither.
-
-    Without a fragment it records nothing and :meth:`rollback` is a no-op.
-    """
-
-    def __init__(self, root: Path, fragment: "Path | None") -> None:
-        self._files: "dict[Path, bytes | None]" = {}
-        self._dirs: "list[Path]" = []
-        if fragment is None:
-            return
-        objects = root / "objects"
-        if not objects.exists():
-            self._dirs.append(objects)
-        # What `_compose_fragment` writes: the copy of the fragment, the
-        # manifest's include line, and the module wiring -- which goes
-        # through `C.save` (gh-1677), and so may land in the manifest or in
-        # any file it includes (`modules/X.toml` in the split layout). All
-        # of them, as `C._provenance` names them: the set `save` routes to.
-        owners, module_owners, _ = C._provenance(root)
-        for p in {
-            root / C.FILENAME,
-            objects / Path(fragment).name,
-            *owners.values(),
-            *module_owners.values(),
-        }:
-            self._files[p] = p.read_bytes() if p.is_file() else None
-
-    def disarm(self) -> None:
-        self._files, self._dirs = {}, []
-
-    def rollback(self) -> None:
-        for p, data in self._files.items():
-            if data is None:
-                if p.is_file():
-                    p.unlink()
-            elif p.read_bytes() != data:
-                p.write_bytes(data)
-        for d in self._dirs:
-            if d.is_dir() and not any(d.iterdir()):
-                d.rmdir()
-
-
 def run(
     root: Path,
     fragment: Path | None = None,
@@ -3618,44 +3819,41 @@ def run(
         )
         sys.exit(1)
 
-    # gh-1660: a refused apply writes nothing, and a fragment is composed
-    # before any refusal can be asked -- so what it writes is undone.
-    undo = _ComposeUndo(root, fragment)
-    try:
-        if fragment is not None:
-            print(f"just-makeit: composing fragment {fragment}")
-            try:
-                _compose_fragment(root, fragment)
-            except (FileNotFoundError, FileExistsError, ValueError) as e:
-                print(f"error: {e}", file=sys.stderr)
-                sys.exit(1)
-            print()
-        _apply_manifest(
-            root,
-            only,
-            undo,
-            honor_status_allow=honor_status_allow,
-            replay_out=replay_out,
-        )
-    except BaseException:
-        undo.rollback()
-        raise
+    # gh-1660: a refused apply writes nothing. A fragment is composed before
+    # any refusal can be asked, because every refusal reads the manifest
+    # WITH it, and the reconcile's own stub guards follow its first writes
+    # (gh-1676): what either wrote is put back by the command's `_undo`
+    # record when a refusal follows (gh-1867), which `_cli.main` takes
+    # around every mutating command.
+    if fragment is not None:
+        print(f"just-makeit: composing fragment {fragment}")
+        try:
+            _compose_fragment(root, fragment)
+        except (FileNotFoundError, FileExistsError, ValueError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print()
+    _apply_manifest(
+        root,
+        only,
+        honor_status_allow=honor_status_allow,
+        replay_out=replay_out,
+    )
 
 
 def _apply_manifest(
     root: Path,
     only: "str | None",
-    undo: _ComposeUndo,
     *,
     honor_status_allow: bool,
     replay_out: "Path | None",
 ) -> None:
     """The body of :func:`run`, once any fragment is composed.
 
-    Every refusal is asked before the first write into the tree, where
-    *undo* is disarmed -- except the reconcile phase's own stub guards,
-    which follow its first writes (gh-1676). The `jm_version` stamp follows
-    even those (gh-1660).
+    Every refusal is asked before the first write into the tree -- except
+    the reconcile phase's own stub guards, which follow its first writes
+    (gh-1676); the command's `_undo` record puts those writes back
+    (gh-1867). The `jm_version` stamp follows even those (gh-1660).
     """
     cfg = C.load(root)
     # gh-1310: a family member whose family header is missing, before anything
@@ -3691,6 +3889,10 @@ def _apply_manifest(
     C.pkg_module_entries(cfg)
     C.public_link_libs(cfg)
     C.public_defines(cfg)
+    # gh-2074: and the apps, which `_app.replay` renders last -- so a
+    # schema-8 `[app]` table is refused (naming `jm upgrade`) before the
+    # first write, not after the last.
+    C.apps(cfg)
     # gh-1600: an additional library the tree cannot build is refused before
     # anything is written -- a missing core is a CMake configure error, and a
     # core also in lib<pkg> puts its objects in a consumer's link twice.
@@ -3711,13 +3913,6 @@ def _apply_manifest(
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
-    if not C.components(cfg) and not C.modules(cfg):
-        print(
-            "error: manifest declares no objects or modules — nothing to materialize.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     # gh-595 / gh-598: refuse to generate from a manifest declaring a type no
     # binding can convert. Left unchecked neither failed — an unknown
     # return_type produced a binding that dropped the C result and returned
@@ -3741,6 +3936,14 @@ def _apply_manifest(
     _extra_errors = _extramethods.manifest_errors(root, cfg)
     if _extra_errors:
         C._refuse(_extra_errors)
+    # gh-2302: a setter whose status the binding would discard. Before
+    # anything is written: a standalone header's declaration would be
+    # rewritten to `void` below, out of step with its definition.
+    from ._property import discarded_setter_status
+
+    _dropped_status = discarded_setter_status(root, cfg)
+    if _dropped_status:
+        C._refuse(_dropped_status)
 
     # gh-327: refuse to silently promote a former module object — whose
     # fragment was left behind after `objects = [...]` dropped it — into a
@@ -3870,9 +4073,17 @@ def _apply_manifest(
         try:
             _owned = _owned_fragments(root, cfg)
             _refuse_owned_that_would_lose(temp_root, root, _owned)
+            # gh-1840: and an author's OBJECT library in a CMakeLists the
+            # reconcile below rewrites.
+            _refuse_cmake_that_would_lose(temp_root, root, cfg)
             _scaffolds = _owned_scaffolds(temp_root, root)
             # The first write into the tree: nothing above it has written.
-            undo.disarm()
+            # gh-1899: a Makefile still rendered for the backend the project
+            # no longer uses is replaced, so the switch reaches the build.
+            # The command's `_undo` guard (gh-1867) puts it back on failure.
+            _backend = reconcile_backend_makefile(root, cfg, temp_root)
+            if _backend:
+                print(_backend)
             created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
@@ -4007,13 +4218,27 @@ def _apply_manifest(
             indent="  ",
         )
 
+    # gh-2316: and a Python benchmark the object declines. Warned on every
+    # apply while it is on disk, as gh-1142's orphan header is: apply is
+    # what an author runs after changing the manifest, so it is where the
+    # disagreement is first seen.
+    for _declined in C.declined_python_benches(root, cfg):
+        _report.warn(
+            f"{_declined} is a Python benchmark for an object that declares "
+            "`no_python_bench`, so jm no longer renders or reconciles it. "
+            "jm does not delete files — remove it, or drop the key",
+            gates=True,
+            stream=sys.stdout,
+            indent="  ",
+        )
+
     # gh-1154: a manifest `doc` carrying more than one paragraph. The
     # renderer drops the rest for a function and reflows it into prose for a
     # method, both silently; this says so and names the header path, which
     # already renders a complete numpy docstring from Doxygen.
     from . import _docstring as _doc_mod
 
-    for _md in _doc_mod.manifest_docs_with_sections(cfg):
+    for _md in _doc_mod.manifest_docs_with_sections(cfg, root):
         _report.warn(
             _doc_mod.manifest_doc_advice(_md),
             gates=True,

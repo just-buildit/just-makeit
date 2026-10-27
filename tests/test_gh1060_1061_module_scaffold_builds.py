@@ -117,6 +117,8 @@ class TestAnOutTypeFunctionIsNotCalled:
             params=list(params),
             out_type="float",
             variable_output=True,
+            # gh-1888: with no array param the capacity must be declared.
+            out_size="16",
         )
         header = (root / INC_ROOT / "dsp" / "dsp_core.h").read_text(
             encoding="utf-8"
@@ -260,6 +262,8 @@ class TestItActuallyBuilds:
             params=[("beta", "double")],
             out_type="float",
             variable_output=True,
+            # gh-1888: with no array param the capacity must be declared.
+            out_size="16",
         )
         _quiet(function_run, root, "reset_all", "dsp")
         # The sacred bodies are the author's; write ones that make `dsp`
