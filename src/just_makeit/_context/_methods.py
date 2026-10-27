@@ -4375,6 +4375,12 @@ def make_methods_ctx(
                         f'    if (!PyArg_ParseTuple(args, "n",'
                         f" &{_pymo_name}))\n"
                         f"        return NULL;\n"
+                        # gh-2380: `n` is converted above, after the guard.
+                        + _inflight.recheck(
+                            "self",
+                            f"{c_fn}_max_out({_st})",
+                            "",
+                        )
                         + _max_out_return_c(
                             f"{c_fn}_max_out({_st},"
                             f" (size_t){_pymo_name}{_mo_per})",

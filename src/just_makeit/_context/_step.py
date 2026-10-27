@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .. import _coerce, _ctorsig
+from .. import _coerce, _ctorsig, _inflight
 from .. import _types as T
 from .. import _csym as CSYM
 from .._types import (
@@ -19,6 +19,18 @@ from .._docstring import (
 from ._methods import bench_record_c
 from ._parse import _build_ml_doc, _step_parse_block
 from ._parse import ctrl_parse_c as _ctrl_parse_c
+
+
+def _rc(release: "list[str]", indent: str = "    ") -> str:
+    """The liveness guard again before a kernel call (gh-2273, gh-2380).
+
+    ``step()`` / ``steps()`` check the object first and convert their
+    arguments after, and a conversion can run Python that destroys it.
+    *release* lists what the call holds -- one statement per entry.
+    """
+    return _inflight.recheck(
+        "self", "k(self->handle)", " ".join(release), indent=indent
+    )
 
 
 def make_perf_ctx(perf: bool) -> dict[str, str]:
@@ -620,6 +632,7 @@ def make_step_ctx(
             f"            Py_DECREF(out_arr);\n"
             f"            return NULL;\n"
             f"        }}\n"
+            f"{_rc(['Py_DECREF(x_arr);', 'Py_DECREF(out_arr);'], ' ' * 8)}"
             f"        {csym}_steps(\n"
             f"            self->handle,\n"
             f"            (const {in_disp} *)PyArray_DATA(x_arr),\n"
@@ -632,6 +645,7 @@ def make_step_ctx(
             f"    PyObject *out = PyArray_SimpleNew(1, dims,"
             f" {out_np_enum_bw});\n"
             f"    if (!out) {{ Py_DECREF(x_arr); return NULL; }}\n"
+            f"{_rc(['Py_DECREF(x_arr);', 'Py_DECREF(out);'])}"
             f"    {csym}_steps(\n"
             f"        self->handle,\n"
             f"        (const {in_disp} *)PyArray_DATA(x_arr),\n"
@@ -924,6 +938,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{_gen_step_parse}"
+                f"{_rc([])}"
                 f"    {csym}_step(self->handle{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
@@ -937,6 +952,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{_gen_steps_parse}"
+                f"{_rc([])}"
                 f"    {csym}_steps(self->handle, (size_t)n{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
@@ -1035,6 +1051,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{_gen_step_parse}"
+                f"{_rc([])}"
                 f"    {ret_disp} y ="
                 f" {csym}_step(self->handle{ctrl_args});\n"
                 f"    return {step_return};\n"
@@ -1056,6 +1073,7 @@ def make_step_ctx(
                 f"    if (!out_arr)\n"
                 f"        return NULL;\n"
                 f"\n"
+                f"{_rc(['Py_DECREF(out_arr);'])}"
                 f"    {csym}_steps(\n"
                 f"        self->handle,\n"
                 f"        ({ret_disp} *)PyArray_DATA"
@@ -1121,6 +1139,7 @@ def make_step_ctx(
                 f"    const {elem_disp} *x = "
                 f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
                 f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
+                f"{_rc(['Py_DECREF(x_arr);'])}"
                 f"    {csym}_step(self->handle, x, x_len{ctrl_args});\n"
                 f"    Py_DECREF(x_arr);\n"
                 f"    Py_RETURN_NONE;\n"
@@ -1168,6 +1187,7 @@ def make_step_ctx(
                 f"    const {elem_disp} *x = "
                 f"(const {elem_disp} *)PyArray_DATA(x_arr);\n"
                 f"    size_t x_len = (size_t)PyArray_SIZE(x_arr);\n"
+                f"{_rc(['Py_DECREF(x_arr);'])}"
                 f"    {ret_disp} y ="
                 f" {csym}_step(self->handle, x, x_len{ctrl_args});\n"
                 f"    Py_DECREF(x_arr);\n"
@@ -1284,6 +1304,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{step_parse}\n"
+                f"{_rc([])}"
                 f"    {csym}_step(self->handle, x{ctrl_args});\n"
                 f"    Py_RETURN_NONE;\n"
                 f"}}"
@@ -1321,6 +1342,7 @@ def make_step_ctx(
                 f"    if (!in_arr)\n"
                 f"        return NULL;\n"
                 f"\n"
+                f"{_rc(['Py_DECREF(in_arr);'])}"
                 f"    {csym}_steps(\n"
                 f"        self->handle,\n"
                 f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
@@ -1436,6 +1458,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"{step_parse}\n"
+                f"{_rc([])}"
                 f"    {ret_disp} y ="
                 f" {csym}_step(self->handle, x{ctrl_args});\n"
                 f"    return {step_return};\n"
@@ -1497,6 +1520,7 @@ def make_step_ctx(
                 f"            Py_DECREF(in_arr);\n"
                 f"            return NULL;\n"
                 f"        }}\n"
+                f"{_rc(['Py_DECREF(in_arr);', 'Py_DECREF(out_arr);'], ' ' * 8)}"
                 f"        {csym}_steps(\n"
                 f"            self->handle,\n"
                 f"            (const {arg_disp} *)PyArray_DATA(in_arr),\n"
@@ -1514,6 +1538,7 @@ def make_step_ctx(
                 f"        return NULL;\n"
                 f"    }}\n"
                 f"\n"
+                f"{_rc(['Py_DECREF(in_arr);', 'Py_DECREF(out_arr);'])}"
                 f"    {csym}_steps(\n"
                 f"        self->handle,\n"
                 f"        (const {arg_disp} *)PyArray_DATA(in_arr),\n"
