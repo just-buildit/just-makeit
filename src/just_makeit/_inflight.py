@@ -292,6 +292,12 @@ def recheck(
             PyErr_SetString(PyExc_RuntimeError, "Ring is closed");
             return NULL;
         }
+    >>> print(recheck("self", "k(self->state, v)", "",
+    ...               "composer already closed", fail="-1"), end="")
+        if (self->destroyed) {
+            PyErr_SetString(PyExc_RuntimeError, "composer already closed");
+            return -1;
+        }
     >>> recheck("self", "k(self->x)", "")
     ''
     """
@@ -301,6 +307,9 @@ def recheck(
         elif re.search(r"self->h\b", call_expr):
             # a handle module's wrapper: `close()` sets `closed` and keeps `h`
             cond = "self->closed"
+        elif "self->state" in call_expr:
+            # a composer's own methods: `close()` sets `destroyed`
+            cond = "self->destroyed"
         else:
             return ""
     elif f"{owner}->state" in call_expr:

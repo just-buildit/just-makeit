@@ -3314,6 +3314,23 @@ def _capsule_getset_c(
     return fn, row
 
 
+def _again_c(fail: str, release: str = "") -> str:
+    """The closed guard again, after the last conversion (gh-2380).
+
+    A composer method checks ``destroyed`` first and converts its arguments
+    after, and converting runs Python (an ``__index__``, a ``__float__``)
+    that can ``close()`` the composer; the backing then ran on a state
+    ``close()`` had freed. *fail* is what the refusal returns.
+    """
+    return _inflight.recheck(
+        "self",
+        "k(self->state)",
+        release,
+        "composer already closed",
+        fail=fail,
+    )
+
+
 def render_serializers(
     cfg: dict,
     module: str,
@@ -3411,7 +3428,7 @@ def render_serializers(
         return NULL;
     }}
 {decls_s}
-{parse}{enum_s}    size_t _n; int _rep = 0, _cont = 0;
+{parse}{enum_s}{_again_c("NULL")}    size_t _n; int _rep = 0, _cont = 0;
     const {seg_struct} *segs =
         {segments_fn}(self->state, &_n, &_rep, &_cont);
     char *_js = {fn}({call_prefix}segs, _n);
@@ -4893,6 +4910,7 @@ def _settings_getset_c(
                 scalar_parse_c(
                     ctype, "value", "_v", "return -1;", label=n, meta=meta
                 )
+                + _again_c("-1")
                 + f"    {st['setter_fn']}(self->state, _v);\n"
                 f"    return 0;\n"
             )
