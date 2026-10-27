@@ -2303,7 +2303,7 @@ def make_functions_ctx(
                 authored_doc_lines(fn.get("doc", "")) or [name_summary(name)]
             )
         else:
-            _ret_ann, _py_params, _ = fn_py_surface(fn)
+            _ret_ann, _py_params, _ = fn_py_surface(fn, enums)
             doc = _build_ml_doc(
                 render_runtime_doc(
                     _blk,
