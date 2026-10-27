@@ -35,9 +35,7 @@ Examples
         try:
             result = module.fft_scale(n=1, x=1.0)
         except (ValueError, RuntimeError, OverflowError) as e:
-            self.skipTest(
-                f"the kernel refused the synthetic arguments: {e}"
-            )
+            self.skipTest(f"the kernel refused the synthetic arguments: {e}")
         else:
             self.assertIsInstance(result, float)
 >>> uses_np
@@ -175,9 +173,7 @@ def case(fn: dict) -> "tuple[str, bool]":
         "        try:\n"
         f"            result = {call}\n"
         f"        except {_REFUSALS} as e:\n"
-        "            self.skipTest(\n"
-        '                f"the kernel refused the synthetic arguments: {e}"\n'
-        "            )\n"
+        '            self.skipTest(f"the kernel refused the synthetic arguments: {e}")\n'
         "        else:\n"
         f"            {check}\n"
     ), uses_np
