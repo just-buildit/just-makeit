@@ -1001,7 +1001,28 @@ Every slot is **read**: `handle_type` gives the C type (the generated struct
 stores exactly `<handle_type> *h`, and the capsule lends it), `capsule` the
 name, `header` the include, `type_name` the class. A handle generates one
 class, so `wfm_writer.Writer` is accepted and any other suffix is refused. A
-`capsule` or `composer` module is still not a target.
+`capsule` module is still not a target.
+
+A **`kind = "composer"` module is a legal target** (gh-2354) once it publishes a
+capsule (`capsule = "<name>"` on the module table, gh-2346), read the same
+way: the C type is `<backing stem>_state_t *` (the stem moves with a
+`c_prefix` when `backing` names a jm component), `capsule` the name, `header`
+the backing's core header, and the class is the composer type
+(`oo.composer_type_name`, default `Composer`). A composer that publishes no
+capsule is refused with the line that fixes it.
+
+```toml
+[[holder.init_params]]
+name   = "scene"
+object = "playlist"                 # -> playlist_state_t *, the composer's state
+```
+
+The consumer needs no `retain`: a constructor's borrowed pointer already holds
+a strong reference to the Python owner (gh-790), so a closed composer's state
+outlives the call. The generated `.pyi` imports the class from the file that
+holds it (`from .playlist.playlist import Mix`), since a composer's package has
+no `__init__.py` re-exporting it. Passing anything else is a `TypeError` naming
+the capsule it wants.
 
 The `type` is **read when the producer states it and inferred otherwise**.
 Undeclared, it is `<pkg>_<comp>_state_t *`, which is right for a producer
