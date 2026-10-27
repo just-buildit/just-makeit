@@ -18,7 +18,8 @@
     tag, all from one answer, `resolve`'s `newest` (is this the highest
     `vX.Y.Z` tag; it fails rather than guesses if it cannot list the tags):
     the image's `:latest` tag (`docker.yml` takes a `latest` input, default
-    true), GitHub's "Latest release" badge (`gh release create   --latest=false`), and the image's NAME. `docker.yml` took its `sha-` tag
+    true), GitHub's "Latest release" badge (created with `--latest=false`
+    unless the tag is the newest), and the image's NAME. `docker.yml` took its `sha-` tag
     from the dispatching commit, so a dispatch from `main` for an older tag
     pushed that tag's code as `sha-<main's head>`; it takes a `sha` input now,
     which `release.yml` sets to the resolved tag's commit, the key the probe
