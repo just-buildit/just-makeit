@@ -1,5 +1,109 @@
 ## [Unreleased]
 
+## [0.112.0] — 2026-10-27
+
+### Added
+
+- **`jbx just-makeit:install-deps` runs jm's installer.** The published
+    site now ships `aliases.toml` beside `install.sh`, aliasing
+    `install-deps` to `install.sh`, which is where jbx's `just-makeit`
+    namespace looks first. `make docs` copies it into `site/`, and a test
+    runs the shared `site-files` recipe and holds every alias to a file it
+    ships.
+
+### Fixed
+
+- **A teardown from inside argument conversion no longer reaches the
+    kernel** (gh-2273). A generated method checked its handle once, at the
+    top, then converted its arguments; converting can run Python (an
+    `__array__`), and Python that called `destroy()` left the method a NULL
+    state, so the kernel (or `<m>_max_out`) was called with NULL and the
+    process segfaulted. The guard now runs again after the last conversion,
+    through the one kernel-call emitter, releasing what the call holds and
+    raising the same `RuntimeError("destroyed")`. Handle and composer
+    modules build their own calls and are tracked in gh-2380.
+
+- **A composer source's buffer setter no longer frees a buffer a running
+    generator may borrow** (gh-2274). Assigning a `bytes`, complex-stream or
+    owned-pointer field freed the old buffer and installed the new one with
+    no wait for a `steps()` running GIL-free on another thread, and left the
+    generator built from the old configuration in place. The setter and
+    `__init__` now go through one generated replace per field: it converts
+    the new value into a copy first (Python can run there; nothing live is
+    touched), waits for the running `steps()`, drops the generator so the
+    next `steps()` rebuilds it from the new configuration, then frees and
+    installs in pure C. **Behaviour change:** a refused value now leaves the
+    field as it was. It used to clear it, so a caller that relied on a failed
+    assignment emptying the field must now assign `None` to clear it.
+
+- **A release's post-publish jobs no longer skip when the version is already
+    on PyPI** (gh-2310). After a release published to PyPI and then failed at
+    `github-release` or `docker`, **Re-run all jobs** re-ran `resolve`, which
+    saw the version on PyPI and skipped `publish`; that skip cascaded through
+    `needs` to `github-release` and `docker`, and the run ended green with the
+    GitHub Release or the image missing. Observed on the dispatch of
+    `release.yml` for the already-released `v0.111.2`: only `resolve` ran.
+    `github-release` and `docker` now run when `publish` succeeded or was
+    skipped only because the version is already published, and each is
+    idempotent. `github-release` leaves an existing release as it is. For a
+    version already on PyPI, `docker` runs only when the commit's image tag is
+    absent from GHCR (a new `image-state` job asks, and answers "absent" on any
+    doubt); after a `publish` that succeeded in the same run it always runs,
+    since main's own CI publishes the same tag for a release commit and a
+    probe taken during the run would otherwise decide by timing. A failed
+    `publish`, or a smoke that failed before it, still skips both.
+    Re-running makes three things that move on a release safe for an OLDER
+    tag, all from one answer, `resolve`'s `newest` (is this the highest
+    `vX.Y.Z` tag; it fails rather than guesses if it cannot list the tags):
+    the image's `:latest` tag (`docker.yml` takes a `latest` input, default
+    true), GitHub's "Latest release" badge (created with `--latest=false`
+    unless the tag is the newest), and the image's NAME. `docker.yml` took its `sha-` tag
+    from the dispatching commit, so a dispatch from `main` for an older tag
+    pushed that tag's code as `sha-<main's head>`; it takes a `sha` input now,
+    which `release.yml` sets to the resolved tag's commit, the key the probe
+    asks for. The gh-2260 test now holds that nothing that builds or publishes
+    runs for a published version, and a new test requires any job that escapes
+    the skip cascade with `always()`, `failure()` or `cancelled()` to say what
+    a skipped `publish` means.
+
+- **A capsule param given a wrong object raises `TypeError`, not
+    `AttributeError`** (gh-2355). A capsule-typed method param unwraps by duck
+    typing (the capsule itself, or an object exposing `_capsule`), and an
+    object that was neither leaked the lookup's error,
+    `'int' object has no attribute '_capsule'`, which names an implementation
+    detail instead of the requirement. It is now a `TypeError` naming the param
+    and the capsule it wants, as a constructor param already said (gh-790), and
+    a closed handle's own `RuntimeError` still propagates. **Behaviour
+    change:** a caller that caught `AttributeError` from a capsule method
+    param must catch `TypeError`. The emitter's `explain_type_error` switch,
+    which kept a method on the raw error, had no False left and is removed.
+
+- **An enum-backed parameter's docstring lists its choices, not the C int**
+    (gh-2379). A parameter declared `type = "int"` with `enum = "<name>"`
+    takes one of the `[[enum]]` strings, but its generated docstring repeated
+    the header's `@param` text, which describes the C `int`: `endian : str` /
+    `0 little, 1 big.` beside a signature that refuses a number. It now lists
+    the choices (`One of "le", "be".`) on every face that documents a parameter:
+    an object's method (standalone and in a module), a module function, a
+    handle's method, and an object's or handle's constructor, in the runtime
+    `__doc__` and the `.pyi` alike. A manifest `doc` on the parameter is still
+    shown, ahead of the choices. A `string_enum` init parameter said the same
+    thing three ways (`One of: le, be.` in the standalone `.pyi` template, the
+    header's prose in the stub); it is now the one sentence. Prose a header
+    author wants kept for such a parameter goes in its manifest `doc`.
+
+- **An enum-backed property is documented by its choices, not by the C int's
+    comment** (gh-2388). A property bound to an `[[enum]]` returns one of the
+    strings (`Literal["le", "be"]`), but with no manifest `doc` and no getter
+    `@brief` its text came from the state struct member's trailing comment,
+    which describes the `int`: `0 little, 1 big.` beside a return type that
+    is not a number. It now reads `One of "le", "be".`, in the runtime getset
+    doc and the `.pyi`, from the same sentence as an enum-backed parameter
+    (gh-2379). A manifest `doc` and a getter `@brief` still win. The generated
+    `get_<name>()` and `set_<name>()` accessors return the raw `int`, so they
+    keep the C comment. `jm status --docs` still lists such a property, since
+    the choices are generated and not written.
+
 ## [0.111.2] — 2026-10-25
 
 ### Fixed
