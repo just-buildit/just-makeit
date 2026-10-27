@@ -143,12 +143,13 @@ manifests, a commit whose `CI passed` already concluded failure, and a
 nothing shows you meant it). They are listed nowhere below because they can no
 longer happen.
 
-| Mistake                                                                 | Fix                                                                                                         |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Want to "redo" a release after publish succeeded                        | You can't — PyPI rejects a duplicate version. Bump to the next patch and release that                       |
-| PyPI CDN lag fails `artifact.yml`                                       | Wait — the retry loop runs for 10 min; if it still fails, read the logs                                     |
-| An example's `test.py` calls a tool absent from the release environment | Guard optional tools with an availability check and skip gracefully — `full_workflow` step 7 is the pattern |
-| GitHub still shows the old version                                      | The `github-release` job failed — read the Actions log and re-run, or `gh release create vX.Y.Z --latest`   |
+| Mistake                                                                 | Fix                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Want to "redo" a release after publish succeeded                        | You can't — PyPI rejects a duplicate version. Bump to the next patch and release that                                                                                                                                                                     |
+| PyPI CDN lag fails `artifact.yml`                                       | Wait — the retry loop runs for 10 min; if it still fails, read the logs                                                                                                                                                                                   |
+| An example's `test.py` calls a tool absent from the release environment | Guard optional tools with an availability check and skip gracefully — `full_workflow` step 7 is the pattern                                                                                                                                               |
+| GitHub still shows the old version                                      | The `github-release` job failed — read the Actions log and re-run, or `gh release create vX.Y.Z --latest`                                                                                                                                                 |
+| PyPI has the version but `github-release` or `docker` failed            | Either **Re-run failed jobs** or **Re-run all jobs**: both finish the release (gh-2310). The post-publish jobs run for a version already on PyPI and are idempotent — an existing release is left alone, and the image is built only if its tag is absent |
 
 **A release tag is immutable: a failed release burns its number.** The
 repository's `release tags` ruleset refuses deleting or moving any `v*` tag,

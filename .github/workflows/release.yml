@@ -44,9 +44,17 @@ jobs:
     outputs:
       tag: ${{ steps.r.outputs.tag }}
       sha: ${{ steps.r.outputs.sha }}
-      # "true" only when PyPI already serves this exact version; every job
-      # from verify-ci on is skipped then, so a duplicate run cannot publish
-      # twice or fail on PyPI's "file exists" (gh-2260).
+      # "true" only when PyPI already serves this exact version; verify-ci,
+      # build, the smokes and publish are skipped then, so a duplicate run
+      # cannot publish twice or fail on PyPI's "file exists" (gh-2260).
+      #
+      # It does NOT skip what comes AFTER publish (gh-2310). The same answer
+      # is also what "Re-run all jobs" reads after a release published to
+      # PyPI and then failed at github-release or docker: skipping those two
+      # on it ended the run green with the release or the image missing.
+      # github-release and docker run on it too, and each is idempotent
+      # (the release exists -> nothing to create; the image tag exists ->
+      # nothing to build), so a duplicate run still ships nothing twice.
       published: ${{ steps.pypi.outputs.published }}
     steps:
       - id: r
@@ -332,8 +340,21 @@ jobs:
 
       - uses: pypa/gh-action-pypi-publish@release/v1
 
+  # gh-2310: runs after a publish that succeeded, AND when publish was skipped
+  # only because the version is already on PyPI -- a duplicate run, or
+  # "Re-run all jobs" after a release that published and then failed here.
+  # The skip used to cascade through `needs` and end such a run green with no
+  # GitHub Release. `!cancelled()` is the status function that stops that
+  # cascade, so the condition says which skips are acceptable: only publish's,
+  # and only for a published version. A publish that FAILED, or a smoke that
+  # failed before it, still skips this job.
   github-release:
     needs: [resolve, publish]
+    if: >-
+      ${{ !cancelled() && needs.resolve.result == 'success' &&
+      (needs.publish.result == 'success' ||
+      (needs.publish.result == 'skipped' &&
+      needs.resolve.outputs.published == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -365,18 +386,80 @@ jobs:
              found {print}' CHANGELOG.md > release-notes.md
           cat release-notes.md
 
+      # Idempotent (gh-2310): this job also runs for a version PyPI already
+      # serves, where the first run may have created the release. An existing
+      # release is left exactly as it is -- a re-run must not rewrite notes a
+      # person may have edited. The runs for one tag are serialised by the
+      # workflow's concurrency group, so two never reach this step together;
+      # the second check below only covers a create that lost a race anyway.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          gh release create "${RELEASE_TAG}" \
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::notice::${RELEASE_TAG} already has a GitHub Release; leaving it as it is."
+            exit 0
+          fi
+          if ! gh release create "${RELEASE_TAG}" \
             --title "${RELEASE_TAG}" \
             --latest \
-            --notes-file release-notes.md
+            --notes-file release-notes.md; then
+            if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+              echo "::notice::${RELEASE_TAG} was released by another run while this one tried."
+              exit 0
+            fi
+            exit 1
+          fi
 
+  # gh-2310: is this commit's multi-arch image already in GHCR? `docker` is a
+  # called workflow, which has no steps of its own to ask, so the question is
+  # a job. It answers FALSE on any doubt -- no login, a registry error, a tag
+  # that cannot be read -- because the cost of a wrong "absent" is rebuilding
+  # an image (`imagetools create` overwrites its tags), and the cost of a
+  # wrong "present" is a release with no image. The tag is the one docker.yml
+  # writes, `sha-<commit>`; the commit is the resolved tag's.
+  image-state:
+    name: Is the image already published?
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      packages: read
+    outputs:
+      exists: ${{ steps.probe.outputs.exists }}
+    steps:
+      - uses: docker/login-action@v4.6.0
+        continue-on-error: true
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: probe
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -uo pipefail
+          ref="ghcr.io/${OWNER}/jm-examples-linux:sha-${SHA}"
+          if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            echo "::notice::$ref is already published; the image is not built again."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$ref is not published (or could not be read) -- the image is built."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Runs after a release that exists (gh-2310) unless the image does too. See
+  # `github-release`: `!cancelled()` stops a skipped `publish` cascading here,
+  # and `github-release` succeeding is what says the version is released.
   docker:
-    needs: [resolve, github-release]
+    needs: [resolve, github-release, image-state]
+    if: >-
+      ${{ !cancelled() && needs.github-release.result == 'success' &&
+      needs.image-state.result == 'success' &&
+      needs.image-state.outputs.exists != 'true' }}
     uses: ./.github/workflows/docker.yml
     with:
       # Explicit, because a called workflow otherwise inherits THIS workflow's
