@@ -4,7 +4,7 @@
 # <site>/NAME.sh / NAME.py when NAME is not listed here, so `install-deps`
 # resolves to the installer this site already serves, with no second file.
 # tests/test_aliases_toml_published.py holds every target to a file the
-# built site ships.
+# site-files recipe ships.
 
 [aliases]
 install-deps = "https://just-buildit.github.io/just-makeit/install.sh"

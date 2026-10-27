@@ -2,4 +2,5 @@
     site now ships `aliases.toml` beside `install.sh`, aliasing
     `install-deps` to `install.sh`, which is where jbx's `just-makeit`
     namespace looks first. `make docs` copies it into `site/`, and a test
-    reads the built site to hold every alias to a file it ships.
+    runs the shared `site-files` recipe and holds every alias to a file it
+    ships.
