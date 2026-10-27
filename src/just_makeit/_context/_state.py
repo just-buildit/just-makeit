@@ -13,6 +13,7 @@ from .. import _config as C
 from .._report import Refusal
 from .. import _csym as CSYM
 from .._docstring import (
+    enum_param_desc,
     struct_member_doc,
     render_numpy_doc,
     render_runtime_doc,
@@ -1573,7 +1574,7 @@ def _build_no_state_init_ctx(
         pyi_doc_sections.append(
             "\n".join(
                 f'    {sname} : str, default "{sdflt}"\n'
-                f"        One of: {', '.join(choices)}."
+                f"        {enum_param_desc(choices)}"
                 for sname, choices, sdflt in str_enum_ip
             )
         )

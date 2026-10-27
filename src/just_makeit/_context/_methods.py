@@ -36,6 +36,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    EnumAnn,
     method_doc,
     name_summary,
     property_doc,
@@ -112,7 +113,10 @@ def _pyi_ndarray(ctype: str) -> str:
 
 
 def _stub_params(
-    arg_type: str, params: list[dict], variable_output: bool = False
+    arg_type: str,
+    params: list[dict],
+    variable_output: bool = False,
+    enums: "dict | None" = None,
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """The Python-facing arguments of one method, for signature and prose.
 
@@ -196,10 +200,12 @@ def _stub_params(
             # binding now rejects, which is the manifest-contradicts-surface
             # shape the issue is about. The default is a choice, not a C
             # literal, so it is quoted.
+            # gh-2379: the annotation carries the choices, so the prose is
+            # theirs and not the header's description of the C int.
             fields.append(
                 (
                     p["name"],
-                    "str",
+                    EnumAnn((enums or {}).get(p["enum"]) or []),
                     f" = {p['default']!r}" if p.get("default") else "",
                 )
             )
@@ -2640,7 +2646,7 @@ def make_methods_ctx(
         # that. A declared param never reaches it: whether it should, or be
         # refused, is gh-2021's.
         _sig_parts, _doc_params = _stub_params(
-            arg_type, [] if batch else params, variable_output or batch
+            arg_type, [] if batch else params, variable_output or batch, enums
         )
         # ...and the return annotation with it, for the same reason: it is the
         # type line of the `Returns` section on both faces.

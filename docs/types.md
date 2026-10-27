@@ -708,6 +708,15 @@ A `default` is the choice **string**, not the C index — an int default is
 refused at generation time rather than failing on the first call that omits
 the argument.
 
+**The docstring lists the choices, not the header's prose.** An enum-backed
+parameter is documented as `One of "none", "rs", "conv".` on
+every face that documents a parameter — a method, a module function, a
+handle method, and an object's or handle's constructor — in the runtime
+`__doc__` and the `.pyi` alike. The header's `@param` for that argument
+describes the C `int` (`0 none, 1 rs`), which is the one thing a Python
+caller must not pass, so it is not used. To say more about the argument,
+give it a manifest `doc`: it is shown first, with the choices after it.
+
 ______________________________________________________________________
 
 ## Sacred vs glue files

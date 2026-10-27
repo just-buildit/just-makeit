@@ -3246,6 +3246,10 @@ def _numpy_sections(
             authored = authored_doc_lines((param_docs or {}).get(pname, ""))
             if authored:
                 out += [f"    {ln}" if ln else "" for ln in authored]
+                # gh-2379: an enum-backed parameter's choices follow the
+                # author's text, as they do on an init parameter.
+                if isinstance(ann, EnumAnn) and ann.choices:
+                    out += ["", f"    {enum_param_desc(ann.choices)}"]
                 continue
             # gh-1042: precedence is header > jm's per-name default >
             # the generic fallback. The middle rung exists because `count`
@@ -3401,6 +3405,55 @@ def render_runtime_doc(
     return lines
 
 
+class EnumAnn(str):
+    """The annotation ``str`` of an enum-backed parameter, with its choices.
+
+    gh-2379. An enum-backed parameter is a C ``int`` and, in Python, one of a
+    set of strings. The header's ``@param`` prose describes the C ``int`` --
+    ``0 little, 1 big.`` -- so a docstring that repeated it told the caller
+    to pass a number the binding refuses. Every face already computes the
+    parameter's annotation (``str``); carrying the choices on that same
+    object lets the ONE place that picks a description,
+    `render_numpy_method_doc`, document the choices instead, without a
+    parallel argument threaded through every renderer.
+
+    It is a ``str`` equal to ``"str"``, so a signature, a comparison or a
+    format that reads it as an annotation is unchanged.
+
+    Examples
+    --------
+    >>> a = EnumAnn(["le", "be"])
+    >>> a, a == "str", a.choices
+    ('str', True, ('le', 'be'))
+    """
+
+    choices: "tuple[str, ...]"
+
+    def __new__(cls, choices: "Collection[str]") -> "EnumAnn":
+        obj = super().__new__(cls, "str")
+        obj.choices = tuple(choices)
+        return obj
+
+
+def enum_param_desc(choices: "Collection[str]") -> str:
+    """What documents an enum-backed parameter: the strings it takes.
+
+    The header's ``@param`` prose is not used (gh-2379): it describes the C
+    ``int`` the choice is looked up to. The one sentence is the one the
+    handle face has said since gh-2228.
+
+    Examples
+    --------
+    >>> enum_param_desc(["le", "be"])
+    'One of ``"le"``, ``"be"``.'
+    >>> enum_param_desc([])
+    ''
+    """
+    if not choices:
+        return ""
+    return "One of " + ", ".join(f'``"{c}"``' for c in choices) + "."
+
+
 def render_numpy_method_doc(
     block: DoxyBlock,
     py_params: list[tuple[str, str]],
@@ -3486,6 +3539,10 @@ def render_numpy_method_doc(
                 desc_by_name[n] = d
     for n in py_names:
         desc_by_name.setdefault(n, "")
+    # gh-2379: an enum-backed parameter is documented by its choices.
+    for n, ann in py_params:
+        if isinstance(ann, EnumAnn) and ann.choices:
+            desc_by_name[n] = enum_param_desc(ann.choices)
     return (
         block.brief,
         group_paragraphs(block.body),
@@ -3659,7 +3716,9 @@ def _row_docstring(
         from ._handle import _backing_doc_blocks, method_doc_lines
 
         blocks = _backing_doc_blocks(cfg, owner, root)
-        return "\n".join(method_doc_lines(row, blocks))
+        from ._config import enums as _enums
+
+        return "\n".join(method_doc_lines(row, blocks, _enums(cfg)))
     if owner_kind == "handle" and table == ("factories",):
         from ._handle import _factory_doc_lines
 
