@@ -139,7 +139,7 @@ def is_borrow(m: dict) -> bool:
     return bool(m.get("borrow"))
 
 
-def lends(cfg: dict, component: str) -> bool:
+def lends(cfg: dict, component: str) -> "bool | str":
     """True when *component* hands out views into memory it owns (gh-2187).
 
     Three rows do, and each pins ``self`` as the view's base: a
@@ -160,6 +160,17 @@ def lends(cfg: dict, component: str) -> bool:
     True
     >>> lends({"o": {"state": [{"name": "g", "type": "double"}]}}, "o")
     False
+
+    An object that publishes its pointer as a capsule lends too (gh-2346):
+    a consumer that keeps it (``retain``) keeps this object alive, not its
+    state, so a ``destroy()`` that freed the state left the consumer reading
+    freed memory. It answers ``"capsule"`` -- truthy, so every caller defers
+    the free exactly as for a view -- and the teardown's prose reads the
+    answer to say which it is.
+
+    >>> lends({"o": {"properties": [{"name": "_capsule", "type": "capsule",
+    ...                              "capsule": "p.o"}]}}, "o")
+    'capsule'
     """
     return lends_from(
         C.methods(cfg, component),
@@ -172,7 +183,7 @@ def lends_from(
     methods: "list[dict]",
     properties: "list[dict]",
     state_vars: "list[tuple[str, str, str]]",
-) -> bool:
+) -> "bool | str":
     """`lends`, from the declarations a render actually holds.
 
     Creation renders the object before its state reaches the manifest --
@@ -196,7 +207,36 @@ def lends_from(
         return True
     if any(p.get("buf_field") for p in properties):
         return True
-    return any(parse_array_type(ct) for _, ct, _ in state_vars)
+    if any(parse_array_type(ct) for _, ct, _ in state_vars):
+        return True
+    # gh-2346: a capsule lends the pointer itself. Last, so an object that
+    # also lends views keeps answering True (and its prose) byte for byte.
+    if any(publishes_capsule(p) for p in properties):
+        return "capsule"
+    return False
+
+
+def publishes_capsule(p: dict) -> bool:
+    """Whether property *p* hands out its object's pointer as a capsule.
+
+    The ``capsule`` key decides it, not the ``type``: the getter renders
+    ``jm_capsule_lend`` for any property carrying the key
+    (`_context._methods`), so a ``type = "capsule"``, a pointer type and no
+    type at all all lend. One test for both, so the getter that lends and the
+    teardown that must defer cannot disagree -- keyed on the type, the other
+    two spellings freed in ``destroy()`` under a kept capsule.
+
+    >>> publishes_capsule({"name": "_capsule", "type": "capsule",
+    ...                    "capsule": "p.o"})
+    True
+    >>> publishes_capsule({"name": "_capsule", "capsule": "p.o"})
+    True
+    >>> publishes_capsule({"name": "t", "type": "t_t *", "capsule": "p.t"})
+    True
+    >>> publishes_capsule({"name": "g", "type": "double"})
+    False
+    """
+    return bool(p.get("capsule"))
 
 
 def is_writeable(m: dict) -> bool:
@@ -362,8 +402,9 @@ def release_resolve_c(m: dict, *, kwlist: list[str]) -> str:
     means (a ring's is a no-op). Testing the parsed local instead made an
     explicit 0 take the outstanding count: ``peek(64); consume(0)``
     released 64 samples nobody had processed. A sentinel default cannot
-    stand in for presence either: ``K`` does not range-check, so
-    ``consume(-1)`` would alias it. So the count is looked for where the
+    stand in for presence either: every value of the count's type is one a
+    caller may pass (and until gh-2220 ``K`` did not range-check, so
+    ``consume(-1)`` aliased ``SIZE_MAX``). So the count is looked for where the
     parse found it: positionally at its index in ``kwlist`` -- the parse
     block's own ``_kwlist``, in its order, handed over by the caller that
     built it -- or by name in ``kwds``.

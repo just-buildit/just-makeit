@@ -345,7 +345,7 @@ class TestGeneratedBinding:
 
     def test_array_param_is_parsed_as_an_object_not_a_double(self, ext):
         # was: "d|K" -- the array param parsed as a scalar double.
-        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "OK"' in ext
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "OO"' in ext
         assert "PyObject *rx_obj = NULL;" in ext
 
     def test_defaulted_param_stays_optional(self, tmp_path):
@@ -355,7 +355,7 @@ class TestGeneratedBinding:
             [("rx", "float _Complex[]"), ("t0", "size_t", "0")],
         )
         ext = (dest / "native/src/ber/ber_ext_meter.c").read_text("utf-8")
-        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "O|K"' in ext
+        assert 'PyArg_ParseTupleAndKeywords(args, kwds, "O|O"' in ext
 
     def test_array_param_is_converted_and_sized(self, ext):
         assert "jm_array_arg(rx_obj, NPY_COMPLEX64," in ext

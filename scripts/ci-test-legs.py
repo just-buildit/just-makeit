@@ -9,9 +9,12 @@ GitHub does and keeps the legs this run owes:
 
 ``pull_request``
     Every leg, except that an OS named in ``TRIM`` runs only its floor and
-    its newest Python. macOS bounded PR throughput: its runner pool is a
-    quarter of the org's, and its five legs were ~100 of a run's ~340
-    job-minutes.
+    its newest Python, plus the middle one if the OS is also named in
+    ``MIDDLE``. macOS bounded PR throughput: its runner pool is a quarter
+    of the org's, and its five legs were ~100 of a run's ~340 job-minutes.
+    The free plan's ~20 concurrent jobs then bounded it for the Linux legs
+    too (queue waits averaged ~400s on every runner label), so they are
+    trimmed the same way.
 a ``push`` whose tree its PR already tested (``TESTED=true``)
     Exactly the legs that PR trimmed, and nothing else. gh-1801 lets such a
     push skip what its PR ran; it may not skip what its PR did not run, or
@@ -33,6 +36,10 @@ run exactly what the workflow runs:
     The declaration, JSON.
 ``TRIM``
     Space-separated ``os`` values a PR runs at the edges only.
+``MIDDLE``
+    Space-separated ``os`` values (a subset of ``TRIM``) that also keep
+    the middle released Python: the one at index ``len // 2`` of that OS's
+    sorted released Pythons, so it moves with the matrix.
 ``EVENT``
     ``github.event_name``.
 ``TESTED``
@@ -51,12 +58,14 @@ Examples
 [('linux', '3.9'), ('linux', '3.10'), ('linux', '3.11'), ('mac', '3.10'), \
 ('mac', '3.11')]
 >>> m["python-version"].append("3.12")
->>> pairs(owed(m, ["mac"], "pull_request", ""))
+>>> pairs(owed(m, ["mac"], [], "pull_request", ""))
 [('linux', '3.9'), ('linux', '3.10'), ('linux', '3.11'), ('linux', '3.12'), \
 ('mac', '3.10'), ('mac', '3.12')]
->>> pairs(owed(m, ["mac"], "push", "true"))
+>>> pairs(owed(m, ["mac"], [], "push", "true"))
 [('mac', '3.11')]
->>> len(owed(m, ["mac"], "schedule", "")) == len(expand(m))
+>>> pairs(owed(m, ["linux"], ["linux"], "pull_request", ""))[:3]
+[('linux', '3.9'), ('linux', '3.11'), ('linux', '3.12')]
+>>> len(owed(m, ["mac"], [], "schedule", "")) == len(expand(m))
 True
 """
 
@@ -124,12 +133,16 @@ def expand(matrix: "dict[str, Any]") -> "List[Leg]":
     return legs
 
 
-def trimmed(legs: "List[Leg]", trim: "List[str]") -> "List[Leg]":
+def trimmed(
+    legs: "List[Leg]", trim: "List[str]", middle: "List[str]"
+) -> "List[Leg]":
     """The legs a PR skips: each *trim* OS's Pythons between its edges.
 
     The edges are that OS's oldest and newest released Python among
     *legs*, so they move with the matrix: promoting a Python makes it the
-    new newest, and raising the floor moves the oldest. A ``prerelease``
+    new newest, and raising the floor moves the oldest. An OS also in
+    *middle* keeps the Python at index ``len // 2`` of its sorted released
+    Pythons as well. A ``prerelease``
     leg is never trimmed and never an edge.
     """
     out = []
@@ -139,16 +152,23 @@ def trimmed(legs: "List[Leg]", trim: "List[str]") -> "List[Leg]":
             continue
         edges = {_version(min(mine, key=_version))}
         edges.add(_version(max(mine, key=_version)))
+        if name in middle:
+            ranked = sorted(mine, key=_version)
+            edges.add(_version(ranked[len(ranked) // 2]))
         out += [x for x in mine if _version(x) not in edges]
     return out
 
 
 def owed(
-    matrix: "dict[str, Any]", trim: "List[str]", event: str, tested: str
+    matrix: "dict[str, Any]",
+    trim: "List[str]",
+    middle: "List[str]",
+    event: str,
+    tested: str,
 ) -> "List[Leg]":
     """The legs a run on *event* owes; see the module docstring."""
     legs = expand(matrix)
-    skip = trimmed(legs, trim)
+    skip = trimmed(legs, trim, middle)
     if tested == "true":
         return skip
     if event == "pull_request":
@@ -161,6 +181,7 @@ def main() -> int:
     legs = owed(
         json.loads(os.environ["MATRIX"]),
         os.environ.get("TRIM", "").split(),
+        os.environ.get("MIDDLE", "").split(),
         os.environ.get("EVENT", ""),
         os.environ.get("TESTED", ""),
     )

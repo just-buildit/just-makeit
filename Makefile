@@ -319,6 +319,7 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh1219_impl_marker_wraps.py \
                     tests/test_gh1448_token_survives_clang_format.py \
                     tests/test_gh1734_array_arg_clang_format.py \
+                    tests/test_gh2212_pmd_rows_clang_format.py \
                     tests/test_gh1452_consumer_links_installed_tree.py \
                     tests/test_gh1572_combined_lib_links_extra.py \
                     tests/test_gh1573_pc_requires_private.py \
@@ -505,11 +506,14 @@ DOCS_PREPARE = $(PYTHON) scripts/copy_examples.py
 # only existed in CI. Here it is in the build, so `make docs` and `make
 # docs-serve` produce the real site.
 #
+# `aliases.toml` rides the same line of reasoning (`jbx just-makeit:NAME`
+# fetches it first); both copies are the `site-files` recipe (local.mk).
+#
 # It has to run AFTER the build rather than in DOCS_PREPARE, because the
 # build's `--clean` wipes `site/` first.
 define DOCS_BUILD_CMD
 $(ZENSICAL) build --clean --strict
-cp install.sh site/install.sh
+$(MAKE) -s site-files
 endef
 
 # A post-gate, not DOCS_CHECK_CMD: the docs tests run after the strict build,

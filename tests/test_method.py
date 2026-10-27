@@ -575,7 +575,7 @@ class TestMethodOutKwarg:
         assert "out:" in pyi and "| None = None" in pyi
         # gh-607: max_out() mirrors the kernel's own count param (n_in for
         # an array-arg method).
-        assert "def execute_cf32_max_out(self, n_in: int) -> int:" in pyi
+        assert "def execute_cf32_max_out(self, n_in: int, /) -> int:" in pyi
 
     def test_multi_output_stays_positional(self, project):
         ext = self._add(project, arg="void", multi=["float _Complex"])
@@ -693,7 +693,7 @@ class TestVariableOutputSingleArrayParam:
         assert "out:" in pyi and "| None = None" in pyi
         # gh-607: max_out() mirrors the kernel's own count param — the
         # array's own `_len` name for a single-array-param method.
-        assert "def steps_max_out(self, x_len: int) -> int:" in pyi
+        assert "def steps_max_out(self, x_len: int, /) -> int:" in pyi
 
     def test_returned_view_pinned_to_callers_array(self, project):
         ext = self._ext(project)
@@ -1043,7 +1043,9 @@ class TestMethodFixedMultiOutput:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyTuple_Pack" in ext
+        # gh-2250: `N` hands each new reference to the tuple; PyTuple_Pack
+        # took them with `O` and leaked them.
+        assert 'Py_BuildValue("(NN)"' in ext
 
     def test_ext_c_stack_alloc_out(self, project):
         method_run(
@@ -1113,7 +1115,9 @@ class TestMethodFixedMultiOutput:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyTuple_Pack" in ext
+        # gh-2250: `N` hands each new reference to the tuple; PyTuple_Pack
+        # took them with `O` and leaked them.
+        assert 'Py_BuildValue("(NN)"' in ext
 
     def test_multiple_extra_outputs(self, project):
         method_run(
@@ -1134,7 +1138,7 @@ class TestMethodFixedMultiOutput:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        assert "PyTuple_Pack(3," in ext
+        assert 'Py_BuildValue("(NNN)"' in ext
 
 
 # ---------------------------------------------------------------------------
@@ -1335,8 +1339,9 @@ class TestMethodWithParams:
         ext = (project / "native" / "src" / "nco" / "nco_ext.c").read_text(
             encoding="utf-8"
         )
-        # float -> "f", int32_t -> "l" (long intermediate)
-        assert '"fl"' in ext
+        # float -> "f", int32_t -> "L" (a long long intermediate, the
+        # same width on every platform; gh-2269)
+        assert '"fL"' in ext
 
     def test_ext_c_meth_varargs(self, project):
         method_run(
@@ -2133,7 +2138,7 @@ class TestMethodSingleRecord:
         # indexing type-check exactly as they did before.
         pyi = (self._scaffold(tmp_path) / "src/p/tm.pyi").read_text("utf-8")
         assert (
-            "def analyze(self, x: npt.NDArray[np.complex64])"
+            "def analyze(self, x: npt.NDArray[np.complex64], /)"
             " -> ToneMetrics:" in pyi
         )
         assert "class ToneMetrics(tuple[float, float, int]):" in pyi
@@ -2440,7 +2445,10 @@ class TestMethodSingleRecord:
         )  # hoisted above the block
         assert "tone_metrics_t _r;" in ext  # declared outside the block
         assert "Py_BEGIN_ALLOW_THREADS" in ext
-        assert "_r = tm_analyze(self->handle," in ext
+        # gh-2272: the state is read before the release, so a teardown
+        # that NULLs self->handle to refuse new calls cannot reach it.
+        assert "void *_jm_h = self->handle;" in ext
+        assert "_r = tm_analyze(_jm_h," in ext
         assert "Py_END_ALLOW_THREADS" in ext
         # the input's final Py_DECREF stays under the GIL, after the released
         # block (rindex skips the earlier error-path DECREF).

@@ -126,6 +126,15 @@ class TestEveryKeyRoundTrips:
         "error_message": "alpha must lie in (0, 1]",
     }
 
+    # gh-2347: a json property's stub annotation. Its own shape: py_type is
+    # refused on every other kind.
+    JSON_PROP = {
+        "name": "annotations",
+        "type": "json",
+        "doc": "The capture's annotations.",
+        "py_type": "list[dict[str, Any]]",
+    }
+
     SHAPES = {
         "enum": ENUM_PROP,
         "buf_field": BUF_PROP,
@@ -134,6 +143,7 @@ class TestEveryKeyRoundTrips:
         "capsule": CAPSULE_PROP,
         "scalar": SCALAR_PROP,
         "refusing": REFUSING_PROP,
+        "json": JSON_PROP,
     }
 
     @pytest.mark.parametrize("prop", list(SHAPES.values()), ids=list(SHAPES))

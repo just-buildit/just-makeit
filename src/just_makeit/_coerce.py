@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 
+from ._inflight import INFLIGHT_C
 from ._keys import INIT_PARAM_FIELDS, SHAPE_KEYS
 
 # The C function parameter type a path arg presents to user C code: the callee
@@ -632,6 +633,49 @@ jm_array_arg(PyObject *obj, int typenum, int requirements, const char *name)
 #endif /* JM_ARRAY_ARG_DEFINED */
 """
 
+#: The helper every lent capsule is made by (gh-2328), embedded once per
+#: binding translation unit through `_coerce.TU_HELPERS_C`.
+CAPSULE_LEND_C = """\
+#ifndef JM_CAPSULE_LEND_DEFINED
+#define JM_CAPSULE_LEND_DEFINED
+/* gh-2328: a lent capsule's context is the object that owns its pointer.
+ * The destructor releases that reference and nothing else -- the pointer is
+ * the owner's to free -- so whoever keeps the capsule keeps the owner. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
+static void
+jm_capsule_lend_release(PyObject *cap)
+{
+    Py_XDECREF((PyObject *)PyCapsule_GetContext(cap));
+}
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
+static PyObject *
+jm_capsule_lend(void *ptr, const char *name, PyObject *owner)
+{
+    PyObject *cap = PyCapsule_New(ptr, name, jm_capsule_lend_release);
+    if (!cap)
+        return NULL;
+    Py_INCREF(owner);
+    if (PyCapsule_SetContext(cap, owner) < 0) {
+        Py_DECREF(owner);
+        Py_DECREF(cap);
+        return NULL;
+    }
+    return cap;
+}
+#endif /* JM_CAPSULE_LEND_DEFINED */
+"""
+
+#: Everything a binding translation unit is handed once, at its head: the
+#: array-argument converter, the in-flight count a GIL-free call and the
+#: teardown share (gh-2272), and the lent capsule that keeps its owner alive
+#: (gh-2328). Every binding kind embeds THIS, so no kind can
+#: be handed one and not the other.
+TU_HELPERS_C = ARRAY_ARG_C + "\n" + INFLIGHT_C + "\n" + CAPSULE_LEND_C
+
 
 def array_arg(
     obj_var: str, npy_enum: str, flags: str, name: str, hint: str = ""
@@ -1038,7 +1082,10 @@ def input_array_acq(
         )
     if dtype_fn:
         descr = f"_{arr_var.removesuffix('_arr')}_descr"
-        label = arr_var.removesuffix("_arr")
+        # gh-2271: the name the caller passes, as the converting path
+        # below uses -- a method's input is the local `in_arr` while its
+        # keyword is `x`, and a refusal saying "in" names no argument.
+        label = label or label_of(arr_var)
         # The input's dtype must EQUAL the record's, not merely convert to
         # it. Measured: `PyArray_FromAny` accepts a same-itemsize structured
         # dtype whose fields are declared in the other order and hands C the
@@ -1095,6 +1142,7 @@ def input_array_acq(
             obj_var=obj_var,
             arr_var=arr_var,
             fail=fail,
+            label=label or label_of(arr_var),
         )
     return (
         f"    PyArrayObject *{arr_var} =\n"
@@ -1134,7 +1182,13 @@ def _strict_rank_and_contiguity(
 
 
 def _strict_acq(
-    *, npy_enum: str, expect: str, obj_var: str, arr_var: str, fail: str
+    *,
+    npy_enum: str,
+    expect: str,
+    obj_var: str,
+    arr_var: str,
+    fail: str,
+    label: str = "",
 ) -> str:
     """Acquire a scalar-element input array WITHOUT converting it (gh-1426 B).
 
@@ -1166,8 +1220,12 @@ def _strict_acq(
     True
     >>> "complex64" in c                 # the refusal names what it wanted
     True
+    >>> '"x must be an ndarray' in _strict_acq(
+    ...     npy_enum="NPY_FLOAT", expect="float32", obj_var="in_obj",
+    ...     arr_var="in_arr", fail="return NULL;", label="x")
+    True
     """
-    label = arr_var.removesuffix("_arr")
+    label = label or label_of(arr_var)
     return (
         f"    if (!PyArray_Check({obj_var})\n"
         f"        || PyArray_TYPE((PyArrayObject *){obj_var})"
@@ -1500,3 +1558,80 @@ RETURNED_COUNT_GUARD_RE = re.compile(
 RETURNED_COUNT_BLOCK_RE = re.compile(
     RETURNED_COUNT_GUARD_RE.pattern + r"[^{}]*\{[^{}]*\}"
 )
+
+
+def consumed_guard_c(
+    consumed: str,
+    left: str,
+    fn: str,
+    who: str,
+    release: str = "",
+    *,
+    indent: str = "    ",
+) -> str:
+    """Refuse a CONSUMED count that cannot advance the input (gh-2204).
+
+    A list-of-records method declaring ``consumed_fn`` re-offers its input
+    block until none is left: after each call it asks *fn* how much the
+    call took and advances by that. Two answers cannot advance it, and both
+    raise ``RuntimeError`` -- the C broke its side of the contract, as for
+    :func:`returned_count_c`:
+
+    - ``0`` with input left. The next call would be offered the same input
+      and, a kernel being deterministic, take none of it again: a loop that
+      never ends. Raised instead of spun.
+    - more than *left*. The remainder would wrap below zero and the next
+      call would be handed memory past the input's end.
+
+    A call offered nothing (an empty input) taking nothing is the one
+    legitimate zero. *consumed* and *left* are ``size_t`` locals the site
+    holds; *release* runs before ``return NULL``.
+
+    Examples
+    --------
+    >>> print(consumed_guard_c("_consumed", "n_in", "h_used", "H.push",
+    ...                        "Py_DECREF(lst);"))
+        if (_consumed > n_in || (_consumed == 0 && n_in > 0)) {
+            Py_DECREF(lst);
+            PyErr_Format(PyExc_RuntimeError,
+                "H.push: h_used() says the last call took %zu of the %zu "
+                "input elements left%s",
+                _consumed, n_in,
+                _consumed ? ", more than it was given"
+                          : ", so it made no progress and the rest can "
+                            "never be offered");
+            return NULL;
+        }
+    <BLANKLINE>
+    >>> bool(CONSUMED_GUARD_RE.search(consumed_guard_c("_consumed", "x_len",
+    ...                                                "f", "F.g")))
+    True
+    """
+    i = indent
+    rel = f"{i}    {release.strip()}\n" if release.strip() else ""
+    return (
+        f"{i}if ({consumed} > {left} || ({consumed} == 0 && {left} > 0)) {{\n"
+        f"{rel}"
+        f"{i}    PyErr_Format(PyExc_RuntimeError,\n"
+        f'{i}        "{who}: {fn}() says the last call took %zu of the %zu "\n'
+        f'{i}        "input elements left%s",\n'
+        f"{i}        {consumed}, {left},\n"
+        f'{i}        {consumed} ? ", more than it was given"\n'
+        f'{i}                  : ", so it made no progress and the rest can "\n'
+        f'{i}                    "never be offered");\n'
+        f"{i}    return NULL;\n"
+        f"{i}}}\n"
+    )
+
+
+#: The opening of the guard :func:`consumed_guard_c` emits over the local the
+#: list-of-records loop names ``_consumed``: what says a binding re-offers its
+#: input (``_docsync``'s feature marker). Code, not text, so a formatter's
+#: layout does not hide it.
+CONSUMED_GUARD_RE = re.compile(r"\bif\s*\(\s*_consumed\s*>")
+
+#: The whole guard block, for ``_docsync`` to remove before it asks whether a
+#: wrapper raises: the raise is jm's guard, not a result shape the manifest
+#: declared. Its condition has parentheses and no brace; its body holds only
+#: statements.
+CONSUMED_BLOCK_RE = re.compile(CONSUMED_GUARD_RE.pattern + r"[^{}]*\{[^{}]*\}")

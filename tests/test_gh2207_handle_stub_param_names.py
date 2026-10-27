@@ -37,14 +37,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _handle  # noqa: E402
 
 #: Argument row kinds, by what `_emit_method` dispatches on: an array, the
-#: caller's writable buffer, and a scalar with and without a default. Names
-#: are assigned per position, and none is a name jm ever hard-coded.
+#: caller's writable buffer, a scalar with and without a default, an enum
+#: choice (gh-2228) and a `string` (gh-2211 review). Names are assigned per
+#: position, and none is a name jm ever hard-coded.
 _ROWS = {
     "array": {"type": "float[]"},
     "out": {"type": "float[]", "writable": True},
     "scalar": {"type": "double"},
     "default": {"type": "float", "default": "1.0f"},
+    "choice": {"type": "int", "enum": "zqmode"},
+    "text": {"type": "string"},
 }
+#: The `[[enum]]` a "choice" row names.
+_ENUMS = [{"name": "zqmode", "values": ["zqlo", "zqhi"]}]
 _NAMES = ("zqa", "zqb", "zqc")
 _RETURNS = (None, "int", "float[]", "bytes")
 
@@ -59,13 +64,12 @@ _BASE = {
 
 
 def _methods():
-    """Every method the keys form, but a required scalar after a defaulted
+    """Every method the keys form, but a required row after a defaulted
     one, which no Python signature can spell."""
     for n in range(len(_NAMES) + 1):
         for kinds in itertools.product(_ROWS, repeat=n):
-            if (
-                "default" in kinds
-                and "scalar" in kinds[kinds.index("default") :]
+            if "default" in kinds and {"scalar", "choice", "text"} & set(
+                kinds[kinds.index("default") :]
             ):
                 continue
             args = [
@@ -98,6 +102,7 @@ def cases():
     for ident, m in _methods():
         cfg = {
             "project": {"name": "p"},
+            "enum": _ENUMS,
             "module": {"h": {**_BASE, "methods": [m]}},
         }
         try:
@@ -118,7 +123,8 @@ def cases():
             for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef) and node.name == "op"
         )
-        names = [a.arg for a in fn.args.args[1:]]
+        # gh-2212: a positional-only stub holds its parameters before `/`.
+        names = [a.arg for a in fn.args.posonlyargs + fn.args.args][1:]
         out.append((ident, m, body, names))
     return out
 
@@ -169,8 +175,9 @@ def _misnamed(m: dict, names: "list[str]") -> bool:
     declared = [a["name"] for a in m["args"]]
     if _has_array_arg(m):
         return sorted(names) != sorted(declared)
-    # A count-in shape takes one count, `n` when none is declared.
-    return bool(declared) and not set(names) <= set(declared)
+    # Every other shape takes the rows as declared -- a count-in shape its
+    # count and then the rest (gh-2211) -- and `n` when none is declared.
+    return bool(declared) and names != declared
 
 
 def test_the_stub_names_only_what_the_manifest_declares(cases):

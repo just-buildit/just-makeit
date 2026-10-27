@@ -71,12 +71,9 @@ METHODS: "list[tuple[str, str, bool]]" = [
     # The same two routes without the key: an empty array, and a raise.
     ("plain", _VO, False),
     ("wait", _BORROW, False),
-    # The key where no route reads it -- a 1:1 batch is dispatched ahead of
-    # the variable-output route, and a scalar has no empty result -- so no
-    # face may promise a None the binding never returns. Accepted today;
-    # gh-2202 refuses it, and these two then move to a refusal test.
-    ("block", f"{_VO} --batch --none-on-empty", False),
-    ("level", "--arg-type float --return-type float --none-on-empty", False),
+    # The key where no route reads it -- a scalar, a 1:1 batch -- is
+    # refused now (gh-2202, gh-2261): tests/test_gh2250_shape_bound_method_
+    # keys.py holds that, over every shape.
 ]
 
 _EMPTY = re.compile(r"if\s*\(\s*!\s*(?:n_out|_p)\s*\)\s*")
@@ -84,13 +81,6 @@ _EMPTY = re.compile(r"if\s*\(\s*!\s*(?:n_out|_p)\s*\)\s*")
 # identifier right before `, METH_`, past whatever cast precedes it.
 _ROW = re.compile(r'\{"(\w+)",[^"{}]*?\b(\w+),\s*METH_')
 _RETURNS = re.compile(r"^Returns\n-+\n(.*)\n((?:    .*(?:\n|$))*)", re.M)
-
-
-#: gh-2200: `--batch --variable-output` declares a kernel its own scaffold
-#: stub contradicts, so a project carrying it does not compile. The text
-#: faces keep it -- it is the shape `empty_is_none`'s batch term exists for
-#: -- and the project that is BUILT leaves it out.
-_BUILDS = [case for case in METHODS if case[0] != "block"]
 
 
 def _scaffold(
@@ -364,7 +354,8 @@ def _probe(pyi: str) -> str:
             "| None"
         ):
             continue
-        args = fn.args.args[1:]
+        # gh-2212: a positional-only parameter sits before `/`.
+        args = (fn.args.posonlyargs + fn.args.args)[1:]
         required = args[: len(args) - len(fn.args.defaults)]
         call = ", ".join(value(ast.unparse(a.annotation)) for a in required)
         lines += [
@@ -377,7 +368,7 @@ def _probe(pyi: str) -> str:
         if out is None:
             continue
         mo = fns[f"{name}_max_out"]
-        mo_arg = "4" if len(mo.args.args) > 1 else ""
+        mo_arg = "4" if len(mo.args.posonlyargs + mo.args.args) > 1 else ""
         elem = re.search(r"NDArray\[(np\.\w+)\]", ast.unparse(out.annotation))
         # A scaffold `_max_out` answers 0, and an input-sized method then
         # needs the input's length (gh-421): room for both.
@@ -398,7 +389,7 @@ class TestTheAnnotationIsTrue:
     """Text cannot answer this: does the compiled binding return None?"""
 
     def test_every_optional_method_returns_none_when_empty(self, tmp_path):
-        _scaffold(tmp_path / "t", None, _BUILDS)
+        _scaffold(tmp_path / "t", None)
         root = tmp_path / "t" / "p"
         # An all-scalar-params method sizes its output from `_max_out` alone
         # and refuses a bound of 0, so that one bound is implemented -- the

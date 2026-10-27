@@ -65,6 +65,8 @@ OBJECT_KEYS = frozenset(
         # standalone object, which is the asymmetry this ends.
         "fragment",
         "process_global",
+        # gh-2316: the object has no Python benchmark; the C one stays.
+        "no_python_bench",
         "serializable",
         "streamable",
         "stream_block_default",
@@ -269,8 +271,14 @@ METHOD_KEYS = frozenset(
         # gh-805 §D: trust `max_out` as a true bound; drop the
         # `max(max_out, n)` clamp without changing the kernel signature.
         "exact_max_out",
+        # gh-2230: an `out=` smaller than `max_out()` is accepted, for a
+        # backpressure kernel that clamps and reports what it took.
+        "short_out",
         "count_default",
         "count_name",
+        # gh-2233: a void-input variable_output method takes NO count: its
+        # result is sized by the object alone, through `max_out(state)`.
+        "no_count",
         "batch",
         "nogil",
         # result shape
@@ -288,6 +296,9 @@ METHOD_KEYS = frozenset(
         "record_module",
         "record_doc",
         "record_dtype",
+        # gh-2204: a list-of-records kernel that stops at a full buffer
+        # says how much input it took; the binding re-offers the rest.
+        "consumed_fn",
         # gh-1312: the method returns a BORROWED view -- a numpy array over
         # memory the C state owns, pinned to `self`. The kernel returns a
         # pointer instead of filling one, which is the shape a fixed-mapping
@@ -372,6 +383,76 @@ METHOD_NON_SIGNATURE_KEYS = frozenset(
 #: Keys whose value must match for two method entries to be the same call.
 METHOD_SIGNATURE_KEYS = METHOD_KEYS - METHOD_NON_SIGNATURE_KEYS
 
+#: The keys a ``batch = true`` method entry may carry: the ones its binding,
+#: prototype, stub and benchmark read (gh-2261).
+#:
+#: A batch method is a 1:1-rate block transform, ``void
+#: <stem>_<m>(state, const T *in, size_t n, R *out)``, and it is rendered
+#: ahead of every other result shape. So any other shape key on its row --
+#: a param, a capacity, a divisor, a status, a record, ``variable_output``
+#: itself -- was stored and then read by nobody: five issues (gh-1991,
+#: gh-2021, gh-2200, gh-2202, gh-2261) found one key each. This is the one
+#: answer to all of them, an ALLOW-list, so a method key added later is
+#: refused on a batch row until someone decides the batch binding reads it.
+#: ``_method.batch_why_not`` asks it, from ``_method.run``, which both
+#: ``jm method`` and ``apply``'s replay call; and
+#: ``tests/test_gh2261_batch_keys.py`` requires every other key in
+#: ``METHOD_KEYS`` to be refused there.
+#:
+#: ``strict`` reads the input block and ``count_default`` / ``count_name``
+#: the count of an input-less one; the rest name or document the method.
+BATCH_METHOD_KEYS = frozenset(
+    {
+        "name",
+        "doc",
+        "fn",
+        "arg_type",
+        "return_type",
+        "batch",
+        "nogil",
+        "strict",
+        "count_default",
+        "count_name",
+        "bench",
+        "impl",
+        "impl_file",
+        "replace",
+    }
+)
+
+#: Method keys that only some RESULT shapes read: each key, and the shapes
+#: (`_method.result_shape`) whose binding reads it (gh-2202, gh-2250).
+#:
+#: ``none_on_empty`` answers ``None`` for an empty result, and only a
+#: ``variable_output`` count and a borrow's ``NULL`` can be empty.
+#: ``status_return`` reads the kernel's integer return as a status, and only
+#: a fixed-output kernel returns one: a single record returns the record, a
+#: list of records and a ``variable_output`` result their count, a borrow its
+#: pointer. On any other shape each was stored and read by nobody, or (on a
+#: fixed ``out_type`` / ``multi_output``) rendered a call that did not
+#: compile. ``_method.shape_keys_why_not`` refuses the rest, from
+#: ``_method.run``, which ``jm method`` and ``apply``'s replay both call; and
+#: ``tests/test_gh2250_shape_bound_method_keys.py`` builds every pair this
+#: accepts and refuses every other, over every shape it knows.
+RESULT_SHAPE_KEYS: "dict[str, frozenset[str]]" = {
+    "none_on_empty": frozenset({"variable_output", "borrow"}),
+    "status_return": frozenset({"fixed"}),
+}
+
+#: Method keys that read one side of the INPUT: each key, and the input
+#: `_method.method_input` must report for the binding to read it (gh-2313).
+#:
+#: ``strict`` refuses a wrong-dtype input ARRAY rather than converting it, so
+#: it needs one: a block input or an array param. ``count_default`` and
+#: ``count_name`` size and name the count the binding SYNTHESIZES for an
+#: input-less ``variable_output`` or ``batch`` method, so they need that
+#: count. On the other side each was stored and generated nothing.
+INPUT_SIDE_KEYS: "dict[str, str]" = {
+    "strict": "block",
+    "count_default": "count",
+    "count_name": "count",
+}
+
 #: Keys valid on a ``[[<component>.methods.params]]`` entry.
 PARAM_KEYS = frozenset(
     {
@@ -383,6 +464,13 @@ PARAM_KEYS = frozenset(
         "mutable",
         "doc",
         "capsule",
+        # gh-2327: the kernel keeps the capsule's pointer past the call, so
+        # the binding keeps its owner alive (`_retain`).
+        "retain",
+        # gh-2360: `required = true` makes a capsule param mandatory -- the
+        # binding refuses None and the stub drops `| None`. The constructor's
+        # spelling of the same choice (gh-805 §H).
+        "required",
         "header",
         # gh-805 §C: array shape/interleave metadata. `rank` is the opt-in
         # `PyArray_NDIM` guard; `elements_per_sample` is the interleave factor
@@ -434,6 +522,10 @@ PROPERTY_KEYS = frozenset(
         "expr",
         "enum",
         "value_type",
+        # gh-2347: a `json` property's stub annotation, e.g.
+        # "list[dict[str, Any]]". Deliberately not `value_type`, which names a
+        # container's C element type -- one key, one meaning.
+        "py_type",
         "entry_type",
         "count_fn",
         "key_fn",
@@ -614,6 +706,10 @@ COMPOSER_MODULE_KEYS = (_SHARED_MODULE_KEYS - {"methods"}) | {
     # gh-1755: the create takes a trailing `const char **why` --
     # `[module.X.json] from_json_why`'s shape.
     "create_why",
+    # gh-2346: the capsule the composer publishes as `_capsule` -- the same
+    # key a handle reads (`_config.published_capsule`); `capsule_name`, the
+    # shared spelling, is honoured too.
+    "capsule",
 }
 
 #: A handle method: `args` / `returns`, and the gh-565/gh-1111 status raise.
@@ -822,6 +918,14 @@ COMPOSER_OWNED_PTR_KEYS = (
 COMPOSER_SOURCE_FIELD_KEYS = COMPOSER_FIELD_KEYS | frozenset(
     COMPOSER_OWNED_PTR_KEYS
 )
+#: gh-1752: the field vocabularies a project may extend, through
+#: ``[project] composer_field_keys``, with the keys its OWN generator reads
+#: off the same rows. doppler generates wfmgen's CLI table and JSON schema
+#: from ``cli``, ``json``, ``metavar`` ... on its composer field rows; jm reads
+#: none of them, and warning on every one buried a real typo among ~20 lines
+#: of expected noise per apply. A declared name is skipped on these rows ONLY,
+#: so every other unknown key -- a misspelt jm key above all -- still warns.
+PROJECT_FIELD_VOCABS = ("composer field", "composer source field")
 COMPOSER_COMPUTED_KEYS = frozenset({"name", "type", "fn", "doc"})
 COMPOSER_SOURCE_KEYS = frozenset(
     {
@@ -851,6 +955,8 @@ COMPOSER_GENERATES_KEYS = frozenset(
         "destroy_fn",
         "header",
         "output_type",
+        # gh-2259: generator methods the source delegates.
+        "methods",
     }
 )
 COMPOSER_SEGMENT_KEYS = frozenset(
@@ -1130,17 +1236,20 @@ class Unknown:
         return f"Unknown({self.kind!r}, {self.where!r}, {self.key!r})"
 
 
-def _check(kind: str, where: str, table: dict) -> list:
+def _check(
+    kind: str, where: str, table: dict, own: frozenset = frozenset()
+) -> list:
     """Collect the unrecognised keys of one table.
 
     Keys beginning with ``_`` are transient render state (``_doc_blocks``) and
     are never manifest-authored, so they are skipped exactly as ``_dump``
-    skips them.
+    skips them. ``own`` is the keys the project declared as its own on this
+    table (gh-1752, :func:`project_field_keys`); they are skipped too.
     """
     valid = KIND_KEYS[kind]
     out = []
     for key in table:
-        if key.startswith("_") or key in valid:
+        if key.startswith("_") or key in valid or key in own:
             continue
         valid_for = tuple(
             k for k, keys in KIND_KEYS.items() if k != kind and key in keys
@@ -1162,7 +1271,92 @@ def _accepted_keys(kind: str) -> frozenset:
     return KIND_KEYS.get(f"{kind} module", frozenset())
 
 
-def _check_dict_subtables(kind: str, mod: str, data: dict) -> list:
+def project_field_keys(cfg: dict) -> frozenset:
+    """The keys a project declared as its own on composer field rows.
+
+    gh-1752. ``[project] composer_field_keys`` names the keys a project's own
+    generator reads off ``source.fields`` / ``segment.fields`` rows. jm reads
+    none of them, keeps them on a save as it keeps every key (gh-2045), and
+    stops warning that they have no effect -- on those rows only.
+
+    Parameters
+    ----------
+    cfg : dict
+        A loaded manifest.
+
+    Returns
+    -------
+    frozenset of str
+        The declared names; empty when the key is absent. A malformed value
+        contributes nothing here: :func:`project_field_key_errors` refuses it
+        first, in ``_config.load``.
+
+    Examples
+    --------
+    >>> cfg = {"project": {"composer_field_keys": ["cli", "json"]}}
+    >>> sorted(project_field_keys(cfg))
+    ['cli', 'json']
+    >>> project_field_keys({"project": {}})
+    frozenset()
+    """
+    value = (cfg.get("project") or {}).get("composer_field_keys", [])
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(k for k in value if isinstance(k, str))
+
+
+def project_field_key_errors(cfg: dict) -> list:
+    """Why ``[project] composer_field_keys`` cannot be honoured, if it cannot.
+
+    gh-1752. Two refusals:
+
+    - the value is not a list of strings -- there is no name to skip;
+    - a listed name is one jm READS on a composer field row (``doc``,
+      ``copy_fn``, ...). Declaring it the project's would claim jm ignores a
+      key that changes what jm generates, and would hide nothing: a key jm
+      reads never warns. Listing it is a mistake, said so.
+
+    Returns
+    -------
+    list of str
+        One sentence per problem; empty when the declaration is sound.
+
+    Examples
+    --------
+    >>> project_field_key_errors({"project": {"composer_field_keys": ["cli"]}})
+    []
+    >>> (err,) = project_field_key_errors(
+    ...     {"project": {"composer_field_keys": ["cli", "doc"]}}
+    ... )
+    >>> print(err)  # doctest: +NORMALIZE_WHITESPACE
+    [project] composer_field_keys lists `doc`, which jm reads on a composer
+    field row; it cannot be declared the project's own. Remove it from the
+    list.
+    """
+    proj = cfg.get("project") or {}
+    if "composer_field_keys" not in proj:
+        return []
+    value = proj["composer_field_keys"]
+    if not isinstance(value, list) or not all(
+        isinstance(k, str) for k in value
+    ):
+        return [
+            "[project] composer_field_keys must be a list of key names, "
+            f"got {value!r}"
+        ]
+    jm_reads = frozenset().union(*(KIND_KEYS[v] for v in PROJECT_FIELD_VOCABS))
+    return [
+        f"[project] composer_field_keys lists `{k}`, which jm reads on a "
+        "composer field row; it cannot be declared the project's own. "
+        "Remove it from the list."
+        for k in value
+        if k in jm_reads
+    ]
+
+
+def _check_dict_subtables(
+    kind: str, mod: str, data: dict, own: frozenset = frozenset()
+) -> list:
     """Collect the unrecognised keys of a kind module's TABLE sub-tables.
 
     gh-1236. :func:`_check_kind_module` walked the sub-tables whose rows are
@@ -1207,13 +1401,17 @@ def _check_dict_subtables(kind: str, mod: str, data: dict) -> list:
                 continue
             where = f"{mod}.{tbl}.{inner}"
             rows = val if isinstance(val, list) else [val]
+            # gh-1752: the project's own keys apply to its field rows only.
+            skip = own if nvocab in PROJECT_FIELD_VOCABS else frozenset()
             for row in rows:
                 if isinstance(row, dict):
-                    found += _check(nvocab, where, row)
+                    found += _check(nvocab, where, row, skip)
     return found
 
 
-def _check_kind_module(mod: str, data: dict) -> list:
+def _check_kind_module(
+    mod: str, data: dict, own: frozenset = frozenset()
+) -> list:
     """Collect the unrecognised keys of one ``kind``-bearing module (gh-1114).
 
     Sub-tables are walked only when their rows are TABLES. ``composes`` and
@@ -1230,7 +1428,7 @@ def _check_kind_module(mod: str, data: dict) -> list:
     if f"{kind} module" not in KIND_KEYS:
         return []  # not a kind jm generates; nothing to say about it
     found = _check(f"{kind} module", mod, data)
-    found += _check_dict_subtables(kind, mod, data)
+    found += _check_dict_subtables(kind, mod, data, own)
     for tbl, rows in data.items():
         if not isinstance(rows, list) or not any(
             isinstance(r, dict) for r in rows
@@ -1302,6 +1500,7 @@ def unknown_keys(cfg: dict) -> list:
     # `[app]` key as an unknown object key.
     from ._config import components
 
+    own = project_field_keys(cfg)
     found: list = []
     for name in components(cfg):
         section = cfg.get(name)
@@ -1356,7 +1555,7 @@ def unknown_keys(cfg: dict) -> list:
         if data.get("kind"):
             # gh-1114: it has its own vocabulary -- which is now written down,
             # so it is checked against that rather than skipped.
-            found += _check_kind_module(mod, data)
+            found += _check_kind_module(mod, data, own)
             continue
         # gh-1432: `depends_on` is a real key on a `kind` module and is
         # DROPPED on an object module -- no link line, and no

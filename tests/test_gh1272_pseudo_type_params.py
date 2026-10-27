@@ -234,7 +234,9 @@ class TestTheMethodFace:
         )
         body = ext[ext.index("O_fin(") if "O_fin(" in ext else 0 :]
         call = body.index("o_fin(self->handle")
-        release = body.index("Py_XDECREF(p);")
+        # gh-2273: the recheck before the call releases the borrow on its
+        # refusal path, so the release asserted here is the one AFTER it.
+        release = body.index("Py_XDECREF(p);", call)
         assert call < release, body[:600]
 
     def test_bytes_takes_no_release(self, tmp_path):

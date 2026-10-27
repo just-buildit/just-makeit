@@ -1,0 +1,10 @@
+# just-makeit's jbx alias manifest, served at the site root beside install.sh.
+#
+# `jbx just-makeit:NAME` fetches <site>/aliases.toml FIRST and only probes
+# <site>/NAME.sh / NAME.py when NAME is not listed here, so `install-deps`
+# resolves to the installer this site already serves, with no second file.
+# tests/test_aliases_toml_published.py holds every target to a file the
+# site-files recipe ships.
+
+[aliases]
+install-deps = "https://just-buildit.github.io/just-makeit/install.sh"

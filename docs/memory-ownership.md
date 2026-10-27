@@ -250,14 +250,15 @@ Do not use it expecting throughput. It is slower on average.
 
 Every single-output `variable_output` method takes one, validated against what
 the binding would have allocated itself: a generator against its count, an
-all-scalar method against `<m>_max_out(state)`, and a method whose params carry
-an array against the first array's length — beside a scalar or another array
-too (`delay(x, mu, out=None)`,
+all-scalar method against `<m>_max_out(state)`, a method with an `arg_type`
+input against the input's length — with params beside it too
+(`run(x, gain, out=None)`,
+[gh-2028](https://github.com/just-buildit/just-makeit/issues/2028)) — and a
+method whose params carry an array against the first array's length — beside
+a scalar or another array too (`delay(x, mu, out=None)`,
 [gh-1998](https://github.com/just-buildit/just-makeit/issues/1998)).
-`<m>_max_out(len(x))` sizes it. Two shapes go without: `multi_output`, where
-one `out=` cannot name two buffers, and params beside an `arg_type` input,
-which that wrapper does not parse
-([gh-1960](https://github.com/just-buildit/just-makeit/issues/1960)).
+`<m>_max_out(len(x))` sizes it. One shape goes without: `multi_output`, where
+one `out=` cannot name two buffers.
 
 ### Throughput: a fixed cost, always
 
@@ -349,6 +350,7 @@ more loosely would accept a buffer the internal path considers too small:
 | `pass_capacity`, count-bearing max_out | `max_out(state, n)`                 |
 | `pass_capacity`, `max_out(state)` only | `max(max_out(state), n)`            |
 | `exact_max_out`                        | `max_out(...)`, or `n` if it is `0` |
+| `pass_capacity` + `short_out`          | `0` — no minimum, only the shape    |
 
 So a buffer sized to the request is accepted exactly when the author has said
 the bound is a per-call one. Where `out=` demands more than the call could
@@ -356,29 +358,53 @@ possibly produce, the answer is on the C side — give `max_out` the count, or
 assert `exact_max_out` — not a looser check here, which would only move the
 silent truncation from the allocation into the caller's own buffer.
 
+**A backpressure kernel declares the opposite contract**, and says so with
+`short_out = true`
+([gh-2230](https://github.com/just-buildit/just-makeit/issues/2230)). Its
+short buffer is not a truncation but a request for less: the kernel writes
+what fits, takes only the input that produced it, and the object reports how
+much — so the caller resumes where it stopped and no input is lost:
+
+```python
+buf = np.empty((4, s.nfft), np.float32)
+while x.size:
+    rows = s.push(x, out=buf)   # at most 4 rows, a view of buf
+    sink(rows)
+    x = x[s.consumed:]          # the input push did not take
+```
+
+The key needs `pass_capacity`, because only a kernel told the buffer's real
+size can stop at it, and jm refuses it at load otherwise. The buffer is then
+held to its shape alone: any length, `0` included; under `out_cols` a 2-D
+array of that many columns and any number of rows. A wrong dtype is still
+refused, and under `out_cols` so is a wrong rank or width. How much input was
+taken is the object's to report —
+a read-only property over its state, as `consumed` is above — since the
+method returns only what it wrote.
+
 ## Who owns what, by shape
 
-| Shape                              | Allocated by                                                                                                           | Result aliases                                    | Kept alive by      | `out=`   |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------ | -------- |
-| `step()` scalar                    | — (no array)                                                                                                           | —                                                 | —                  | n/a      |
-| `steps()` blockwise                | NumPy, per call                                                                                                        | nothing                                           | itself             | yes      |
-| `steps(n)` generator               | NumPy, per call                                                                                                        | nothing                                           | itself             | no       |
-| `batch` method                     | NumPy, per call                                                                                                        | nothing                                           | itself             | yes      |
-| `variable_output`                  | NumPy, per call                                                                                                        | its own allocation (view) or nothing (exact fill) | itself             | yes      |
-| `variable_output` + `multi_output` | NumPy, per call, one per output                                                                                        | each its own allocation                           | itself             | no       |
-| `out_type` method                  | NumPy, per call                                                                                                        | nothing                                           | itself             | no       |
-| `result_fields`                    | stack array of `max_results`, or heap sized by a declared `<name>_max_out` and freed before return; copied into tuples | nothing                                           | —                  | n/a      |
-| `result_fields` + `single`         | returned by value                                                                                                      | nothing                                           | —                  | n/a      |
-| Module function `out_type`         | NumPy, per call                                                                                                        | nothing                                           | itself             | no       |
-| Module function `result_fields`    | heap, freed before return                                                                                              | nothing                                           | —                  | n/a      |
-| `buf_field` property               | **C state struct**                                                                                                     | the object's state                                | `self` (INCREF'd)  | n/a      |
-| Array state `get_<name>()`         | NumPy, per call                                                                                                        | nothing (copy)                                    | itself             | n/a      |
-| Array state `get_<name>_view()`    | **C state struct**                                                                                                     | the object's state                                | `self`             | n/a      |
-| `borrow` method                    | **C state struct**                                                                                                     | the object's state                                | `self`             | n/a      |
-| Handle (c)/(e)                     | NumPy, per call                                                                                                        | nothing                                           | itself             | no       |
-| Handle (d), capsule `execute`      | **caller**                                                                                                             | the caller's array                                | the caller's array | required |
-| Handle (f) `bytes`                 | copied into `bytes`                                                                                                    | nothing                                           | —                  | n/a      |
-| Composer `steps`/`compose`         | NumPy, per call                                                                                                        | nothing                                           | itself             | no       |
+| Shape                              | Allocated by                                                                                                                                                                               | Result aliases                                    | Kept alive by      | `out=`   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | ------------------ | -------- |
+| `step()` scalar                    | — (no array)                                                                                                                                                                               | —                                                 | —                  | n/a      |
+| `steps()` blockwise                | NumPy, per call                                                                                                                                                                            | nothing                                           | itself             | yes      |
+| `steps(n)` generator               | NumPy, per call                                                                                                                                                                            | nothing                                           | itself             | no       |
+| `batch` method                     | NumPy, per call                                                                                                                                                                            | nothing                                           | itself             | yes      |
+| `variable_output`                  | NumPy, per call                                                                                                                                                                            | its own allocation (view) or nothing (exact fill) | itself             | yes      |
+| `variable_output` + `multi_output` | NumPy, per call, one per output                                                                                                                                                            | each its own allocation                           | itself             | no       |
+| `out_type` method                  | NumPy, per call                                                                                                                                                                            | nothing                                           | itself             | no       |
+| `result_fields`                    | stack array of `max_results`, or heap sized by a declared `<name>_max_out` and freed before return; copied into tuples. Per call: a `consumed_fn` repeats it over the input left (gh-2204) | nothing                                           | —                  | n/a      |
+| `result_fields` + `single`         | returned by value                                                                                                                                                                          | nothing                                           | —                  | n/a      |
+| Module function `out_type`         | NumPy, per call                                                                                                                                                                            | nothing                                           | itself             | no       |
+| Module function `result_fields`    | heap, freed before return                                                                                                                                                                  | nothing                                           | —                  | n/a      |
+| `buf_field` property               | **C state struct**                                                                                                                                                                         | the object's state                                | `self` (INCREF'd)  | n/a      |
+| Array state `get_<name>()`         | NumPy, per call                                                                                                                                                                            | nothing (copy)                                    | itself             | n/a      |
+| Array state `get_<name>_view()`    | **C state struct**                                                                                                                                                                         | the object's state                                | `self`             | n/a      |
+| `borrow` method                    | **C state struct**                                                                                                                                                                         | the object's state                                | `self`             | n/a      |
+| Handle (c)/(e)                     | NumPy, per call                                                                                                                                                                            | nothing                                           | itself             | no       |
+| Handle (d), capsule `execute`      | **caller**                                                                                                                                                                                 | the caller's array                                | the caller's array | required |
+| Handle (f) `bytes`                 | copied into `bytes`                                                                                                                                                                        | nothing                                           | —                  | n/a      |
+| Composer `steps`/`compose`         | NumPy, per call                                                                                                                                                                            | nothing                                           | itself             | no       |
 
 !!! danger "Borrowed views do not survive `destroy()`"
 

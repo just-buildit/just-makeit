@@ -45,5 +45,5 @@ PyInit_/*<<component>>*/(void)
         Py_DECREF(m);
         return NULL;
     }
-/*<<record_add_object>>*//*<<procglobal>>*/    return m;
+/*<<record_add_object>>*//*<<enum_publish>>*//*<<procglobal>>*/    return m;
 }

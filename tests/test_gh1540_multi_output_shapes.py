@@ -9,6 +9,10 @@ parameter. Measured over the result shapes, three never render them: a
 stored the key, and generated a prototype, binding and stub with no trace of
 it -- the declared output silently vanished.
 
+A ``--batch`` method now refuses it with every other key its binding does
+not read, from one table (gh-2261, ``tests/test_gh2261_batch_keys.py``); its
+row here holds that the refusal still reaches ``apply``.
+
 They are refused now, in ``_method.run``, which the CLI and ``apply``'s
 replay share, so a hand-written manifest cannot get past what the CLI
 refuses (the disagreement gh-1408 is about). The shapes that DO render the
@@ -28,8 +32,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from _jmrun import run_cli  # noqa: E402
 
+_BATCH = ["--arg-type", "double", "--return-type", "double", "--batch"]
+
 _REFUSED = {
-    "batch": ["--arg-type", "double", "--return-type", "double", "--batch"],
     "records": [
         "--arg-type", "void", "--return-type", "row_t",
         "--result-field", "a:int",
@@ -93,10 +98,7 @@ def test_a_shape_with_a_slot_still_carries_it(proj, shape):
 
 def test_apply_refuses_what_the_cli_refuses(proj):
     """A hand-written manifest entry takes the same road as the CLI."""
-    assert (
-        run_cli("method", "w", "m", *_REFUSED["batch"], cwd=proj).returncode
-        == 0
-    )
+    assert run_cli("method", "w", "m", *_BATCH, cwd=proj).returncode == 0
     f = proj / "objects/w.toml"
     text = f.read_text(encoding="utf-8")
     assert "batch = true" in text
@@ -108,4 +110,4 @@ def test_apply_refuses_what_the_cli_refuses(proj):
     )
     r = run_cli("apply", cwd=proj)
     assert r.returncode != 0, "apply accepted what the CLI refuses"
-    assert "--multi-output has no effect" in r.stderr, r.stderr
+    assert "multi_output has no effect on a batch" in r.stderr, r.stderr

@@ -34,7 +34,8 @@ gate ends up passing for months over a thing it stopped being able to see.
 
 GATE: every Python in jm's CI matrix runs on macOS in a run that gates a
       release (a PR, or the push that lands it), all but at most the
-      requires-python floor; a PR runs macOS at its oldest and newest only.
+      requires-python floor; a PR runs macOS and arm Linux at their oldest and newest only, and
+      ubuntu-latest at those and the middle Python.
 """
 
 from __future__ import annotations
@@ -112,6 +113,11 @@ def _trim() -> "list[str]":
     return str((_legs_step().get("env") or {}).get("TRIM", "")).split()
 
 
+def _middle() -> "list[str]":
+    """The trimmed OSes whose PR legs also keep the middle Python."""
+    return str((_legs_step().get("env") or {}).get("MIDDLE", "")).split()
+
+
 def _axes() -> tuple[list[str], list[str]]:
     """The `os` and `python-version` axis lists, as declared."""
     m = _declared()
@@ -142,7 +148,7 @@ def _key(v: str) -> tuple[int, ...]:
 def _owed(event: str, tested: str) -> "list[dict]":
     """What the planner keeps for a run on *event*, from the step's own
     declaration -- the inputs the workflow hands it."""
-    return LEGS.owed(_declared(), _trim(), event, tested)
+    return LEGS.owed(_declared(), _trim(), _middle(), event, tested)
 
 
 def _pairs(legs: "list[dict]") -> "set[tuple[str, str]]":
@@ -336,10 +342,35 @@ class TestWhatEachRunOwes:
         for os_ in _trim():
             have = _released(full, os_)
             want = {min(have, key=_key), max(have, key=_key)}
+            if os_ in _middle():
+                want.add(sorted(have, key=_key)[len(have) // 2])
             assert _released(pr, os_) == want, (os_, sorted(pr))
         kept = {(o, p) for o, p in full if o not in _trim()}
         assert kept <= pr, f"a PR skips {sorted(kept - pr)}"
         assert pr <= full
+
+    def test_the_pr_legs_are_exactly_the_trimmed_set(self) -> None:
+        """gh-2125 + the Linux trim: the PR's legs, written out. Adding a
+        leg to the PR set (a wider TRIM edge, a MIDDLE os) fails here until
+        this table is changed on purpose, with the reason in the PR."""
+        _, pys = _axes()
+        floor, newest = min(pys, key=_key), max(pys, key=_key)
+        middle = sorted(pys, key=_key)[len(pys) // 2]
+        assert (floor, middle, newest) == ("3.9", "3.12", "3.15"), pys
+        assert _pairs(_owed("pull_request", "")) == {
+            ("ubuntu-latest", floor),
+            ("ubuntu-latest", middle),
+            ("ubuntu-latest", newest),
+            ("ubuntu-24.04-arm", floor),
+            ("ubuntu-24.04-arm", newest),
+            ("macos-latest", "3.10"),
+            ("macos-latest", newest),
+        }
+        assert len(_owed("pull_request", "")) == 7
+
+    def test_middle_is_a_trimmed_os(self) -> None:
+        """A MIDDLE os that is not trimmed would do nothing, silently."""
+        assert _middle() and set(_middle()) <= set(_trim())
 
     def test_a_tested_push_owes_exactly_what_its_pr_trimmed(self) -> None:
         """The PR and the push that lands it partition the matrix: no leg

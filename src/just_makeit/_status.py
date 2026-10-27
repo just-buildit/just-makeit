@@ -487,6 +487,14 @@ def run(
         for rel in _pg_mod.orphan_headers(root, cfg)
         if not _is_allowed(rel, allow_patterns)
     ]
+    # gh-2316: the same shape -- a Python benchmark on disk for an object
+    # whose manifest says `no_python_bench`. The replay renders none, so no
+    # diff can show it; this is the only place it is seen.
+    _declined_bench = [
+        rel
+        for rel in C.declined_python_benches(root, cfg)
+        if not _is_allowed(rel, allow_patterns)
+    ]
 
     # gh-1154: manifest `doc` values the renderer cannot carry whole. Static,
     # manifest-only, and nothing `apply` would rewrite — the same shape as
@@ -610,6 +618,11 @@ def run(
         # versions behind that is. The replay tree is the only place jm's
         # *current* render of those files exists.
         replay_root = Path(tmp) / "jm-replay"
+        # gh-2344: the fragments deleted above are what decides what the
+        # aggregator publishes, so the replay reads the user's.
+        from . import _object as _obj
+
+        _obj._FRAGMENT_ROOT_OVERRIDE = root
         try:
             with (
                 contextlib.redirect_stdout(_replay_out),
@@ -647,6 +660,8 @@ def run(
             raise SystemExit(
                 _exc.code if isinstance(_exc.code, int) else 1
             ) from None
+        finally:
+            _obj._FRAGMENT_ROOT_OVERRIDE = None
 
         # gh-1361: the link-check table is derived from the binding, and the
         # scratch copy above swapped every unreconciled fragment for a fresh
@@ -751,6 +766,15 @@ def run(
             _rr = replay_root / "CMakeLists.txt"
             root_render = _rr.read_bytes() if _rr.is_file() else None
 
+        # gh-2299: what jm OWNS is what its replay renders, and the manifest
+        # it renders from (a fragment is read, never rendered). The scratch
+        # copy also holds every file jm never writes -- a tool cache, an
+        # author's notes -- which the replay leaves unchanged by definition,
+        # so counting "unchanged" over the copy counted each as a match.
+        _owned_paths = {p.as_posix() for p in _walk_managed(replay_root)} | {
+            p.relative_to(scratch).as_posix()
+            for p in C.manifest_files(scratch)
+        }
         for rel in _walk_managed(scratch):
             real = root / rel
             after = (scratch / rel).read_bytes()
@@ -782,7 +806,7 @@ def run(
                             (rel_posix, _exc.lineno or 0, _exc.msg, _lost)
                         )
                 if before == after:
-                    ok_count += 1
+                    ok_count += rel_posix in _owned_paths
                     continue
                 # gh-1641: a CRLF checkout of a current file. Its own state,
                 # never counted: no tool the build runs reads it differently,
@@ -1077,6 +1101,7 @@ def run(
         + sum(1 for b in backend_entries if not b[2])
         + len(manifest_doc_entries)
         + len(_orphan_pg)
+        + len(_declined_bench)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
         # completeness ratchet projects legitimately differ on; this is "the
         # published constructor raises when called as documented", which is
@@ -1164,6 +1189,7 @@ def run(
                         for (o, n, m, h) in drift_entries
                     ],
                     "orphan_procglobal_headers": list(_orphan_pg),
+                    "declined_python_benches": list(_declined_bench),
                     # gh-1566: the UNRECONCILED buckets, from the same
                     # classifier the text prints -- one source, two faces.
                     "unreconciled": {
@@ -2279,6 +2305,23 @@ def run(
         )
         print()
 
+    # gh-2316: same treatment, and the same reason no diff can show it.
+    if _declined_bench:
+        print(
+            f"DECLINED ({len(_declined_bench)}) — Python benchmark(s) for an "
+            "object that declares `no_python_bench`:"
+        )
+        for rel in _declined_bench:
+            print(f"  ! {rel}")
+        print(
+            "  The manifest says this object has no Python benchmark, so "
+            "jm no longer\n  renders or reconciles the file. jm does not "
+            "delete files — remove it\n  yourself, or drop "
+            "`no_python_bench` if declining it was the mistake.\n"
+            "  See gh-2316."
+        )
+        print()
+
     # gh-921: deliberately NOT the "impossible to miss" treatment the three
     # sections around it get. Nothing here is broken — gh-920 made this seam
     # safe, and the allocation is the historical clamped one, which is correct
@@ -2400,6 +2443,7 @@ def run(
         and not drift_entries
         and not version_entries
         and not _orphan_pg
+        and not _declined_bench
         and not manifest_doc_entries
         and not any(not e[2] for e in kwargs_entries)
         # gh-1290: and the record shapes, on the same argument — a
@@ -2562,6 +2606,11 @@ def run(
                 else ""
             )
             + (f", {len(_orphan_pg)} orphan-header (!)" if _orphan_pg else "")
+            + (
+                f", {len(_declined_bench)} declined-bench (!)"
+                if _declined_bench
+                else ""
+            )
             + (
                 f", {sum(1 for e in record_entries if not e[2])} "
                 "record-drift (!)"

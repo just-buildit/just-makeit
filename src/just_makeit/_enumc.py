@@ -8,6 +8,7 @@ result and the reason the gate scans:
 | --------------------------------------- | ----------------------------- |
 | module-function param                   | bare                          |
 | handle create-arg                       | bare                          |
+| handle method arg / factory param       | bare (gh-2228)                |
 | composer serializer param               | bare                          |
 | composer source `tp_init` field         | bare                          |
 | composer source property setter         | bare                          |
@@ -15,6 +16,7 @@ result and the reason the gate scans:
 | composer decoded-getter / from-dict     | bare                          |
 | object property setter                  | ``_enum_index_<Component>``   |
 | object method param                     | ``_enum_index_<Component>``   |
+| composer C CLI flag (gh-2140)           | bare                          |
 | (+ the shared lookup body, already one) | —                             |
 
 The lookup *body* was already shared — three of them imported one constant —
@@ -54,6 +56,10 @@ inside this change would hide it. It is filed separately.
 """
 
 from __future__ import annotations
+
+import re
+from collections.abc import Iterable
+from pathlib import Path
 
 #: The shared string-enum → index lookup, as C.
 #:
@@ -239,6 +245,260 @@ def constants_of(
     return getattr((enums or {}).get(name), "constants", None)
 
 
+def py_name(ename: str) -> str:
+    """The module attribute an ``[[enum]]``'s choices are published under.
+
+    gh-2344. The enum's ``name`` in upper case, as a module constant:
+    ``async_dsss_rx_state`` becomes ``ASYNC_DSSS_RX_STATE``, so a status
+    field's integer is decoded as ``ASYNC_DSSS_RX_STATE[v]``. Upper-casing
+    is the whole rule. No helper in ``_csym`` fits: its ``upper`` takes an
+    owning component, and an enum is not one.
+
+    >>> py_name("async_dsss_rx_state")
+    'ASYNC_DSSS_RX_STATE'
+    """
+    return ename.upper()
+
+
+def _is_dense(consts: "list[str] | None", n: int) -> bool:
+    """Whether a choice's position is its C value, so a tuple can index it.
+
+    Without ``enumerators`` position is the C int by contract. With them,
+    jm cannot read the constants' values (they are C names), so only the
+    literal spelling ``0, 1, ..., n-1`` proves position and value agree.
+    Anything else -- a name, a hex literal, a gap -- is a dict, which is
+    always right.
+
+    >>> _is_dense(None, 2), _is_dense(["0", "1"], 2), _is_dense(["A", "B"], 2)
+    (True, True, False)
+    """
+    if consts is None:
+        return True
+    return len(consts) == n and all(c == str(i) for i, c in enumerate(consts))
+
+
+def publication(
+    used: list[str],
+    enums: "dict[str, list[str]] | None",
+    *,
+    prefix: str = "",
+) -> list[dict]:
+    """One entry per enum in *used*: what its Python-visible value is.
+
+    gh-2344. The single description of an enum's Python face. The C side
+    (:func:`publish_c`) and the stub (:func:`publish_pyi`) both read these
+    entries, and the table each one names is the one :func:`render_tables`
+    emits from the same *used* list, so the published value and the binding's
+    private table cannot describe two different lists.
+
+    Each entry is a dict with keys ``enum`` (the ``[[enum]]`` name), ``py``
+    (the module attribute, :func:`py_name`), ``table`` (the C array of
+    choice strings, :func:`symbols`), ``count`` (its length), ``dense`` (a
+    tuple, else a dict keyed by ``table_c``) and ``consts`` (the C constant
+    array's name, or ``None`` when the enum has none).
+
+    >>> e = publication(["k"], {"k": ["a", "b"]}, prefix="Acq")[0]
+    >>> e["py"], e["table"], e["dense"], e["consts"]
+    ('K', '_enum_Acq_k', True, None)
+    """
+    out: list[dict] = []
+    for name in used:
+        choices = list((enums or {}).get(name, []))
+        consts = constants_of(enums, name)
+        _, table = symbols(prefix, name)
+        out.append(
+            {
+                "enum": name,
+                "py": py_name(name),
+                "table": table,
+                "count": len(choices),
+                "dense": _is_dense(consts, len(choices)),
+                "consts": f"{table}_c" if consts else None,
+            }
+        )
+    return out
+
+
+def _defines(mask: str, name: str) -> bool:
+    """Whether code *mask* (comments and literals blanked) defines array
+    *name*: ``name[] =``, the shape :func:`render_tables` writes."""
+    return re.search(rf"\b{re.escape(name)}\s*\[\s*\]\s*=", mask) is not None
+
+
+def fragment_publication(
+    root: "Path | None", cname: str, obj: str, entries: "list[dict]"
+) -> list[dict]:
+    """The *entries* module object *obj*'s fragment can publish.
+
+    gh-2344. A module object's tables live in its fragment,
+    ``native/src/<cname>/<cname>_ext_<obj>.c``, which is sacred: ``apply``
+    only appends members it lacks, so an ``enum =`` declared on a param the
+    fragment already binds never brings its table. The aggregator, which
+    is regenerated from the manifest, would then publish a table nothing
+    defines -- a C error, not a stale value. So what is published is read
+    off the fragment itself: an entry is kept only when the fragment
+    defines its table (and, for a constant-bound enum, its constants).
+
+    The fragment read is the real project's, also under ``apply``'s temp
+    replay (``_init._real_root``). A fragment not yet on disk keeps every
+    entry: the render that writes it emits every table the manifest uses. With no *root* there is no
+    fragment to read, and the manifest's answer stands. The aggregator and
+    the module stub both call this, so the ``.pyi`` declares exactly what
+    the extension adds.
+
+    >>> import tempfile
+    >>> e = publication(["k"], {"k": ["a"]}, prefix="G")
+    >>> d = Path(tempfile.mkdtemp())
+    >>> [x["py"] for x in fragment_publication(d, "m", "g", e)]
+    ['K']
+    >>> f = d / "native" / "src" / "m" / "m_ext_g.c"
+    >>> f.parent.mkdir(parents=True)
+    >>> _ = f.write_text('/* _enum_G_k[] = */ static int y = 0;\\n')
+    >>> fragment_publication(d, "m", "g", e)
+    []
+    >>> _ = f.write_text('static const char *const _enum_G_k[] = {"a"};\\n')
+    >>> [x["py"] for x in fragment_publication(d, "m", "g", e)]
+    ['K']
+    """
+    if root is None or not entries:
+        return entries
+    # Imported here: `_object`, `_docsync` and `_init` import `_render`,
+    # which imports this module.
+    from . import _object
+    from ._docsync import _code_mask
+    from ._init import _real_root
+
+    # `apply` renders into a temp replay whose fragments are fresh and hold
+    # every table; the sacred fragment that will be compiled is the real
+    # project's, as for the `_core.h` Doxygen -- and under `status`, the
+    # user's rather than its scratch copy's.
+    frag = (
+        Path(_object._FRAGMENT_ROOT_OVERRIDE or _real_root(Path(root)))
+        / "native"
+        / "src"
+        / cname
+        / f"{cname}_ext_{obj}.c"
+    )
+    if not frag.is_file():
+        return entries
+
+    mask = _code_mask(frag.read_text(encoding="utf-8"))
+    return [
+        e
+        for e in entries
+        if _defines(mask, e["table"])
+        and (e["consts"] is None or _defines(mask, e["consts"]))
+    ]
+
+
+def module_publication(per_object: "Iterable[list[dict]]") -> list[dict]:
+    """One entry per Python name across a module's objects.
+
+    gh-2344. Two objects that index the same ``[[enum]]`` each carry its
+    table, but the module has one attribute of that name: the first object
+    to name it publishes it, and a second would only overwrite it. The
+    aggregator, the module stub and the package ``__init__.py`` (gh-2372)
+    all read the module's enums through this, so the extension, the
+    ``.pyi`` and the re-export name the same list. *per_object* is each
+    object's entries, already through :func:`fragment_publication`.
+
+    >>> a = publication(["k"], {"k": ["x"]}, prefix="A")
+    >>> b = publication(["k", "m"], {"k": ["x"], "m": ["y"]}, prefix="B")
+    >>> [(e["py"], e["table"]) for e in module_publication([a, b])]
+    [('K', '_enum_A_k'), ('M', '_enum_B_m')]
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for entries in per_object:
+        for e in entries:
+            if e["py"] not in seen:
+                seen.add(e["py"])
+                out.append(e)
+    return out
+
+
+def publish_c(entries: "list[dict]") -> str:
+    """C statements that add each enum's value to the module being built.
+
+    gh-2344. Each statement runs inside a ``PyInit_`` after ``m`` exists and
+    reads the same choice array the binding indexes, so the Python value is
+    built from the list the C int is decoded through, never from a second
+    copy. A dense enum becomes a tuple, a constant-bound one a dict from the
+    C constant to its name. The C is written in ``PyInit_``'s own style: a
+    failed add releases the value and the module and returns ``NULL``.
+
+    Returns ``""`` for no entries, so an enum-free module renders
+    byte-identically to before.
+
+    Examples
+    --------
+    >>> e = publication(["k"], {"k": ["a", "b"]}, prefix="A")
+    >>> "PyTuple_New(2)" in publish_c(e)
+    True
+    >>> publish_c([])
+    ''
+    """
+    parts: list[str] = []
+    for e in entries:
+        n, table, py = e["count"], e["table"], e["py"]
+        if e["dense"]:
+            body = [
+                f"        PyObject *_e = PyTuple_New({n});",
+                f"        for (Py_ssize_t _i = 0; _e && _i < {n}; _i++) {{",
+                f"            PyObject *_s = PyUnicode_FromString({table}[_i]);",
+                "            if (_s)",
+                "                PyTuple_SET_ITEM(_e, _i, _s);",
+                "            else",
+                "                Py_CLEAR(_e);",
+                "        }",
+            ]
+        else:
+            body = [
+                "        PyObject *_e = PyDict_New();",
+                f"        for (Py_ssize_t _i = 0; _e && _i < {n}; _i++) {{",
+                f"            PyObject *_k = PyLong_FromLong({e['consts']}[_i]);",
+                f"            PyObject *_v = PyUnicode_FromString({table}[_i]);",
+                "            if (!_k || !_v || PyDict_SetItem(_e, _k, _v) < 0)",
+                "                Py_CLEAR(_e);",
+                "            Py_XDECREF(_k);",
+                "            Py_XDECREF(_v);",
+                "        }",
+            ]
+        parts += [
+            "    {  /* gh-2344: [[enum]] %s -> %s */" % (e["enum"], py),
+            *body,
+            f'        if (!_e || PyModule_AddObject(m, "{py}", _e) < 0) {{',
+            "            Py_XDECREF(_e);",
+            "            Py_DECREF(m);",
+            "            return NULL;",
+            "        }",
+            "    }",
+        ]
+    return "\n".join(parts) + "\n" if parts else ""
+
+
+def publish_pyi(entries: "list[dict]") -> str:
+    """The ``.pyi`` declarations for the values :func:`publish_c` adds.
+
+    A dense enum is ``tuple[str, ...]`` and a constant-bound one
+    ``dict[int, str]``, matching the two shapes. Returns ``""`` for no
+    entries.
+
+    The template supplies the newline that ends the block, so this returns
+    one trailing newline: the blank line before ``@final`` is then the same
+    whether or not an enum is published, which the formatter requires.
+
+    >>> publish_pyi(publication(["k"], {"k": ["a"]}))
+    'K: tuple[str, ...]\\n'
+    """
+    lines = [
+        f"{e['py']}: "
+        + ("tuple[str, ...]" if e["dense"] else "dict[int, str]")
+        for e in entries
+    ]
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def default_c(
     ename: str, choice: str, enums: "dict[str, list[str]] | None"
 ) -> str:
@@ -368,6 +628,7 @@ def validate_c(
     fail: str = "return NULL;",
     cleanup: str = "",
     indent: str = "    ",
+    cli_flag: str = "",
 ) -> str:
     """The call site: look the choice up, raise naming the choices, or pass on.
 
@@ -404,11 +665,27 @@ def validate_c(
         as each face already did.
     indent : str, optional
         Leading whitespace for the block.
+    cli_flag : str, optional
+        The flag the choice arrives as on a generated C command line,
+        without its ``--``. A command line has no exception to raise, so the
+        refusal is printed to stderr instead, as ``<prog>: --<flag>:
+        invalid choice '<s>' (choices: ...)`` -- the form a generated C
+        command line refuses any flag in -- and *fail* (``return 2;``) ends
+        the program (gh-2140). ``argv`` must be in scope.
 
     Returns
     -------
     str
         C source, with no trailing newline.
+
+    Examples
+    --------
+    >>> c = validate_c("gap", "gap", {"gap": ["auto", "off"]}, src="_s",
+    ...                result="_v", fail="return 2;", cli_flag="gap")
+    >>> "--gap: invalid choice '%s' (choices: auto, off)" in c
+    True
+    >>> "PyErr_Format" in c, "return 2;" in c
+    (False, True)
     """
     index_fn, table = symbols(prefix, ename)
     var = result or f"_arg_{pname}"
@@ -418,12 +695,21 @@ def validate_c(
     # value, so its -1 cannot collide with a legal constant -- every
     # negative one is reachable. The value is read from the table after.
     idx = f"{var}_i" if constants_of(enums, ename) else var
+    if cli_flag:
+        report = (
+            f'{indent}    fprintf(stderr, "%s: --{cli_flag}: invalid choice'
+            f" '%s'{suffix}\\n\", argv[0], {expr});{cleanup}\n"
+        )
+    else:
+        report = (
+            f"{indent}    PyErr_Format(PyExc_ValueError,\n"
+            f"{indent}        \"invalid {pname} '%s'{suffix}\","
+            f" {expr});{cleanup}\n"
+        )
     out = (
         f"{indent}int {idx} = {index_fn}({table}, {expr});\n"
         f"{indent}if ({idx} < 0) {{\n"
-        f"{indent}    PyErr_Format(PyExc_ValueError,\n"
-        f"{indent}        \"invalid {pname} '%s'{suffix}\","
-        f" {expr});{cleanup}\n"
+        f"{report}"
         f"{indent}    {fail}\n"
         f"{indent}}}"
     )

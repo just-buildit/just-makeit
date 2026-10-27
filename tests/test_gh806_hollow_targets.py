@@ -362,7 +362,7 @@ class TestTheSilentBenchmark:
         # counts as recording — which is how the substring form silently
         # disabled the whole SILENT section.
         assert _hollow.records_nothing(text)
-        assert "jm_bench_add(&_bench," in text, "the TODO shows the call"
+        assert "jm_bench_add_unit(&_bench," in text, "the TODO shows the call"
 
     def test_it_is_reported_with_the_method_count(self, hollow_bench):
         found = _hollow.silent_benches(hollow_bench, C.load(hollow_bench))

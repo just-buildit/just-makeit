@@ -238,6 +238,12 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # computes the real value for any component that has one.
         "record_type_ready": "",
         "record_add_object": "",
+        # gh-2344: the [[enum]] values the `.so` publishes as module
+        # attributes, and their stub lines. Seeded for the same reason as the
+        # record slots; `_glue.component_ctx` computes them from the
+        # object's enum tables.
+        "enum_publish": "",
+        "pyi_enum_publish": "",
         # gh-541/gh-544: destructor slots. Seeded here — the one place every
         # component render path passes through — so no path can leak a literal
         # <<destroy_*>> into generated C. The undeclared values reproduce the
@@ -386,6 +392,75 @@ def _func_span_before_brace(
     return (name, i + 1) if name else None
 
 
+# A C comment, either kind. A block comment is only matched closed, so text
+# that opens one and never closes it is left as it is.
+_C_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+
+
+def _blank_comments(text: str) -> str:
+    r"""*text* with every complete comment blanked to spaces, newlines kept.
+
+    How :func:`_decl_start` reads a header (gh-2314). The result is as
+    long as *text*, so an offset found in it indexes *text*. A comment can
+    sit anywhere a space can -- ``void /* none */ f(void);`` -- so cutting
+    at a ``*/`` instead loses whatever code came before the comment.
+
+    *text* must start outside a comment, as a whole header does. String
+    literals are not recognised; a declaration has none.
+
+    Examples
+    --------
+    >>> _blank_comments("void /* x */ f(void);")
+    'void         f(void);'
+    >>> _blank_comments("int // a;\n/* b\n */ g;")
+    'int      \n    \n    g;'
+    """
+    return _C_COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+
+
+# A preprocessor directive, with any backslash-continued lines.
+_PP_LINE_RE = re.compile(r"^[ \t]*#(?:[^\n]*\\\n)*[^\n]*", re.M)
+
+
+def _decl_start(head: str) -> "tuple[int, int]":
+    r"""Where the declaration that *head* runs into begins.
+
+    *head* is a header up to a declared name. The declaration starts past
+    the previous statement, block, brace or preprocessor line, read with
+    comments blanked (:func:`_blank_comments`), so a ``;`` in a comment is
+    not an end and a comment between the return type and the name is not
+    a start (gh-2314). The one reading of "the text before a name that is
+    its declaration": :func:`step_def_start` inserts above it and
+    :func:`declared_return` reads the type out of it.
+
+    Returns
+    -------
+    tuple of int
+        ``(doc, code)``: *code* is the declaration's first character of
+        code; *doc* is the start of the comment ending right before it,
+        which documents it, or *code* when there is none.
+
+    Examples
+    --------
+    >>> h = "int a;\n/* doc; */\nvoid /* x */ f"
+    >>> doc, code = _decl_start(h)
+    >>> h[doc:code], h[code:]
+    ('/* doc; */\n', 'void /* x */ f')
+    >>> _decl_start("#include <x.h>\nint g")
+    (15, 15)
+    """
+    mask = _blank_comments(head)
+    at = max(mask.rfind(";"), mask.rfind("}"), mask.rfind("{")) + 1
+    for m in _PP_LINE_RE.finditer(mask, at):
+        at = m.end()
+    code = at + len(mask[at:]) - len(mask[at:].lstrip())
+    lead = len(head[:code].rstrip())
+    for m in _C_COMMENT_RE.finditer(head, at, code):
+        if m.end() == lead and m.group(0).startswith("/*"):
+            return m.start(), code
+    return code, code
+
+
 def step_def_start(source: str, stem: str) -> "int | None":
     r"""Where the inline ``<stem>_step()`` definition begins in a ``_core.h``
     -- its doc comment if one sits right above it -- or None when the header
@@ -406,22 +481,21 @@ def step_def_start(source: str, stem: str) -> "int | None":
     '/** doc */'
     >>> step_def_start("void a(void);\n", "q") is None
     True
+
+    A comment inside the declaration is part of it (gh-2314):
+
+    >>> c = "int a;\n/** doc */\nfloat /* hot */\nq_step(float x)\n{}"
+    >>> c[step_def_start(c, "q"):].splitlines()[0]
+    '/** doc */'
     """
     i = 0
     while (brace := source.find("{", i)) != -1:
         end = _matching_brace(source, brace)
         span = _func_span_before_brace(source, brace)
         if span and span[0] == f"{stem}_step":
-            # Back to the start of the declaration: just past the previous
-            # statement, block or comment end.
-            head = source[: span[1]]
-            doc_end = head.rfind("*/") + 2 if "*/" in head else 0
-            at = max(head.rfind(";") + 1, head.rfind("}") + 1, doc_end)
-            if doc_end and at == doc_end:
-                # Nothing but the step's own return type follows that
-                # comment, so it is the step's doc: keep them together.
-                at = head.rfind("/*", 0, at)
-            return at + len(source[at:]) - len(source[at:].lstrip())
+            # Back to the start of the declaration, with its doc comment:
+            # the two stay together.
+            return _decl_start(source[: span[1]])[0]
         # A function body is skipped whole; any other block -- the
         # `extern "C" {` wrapping the whole header, a struct -- is stepped
         # INTO, or the step inside it is never seen.
@@ -570,6 +644,83 @@ def _reconcile_decl_doc(text: str, decl: str) -> str:
     return before[: m.start(1)] + fixed + m.group(2) + text[at:]
 
 
+def existing_decl(text: str, fn_name: str) -> "re.Pattern[str] | None":
+    """The pattern that finds *text*'s declaration of *fn_name*, or None.
+
+    The one by-name lookup of a prototype in a sacred header: the
+    replace-or-keep decision in :func:`_inject_decls_into_core_h` and the
+    return-type read of :func:`declared_return` both ask it. A single-line
+    match is tried first, then a multi-line one (gh-137: a prototype
+    wrapped across lines was missed, and the generated declaration appended
+    as a conflicting duplicate). Both require the prototype to end in
+    ``);``, so neither ever matches a definition, which ends in ``{``.
+
+    Examples
+    --------
+    >>> h = "int acc_set_alpha(acc_state_t *s,\\n    double v);\\n"
+    >>> existing_decl(h, "acc_set_alpha").search(h).group(0).split()[0]
+    'int'
+    >>> existing_decl("void f(void) { }", "f") is None
+    True
+    """
+    pat = re.compile(
+        r"^[ \t]*[A-Za-z_][^\n{]*\b"
+        + re.escape(fn_name)
+        + r"\s*\([^\n{]*\);[ \t]*$",
+        re.MULTILINE,
+    )
+    if pat.search(text):
+        return pat
+    pat_ml = re.compile(
+        r"^[ \t]*[A-Za-z_][^{;]*?\b"
+        + re.escape(fn_name)
+        + r"\s*\([^{;]*?\)\s*;",
+        re.MULTILINE,
+    )
+    return pat_ml if pat_ml.search(text) else None
+
+
+def declared_return(text: str, fn_name: str) -> "str | None":
+    """What *text*'s declaration of *fn_name* says it returns, or None.
+
+    Everything before the name, whitespace collapsed, so storage classes and
+    export macros come along (``static inline void``, ``DP_API int``): the
+    caller asks a question of it, such as whether it ends in ``void``.
+    ``None`` is "can't tell" -- no declaration, or none whose return type
+    survives taking the comments out -- which is not the same answer as
+    ``void``. A comment anywhere in the type is not part of it (gh-2314).
+
+    Examples
+    --------
+    >>> declared_return("DP_API int dp_x_set_bn(dp_x_t *s, double v);",
+    ...                 "dp_x_set_bn")
+    'DP_API int'
+    >>> declared_return("void *\\nx_buf(x_t *s);", "x_buf")
+    'void *'
+    >>> declared_return("int other(void);", "x_buf") is None
+    True
+    >>> declared_return("/* Returns void when unchanged.\\n   Else 1 */\\nint\\n"
+    ...                 "x_set(x_t *s,\\n      double v);", "x_set")
+    'int'
+    >>> declared_return("void /* nothing */ x_set(x_t *s, double v);",
+    ...                 "x_set")
+    'void'
+
+    """
+    pat = existing_decl(text, fn_name)
+    if pat is None:
+        return None
+    m = pat.search(text)
+    name = re.search(r"\b" + re.escape(fn_name) + r"\s*\(", m.group(0))
+    # Read back from the name through the whole header, not from where the
+    # lookup's match starts: that can be prose INSIDE the doc comment above
+    # a prototype ("Returns void when ..."), whose `*/` then closes a
+    # comment the match never opened.
+    head = text[: m.start() + name.start()]
+    prefix = _blank_comments(head)[_decl_start(head)[1] :]
+    return " ".join(prefix.split()) or None
+
+
 def _inject_decls_into_core_h(
     path: Path,
     comp: str,
@@ -668,27 +819,8 @@ def _inject_decls_into_core_h(
             ):
                 continue
             # Replace an existing prototype of the same name (a builtin
-            # override or a refreshed signature). Try a single-line match
-            # first; fall back to a multi-line match (gh-137: a prototype
-            # wrapped across lines — e.g. a 5-arg variable_output
-            # `*_execute(..., out, max_out)` — was previously missed and the
-            # generated decl appended as a conflicting/duplicate declaration).
-            # Both forms require the prototype to end in ');' so neither ever
-            # matches the inline step() definition (which ends in '{').
-            pat = re.compile(
-                r"^[ \t]*[A-Za-z_][^\n{]*\b"
-                + re.escape(fn_name)
-                + r"\s*\([^\n{]*\);[ \t]*$",
-                re.MULTILINE,
-            )
-            pat_ml = re.compile(
-                r"^[ \t]*[A-Za-z_][^{;]*?\b"
-                + re.escape(fn_name)
-                + r"\s*\([^{;]*?\)\s*;",
-                re.MULTILINE,
-            )
-            m_sl = pat.search(text)
-            use = pat if m_sl else pat_ml if pat_ml.search(text) else None
+            # override or a refreshed signature).
+            use = existing_decl(text, fn_name)
             if use is not None:
                 if skip_names and fn_name in skip_names:
                     # Name is in skip_names — preserve the existing decl.
@@ -1230,6 +1362,7 @@ def run(
     no_step: bool = False,
     no_reset: bool = False,
     process_global: bool = False,
+    no_python_bench: bool = False,
     fragment: str = "",
     mutable: bool = False,
     step_delegates: bool = False,
@@ -1334,7 +1467,10 @@ def run(
     # (state_vars is None) and the struct isn't opaque-managed. An explicit
     # [] — e.g. apply replaying an object whose last field was removed —
     # stays empty rather than resurrecting `gain`.
-    _has_opaque = bool(opaque_fields)
+    # gh-2215: `opaque_state` too -- a starter field in a struct the header
+    # does not publish is a member nobody declared, and `jm script` replays
+    # the manifest's `state = []` with no `--state` at all.
+    _has_opaque = bool(opaque_fields) or opaque_state
     if no_state:
         vars_ = []
     elif state_vars is None:
@@ -1582,6 +1718,27 @@ def run(
         "\n    ".join(block_libs) + "\n    " if block_libs else ""
     )
     ctx["extra_link_libs_block"] = extra_link_libs_block
+    # gh-2320: the C test and bench link what the .so does, plus what a
+    # `test_only` edge reaches (gh-537) -- the one thing they need that the
+    # .so must not have. They shared the .so's block, which `dep_link_libs`
+    # filters test_only out of, so a standalone object's test-only sibling
+    # reached neither. Its own edges are walked as the .so walks a link=true
+    # one.
+    test_libs = list(block_libs)
+    for core in C.transitive_dep_cores(
+        cfg,
+        [
+            {"name": C._dep_name(d), "link": True}
+            for d in depends_on
+            if C._dep_test_only(d)
+        ],
+        link_only=True,
+    ):
+        if core not in test_libs:
+            test_libs.append(core)
+    ctx["test_link_libs_block"] = (
+        "\n    ".join(test_libs) + "\n    " if test_libs else ""
+    )
     ctx["extra_ext_sources"] = ""  # populated on jm method --varargs
     # extra_include_dirs is a list of CMake include dirs (literals or ${VAR}
     # references). Each dir lands on its own indented line inside the
@@ -1820,13 +1977,15 @@ def run(
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
     # gh-1528: born owned too -- it constructs the object, so it goes stale
-    # with the constructor exactly as the test did.
-    _write(
-        root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
-        R.owned_scaffold(
-            R.render_scaffold_py(bench_py_tmpl, ctx), f"bench_{comp}.py"
-        ),
-    )
+    # with the constructor exactly as the test did. gh-2316: unless the
+    # object declines it, and then the replay renders none to restore.
+    if not no_python_bench:
+        _write(
+            root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
+            R.owned_scaffold(
+                R.render_scaffold_py(bench_py_tmpl, ctx), f"bench_{comp}.py"
+            ),
+        )
 
     # Benchmark history dir — dated snapshots committed to git
     gitkeep = root / "benchmarks" / "history" / ".gitkeep"

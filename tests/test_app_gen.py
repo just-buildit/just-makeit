@@ -95,14 +95,16 @@ def test_pep723_target_is_generated(tmp_path: Path):
     assert "obj.step(x)" in script and "<<IMPLEMENT" not in script
 
 
-def test_int_flag_uses_strtol_and_int_argparse(tmp_path: Path):
+def test_int_flag_uses_checked_parse_and_int_argparse(tmp_path: Path):
     proj = _scaffold(tmp_path)
     taps = [{"name": "taps", "type": "int32_t", "default": "8"}]
     jm_app(proj, target="c", name="tool", object_="gain", flags=taps)
     jm_app(proj, target="console", name="tool-cli", object_="gain", flags=taps)
     c = (proj / "native" / "src" / "app" / "tool.c").read_text()
     cli = (proj / "src" / "proj" / "cli.py").read_text()
-    assert "int32_t taps = 8;" in c and "strtol(argv[++i]" in c
+    assert "int32_t taps = 8;" in c
+    # gh-2225: through the checked parser, never a bare strtol cast.
+    assert 'jm_cli_int(argv[0], "--taps", argv[++i]' in c
     assert "--taps" in cli and "type=int" in cli
 
 
@@ -416,13 +418,14 @@ def test_output_axes_c(tmp_path: Path):
     # the csv + byte-swap writer is emitted
     assert "static void\njm_write_block(" in c
     assert "static size_t\njm_elem_size(" in c
-    assert 'fprintf(out, "%0.9f,%0.9f' in c  # csv float line
+    assert "jm_put_iq(out, (double)re, (double)im, 9);" in c  # gh-2254
     assert "bytes[off + a] = bytes[off + b];" in c  # big-endian swap
     # --record dumps the resolved run, with choice names from the tables
     assert "static const char *const jm_choices_sample_type[]" in c
     assert "if (record_path) {" in c
     assert 'fprintf(rec, ",\\"sample_type\\":\\"%s\\"", ' in c
-    assert 'fprintf(rec, ",\\"freq\\":%g", (double)freq);' in c
+    # gh-2254: a real is recorded with every digit it needs to replay
+    assert 'jm_put_real(rec, (double)freq, 17, "NaN", "Infinity");' in c
 
 
 def test_output_axes_python(tmp_path: Path):

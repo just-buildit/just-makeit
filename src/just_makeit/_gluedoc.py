@@ -217,11 +217,20 @@ def _serialization(Component: str) -> list[GlueMethod]:
             ret_ann="bytes",
             block=DoxyBlock(
                 brief="Serialize this object's mutable state to bytes.",
+                # gh-2185 / gh-2234: true of every object, because jm cannot
+                # see which kind a core is. A blob may carry a setter's value
+                # (doppler#2022) or configuration as reject keys (doppler's
+                # Spectrogram), so "construction parameters are not
+                # included" was false for both; what holds for all of them
+                # is that they are not RESTORED.
                 body=[
-                    "Captures exactly the state that evolves as the object "
-                    "runs, so a blob taken now and restored later resumes "
-                    "from this point. Construction parameters are not "
-                    "included: restore into an object built the same way.",
+                    "Captures the state that evolves as the object runs, "
+                    "including any value a setter changed after "
+                    "construction, so a blob taken now and restored later "
+                    "resumes from this point. Construction parameters are "
+                    "not restored: restore into an object built the same "
+                    "way. A core may check some of them and refuse a blob "
+                    "built differently.",
                     "The blob is opaque and always `state_bytes()` long. Its "
                     "layout is an implementation detail of the C core and is "
                     "not a stable format across builds.",
@@ -235,11 +244,18 @@ def _serialization(Component: str) -> list[GlueMethod]:
             py_params=[("blob", "bytes")],
             block=DoxyBlock(
                 brief="Restore mutable state from a `get_state()` blob.",
+                # gh-2185 / gh-2234: "the object keeps the parameters it was
+                # constructed with" was false wherever a setter's value
+                # travels in the blob -- set_state replaces it.
                 body=[
-                    "Overwrites the live state in place; the object keeps the "
-                    "parameters it was constructed with. Length is validated "
-                    "against `state_bytes()` before the blob is handed to the "
-                    "C core, and the core may reject it as well.",
+                    "Overwrites the live state in place, including any value "
+                    "a setter changed after construction. Construction "
+                    "parameters are not restored: restore into an object "
+                    "built the same way. Length is validated against "
+                    "`state_bytes()` before the blob is handed to the C "
+                    "core, which may reject it too: a core may check some "
+                    "construction parameters and refuse a blob built "
+                    "differently.",
                     "Raises ``TypeError`` if *blob* is not bytes, "
                     "``ValueError`` if its length differs from "
                     f"`state_bytes()` or the core rejects it, and "
@@ -304,8 +320,26 @@ def _lifecycle(
     # gh-2187: a lending object's teardown cannot free "immediately" -- the
     # views it handed out point into the memory -- so its prose says when
     # the memory does go, rather than promising what the body no longer does.
+    # gh-2346: an object that lends its pointer as a capsule defers the same
+    # way (`_borrow.lends` answers "capsule"), and says so in its own terms.
+    _close_capsule = DoxyBlock(
+        brief="Close the object; the memory goes with its last user.",
+        body=[
+            "Ordinarily unnecessary: the resources are freed when the "
+            "object is garbage-collected. Call this, or use the object "
+            "as a context manager, to end its use at a definite point.",
+            "A consumer this object's ``_capsule`` was handed to may "
+            "still hold its pointer, and keeps this object alive while it "
+            "does: the memory is freed when the last of them, and this "
+            "object, are gone, not here (gh-2346). Idempotent: calling it "
+            "again does nothing. Every other method raises "
+            "``RuntimeError`` once it has run.",
+        ],
+    )
     _close = (
-        DoxyBlock(
+        _close_capsule
+        if lends == "capsule"
+        else DoxyBlock(
             brief="Close the object; the memory goes with its last user.",
             body=[
                 "Ordinarily unnecessary: the resources are freed when the "
@@ -572,11 +606,32 @@ COUNT_PARAM_DOC = (
     "the worst case."
 )
 
+#: The same, for a method with no `out=` to size (a `multi_output` one):
+#: the clause above would point the reader at a buffer, and a `_max_out()`,
+#: the method does not have (gh-2222).
+COUNT_PARAM_DOC_NO_OUT = (
+    "How many output samples to ask for. The call may return fewer."
+)
+
 #: Default description for the optional `out=` buffer.
 OUT_PARAM_DOC = (
     "Optional pre-allocated output buffer. When given, the result is "
     "written into it and the returned array is a view of exactly the "
     "samples produced; when omitted, a fresh array is allocated."
+)
+
+#: The two above, for a ``batch`` method (gh-2259). Its result is exactly as
+#: long as its input -- or as the count it was asked for -- so there is no
+#: worst case to size for and no ``_max_out()`` to size it with, and an
+#: ``out=`` of any other length is refused rather than trimmed.
+BATCH_COUNT_PARAM_DOC = (
+    "How many output samples to produce. The result has exactly this length."
+)
+BATCH_OUT_PARAM_DOC = (
+    "Optional pre-allocated output buffer, exactly as long as the result: "
+    "one element per input sample, or the count asked for. When given, "
+    "the result is written into it and that same array is returned; when "
+    "omitted, a fresh array is allocated."
 )
 
 #: The same, for a method whose result is a matrix (``out_cols``, gh-2115).
@@ -588,6 +643,18 @@ OUT_PARAM_DOC_MATRIX = (
     "width. When given, the result is written into it and the returned "
     "array is a (rows, cols) view of exactly the rows produced; when "
     "omitted, a fresh array is allocated."
+)
+
+#: Appended for a method declaring ``short_out`` (gh-2230). Every other
+#: ``out=`` must hold what the binding would have allocated, so the one thing
+#: a caller of this one needs to know is that a smaller buffer is a request
+#: for less, not an error -- and that the input it did not take is theirs to
+#: offer again.
+OUT_PARAM_DOC_SHORT = (
+    " It has no minimum size: a buffer smaller than the matching "
+    "`_max_out()` asks for, empty included, is accepted. The call writes "
+    "only what fits and may then take less than all of its input; the "
+    "object reports how much it took, so offer the rest again."
 )
 
 
@@ -655,12 +722,71 @@ def count_kwarg_name(count_name: str = "") -> str:
     return (count_name or "").strip() or COUNT_KWARG_DEFAULT
 
 
+def synthesizes_count(
+    *, variable_output: object, arg_type: str, params: object, no_count: object
+) -> bool:
+    """Whether the binding synthesizes a leading count argument.
+
+    gh-527 named the shape: a ``variable_output`` method with ``arg_type =
+    "void"`` and no params has nothing to size its output from, so the
+    binding parses a ``count`` (`count_kwarg_name`) and hands it to the
+    kernel as ``size_t n``. gh-2233 adds the opt-out, ``no_count``, for a
+    kernel whose result is sized by the object alone: that method takes no
+    count anywhere, and is called ``f()``.
+
+    One predicate for every face that asks -- the runtime ``__doc__`` and
+    the standalone ``.pyi`` (`_context._methods`) and the module-aggregated
+    ``.pyi`` (`_stubs`). They spelled the shape test out each, and a key
+    taught to one of them and not the others is the drift gh-1042 and
+    gh-1051 found twice over this same argument.
+
+    Parameters
+    ----------
+    variable_output : bool
+        The method's ``variable_output``.
+    arg_type : str
+        Its input type; ``"void"`` means none.
+    params : list
+        Its declared params; any at all means the shape takes no count.
+    no_count : bool
+        The method's ``no_count`` (gh-2233).
+
+    Returns
+    -------
+    bool
+        True when the binding parses a count and the stub publishes it.
+
+    Examples
+    --------
+    >>> synthesizes_count(
+    ...     variable_output=True, arg_type="void", params=[], no_count=False
+    ... )
+    True
+    >>> synthesizes_count(
+    ...     variable_output=True, arg_type="void", params=[], no_count=True
+    ... )
+    False
+    >>> synthesizes_count(
+    ...     variable_output=True, arg_type="float", params=[], no_count=False
+    ... )
+    False
+    """
+    return (
+        bool(variable_output)
+        and arg_type == "void"
+        and not params
+        and not no_count
+    )
+
+
 def binding_param_docs(
     count_name: str = "",
     *,
+    batch: bool = False,
     count: bool,
     out: bool,
     out_cols: bool = False,
+    short_out: bool = False,
 ) -> dict[str, str]:
     """jm's default description for each binding argument it synthesized.
 
@@ -680,22 +806,54 @@ def binding_param_docs(
     parameter — a plain ``int`` on a method with no buffer — as jm's
     generator length and ``out=`` buffer, on both faces.
 
+    gh-2259: *batch* is a ``batch`` method's pair, whose result length is
+    exact rather than a bound -- the ``variable_output`` text would point
+    the reader at a ``_max_out()`` the method does not have.
+
+    >>> docs = binding_param_docs(batch=True, count=True, out=True)
+    >>> sorted(docs), "_max_out" in docs["count"]
+    (['count', 'out'], False)
+
     Examples
     --------
     >>> sorted(binding_param_docs(count=True, out=True))
     ['count', 'out']
     >>> sorted(binding_param_docs("n", count=True, out=False))
     ['n']
+
+    gh-2222: the count's text offers `out=` only beside one.
+
+    >>> "out=" in binding_param_docs(count=True, out=False)["count"]
+    False
     >>> binding_param_docs(count=False, out=False)
     {}
     >>> "2-D" in binding_param_docs(count=False, out=True, out_cols=True)["out"]
     True
+
+    gh-2230: *short_out* says the buffer has no minimum, on either shape.
+
+    >>> "no minimum" in binding_param_docs(
+    ...     count=False, out=True, out_cols=True, short_out=True)["out"]
+    True
     """
+    if batch:
+        return {
+            name: text
+            for name, text, on in (
+                (count_kwarg_name(count_name), BATCH_COUNT_PARAM_DOC, count),
+                ("out", BATCH_OUT_PARAM_DOC, out),
+            )
+            if on
+        }
     docs: dict[str, str] = {}
     if count:
-        docs[count_kwarg_name(count_name)] = COUNT_PARAM_DOC
+        docs[count_kwarg_name(count_name)] = (
+            COUNT_PARAM_DOC if out else COUNT_PARAM_DOC_NO_OUT
+        )
     if out:
-        docs["out"] = OUT_PARAM_DOC_MATRIX if out_cols else OUT_PARAM_DOC
+        docs["out"] = (OUT_PARAM_DOC_MATRIX if out_cols else OUT_PARAM_DOC) + (
+            OUT_PARAM_DOC_SHORT if short_out else ""
+        )
     return docs
 
 

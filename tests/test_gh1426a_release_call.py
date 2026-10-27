@@ -198,7 +198,7 @@ class TestTheCountTravels:
         body = _wrapper((proj / EXT).read_text(), "consume")
         # Optional in the PyArg format -- the `|` is what makes `consume()`
         # a legal call at all.
-        assert '"|K"' in body
+        assert '"|O"' in body
         assert "n = self->_jm_borrowed;" in body
         assert "PyExc_RuntimeError" in body
         assert "self->_jm_borrowed = 0;" in body

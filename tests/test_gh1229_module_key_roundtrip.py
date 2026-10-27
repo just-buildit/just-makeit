@@ -237,4 +237,4 @@ def test_a_handle_still_publishes_its_capsule_after_a_save(
     }
     C.save(tmp_path, back_cfg)
     reloaded = C.load(tmp_path)
-    assert C.handle_capsule(reloaded, "ring") == "p.ring"
+    assert C.published_capsule(reloaded, "ring") == "p.ring"

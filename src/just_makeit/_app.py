@@ -46,6 +46,7 @@ from . import _textio
 import contextlib
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -81,23 +82,193 @@ _PYTYPE = {
     "size_t": "int",
 }
 
-# C types whose CLI value can be parsed from a string into a typed local.
-# `{a}` is the argv token expression. Types absent here (complex, string) are
-# not turned into CLI flags; their ctor default is used verbatim instead.
-_C_PARSE = {
-    "float": "strtof({a}, NULL)",
-    "double": "strtod({a}, NULL)",
-    "int": "(int)strtol({a}, NULL, 10)",
-    "int8_t": "(int8_t)strtol({a}, NULL, 10)",
-    "int16_t": "(int16_t)strtol({a}, NULL, 10)",
-    "int32_t": "(int32_t)strtol({a}, NULL, 10)",
-    "int64_t": "(int64_t)strtoll({a}, NULL, 10)",
-    "uint8_t": "(uint8_t)strtoul({a}, NULL, 10)",
-    "uint16_t": "(uint16_t)strtoul({a}, NULL, 10)",
-    "uint32_t": "(uint32_t)strtoul({a}, NULL, 10)",
-    "uint64_t": "(uint64_t)strtoull({a}, NULL, 10)",
-    "size_t": "(size_t)strtoull({a}, NULL, 10)",
+# C types an app turns into a numeric CLI flag: the ones its Python faces
+# read as an int or a float, so the C and Python faces of one app take the
+# same flags. Types absent here (complex, string) are not turned into CLI
+# flags; their ctor default is used verbatim instead. How the C face reads
+# one is `cli_number_c` (gh-2225).
+_C_PARSE = frozenset(t for t, py in _PYTYPE.items() if py in ("int", "float"))
+
+# ── checked numeric flags (gh-2225) ──────────────────────────────────────────
+# Every generated C command line -- a `jm app` executable and a composer's
+# c-face CLI (`_composer.render_cli`) -- reads a numeric flag through these,
+# and nothing else parses one. They read the WHOLE argument at the declared
+# type or refuse it: text that is not a number, a value past the parse
+# type's range (ERANGE), a sign on an unsigned type, or a value outside the
+# declared type's `limits` each print `<prog>: --<flag>: <reason>` and exit
+# 2, the conventional usage-error status. A bare `(int8_t)strtol(s, NULL,
+# 10)` had read `abc` as 0, `300` as 44 and `99999999999999999999` as
+# ULLONG_MAX, all with exit status 0.
+#
+# One definition per helper, emitted into a translation unit only when a flag
+# there calls it (`cli_number_helpers`): an uncalled `static` function is
+# -Wunused-function, an error under -Werror (gh-1863).
+_CLI_INT_C = """\
+static long long
+jm_cli_int(const char *prog, const char *flag, const char *s, int base,
+           const char *type, long long lo, long long hi)
+{
+    char *end;
+    errno = 0;
+    long long v = strtoll(s, &end, base);
+    if (end == s || *end != '\\0') {
+        fprintf(stderr, "%s: %s: '%s' is not an integer\\n", prog, flag, s);
+        exit(2);
+    }
+    if (errno == ERANGE || v < lo || v > hi) {
+        fprintf(stderr, "%s: %s: '%s' is out of range for %s [%lld, %lld]\\n",
+                prog, flag, s, type, lo, hi);
+        exit(2);
+    }
+    return v;
 }
+"""
+
+_CLI_UINT_C = """\
+static unsigned long long
+jm_cli_uint(const char *prog, const char *flag, const char *s, int base,
+            const char *type, unsigned long long hi)
+{
+    char *end;
+    errno = 0;
+    unsigned long long v = strtoull(s, &end, base);
+    if (end == s || *end != '\\0') {
+        fprintf(stderr, "%s: %s: '%s' is not an integer\\n", prog, flag, s);
+        exit(2);
+    }
+    /* strtoull negates a leading '-' rather than refusing it: "-1" reads as
+     * ULLONG_MAX, with no ERANGE. Only -0 is a value this type holds. */
+    int negative = s[strspn(s, " \\t\\n\\v\\f\\r")] == '-' && v != 0;
+    if (errno == ERANGE || negative || v > hi) {
+        fprintf(stderr, "%s: %s: '%s' is out of range for %s [0, %llu]\\n",
+                prog, flag, s, type, hi);
+        exit(2);
+    }
+    return v;
+}
+"""
+
+_CLI_REAL_C = """\
+static double
+jm_cli_real(const char *prog, const char *flag, const char *s,
+            const char *type)
+{
+    char *end;
+    errno = 0;
+    /* A float is read at its own precision, so text that rounds to FLT_MAX
+     * is FLT_MAX, and text past it is ERANGE -- as for a double. */
+    double v = strcmp(type, "float") ? strtod(s, &end)
+                                     : (double)strtof(s, &end);
+    if (end == s || *end != '\\0') {
+        fprintf(stderr, "%s: %s: '%s' is not a number\\n", prog, flag, s);
+        exit(2);
+    }
+    /* ERANGE past a magnitude of 1 is an overflow; an underflow returns a
+     * value no larger than the smallest normal and is kept, as Python's
+     * float() keeps it. */
+    if (errno == ERANGE && (v > 1.0 || v < -1.0)) {
+        fprintf(stderr, "%s: %s: '%s' is out of range for %s\\n", prog, flag,
+                s, type);
+        exit(2);
+    }
+    return v;
+}
+"""
+
+#: Each helper by the name a call spells, in the order they are emitted.
+_CLI_NUMBER_FNS = {
+    "jm_cli_int": _CLI_INT_C,
+    "jm_cli_uint": _CLI_UINT_C,
+    "jm_cli_real": _CLI_REAL_C,
+}
+
+
+def cli_number_c(ctype: str, flag: str, text: str, *, base: int = 10) -> str:
+    """The C expression reading *text* as a ``--<flag>`` of type *ctype*.
+
+    gh-2225: the one way a generated C command line reads a numeric flag.
+    The expression calls a ``jm_cli_*`` helper that returns the value at
+    the declared type or exits 2 naming the flag; :func:`cli_number_helpers`
+    emits whichever helpers a translation unit's flags call. An integer is
+    parsed through a ``long long`` (``strtoll``, or ``strtoull`` when its
+    floor is ``0``) and held to its row's ``limits`` -- the ``<stdint.h>``
+    / ``<limits.h>`` macros, so the compiler states the range, not jm -- and
+    a ``float`` / ``double`` through ``strtof`` / ``strtod``, whose ERANGE
+    is the range.
+
+    Parameters
+    ----------
+    ctype : str
+        A numeric ``_CTYPE_META`` key (kind ``int`` or ``float``).
+    flag : str
+        The flag's name without its ``--``; the refusal names ``--<flag>``.
+    text : str
+        The C expression holding the argument, e.g. ``argv[++i]``.
+    base : int, optional
+        The integer base ``strtoll`` / ``strtoull`` reads in: 10 for a
+        ``jm app`` executable, 0 (``0x`` hex, a leading-``0`` octal) for a
+        composer CLI, each the grammar that face has always read.
+
+    Returns
+    -------
+    str
+        A C expression of type *ctype*. ``argv[0]`` must be in scope: it is
+        the program name the refusal leads with.
+
+    Examples
+    --------
+    >>> cli_number_c("int8_t", "gain", "argv[++i]")
+    '(int8_t)jm_cli_int(argv[0], "--gain", argv[++i], 10, "int8_t", \
+INT8_MIN, INT8_MAX)'
+    >>> cli_number_c("size_t", "n", "s", base=0)
+    '(size_t)jm_cli_uint(argv[0], "--n", s, 0, "size_t", SIZE_MAX)'
+    >>> cli_number_c("float", "fc", "s")
+    '(float)jm_cli_real(argv[0], "--fc", s, "float")'
+    """
+    meta = T._CTYPE_META[ctype]
+    head = f'argv[0], "--{flag}", {text}'
+    if meta["kind"] == "float":
+        return f'({ctype})jm_cli_real({head}, "{ctype}")'
+    lo, hi = meta["limits"]
+    if lo == "0":
+        return f'({ctype})jm_cli_uint({head}, {base}, "{ctype}", {hi})'
+    return f'({ctype})jm_cli_int({head}, {base}, "{ctype}", {lo}, {hi})'
+
+
+def cli_number_helpers(text: str) -> str:
+    """The ``jm_cli_*`` definitions *text* calls, or ``""`` for none.
+
+    *text* is the translation unit's generated flag parsing -- every
+    expression :func:`cli_number_c` wrote into it. The finished text is
+    asked rather than the flags restated, as `_composer._drop_uncalled`
+    does (gh-1863): a helper is emitted exactly when a call to it is there.
+    The block carries the headers it needs beyond the ``<stdio.h>`` /
+    ``<stdlib.h>`` / ``<string.h>`` / ``<stdint.h>`` every face includes,
+    and comes before the first call.
+
+    Examples
+    --------
+    >>> cli_number_helpers("int x = 0;")
+    ''
+    >>> h = cli_number_helpers(cli_number_c("double", "fs", "s"))
+    >>> "jm_cli_real(" in h, "jm_cli_int(" in h
+    (True, False)
+    """
+    called = [
+        src
+        for fn, src in _CLI_NUMBER_FNS.items()
+        if re.search(rf"\b{fn}\(", text)
+    ]
+    if not called:
+        return ""
+    head = [
+        "/* gh-2225: a numeric flag is read whole, at its declared type, or",
+        " * the tool prints `<prog>: --<flag>: <reason>` and exits 2. */",
+        "#include <errno.h>",
+        "#include <limits.h>",
+        "",
+    ]
+    return "\n".join(head + called)
 
 
 def _py_default(c_default: str, ctype: str) -> "str | None":
@@ -282,16 +453,90 @@ _PY_WRITE = (
 )
 
 
+# ── exact numeric text (gh-2254) ─────────────────────────────────────────────
+# The significant digits that write an IEEE 754 binary real so the decimal
+# text reads back to the same bits: C11's FLT_DECIMAL_DIG / DBL_DECIMAL_DIG,
+# which C99 (the generated projects' standard) does not define. Keyed by the
+# width the type row's `py_type` states, so a real row of another width is a
+# KeyError at render time, not lossy text.
+_REAL_DIGITS = {32: 9, 64: 17}
+
+
+def _real_digits(ctype: str) -> int:
+    """The digits that write the real *ctype* exactly, from its row's width.
+
+    >>> _real_digits("float"), _real_digits("double")
+    (9, 17)
+    """
+    py_type = T._CTYPE_META[ctype]["py_type"]
+    return _REAL_DIGITS[int(py_type.rsplit("float", 1)[1])]
+
+
+def c_printf(ctype: str) -> "tuple[str, str]":
+    """The ``printf`` conversion and cast that write a *ctype* value exactly.
+
+    gh-2254: the one answer for every generated C line that prints a
+    numeric value -- a ``jm app`` executable's ``--record`` and a function
+    app's result -- derived from the type's ``_CTYPE_META`` row rather
+    than a table of its own. An integer is widened to ``long long`` (or
+    ``unsigned long long`` when its row's floor is ``0``, the split
+    :func:`cli_number_c` reads by), which holds every integer row. A real
+    is widened to ``double`` and written with the digits that read back
+    to the same bits through ``strtof`` / ``strtod`` -- the parse
+    :func:`cli_number_c` emits -- so a recorded value replays as itself.
+    ``%g`` kept six digits, so ``0.123456789`` was recorded as
+    ``0.123457``.
+
+    Parameters
+    ----------
+    ctype : str
+        A numeric ``_CTYPE_META`` key (kind ``int`` or ``float``).
+
+    Returns
+    -------
+    tuple of str
+        ``(conversion, cast)``: the conversion spec, and the C cast that
+        puts the value in the type the conversion reads.
+
+    Examples
+    --------
+    >>> c_printf("float"), c_printf("double")
+    (('%.9g', '(double)'), ('%.17g', '(double)'))
+    >>> c_printf("int8_t"), c_printf("size_t")
+    (('%lld', '(long long)'), ('%llu', '(unsigned long long)'))
+    """
+    meta = T._CTYPE_META[ctype]
+    if meta["kind"] == "float":
+        return f"%.{_real_digits(ctype)}g", "(double)"
+    if meta["limits"][0] == "0":
+        return "%llu", "(unsigned long long)"
+    return "%lld", "(long long)"
+
+
+# A csv I or Q value, per float sample type: the conversion `c_printf` writes
+# the component type with, so each line reads back to the sample's bits
+# (gh-2254). `%0.9f` kept nine places after the point, so a cf32 sample
+# below 5e-10 -- an ordinary small amplitude -- was written as 0.000000000.
+# Both faces spell it with this one conversion: Python's `%` and C's
+# `printf` both round correctly, so the two write the same bytes. A
+# non-finite sample is the exception printf does not share -- it writes a
+# sign-bit NaN as "-nan" where Python's `%` writes "nan" -- so the C face
+# writes those through `jm_put_real` (`_WRITE_BLOCK_C`) in Python's spelling.
+_CSV_CF32 = c_printf("float")[0]
+_CSV_CF64 = c_printf("double")[0]
+
 _PY_PACK_WRITE = (
     "    _st = args.sample_type\n"
     '    if args.file_type == "csv":\n'
     "        _lines = []\n"
     '        if _st == "cf32":\n'
     "            for _z in out:\n"
-    '                _lines.append("%0.9f,%0.9f" % (_z.real, _z.imag))\n'
+    f'                _lines.append("{_CSV_CF32},{_CSV_CF32}"'
+    " % (_z.real, _z.imag))\n"
     '        elif _st == "cf64":\n'
     "            for _z in out:\n"
-    '                _lines.append("%0.17g,%0.17g" % (_z.real, _z.imag))\n'
+    f'                _lines.append("{_CSV_CF64},{_CSV_CF64}"'
+    " % (_z.real, _z.imag))\n"
     "        else:\n"
     '            _sc = {"ci32": 2147483647.0, "ci16": 32767.0, "ci8": 127.0}[_st]\n'
     "            for _z in out:\n"
@@ -461,7 +706,7 @@ def _c_argv_parser(
         if ct not in _C_PARSE:
             continue  # not CLI-parseable; ctor uses its default literal
         decls.append(f"    {ct} {f['name']} = {f['default']};")
-        parse = _C_PARSE[ct].format(a="argv[++i]")
+        parse = cli_number_c(ct, f["name"], "argv[++i]")  # gh-2225
         clauses.append(
             f'if (!strcmp(argv[i], "--{f["name"]}") && i + 1 < argc) {{\n'
             f"            {f['name']} = {parse};\n"
@@ -655,6 +900,36 @@ jm_convert_block(const float _Complex *in, size_t n, int st,
 # assumed little-endian (jm's targets), so big-endian output reverses each
 # element on the way out.
 _WRITE_BLOCK_C = """\
+#include <math.h>
+
+/* gh-2254: write v so it reads back exactly -- `digits` significant digits
+   (the type's round-trip count), or, for a non-finite v, nan_s / inf_s with
+   a '-' before a negative infinity. A NaN's sign is dropped, as Python's
+   `%` drops it, where printf writes "-nan". The one writer of a real both
+   the csv lines and the --record JSON go through, with their own spellings
+   of the non-finite values. */
+static void
+jm_put_real(FILE *f, double v, int digits, const char *nan_s,
+            const char *inf_s)
+{
+    if (isnan(v))
+        fputs(nan_s, f);
+    else if (isinf(v))
+        fprintf(f, "%s%s", v < 0 ? "-" : "", inf_s);
+    else
+        fprintf(f, "%.*g", digits, v);
+}
+
+/* One csv I,Q line, each component as Python's `%.<digits>g` writes it. */
+static void
+jm_put_iq(FILE *f, double re, double im, int digits)
+{
+    jm_put_real(f, re, digits, "nan", "inf");
+    fputc(',', f);
+    jm_put_real(f, im, digits, "nan", "inf");
+    fputc('\\n', f);
+}
+
 /* Bytes per I or Q element for sample type st (for big-endian swapping). */
 static size_t
 jm_elem_size(int st)
@@ -678,9 +953,9 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
         for (size_t i = 0; i < n; i++) {
             float re = crealf(in[i]), im = cimagf(in[i]);
             if (st == 0)
-                fprintf(out, "%0.9f,%0.9f\\n", (double)re, (double)im);
+                jm_put_iq(out, (double)re, (double)im, JM_CSV_CF32);
             else if (st == 1)
-                fprintf(out, "%0.17g,%0.17g\\n", (double)re, (double)im);
+                jm_put_iq(out, (double)re, (double)im, JM_CSV_CF64);
             else {
                 double sc = (st == 2) ? 2147483647.0
                             : (st == 3) ? 32767.0
@@ -703,23 +978,17 @@ jm_write_block(FILE *out, const float _Complex *in, size_t n, int st,
     }
     fwrite(bytes, 1, nb, out);
 }
-"""
+""".replace("JM_CSV_CF32", str(_real_digits("float"))).replace(
+    "JM_CSV_CF64", str(_real_digits("double"))
+)
 
-# printf format + cast for each numeric C type, used by the --record JSON dump.
-_C_REC_FMT = {
-    "float": ("%g", "(double)"),
-    "double": ("%g", "(double)"),
-    "int": ("%d", "(int)"),
-    "int8_t": ("%d", "(int)"),
-    "int16_t": ("%d", "(int)"),
-    "int32_t": ("%d", "(int)"),
-    "int64_t": ("%lld", "(long long)"),
-    "uint8_t": ("%u", "(unsigned)"),
-    "uint16_t": ("%u", "(unsigned)"),
-    "uint32_t": ("%lu", "(unsigned long)"),
-    "uint64_t": ("%llu", "(unsigned long long)"),
-    "size_t": ("%zu", ""),
-}
+
+def _is_recorded_real(f: dict) -> bool:
+    return (
+        not f.get("choices")
+        and f["type"] in _C_PARSE
+        and T._CTYPE_META[f["type"]]["kind"] == "float"
+    )
 
 
 def _c_choice_arrays(flags: list[dict]) -> str:
@@ -753,8 +1022,20 @@ def _c_record_block(flags: list[dict], name: str, version: str) -> str:
                 f'            fprintf(rec, ",\\"{nm}\\":\\"%s\\"", '
                 f"jm_choices_{nm}[{nm}]);"
             )
-        elif f["type"] in _C_REC_FMT:
-            fmt, cast = _C_REC_FMT[f["type"]]
+        elif _is_recorded_real(f):
+            # gh-2254: the digits `c_printf` writes this type with, through
+            # the csv's writer (`_WRITE_BLOCK_C`, always beside a record).
+            # JSON has no spelling for a non-finite number and `%g` writes
+            # `inf` / `nan`, which no JSON reader takes: these are the ones
+            # Python's `json` writes for the Python face's record and reads
+            # back, and `strtod` reads them too, so either record replays.
+            lines.append(f'            fprintf(rec, ",\\"{nm}\\":");')
+            lines.append(
+                f"            jm_put_real(rec, (double){nm}, "
+                f'{_real_digits(f["type"])}, "NaN", "Infinity");'
+            )
+        elif f["type"] in _C_PARSE:
+            fmt, cast = c_printf(f["type"])
             lines.append(
                 f'            fprintf(rec, ",\\"{nm}\\":{fmt}", {cast}{nm});'
             )
@@ -771,7 +1052,7 @@ def _py_record_block(flags: list[dict], name: str, version: str) -> str:
     """Emit a `--record` JSON dump in Python from the parsed args."""
     fields = [f'"tool": "{name}"', f'"version": "{version}"']
     for f in flags:
-        if f.get("choices") or f["type"] in _C_REC_FMT:
+        if f.get("choices") or f["type"] in _C_PARSE:
             fields.append(f'"{f["name"]}": args.{f["name"]}')
     # One key per line with a trailing comma: the layout ruff keeps at any
     # width, where the one-line dict ran past it (gh-1478).
@@ -1107,23 +1388,6 @@ def _app_shape(cfg: dict, component: str) -> str | None:
 
 
 # ── module-function apps ─────────────────────────────────────────────────────
-# printf format + cast per scalar return type.
-_C_PRINTF = {
-    "float": ("%g", "(double)"),
-    "double": ("%g", "(double)"),
-    "int": ("%d", ""),
-    "int8_t": ("%d", "(int)"),
-    "int16_t": ("%d", "(int)"),
-    "int32_t": ("%ld", "(long)"),
-    "int64_t": ("%lld", "(long long)"),
-    "uint8_t": ("%u", "(unsigned)"),
-    "uint16_t": ("%u", "(unsigned)"),
-    "uint32_t": ("%lu", "(unsigned long)"),
-    "uint64_t": ("%llu", "(unsigned long long)"),
-    "size_t": ("%zu", ""),
-}
-
-
 def _find_fn(cfg: dict, function: str, module: str | None):
     """Return (module, fn_dict) for the named function, or (None, None)."""
     mods = [module] if module else C.modules(cfg)
@@ -1141,7 +1405,7 @@ def _fn_generatable(fn: dict) -> bool:
         if p["type"] not in _C_PARSE:
             return False
     ret = fn.get("return_type", "void")
-    return ret == "void" or ret in _C_PRINTF
+    return ret == "void" or ret in _C_PARSE
 
 
 def _fn_flags(params: list[dict]) -> list[dict]:
@@ -1161,9 +1425,11 @@ def _fn_flags(params: list[dict]) -> list[dict]:
 
 def _c_call_print(function: str, ret_t: str, param_names: list[str]) -> str:
     args = ", ".join(param_names)
-    if ret_t == "void" or ret_t not in _C_PRINTF:
+    if ret_t == "void" or ret_t not in _C_PARSE:
         return f"    {function}({args});"
-    fmt, cast = _C_PRINTF[ret_t]
+    # gh-2254: a real round-trips exactly, as the Python face's print()
+    # does -- the same value, though not always the same text.
+    fmt, cast = c_printf(ret_t)
     return (
         f"    {ret_t} result = {function}({args});\n"
         f'    printf("{fmt}\\n", {cast}result);'
@@ -1178,6 +1444,9 @@ def _build_fn_ctx(
     ret_t = fn.get("return_type", "void")
     fn_flags = _fn_flags(params)
     pnames = [p["name"] for p in params]
+    arg_parse_block = _c_argv_parser(
+        name, fn_flags, want_in=False, want_out=False
+    )
     return {
         "name": name,
         "project": pkg,
@@ -1186,9 +1455,9 @@ def _build_fn_ctx(
         "module": module,
         "function": function,
         "argparse_state_args": _argparse_block(fn_flags),
-        "arg_parse_block": _c_argv_parser(
-            name, fn_flags, want_in=False, want_out=False
-        ),
+        "arg_parse_block": arg_parse_block,
+        # gh-2225: the checked number parsers its flags call.
+        "helpers": cli_number_helpers(arg_parse_block),
         # gh-1591: the C call names the function's SYMBOL stem (`<p>_<fn>`
         # under a c_prefix); `function` above stays the Python name.
         # gh-1706: a `why = true` function takes a trailing
@@ -1293,13 +1562,16 @@ def _build_cmd_ctx(
     cfg: dict, name: str, commands: list[dict]
 ) -> dict[str, str]:
     pkg = C.project_name(cfg)
+    handlers = _c_command_handlers(commands)
     return {
         "name": name,
         "project": pkg,
         "package": pkg,
         "version": C.project_version(cfg),
-        "helpers": "",
-        "command_handlers": _c_command_handlers(commands),
+        # gh-2225: one copy of each checked number parser, for every
+        # command's flags -- they share this translation unit.
+        "helpers": cli_number_helpers(handlers),
+        "command_handlers": handlers,
         "dispatch": _c_dispatch(commands),
         "usage": _cmd_usage(name, commands),
         "command_fns": _py_command_fns(commands),
@@ -1427,7 +1699,15 @@ def _build_ctx(
             sample_type=sample_type,
             csym=csym,
         )
-        helpers = _c_choice_parsers(parse_flags)
+        # gh-2225: the checked number parsers this block's flags call.
+        helpers = "\n\n".join(
+            x
+            for x in (
+                cli_number_helpers(arg_parse_block),
+                _c_choice_parsers(parse_flags),
+            )
+            if x
+        )
         if sample_type:
             helpers = "\n\n".join(
                 x

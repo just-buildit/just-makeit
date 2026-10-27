@@ -67,6 +67,9 @@ Commands:
                                 equivalent flag combination; passing the
                                 flags directly is always equivalent.
     --module name               Place object inside this module's .so.
+    --before OBJ                With --module: insert ahead of OBJ in the
+                                module's objects list (its load order)
+                                instead of appending.
     --state name:type[:default] State variable; repeatable.
     --arg-type TYPE             step() input type (default: float _Complex).
     --return-type TYPE          step() return type (default: --arg-type).
@@ -184,6 +187,11 @@ Commands:
                                 call-independent -- a `max_out(state)` that
                                 never sees the count cannot claim it, and is
                                 clamped without this flag (gh-920).
+    --short-out                 Accept an out= SMALLER than max_out(), any
+                                size down to empty (whole rows, with
+                                --out-cols), for a backpressure kernel: it
+                                writes what fits and the object reports the
+                                input it took. Needs --pass-capacity.
     --nogil                     Release the GIL across the pure-C kernel so a
                                 thread-per-shard worker scales across cores.
                                 Numpy accessors are hoisted out first. Sound
@@ -212,6 +220,11 @@ Commands:
                                 "count"). Say it when your C API names the quantity
                                 something else -- the paired <comp>_<name>_max_out()
                                 already takes its name from the C signature.
+    --no-count                  Drop that synthesized argument altogether: the
+                                method is called f(), the kernel f(state, out
+                                [, max_out]), and <comp>_<name>_max_out(state)
+                                alone sizes the result. For a kernel that
+                                writes one result sized by the object (gh-2233).
     --out-cols EXPR             Make a --variable-output result a MATRIX: the
                                 kernel still fills a flat buffer and returns an
                                 element count, and the binding returns
@@ -251,6 +264,11 @@ Commands:
                                 first integer --param.
     --out-divisor N             Divide input length by N for output array (default: 1).
     --result-field name:type    Append a field to a returned record list; repeatable.
+    --consumed-fn NAME          With --result-field and an --arg-type input: the C
+                                function saying how much input the last call took
+                                (size_t NAME(const state *)). The binding re-offers
+                                the rest until none is left, so a kernel that stops
+                                at a full buffer loses no records.
     --record-dtype STRUCT       With --variable-output: return ONE numpy structured
                                 array whose dtype is that C struct's own layout
                                 (offsetof/sizeof), one row per record. The
@@ -352,8 +370,10 @@ Commands:
     --out-size EXPR             Length of that output, as a verbatim C expression
                                 over the function's own arguments — each array
                                 param's generated <name>_len included
-                                (e.g. "x_len * factor").
-    --check-return              Treat a non-zero int return as failure: raise
+                                (e.g. "x_len * factor"). With --result-field,
+                                the number of records the C is handed room
+                                for (default: max_results, 64).
+    --check-return             Treat a non-zero int return as failure: raise
                                 RuntimeError(rc), return None on success.
                                 Requires an integer --return-type.
     --why                       The C function takes a trailing
@@ -978,6 +998,7 @@ def _main() -> None:
         capsule_type = ""  # gh-1235
         error = ""  # gh-2182
         error_message = ""
+        py_type = ""  # gh-2347
 
         remaining = args[3:]
         i = 0
@@ -1050,6 +1071,8 @@ def _main() -> None:
                 # gh-2182: the exception a refused assignment raises.
                 "--error",
                 "--error-message",
+                # gh-2347: a json property's stub annotation.
+                "--py-type",
             ):
                 i += 1
                 if i >= len(remaining):
@@ -1080,6 +1103,8 @@ def _main() -> None:
                     error = val  # gh-2182
                 elif tok == "--error-message":
                     error_message = val
+                elif tok == "--py-type":
+                    py_type = val  # gh-2347
                 else:
                     expr = val
                 i += 1
@@ -1132,6 +1157,7 @@ def _main() -> None:
             capsule_type=capsule_type,
             error=error,
             error_message=error_message,
+            py_type=py_type,
         )
 
     elif cmd == "warning":

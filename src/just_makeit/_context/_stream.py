@@ -263,7 +263,9 @@ static PyObject *
 {ComponentW}_make_iter({obj_t} *self, Py_ssize_t block,
                        Py_ssize_t count, PyObject *on_block)
 {{
-    {iter_t} *it = PyObject_New({iter_t}, &{iter_ty});
+    /* tp_alloc zeroes the object: a field added to the iterator and not
+       named below starts empty, not as garbage (gh-2292). */
+    {iter_t} *it = ({iter_t} *){iter_ty}.tp_alloc(&{iter_ty}, 0);
     if (!it)
         return NULL;
     Py_INCREF(self);

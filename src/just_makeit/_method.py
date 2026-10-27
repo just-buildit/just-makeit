@@ -37,6 +37,7 @@ from . import _types as T
 
 from . import _report
 from . import _init
+from . import _keys
 from ._builtins import (
     builtin_method_names,
     is_builtin_symbol,
@@ -71,7 +72,6 @@ def count_why_not(
     error_negative: bool = False,
     error_sentinel: str = "",
     error_on_empty: bool = False,
-    batch: bool = False,
     varargs: bool = False,
     manual_stub: bool = False,
     codec: str = "",
@@ -102,10 +102,11 @@ def count_why_not(
     variable_output, count_type, error_negative, error_sentinel, \
 error_on_empty
         The declaration. An empty *count_type* is the default, ``size_t``.
-    batch, varargs, manual_stub, codec
+    varargs, manual_stub, codec
         The shapes that win over ``variable_output`` and never read the
         count: each renders its own binding, so a count key on one is
-        silently inert.
+        silently inert. (``batch`` is the fourth, and refuses every key its
+        binding does not read, these among them: `batch_why_not`.)
 
     Returns
     -------
@@ -153,9 +154,7 @@ error_on_empty
             )
         return ""
     hides = (
-        "--batch"
-        if batch
-        else "--varargs"
+        "--varargs"
         if varargs
         else "--manual-stub"
         if manual_stub
@@ -204,6 +203,316 @@ error_on_empty
     return ""
 
 
+def batch_why_not(method: str, carried) -> str:
+    """Why a ``batch`` method cannot carry *carried*, or ``""``.
+
+    gh-2261. A batch method is a 1:1-rate block transform, and the binding
+    renders it ahead of every other result shape, so a key outside
+    `_keys.BATCH_METHOD_KEYS` -- the ones its binding, prototype, stub and
+    benchmark read -- would be stored in the manifest and generate nothing:
+    a capacity no prototype takes, a status nobody raises, a param nobody
+    parses. Or worse, a declaration that does not compile (``variable_output``
+    renders a counted ``_core.c`` stub under a ``void`` prototype, gh-2200)
+    or a crash (a record return has no ndarray dtype). Every one is refused
+    by this one table rather than by a check per key, so a key added later
+    is refused on a batch row until the batch binding reads it.
+
+    Asked by `run`, which both ``jm method`` and ``apply``'s replay call, so
+    the two front doors refuse alike, before anything is written.
+
+    Parameters
+    ----------
+    method : str
+        ``<object>.<method>``, for the message.
+    carried : iterable of str
+        The manifest keys the method declares with a non-default value.
+
+    Returns
+    -------
+    str
+        One sentence for ``error:``, or ``""`` when every key is one a batch
+        method reads.
+
+    Examples
+    --------
+    >>> batch_why_not("o.run", ["arg_type", "batch", "nogil"])
+    ''
+    >>> why = batch_why_not("o.run", ["batch", "max_out", "params"])
+    >>> why.split(":")[0]
+    "method 'o.run'"
+    >>> "max_out and params have no effect on a batch method" in why
+    True
+    """
+    stray = sorted(set(carried) - _keys.BATCH_METHOD_KEYS)
+    if not stray:
+        return ""
+    # The keys that shape the call; the rest name or document the method.
+    reads = ", ".join(
+        sorted(
+            _keys.BATCH_METHOD_KEYS
+            - _keys.METHOD_NON_SIGNATURE_KEYS
+            - {"batch"}
+        )
+    )
+    one = len(stray) == 1
+    return (
+        f"method '{method}': {' and '.join(stray)} "
+        f"{'has' if one else 'have'} no effect on a batch method. Its "
+        "binding is a 1:1 block transform that reads only "
+        f"{reads}, so jm would store {'it' if one else 'them'} and generate "
+        f"nothing. Drop {'it' if one else 'them'}, or drop `batch` for a "
+        f"shape that reads {'it' if one else 'them'}."
+    )
+
+
+def result_shape(m: dict) -> str:
+    """The result shape the binding renders method *m* as.
+
+    gh-2250. ``make_methods_ctx`` picks ONE shape per method, in this
+    order, and a key belonging to another shape is never read:
+
+    - ``varargs`` / ``manual_stub`` -- the author writes the binding;
+    - ``codec`` -- generated from the ``[codec.X]`` table alone;
+    - ``batch`` -- a 1:1 block transform (gh-179);
+    - ``variable_output`` -- an array sized by the kernel's count;
+    - ``single`` / ``records`` -- one record by value, or a list of them;
+    - ``borrow`` -- a view the kernel lends (gh-1312);
+    - ``fixed`` -- everything else: a scalar or ``void`` return, with any
+      ``status_return``, ``error_negative``, ``multi_output`` or
+      ``out_type``.
+
+    `_keys.RESULT_SHAPE_KEYS` names, per key, the shapes that read it.
+
+    Examples
+    --------
+    >>> result_shape({"name": "m", "variable_output": True})
+    'variable_output'
+    >>> result_shape({"name": "m", "result_fields": [{"name": "a"}],
+    ...               "single": True})
+    'single'
+    >>> result_shape({"name": "m", "result_fields": [{"name": "a"}],
+    ...               "variable_output": True, "record_dtype": "rec_t"})
+    'variable_output'
+    >>> result_shape({"name": "m", "out_type": "float"})
+    'fixed'
+    """
+    for key in ("varargs", "manual_stub", "codec", "batch", "variable_output"):
+        if m.get(key):
+            return key
+    if m.get("result_fields") and not _record.is_record_array(
+        m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+    ):
+        return "single" if m.get("single") else "records"
+    return "borrow" if _borrow.is_borrow(m) else "fixed"
+
+
+def method_input(m: dict) -> str:
+    """What the binding of method *m* reads its input length from.
+
+    gh-2313. One of three answers:
+
+    - ``"block"`` -- an input ARRAY the binding acquires: a block
+      ``arg_type`` (every ``batch``, ``variable_output`` and record shape
+      takes its input as ``const T *in, size_t n``), a ``T[]`` ``arg_type``,
+      or an array param that is not the caller's buffer to write. ``strict``
+      reads it (gh-1426 B).
+    - ``"count"`` -- no input at all, so the binding synthesizes a leading
+      count (`_gluedoc.synthesizes_count`, and an input-less ``batch``).
+      ``count_default`` and ``count_name`` size and name it (gh-657,
+      gh-1074).
+    - ``""`` -- neither: scalars only, nothing, or a binding jm does not
+      write.
+
+    `_keys.INPUT_SIDE_KEYS` names, per key, the answer that reads it.
+
+    Examples
+    --------
+    >>> method_input({"name": "m", "arg_type": "float", "batch": True})
+    'block'
+    >>> method_input({"name": "m", "return_type": "float", "batch": True})
+    'count'
+    >>> method_input({"name": "m", "variable_output": True})
+    'count'
+    >>> method_input({"name": "m", "arg_type": "float"})
+    ''
+    >>> method_input({"name": "m", "params": [{"name": "v",
+    ...                                        "type": "float[]"}]})
+    'block'
+    >>> method_input({"name": "m", "params": [{"name": "y", "out": True,
+    ...                                        "type": "float[]"}]})
+    ''
+    """
+    from . import _gluedoc
+
+    shape = result_shape(m)
+    if shape in ("varargs", "manual_stub", "codec"):
+        return ""
+    arg_type = str(m.get("arg_type") or "void")
+    has_arg = arg_type != "void"
+    if shape == "batch":
+        # A batch binding parses `x` or a count and nothing else (gh-2259).
+        return "block" if has_arg else "count"
+    params = m.get("params") or []
+    if has_arg and (
+        shape in ("variable_output", "single", "records")
+        or T.is_array_param_type(arg_type)
+    ):
+        return "block"
+    if any(
+        T.is_array_param_type(str(p.get("type", "")))
+        and not T.param_writable(p)
+        for p in params
+    ):
+        return "block"
+    if _gluedoc.synthesizes_count(
+        variable_output=shape == "variable_output",
+        arg_type=arg_type,
+        params=params,
+        no_count=m.get("no_count"),
+    ):
+        return "count"
+    return ""
+
+
+#: How a refusal names each `result_shape`.
+_SHAPE_NAMES = {
+    "varargs": "a --varargs method (its binding is yours)",
+    "manual_stub": "a --manual-stub method (its binding is yours)",
+    "codec": "a codec method (its binding is the codec's)",
+    "batch": "a batch method",
+    "variable_output": "a variable_output method",
+    "single": "a --single record method",
+    "records": "a list-of-records method",
+    "borrow": "a --borrow method",
+    "fixed": "a fixed-output method",
+}
+
+#: Why `status_return` has nothing to read on a shape that has no int status
+#: in its return, and what to declare instead (gh-2250).
+_NO_STATUS = {
+    "variable_output": (
+        "its kernel returns the output COUNT. To refuse through it, declare "
+        "a signed --count-type with --error-negative, or --error-sentinel, "
+        "or --error-on-empty"
+    ),
+    "single": "its kernel returns the record itself, by value",
+    "records": (
+        "its kernel returns the number of records it wrote; to refuse, "
+        "return them through --variable-output --record-dtype, whose count "
+        "takes --error-negative or --error-sentinel"
+    ),
+    "borrow": (
+        "its kernel returns the pointer it lends: a NULL already raises, "
+        "and --status-fn maps why"
+    ),
+}
+
+
+def shape_keys_why_not(method: str, m: dict) -> str:
+    """Why *m* carries a key its shape's binding does not read, or ``""``.
+
+    gh-2202 / gh-2250 / gh-2313: the #1408 family. A key read on only some
+    shapes was accepted on every one, stored in the manifest, and read by
+    nobody -- ``none_on_empty`` on a scalar, ``status_return`` on a record
+    (whose refusing kernel's error code then became a result), ``strict``
+    with no input array, ``count_default`` beside an input that sizes the
+    call. The shapes that read each key are DECLARED, in
+    `_keys.RESULT_SHAPE_KEYS` and `_keys.INPUT_SIDE_KEYS`, and asked of
+    `result_shape` and `method_input`; this refuses every other pairing.
+
+    ``status_return`` also needs an integer return to read: ``void`` did not
+    compile, and a floating return was truncated to ``int`` and tested.
+
+    Asked by `run`, which both ``jm method`` and ``apply``'s replay call,
+    so the two front doors refuse alike, before anything is written.
+    A ``batch`` row's stray keys are `batch_why_not`'s, asked first.
+
+    Parameters
+    ----------
+    method : str
+        ``<object>.<method>``, for the message.
+    m : dict
+        The method's manifest entry, with its params as tables.
+
+    Returns
+    -------
+    str
+        One sentence for ``error:``, or ``""``.
+
+    Examples
+    --------
+    >>> shape_keys_why_not("o.m", {"name": "m", "return_type": "float",
+    ...                            "none_on_empty": True}).split(".")[1]
+    "m': none_on_empty has no effect on a fixed-output method"
+    >>> shape_keys_why_not("o.m", {"name": "m", "return_type": "int",
+    ...                            "status_return": True, "out_type": "u8"})
+    ''
+    >>> "nothing to read" in shape_keys_why_not(
+    ...     "o.m", {"name": "m", "status_return": True, "single": True,
+    ...             "result_fields": [{"name": "a", "type": "int"}]})
+    True
+    >>> "has no input array" in shape_keys_why_not(
+    ...     "o.m", {"name": "m", "arg_type": "float", "strict": True})
+    True
+    """
+    who = f"method '{method}'"
+    shape = result_shape(m)
+    for key, reads in _keys.RESULT_SHAPE_KEYS.items():
+        if not m.get(key) or shape in reads:
+            continue
+        if key == "status_return" and shape in _NO_STATUS:
+            return (
+                f"{who}: status_return reads the kernel's int return as a "
+                f"status, and {_SHAPE_NAMES[shape]} has nothing to read: "
+                f"{_NO_STATUS[shape]}. Drop status_return."
+            )
+        return (
+            f"{who}: {key} has no effect on {_SHAPE_NAMES[shape]}. It is "
+            f"read only by {' and '.join(_SHAPE_NAMES[s] for s in sorted(reads))}"
+            ", so jm would store it and generate nothing. Drop it."
+        )
+    rt = str(m.get("return_type") or "float _Complex")
+    if (
+        m.get("status_return")
+        and T._CTYPE_META.get(rt, {}).get("kind") != "int"
+    ):
+        return (
+            f"{who}: status_return reads the kernel's return as an integer "
+            f"status (0 is success), and {rt!r} is not an integer. Declare "
+            "the integer the kernel returns: --return-type int."
+        )
+    side = method_input(m)
+    stray = [
+        k
+        for k, want in _keys.INPUT_SIDE_KEYS.items()
+        if m.get(k) and want != side
+    ]
+    if not stray:
+        return ""
+    one = len(stray) == 1
+    has = (
+        "takes its input as an array"
+        if side == "block"
+        else "synthesizes a count to size its call"
+        if side == "count"
+        else "has no input array and synthesizes no count"
+    )
+    readers = "; ".join(
+        f"{k} reads "
+        + (
+            "an input array (a block arg_type or an array param)"
+            if _keys.INPUT_SIDE_KEYS[k] == "block"
+            else "the count an input-less variable_output or batch method "
+            "synthesizes"
+        )
+        for k in stray
+    )
+    return (
+        f"{who}: {' and '.join(stray)} {'has' if one else 'have'} no effect: "
+        f"the method {has}, and {readers}. Drop {'it' if one else 'them'}."
+    )
+
+
 # gh-805 §A2: what a C function name may be.
 _C_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -238,7 +547,7 @@ def _out_elem_disp(return_type: str, out_type: str | None = None) -> str:
 
 
 def _max_out_count_param(
-    arg_type: str, params: list | None
+    arg_type: str, params: list | None, no_count: bool = False
 ) -> "tuple[str, str | None]":
     """gh-607: the count parameter ``*_max_out()`` takes, mirroring the
     shape's own kernel count argument — the same value the binding is about
@@ -247,11 +556,16 @@ def _max_out_count_param(
 
     Returns ``(decl, name)``: ``decl`` is the C parameter text to append
     (``", size_t n_in"``); ``name`` is the identifier the stub body
-    suppresses/uses, or ``None`` only for the all-scalar-params shape, whose
+    suppresses/uses, or ``None`` for the all-scalar-params shape, whose
     kernel has no size-bearing argument to mirror — ``max_out`` stays
-    zero-arg for that one shape (there is nothing to pass).
+    zero-arg for that shape (there is nothing to pass).
+
+    gh-2233: and ``None`` under ``no_count``, for the same reason: that
+    method's kernel takes no count, so its bound is the state's alone.
     """
     params = params or []
+    if no_count:
+        return "", None
     if arg_type != "void":
         return ", size_t n_in", "n_in"
     for p in params:
@@ -280,6 +594,7 @@ def _methods_c_stub_variable(
     csym: str,
     count_type: str = DEFAULT_COUNT_TYPE,
     error_sentinel: str = "",
+    no_count: bool = False,
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -301,6 +616,9 @@ def _methods_c_stub_variable(
     ``_core.h`` declaration names, read from the same key -- and its
     ``IMPLEMENT`` note says how it refuses when the method declares a way:
     a negative code for a signed count, *error_sentinel* for an unsigned one.
+
+    gh-2233: *no_count* drops the void-input shape's ``size_t n`` from the
+    kernel and from ``_max_out``, which then take the state alone.
     """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = _out_elem_disp(return_type, out_type)
@@ -328,6 +646,10 @@ def _methods_c_stub_variable(
         # param loses its `const` here exactly as it does in the header.
         step_param = ", " + ", ".join(T.c_param_parts(params))
         suppress_in = "    " + " ".join(T.c_param_suppress(params))
+    elif no_count:
+        # gh-2233: no count at all; the result is sized by the state.
+        step_param = ""
+        suppress_in = ""
     else:
         step_param = ", size_t n"
         suppress_in = "    (void)n;"
@@ -339,7 +661,7 @@ def _methods_c_stub_variable(
     cap_param = ", size_t max_out" if pass_capacity else ""
     cap_suppress = " (void)max_out;" if pass_capacity else ""
 
-    moc_decl, moc_name = _max_out_count_param(arg_type, params)
+    moc_decl, moc_name = _max_out_count_param(arg_type, params, no_count)
     moc_suppress = f" (void){moc_name};" if moc_name else ""
 
     if max_out > 0:
@@ -369,7 +691,7 @@ def _methods_c_stub_variable(
         f"{step_param}, {ret_disp} *out{extra_out_params}{cap_param})",
         "{",
         "    (void)state;",
-        suppress_in,
+        *([suppress_in] if suppress_in else []),
         # gh-600: the extra multi_output buffers are parameters too — omitting
         # them left a freshly scaffolded stub warning about unused `out1`
         # (an error under -Werror) before a line of user code is written.
@@ -487,6 +809,131 @@ def _methods_c_stub_result_single(
     return "\n".join(lines) + "\n"
 
 
+def _zero_return(return_type: str) -> str:
+    """The ``return`` of *return_type*'s zero, or "" for ``void``.
+
+    The neutral value a fixed-output stub returns, and what
+    :func:`impl_default_return` completes a body with: one spelling, so the
+    two cannot differ. A registered scalar returns its ``_CTYPE_META``
+    zero. Any other type is a record returned by value -- ``single``, or a
+    declared record element as a fixed return (gh-1405) -- and returns a
+    zeroed C99 compound literal. The fixed stub emitted no ``return`` at
+    all for that kind, so a fresh scaffold fell off the end of a non-void
+    function (gh-2248).
+
+    >>> _zero_return("float")
+    'return (float)0.0f;'
+    >>> _zero_return("iq16_t")
+    'return (iq16_t){0};'
+    >>> _zero_return("void")
+    ''
+    """
+    if return_type == "void":
+        return ""
+    meta = T._CTYPE_META.get(return_type)
+    return f"return ({return_type}){meta['zero'] if meta else '{0}'};"
+
+
+def ends_in_return(body: str) -> bool:
+    """Whether *body*'s last top-level statement is a ``return``.
+
+    What decides whether an ``impl`` body is complete (gh-2248). Asking
+    whether ``return`` appears anywhere read an early exit --
+    ``if (n == 0) return 0;`` followed by more work -- as a body that
+    returns, and the function then fell off its end. Read on the body with
+    comments and literals blanked (`_docsync._code_mask`): the statement
+    ending the body is everything after the ``;``, ``{`` or ``}`` before
+    its own final ``;``, so a ``;`` or ``return`` in a comment or a
+    string is not seen. A body ending in a block
+    (``if/else``, a loop) does not end in a ``return``; the one appended
+    after it is at worst unreachable, which compiles.
+
+    Examples
+    --------
+    >>> ends_in_return("x = 1;\\nreturn x;  /* done */")
+    True
+    >>> ends_in_return("if (n == 0) return 0;\\nout[0] = 1;")
+    False
+    >>> ends_in_return("for (;;) { return 1; }")
+    False
+    >>> ends_in_return("if (n) { return 1; }\\nreturn 0;")
+    True
+    """
+    from ._docsync import _code_mask
+
+    mask = _code_mask(body).rstrip()
+    # The final statement starts past the previous `;`, `{` or `}`: any
+    # brace met walking back from a top-level `;` closes or opens a block
+    # before it, so no depth needs tracking. A body ending in a block
+    # leaves only its closing `}` there, which is not a `return`.
+    start = max(mask.rfind(c, 0, len(mask) - 1) for c in ";{}") + 1
+    return re.match(r"\s*return\b", mask[start:]) is not None
+
+
+def impl_default_return(
+    *,
+    return_type: str,
+    record_list: bool = False,
+    variable_output: bool = False,
+    arg_type: str = "void",
+    params: list | None = None,
+    no_count: bool = False,
+    count_type: str = "",
+    batch: bool = False,
+    borrow: bool = False,
+    c_fn: str,
+) -> str:
+    """The ``return`` that completes an ``impl`` body which has none.
+
+    gh-2248. A body lifted from a reference function (``--impl``, or a
+    manifest ``impl``) may end without a ``return`` where the method's
+    kernel returns something; falling off its end compiles with at most a
+    warning and returns garbage. jm appends this statement, the shape's
+    own neutral value, deciding the shape in the order the stub dispatch
+    in :func:`run` does:
+
+    * a list of records (``result_fields``): ``0`` records;
+    * ``variable_output``: the body filled the output it was handed, so
+      the shape's own count -- the one ``_max_out`` mirrors from the
+      kernel (:func:`_max_out_count_param`: ``n``, ``n_in``,
+      ``<p>_len``) -- or, for a kernel with none (all-scalar params,
+      gh-2233's ``no_count``), the bound the binding sized ``out`` with,
+      ``<fn>_max_out(state)``; cast to *count_type* unless ``size_t``;
+    * a borrow: ``NULL``, which the binding raises on;
+    * a batch: nothing, it returns ``void``;
+    * any other -- a scalar, ``void``, one record by value (``single``):
+      the zero the stub returns (:func:`_zero_return`), ``(<T>){0}`` for a
+      record.
+
+    Every non-void type has a zero to spell, so no shape is refused.
+
+    Examples
+    --------
+    >>> impl_default_return(return_type="rec_t", c_fn="f")
+    'return (rec_t){0};'
+    >>> impl_default_return(return_type="rec_t", record_list=True, c_fn="f")
+    'return 0;'
+    >>> impl_default_return(return_type="float", variable_output=True,
+    ...                     arg_type="float", c_fn="f")
+    'return n_in;'
+    >>> impl_default_return(return_type="float", variable_output=True,
+    ...                     no_count=True, count_type="int", c_fn="f")
+    'return (int)f_max_out(state);'
+    """
+    if record_list:
+        return "return 0;"
+    if variable_output:
+        count = _max_out_count_param(arg_type, params, no_count)[1]
+        ctype = count_type or DEFAULT_COUNT_TYPE
+        cast = "" if ctype == "size_t" else f"({ctype})"
+        return f"return {cast}{count or f'{c_fn}_max_out(state)'};"
+    if borrow:
+        return "return NULL;"
+    if batch:
+        return ""
+    return _zero_return(return_type)
+
+
 def _methods_c_stub_fixed(
     component: str,
     name: str,
@@ -597,12 +1044,8 @@ def _methods_c_stub_fixed(
         c_params = f"{csym}_state_t *state{extra_params}{out_param}"
         suppress = f"    (void)state;{extra_suppress}{out_suppress}"
 
-    zero = (
-        T._CTYPE_META[return_type]["zero"]
-        if return_type in T._CTYPE_META
-        else None
-    )
-    ret_line = f"    return ({ret_disp}){zero};" if zero is not None else ""
+    zero = _zero_return(return_type)
+    ret_line = f"    {zero}" if zero else ""
     lines = [
         f"/* <<IMPLEMENT: {name} >> */",
         f"{ret_disp}",
@@ -893,6 +1336,7 @@ def _build_method_prototype(
     *,
     csym: str,
     count_type: str = DEFAULT_COUNT_TYPE,
+    no_count: bool = False,
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline).
 
@@ -913,6 +1357,9 @@ def _build_method_prototype(
     gh-2012: a variable-output kernel returns its count as *count_type*
     (``size_t`` unless the method declares a signed one); its ``_max_out``
     sibling stays ``size_t``, a capacity and never a refusal.
+
+    gh-2233: *no_count* declares the void-input kernel and its ``_max_out``
+    without the ``size_t n`` the shape otherwise takes.
     """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
@@ -1003,9 +1450,10 @@ def _build_method_prototype(
             # site at once.
             step_param = ", " + ", ".join(T.c_param_parts(params))
         else:
-            step_param = ", size_t n"
+            # gh-2233: `no_count` takes none; the state sizes the result.
+            step_param = "" if no_count else ", size_t n"
         out_disp = _out_elem_disp(return_type, record_dtype or out_type)
-        moc_decl, _ = _max_out_count_param(arg_type, params)
+        moc_decl, _ = _max_out_count_param(arg_type, params, no_count)
         return "\n".join(
             [
                 f"size_t {c_fn}_max_out({csym}_state_t *state{moc_decl});",
@@ -1072,6 +1520,9 @@ _SIGNATURE_COERCIONS: dict = {
     "record_name": (str, ""),
     "record_module": (str, ""),
     "record_dtype": (str, ""),
+    # gh-2204: a second C symbol the binding calls after every kernel call,
+    # and what decides whether the input is offered once or until it is used.
+    "consumed_fn": (str, ""),
     # gh-1312: all three are part of the CALL -- `borrow` decides whether
     # the kernel lends or fills, `borrow_count` which argument sizes the
     # view, `borrow_writeable` what the caller may do with it. Two objects
@@ -1091,8 +1542,10 @@ _SIGNATURE_COERCIONS: dict = {
     "manual_stub": (bool, False),
     "pass_capacity": (bool, False),
     "exact_max_out": (bool, False),
+    "short_out": (bool, False),
     "count_default": (str, ""),
     "count_name": (str, ""),
+    "no_count": (bool, False),
     "out_cols": (str, ""),
     "nogil": (bool, False),
     "status_return": (bool, False),
@@ -1210,6 +1663,7 @@ def run(
     record_module: str = "",
     record_doc: str = "",
     record_dtype: str = "",
+    consumed_fn: str = "",
     borrow: bool = False,
     borrow_count: str = "",
     borrow_writeable: bool = False,
@@ -1225,7 +1679,9 @@ def run(
     exact_max_out: bool = False,
     count_default: str = "",
     count_name: str = "",
+    no_count: bool = False,
     out_cols: str = "",
+    short_out: bool = False,
     nogil: bool = False,
     status_return: bool = False,
     fn: str = "",
@@ -1243,7 +1699,27 @@ def run(
     #: become this function's defaults. Only the caller can tell them apart.
     declared: "frozenset[str] | None" = None,
 ) -> None:
+    # gh-2261: every argument as passed, read before any local is bound, so
+    # the batch refusal below asks about every signature key there is,
+    # rather than a list of them kept here that a new key would miss.
+    _args = dict(locals())
     C.require_name(method_name, "method")  # gh-625
+    # gh-2261: a batch method reads a fixed set of keys (`_keys.
+    # BATCH_METHOD_KEYS`); any other is refused here, first and before
+    # anything is written, for `jm method` and `apply` alike. The carried
+    # keys are the ones differing from their default, compared exactly as a
+    # view override's are (an empty parent is "every key at its default").
+    # `record_doc` is the one non-signature key a batch row may not carry.
+    if batch:
+        _batch_why = batch_why_not(
+            f"{object_name}.{method_name}",
+            _signature_differences(
+                {}, None, **{k: _args[k] for k in _SIGNATURE_COERCIONS}
+            )
+            + (["record_doc"] if record_doc else []),
+        )
+        if _batch_why:
+            raise _report.Refusal(_batch_why)
     # gh-910: the method's parameters and result fields, before this command
     # writes any C. `C.save`'s gate catches them either way, but this command
     # renders the binding and the stub before it saves, so without this a
@@ -1338,12 +1814,12 @@ def run(
     # (gh-600), but only some result shapes render them. On these three the
     # key was accepted and stored, and then no prototype, binding or stub
     # used it: the declared outputs silently vanished. Refused here, before
-    # anything is written, so the CLI and `apply` agree (gh-1408).
+    # anything is written, so the CLI and `apply` agree (gh-1408). A batch
+    # method was the third; it refuses every key it does not read, this one
+    # among them, in `batch_why_not` above (gh-2261).
     if multi_output:
         _mo_shape = (
-            "--batch"
-            if batch
-            else "--single"
+            "--single"
             if single
             else "--result-field"
             if result_fields and not record_dtype and not borrow
@@ -1437,7 +1913,6 @@ def run(
         error_negative=error_negative,
         error_sentinel=error_sentinel,
         error_on_empty=error_on_empty,
-        batch=batch,
         varargs=varargs,
         manual_stub=manual_stub,
         codec=codec,
@@ -1466,24 +1941,6 @@ def run(
     if _shape_err:
         print(f"error: {_shape_err}", file=sys.stderr)
         sys.exit(1)
-    # gh-1885: an array-result method (variable-output or batch) with no
-    # output element -- a `void` return and nothing else naming one -- was
-    # persisted and then crashed the render, and so every later command
-    # that read the manifest. Asked here, before anything is written, for
-    # the CLI, `jm object --variable-output` and `apply`'s replay alike.
-    # After the record-shape gate, whose message about `--result-field` is
-    # the more specific one.
-    _element_why = _outbuf.element_why_not(
-        f"method '{object_name}.{method_name}'",
-        variable_output=variable_output,
-        batch=batch,
-        record_dtype=record_dtype,
-        borrow=borrow,
-        out_type=out_type or "",
-        return_type=return_type,
-    )
-    if _element_why:
-        raise _report.Refusal(_element_why)
     # gh-823 Ask D: `status_return` raises too, so it may name the exception
     # and carry the message. The key was never the problem — both were already
     # read from the manifest; only `error_negative`'s emitter looked at them.
@@ -1571,6 +2028,28 @@ def run(
     # ARRAY param naming an element is gh-1413, filed rather than half-done.
     arg_type = _record.resolve_element(arg_type, _elem_records)
     return_type = _record.resolve_element(return_type, _elem_records)
+
+    # gh-1885: an array-result method (variable-output or batch) with no
+    # output element -- a `void` return and nothing else naming one -- was
+    # persisted and then crashed the render, and so every later command
+    # that read the manifest. Asked here, before anything is written, for
+    # the CLI, `jm object --variable-output` and `apply`'s replay alike.
+    # After the record-shape gate, whose message about `--result-field` is
+    # the more specific one. gh-2261: and after the element is resolved, so
+    # a batch return naming a declared scalar element is its C type, and
+    # one naming a record struct -- which has no scalar dtype -- is refused
+    # rather than met by the render as a `KeyError`.
+    _element_why = _outbuf.element_why_not(
+        f"method '{object_name}.{method_name}'",
+        variable_output=variable_output,
+        batch=batch,
+        record_dtype=record_dtype,
+        borrow=borrow,
+        out_type=out_type or "",
+        return_type=return_type,
+    )
+    if _element_why:
+        raise _report.Refusal(_element_why)
 
     # Resolve which component this belongs to
     # gh-963: the manifest already records which module owns this object,
@@ -1710,6 +2189,7 @@ def run(
                     record_name=record_name,
                     record_module=record_module,
                     record_dtype=record_dtype,
+                    consumed_fn=consumed_fn,
                     py_return_type=py_return_type,
                     max_out=max_out,
                     varargs=varargs,
@@ -1718,6 +2198,7 @@ def run(
                     exact_max_out=exact_max_out,
                     count_default=count_default,
                     count_name=count_name,
+                    no_count=no_count,
                     nogil=nogil,
                     status_return=status_return,
                     error_negative=error_negative,
@@ -1855,6 +2336,22 @@ def run(
     )
     if _scalar_why:
         raise _report.Refusal(_scalar_why)
+    # gh-2204: the loader's refusal, asked before this command writes the
+    # row it would refuse on the next load.
+    _consumed_why = _record.consumed_fn_why_not(
+        {
+            "arg_type": arg_type,
+            "result_fields": result_fields or [],
+            "single": single,
+            "variable_output": variable_output,
+            "record_dtype": record_dtype,
+            "borrow": borrow,
+            "consumed_fn": consumed_fn,
+        },
+        f"method '{object_name}.{method_name}'",
+    )
+    if _consumed_why:
+        raise _report.Refusal(_consumed_why)
     _restated = _record.restated_columns(
         {
             "name": method_name,
@@ -1912,6 +2409,22 @@ def run(
                 _entry["out"] = True
             _norm_params.append(_entry)
     params = _norm_params
+
+    # gh-2202 / gh-2250 / gh-2313: a key only some shapes read, on a shape
+    # that does not -- refused here, below the normalisation (the input side
+    # asks whether a param is an array the caller writes), for `jm method`
+    # and `apply` alike, before anything is written.
+    _shape_why = shape_keys_why_not(
+        f"{object_name}.{method_name}",
+        {
+            **{k: _args[k] for k in _SIGNATURE_COERCIONS},
+            "name": method_name,
+            "params": params,
+            "result_fields": result_fields,
+        },
+    )
+    if _shape_why:
+        raise _report.Refusal(_shape_why)
 
     # gh-1312: a borrow's refusals live in `_borrow.why_not` so every face
     # asks one place and the reason reaches the author as prose rather than
@@ -2090,6 +2603,7 @@ def run(
                 csym=csym,
                 count_type=count_type or DEFAULT_COUNT_TYPE,
                 error_sentinel=error_sentinel,
+                no_count=no_count,
             )
         else:
             stub = _methods_c_stub_fixed(
@@ -2110,13 +2624,34 @@ def run(
                 csym=csym,
             )
         if impl_body is not None:
-            import re as _re
-
             from . import _impl as I
 
             body = impl_body
-            if variable_output and not _re.search(r"\breturn\b", body):
-                body = body.rstrip("\n") + "\nreturn n;"
+            if not ends_in_return(body):
+                # gh-2248: the shape's own neutral return, for every shape
+                # the dispatch above picks, unless the body already ends in
+                # one; it was `n` for variable_output alone, nothing for the
+                # rest, and nothing after an early `return` either.
+                _ret = impl_default_return(
+                    return_type=return_type,
+                    record_list=bool(
+                        result_fields
+                        and not single
+                        and not _record.is_record_array(
+                            variable_output, record_dtype, borrow
+                        )
+                    ),
+                    variable_output=bool(variable_output),
+                    arg_type=arg_type,
+                    params=params,
+                    no_count=bool(no_count),
+                    count_type=count_type,
+                    batch=bool(batch),
+                    borrow=bool(borrow),
+                    c_fn=_c_fn,
+                )
+                if _ret:
+                    body = body.rstrip("\n") + "\n" + _ret
             stub = I.inject_body_into_stub(stub, body)
         # gh-994: `fn` overrides the symbol; unset it derives the same way
         # every stub emitter above does.
@@ -2170,6 +2705,7 @@ def run(
             c_fn=fn,
             csym=csym,
             count_type=count_type or DEFAULT_COUNT_TYPE,
+            no_count=no_count,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
@@ -2286,11 +2822,17 @@ def run(
         method_entry["exact_max_out"] = True
     if count_default:
         method_entry["count_default"] = count_default
+    # gh-2233: written only when set, like the two count keys beside it.
+    if no_count:
+        method_entry["no_count"] = True
     # gh-2115: written only when set, so an existing manifest gains no key
     # and `jm status --check` sees no drift on a project that never asked
     # for a matrix result.
     if out_cols:
         method_entry["out_cols"] = out_cols
+    # gh-2230: written only when set, like `out_cols` above.
+    if short_out:
+        method_entry["short_out"] = True
     # gh-1074: written only when set, like `count_default` beside it, so
     # an existing manifest gains no key and `jm status --check` sees no
     # drift on a project that never asked for the rename.
@@ -2357,6 +2899,10 @@ def run(
         # gh-788: the POD C struct whose layout becomes the returned numpy
         # array's dtype. Paired with `result_fields`, which names its members.
         method_entry["record_dtype"] = record_dtype
+    if consumed_fn:
+        # gh-2204: written whenever declared; a shape that cannot honour it
+        # was refused above rather than dropped here.
+        method_entry["consumed_fn"] = consumed_fn
     if borrow:
         # gh-1312: the kernel lends a pointer into the state's own memory.
         # `borrow_count` is persisted only when it was DECLARED -- it is
@@ -2559,6 +3105,14 @@ def run(
         # and pointing at it sent the author somewhere that cannot work.
         _where = f"{object_name}_core.h" if _hdr_only else core_c.name
         print(f"Done!  Implement {_c_fn}() in {_where}")
+        if consumed_fn:
+            # gh-2204: jm calls it and declares nothing, like `status_fn`.
+            print(
+                f"       and declare size_t {consumed_fn}"
+                f"(const {csym}_state_t *state) in {object_name}_core.h:\n"
+                "       the input the last call took. The binding offers "
+                "the rest until none is left."
+            )
         # gh-1319: printed AFTER the Done! line so it is the last thing on
         # screen -- the failure it prevents is a compile error three files
         # away, and a note scrolled off the top prevents nothing.

@@ -93,7 +93,8 @@ jobs:
       # the legs this run owes (gh-2125):
       #
       #   pull_request       every leg, but each TRIM os runs only its
-      #                      oldest and newest Python
+      #                      oldest and newest Python (plus the middle one
+      #                      for the MIDDLE os: ubuntu-latest runs 3 legs)
       #   push, tested=true  only the legs its PR trimmed
       #   anything else      every leg: an untested push, the nightly, a
       #                      dispatch
@@ -106,6 +107,15 @@ jobs:
       # every leg below on that tree. tests/test_own_ci_matrix.py holds
       # each event's legs and refuses a Python that no release-gating run
       # tests on macOS.
+      #
+      # The Linux legs are trimmed the same way: the free plan gives the org
+      # ~20 concurrent hosted jobs, one PR launched ~40 and several are in
+      # flight, so queue waits averaged ~400s on EVERY runner label.
+      # Relabelling does not help; fewer jobs per PR does. The kept Pythons
+      # are the boundaries: the floor, 3.12 (the middle; distutils and imp
+      # gone, the 3.12 stdlib/typing changes) and the newest. The cost is
+      # that a failure on a trimmed Python surfaces on the push that lands
+      # the PR, not on the PR (gh-2125 accepted the same for macOS).
       #
       # macOS + 3.9 is excluded for a MECHANISM, not for being slow.
       #
@@ -160,7 +170,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           TESTED: ${{ needs.changes.outputs.tested }}
-          TRIM: macos-latest
+          TRIM: macos-latest ubuntu-latest ubuntu-24.04-arm
+          MIDDLE: ubuntu-latest
           MATRIX: >-
             {"os": ["ubuntu-latest", "macos-latest", "ubuntu-24.04-arm"],
             "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14",
