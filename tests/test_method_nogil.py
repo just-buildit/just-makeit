@@ -219,4 +219,6 @@ def test_make_methods_ctx_result_fields_nogil_wraps_kernel():
     assert "PyArray_" not in c[b:e]
     # the results[] buffer is declared before the block; DECREF stays after it
     assert c.index("results[64]") < b
-    assert c.index("Py_DECREF(in_arr)") > e
+    # (gh-2273: the recheck before the block releases it on a refusal, so the
+    # release that must follow the block is the last one.)
+    assert c.rindex("Py_DECREF(in_arr)") > e
