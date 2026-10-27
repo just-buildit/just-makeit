@@ -724,6 +724,7 @@ def property_doc(
     doc_blocks: "dict | None",
     *,
     csym: str,
+    enums: "dict | None" = None,
 ) -> tuple[str, bool]:
     """A property's documentation, and whether it is only its name.
 
@@ -738,6 +739,16 @@ def property_doc(
     name. gh-1300: the field's OWN struct, never a same-named field in
     whatever the header includes -- that inheritance gave doppler's
     `IMDMeasure.rbw_hz` a different record's formula.
+
+    gh-2388: for a property bound to an ``[[enum]]`` (*enums* is
+    ``C.enums(cfg)``) the struct member's comment is not used: it describes
+    the C ``int`` (``0 little, 1 big.``) beside a ``Literal["le", "be"]``
+    return, which is the defect gh-2379 closed for a parameter. The choices
+    take that rung -- the same sentence, from `enum_param_desc` -- and the
+    manifest ``doc`` and the getter's ``@brief``, both authored for the
+    property, still outrank it. Such a property is still reported as
+    undocumented (the second element), since the choices are generated, not
+    written: ``jm status --docs`` keeps asking for a ``doc``.
 
     Returns
     -------
@@ -755,19 +766,29 @@ def property_doc(
     >>> blocks = {struct_members_key(): {"psd_state_t": {"n": "Frame len."}}}
     >>> property_doc("psd", {"name": "n"}, blocks, csym="psd")
     ('Frame len.', False)
+    >>> blocks = {struct_members_key(): {"psd_state_t": {"e": "0 le, 1 be."}}}
+    >>> property_doc("psd", {"name": "e", "enum": "end"}, blocks, csym="psd",
+    ...              enums={"end": ["le", "be"]})
+    ('One of ``"le"``, ``"be"``.', True)
     """
     from ._csym import property_getter
 
     name = str(prop.get("name") or "")
     # The one spelling `_csym.renames` moves with a c_prefix (gh-1670).
     block = (doc_blocks or {}).get(property_getter(csym, name))
+    # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
+    # returned raw, so the runtime getset kept an indented TOML table's
+    # continuation indent while the stub beside it did not -- found when
+    # the gh-1493 gate learned to compare indentation.
+    authored = "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
+    brief = block.brief if (block and block.brief) else ""
+    choices = (enums or {}).get(prop.get("enum") or "") or []
+    if choices and not (authored or brief):
+        # gh-2388: generated, not written -- see above.
+        return enum_param_desc(choices), True
     text = (
-        # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
-        # returned raw, so the runtime getset kept an indented TOML table's
-        # continuation indent while the stub beside it did not -- found when
-        # the gh-1493 gate learned to compare indentation.
-        "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
-        or (block.brief if (block and block.brief) else "")
+        authored
+        or brief
         or struct_member_doc(doc_blocks, f"{csym}_state_t", name)
     )
     return (text, False) if text else (name_summary(name), True)
