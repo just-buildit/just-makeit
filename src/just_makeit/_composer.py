@@ -4320,6 +4320,39 @@ fail:
         if lends
         else "!self->destroyed && self->state"
     )
+    # gh-2356: a second __init__ on a live composer built a new state and
+    # never freed the old one -- it set `self->state = NULL` first. The
+    # same contract a handle has (gh-178, gh-2346, gh-2272):
+    #
+    # * refused while the state is lent: a borrower holds the pointer, and
+    #   there is one slot, so the old state can be neither freed nor kept;
+    # * the new state is BUILT first, so a refused or failing re-init leaves
+    #   the composer exactly as it was, where the handle's is left closed;
+    # * only then is the old one released -- new calls refused, a GIL-free
+    #   one in flight waited for -- and only if it is still live: `close()`
+    #   frees without clearing the pointer, so a closed composer's is not.
+    reinit_refuse = (
+        "    if (self->lent) {\n"
+        "        PyErr_SetString(PyExc_RuntimeError,\n"
+        f'            "{obj}: its state was lent as a capsule; a second "\n'
+        '            "__init__ would free it under the borrower");\n'
+        "        return -1;\n"
+        "    }\n"
+        if lends
+        else ""
+    )
+    reinit_swap = (
+        "    if (self->state && !self->destroyed) {\n"
+        f"        {sym}_state_t *_jm_old = self->state;\n"
+        "        /* gh-2272: refuse new calls, then wait for a running one. */\n"
+        "        self->destroyed = 1;\n"
+        + _inflight.wait(
+            "self",
+            f"self->destroyed = 0; {destroy_fn}(_jm_new); return -1;",
+        )
+        + f"        {destroy_fn}(_jm_old);\n"
+        "    }\n"
+    )
 
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
@@ -4441,9 +4474,7 @@ _pop_flag(PyObject *kw, const char *name, int *out)
 static int
 {cname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
-    self->state = NULL;
-    self->destroyed = 0;
-    int repeat = 0, continuous = 0;
+{reinit_refuse}    int repeat = 0, continuous = 0;
 
     PyObject *kw = kwds ? PyDict_Copy(kwds) : PyDict_New();
     if (!kw)
@@ -4539,12 +4570,14 @@ static int
      * seglist must outlive the create call below (which deep-copies them) --
      * dropping it earlier would, in the single-segment-kwargs path where
      * seglist is the sole owner, free the bits out from under the read. */
-{ctor_why_decl}    self->state = {ctor_create};
+{ctor_why_decl}    {sym}_state_t *_jm_new = {ctor_create};
     _free_{backing}_segments(segs, n);
     Py_DECREF(seglist);
-    if (!self->state) {{
+    if (!_jm_new) {{
 {ctor_raise}        return -1;
     }}
+{reinit_swap}    self->state = _jm_new;
+    self->destroyed = 0;
 {settings_apply}    return 0;
 }}
 

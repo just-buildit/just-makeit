@@ -123,7 +123,7 @@ class TestTheConstructor:
 
     def test_the_setter_runs_after_create(self):
         ext = _composer.render_ext(_cfg(), "wc")
-        create = ext.index("self->state = wfm_compose_create(")
+        create = ext.index("_jm_new = wfm_compose_create(")
         apply_ = ext.index("wfm_compose_set_seed_advance(self->state,")
         assert create < apply_
 
