@@ -43,8 +43,9 @@ sudo apt-get install lcov doxygen          # Debian/Ubuntu
 brew install lcov doxygen                  # macOS
 sudo pacman -S lcov doxygen                # Arch/CachyOS
 
-# into the venv `make` uses (the active one):
-pip install pytest pytest-benchmark pytest-cov mkdocstrings-python zensical
+# into the venv `make` uses (the active one). pytest is capped: 9.2 broke
+# pytest-benchmark (gh-2411); lift the cap once pytest-benchmark supports it.
+pip install 'pytest<9.2' pytest-benchmark pytest-cov mkdocstrings-python zensical
 ```
 
 ---
