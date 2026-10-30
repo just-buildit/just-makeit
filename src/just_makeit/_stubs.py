@@ -52,6 +52,8 @@ from ._context._parse import capsule_annotation
 from ._context._types import _py_default
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    EnumAnn,
+    enum_param_desc,
     CLASS_INDENT,
     authored_doc_lines,
     authored_docstring,
@@ -1053,11 +1055,20 @@ def _build_class_docstring(
             if required
             else f"{name} constructor parameter."
         )
+        is_enum = ctype.startswith("string_enum:")
         hdr = create_blk.param_desc(name) if create_blk else None
         # gh-1493: an init param's manifest `doc` through the one rule,
         # `inspect.cleandoc` -- it was passed raw, so an indented TOML
         # table's continuation lines kept their indent.
-        desc = "\n".join(authored_doc_lines(manifest_doc)) or hdr or stub
+        authored = "\n".join(authored_doc_lines(manifest_doc))
+        names = T.string_enum_choices(ctype) if is_enum else []
+        if names:
+            # gh-2379: a string-enum's header `@param` describes the C int,
+            # so the choices replace it; the author's own `doc` stands, and
+            # the runtime peer (`_state`) says the same sentence.
+            desc = "\n".join(filter(None, [authored, enum_param_desc(names)]))
+        else:
+            desc = authored or hdr or stub
         # gh-901: an enum's per-choice `///<` docs, as a definition list under
         # the parameter they belong to. numpydoc has no `Choices` section, and
         # a parameter's description is free prose — so this is where a reader
@@ -1786,7 +1797,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # demands, AND left it in declaration order behind a defaulted
             # scalar the kwlist hoists it above — so `Capn(4096)` bound 4096 to
             # `clock` while the stub promised `n`. Same accidental coupling as
-            # `allow_none`/`explain_type_error` in `_context/_parse.py`.
+            # `allow_none` and the (since removed) `explain_type_error` in
+            # `_context/_parse.py`.
             capsule = param[10] if len(param) > 10 else ""
             # gh-515: a path is required-positional by construction (a
             # filesystem path has no sensible default), so it is hoisted with
@@ -2312,7 +2324,8 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # defect gh-1021 exists to close, reappearing inside a single
             # generated file.
             if p.get("enum"):
-                _ann = "str"
+                # gh-2379: carries the choices, so the prose is theirs.
+                _ann = EnumAnn(C.enums(cfg).get(p["enum"]) or [])
             elif p.get("capsule"):
                 _ann = capsule_annotation(p)
             else:
@@ -2564,7 +2577,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 # ── module-level function stub ────────────────────────────────────────────────
 
 
-def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
+def fn_py_surface(
+    fn: dict, enums: "dict | None" = None
+) -> tuple[str, list[tuple[str, str]], list[str]]:
     """The Python-facing surface of one module free function.
 
     Returns the three things both faces need, derived once (gh-643). The
@@ -2608,7 +2623,8 @@ def fn_py_surface(fn: dict) -> tuple[str, list[tuple[str, str]], list[str]]:
         # spells it for every surface — gh-623); an enum arg (type "int" with
         # an `enum` name) accepts the choice string.
         if p.get("enum"):
-            ann = "str"
+            # gh-2379: carries the choices, so the prose is theirs.
+            ann = EnumAnn((enums or {}).get(p["enum"]) or [])
         else:
             ann = _py(p["type"])
         # gh-1271: the same two corrections as the method producer above, and
@@ -2668,13 +2684,17 @@ def function_stub(cfg: dict, root, module: str, fn: dict) -> str:
     restating `_fn_stub`'s rule: with no header Doxygen and no documented
     param it does not, and the `doc` duplicates nothing.
     """
-    return _fn_stub(fn, _fn_block(cfg, _module_fn_blocks(root, module), fn))
+    return _fn_stub(
+        fn,
+        _fn_block(cfg, _module_fn_blocks(root, module), fn),
+        C.enums(cfg),
+    )
 
 
-def _fn_stub(fn: dict, block=None) -> str:
+def _fn_stub(fn: dict, block=None, enums: "dict | None" = None) -> str:
     name = fn["name"]
     doc = fn.get("doc", "")
-    ret, py_params, parts = fn_py_surface(fn)
+    ret, py_params, parts = fn_py_surface(fn, enums)
     sig = f"def {name}({', '.join(parts)}) -> {ret}:"
     # gh-384: when the module header carries Doxygen for this free function,
     # synthesize the full numpy docstring (brief + params + a runnable Examples
@@ -3336,7 +3356,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             parts.append("")
 
     for fn in functions:
-        parts.append(_fn_stub(fn, _fn_block(cfg, fn_doc_blocks, fn)))
+        parts.append(
+            _fn_stub(fn, _fn_block(cfg, fn_doc_blocks, fn), C.enums(cfg))
+        )
         parts.append("")
 
     # strip trailing blank line

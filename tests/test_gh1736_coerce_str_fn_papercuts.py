@@ -90,20 +90,18 @@ class TestOneHelperPerFunction:
         assert _helpers(s) == [f"_coerce_{HOST}"]
         for n in ("bits", "pilot"):
             # the constructor and the setter both call the shared helper
-            assert (
-                f"_coerce_{HOST}(&self->src.{n}, &self->src.n_{n}, {n})" in s
-            )
-            assert (
-                f"return _coerce_{HOST}(&self->src.{n}, &self->src.n_{n}, "
-                "value)" in s
-            )
+            # (gh-2274: each field's replace calls the shared helper on a
+            # copy of the source; the constructor and setter call replace.)
+            assert f"_coerce_{HOST}(&_t.{n}, &_t.n_{n}, value)" in s
+            assert f"if (!Synth_replace_{n}(self, {n}))" in s
+            assert f"return Synth_replace_{n}(self, value) ? 0 : -1;" in s
 
     def test_two_distinct_fns_get_two_helpers(self) -> None:
         cfg = _fields(_pattern("bits", HOST), _pattern("pilot", "other_fn"))
         s = _composer.render_source_type(cfg, MOD)
         assert _helpers(s) == [f"_coerce_{HOST}", "_coerce_other_fn"]
-        assert "_coerce_other_fn(&self->src.pilot" in s
-        assert f"_coerce_{HOST}(&self->src.bits" in s
+        assert "_coerce_other_fn(&_t.pilot" in s
+        assert f"_coerce_{HOST}(&_t.bits" in s
 
 
 class TestTheBuiltinGrammarOnlyWhenRead:

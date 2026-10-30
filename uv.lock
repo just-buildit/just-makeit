@@ -526,7 +526,7 @@ wheels = [
 
 [[package]]
 name = "just-makeit"
-version = "0.111.2"
+version = "0.112.0"
 source = { editable = "." }
 dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
@@ -578,7 +578,7 @@ dev = [
     { name = "mypy", marker = "python_full_version >= '3.10'", specifier = "==2.3.*" },
     { name = "numpy" },
     { name = "pre-commit" },
-    { name = "pytest" },
+    { name = "pytest", specifier = "<9.2" },
     { name = "pytest-benchmark" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },

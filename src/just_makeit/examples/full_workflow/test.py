@@ -583,7 +583,8 @@ def run(root: Path) -> None:
     else:
         print(
             "  [full_workflow] skipping pytest-benchmark run — "
-            "uv add --dev pytest-benchmark"
+            "uv add --dev 'pytest<9.2' pytest-benchmark (gh-2411: lift the "
+            "cap once pytest-benchmark supports pytest 9.2)"
         )
 
     # 12. Coverage (skipped if lcov/pytest-cov absent)

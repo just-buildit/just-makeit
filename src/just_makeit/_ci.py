@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _pins
 from . import _render as R
 
 # provider -> (render-template attribute on _render, output path)
@@ -62,7 +63,7 @@ def run(root: Path, provider: str = "github", force: bool = False) -> None:
         return
 
     # pytest projects need pytest in CI; unittest-default projects don't.
-    pip_deps = "numpy pytest" if C.is_pytest(cfg) else "numpy"
+    pip_deps = f"numpy {_pins.PYTEST_DQ}" if C.is_pytest(cfg) else "numpy"
     ctx = {"package": C.project_name(cfg), "pip_deps": pip_deps}
     content = R.render(getattr(R, tmpl_attr), ctx)
 

@@ -172,9 +172,11 @@ class TestItRefusesWithTheFix:
         assert "gh-790" in msg  # the spelling that works today
         assert "undeclared" not in msg
         # It must not describe a capsule module as the kind that IS a target.
-        assert 'names a component, one of its views, or a kind = "handle"' in (
-            msg
-        )
+        # (gh-2354: a composer module is a target now, and the message says so.)
+        assert (
+            'names a component, one of its views, a kind = "handle" module '
+            'or a kind = "composer" module'
+        ) in msg
 
     def test_object_and_capsule_together_are_refused(self, tmp_path):
         """Allowing both would re-create the duplication `object` removes,

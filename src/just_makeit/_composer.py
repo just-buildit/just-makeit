@@ -605,6 +605,100 @@ def _owned_ptr_prototypes(cfg: dict, module: str) -> "list[_Seam]":
     return out
 
 
+def _replace_c(
+    tname: str,
+    obj: str,
+    struct: str,
+    name: str,
+    members: "list[tuple[str, str]]",
+    attach: str,
+    free: str,
+    gen_destroy: str,
+) -> str:
+    """``<tname>_replace_<name>``: swap one owned buffer on a live source.
+
+    gh-2274. A source's ``bytes`` / complex-stream / owned-pointer field is a
+    heap buffer the source owns, and a generator built from the source
+    (``generates``, run with the GIL released by ``steps()``) may borrow it.
+    The ``_attach_*`` functions free the old buffer and install the new one,
+    and the setters called them on ``self->src`` directly: a setter on thread
+    B freed a buffer thread A's generator was reading, and left the
+    generator, built from the OLD config, in place.
+
+    This is the one place a field is replaced, for the property setter and
+    for ``__init__`` alike:
+
+    1. the new value is converted into a COPY of the source struct whose
+       member is cleared -- converting can run Python (``__array__``,
+       ``__index__``), which may run any other thread, so it touches nothing
+       a generator can see (and a refused value leaves the field as it was);
+    2. with the GIL held and nothing yielding from here on, wait for the
+       running ``steps()`` (`_inflight.wait`) and drop the generator, so the
+       next ``steps()`` rebuilds it from the new config, as a re-``__init__``
+       does;
+    3. then free the old buffer and install the new one -- pure C.
+
+    Parameters
+    ----------
+    members : list of (member, zero)
+        The struct members the field lives in (``c_ptr`` / ``c_len`` may name
+        a nested path), each with the value that means "empty".
+    attach : str
+        The call converting ``value`` into ``_t``, as an expression.
+    free : str
+        The statement freeing a buffer, with ``{src}`` for the struct it is
+        read from.
+    gen_destroy : str
+        The generator's destroy function when the source declares
+        ``generates``; ``""`` otherwise, when there is nothing to wait for
+        and no generator to drop.
+
+    Examples
+    --------
+    >>> print(_replace_c("S", "SObject", "s_t", "bits",
+    ...     [("bits", "NULL"), ("n_bits", "0")],
+    ...     "_attach_bytes(&_t.bits, &_t.n_bits, value)",
+    ...     "free({src}.bits);", ""), end="")
+    static int
+    S_replace_bits(SObject *self, PyObject *value)
+    {
+        s_t _t = self->src;
+        _t.bits = NULL;
+        _t.n_bits = 0;
+        if (!_attach_bytes(&_t.bits, &_t.n_bits, value))
+            return 0;
+        free(self->src.bits);
+        self->src.bits = _t.bits;
+        self->src.n_bits = _t.n_bits;
+        return 1;
+    }
+    """
+    clear = "".join(f"    _t.{m} = {z};\n" for m, z in members)
+    commit = ""
+    if gen_destroy:
+        commit = (
+            _inflight.wait(
+                "self",
+                free.format(src="_t") + " return 0;",
+                "    ",
+            )
+            + "    if (self->_gen) {\n"
+            "        /* Built from the config being replaced; the next\n"
+            "           steps() builds it again from the new one. */\n"
+            f"        {gen_destroy}(self->_gen);\n"
+            "        self->_gen = NULL;\n"
+            "    }\n"
+        )
+    install = "".join(f"    self->src.{m} = _t.{m};\n" for m, _ in members)
+    return (
+        f"static int\n{tname}_replace_{name}({obj} *self, PyObject *value)\n"
+        f"{{\n    {struct} _t = self->src;\n{clear}"
+        f"    if (!{attach})\n        return 0;\n"
+        f"{commit}    {free.format(src='self->src')}\n{install}"
+        "    return 1;\n}\n"
+    )
+
+
 def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
     """``_attach_<name>``: bind one owned-pointer field from a Python value.
 
@@ -641,7 +735,6 @@ def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
                 "_jm_obj",
                 "return 0;",
                 indent="        ",
-                explain_type_error=True,
             )
             + f"""
         _jm_new = {p.copy_fn}({n});
@@ -1937,11 +2030,10 @@ def render_source_type(cfg: dict, module: str) -> str:
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             assign.append(
-                f"    if (!{_attacher(f)}({_cast}&self->src.{_p}, "
-                f"&self->src.{_l}, {n}))\n        return -1;"
+                f"    if (!{tname}_replace_{n}(self, {n}))\n        return -1;"
             )
         elif f.get("complex") or _field_is_owned_ptr(f):
-            assign.append(f"""    if (!_attach_{n}(&self->src, {n}))
+            assign.append(f"""    if (!{tname}_replace_{n}(self, {n}))
         return -1;""")
         elif f.get("_ranged"):
             ct = f["type"]
@@ -2182,9 +2274,55 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
 {attach_body}
 }}
 """
+    # gh-2274: the one replacement of an owned buffer, for the property
+    # setter and `__init__` both (see `_replace_c`).
+    replace_c = ""
+    for f in fields:
+        n = f["name"]
+        gd = gen["destroy_fn"] if gen else ""
+        if f.get("bytes"):
+            _p, _l = buffer_members(f)
+            _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
+            _cfree = "(void *)" if buffer_is_relocated(f) else ""
+            replace_c += "\n" + _replace_c(
+                tname,
+                obj,
+                struct,
+                n,
+                [(_p, "NULL"), (_l, "0")],
+                f"{_attacher(f)}({_cast}&_t.{_p}, &_t.{_l}, value)",
+                "free(" + _cfree + "{src}." + _p + ");",
+                gd,
+            )
+        elif f.get("complex"):
+            _p, _l = buffer_members(f)
+            _cfree = "(void *)" if buffer_is_relocated(f) else ""
+            replace_c += "\n" + _replace_c(
+                tname,
+                obj,
+                struct,
+                n,
+                [(_p, "NULL"), (_l, "0")],
+                f"_attach_{n}(&_t, value)",
+                "free(" + _cfree + "{src}." + _p + ");",
+                gd,
+            )
+        elif _field_is_owned_ptr(f):
+            op = owned_ptr(cfg, f)
+            replace_c += "\n" + _replace_c(
+                tname,
+                obj,
+                struct,
+                n,
+                [(op.member, "NULL")],
+                f"_attach_{n}(&_t, value)",
+                f"{op.free_fn}(({op.ctype})" + "{src}." + op.member + ");",
+                gd,
+            )
+
     parts.append(
         attach_bytes_c
-        + f"""{host_attach}
+        + f"""{host_attach}{replace_c}
 static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
@@ -2258,9 +2396,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {_attacher(f)}({_cast}&self->src.{_p}, &self->src.{_l}, value)
-               ? 0
-               : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -2291,7 +2427,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_{n}(&self->src, value) ? 0 : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -2317,7 +2453,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return _attach_{n}(&self->src, value) ? 0 : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -4185,6 +4321,52 @@ fail:
         else "!self->destroyed && self->state"
     )
 
+    # gh-2356: a second __init__ on a live composer built a new state and
+    # never freed the old one -- it set `self->state = NULL` first. The
+    # same contract a handle has (gh-178, gh-2346, gh-2272):
+    #
+    # * refused while the state is lent: a borrower holds the pointer, and
+    #   there is one slot, so the old state can be neither freed nor kept;
+    # * the new state is BUILT first, so a refused or failing re-init leaves
+    #   the composer exactly as it was, where the handle's is left closed;
+    # * only then is the old one released -- new calls refused, a GIL-free
+    #   one in flight waited for -- and only if it is still live: `close()`
+    #   frees without clearing the pointer, so a closed composer's is not.
+    def _lent_refusal(indent: str, undo: str) -> str:
+        return (
+            f"{indent}if (self->lent) {{\n"
+            f"{undo}"
+            f"{indent}    PyErr_SetString(PyExc_RuntimeError,\n"
+            f'{indent}        "{obj}: its state was lent as a capsule; a second "\n'
+            f'{indent}        "__init__ would free it under the borrower");\n'
+            f"{indent}    return -1;\n"
+            f"{indent}}}\n"
+        )
+
+    # Checked twice, like the handle's liveness guard (gh-2273): at the top,
+    # as the cheap early refusal, and again in the swap, because converting
+    # the arguments runs Python (a seglist element's `__index__`, a kwarg)
+    # that can lend the state after the first look. The lend is sticky, so
+    # the second check only ever sees a lend the first one could not.
+    reinit_refuse = _lent_refusal("    ", "") if lends else ""
+    reinit_swap = (
+        (
+            _lent_refusal("    ", f"        {destroy_fn}(_jm_new);\n")
+            if lends
+            else ""
+        )
+        + "    if (self->state && !self->destroyed) {\n"
+        f"        {sym}_state_t *_jm_old = self->state;\n"
+        "        /* gh-2272: refuse new calls, then wait for a running one. */\n"
+        "        self->destroyed = 1;\n"
+        + _inflight.wait(
+            "self",
+            f"self->destroyed = 0; {destroy_fn}(_jm_new); return -1;",
+        )
+        + f"        {destroy_fn}(_jm_old);\n"
+        "    }\n"
+    )
+
     return f"""static PyTypeObject {type_obj}; /* fwd: from_json/from_file alloc */
 
 typedef struct {{
@@ -4305,9 +4487,7 @@ _pop_flag(PyObject *kw, const char *name, int *out)
 static int
 {cname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
-    self->state = NULL;
-    self->destroyed = 0;
-    int repeat = 0, continuous = 0;
+{reinit_refuse}    int repeat = 0, continuous = 0;
 
     PyObject *kw = kwds ? PyDict_Copy(kwds) : PyDict_New();
     if (!kw)
@@ -4403,12 +4583,14 @@ static int
      * seglist must outlive the create call below (which deep-copies them) --
      * dropping it earlier would, in the single-segment-kwargs path where
      * seglist is the sole owner, free the bits out from under the read. */
-{ctor_why_decl}    self->state = {ctor_create};
+{ctor_why_decl}    {sym}_state_t *_jm_new = {ctor_create};
     _free_{backing}_segments(segs, n);
     Py_DECREF(seglist);
-    if (!self->state) {{
+    if (!_jm_new) {{
 {ctor_raise}        return -1;
     }}
+{reinit_swap}    self->state = _jm_new;
+    self->destroyed = 0;
 {settings_apply}    return 0;
 }}
 

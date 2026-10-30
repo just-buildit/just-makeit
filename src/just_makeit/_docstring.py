@@ -724,6 +724,7 @@ def property_doc(
     doc_blocks: "dict | None",
     *,
     csym: str,
+    enums: "dict | None" = None,
 ) -> tuple[str, bool]:
     """A property's documentation, and whether it is only its name.
 
@@ -738,6 +739,16 @@ def property_doc(
     name. gh-1300: the field's OWN struct, never a same-named field in
     whatever the header includes -- that inheritance gave doppler's
     `IMDMeasure.rbw_hz` a different record's formula.
+
+    gh-2388: for a property bound to an ``[[enum]]`` (*enums* is
+    ``C.enums(cfg)``) the struct member's comment is not used: it describes
+    the C ``int`` (``0 little, 1 big.``) beside a ``Literal["le", "be"]``
+    return, which is the defect gh-2379 closed for a parameter. The choices
+    take that rung -- the same sentence, from `enum_param_desc` -- and the
+    manifest ``doc`` and the getter's ``@brief``, both authored for the
+    property, still outrank it. Such a property is still reported as
+    undocumented (the second element), since the choices are generated, not
+    written: ``jm status --docs`` keeps asking for a ``doc``.
 
     Returns
     -------
@@ -755,19 +766,29 @@ def property_doc(
     >>> blocks = {struct_members_key(): {"psd_state_t": {"n": "Frame len."}}}
     >>> property_doc("psd", {"name": "n"}, blocks, csym="psd")
     ('Frame len.', False)
+    >>> blocks = {struct_members_key(): {"psd_state_t": {"e": "0 le, 1 be."}}}
+    >>> property_doc("psd", {"name": "e", "enum": "end"}, blocks, csym="psd",
+    ...              enums={"end": ["le", "be"]})
+    ('One of ``"le"``, ``"be"``.', True)
     """
     from ._csym import property_getter
 
     name = str(prop.get("name") or "")
     # The one spelling `_csym.renames` moves with a c_prefix (gh-1670).
     block = (doc_blocks or {}).get(property_getter(csym, name))
+    # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
+    # returned raw, so the runtime getset kept an indented TOML table's
+    # continuation indent while the stub beside it did not -- found when
+    # the gh-1493 gate learned to compare indentation.
+    authored = "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
+    brief = block.brief if (block and block.brief) else ""
+    choices = (enums or {}).get(prop.get("enum") or "") or []
+    if choices and not (authored or brief):
+        # gh-2388: generated, not written -- see above.
+        return enum_param_desc(choices), True
     text = (
-        # gh-1499: the manifest `doc` through the one rule (gh-1493). It was
-        # returned raw, so the runtime getset kept an indented TOML table's
-        # continuation indent while the stub beside it did not -- found when
-        # the gh-1493 gate learned to compare indentation.
-        "\n".join(authored_doc_lines(str(prop.get("doc") or "")))
-        or (block.brief if (block and block.brief) else "")
+        authored
+        or brief
         or struct_member_doc(doc_blocks, f"{csym}_state_t", name)
     )
     return (text, False) if text else (name_summary(name), True)
@@ -3246,6 +3267,18 @@ def _numpy_sections(
             authored = authored_doc_lines((param_docs or {}).get(pname, ""))
             if authored:
                 out += [f"    {ln}" if ln else "" for ln in authored]
+                # gh-2379: an enum-backed parameter's choices follow the
+                # author's text, as they do on an init parameter.
+                # gh-2399: through the wrapper the no-doc path below uses,
+                # directly under the author's text, as an init parameter's
+                # are -- not a blank line and one unwrapped line.
+                if isinstance(ann, EnumAnn) and ann.choices:
+                    out += [
+                        f"    {w}"
+                        for w in _wrap(
+                            enum_param_desc(ann.choices), DESC_WIDTH
+                        )
+                    ]
                 continue
             # gh-1042: precedence is header > jm's per-name default >
             # the generic fallback. The middle rung exists because `count`
@@ -3401,6 +3434,55 @@ def render_runtime_doc(
     return lines
 
 
+class EnumAnn(str):
+    """The annotation ``str`` of an enum-backed parameter, with its choices.
+
+    gh-2379. An enum-backed parameter is a C ``int`` and, in Python, one of a
+    set of strings. The header's ``@param`` prose describes the C ``int`` --
+    ``0 little, 1 big.`` -- so a docstring that repeated it told the caller
+    to pass a number the binding refuses. Every face already computes the
+    parameter's annotation (``str``); carrying the choices on that same
+    object lets the ONE place that picks a description,
+    `render_numpy_method_doc`, document the choices instead, without a
+    parallel argument threaded through every renderer.
+
+    It is a ``str`` equal to ``"str"``, so a signature, a comparison or a
+    format that reads it as an annotation is unchanged.
+
+    Examples
+    --------
+    >>> a = EnumAnn(["le", "be"])
+    >>> a, a == "str", a.choices
+    ('str', True, ('le', 'be'))
+    """
+
+    choices: "tuple[str, ...]"
+
+    def __new__(cls, choices: "Collection[str]") -> "EnumAnn":
+        obj = super().__new__(cls, "str")
+        obj.choices = tuple(choices)
+        return obj
+
+
+def enum_param_desc(choices: "Collection[str]") -> str:
+    """What documents an enum-backed parameter: the strings it takes.
+
+    The header's ``@param`` prose is not used (gh-2379): it describes the C
+    ``int`` the choice is looked up to. The one sentence is the one the
+    handle face has said since gh-2228.
+
+    Examples
+    --------
+    >>> enum_param_desc(["le", "be"])
+    'One of ``"le"``, ``"be"``.'
+    >>> enum_param_desc([])
+    ''
+    """
+    if not choices:
+        return ""
+    return "One of " + ", ".join(f'``"{c}"``' for c in choices) + "."
+
+
 def render_numpy_method_doc(
     block: DoxyBlock,
     py_params: list[tuple[str, str]],
@@ -3486,6 +3568,10 @@ def render_numpy_method_doc(
                 desc_by_name[n] = d
     for n in py_names:
         desc_by_name.setdefault(n, "")
+    # gh-2379: an enum-backed parameter is documented by its choices.
+    for n, ann in py_params:
+        if isinstance(ann, EnumAnn) and ann.choices:
+            desc_by_name[n] = enum_param_desc(ann.choices)
     return (
         block.brief,
         group_paragraphs(block.body),
@@ -3659,7 +3745,9 @@ def _row_docstring(
         from ._handle import _backing_doc_blocks, method_doc_lines
 
         blocks = _backing_doc_blocks(cfg, owner, root)
-        return "\n".join(method_doc_lines(row, blocks))
+        from ._config import enums as _enums
+
+        return "\n".join(method_doc_lines(row, blocks, _enums(cfg)))
     if owner_kind == "handle" and table == ("factories",):
         from ._handle import _factory_doc_lines
 

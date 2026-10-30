@@ -41,6 +41,7 @@ from typing import NamedTuple
 from . import _coerce
 from . import _config as C
 from . import _gluedoc
+from . import _inflight
 from . import _record
 from . import _report
 from . import _retain
@@ -1477,6 +1478,9 @@ def _method_return_shapes(text: str) -> dict:
         jm_guards = _coerce.RETURNED_COUNT_BLOCK_RE.sub("", code)
         # gh-2204: so is the guard on a re-offered input's progress.
         jm_guards = _coerce.CONSUMED_BLOCK_RE.sub("", jm_guards)
+        # gh-2273: and the recheck before the kernel call, which a fragment
+        # rendered before it lacks.
+        jm_guards = _inflight.strip_rechecks(jm_guards)
         if _raises(_OUT_SIZE_RE.sub("", jm_guards)):
             found.add(_RAISE_MARKER)
         out[name] = frozenset(found)

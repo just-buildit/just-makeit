@@ -88,10 +88,7 @@ class TestCreateFnIsHonoured:
         return _render(_mod_cfg(create_fn="wfm_make"))
 
     def test_every_face_calls_it(self, out: "dict[str, str]") -> None:
-        assert (
-            "self->state = wfm_make(segs, n, repeat, continuous);"
-            in out["ext"]
-        )
+        assert "_jm_new = wfm_make(segs, n, repeat, continuous);" in out["ext"]
         assert (
             'PyErr_SetString(PyExc_ValueError, "wfm_make failed");'
             in out["ext"]
@@ -112,7 +109,7 @@ class TestCreateFnIsHonoured:
         cfg["project"]["c_prefix"] = "zz"
         cfg["wfm_compose"] = {}  # `backing` now names a jm component
         ext = _composer.render_ext(cfg, MOD)
-        assert "self->state = wfm_make(segs, n, repeat, continuous);" in ext
+        assert "_jm_new = wfm_make(segs, n, repeat, continuous);" in ext
         assert "zz_wfm_compose_destroy(" in ext
         assert "create_fn" in _csym.AUTHOR_NAMED_KEYS
 
@@ -141,13 +138,13 @@ class TestEveryFacePassesTheReason:
 
     def test_the_constructor_passes_and_raises_it(self, case) -> None:
         fn, out = case
-        call = (
-            "    const char *_why = NULL;\n"
-            f"    self->state = {fn}(segs, n, repeat, continuous, &_why);\n"
-        )
+        # gh-2356: the new state is built into a local before the old one is
+        # released, so the call no longer assigns `self->state` directly.
+        call = f"_jm_new = {fn}(segs, n, repeat, continuous, &_why);\n"
         assert out["ext"].count(call) == 1, "no reason-passing create call"
+        assert "    const char *_why = NULL;\n" in out["ext"]
         after = out["ext"].split(call, 1)[1]
-        raise_ = after.split("if (!self->state) {", 1)[1].split("}", 1)[0]
+        raise_ = after.split("if (!_jm_new) {", 1)[1].split("}", 1)[0]
         assert "PyErr_SetString(PyExc_ValueError, _why);" in raise_
         # ...and the fixed text is still the raise when there is none.
         assert f'"{fn} failed"' in raise_
@@ -193,7 +190,7 @@ class TestWithoutTheKeys:
         assert plain == _render(_mod_cfg(create_why=False))
         assert plain == _render(_mod_cfg(create_fn="wfm_compose_create"))
         assert (
-            "self->state = wfm_compose_create(segs, n, repeat, continuous);"
+            "_jm_new = wfm_compose_create(segs, n, repeat, continuous);"
             in plain["ext"]
         )
         assert (

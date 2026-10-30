@@ -36,6 +36,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    EnumAnn,
     method_doc,
     name_summary,
     property_doc,
@@ -112,7 +113,10 @@ def _pyi_ndarray(ctype: str) -> str:
 
 
 def _stub_params(
-    arg_type: str, params: list[dict], variable_output: bool = False
+    arg_type: str,
+    params: list[dict],
+    variable_output: bool = False,
+    enums: "dict | None" = None,
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """The Python-facing arguments of one method, for signature and prose.
 
@@ -196,10 +200,12 @@ def _stub_params(
             # binding now rejects, which is the manifest-contradicts-surface
             # shape the issue is about. The default is a choice, not a C
             # literal, so it is quoted.
+            # gh-2379: the annotation carries the choices, so the prose is
+            # theirs and not the header's description of the C int.
             fields.append(
                 (
                     p["name"],
-                    "str",
+                    EnumAnn((enums or {}).get(p["enum"]) or []),
                     f" = {p['default']!r}" if p.get("default") else "",
                 )
             )
@@ -278,7 +284,14 @@ def _hoist_for_nogil(call_expr: str) -> tuple[str, str]:
 
 
 def _nogil_call(
-    decl: str, var: str, call_expr: str, nogil: bool, owner: str = "self"
+    decl: str,
+    var: str,
+    call_expr: str,
+    nogil: bool,
+    owner: str = "self",
+    *,
+    release: str,
+    gone: str = "destroyed",
 ) -> str:
     """Emit ``<decl> <var> = <call>;``, with the GIL released when *nogil*.
 
@@ -311,14 +324,32 @@ def _nogil_call(
     teardown NULLs it first to refuse new calls. *owner* is the C pointer to
     that struct: ``self`` for an object, ``w`` for a capsule's wrapper.
 
+    gh-2273: and the object is checked AGAIN here, after the last argument
+    conversion. Converting can run Python (an ``__array__``), which can
+    call ``destroy()``; the top-of-method guard has long passed, and the
+    kernel would be handed a NULL state. *release* undoes what the call
+    acquired (the array references, an allocated result) before the same
+    ``RuntimeError("destroyed")`` the top guard raises. It is a required
+    keyword, so a new call site has to say what it holds; ``""`` is a
+    statement that it holds nothing. *gone* is the message, for a wrapper
+    whose top guard words it differently. `_inflight.recheck` renders it
+    and `tests/test_gh2273_recheck_one_emitter.py` refuses a copy.
+
     Examples
     --------
-    >>> print(_nogil_call("int", "_rc", "k(self->handle)", False), end="")
+    >>> print(_nogil_call("int", "_rc", "k(self->handle)", False,
+    ...                   release=""), end="")
+        if (!self->handle) {
+            PyErr_SetString(PyExc_RuntimeError, "destroyed");
+            return NULL;
+        }
         int _rc = k(self->handle);
-    >>> print(_nogil_call("", "", "k(self->handle)", False), end="")
-        k(self->handle);
+    >>> print(_nogil_call("", "", "k(self->handle)", False,
+    ...                   release="Py_DECREF(x);")[-17:], end="")
+    k(self->handle);
     >>> body = _nogil_call(
-    ...     "", "", "k(self->handle, (float *)PyArray_DATA(a))", True)
+    ...     "", "", "k(self->handle, (float *)PyArray_DATA(a))", True,
+    ...     release="")
     >>> print(body[body.index("    float *"):], end="")
         float * _ng0 = (float *)PyArray_DATA(a);
         void *_jm_h = self->handle;
@@ -328,14 +359,16 @@ def _nogil_call(
         Py_END_ALLOW_THREADS
         jm_inflight_leave(&self->_jm_inflight);
     """
+    again = _inflight.recheck(owner, call_expr, release, gone)
     if not nogil:
         lead = f"{decl} {var} = " if var else ""
-        return f"    {lead}{call_expr};\n"
+        return f"{again}    {lead}{call_expr};\n"
     stmt = f"{var} = " if var else ""
     hoist, rewritten = _hoist_for_nogil(call_expr)
     h_decl, rewritten = _inflight.hoist_handle(rewritten)
     return (
-        "    /* nogil: GIL released across the pure-C kernel. Two calls on\n"
+        again
+        + "    /* nogil: GIL released across the pure-C kernel. Two calls on\n"
         "     * one object may run at once only if its kernel allows it; a\n"
         "     * teardown waits for a running call (gh-2272). */\n"
         f"{hoist}"
@@ -362,7 +395,11 @@ def _reindent(blk: str) -> str:
 
 
 def _kernel_call_block(
-    call_expr: str, nogil: bool, m: "dict | None" = None
+    call_expr: str,
+    nogil: bool,
+    m: "dict | None" = None,
+    *,
+    release: str,
 ) -> str:
     """``size_t n_out = <call>;`` — the variable-output shape.
 
@@ -373,8 +410,10 @@ def _kernel_call_block(
     ``size_t n_out`` as before, so no later comparison mixes signedness.
     """
     if m and m.get("error_negative"):
-        return _nogil_call(count_type_of(m), "_rc", call_expr, nogil)
-    return _nogil_call("size_t", "n_out", call_expr, nogil)
+        return _nogil_call(
+            count_type_of(m), "_rc", call_expr, nogil, release=release
+        )
+    return _nogil_call("size_t", "n_out", call_expr, nogil, release=release)
 
 
 def _count_refusal_c(m: dict, name: str, release: str, pad: str) -> str:
@@ -430,9 +469,11 @@ def _count_refusal_c(m: dict, name: str, release: str, pad: str) -> str:
     return ""
 
 
-def _single_kernel_block(ret_disp: str, call_expr: str, nogil: bool) -> str:
+def _single_kernel_block(
+    ret_disp: str, call_expr: str, nogil: bool, *, release: str
+) -> str:
     """``<ret> _r = <call>;`` — a single record returned by value (gh-261)."""
-    return _nogil_call(ret_disp, "_r", call_expr, nogil)
+    return _nogil_call(ret_disp, "_r", call_expr, nogil, release=release)
 
 
 class CallConvention(NamedTuple):
@@ -1597,7 +1638,7 @@ def _max_out_call_c(
 
 def _records_consumed_c(
     buffer: "Callable[[str, str], tuple[str, str, str]]",
-    call: "Callable[[str], str]",
+    call: "Callable[[str, str], str]",
     *,
     ptr: str,
     count: str,
@@ -1633,7 +1674,9 @@ def _records_consumed_c(
     buffer : callable
         ``(count, release) -> (declare, capacity, free)`` for one call.
     call : callable
-        The kernel call's C block for a capacity expression, built by the
+        ``(capacity, release) -> C``: the kernel call's block for a capacity
+        expression, with *release* the statements that undo everything held
+        at that point (the buffer, the list, the parsed arrays), built by the
         caller inside :func:`_kernel_call_block` -- the one ``nogil``
         emitter, which ``tests/test_gh2259_batch_method_faces.py`` requires
         every kernel call in ``make_methods_ctx`` to be spelled inside.
@@ -1663,7 +1706,7 @@ def _records_consumed_c(
     rel_all = f"{free} {rel_lst}".strip()
     body = (
         decl
-        + call(cap)
+        + call(cap, rel_all)
         # gh-1716: `n_out` records are read from `results[]`.
         + _coerce.returned_count_c("n_out", cap, who, rel_all)
         + "    for (size_t i = 0; i < n_out; i++) {\n"
@@ -2603,7 +2646,7 @@ def make_methods_ctx(
         # that. A declared param never reaches it: whether it should, or be
         # refused, is gh-2021's.
         _sig_parts, _doc_params = _stub_params(
-            arg_type, [] if batch else params, variable_output or batch
+            arg_type, [] if batch else params, variable_output or batch, enums
         )
         # ...and the return annotation with it, for the same reason: it is the
         # type line of the `Returns` section on both faces.
@@ -3168,18 +3211,24 @@ def make_methods_ctx(
                 else ""
             )
 
-            def _b_call(out_arr: str) -> str:
-                """The kernel call writing into *out_arr*, at body depth."""
+            def _b_call(out_arr: str, held: str) -> str:
+                """The kernel call writing into *out_arr*, at body depth.
+
+                *held* is the result array this path owns; the input is
+                held too when the method takes one (gh-2273).
+                """
                 return _nogil_call(
                     "",
                     "",
                     f"{c_fn}({_st},\n        {_b_in}(size_t)n,\n"
                     f"        ({ret_disp} *)PyArray_DATA({out_arr}))",
                     nogil,
+                    release=f"Py_DECREF({held});"
+                    + (" Py_DECREF(in_arr);" if has_arg else ""),
                 )
 
-            _b_out_kernel = _reindent(_b_call("out_arr"))
-            _b_new_kernel = _b_call("(PyArrayObject *)out")
+            _b_out_kernel = _reindent(_b_call("out_arr", "out_arr"))
+            _b_new_kernel = _b_call("(PyArrayObject *)out", "out")
             _b_array_arg = _coerce.array_arg(
                 "out_obj",
                 ret_np,
@@ -3614,6 +3663,7 @@ def make_methods_ctx(
                         f"{c_fn}({_out_call_data}{_out_cap_arg})",
                         nogil,
                         m,
+                        release=f"Py_DECREF(out_arr); {_decref_early_vo}",
                     )
                 )
                 _out_decref = _reindent(decref_in) if decref_in else ""
@@ -3762,7 +3812,15 @@ def make_methods_ctx(
                 # method renders the three lines it always did.
                 _out_bound = (
                     (
-                        f"        size_t _omax = {_moc_call};\n"
+                        # gh-2273: `max_out` reads the state too, and runs
+                        # straight after the arrays were converted.
+                        _inflight.recheck(
+                            "self",
+                            _moc_call,
+                            f"Py_DECREF(out_arr); {_decref_early_vo}",
+                            indent="        ",
+                        )
+                        + f"        size_t _omax = {_moc_call};\n"
                         + _out_min_cap
                         + _out_zero
                         + (
@@ -3872,7 +3930,9 @@ def make_methods_ctx(
             _xdecref_arrs = " ".join(f"Py_XDECREF(arr{i});" for i in _idx)
             _decref_arrs = " ".join(f"Py_DECREF(arr{i});" for i in _idx)
             _vo_alloc = (
-                f"    size_t _need = {_lazy_fallback};\n"
+                # gh-2273: as for the `out=` path's `max_out`.
+                _inflight.recheck("self", _moc_call, _decref_early_vo)
+                + f"    size_t _need = {_lazy_fallback};\n"
                 f"    size_t _cap ="
                 f" {_moc_call};\n"
                 # gh-607: without pass_capacity, the kernel is never told its
@@ -3975,6 +4035,7 @@ def make_methods_ctx(
                 f"{c_fn}({_vo_call_data}{_vo_call_extra}{_vo_cap_arg})",
                 nogil,
                 m,
+                release=f"{_decref_arrs} {_decref_early_vo}",
             )
             if error_on_empty:
                 # The same test, the opposite verdict. Rendered from
@@ -4314,6 +4375,12 @@ def make_methods_ctx(
                         f'    if (!PyArg_ParseTuple(args, "n",'
                         f" &{_pymo_name}))\n"
                         f"        return NULL;\n"
+                        # gh-2380: `n` is converted above, after the guard.
+                        + _inflight.recheck(
+                            "self",
+                            f"{c_fn}_max_out({_st})",
+                            "",
+                        )
                         + _max_out_return_c(
                             f"{c_fn}_max_out({_st},"
                             f" (size_t){_pymo_name}{_mo_per})",
@@ -4417,6 +4484,7 @@ def make_methods_ctx(
                         ret_disp,
                         f"{c_fn}({_st}, {_p_call})",
                         nogil,
+                        release=_cleanup_inline,
                     )
                     + _p_cleanup
                     + _keep
@@ -4444,6 +4512,7 @@ def make_methods_ctx(
                         f"        (const {arg_disp} *)PyArray_DATA(in_arr),"
                         f" n_in)",
                         nogil,
+                        release="Py_DECREF(in_arr);",
                     )
                     + "    Py_DECREF(in_arr);\n"
                 )
@@ -4457,9 +4526,7 @@ def make_methods_ctx(
                     f"    }}\n"
                 )
                 _s_call = _single_kernel_block(
-                    ret_disp,
-                    f"{c_fn}({_st})",
-                    nogil,
+                    ret_disp, f"{c_fn}({_st})", nogil, release=""
                 )
             _set_lines = []
             for _i, _f in enumerate(result_fields):
@@ -4584,6 +4651,7 @@ def make_methods_ctx(
                     + _kernel_call_block(
                         f"{c_fn}({_st}, {_p_call}, results, {_rf_cap})",
                         nogil,
+                        release=f"{_rf_free} {_p_cleanup}".strip(),
                     )
                     + _p_cleanup
                     + _keep
@@ -4607,6 +4675,7 @@ def make_methods_ctx(
                         f"(const {arg_disp} *)PyArray_DATA(in_arr), n_in, "
                         f"results, {_rf_cap})",
                         nogil,
+                        release=f"{_rf_free} Py_DECREF(in_arr);".strip(),
                     )
                     + "    Py_DECREF(in_arr);\n"
                 )
@@ -4616,6 +4685,7 @@ def make_methods_ctx(
                 _rf_call = _rf_decl + _kernel_call_block(
                     f"{c_fn}({_st}, results, {_rf_cap})",
                     nogil,
+                    release=_rf_free,
                 )
             # The stack array needs no release; a heap buffer is freed on
             # every way out once the kernel has filled it.
@@ -4653,10 +4723,11 @@ def make_methods_ctx(
                     _rf_buffer,
                     # gh-2327: after every call; keeping the object already
                     # kept is a no-op.
-                    lambda cap: (
+                    lambda cap, rel: (
                         _kernel_call_block(
                             f"{c_fn}({_st}, {_p_call}, results, {cap})",
                             nogil,
+                            release=rel,
                         )
                         + _keep
                     ),
@@ -4675,9 +4746,10 @@ def make_methods_ctx(
                 )
                 _rf_tail = _records_consumed_c(
                     _rf_buffer,
-                    lambda cap: _kernel_call_block(
+                    lambda cap, rel: _kernel_call_block(
                         f"{c_fn}({_st}, _in, n_in, results, {cap})",
                         nogil,
+                        release=rel,
                     ),
                     ptr="_in",
                     count="n_in",
@@ -4801,6 +4873,7 @@ def make_methods_ctx(
                         "_p",
                         f"{c_fn}({call_args_c})",
                         nogil,
+                        release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"
                     + "    if (!_p) {\n"
@@ -4869,7 +4942,11 @@ def make_methods_ctx(
                 # author's text is an argument and never the format string.
                 ret_body = (
                     _nogil_call(
-                        ret_disp, "_rc", f"{c_fn}({call_args_c})", nogil
+                        ret_disp,
+                        "_rc",
+                        f"{c_fn}({call_args_c})",
+                        nogil,
+                        release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"
                     f"    if (_rc < 0) {{\n"
@@ -4963,6 +5040,10 @@ def make_methods_ctx(
                     _var,
                     f"{c_fn}({call_args_c}{_extra_args}{_out_arg})",
                     nogil,
+                    release=(
+                        " ".join(_p_cleanup.split())
+                        + (" Py_DECREF(_out);" if out_type else "")
+                    ),
                 )
                 _check_c = (
                     "    if (_rc != 0) {\n"
@@ -5016,7 +5097,11 @@ def make_methods_ctx(
                 ret_expr = ret_meta["to_py"](_res)
                 ret_body = (
                     _nogil_call(
-                        ret_disp, _res, f"{c_fn}({call_args_c})", nogil
+                        ret_disp,
+                        _res,
+                        f"{c_fn}({call_args_c})",
+                        nogil,
+                        release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"
                     f"{_keep}"
@@ -5024,7 +5109,13 @@ def make_methods_ctx(
                 )
             else:
                 ret_body = (
-                    _nogil_call("", "", f"{c_fn}({call_args_c})", nogil)
+                    _nogil_call(
+                        "",
+                        "",
+                        f"{c_fn}({call_args_c})",
+                        nogil,
+                        release=" ".join(_p_cleanup.split()),
+                    )
                     + f"{_p_cleanup}"
                     f"{_keep}"
                     f"    Py_RETURN_NONE;\n"
@@ -6407,6 +6498,8 @@ def make_properties_ctx(
                 f"        return -1;\n"
                 f"    }}\n"
                 f"{parse_block}"
+                # gh-2380: the value is converted above, after the guard.
+                f"{_inflight.recheck('self', assign_line, '', fail='-1')}"
                 f"{assign_line}"
                 f"    return 0;\n"
                 f"}}"
@@ -6426,7 +6519,9 @@ def make_properties_ctx(
         # the same sentence maintained twice and drifting independently.
         # gh-1394: the one chain, shared with `jm status --docs`, which
         # reports whichever properties it answers with a name stub.
-        _pdoc = property_doc(component, p, doc_blocks, csym=csym)[0]
+        _pdoc = property_doc(component, p, doc_blocks, csym=csym, enums=enums)[
+            0
+        ]
         # gh-2182: a setter that may refuse documents what it raises, on
         # both faces, through the renderer a method's Raises goes through --
         # so the runtime text is the stub's text without its indent. A

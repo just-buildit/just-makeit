@@ -308,9 +308,10 @@ class TestItCompilesAndRuns:
         assert out.split() == ["4242", "4242"]
 
     def test_a_wrong_object_still_names_what_to_pass(self, tmp_path):
-        # The regression the `explain_type_error` split exists to prevent:
-        # with the old coupling this raised
-        # `AttributeError: 'int' object has no attribute '_capsule'`.
+        # The regression gh-805 section H fixed (the explanation had been
+        # tied to mandatoriness, so a nullable constructor raised
+        # `AttributeError: 'int' object has no attribute '_capsule'`); since
+        # gh-2355 there is no switch to tie it to.
         out = self._run(
             self._duo(tmp_path),
             "from proj import Capture\n"

@@ -258,10 +258,22 @@ endef
 # up. It belongs here rather than in the dev group: this is test
 # infrastructure like pytest and numpy, not a formatter whose exact
 # version has to agree byte-for-byte across machines.
-PYTEST_DEPS     = --with pytest --with pytest-xdist --with numpy \
+# gh-2411. pytest is capped below 9.2: 9.2.0 dropped `Node._nodeid`, which
+# pytest-benchmark 5.3.0 still reads, so every benchmark died at setup.
+# REMOVE WHEN pytest-benchmark publishes a release that supports pytest 9.2.
+# The same cap is in pyproject.toml's dev group and in `_pins.PYTEST` (what jm
+# hands generated projects); tests/test_gh2411_pytest_cap.py holds them together.
+PYTEST_DEPS     = --with 'pytest<9.2' --with pytest-xdist --with numpy \
                   --with pyyaml --with pytest-benchmark
-PYTEST_ISOLATED = $(UV) run --no-project $(PYTEST_DEPS) --with just-buildit \
-                  --with-editable .
+# gh-2163. `uv run --no-project` still DISCOVERS a virtual environment: from a
+# checkout it finds the dev .venv above the cwd, and so honours VIRTUAL_ENV, and
+# it layers the --with env over that venv, so a dev-group package imports here
+# and not in CI. Measured (tests/test_gh2163_isolated_test_env.py reproduces it):
+# an explicit --python path stops the overlay but overrides UV_PYTHON, which
+# setup-uv sets per CI leg, so every leg would test one interpreter. --isolated
+# stops the overlay and keeps the interpreter request already in force.
+PYTEST_ISOLATED = $(UV) run --no-project --isolated $(PYTEST_DEPS) \
+                  --with just-buildit --with-editable .
 PYTEST          = $(PYTEST_ISOLATED) pytest
 PYTEST_B        = $(PYTEST_ISOLATED) --with pytest-benchmark pytest
 PYTEST_EXAMPLES = CMAKE_LINT='$(CMAKE_LINT)' $(UV) run $(PYTEST_DEPS) pytest
@@ -506,11 +518,14 @@ DOCS_PREPARE = $(PYTHON) scripts/copy_examples.py
 # only existed in CI. Here it is in the build, so `make docs` and `make
 # docs-serve` produce the real site.
 #
+# `aliases.toml` rides the same line of reasoning (`jbx just-makeit:NAME`
+# fetches it first); both copies are the `site-files` recipe (local.mk).
+#
 # It has to run AFTER the build rather than in DOCS_PREPARE, because the
 # build's `--clean` wipes `site/` first.
 define DOCS_BUILD_CMD
 $(ZENSICAL) build --clean --strict
-cp install.sh site/install.sh
+$(MAKE) -s site-files
 endef
 
 # A post-gate, not DOCS_CHECK_CMD: the docs tests run after the strict build,

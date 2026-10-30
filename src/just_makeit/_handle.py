@@ -1071,6 +1071,16 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         return NULL;
     }}"""
 
+    def _again(release: str) -> str:
+        """The closed guard again, after the last conversion (gh-2380).
+
+        Converting an argument runs Python (an ``__array__``) that can
+        ``close()`` this handle, after ``closed_guard`` looked.
+        """
+        return _inflight.recheck(
+            "self", "k(self->h)", release, f"{tname} is closed"
+        )
+
     array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     # gh-2009: how a refusal names this method's argument rows and return.
     args_where = f"handle module '{module}' method '{name}' args"
@@ -1350,7 +1360,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {_out_guard}    PyArrayObject *{on}_arr =
         {_coerce.array_arg(f"{on}_obj", out_npy, "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE", on)};
     if (!{on}_arr) {{ Py_DECREF({xn}_arr); return NULL; }}
-
+{_again(f"Py_DECREF({xn}_arr); Py_DECREF({on}_arr);")}
     size_t n_in    = (size_t)PyArray_SIZE({xn}_arr);
     size_t max_out = (size_t)PyArray_SIZE({on}_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA({xn}_arr);
@@ -1408,7 +1418,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     PyArrayObject *x_arr =
         {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", a["name"], _coerce.str_hint(a))};
     if (!x_arr) return NULL;
-    size_t n_in = (size_t)PyArray_SIZE(x_arr);
+{_again("Py_DECREF(x_arr);")}    size_t n_in = (size_t)PyArray_SIZE(x_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);
 {b_ret}"""
         # Trailing scalars parse with keywords + defaults (gh-178 review #6: the
@@ -1891,7 +1901,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             "cannot delete '{n}'");
         return -1;
     }}
-{parse}    {set_fn}(self->h, v);
+{parse}{_inflight.recheck("self", "k(self->h)", "", f"{tname} is closed", fail="-1")}    {set_fn}(self->h, v);
     return 0;
 }}
 """)
@@ -2114,7 +2124,7 @@ static PyObject *
     method_rows = []
     for m in C.handle_methods(cfg, module):
         flags = method_flags(m)
-        _face = py_face(m)
+        _face = py_face(m, C.enums(cfg))
         _block = _method_block(_blocks, m.get("fn"), m["name"])
         _override = str(m.get("doc", ""))
         _raises = _diagnostics.raises_doc(m, handle=True)
@@ -2403,8 +2413,12 @@ def _pyi_scalar(ctype: str) -> str:
     return _capsule._pyi_scalar(ctype)
 
 
-def _pyi_arg_ann(a: dict) -> str:
-    """Python annotation for a handle create_arg (path, string, enum, scalar)."""
+def _pyi_arg_ann(a: dict, enums: "dict | None" = None) -> str:
+    """Python annotation for a handle create_arg (path, string, enum, scalar).
+
+    An enum arg's annotation is an :class:`~_docstring.EnumAnn` when *enums*
+    is given: ``str``, carrying the choices, so a method's ``Parameters``
+    section documents them (gh-2379)."""
     if a.get("type") == "path":
         # gh-623: same PyUnicode_FSConverter coercion as every other path
         # surface (see _coerce), so the same annotation.
@@ -2414,7 +2428,9 @@ def _pyi_arg_ann(a: dict) -> str:
     if a.get("type") == "bytes":
         return "bytes"  # gh-565: opaque blob init-param
     if a.get("enum"):
-        return "str"
+        from ._docstring import EnumAnn
+
+        return EnumAnn((enums or {}).get(a["enum"]) or [])
     return _pyi_scalar(a.get("type", "int"))
 
 
@@ -2490,7 +2506,12 @@ def _pyi_class_docstring(
     whatever length they came out (108 columns in doppler's ``wfm_sink.pyi``).
     Layout now comes from `_docstring.class_docstring`; what remains here is
     deriving each argument's type line and notes."""
-    from ._docstring import ClassParam, class_docstring, group_paragraphs
+    from ._docstring import (
+        ClassParam,
+        class_docstring,
+        enum_param_desc,
+        group_paragraphs,
+    )
 
     summary = f"{tname} handle."
     body: list[str] = []
@@ -2515,13 +2536,14 @@ def _pyi_class_docstring(
         # It was accepted by `_keys` and read by nothing.
         authored = "\n".join(authored_doc_lines(str(a.get("doc") or "")))
         pdesc = create_block.param_desc(n) if create_block else None
-        if authored or pdesc:
+        choices = enum_reg.get(a["enum"], []) if a.get("enum") else []
+        # gh-2379: an enum arg's header `@param` describes the C int, so
+        # when the arg has choices they replace it; the author's own `doc`
+        # still stands.
+        if authored or (pdesc and not choices):
             notes.append(authored or pdesc)
-        if a.get("enum"):
-            choices = enum_reg.get(a["enum"], [])
-            if choices:
-                choice_str = ", ".join(f'``"{c}"``' for c in choices)
-                notes.append(f"One of {choice_str}.")
+        if choices:
+            notes.append(enum_param_desc(choices))
         params.append(ClassParam(type_line, tuple(notes)))
     return class_docstring(summary, body=body, params=params)
 
@@ -2602,7 +2624,7 @@ def _arg_array_ann(a: dict) -> str:
     )
 
 
-def py_face(m: dict) -> PyFace:
+def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
     """The Python-facing shape of one handle method.
 
     Every parameter is named and placed by `py_args`, the order the binding
@@ -2732,14 +2754,16 @@ def py_face(m: dict) -> PyFace:
                 a["name"],
                 _arg_array_ann(a)
                 if str(a.get("type", "")).endswith("[]")
-                else _pyi_arg_ann(a),
+                else _pyi_arg_ann(a, enums),
             )
             for a in py_args(m)
         ],
     )
 
 
-def method_doc_lines(m: dict, doc_blocks: "dict | None") -> "list[str]":
+def method_doc_lines(
+    m: dict, doc_blocks: "dict | None", enums: "dict | None" = None
+) -> "list[str]":
     """The ``.pyi`` docstring of handle method *m*, at method-body indent.
 
     `render_pyi` writes it under the method's signature, and gh-2103's
@@ -2748,7 +2772,7 @@ def method_doc_lines(m: dict, doc_blocks: "dict | None") -> "list[str]":
     ``None`` return does not, so its `doc` duplicates nothing.
     """
     name = m["name"]
-    _face = py_face(m)
+    _face = py_face(m, enums)
     ann, doc_call = _face.ann, _face.doc_call
     # Header prose (from the method's C `fn` Doxygen) upgrades the one-line
     # stub to a full numpy docstring — @param/@return prose plus a runnable
@@ -2857,9 +2881,9 @@ def render_pyi(
 
     # methods — one of the four shapes (a)-(d) (see _emit_method).
     for m in C.handle_methods(cfg, module):
-        _face = py_face(m)
+        _face = py_face(m, C.enums(cfg))
         lines.append(f"    def {m['name']}({_face.sig}) -> {_face.ann}:")
-        lines.extend(method_doc_lines(m, doc_blocks))
+        lines.extend(method_doc_lines(m, doc_blocks, C.enums(cfg)))
 
     # decoded-getter properties (a writable_fn field also gets a setter).
     for g in C.handle_getters(cfg, module):
