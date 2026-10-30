@@ -1,0 +1,1 @@
+- The CI that `jm ci` generates pins `actions/setup-python` at v7.1.0, the version jm's own workflows now use. (dependabot actions group)

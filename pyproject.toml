@@ -141,7 +141,10 @@ dev = [
     "mypy==2.3.*; python_version >= '3.10'",
     "numpy",
     "pre-commit",
-    "pytest",
+    # gh-2411: capped below 9.2, which dropped `Node._nodeid` that
+    # pytest-benchmark 5.3.0 still reads. REMOVE WHEN pytest-benchmark
+    # publishes a release that supports pytest 9.2 (see `_pins.PYTEST`).
+    "pytest<9.2",
     "pytest-benchmark",
     "pytest-cov>=7.1.0",
     # Docs tooling; zensical requires >=3.10, so gate it to keep dev deps

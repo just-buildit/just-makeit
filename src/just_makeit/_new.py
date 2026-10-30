@@ -18,6 +18,7 @@ from . import _color as Color
 from . import _config as C
 from . import _render as T
 from . import _incpath as INC
+from . import _pins
 
 
 def _make_project_ctx(
@@ -26,8 +27,14 @@ def _make_project_ctx(
     pytest_: bool = False,
 ) -> dict[str, str]:
     if pytest_:
-        ensure_win = '\t$(PYTHON) -c "import pytest" 2>nul || $(PYTHON) -m pip install pytest\n'
-        ensure_unix = '\t@$(PYTHON) -c "import pytest" 2>/dev/null || $(PYTHON) -m pip install pytest\n'
+        ensure_win = (
+            '\t$(PYTHON) -c "import pytest" 2>nul || '
+            f"$(PYTHON) -m pip install {_pins.PYTEST_DQ}\n"
+        )
+        ensure_unix = (
+            '\t@$(PYTHON) -c "import pytest" 2>/dev/null || '
+            f"$(PYTHON) -m pip install {_pins.PYTEST_SHELL}\n"
+        )
         cmd_win = "$(PYTHON) -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)\""
         cmd_unix = "$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret"
     else:
