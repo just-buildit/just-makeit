@@ -248,6 +248,7 @@ def recheck(
     release: str,
     gone: str = "destroyed",
     indent: str = "    ",
+    fail: str = "NULL",
 ) -> str:
     """The liveness guard again, just before the kernel call (gh-2273).
 
@@ -262,7 +263,8 @@ def recheck(
     array references, the allocated result -- run before the refusal, which
     is the same ``RuntimeError`` the top guard raises. It is required of
     every caller, as ``""`` when nothing was acquired, so a new call site
-    must state what it holds.
+    must state what it holds. *fail* is what the refusal returns: ``NULL``
+    from a method, ``-1`` from a getset setter or an ``initproc`` (gh-2380).
 
     Examples
     --------
@@ -278,13 +280,29 @@ def recheck(
             PyErr_SetString(PyExc_RuntimeError, "w is gone");
             return NULL;
         }
+    >>> print(recheck("self", "k(self->handle)", "", fail="-1"), end="")
+        if (!self->handle) {
+            PyErr_SetString(PyExc_RuntimeError, "destroyed");
+            return -1;
+        }
+    >>> print(recheck("self", "k(self->h, x)", "Py_DECREF(x_arr);",
+    ...               "Ring is closed"), end="")
+        if (self->closed) {
+            Py_DECREF(x_arr);
+            PyErr_SetString(PyExc_RuntimeError, "Ring is closed");
+            return NULL;
+        }
     >>> recheck("self", "k(self->x)", "")
     ''
     """
     if owner == "self":
-        if "self->handle" not in call_expr:
+        if "self->handle" in call_expr:
+            cond = "!self->handle"
+        elif re.search(r"self->h\b", call_expr):
+            # a handle module's wrapper: `close()` sets `closed` and keeps `h`
+            cond = "self->closed"
+        else:
             return ""
-        cond = "!self->handle"
     elif f"{owner}->state" in call_expr:
         cond = f"{owner}->destroyed"
     else:
@@ -295,7 +313,7 @@ def recheck(
         f"{indent}if ({cond}) {{\n"
         f"{rel}"
         f'{indent}    PyErr_SetString(PyExc_RuntimeError, "{gone}");\n'
-        f"{indent}    return NULL;\n"
+        f"{indent}    return {fail};\n"
         f"{indent}}}\n"
     )
 

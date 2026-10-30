@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from just_makeit import _pins
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._ci import run as ci_run
@@ -55,7 +56,7 @@ class TestCi:
         text = (
             pytest_project / ".github" / "workflows" / "ci.yml"
         ).read_text()
-        assert "numpy pytest" in text
+        assert f"numpy {_pins.PYTEST_DQ}" in text
 
     def test_woodpecker_provider(self, project):
         ci_run(project, provider="woodpecker")

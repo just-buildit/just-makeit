@@ -1071,6 +1071,16 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
         return NULL;
     }}"""
 
+    def _again(release: str) -> str:
+        """The closed guard again, after the last conversion (gh-2380).
+
+        Converting an argument runs Python (an ``__array__``) that can
+        ``close()`` this handle, after ``closed_guard`` looked.
+        """
+        return _inflight.recheck(
+            "self", "k(self->h)", release, f"{tname} is closed"
+        )
+
     array_in = [a for a in margs if str(a.get("type", "")).endswith("[]")]
     # gh-2009: how a refusal names this method's argument rows and return.
     args_where = f"handle module '{module}' method '{name}' args"
@@ -1350,7 +1360,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
 {_out_guard}    PyArrayObject *{on}_arr =
         {_coerce.array_arg(f"{on}_obj", out_npy, "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE", on)};
     if (!{on}_arr) {{ Py_DECREF({xn}_arr); return NULL; }}
-
+{_again(f"Py_DECREF({xn}_arr); Py_DECREF({on}_arr);")}
     size_t n_in    = (size_t)PyArray_SIZE({xn}_arr);
     size_t max_out = (size_t)PyArray_SIZE({on}_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA({xn}_arr);
@@ -1408,7 +1418,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     PyArrayObject *x_arr =
         {_coerce.array_arg("x_obj", in_npy, "NPY_ARRAY_C_CONTIGUOUS", a["name"], _coerce.str_hint(a))};
     if (!x_arr) return NULL;
-    size_t n_in = (size_t)PyArray_SIZE(x_arr);
+{_again("Py_DECREF(x_arr);")}    size_t n_in = (size_t)PyArray_SIZE(x_arr);
     const {in_elem} *in_data = (const {in_elem} *)PyArray_DATA(x_arr);
 {b_ret}"""
         # Trailing scalars parse with keywords + defaults (gh-178 review #6: the
@@ -1891,7 +1901,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             "cannot delete '{n}'");
         return -1;
     }}
-{parse}    {set_fn}(self->h, v);
+{parse}{_inflight.recheck("self", "k(self->h)", "", f"{tname} is closed", fail="-1")}    {set_fn}(self->h, v);
     return 0;
 }}
 """)
