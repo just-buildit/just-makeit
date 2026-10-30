@@ -25,6 +25,7 @@ Workflow
 
 from __future__ import annotations
 
+from . import _pins
 from . import _textio
 
 import contextlib
@@ -612,7 +613,8 @@ def _run_python(
     if not _has_pytest_benchmark(python):
         print(
             "  Python benchmarks: pytest-benchmark not installed "
-            "in the project venv."
+            "in the project venv "
+            f"(pip install {_pins.PYTEST_SHELL} pytest-benchmark)."
         )
         return None
     merged: dict | None = None
