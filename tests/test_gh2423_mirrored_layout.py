@@ -322,7 +322,12 @@ def test_the_mirrored_project_builds_and_its_c_tests_pass(mirrored, tmp_path):
     ):
         r = subprocess.run(cmd, capture_output=True, text=True)
         assert r.returncode == 0, (cmd, r.stdout[-3000:], r.stderr[-3000:])
-    assert "100% tests passed, 0 tests failed out of 4" in r.stdout
+    # ctest's summary wording varies by release: 3.x prints "100% tests
+    # passed, 0 tests failed out of 4", 4.x "100% tests passed out of 4".
+    # What matters is all passed AND all four ran -- the count is what
+    # proves the nested tests were found at all.
+    summary = re.search(r"(\d+)% tests passed.*? out of (\d+)", r.stdout)
+    assert summary and summary.groups() == ("100", "4"), r.stdout[-3000:]
     for name in _EXPECTED:
         assert (build / f"bench_{name}_core").exists() or any(
             build.rglob(f"bench_{name}_core")
