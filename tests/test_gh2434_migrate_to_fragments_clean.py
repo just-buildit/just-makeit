@@ -8,7 +8,8 @@ A dry run on doppler (45 `[module.X]` tables, 28 `[[enum]]`, one
    but ``adopt`` answered ``--help``. `_cli._main` now answers ``--help`` /
    ``-h`` for every command before its branch runs, from the command's own
    entries of the top-level usage, and a command that takes no argument
-   refuses one (exit 2).
+   refuses one (exit 2), as ``build`` and ``bench`` refuse an option they
+   do not have (``build --help`` built a wheel into ``./--help/``).
 2. ``[[enum]]`` and ``[codec]`` were filed as ``objects/enum.toml`` and
    ``objects/codec.toml``: `_migrate` and `_split_objects` spelled their own
    copy of "the sections that are not components". They ask
@@ -21,7 +22,7 @@ A dry run on doppler (45 `[module.X]` tables, 28 `[[enum]]`, one
    the names another module's ``reexports`` put in ``__all__``, so the file
    depended on module order (doppler's ``wfm`` lost 23 public names).
 
-GATE: every command but a BUILD one answers ``--help`` / ``-h`` with its
+GATE: every command that reads its own argv answers ``--help`` / ``-h`` with its
       usage, exit 0, and leaves the tree byte-identical; any of them given a
       bogus argument fails and leaves the tree alone; migrating a project
       that declares every reserved section moves none of them; no module
@@ -46,9 +47,10 @@ from just_makeit._apply import walk
 
 _SRC = Path(_cli.__file__).parent
 
-#: Every command whose argv `_main` reads itself. A BUILD command hands its
-#: argv on (`test` to pytest), so `--help` is its own parser's to answer.
-_ANSWERED = sorted(c for c, k in _cli.COMMANDS.items() if k != _cli.BUILD)
+#: Every command whose argv `_main` reads itself: all but the ones that
+#: hand it to another program (`test` to pytest), whose `--help` that
+#: program answers.
+_ANSWERED = sorted(set(_cli.COMMANDS) - _cli._FORWARDS_ARGV)
 
 
 def _snap(root: Path) -> "dict[str, str]":
@@ -177,26 +179,37 @@ def reserved(proj: Path) -> Path:
     toml.write_text(toml.read_text() + _SECTIONS)
     _ok("apply", cwd=proj)
     present = set(C.load_manifest(proj))
-    # `include` is the fragment list a migration WRITES; every other
-    # reserved section is declared above, so a new one fails here first.
-    assert set(C.RESERVED_SECTIONS) - {"include"} <= present, present
+    # Every reserved section is declared above, so a new one fails here
+    # until the fixture declares it.
+    assert set(C.RESERVED_SECTIONS) <= present, present
     return proj
 
 
-@pytest.mark.parametrize("cmd", ["migrate-to-fragments", "split-objects"])
-def test_no_reserved_section_is_filed_as_a_component(cmd, reserved):
-    _ok(cmd, cwd=reserved)
+@pytest.mark.parametrize(
+    "cmds",
+    [
+        ("migrate-to-fragments",),
+        ("split-objects",),
+        # A split project's manifest holds `include` beside its inline
+        # modules: migrating it must not take the list for a component.
+        ("split-objects", "migrate-to-fragments"),
+    ],
+    ids="+".join,
+)
+def test_no_reserved_section_is_filed_as_a_component(cmds, reserved):
+    for cmd in cmds:
+        _ok(cmd, cwd=reserved)
     filed = [
         p.relative_to(reserved).as_posix()
         for d in ("objects", "modules")
         for p in (reserved / d).glob("*.toml")
-        if p.stem in C.RESERVED_SECTIONS
+        if p.stem in C.NOT_COMPONENTS
     ]
     assert not filed, filed
     # Every one stays in the manifest -- but `[module.X]`, which
     # `migrate-to-fragments` moves to modules/ by design.
     kept = set(C.RESERVED_SECTIONS)
-    if cmd == "migrate-to-fragments":
+    if "migrate-to-fragments" in cmds:
         kept.discard("module")
     manifest = C.load_manifest(reserved)
     assert kept <= set(manifest), set(manifest)
@@ -222,8 +235,8 @@ def test_save_files_a_new_group_in_the_manifest_only(tmp_path):
 def _reserved_tuples(path: Path) -> "list[str]":
     """Each literal collection of two or more strings in *path* that names
     `project` and nothing that is not a reserved section: a private copy of
-    the list `_config.RESERVED_SECTIONS` declares."""
-    reserved = set(C.RESERVED_SECTIONS)
+    the list `_config.NOT_COMPONENTS` declares."""
+    reserved = set(C.NOT_COMPONENTS)
     out = []
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
@@ -247,7 +260,7 @@ def test_no_module_spells_its_own_reserved_sections():
         for hit in _reserved_tuples(path)
     ]
     assert not found, (
-        "ask _config.components() / RESERVED_SECTIONS instead:\n"
+        "ask _config.components() / NOT_COMPONENTS instead:\n"
         + "\n".join(found)
     )
 

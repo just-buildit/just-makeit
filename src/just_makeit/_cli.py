@@ -816,6 +816,10 @@ def main() -> None:
 #: The tokens that ask a command for its usage instead of running it.
 _HELP = frozenset({"-h", "--help"})
 
+#: The commands that hand their argv to another program, which answers
+#: ``--help`` itself: `test` to pytest, `install-deps` to its script.
+_FORWARDS_ARGV = frozenset({"test", "install-deps"})
+
 
 def command_usage(cmd: str) -> str:
     """The usage of *cmd*: its own entries of the top-level ``_USAGE``.
@@ -914,9 +918,9 @@ def _main() -> None:
 
     # gh-2434: `<cmd> --help` prints the command's usage and runs nothing.
     # Asked here, before any branch, so no command can forget it: three
-    # never read their argv, and `migrate-to-fragments --help` migrated.
-    # A BUILD command is left to its own parser -- `test` hands its argv on.
-    if COMMANDS.get(cmd, BUILD) != BUILD and _HELP & set(args[1:]):
+    # never read their argv, `migrate-to-fragments --help` migrated, and
+    # `build --help` built a wheel into a directory named `--help`.
+    if cmd in COMMANDS and cmd not in _FORWARDS_ARGV and _HELP & set(args[1:]):
         print(command_usage(cmd))
         return
 
@@ -1776,6 +1780,9 @@ def _main() -> None:
                     )
                     sys.exit(1)
                 i += 2
+            elif a.startswith("-"):
+                # gh-2434: taken for a component name, after the build.
+                _refuse_argument(cmd, a)
             else:
                 comps.append(a)
                 i += 1
@@ -1828,6 +1835,10 @@ def _main() -> None:
     elif cmd == "build":
         from . import _build
 
+        # gh-2434: one optional wheel directory. An option, or a second
+        # path, was taken for it (or ignored) and the build ran anyway.
+        for extra in [a for a in args[1:] if a.startswith("-")] + args[2:]:
+            _refuse_argument(cmd, extra)
         _build.cmd_build(args[1:])
 
     elif cmd == "test":

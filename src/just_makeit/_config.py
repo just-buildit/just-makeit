@@ -1608,7 +1608,7 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in RESERVED_SECTIONS:
+        if key in NOT_COMPONENTS:
             # Each is placed below: `project`, `app`, `enum`, `codec` and
             # `group` in the manifest, `template` with its owner, `module`
             # per module (gh-2434: `group` was missing here, so a new one in
@@ -1693,14 +1693,9 @@ def save(root: Path, cfg: dict) -> None:
 #: of these" is the definition, and a new section missing from the list is
 #: silently treated as an object — which is how `[[group]]` first reached
 #: `manifest_type_errors` as `cfg["group"].get(...)` on a list (gh-999).
-#: `include` is the manifest's fragment list: a loaded project has none, but
-#: a raw manifest (`load_manifest`, a fragment) does, and it is no component
-#: either -- `migrate-to-fragments` filed `[[enum]]` and `[codec]` under
-#: objects/ from a hand-written copy of this list that lacked them (gh-2434).
 RESERVED_SECTIONS = (
     "project",
     "module",
-    "include",
     "app",
     "enum",
     "codec",
@@ -1708,10 +1703,24 @@ RESERVED_SECTIONS = (
     "template",
 )
 
+#: The top-level keys that are not components: the reserved sections and
+#: `include`, the manifest's fragment list. A loaded project has no
+#: `include`, but a raw manifest (`load_manifest`) does, and its readers
+#: spelled their own copy of this -- `migrate-to-fragments`'s lacked
+#: `[[enum]]` and `[codec]` and filed them under objects/ (gh-2434).
+NOT_COMPONENTS = (*RESERVED_SECTIONS, "include")
+
 
 def components(cfg: dict) -> list[str]:
-    """Return component names — all top-level keys except reserved sections."""
-    return [k for k in cfg if k not in RESERVED_SECTIONS]
+    """Return component names: every top-level key but `NOT_COMPONENTS`.
+
+    A loaded project or a raw manifest alike:
+
+    >>> components({"include": ["objects/*.toml"], "project": {},
+    ...             "enum": [], "fir": {}})
+    ['fir']
+    """
+    return [k for k in cfg if k not in NOT_COMPONENTS]
 
 
 def declared_methods(cfg: dict) -> "list[tuple[str, dict]]":
