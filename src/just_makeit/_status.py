@@ -775,6 +775,11 @@ def run(
             p.relative_to(scratch).as_posix()
             for p in C.manifest_files(scratch)
         }
+        # gh-2429: a native layout move `apply` makes renders its file at
+        # the new place, absent from the tree until the move. It is that
+        # move, listed once under SUPERSEDED -- not also a file `apply`
+        # will create. Still counted: `apply` changes the tree.
+        _moving = {n for _o, n in _createonly.relocating(root)}
         for rel in _walk_managed(scratch):
             real = root / rel
             after = (scratch / rel).read_bytes()
@@ -784,7 +789,8 @@ def run(
             managed_paths.append(rel_posix)
             dropped: frozenset = frozenset()
             if not real.exists():
-                state, diff = "missing", ""
+                state = "moved" if rel_posix in _moving else "missing"
+                diff = ""
             else:
                 before = real.read_bytes()
                 # gh-785: asked before the equality shortcut below, and
@@ -2182,7 +2188,17 @@ def run(
         for _old, _new in _superseded:
             print(f"  → {_old}  ({_new})")
             print(f"    {_apply.superseded_advice(root, _old, _new)}")
-        print("  Not drift.")
+        # gh-2429: a move `apply` makes is drift (counted as `moved`);
+        # only the renames left for `upgrade` are not.
+        _moves = set(_createonly.relocating(root))
+        if set(_superseded) <= _moves:
+            print("  `jm apply` makes these moves.")
+        elif _moves:
+            print(
+                "  `jm apply` makes the native moves; the rest are not drift."
+            )
+        else:
+            print("  Not drift.")
         print()
 
     # gh-785: printed on both paths and under --check. The strongest case
@@ -2428,6 +2444,7 @@ def run(
 
     n_missing = sum(1 for e in drift if e[1] == "missing")
     n_stale = sum(1 for e in drift if e[1] == "stale")
+    n_moved = sum(1 for e in drift if e[1] == "moved")
 
     # gh-823: a drifted constructor is no longer merely *qualified* in the
     # "OK" line — it leaves that branch entirely. jm detected this condition,
@@ -2588,6 +2605,7 @@ def run(
         print(
             f"summary: {ok_count} OK, {n_missing} missing, "
             f"{n_stale} stale"
+            + (f", {n_moved} to move" if n_moved else "")
             + (
                 f", {len(unreconciled_entries)} unreconciled"
                 if unreconciled_entries

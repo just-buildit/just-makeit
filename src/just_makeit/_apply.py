@@ -332,9 +332,16 @@ def superseded_advice(root: Path, old: str, new: str) -> str:
             f" Merge anything you added to {old} into {new}, then delete"
             f" {old}."
         )
+    # gh-2429: a native layout move is one `apply` makes (the build names
+    # the new place), so naming `upgrade` sent the reader to the wrong
+    # command.
+    command = (
+        "apply" if (old, new) in _createonly.relocating(root) else "upgrade"
+    )
     return (
         f"{old} is now called {new}; jm will not create {new} beside it."
-        " Run `just-makeit upgrade` to rename it -- your edits come along."
+        f" Run `just-makeit {command}` to rename it -- your edits come"
+        " along."
     )
 
 
@@ -1652,10 +1659,14 @@ def _relocate_native(root: Path) -> "list[Path]":
 
     Then every remaining reference in a build file jm does not rewrite --
     the root ``CMakeLists.txt``, a hand-owned component one (gh-275), the
-    ``make`` backend's create-only ``Makefile`` -- to an old place whose
-    file is now at the new one is respelled, so a target the author
-    registered by hand follows the file it builds. Whole path tokens only,
-    so ``.../test_fir_core.c`` never matches inside a longer name.
+    ``<d>_extra.cmake`` hook beside each (gh-1351, gh-2429), the ``make``
+    backend's create-only ``Makefile`` -- to an old place whose file is now
+    at the new one is respelled, so a target the author registered by hand
+    follows the file it builds. Whole path tokens only, so
+    ``.../test_fir_core.c`` never matches inside a longer name. In a CMake
+    file the target that builds a moved source is also given the directory
+    the source left (:func:`_include_left_dirs`), as jm's own test target
+    is given ``native/tests``.
 
     Returns the build files respelled, for the run's change report.
     """
@@ -1680,9 +1691,16 @@ def _relocate_native(root: Path) -> "list[Path]":
     respelled: "list[Path]" = []
     if not landed:
         return respelled
-    build_files = [root / "CMakeLists.txt", root / "Makefile"] + sorted(
-        (root / "native" / "src").glob("*/CMakeLists.txt")
-    )
+    # gh-2429: each component CMakeLists' `<d>_extra.cmake` too, asked of
+    # the one reader of "the hook beside it" -- the file jm includes and
+    # never writes is where an author's own targets for the directory live.
+    build_files = [
+        root / "CMakeLists.txt",
+        root / "Makefile",
+        *_libwiring.with_hooks(
+            sorted((root / "native" / "src").glob("*/CMakeLists.txt"))
+        ),
+    ]
     for path in build_files:
         if not path.is_file():
             continue
@@ -1698,10 +1716,88 @@ def _relocate_native(root: Path) -> "list[Path]":
                 moved,
                 new,
             )
+        if path.name != "Makefile":
+            new = _include_left_dirs(root, new, landed)
         if new != text:
             _textio.write_text(path, new)
             respelled.append(path)
     return respelled
+
+
+#: The CMake commands that give a target a source file: the declaration
+#: names the target first, as `target_sources` does.
+_SOURCE_COMMANDS = ("add_executable", "add_library", "target_sources")
+
+
+def _include_left_dirs(
+    root: Path, text: str, landed: "list[tuple[str, str]]"
+) -> str:
+    """*text*, a hand-written CMake file, with each target that builds a
+    moved native file given the directory that file left (gh-2429).
+
+    A C file finds a quoted ``#include "x.h"`` beside itself before it
+    looks on the include path, so a test moved from ``native/tests/`` to
+    ``native/tests/fir/`` loses every header it shared that directory with
+    -- jm's ``jm_test.h``, and the author's own. jm's generated target is
+    given ``native/tests`` for that reason (`_incpath.native_slots`); a
+    target the author wrote, whose source path the respell just changed, is
+    given the same, so the build stays green with no step of theirs. The
+    edit is one ``target_include_directories`` line after the command that
+    names the source, the same class of edit as the path respell itself.
+
+    Both directions from *landed*: switching back to flat gives a target
+    the mirrored directory it left only while that directory still exists
+    -- an emptied one is removed, and an include of nothing is noise. A
+    target already including the directory is left alone, so a second run
+    adds nothing.
+
+    Parameters
+    ----------
+    root : Path
+        The project root.
+    text : str
+        The CMake file's text, already respelled.
+    landed : list of (str, str)
+        ``(old, new)`` for each native file now at *new*.
+
+    Returns
+    -------
+    str
+        *text* with the include lines added.
+    """
+    from . import _rootcmake
+
+    spans = _rootcmake.call_spans(text)
+    included: "dict[str, set[str]]" = {}
+    for call, _s, _e in spans:
+        if call.name == "target_include_directories" and call.args:
+            included.setdefault(call.args[0], set()).update(
+                a.rstrip("/") for a in call.args[1:]
+            )
+    inserts: "dict[int, list[str]]" = {}
+    for old, new in landed:
+        left = Path(old).parent.as_posix()
+        if not (root / left).is_dir():
+            continue
+        want = f"${{CMAKE_SOURCE_DIR}}/{left}"
+        for call, _s, end in spans:
+            if call.name not in _SOURCE_COMMANDS or not call.args:
+                continue
+            if not any(a == new or a.endswith(f"/{new}") for a in call.args):
+                continue
+            target = call.args[0]
+            have = included.setdefault(target, set())
+            if want in have or left in have:
+                continue
+            have.add(want)
+            cmd = "target_include_directories("
+            line = f"{cmd}{target} PRIVATE {want})"
+            if len(line) > 79:
+                line = f"{cmd}{target}\n{' ' * len(cmd)}PRIVATE {want})"
+            inserts.setdefault(end, []).append(f"\n{line}")
+    for end in sorted(inserts, reverse=True):
+        text = text[:end] + "".join(inserts[end]) + text[end:]
+    return text
 
 
 def _sync_missing(

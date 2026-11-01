@@ -284,8 +284,13 @@ the key, then run `jm apply`. It moves each `test_<c>_core.c`,
 `test_<c>_symbols.c` and `bench_<c>_core.c` to its new place (your edits
 come along: it is a move, not a re-render), re-renders the component
 CMakeLists, and respells any path to a moved file in the root
-`CMakeLists.txt`, a hand-owned component one, or a `make` project's
-`Makefile`. Moving the files yourself first, to keep their history, works
+`CMakeLists.txt`, a hand-owned component one, a component's
+`<c>_extra.cmake` hook, or a `make` project's `Makefile`. A CMake target
+of yours that builds a moved file is also given the directory the file
+left, one `target_include_directories(... PRIVATE ${CMAKE_SOURCE_DIR}/native/tests)` line after it, so a header the test
+shared that directory with (`jm_test.h`, or your own) still resolves, as
+jm's own test target is given it. `jm status` lists each pending move
+once, under `SUPERSEDED`, and counts it until `apply` makes it. Moving the files yourself first, to keep their history, works
 the same: `apply` finds them already in place. `jm upgrade` makes the same
 moves. A file left in both places is not touched; `jm status` names it
 under `SUPERSEDED` until you merge your edits into the new one and delete
@@ -295,8 +300,10 @@ Two things `apply` cannot do for you. A `make` project's `Makefile` is
 written once and then yours: `apply` respells its paths, but each C test
 rule also needs `-Inative/tests`, and `jm status` reports the file
 `OUTDATED` until you take jm's render (delete it and run `jm apply`) or
-add the flag yourself. And a target you registered for a file of your own,
-not one jm generated, keeps whatever path you gave it.
+add the flag yourself; a rule of your own there gets no include flag
+either. And `apply` moves and respells only the files jm generates: a C
+source of your own in `native/tests/` stays where it is, under whatever
+path your target gives it.
 
 ______________________________________________________________________
 

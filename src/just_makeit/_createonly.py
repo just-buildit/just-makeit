@@ -415,6 +415,22 @@ def superseded(root: Path) -> "list[tuple[str, str]]":
     ]
 
 
+def relocating(root: Path) -> "list[tuple[str, str]]":
+    """The :func:`superseded` pairs `apply` moves itself: the native
+    layout's (gh-2423, :func:`_incpath.relocations`), whose new place the
+    build already names. Every other rename waits for `upgrade` (gh-1472).
+
+    gh-2429: `status` lists one of these once, as the move it is, not also
+    as a file `apply` will create, and names `apply` as the command.
+    """
+    from . import _config as C
+
+    if not (root / C.FILENAME).is_file():
+        return []
+    moves = set(INC.relocations(root))
+    return [pair for pair in superseded(root) if pair in moves]
+
+
 @functools.lru_cache(maxsize=None)
 def _compile(pattern: str, pkg: str) -> "re.Pattern[str]":
     """*pattern* as an anchored regex, with ``{pkg}`` filled in.
