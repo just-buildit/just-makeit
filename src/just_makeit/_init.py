@@ -167,6 +167,9 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # only its project's manifest can say -- beside the file stem above,
         # which stays the component's name.
         **CSYM.slots(owner, component),
+        # gh-2423: where its native test and benchmark sit, which only its
+        # project's `[project] layout` can say.
+        **INC.native_slots(owner, component),
         # Default empty; paths with `depends_on` override it (gh-170). Keeps
         # the `<<depends_includes>>` slot from leaking on paths that have no
         # dependency info to inject.
@@ -1927,10 +1930,7 @@ def run(
 
     # C test
     # gh-806: via the one renderer that stamps the scaffold check count.
-    _write(
-        root / "native" / "tests" / f"test_{comp}_core.c",
-        R.render_component_test_c(ctx),
-    )
+    _write(INC.native_path(root, "test", comp), R.render_component_test_c(ctx))
     # gh-1361: the link-check table the C test build names. Written here so
     # the build files never name a source that does not exist; the binding
     # writers refresh it once the calls are known.
@@ -1940,17 +1940,14 @@ def run(
     # gh-934: the shared assertion harness, written once per project like
     # jm_bench.h beside the benchmarks. Create-only -- `apply` never rewrites
     # it, so a project may extend it.
-    jm_test_h = root / "native" / "tests" / "jm_test.h"
+    jm_test_h = root / INC.harness_rel(INC.TESTS_DIR)
     if not jm_test_h.exists():
         # Rendered: its #include of clib_common.h is spelled by the layout.
         _write(jm_test_h, r(R.JM_TEST_H))
 
     # C benchmark
-    _write(
-        root / "native" / "benchmarks" / f"bench_{comp}_core.c",
-        r(bench_c_tmpl),
-    )
-    jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
+    _write(INC.native_path(root, "bench", comp), r(bench_c_tmpl))
+    jm_bench_h = root / INC.harness_rel(INC.BENCH_DIR)
     if not jm_bench_h.exists():
         _write(jm_bench_h, R.JM_BENCH_H)
 

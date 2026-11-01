@@ -126,7 +126,7 @@ def run(
 
     # Ensure C test and benchmark directories exist (even before any objects
     # or functions are added — users may want to write their own C tests).
-    for subdir in ("native/tests", "native/benchmarks"):
+    for subdir in INC.HARNESS:
         d = root / subdir
         if not d.exists():
             d.mkdir(parents=True, exist_ok=True)

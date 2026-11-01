@@ -1934,33 +1934,23 @@ def _write_module_test_and_bench(
             csym=CSYM.stem(root, cname),
         ),
     }
-    for sub, stem, tmpl, shared, shared_tmpl in (
-        (
-            "tests",
-            f"test_{cname}_core.c",
-            R.MODULE_TEST_C,
-            "jm_test.h",
-            R.JM_TEST_H,
-        ),
-        (
-            "benchmarks",
-            f"bench_{cname}_core.c",
-            R.MODULE_BENCH_C,
-            "jm_bench.h",
-            R.JM_BENCH_H,
-        ),
+    for kind, tmpl, shared_tmpl in (
+        ("test", R.MODULE_TEST_C, R.JM_TEST_H),
+        ("bench", R.MODULE_BENCH_C, R.JM_BENCH_H),
     ):
         # The shared harness, written once per project. A quoted include
         # resolves against the including file's own directory, which is how
         # an object's test finds it — so a module's test in the same
         # directory needs it present for the identical reason, and a
-        # function-only project had never had anything write it.
-        harness = root / "native" / sub / shared
+        # function-only project had never had anything write it. It stays
+        # at the tree's root in the mirrored layout (gh-2423), where the
+        # target's include path finds it instead.
+        harness = root / INC.harness_rel(INC.NATIVE_FILES[kind][0])
         if not harness.exists():
             harness.parent.mkdir(parents=True, exist_ok=True)
             # Rendered: jm_test.h spells its includes by the layout.
             _write(harness, R.render(shared_tmpl, ctx))
-        dest = root / "native" / sub / stem
+        dest = INC.native_path(root, kind, cname)
         if dest.exists():
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -2841,7 +2831,7 @@ def _regenerate_module_now(
     cmake_ctx = {
         **cmake_ctx,
         "module_targets_block": R.module_targets_block(
-            cname, bool(_fns), _taken, _module_dep_libs
+            cname, bool(_fns), _taken, _module_dep_libs, owner=root
         ),
     }
     if _fns and _skipped:
@@ -3533,23 +3523,20 @@ def run(
     # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).
     _copy_external_cmake_blocks(root, comp, obj_cmake_path)
     # gh-806: via the one renderer that stamps the scaffold check count.
-    _write(
-        root / "native" / "tests" / f"test_{comp}_core.c",
-        R.render_component_test_c(ctx),
-    )
+    _write(INC.native_path(root, "test", comp), R.render_component_test_c(ctx))
     # gh-934: the shared assertion harness, written once per project like
     # jm_bench.h beside the benchmarks. Create-only -- `apply` never rewrites
     # it, so a project may extend it.
-    jm_test_h = root / "native" / "tests" / "jm_test.h"
+    jm_test_h = root / INC.harness_rel(INC.TESTS_DIR)
     if not jm_test_h.exists():
         # Rendered: its #include of clib_common.h is spelled by the layout.
         _write(jm_test_h, r(R.JM_TEST_H))
 
     _write(
-        root / "native" / "benchmarks" / f"bench_{comp}_core.c",
+        INC.native_path(root, "bench", comp),
         r(R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C),
     )
-    jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
+    jm_bench_h = root / INC.harness_rel(INC.BENCH_DIR)
     if not jm_bench_h.exists():
         _write(jm_bench_h, R.JM_BENCH_H)
 

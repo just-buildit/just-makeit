@@ -59,7 +59,7 @@ _CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
 
 def symbols_file(root: Path, comp: str) -> Path:
     """Where *comp*'s table lives."""
-    return root / "native" / "tests" / f"test_{comp}_symbols.c"
+    return INC.native_path(root, "symbols", comp)
 
 
 def _header_functions(header: str) -> "list[str]":

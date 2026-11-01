@@ -79,24 +79,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _config as C
+from . import _incpath as INC
 from . import _render as R
 
 #: Where jm puts each kind of generated C target, and the filename shape it
 #: uses. A file in one of these directories matching the pattern is jm-shaped
 #: whether or not jm wrote it, which is exactly the population worth checking.
-_KINDS = (
+#: gh-2423: read off `_incpath.NATIVE_FILES`, the one table of where they go.
+_KINDS = tuple(
     (
-        "test",
-        "native/tests",
-        "test_{}_core.c",
-        re.compile(r"^test_(\w+)_core\.c$"),
-    ),
-    (
-        "bench",
-        "native/benchmarks",
-        "bench_{}_core.c",
-        re.compile(r"^bench_(\w+)_core\.c$"),
-    ),
+        kind,
+        tree,
+        name,
+        re.compile("^" + re.escape(name).replace(r"\{\}", r"(\w+)") + r"\Z"),
+    )
+    for kind, (tree, name) in INC.NATIVE_FILES.items()
+    if kind != "symbols"
 )
 
 #: The call that writes a benchmark's JSON, capturing the accumulator it is
@@ -329,12 +327,9 @@ def built_stems(root: Path, kind: str) -> set[str] | None:
     for k, subdir, _fmt, pattern in _KINDS:
         if k != kind:
             continue
-        directory = root / subdir
-        if not directory.is_dir():
-            return set()
         return {
             m.group(1)
-            for src in sorted(directory.glob("*.c"))
+            for src in INC.native_sources(root, subdir, root)
             if (m := pattern.match(src.name))
             and _is_built(src.name[: -len(".c")], texts)
         }
@@ -398,10 +393,7 @@ def orphans(root: Path, cfg: dict) -> list[Orphan] | None:
 
     found: list[Orphan] = []
     for kind, subdir, _fmt, pattern in kinds:
-        directory = root / subdir
-        if not directory.is_dir():
-            continue
-        for src in sorted(directory.glob("*.c")):
+        for src in INC.native_sources(root, subdir, root):
             m = pattern.match(src.name)
             if not m:
                 continue
@@ -487,7 +479,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
     # saw in the listing are the two sources: `components` follows manifest
     # key order, `module_objects` follows the `objects = [...]` array.
     for comp in C.components(cfg):
-        src = root / "native" / "benchmarks" / f"bench_{comp}_core.c"
+        src = INC.native_path(root, "bench", comp)
         if not src.is_file():
             continue
         try:
@@ -512,7 +504,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
         if not fns:
             continue
         cname = C.module_paths(mod).cname
-        src = root / "native" / "benchmarks" / f"bench_{cname}_core.c"
+        src = INC.native_path(root, "bench", cname)
         if not src.is_file():
             continue
         try:

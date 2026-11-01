@@ -165,9 +165,9 @@ def _object_paths(
     paths = [
         INC.path(root, obj),
         root / "native" / "src" / obj,
-        root / "native" / "tests" / f"test_{obj}_core.c",
-        root / "native" / "tests" / f"test_{obj}_symbols.c",  # gh-1361
-        root / "native" / "benchmarks" / f"bench_{obj}_core.c",
+        # The C test, the gh-1361 link table and the C bench, where the
+        # project's layout puts them (gh-2423).
+        *(INC.native_path(root, kind, obj) for kind in INC.NATIVE_FILES),
         # gh-1978: jm's element contract (gh-1404). Left behind, it imported
         # the removed class, and the project's Python tests failed to
         # collect on a tree `status --check` called clean.
@@ -264,12 +264,28 @@ def _strip_pkg_init(root: Path, pkg: str, obj: str, Component: str) -> None:
         print(f"  update  {init}")
 
 
+def _prune_native_dirs(root: Path, name: str) -> None:
+    """Remove *name*'s mirrored native directories once they are empty.
+
+    gh-2423: in the mirrored layout a component's C test and bench sit in a
+    directory of their own; with them gone, an empty one is clutter jm
+    made. One still holding anything -- the author's own test beside jm's
+    -- stays, and a tree's root (the flat layout's directory) is never one.
+    """
+    for tree in INC.HARNESS:
+        d = root / INC.native_dir(tree, name, root)
+        if d != root / tree and d.is_dir() and not any(d.iterdir()):
+            d.rmdir()
+            print(f"  remove  {d}/")
+
+
 def _remove_object_files(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> None:
     """Delete every generated file/dir for *obj* and strip its build wiring."""
     for path in _object_paths(root, cfg, pkg, obj, module):
         _rm(path)
+    _prune_native_dirs(root, obj)
     _strip_cmake_object(root, obj)
     _strip_umbrella(root, pkg, obj)
     if module is None:
@@ -683,7 +699,7 @@ def _bench_still_calls(root: Path, obj: str, sym: str) -> str:
     `_csym.references`, the one "does this C refer to that name" reader, so
     a comment or string naming the function is not a call.
     """
-    bench = root / "native" / "benchmarks" / f"bench_{obj}_core.c"
+    bench = INC.native_path(root, "bench", obj)
     if not bench.is_file():
         return ""
     if not CSYM.references(bench.read_text(encoding="utf-8"), {sym}):
@@ -945,12 +961,9 @@ def _remove_function_core_harness(
     """
     if C.collocated_object(cfg, module):
         return
-    for path in (
-        root / "native" / "tests" / f"test_{cname}_core.c",
-        root / "native" / "tests" / f"test_{cname}_symbols.c",
-        root / "native" / "benchmarks" / f"bench_{cname}_core.c",
-    ):
-        _rm(path)
+    for kind in INC.NATIVE_FILES:
+        _rm(INC.native_path(root, kind, cname))
+    _prune_native_dirs(root, cname)
 
 
 def _regenerate_object_bindings(
