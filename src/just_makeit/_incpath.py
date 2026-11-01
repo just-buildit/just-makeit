@@ -214,7 +214,7 @@ def core_include(comp: str, owner: Owner) -> str:
     >>> core_include("gain", {"project": {"name": "my_proj", "schema": "8"}})
     'my_proj/gain/gain_core.h'
     """
-    return include(f"{comp}/{comp}_core.h", owner)
+    return include(f"{core_dir(comp)}/{comp}_core.h", owner)
 
 
 def rel(name: str, owner: Owner) -> str:
@@ -232,7 +232,7 @@ def core_rel(comp: str, owner: Owner) -> str:
     >>> core_rel("gain", {"project": {"name": "my_proj", "schema": "8"}})
     'native/inc/my_proj/gain/gain_core.h'
     """
-    return rel(f"{comp}/{comp}_core.h", owner)
+    return rel(f"{core_dir(comp)}/{comp}_core.h", owner)
 
 
 def layout_free(rel_posix: str, owner: Owner) -> str:
@@ -292,7 +292,224 @@ def path(root: Path, name: str, owner: "Owner | None" = None) -> Path:
 
 def core_h(root: Path, comp: str, owner: "Owner | None" = None) -> Path:
     """*comp*'s ``_core.h`` under the project at *root*."""
-    return path(root, f"{comp}/{comp}_core.h", owner)
+    return path(root, f"{core_dir(comp)}/{comp}_core.h", owner)
+
+
+def core_dir(comp: str) -> str:
+    """*comp*'s directory below the header root, POSIX-spelled.
+
+    gh-2423. THE answer to "where does this component live in the C tree":
+    its ``_core.h`` is :func:`core_rel`'s ``<header root>/<core_dir>/``,
+    and in the mirrored layout its generated test and benchmark sit at the
+    same ``<core_dir>`` below their own trees (:func:`native_rel`). A
+    component's header does not follow its module today -- an object of
+    ``[module."dsp.filters"]`` keeps ``native/inc/<pkg>/fir/`` -- so neither
+    does anything that mirrors it; the day it does, it moves here and every
+    mirror moves with it.
+
+    >>> core_dir("fir")
+    'fir'
+    """
+    return comp
+
+
+#: gh-2423: ``[project] layout``. ``flat`` (the default) writes every
+#: generated native test and benchmark directly in its tree; ``mirrored``
+#: writes each one under the tree at its component's :func:`core_dir`, the
+#: directory its header has below ``native/inc/<pkg>/``.
+LAYOUTS = ("flat", "mirrored")
+
+#: The trees jm writes a component's C test and C benchmark into. Each holds
+#: its harness header at its root, in every layout: a nested file finds it
+#: through the include directory the build adds (:func:`native_slots`).
+TESTS_DIR = "native/tests"
+BENCH_DIR = "native/benchmarks"
+
+#: Each tree's shared harness, written once per project at the tree's root.
+HARNESS = {TESTS_DIR: "jm_test.h", BENCH_DIR: "jm_bench.h"}
+
+#: Every native file jm generates per component, by kind: its tree and its
+#: file name, ``{}`` being the component (or a module's cname). The ONE
+#: table every writer, reader, remover and build rule asks, through
+#: :func:`native_rel`; ``tests/test_gh2423_mirrored_layout.py`` refuses a
+#: spelling of one anywhere else in jm.
+NATIVE_FILES: "dict[str, tuple[str, str]]" = {
+    "test": (TESTS_DIR, "test_{}_core.c"),
+    "symbols": (TESTS_DIR, "test_{}_symbols.c"),
+    "bench": (BENCH_DIR, "bench_{}_core.c"),
+}
+
+
+def layout(owner: Owner) -> str:
+    """*owner*'s ``[project] layout`` (gh-2423): ``flat`` unless declared.
+
+    An unknown value is refused rather than read as the default: a typo
+    would otherwise write the flat tree the author declared away.
+
+    >>> layout({"project": {"name": "p"}})
+    'flat'
+    >>> layout({"project": {"name": "p", "layout": "mirrored"}})
+    'mirrored'
+    """
+    raw = (manifest(owner).get("project") or {}).get("layout", LAYOUTS[0])
+    if raw not in LAYOUTS:
+        from . import _config as C
+
+        C._refuse(
+            [
+                f"[project] layout {raw!r} is not one jm writes -- it is"
+                f" one of {', '.join(repr(v) for v in LAYOUTS)} (gh-2423)"
+            ]
+        )
+    return raw
+
+
+def native_dir(tree: str, comp: str, owner: Owner) -> str:
+    """The directory *comp*'s file in *tree* sits in, project-relative.
+
+    >>> native_dir(TESTS_DIR, "fir", {"project": {"name": "p"}})
+    'native/tests'
+    >>> o = {"project": {"name": "p", "layout": "mirrored"}}
+    >>> native_dir(TESTS_DIR, "fir", o)
+    'native/tests/fir'
+    """
+    if layout(owner) == "mirrored":
+        return f"{tree}/{core_dir(comp)}"
+    return tree
+
+
+def native_rel(kind: str, comp: str, owner: Owner) -> str:
+    """*comp*'s generated native file of *kind* (a :data:`NATIVE_FILES`
+    key), project-relative and POSIX-spelled.
+
+    >>> native_rel("bench", "fir", {"project": {"name": "p"}})
+    'native/benchmarks/bench_fir_core.c'
+    >>> o = {"project": {"name": "p", "layout": "mirrored"}}
+    >>> native_rel("symbols", "fir", o)
+    'native/tests/fir/test_fir_symbols.c'
+    """
+    tree, name = NATIVE_FILES[kind]
+    return f"{native_dir(tree, comp, owner)}/{name.format(comp)}"
+
+
+def native_path(
+    root: Path, kind: str, comp: str, owner: "Owner | None" = None
+) -> Path:
+    """:func:`native_rel` under *root*; *owner* defaults to *root*."""
+    return Path(root) / native_rel(
+        kind, comp, root if owner is None else owner
+    )
+
+
+def harness_rel(tree: str) -> str:
+    """*tree*'s shared harness header, project-relative.
+
+    >>> harness_rel(BENCH_DIR)
+    'native/benchmarks/jm_bench.h'
+    """
+    return f"{tree}/{HARNESS[tree]}"
+
+
+def native_sources(root: Path, tree: str, owner: Owner) -> "list[Path]":
+    """The ``.c`` files under *tree* where *owner*'s layout puts jm's files.
+
+    Its root alone when flat -- a hand-made subdirectory is not where jm
+    looks for its own files -- and every depth when mirrored. Sorted.
+    """
+    base = Path(root) / tree
+    if not base.is_dir():
+        return []
+    found = (
+        base.rglob("*.c") if layout(owner) == "mirrored" else base.glob("*.c")
+    )
+    return sorted(p for p in found if p.is_file())
+
+
+def native_names(cfg: dict) -> "list[str]":
+    """Every name jm generates native files for: each component, then each
+    module's cname (a function-bearing module's own test and benchmark,
+    gh-1034). A collocated object shares its module's cname; once only."""
+    from . import _config as C
+
+    names = list(C.components(cfg))
+    for mod in C.modules(cfg):
+        cname = C.module_paths(mod).cname
+        if cname not in names:
+            names.append(cname)
+    return names
+
+
+def relocations(owner: Owner) -> "list[tuple[str, str]]":
+    """``(old, new)`` for every generated native file, from where the OTHER
+    layout puts it to where *owner*'s does (gh-2423).
+
+    Read as renames by :mod:`_createonly` (gh-1472): `apply` does not create
+    a file at *new* beside one at *old*, `upgrade` and `apply` move it --
+    the author's bytes come along -- and `status` names *old* until it is
+    gone. Both directions from one table: switching back moves them back.
+
+    >>> o = {"project": {"name": "p", "layout": "mirrored"}, "fir": {}}
+    >>> relocations(o)[0]
+    ('native/tests/test_fir_core.c', 'native/tests/fir/test_fir_core.c')
+    """
+    cfg = manifest(owner)
+    here = layout(cfg)
+    other = {
+        **cfg,
+        "project": {
+            **(cfg.get("project") or {}),
+            "layout": next(v for v in LAYOUTS if v != here),
+        },
+    }
+    return [
+        (native_rel(kind, name, other), native_rel(kind, name, cfg))
+        for name in native_names(cfg)
+        for kind in NATIVE_FILES
+    ]
+
+
+#: gh-2423: the per-component slots :func:`native_slots` fills, which
+#: `render()` refuses a template using without.
+NATIVE_SLOTS = (
+    "native_test_c",
+    "native_symbols_c",
+    "native_bench_c",
+    "native_bench_inc",
+    "native_test_inc",
+    "native_test_inc_make",
+)
+
+
+def native_slots(owner: Owner, comp: str) -> "dict[str, str]":
+    """The template slots for *comp*'s generated native test and benchmark.
+
+    Each path is project-relative (a CMake template leads it with
+    ``${CMAKE_SOURCE_DIR}/``). ``<<native_bench_inc>>`` is the benchmark
+    harness's directory, always the tree's root. ``<<native_test_inc>>`` /
+    ``<<native_test_inc_make>>`` add the test harness's directory to the C
+    test's include path in the mirrored layout only: a flat test sits beside
+    ``jm_test.h`` and a quoted include finds it there, so the flat render is
+    the one jm has always written.
+
+    >>> s = native_slots({"project": {"name": "p"}}, "fir")
+    >>> s["native_test_c"], s["native_test_inc"]
+    ('native/tests/test_fir_core.c', '')
+    >>> s = native_slots({"project": {"name": "p", "layout": "mirrored"}},
+    ...                  "fir")
+    >>> s["native_bench_c"], s["native_test_inc_make"]
+    ('native/benchmarks/fir/bench_fir_core.c', ' -Inative/tests')
+    """
+    nested = layout(owner) == "mirrored"
+    return {
+        "native_test_c": native_rel("test", comp, owner),
+        "native_symbols_c": native_rel("symbols", comp, owner),
+        "native_bench_c": native_rel("bench", comp, owner),
+        "native_bench_inc": BENCH_DIR,
+        "native_test_inc": (
+            f"\n    ${{CMAKE_SOURCE_DIR}}/{TESTS_DIR}" if nested else ""
+        ),
+        "native_test_inc_make": f" -I{TESTS_DIR}" if nested else "",
+    }
 
 
 #: The template slots whose value depends on which layout a project is in.

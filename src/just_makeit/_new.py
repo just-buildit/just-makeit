@@ -266,6 +266,7 @@ def run(
     schema: int | None = None,
     c_prefix: "str | None | object" = DEFAULT_C_PREFIX,
     version: str = "0.1.0",
+    layout: "str | None" = None,
 ) -> None:
     C.require_name(project, "project")
     # gh-1583: the schema decides the header layout, and the manifest that
@@ -289,6 +290,12 @@ def run(
     if c_prefix is not None:
         owner["project"]["c_prefix"] = c_prefix
         C.c_prefix(owner)
+    # gh-2423: the native layout, validated before anything is written. Only
+    # `apply`'s replay passes it -- `jm new` itself writes no file it moves,
+    # so a new project declares it in its manifest before its first object.
+    if layout is not None:
+        owner["project"]["layout"] = layout
+        INC.layout(owner)
 
     root = dest or (Path.cwd() / project)
     if root.exists() and any(root.iterdir()):
@@ -390,6 +397,8 @@ def run(
     )
     if c_prefix is not None:
         cfg.setdefault("project", {})["c_prefix"] = c_prefix
+    if layout is not None:
+        cfg.setdefault("project", {})["layout"] = layout
     # External-dep declarations land in [project]; the root wiring they
     # declare is written below, once the manifest holding them is saved.
     if find_packages:

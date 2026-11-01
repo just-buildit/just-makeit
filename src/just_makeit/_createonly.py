@@ -131,6 +131,17 @@ class Rule(NamedTuple):
         return self.kind == JM
 
 
+def _native_glob(kind: str) -> str:
+    """The rule pattern for every generated native file of *kind*, in both
+    layouts (gh-2423): directly in its tree, or below it at any depth.
+
+    >>> _native_glob("bench")
+    'native/benchmarks/**bench_*_core.c'
+    """
+    tree, name = INC.NATIVE_FILES[kind]
+    return f"{tree}/**{name.format('*')}"
+
+
 # First match wins, so the specific entries precede the general ones.
 RULES: tuple[Rule, ...] = (
     # ── jm's content: a difference means the project is on an older jm ──
@@ -191,13 +202,13 @@ RULES: tuple[Rule, ...] = (
     Rule("inc:clib_common.h", JM, "jm's shared C preamble."),
     Rule("inc:pyex_common.h", JM, "jm's CPython glue preamble."),
     Rule(
-        "native/tests/jm_test.h",
+        INC.harness_rel(INC.TESTS_DIR),
         JM,
         "jm's assertion harness (gh-934). Create-only so a project may extend"
         " it — which is the reason to *report* rather than rewrite, not a"
         " reason to treat the harness as the author's.",
     ),
-    Rule("native/benchmarks/jm_bench.h", JM, "jm's timing harness."),
+    Rule(INC.harness_rel(INC.BENCH_DIR), JM, "jm's timing harness."),
     # ── `apply` writes here, but only into managed blocks ────────────────
     Rule(
         "CMakeLists.txt",
@@ -222,12 +233,12 @@ RULES: tuple[Rule, ...] = (
     Rule("native/src/*/*_core.c", AUTHOR, "sacred: the author's algorithm."),
     Rule("native/src/*_lib.c", AUTHOR, "a stub the author fills in."),
     Rule(
-        "native/tests/test_*_core.c",
+        _native_glob("test"),
         AUTHOR,
         "the author's C tests; the scaffold is a seed (gh-806 counts its"
         " checks precisely because it is expected to grow).",
     ),
-    Rule("native/benchmarks/bench_*_core.c", AUTHOR, "the author's C bench."),
+    Rule(_native_glob("bench"), AUTHOR, "the author's C bench."),
     # gh-1404: ABOVE the author's-tests rule below, because that rule's
     # `*.py` matches this file too and first-match-wins -- the invariants would
     # otherwise be classified as the author's and never refreshed, which is
@@ -324,7 +335,7 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule("native/src/*/*_ext.c", RECONCILED, "generated CPython glue."),
     Rule(
-        "native/tests/test_*_symbols.c",
+        _native_glob("symbols"),
         DERIVED,
         "the link-check table `apply` derives from the binding and header as"
         " they stand in the tree -- which is what compiles (gh-1361).",
@@ -363,14 +374,20 @@ RENAMED: "tuple[tuple[str, str], ...]" = (
 
 
 def _renames(root: Path) -> "list[tuple[str, str]]":
-    """`RENAMED` with the project's name filled in for *root*."""
+    """`RENAMED` with the project's name filled in for *root*, then every
+    generated native file's move from the other layout's place to the one
+    *root*'s ``[project] layout`` declares (gh-2423,
+    :func:`_incpath.relocations`) -- a rename by another name: `apply` must
+    not create the file beside the author's copy, and the copy moves."""
+    from . import _config as C
+
     pkg = ""
     out: "list[tuple[str, str]]" = []
+    if (root / C.FILENAME).is_file():
+        out += INC.relocations(root)
     for old, new in RENAMED:
         if "{" in old + new:
             if not pkg:
-                from . import _config as C
-
                 if not (root / C.FILENAME).is_file():
                     continue
                 pkg = C.project_name(C.load(root))

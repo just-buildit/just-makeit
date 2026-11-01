@@ -209,8 +209,7 @@ def _rewrite_makefile_bench(text: str) -> str:
 _COMPLEX_DIRS = (
     INC.INC_DIR,
     "native/src",
-    "native/tests",
-    "native/benchmarks",
+    *INC.HARNESS,
 )
 
 #: Longest first. Not load-bearing -- rewriting `double complex` inside
@@ -338,7 +337,7 @@ MIGRATIONS: dict[int, list] = {
     3: [
         # Schema 4 adds jm_bench.h (per-round stats + pytest-benchmark JSON)
         # and regenerates bench C files to use the new timing structure.
-        AddFile("native/benchmarks/jm_bench.h", "JM_BENCH_H"),
+        AddFile(INC.harness_rel(INC.BENCH_DIR), "JM_BENCH_H"),
         RegenBench(),
     ],
     4: [
@@ -429,7 +428,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
         version = C.project_version(cfg)
         perf = C.is_perf(cfg)
         for comp in C.components(cfg):
-            bench_c = root / "native" / "benchmarks" / f"bench_{comp}_core.c"
+            bench_c = INC.native_path(root, "bench", comp)
             if not bench_c.exists():
                 continue
             no_step = C.is_no_step(cfg, comp)
@@ -702,8 +701,13 @@ def _where_declared(root: Path, unknown) -> str:
     return f"{frag.relative_to(root).as_posix()}: " if frag.exists() else ""
 
 
-def _rename_superseded(root: Path) -> None:
+def _rename_superseded(
+    root: Path, pairs: "list[tuple[str, str]] | None" = None
+) -> None:
     """Move each file jm has renamed to its new name (gh-1472).
+
+    *pairs* narrows it to those renames, each still pending; `apply` passes
+    the native layout's moves (gh-2423), which it makes itself.
 
     A rename, not a re-render: the old file may carry the author's additions
     (a ``jb.toml`` with ``[runtime.*]`` packages), and a fresh default under
@@ -714,10 +718,11 @@ def _rename_superseded(root: Path) -> None:
     from . import _apply
     from . import _createonly
 
-    for old, new in _createonly.superseded(root):
+    for old, new in _createonly.superseded(root) if pairs is None else pairs:
         if (root / new).exists():
             print(f"\n{_apply.superseded_advice(root, old, new)}")
             continue
+        (root / new).parent.mkdir(parents=True, exist_ok=True)
         (root / old).rename(root / new)
         # An owned file's token names it (gh-1589): carry the ownership
         # across the rename, or the moved file silently becomes the author's.

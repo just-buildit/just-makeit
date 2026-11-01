@@ -235,14 +235,15 @@ class TestModuleTargets:
 
     def test_the_emitter_skips_per_name(self):
         """Unit-level, independent of any project on disk."""
-        both = R.module_targets_block("util", True)
+        o = {"project": {"name": "p"}}
+        both = R.module_targets_block("util", True, owner=o)
         assert "test_util_core" in both and "bench_util_core" in both
         only_test = R.module_targets_block(
-            "util", True, frozenset({"bench_util_core"})
+            "util", True, frozenset({"bench_util_core"}), owner=o
         )
         assert "add_executable(test_util_core" in only_test
         assert "add_executable(bench_util_core" not in only_test
-        assert R.module_targets_block("util", False) == ""
+        assert R.module_targets_block("util", False, owner=o) == ""
 
 
 class TestAppTargets:

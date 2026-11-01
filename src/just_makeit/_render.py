@@ -151,8 +151,13 @@ def module_targets_block(
     has_functions: bool,
     taken: "frozenset[str]" = frozenset(),
     extra_libs: Sequence[str] = (),
+    *,
+    owner: "INC.Owner",
 ) -> str:
     """CMake `test_`/`bench_<cname>_core` targets for a module (gh-1034).
+
+    *owner* is the project, whose `[project] layout` places the sources
+    (gh-2423).
 
     Empty unless the module declares at least one free function, so a module
     that is purely a container for objects renders byte-identically to before
@@ -188,9 +193,9 @@ def module_targets_block(
     libs = _module_link_libs(cname, extra_libs)
     blocks = []
     if f"test_{cname}_core" not in taken:
-        blocks.append(_module_test_target(cname, libs))
+        blocks.append(_module_test_target(cname, libs, owner))
     if f"bench_{cname}_core" not in taken:
-        blocks.append(_module_bench_target(cname, libs))
+        blocks.append(bench_target(cname, libs, owner))
     return "".join(blocks)
 
 
@@ -219,27 +224,36 @@ def _module_link_libs(cname: str, extra_libs: Sequence[str]) -> str:
     return "\n    " + "\n    ".join(parts)
 
 
-def _module_test_target(cname: str, libs: str) -> str:
+def _module_test_target(cname: str, libs: str, owner: "INC.Owner") -> str:
     """The `test_<cname>_core` CMake target for a module (gh-1034)."""
+    slots = INC.native_slots(owner, cname)
     return (
         f"\nadd_executable(test_{cname}_core\n"
-        f"    ${{CMAKE_SOURCE_DIR}}/native/tests/test_{cname}_core.c)\n"
+        f"    ${{CMAKE_SOURCE_DIR}}/{slots['native_test_c']})\n"
         f"target_link_libraries(test_{cname}_core PRIVATE{libs})\n"
         f"target_include_directories(test_{cname}_core\n"
-        f"    PRIVATE {INC.CMAKE_INC})\n"
+        f"    PRIVATE {INC.CMAKE_INC}{slots['native_test_inc']})\n"
         f"add_test(NAME test_{cname}_core COMMAND test_{cname}_core)\n"
     )
 
 
-def _module_bench_target(cname: str, libs: str) -> str:
-    """The `bench_<cname>_core` CMake target for a module (gh-1034)."""
+def bench_target(name: str, libs: str, owner: "INC.Owner") -> str:
+    """The `bench_<name>_core` CMake target (gh-1034), *libs* being the text
+    after ``PRIVATE``, its own leading space included.
+
+    The one spelling of a bench target jm emits in Python: a module's
+    (:func:`module_targets_block`) and the one `apply` appends to a
+    component CMakeLists that predates the template's (gh-2423 folded that
+    second copy in, which spelled the source path by hand).
+    """
+    slots = INC.native_slots(owner, name)
     return (
-        f"\nadd_executable(bench_{cname}_core\n"
-        f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/bench_{cname}_core.c)\n"
-        f"target_link_libraries(bench_{cname}_core PRIVATE{libs})\n"
-        f"target_include_directories(bench_{cname}_core\n"
+        f"\nadd_executable(bench_{name}_core\n"
+        f"    ${{CMAKE_SOURCE_DIR}}/{slots['native_bench_c']})\n"
+        f"target_link_libraries(bench_{name}_core PRIVATE{libs})\n"
+        f"target_include_directories(bench_{name}_core\n"
         f"    PRIVATE {INC.CMAKE_INC}\n"
-        f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
+        f"            ${{CMAKE_SOURCE_DIR}}/{slots['native_bench_inc']})\n"
     )
 
 
@@ -673,6 +687,16 @@ def render(template: str, ctx: dict) -> str:
                 "root or manifest>, <name>)` to it (gh-1591)",
             )
             for s in CSYM.SLOTS
+        ),
+        # gh-2423: and where a component's native test and benchmark sit,
+        # which `[project] layout` decides.
+        *(
+            (
+                s,
+                "the project's native layout; add `_incpath.native_slots("
+                "<project root or manifest>, <name>)` to it (gh-2423)",
+            )
+            for s in INC.NATIVE_SLOTS
         ),
     ):
         if f"<<{_slot}>>" in template and _slot not in ctx:

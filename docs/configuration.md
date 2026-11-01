@@ -243,6 +243,61 @@ below) do.
     default = "0.0f"
     ```
 
+### The mirrored native layout — `[project] layout`
+
+The tree above is the default, `flat` layout: every component's C test and
+C benchmark sit directly in `native/tests/` and `native/benchmarks/`, found
+by file-name prefix. Declare `layout = "mirrored"` and each one moves under
+the directory its header has below `native/inc/<pkg>/` instead, so the C
+tree reads one way everywhere:
+
+```toml
+[project]
+name   = "my_project"
+layout = "mirrored"   # or "flat", the default
+```
+
+```
+native/
+├── inc/my_project/engine/engine_core.h
+├── tests/
+│   ├── jm_test.h                       # the harness stays at the root
+│   └── engine/
+│       ├── test_engine_core.c
+│       └── test_engine_symbols.c
+└── benchmarks/
+    ├── jm_bench.h
+    └── engine/bench_engine_core.c
+```
+
+The generated CMake and `make` rules name the new paths, and add
+`native/tests` to the C test's include path so a nested test still finds
+`jm_test.h`. A component's directory is the one its header has, so it is
+the same in every place: today that is the component's own name, whatever
+module it belongs to (an object of `[module."dsp.filters"]` keeps
+`native/inc/my_project/fir/`, so its test is `native/tests/fir/`). A
+function-bearing module's own test and benchmark go under its C name
+(`native/tests/dsp_filters/`). Any other value is refused.
+
+**Switching an existing project** is a manifest edit and one command: set
+the key, then run `jm apply`. It moves each `test_<c>_core.c`,
+`test_<c>_symbols.c` and `bench_<c>_core.c` to its new place (your edits
+come along: it is a move, not a re-render), re-renders the component
+CMakeLists, and respells any path to a moved file in the root
+`CMakeLists.txt`, a hand-owned component one, or a `make` project's
+`Makefile`. Moving the files yourself first, to keep their history, works
+the same: `apply` finds them already in place. `jm upgrade` makes the same
+moves. A file left in both places is not touched; `jm status` names it
+under `SUPERSEDED` until you merge your edits into the new one and delete
+the old. Removing the key moves everything back.
+
+Two things `apply` cannot do for you. A `make` project's `Makefile` is
+written once and then yours: `apply` respells its paths, but each C test
+rule also needs `-Inative/tests`, and `jm status` reports the file
+`OUTDATED` until you take jm's render (delete it and run `jm apply`) or
+add the flag yourself. And a target you registered for a file of your own,
+not one jm generated, keeps whatever path you gave it.
+
 ______________________________________________________________________
 
 ## Module dependencies & external libraries
@@ -412,6 +467,7 @@ today).
 | `public_defines`      | (manifest only)                           | ✅           | Definitions the installed headers need (`["_GNU_SOURCE"]`, no `-D`): on this project's own compile, both combined libraries' PUBLIC definitions, the exported targets and the `.pc`'s `Cflags:`.                                                                                                                                                                                                                           |
 | `c_deps`              | `jm new --c-dep DIR` (repeatable)         | ✅ (0.13.23) | Vendored C subdir (no Python wrapper).                                                                                                                                                                                                                                                                                                                                                                                     |
 | `c_prefix`            | `jm new --c-prefix P` / `--no-c-prefix`   | ✅           | **Default for a new project: its package name.** Namespaces every C symbol jm derives (`fir_create` becomes `P_fir_create`, `FIR_CORE_H` becomes `P_FIR_CORE_H`), so two installed packages may share a component name; never an author-named symbol or macro, the Python names, or file names — see [c-library](c-library.md#two-packages-one-program).                                                                   |
+| `layout`              | (manifest only)                           | ✅ (gh-2423) | `"flat"` (default) or `"mirrored"`: where each component's generated C test and C benchmark sit, `native/tests/<dir>/` and `native/benchmarks/<dir>/` when mirrored, `<dir>` being the directory its header has below `native/inc/<pkg>/`. `jm apply` moves an existing project's files — see [the mirrored native layout](#the-mirrored-native-layout-project-layout).                                                    |
 | `schema`              | (managed by `jm upgrade`)                 | ✅           | Migrated; no user-facing flag.                                                                                                                                                                                                                                                                                                                                                                                             |
 | `jm_version`          | (managed)                                 | ✅           | Stamped by `jm new`; `jm apply` raises it to the running jm and never lowers it (gh-183).                                                                                                                                                                                                                                                                                                                                  |
 | `c_style`             | `jm new --c-style clang-format`           | ✅ (0.36.0)  | Reformat generated C — see below.                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -1397,6 +1453,7 @@ ______________________________________________________________________
 | `pytest`           | `"true"` or `"false"` | `"false"`                        | `--pytest`                                         |
 | `pytest_benchmark` | `"true"` or `"false"` | `"false"`                        | `--pytest-benchmark`                               |
 | `c_prefix`         | C identifier          | the package name (`jm new`)      | `--c-prefix P` / `--no-c-prefix`                   |
+| `layout`           | `"flat"`/`"mirrored"` | `"flat"`                         | manifest only                                      |
 | `schema`           | string                | the current schema               | `jm new`; migrated by `jm upgrade`                 |
 | `jm_version`       | string                | the running jm                   | `jm new`; raised by `jm apply`                     |
 

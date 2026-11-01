@@ -18,20 +18,20 @@ add_custom_command(TARGET <<component>> POST_BUILD
 endif()
 
 add_executable(test_<<component>>_core
-    ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_core.c
-    ${CMAKE_SOURCE_DIR}/native/tests/test_<<component>>_symbols.c)
+    ${CMAKE_SOURCE_DIR}/<<native_test_c>>
+    ${CMAKE_SOURCE_DIR}/<<native_symbols_c>>)
 target_link_libraries(test_<<component>>_core PRIVATE
     <<component>>_core
     <<test_link_libs_block>>${JM_MATH_LIBRARY})
 target_include_directories(test_<<component>>_core
-    PRIVATE ${CMAKE_SOURCE_DIR}/<<inc_dir>>)
+    PRIVATE ${CMAKE_SOURCE_DIR}/<<inc_dir>><<native_test_inc>>)
 add_test(NAME test_<<component>>_core COMMAND test_<<component>>_core)
 
 add_executable(bench_<<component>>_core
-    ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_<<component>>_core.c)
+    ${CMAKE_SOURCE_DIR}/<<native_bench_c>>)
 target_link_libraries(bench_<<component>>_core PRIVATE
     <<component>>_core
     <<test_link_libs_block>>${JM_MATH_LIBRARY})
 target_include_directories(bench_<<component>>_core
     PRIVATE ${CMAKE_SOURCE_DIR}/<<inc_dir>>
-            ${CMAKE_SOURCE_DIR}/native/benchmarks)
+            ${CMAKE_SOURCE_DIR}/<<native_bench_inc>>)

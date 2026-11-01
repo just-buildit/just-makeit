@@ -691,6 +691,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # `0.1.0` and disagree with an in-sync project, and `apply` materialised
         # a missing copy at `0.1.0`. The stamp below only reached the manifest.
         version=C.project_version(cfg),
+        # gh-2423: and the native layout, for the same reason: a replay that
+        # renders the tests flat makes a mirrored project's "missing".
+        layout=(cfg.get("project") or {}).get("layout"),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.
@@ -1634,6 +1637,71 @@ def reconcile_backend_makefile(
         f"  update  {root / 'Makefile'} (build = {C.build_system(cfg)}; "
         "was the other backend's)"
     )
+
+
+def _relocate_native(root: Path) -> "list[Path]":
+    """Move each generated native test and bench to *root*'s layout.
+
+    gh-2423. The layout's moves are `_createonly` renames
+    (:func:`_incpath.relocations`), and `upgrade` makes every rename; `apply`
+    makes these too, because unlike a renamed config file the build names
+    the new path -- holding one back would leave a CMakeLists naming a
+    source that is not there. Through the same mover as `upgrade`, so a
+    file present in both places is left for the author to merge, with the
+    same advice.
+
+    Then every remaining reference in a build file jm does not rewrite --
+    the root ``CMakeLists.txt``, a hand-owned component one (gh-275), the
+    ``make`` backend's create-only ``Makefile`` -- to an old place whose
+    file is now at the new one is respelled, so a target the author
+    registered by hand follows the file it builds. Whole path tokens only,
+    so ``.../test_fir_core.c`` never matches inside a longer name.
+
+    Returns the build files respelled, for the run's change report.
+    """
+    from . import _upgrade
+
+    moves = INC.relocations(root)
+    _upgrade._rename_superseded(
+        root, [(o, n) for o, n in moves if (root / o).is_file()]
+    )
+    landed = [
+        (o, n)
+        for o, n in moves
+        if (root / n).is_file() and not (root / o).exists()
+    ]
+    # Switching back to flat empties the mirrored directories: an empty one
+    # is jm's leftover, and a tree's own root is never removed.
+    for old, _new in landed:
+        d = (root / old).parent
+        if d.name and d not in {root / t for t in INC.HARNESS}:
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+    respelled: "list[Path]" = []
+    if not landed:
+        return respelled
+    build_files = [root / "CMakeLists.txt", root / "Makefile"] + sorted(
+        (root / "native" / "src").glob("*/CMakeLists.txt")
+    )
+    for path in build_files:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        new = text
+        for old, moved in landed:
+            new = re.sub(
+                rf"(?<![\w./-]){re.escape(old)}(?![\w./-])", moved, new
+            )
+            new = re.sub(
+                rf"(?<=\$\{{CMAKE_SOURCE_DIR\}}/){re.escape(old)}"
+                rf"(?![\w./-])",
+                moved,
+                new,
+            )
+        if new != text:
+            _textio.write_text(path, new)
+            respelled.append(path)
+    return respelled
 
 
 def _sync_missing(
@@ -3573,16 +3641,7 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
         # route. Seed it here when absent.
         if "JM_MATH_LIBRARY" not in text:
             text = R.LIBM_PREAMBLE + "\n" + text
-        bench_block = (
-            f"\nadd_executable(bench_{comp}_core\n"
-            f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/"
-            f"bench_{comp}_core.c)\n"
-            f"target_link_libraries(bench_{comp}_core"
-            f" PRIVATE {comp}_core " + R.LIBM_REF + ")\n"
-            f"target_include_directories(bench_{comp}_core\n"
-            f"    PRIVATE {INC.CMAKE_INC}\n"
-            f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
-        )
+        bench_block = R.bench_target(comp, f" {comp}_core {R.LIBM_REF}", root)
         _textio.write_text(cmake_path, text.rstrip() + bench_block)
         updated.append(cmake_path)
     return updated
@@ -3893,6 +3952,9 @@ def _apply_manifest(
     # schema-8 `[app]` table is refused (naming `jm upgrade`) before the
     # first write, not after the last.
     C.apps(cfg)
+    # gh-2423: and an unknown `[project] layout`, which every native path
+    # below asks.
+    INC.layout(cfg)
     # gh-1600: an additional library the tree cannot build is refused before
     # anything is written -- a missing core is a CMake configure error, and a
     # core also in lib<pkg> puts its objects in a consumer's link twice.
@@ -4084,6 +4146,12 @@ def _apply_manifest(
             _backend = reconcile_backend_makefile(root, cfg, temp_root)
             if _backend:
                 print(_backend)
+            # gh-2423: a native test or bench still where the other
+            # `[project] layout` puts it moves to where this one does,
+            # before anything is materialised -- so no scaffold lands beside
+            # the author's copy, and the CMake reconciled below names a file
+            # that is there. A move, not a re-render: the bytes are theirs.
+            relocated = _relocate_native(root)
             created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
@@ -4308,6 +4376,7 @@ def _apply_manifest(
         [
             *created,
             *impl_patched,
+            *relocated,
             *updated,
             *bench_updated,
             *frag_doc_updated,

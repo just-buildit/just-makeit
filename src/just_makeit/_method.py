@@ -3044,9 +3044,7 @@ def run(
         # for gh-137's reason: its tree is scratch, so the bench there is
         # jm's own scaffold, and re-rendering it is how a bench `apply`
         # materialises times the methods the manifest declares.
-        bench_c = (
-            root / "native" / "benchmarks" / f"bench_{object_name}_core.c"
-        )
+        bench_c = INC.native_path(root, "bench", object_name)
         if from_apply and bench_c.exists():
             _textio.write_text(bench_c, r(bench_c_tmpl))
             print(f"  update  {bench_c}")
