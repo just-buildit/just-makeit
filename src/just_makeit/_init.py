@@ -1119,13 +1119,36 @@ def settle_aggregate_order(root: "Path") -> "list[Path]":
     command that promises an unchanged project left ``status --check`` red
     on two files it never mentioned.
 
-    Only the order moves (:func:`_libwiring.order_sections`,
-    :func:`order_umbrella_includes`): no line is added or dropped.
+    The umbrella's includes are re-sorted (:func:`order_umbrella_includes`):
+    no line is added or dropped. The root CMakeLists' component and module
+    sections are spliced from a replay, exactly as `apply` splices them
+    (:func:`_apply._splice_cmake_components`), because their content follows
+    the order too, not only their sequence (gh-2434): a ``target_sources``
+    line folding a core that several components depend on sits in the block
+    of whichever of them the replay reaches first, so a re-sort that moved
+    blocks whole kept it under the wrong one. Measured on doppler
+    (2026-11-01): 35 module fragments put 37 cores' wiring pairs under
+    another block, some from the Modules section to the Components one.
+    Asking the replay where they go is the one answer; a second derivation
+    of it here would drift from it. It costs a replay, as `apply` does.
     """
+    import tempfile
+
+    from . import _apply
+
     cfg = C.load(root)
     changed = []
+    cmake = root / "CMakeLists.txt"
+    if cmake.is_file():
+        with tempfile.TemporaryDirectory(prefix="jm-settle-") as tmp:
+            temp_root = Path(tmp) / C.project_name(cfg)
+            _apply.replay_project(cfg, temp_root, root)
+            temp_cmake = temp_root / "CMakeLists.txt"
+            if temp_cmake.is_file() and _apply._splice_cmake_components(
+                cmake, temp_cmake, cfg
+            ):
+                changed.append(cmake)
     for path, order in (
-        (root / "CMakeLists.txt", order_sections),
         (INC.path(root, f"{C.project_name(cfg)}.h"), order_umbrella_includes),
     ):
         if not path.is_file():

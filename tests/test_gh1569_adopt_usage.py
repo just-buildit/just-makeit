@@ -5,12 +5,17 @@
 covered one module when it covers everything. The parser now reads its
 accepted options OUT of the usage text, so an option cannot be accepted
 without being advertised; these tests hold the rest: `--help` exits 0, the
-top-level help names every option the usage does, and an object name given
+top-level help names every option the parser does, and an object name given
 to `--check` (which surveys per module) is refused instead of ignored.
 
+gh-2434: `--help` is answered by `_cli._main` for every command, from the
+command's own entries of the top-level usage -- so `adopt --help` prints
+those, and the parser's options are read from its source here.
+
 GATE: `jm adopt` accepts only the options its usage text names, `--help`
-      prints that usage and exits 0, the top-level help names each of those
-      options, and `adopt --check` refuses an object name it would ignore.
+      prints the usage and exits 0, the top-level help names each option
+      the parser accepts, and `adopt --check` refuses an object name it
+      would ignore.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from _jmrun import run_cli
+from test_gh2057_verb_leaves_what_apply_writes import parser_flags
 
 
 @pytest.fixture(scope="module")
@@ -39,8 +45,9 @@ def _usage() -> str:
 
 def test_help_prints_the_usage_and_exits_0():
     out = _usage()
-    assert out.startswith("Usage: just-makeit adopt"), out
-    assert "--check [--module <id> | --all]" in out, out
+    assert out.startswith("Usage: just-makeit\n  adopt --check"), out
+    assert "adopt --check [--module ID | --all]" in out, out
+    assert "adopt --packaging" in out, out
 
 
 def test_the_top_level_help_names_every_adopt_option():
@@ -53,7 +60,9 @@ def test_the_top_level_help_names_every_adopt_option():
         == "adopt --check [--module ID | --all]"
     )
     advertised = set(re.findall(r"--[a-z][a-z-]*", "\n".join(lines)))
-    assert set(re.findall(r"--[a-z][a-z-]*", _usage())) <= advertised
+    accepted = parser_flags("adopt")
+    assert {"--check", "--all", "--packaging"} <= accepted, accepted
+    assert accepted <= advertised, accepted - advertised
 
 
 def test_check_all_is_accepted(proj):

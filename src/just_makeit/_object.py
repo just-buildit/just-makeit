@@ -759,13 +759,32 @@ def package_siblings(cfg: dict, module: str) -> list[str]:
     its own ``from .<leaf> import ...`` line; the returned leaves let
     :func:`_merge_module_init` recognise the neighbour's exports and leave them
     alone instead of pruning them out of ``__all__`` on every other apply.
+
+    gh-2434: and the submodules each such neighbour re-exports from
+    (``[module.X] reexports``), whose ``from .<sub> import ...`` line is that
+    neighbour's too. Without them a module merged AFTER the one declaring
+    the reexport pruned its names out of ``__all__``, so the file depended
+    on module order: doppler's ``wfm`` lost ``Synth`` and the other
+    ``compose`` names the moment `migrate-to-fragments` loaded ``wfm``
+    before its package siblings.
+
+    >>> cfg = {"module": {"a": {"reexports": {"helper": ["H"]}},
+    ...                   "b": {"package": "a"}}}
+    >>> package_siblings(cfg, "b")
+    ['a', 'helper']
     """
     out_pkg = C.module_package_resolved(cfg, module)
-    return [
-        C.module_paths(other).leaf
-        for other in C.modules(cfg)
-        if other != module and C.module_package_resolved(cfg, other) == out_pkg
-    ]
+    out: "list[str]" = []
+    for other in C.modules(cfg):
+        if other == module or C.module_package_resolved(cfg, other) != out_pkg:
+            continue
+        for leaf in (
+            C.module_paths(other).leaf,
+            *C.module_reexports(cfg, other),
+        ):
+            if leaf not in out:
+                out.append(leaf)
+    return out
 
 
 def _leading_docstring(text: str) -> str:

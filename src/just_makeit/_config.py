@@ -764,6 +764,10 @@ def _provenance(
         return owners, module_owners, []
     with manifest_path.open("rb") as f:
         manifest = tomllib.load(f)
+    # Every top-level section but the three placed by other means, not only
+    # components: `save` routes a `[template]` to the file that owns it, so
+    # these ask "which file declares this key", which is not
+    # `components()`'s question (gh-2434).
     for k in manifest:
         if k not in ("project", "module", "include"):
             owners[k] = manifest_path
@@ -1445,6 +1449,10 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     # re-dumping deleted all of it. An unchanged component is not touched at
     # all, so the common case (declare one warning on one object) leaves every
     # other component's text byte-identical.
+    # Every top-level section this file carries but the three handled above,
+    # not only components: `[[enum]]`, `[codec]`, `[[app]]` and `[[group]]`
+    # are synced here too, so this is deliberately not `components()`
+    # (gh-2434).
     new_comps = {
         k: v
         for k, v in cfg.items()
@@ -1600,16 +1608,12 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in (
-            "project",
-            "module",
-            "include",
-            "app",
-            "enum",
-            "codec",
-            "template",
-        ):
-            continue  # `app`/`enum`/`codec`, like `project`, live in the manifest
+        if key in RESERVED_SECTIONS:
+            # Each is placed below: `project`, `app`, `enum`, `codec` and
+            # `group` in the manifest, `template` with its owner, `module`
+            # per module (gh-2434: `group` was missing here, so a new one in
+            # a split project was written to objects/group.toml too).
+            continue
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -1689,9 +1693,14 @@ def save(root: Path, cfg: dict) -> None:
 #: of these" is the definition, and a new section missing from the list is
 #: silently treated as an object — which is how `[[group]]` first reached
 #: `manifest_type_errors` as `cfg["group"].get(...)` on a list (gh-999).
+#: `include` is the manifest's fragment list: a loaded project has none, but
+#: a raw manifest (`load_manifest`, a fragment) does, and it is no component
+#: either -- `migrate-to-fragments` filed `[[enum]]` and `[codec]` under
+#: objects/ from a hand-written copy of this list that lacked them (gh-2434).
 RESERVED_SECTIONS = (
     "project",
     "module",
+    "include",
     "app",
     "enum",
     "codec",

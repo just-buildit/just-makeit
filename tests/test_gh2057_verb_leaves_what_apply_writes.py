@@ -1393,9 +1393,7 @@ def _flags_cased(cmd: str) -> "set[str]":
 
 
 #: (command, flag) -> why no case passes it. May only shrink.
-UNCOVERED_FLAGS: "dict[tuple[str, str], str]" = {
-    ("adopt", "--help"): "prints the usage and exits; it writes nothing.",
-}
+UNCOVERED_FLAGS: "dict[tuple[str, str], str]" = {}
 
 
 def test_every_flag_has_a_case():

@@ -813,6 +813,70 @@ def main() -> None:
             sys.exit(1)
 
 
+#: The tokens that ask a command for its usage instead of running it.
+_HELP = frozenset({"-h", "--help"})
+
+
+def command_usage(cmd: str) -> str:
+    """The usage of *cmd*: its own entries of the top-level ``_USAGE``.
+
+    An entry starts on a line indented two spaces whose first word is the
+    command, and runs over its deeper-indented continuation lines to the
+    next entry or blank line. A command with several forms (``adopt``) has
+    several entries, and all of them are returned. The one usage text
+    serves both ``jm --help`` and ``jm <cmd> --help``, so the two cannot
+    disagree.
+
+    Parameters
+    ----------
+    cmd : str
+        A command `_main` dispatches.
+
+    Returns
+    -------
+    str
+        ``Usage: just-makeit`` followed by the command's entries.
+
+    Examples
+    --------
+    >>> print(command_usage("perf"))  # doctest: +NORMALIZE_WHITESPACE
+    Usage: just-makeit
+      perf                          Retrofit JM_HOT/JM_FORCEINLINE without
+      touching user code.
+    """
+    lines: "list[str]" = []
+    inside = False
+    for line in _USAGE.splitlines():
+        if re.match(r"  \S", line):
+            inside = line.split()[0].rstrip(",") == cmd
+        elif not line.strip():
+            inside = False
+        if inside:
+            lines.append(line)
+    return "\n".join(["Usage: just-makeit", *lines])
+
+
+def _refuse_argument(cmd: str, arg: str) -> None:
+    """Exit 2 on *arg*, an argument *cmd* does not take (gh-2434).
+
+    A command that took no arguments used to ignore them, so a typo, or
+    an option it does not have, ran the command anyway -- which, for a
+    MUTATING one, changed the project.
+    """
+    print(
+        f"error: '{cmd}' does not take '{arg}'; "
+        f"see 'just-makeit {cmd} --help'.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _no_arguments(cmd: str, args: "list[str]") -> None:
+    """Refuse the first of *args* (argv after *cmd*), if there is one."""
+    if args:
+        _refuse_argument(cmd, args[0])
+
+
 def _project_changed_by(args: "list[str]") -> "Path | None":
     """The project *args* would change, if they name a MUTATING command.
 
@@ -847,6 +911,14 @@ def _main() -> None:
         return
 
     cmd = args[0]
+
+    # gh-2434: `<cmd> --help` prints the command's usage and runs nothing.
+    # Asked here, before any branch, so no command can forget it: three
+    # never read their argv, and `migrate-to-fragments --help` migrated.
+    # A BUILD command is left to its own parser -- `test` hands its argv on.
+    if COMMANDS.get(cmd, BUILD) != BUILD and _HELP & set(args[1:]):
+        print(command_usage(cmd))
+        return
 
     if cmd == "new":
         from ._cli_new import run as _cmd_new
@@ -1332,11 +1404,13 @@ def _main() -> None:
         _add.run(Path.cwd(), component, state_vars, force=force)
 
     elif cmd == "perf":
+        _no_arguments(cmd, args[1:])
         from . import _perf
 
         _perf.run(Path.cwd())
 
     elif cmd == "script":
+        _no_arguments(cmd, args[1:])
         from . import _script
 
         _script.run(Path.cwd())
@@ -1357,10 +1431,6 @@ def _main() -> None:
             "       just-makeit adopt --packaging [--check]"
             " [--accept <path>]..."
         )
-        # gh-1569: `--help` was an unknown option.
-        if "--help" in args[1:] or "-h" in args[1:]:
-            print(_usage)
-            sys.exit(0)
         # gh-1569: the options this parser accepts are READ from the usage
         # text, and those followed by `<...>` take a value -- so an option
         # cannot be accepted without the usage naming it, and the two cannot
@@ -1566,6 +1636,15 @@ def _main() -> None:
                     print("error: --allow requires a path", file=sys.stderr)
                     sys.exit(1)
                 _allow.append(_args[_i])
+            elif _args[_i] not in (
+                "--json",
+                "--diff",
+                "--check",
+                "--strict-examples",
+                "--shared-cores",
+            ):
+                # gh-2434: ignored, so `--chek` ran a plain status.
+                _refuse_argument(cmd, _args[_i])
             _i += 1
         sys.exit(
             min(
@@ -1757,6 +1836,7 @@ def _main() -> None:
         _build.cmd_test(args[1:])
 
     elif cmd == "dry-run":
+        _no_arguments(cmd, args[1:])
         from . import _build
 
         _build.cmd_dry_run()
@@ -1851,6 +1931,9 @@ def _main() -> None:
                 app_commands.append(_parse_command(tok[len("--command=") :]))
             elif tok == "--argc-argv":
                 argc_argv = True
+            else:
+                # gh-2434: skipped, it scaffolded the app anyway.
+                _refuse_argument(cmd, tok)
             i += 1
         _app.run(
             Path.cwd(),
@@ -1870,17 +1953,20 @@ def _main() -> None:
         _example.run(args[1] if len(args) > 1 else None)
 
     elif cmd == "upgrade":
+        _no_arguments(cmd, args[1:])
         from . import _upgrade
 
         _upgrade.run(Path.cwd())
 
     elif cmd == "split-objects":
+        _no_arguments(cmd, args[1:])
         _warn_schema()
         from . import _split_objects
 
         _split_objects.run(Path.cwd())
 
     elif cmd == "migrate-to-fragments":
+        _no_arguments(cmd, args[1:])
         _warn_schema()
         from . import _migrate
 
@@ -1963,6 +2049,7 @@ def _main() -> None:
         _ci.run(Path.cwd(), provider=provider, force=force)
 
     elif cmd == "version":
+        _no_arguments(cmd, args[1:])
         from . import __version__
 
         print(__version__)
