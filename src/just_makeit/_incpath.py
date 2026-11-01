@@ -476,8 +476,15 @@ NATIVE_SLOTS = (
     "native_bench_c",
     "native_bench_inc",
     "native_test_inc",
+    "native_test_inc_object",
     "native_test_inc_make",
 )
+
+
+def _cmake_continuation(column: int) -> str:
+    """The test harness's directory as one more ``PRIVATE`` include,
+    aligned under the first at *column* (gh-2429)."""
+    return "\n" + " " * column + f"${{CMAKE_SOURCE_DIR}}/{TESTS_DIR}"
 
 
 def native_slots(owner: Owner, comp: str) -> "dict[str, str]":
@@ -489,7 +496,9 @@ def native_slots(owner: Owner, comp: str) -> "dict[str, str]":
     ``<<native_test_inc_make>>`` add the test harness's directory to the C
     test's include path in the mirrored layout only: a flat test sits beside
     ``jm_test.h`` and a quoted include finds it there, so the flat render is
-    the one jm has always written.
+    the one jm has always written. ``<<native_test_inc_object>>`` is the
+    same line for the object-core template, whose ``PRIVATE`` sits further
+    right: each is aligned under the include it follows.
 
     >>> s = native_slots({"project": {"name": "p"}}, "fir")
     >>> s["native_test_c"], s["native_test_inc"]
@@ -505,9 +514,9 @@ def native_slots(owner: Owner, comp: str) -> "dict[str, str]":
         "native_symbols_c": native_rel("symbols", comp, owner),
         "native_bench_c": native_rel("bench", comp, owner),
         "native_bench_inc": BENCH_DIR,
-        "native_test_inc": (
-            f"\n    ${{CMAKE_SOURCE_DIR}}/{TESTS_DIR}" if nested else ""
-        ),
+        # Aligned under the `${CMAKE_SOURCE_DIR}` that follows `PRIVATE`.
+        "native_test_inc": _cmake_continuation(12) if nested else "",
+        "native_test_inc_object": _cmake_continuation(35) if nested else "",
         "native_test_inc_make": f" -I{TESTS_DIR}" if nested else "",
     }
 

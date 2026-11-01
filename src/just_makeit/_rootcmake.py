@@ -92,15 +92,25 @@ def _literal_end(s: str, i: int) -> Optional[int]:
     return len(s) if end < 0 else end + len(close)
 
 
-def _strip_comments(text: str) -> str:
+def _strip_comments(text: str, keep_offsets: bool = False) -> str:
     """Drop line and bracket ``#`` comments, keeping any ``#`` inside a
     quoted or bracket argument (gh-1604).
+
+    *keep_offsets* blanks each comment instead, every character but a
+    newline becoming a space, so an index into the result is one into
+    *text* (gh-2429: :func:`call_spans` edits the original at it).
 
     >>> _strip_comments('a("x # y") # z')
     'a("x # y") '
     >>> _strip_comments('a([[\\n# kept\\n]]) #[[ gone\\n]] b')
     'a([[\\n# kept\\n]])   b'
+    >>> _strip_comments('a() # z\\nb()', keep_offsets=True)
+    'a()    \\nb()'
     """
+
+    def _blank(chunk: str) -> str:
+        return re.sub(r"[^\n]", " ", chunk)
+
     out = []
     i = 0
     while i < len(text):
@@ -112,11 +122,14 @@ def _strip_comments(text: str) -> str:
         if text[i] == "#":
             end = _literal_end(text, i + 1)
             if end is not None and text.startswith("[", i + 1):
-                out.append(" ")
+                out.append(_blank(text[i:end]) if keep_offsets else " ")
                 i = end
                 continue
             nl = text.find("\n", i)
-            i = len(text) if nl < 0 else nl
+            nl = len(text) if nl < 0 else nl
+            if keep_offsets:
+                out.append(" " * (nl - i))
+            i = nl
             continue
         out.append(text[i])
         i += 1
@@ -144,8 +157,23 @@ def calls(text: str) -> "list[Call]":
     argument is one word, so a change anywhere inside ``install(CODE [[ ...
     ]])`` is a change to that call (gh-1604).
     """
-    s = _strip_comments(text)
-    found: list[Call] = []
+    return [c for c, _start, _end in call_spans(text)]
+
+
+def call_spans(text: str) -> "list[tuple[Call, int, int]]":
+    """:func:`calls`, each with where it sits in *text*: the index of its
+    name and the index just past its closing parenthesis.
+
+    gh-2429: the one parse for a reader that must also EDIT the file -- the
+    native layout's respell adds an include line after a hand-written
+    target's declaration. Comments are blanked rather than dropped, so the
+    offsets are *text*'s own.
+
+    >>> [(c.name, s, e) for c, s, e in call_spans("a(x) # c(y)\\nb(z)")]
+    [('a', 0, 4), ('b', 12, 16)]
+    """
+    s = _strip_comments(text, keep_offsets=True)
+    found: "list[tuple[Call, int, int]]" = []
     pos = 0
     while True:
         m = _COMMAND.search(s, pos)
@@ -162,7 +190,7 @@ def calls(text: str) -> "list[Call]":
         words = tuple(
             _unwrap(w.group(0)) for w in _WORD.finditer(s[m.end() : j - 1])
         )
-        found.append(Call(m.group(1).lower(), words))
+        found.append((Call(m.group(1).lower(), words), m.start(), j))
         pos = j
 
 
