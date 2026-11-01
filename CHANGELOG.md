@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+## [0.114.0] — 2026-11-01
+
+### Added
+
+- **`[project] layout = "mirrored"` puts each component's C test and C
+    benchmark in a directory of its own** (gh-2423). jm wrote every
+    `test_<c>_core.c`, `test_<c>_symbols.c` and `bench_<c>_core.c` flat in
+    `native/tests/` and `native/benchmarks/`, found only by file-name prefix,
+    while the header beside them lived at `native/inc/<pkg>/<c>/`. With the
+    key, they go to `native/tests/<c>/` and `native/benchmarks/<c>/`: the
+    directory the component's header has, asked of one primitive
+    (`_incpath.native_rel`) by every writer, the build templates, `remove`,
+    `status`'s hollow-target scan, the ownership rules and `upgrade`. The
+    harness headers stay at the tree roots and the C test's include path
+    gains `native/tests`. Setting the key on an existing project and running
+    `jm apply` moves the files with your edits (moving them yourself first
+    works the same), respells any build-file path to a moved one, and
+    removing the key moves them back; an unknown value is refused. `flat`
+    stays the default and renders byte-identically to before.
+
+### Fixed
+
+- **Switching `[project] layout` keeps your own CMake targets building**
+    (gh-2429). `jm apply` respelled a moved C test's path in the root
+    `CMakeLists.txt` and a hand-owned component one, but not in a
+    component's `<c>_extra.cmake` hook, so `status --check` was clean and
+    cmake configure failed. And a target of yours whose source it respelled
+    lost the directory the source had left, so a header beside it
+    (`jm_test.h`, or your own) was no longer found. The hook is now
+    respelled in both directions, and each such target gets one
+    `target_include_directories` line naming the directory its source left,
+    as jm's own test target does. Before the move, `jm status` lists each
+    pending move once, under `SUPERSEDED`, naming `jm apply` as the command
+    and counting it (`N to move`), rather than also as a file `apply` would
+    create with advice to run `upgrade`.
+
 ## [0.113.0] — 2026-11-01
 
 ### Added
