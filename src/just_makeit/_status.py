@@ -2190,11 +2190,15 @@ def run(
             print(f"    {_apply.superseded_advice(root, _old, _new)}")
         # gh-2429: a move `apply` makes is drift (counted as `moved`);
         # only the renames left for `upgrade` are not.
-        print(
-            "  `jm apply` makes these moves."
-            if set(_superseded) <= set(_createonly.relocating(root))
-            else "  Not drift."
-        )
+        _moves = set(_createonly.relocating(root))
+        if set(_superseded) <= _moves:
+            print("  `jm apply` makes these moves.")
+        elif _moves:
+            print(
+                "  `jm apply` makes the native moves; the rest are not drift."
+            )
+        else:
+            print("  Not drift.")
         print()
 
     # gh-785: printed on both paths and under --check. The strongest case
