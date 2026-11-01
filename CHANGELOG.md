@@ -1,5 +1,70 @@
 ## [Unreleased]
 
+## [0.113.0] — 2026-11-01
+
+### Added
+
+- **An `init_param` can name a composer: `object = "<composer>"`** (gh-2354).
+    gh-2346 let a composer module publish a `_capsule` and a consumer method
+    param take it; the constructor path, the `object =` sugar over the capsule
+    path, still refused a composer as "not a valid target", so an object could
+    not take a composer at construction. It resolves now, as a handle does
+    (gh-1227), every slot read from the module's own declarations: the C type
+    is the backing's `<stem>_state_t *` (moved by a `c_prefix`), the capsule
+    is the one the module publishes, the header is the backing's core header,
+    and the class is the composer type. A composer that publishes no capsule
+    is refused with the line that fixes it. The consumer needs no `retain`:
+    a constructor's borrowed pointer already holds the Python owner. The
+    generated `.pyi` imports the class from the file that holds it
+    (`from .playlist.playlist import Mix`), not from the composer's package,
+    which has no `__init__.py` re-exporting it.
+
+### Changed
+
+- The CI that `jm ci` generates pins `actions/setup-python` at v7.1.0, the version jm's own workflows now use. (dependabot actions group)
+
+### Fixed
+
+- **`init_post_parse` reaches the fragment of an object in a module**
+    (gh-1971). The key is the manifest's way to write a dynamic default (a C
+    snippet injected after `PyArg_ParseTupleAndKeywords`) and was accepted
+    and then ignored for any object with per-object `<mod>_ext_<obj>.c`
+    fragments, with no diagnostic. Two places dropped it: the fragment's
+    context never passed it on, and the replay's temp manifest, which the
+    module render reads, had no way to persist it (the gh-1172 shape).
+    `jm adopt` made this dangerous: a fragment carrying the snippet by hand
+    showed as a `differs` unit, and `--accept` deleted the default the
+    manifest line was written to carry. `status --check` could not see it,
+    since it renders through the same path. A standalone object rendered by
+    delete-and-`apply` also loses the key; that path is not changed here
+    (tracked in gh-2401).
+
+- **A composer's second `__init__` no longer leaks its previous state**
+    (gh-2356). The generated `__init__` set the state pointer to NULL before
+    building a new one, so calling it again on a live composer dropped the
+    old state without freeing it, and a re-init that then failed left the
+    composer with a NULL state. It now follows the contract a handle has:
+    the new state is built first, so a re-init that fails changes nothing;
+    then the old state is released, with new calls refused and a running
+    GIL-free call waited for, and only if it is still live (`close()` frees
+    without clearing the pointer, so a closed composer's is not freed again).
+    A composer whose state was lent as a capsule refuses a second `__init__`
+    with a `RuntimeError`, since a borrower holds the pointer and there is
+    one slot. The refusal is sticky once the state has been lent, and it is checked
+    again after the arguments are converted (which can run Python that lends
+    it). **Behaviour change:** a composer that has published a capsule can
+    never be re-initialised.
+
+- A composer's typed settings (`obj.setting = value`) and its delegated serializers (`[[module.X.serializers]]`) check that the composer is still open after their argument is converted: an `__index__`, `__float__` or `__complex__` that calls `close()` now raises `RuntimeError("composer already closed")` instead of calling the backing library on a freed state. This is the composer kind of gh-2380. (gh-2380)
+
+- A handle module's array methods (`kind = "handle"`, the array-in and array-in plus `out=` shapes) and its writable properties check that the handle is still open after their argument is converted: an `__array__` or `__float__` that calls `close()` now raises `RuntimeError("<Type> is closed")` instead of calling the backing library on a freed handle. This is the handle kind of gh-2380, after the object kind. (gh-2380)
+
+- An object's `step()` / `steps()`, its generated state and array-state setters (`set_<state>`), its writable properties (`obj.prop = value`) and its `<method>_max_out(n)` check that the object is still alive after their argument is converted, as the array methods already did: an `__index__`, `__float__`, `__complex__` or `__array__` that calls `destroy()` now raises `RuntimeError` instead of handing the kernel a NULL state. This completes the object kind of gh-2273; the handle, composer and capsule kinds follow under gh-2380. (gh-2380)
+
+- A method parameter bound to an `[[enum]]` that also carries a manifest `doc` documents its choices under that text, wrapped, with no blank line between them, on both the `.pyi` and the runtime `__doc__`, as an init parameter and a parameter with no `doc` already did. gh-2379 emitted the choice sentence as one unwrapped line (131 columns for a ten-choice enum) after a blank line. A gate now renders every enum-parameter shape with and without a `doc` and refuses a choice line past the stub width or set off by a blank line. (gh-2399)
+
+- pytest is capped below 9.2 wherever jm resolves it beside pytest-benchmark. pytest 9.2.0 dropped `Node._nodeid`, which pytest-benchmark 5.3.0 still reads, so every benchmark died at setup (`'Function' object has no attribute '_nodeid'`), in jm's own CI and in a generated project's. The pin is in jm's Makefile test runners and dev group, in the `pip install` line of the Makefile and the CI that `jm new` / `jm ci` generate, in the install hint `jm bench` prints, and in the `full_workflow` example. Each carries the condition for lifting it: a pytest-benchmark release that supports pytest 9.2. (gh-2411)
+
 ## [0.112.0] — 2026-10-27
 
 ### Added
