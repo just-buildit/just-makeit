@@ -3756,9 +3756,8 @@ def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
         ("reset_impl", "reset_impl_file"),
         ("destroy_impl", "destroy_impl_file"),
     ]
-    for key, value in fragment.items():
-        if key in ("project", "module", "include"):
-            continue
+    for key in C.components(fragment):
+        value = fragment[key]
         if not isinstance(value, dict):
             continue
         for ik, ifk in _impl_pairs:
@@ -3837,10 +3836,9 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
 
     # Collect module-routing directives and validate before side-effects.
     module_directives: list[tuple[str, str]] = []
-    for key, value in fragment.items():
-        if key in ("project", "module", "include") or not isinstance(
-            value, dict
-        ):
+    for key in C.components(fragment):
+        value = fragment[key]
+        if not isinstance(value, dict):
             continue
         mod_name = value.get("module")
         if isinstance(mod_name, str) and mod_name:

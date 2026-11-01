@@ -17,8 +17,11 @@ project already split via `split-objects` (objects out, modules inline)
 just gets its modules moved and the `modules/*.toml` glob added.
 
 Fragments load sorted by path, so the manifest's component order can change;
-the root CMakeLists wiring and the umbrella header's includes are re-sorted
-to it (`_init.settle_aggregate_order`, gh-1985). No other file is touched.
+the root CMakeLists wiring is spliced as `apply` writes it in the new order,
+and the umbrella header's includes are re-sorted to it
+(`_init.settle_aggregate_order`, gh-1985, gh-2434). No other file is touched.
+The project's own sections -- `[[enum]]`, `[codec]`, `[[app]]`, `[[group]]`,
+`[template]` -- stay in the manifest, where `save` keeps them.
 """
 
 from . import _textio
@@ -41,10 +44,10 @@ def run(root: Path) -> None:
     manifest = C.load_manifest(root)
     existing_globs = list(manifest.get("include", []))
 
-    # Inline sections still living in the central manifest.
-    components = [
-        k for k in manifest if k not in ("project", "module", "include")
-    ]
+    # Inline components still living in the central manifest. The project's
+    # own sections (`[[enum]]`, `[codec]`, `[[app]]`, ...) stay there, where
+    # `save` keeps them (gh-2434).
+    components = C.components(manifest)
     modules = dict(manifest.get("module", {}))
 
     if not components and not modules:

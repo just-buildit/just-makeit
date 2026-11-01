@@ -764,6 +764,10 @@ def _provenance(
         return owners, module_owners, []
     with manifest_path.open("rb") as f:
         manifest = tomllib.load(f)
+    # Every top-level section but the three placed by other means, not only
+    # components: `save` routes a `[template]` to the file that owns it, so
+    # these ask "which file declares this key", which is not
+    # `components()`'s question (gh-2434).
     for k in manifest:
         if k not in ("project", "module", "include"):
             owners[k] = manifest_path
@@ -1445,6 +1449,10 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     # re-dumping deleted all of it. An unchanged component is not touched at
     # all, so the common case (declare one warning on one object) leaves every
     # other component's text byte-identical.
+    # Every top-level section this file carries but the three handled above,
+    # not only components: `[[enum]]`, `[codec]`, `[[app]]` and `[[group]]`
+    # are synced here too, so this is deliberately not `components()`
+    # (gh-2434).
     new_comps = {
         k: v
         for k, v in cfg.items()
@@ -1600,16 +1608,12 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in (
-            "project",
-            "module",
-            "include",
-            "app",
-            "enum",
-            "codec",
-            "template",
-        ):
-            continue  # `app`/`enum`/`codec`, like `project`, live in the manifest
+        if key in NOT_COMPONENTS:
+            # Each is placed below: `project`, `app`, `enum`, `codec` and
+            # `group` in the manifest, `template` with its owner, `module`
+            # per module (gh-2434: `group` was missing here, so a new one in
+            # a split project was written to objects/group.toml too).
+            continue
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -1699,10 +1703,24 @@ RESERVED_SECTIONS = (
     "template",
 )
 
+#: The top-level keys that are not components: the reserved sections and
+#: `include`, the manifest's fragment list. A loaded project has no
+#: `include`, but a raw manifest (`load_manifest`) does, and its readers
+#: spelled their own copy of this -- `migrate-to-fragments`'s lacked
+#: `[[enum]]` and `[codec]` and filed them under objects/ (gh-2434).
+NOT_COMPONENTS = (*RESERVED_SECTIONS, "include")
+
 
 def components(cfg: dict) -> list[str]:
-    """Return component names — all top-level keys except reserved sections."""
-    return [k for k in cfg if k not in RESERVED_SECTIONS]
+    """Return component names: every top-level key but `NOT_COMPONENTS`.
+
+    A loaded project or a raw manifest alike:
+
+    >>> components({"include": ["objects/*.toml"], "project": {},
+    ...             "enum": [], "fir": {}})
+    ['fir']
+    """
+    return [k for k in cfg if k not in NOT_COMPONENTS]
 
 
 def declared_methods(cfg: dict) -> "list[tuple[str, dict]]":

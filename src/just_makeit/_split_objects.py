@@ -36,7 +36,8 @@ def run(root: Path) -> None:
         )
         return
 
-    components = [k for k in manifest if k not in ("project", "module")]
+    # gh-2434: components only; the project's own sections stay put.
+    components = C.components(manifest)
     if not components:
         print("No object sections in the manifest — nothing to split.")
         return
