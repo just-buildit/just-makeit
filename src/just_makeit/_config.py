@@ -939,6 +939,259 @@ def _hand_on_tail(src, dst, _tk) -> None:
     owner.append(None, _tk.nl())
 
 
+# -- Splitting a manifest into fragments (gh-2437) ---------------------------
+
+
+def _header_units(container, path: tuple = ()):
+    """Yield ``(path, item)`` for every table and table array with a header
+    of its own, in the order the document renders them.
+
+    A super table (``module`` in ``[module.mod]``) renders no header, so its
+    children are the units instead. *path* is the key path to the unit.
+    """
+    from tomlkit.items import AoT, Table
+
+    for k, v in container.body:
+        if k is None:
+            continue
+        if isinstance(v, Table) and v.is_super_table():
+            yield from _header_units(v.value, path + (k.key,))
+        elif isinstance(v, (Table, AoT)):
+            yield path + (k.key,), v
+
+
+def _claim_unit_comments(doc) -> "list[tuple[tuple, object]]":
+    """Move the comment run directly above each header into that header.
+
+    The rule is gh-1701's for a table array's rows, applied to every header
+    in the file: the comment lines TOUCHING a header (no blank line between
+    them and it) belong to that header, and move with it. tomlkit filed them
+    as the last items of whatever renders above; after this they live in the
+    unit's own ``trivia.indent`` (a table array's: its first row's), which
+    tomlkit renders immediately before the header, so the text is
+    byte-identical. Any other comment -- one inside a table, or one a blank
+    line separates from the next header -- belongs to the table whose body
+    it is in. Returns the units, in render order.
+    """
+    from tomlkit.items import AoT
+
+    units = list(_header_units(doc))
+    body = doc.body
+    for i, (path, item) in enumerate(units):
+        if i:
+            owner = _tail(units[i - 1][1])
+            stop = len(owner.body) if owner is not None else 0
+        else:
+            owner = doc
+            stop = next(
+                j
+                for j, (k, _) in enumerate(body)
+                if k is not None and k.key == path[0]
+            )
+        if owner is None:
+            continue
+        text = _cut_trailing(owner, stop, comments_only=True)
+        head = item.body[0] if isinstance(item, AoT) else item
+        head.trivia.indent = text + head.trivia.indent
+    return units
+
+
+def _parse_claimed(text: str):
+    """*text* as a tomlkit document whose headers own their comments.
+
+    Refuses when claiming changed the rendered text, so a document that
+    cannot be cut without losing a byte is never cut.
+    """
+    import tomlkit as _tk
+
+    doc = _tk.loads(text)
+    _claim_unit_comments(doc)
+    if doc.as_string() != text:
+        raise Refusal(
+            "could not lift the manifest's tables out unchanged; "
+            "nothing was written."
+        )
+    return doc
+
+
+def _render_cut(doc) -> str:
+    """A cut document's text: no leading blank lines, one final newline."""
+    return doc.as_string().lstrip("\n").rstrip("\n") + "\n"
+
+
+def _refuse_changed(pairs) -> None:
+    """Refuse unless each ``(text, values)`` pair parses to its values."""
+    if any(tomllib.loads(t) != want for t, want in pairs):
+        raise Refusal(
+            "could not split the manifest without changing a value; "
+            "nothing was written."
+        )
+
+
+def split_manifest(
+    text: str, objects: "list[str]", move_modules: bool
+) -> "tuple[str, dict[str, str], dict[str, str]]":
+    """Cut the manifest *text* into a root file and per-component fragments,
+    keeping every comment and the root file's layout.
+
+    The one slicer behind ``migrate-to-fragments`` and ``split-objects``.
+    Both rebuilt each file from plain dicts with `_dump`, which deleted every
+    comment in the manifest -- 621 lines on doppler, the ones on
+    ``[project]`` keys included (gh-2437). Instead the document is parsed
+    once with tomlkit and each moved table is cut out of it whole: its
+    header, its body, its sub-tables and table arrays, and every comment in
+    them, byte for byte. The root file is the same document with those
+    tables removed, so every comment and blank line it keeps is untouched.
+    `set_include` then gives it the ``include`` list.
+
+    Which comments a table takes: the run of comment lines directly above
+    its header (no blank line between), and everything inside its body. A
+    comment a blank line separates from the next header stays with the
+    table above it, as it does when a table array row moves (gh-1701); see
+    `_claim_unit_comments`.
+
+    Parameters
+    ----------
+    text : str
+        The manifest as it is on disk.
+    objects : list of str
+        The top-level component tables to move, one fragment each.
+    move_modules : bool
+        Move every ``[module.X]``, one fragment each. The ``module`` table
+        moves whole, or not at all.
+
+    Returns
+    -------
+    root : str
+        The root manifest's new text, ``include`` untouched.
+    object_frags : dict
+        Each moved object's fragment text, by name.
+    module_frags : dict
+        Each moved module's fragment text, by module id.
+
+    A table written in more than one place -- a module object's table
+    between two ``[module.X]`` headers splits ``module`` in two -- is cut
+    from each place, and its pieces join in file order in its fragment.
+
+    Raises
+    ------
+    Refusal
+        When the cut would change a value or drop a byte. Nothing is
+        written.
+
+    Examples
+    --------
+    >>> root, objs, mods = split_manifest(
+    ...     '[project]\\nname = "p"  # why\\n\\n# the engine\\n[eng]\\n'
+    ...     "x = 1\\n", ["eng"], False)
+    >>> print(root, end="")
+    [project]
+    name = "p"  # why
+    >>> print(objs["eng"], end="")
+    # the engine
+    [eng]
+    x = 1
+    """
+    import tomlkit as _tk
+
+    doc = _parse_claimed(text)
+
+    def _entries(key: str):
+        # A table may be written in more than one place: a module object's
+        # table between two ``[module.X]`` headers splits ``module`` in two.
+        # Each place is cut on its own, in file order.
+        return [(k, v) for k, v in doc.body if k is not None and k.key == key]
+
+    def _cut(pieces) -> str:
+        # One fragment from its pieces, each a ``(key, item)`` of a fresh
+        # document, a blank line between two of them.
+        texts = []
+        for k, v in pieces:
+            frag = _tk.document()
+            frag.append(k, v)
+            texts.append(_render_cut(frag))
+        return "\n".join(texts)
+
+    object_frags = {comp: _cut(_entries(comp)) for comp in objects}
+    for comp in objects:
+        doc.remove(comp)
+
+    by_module: dict[str, list] = {}
+    if move_modules and "module" in doc:
+        for _, part in _entries("module"):
+            for k, v in part.value.body:
+                if k is None:
+                    continue
+                sup = _tk.table(is_super_table=True)
+                sup.append(k, v)
+                by_module.setdefault(k.key, []).append(("module", sup))
+        doc.remove("module")
+    module_frags = {m: _cut(p) for m, p in by_module.items()}
+    root = _render_cut(doc)
+
+    # The cut is a fact, not a hope: every file parses back to exactly the
+    # values the manifest held.
+    data = tomllib.loads(text)
+    moved = set(objects) | ({"module"} if move_modules else set())
+    _refuse_changed(
+        [(root, {k: v for k, v in data.items() if k not in moved})]
+        + [(t, {c: data[c]}) for c, t in object_frags.items()]
+        + [
+            (t, {"module": {m: data["module"][m]}})
+            for m, t in module_frags.items()
+        ]
+    )
+    return root, object_frags, module_frags
+
+
+def set_include(text: str, include: "list[str]") -> str:
+    """Give the manifest *text* the ``include`` list *include*, keeping
+    every comment.
+
+    An existing ``include`` array is extended in place, so its own comments
+    and layout survive. Otherwise the list is written after the file's
+    opening comment block -- what precedes the first key once each header
+    owns the comments touching it (`_claim_unit_comments`) -- and before
+    everything else; with no opening block it is the first line, as a new
+    manifest writes it.
+
+    Examples
+    --------
+    >>> print(set_include("# header\\n\\n[project]\\n", ["a/*.toml"]),
+    ...       end="")
+    # header
+    <BLANKLINE>
+    include = ["a/*.toml"]
+    <BLANKLINE>
+    [project]
+    """
+    from tomlkit.items import Null
+
+    doc = _parse_claimed(text)
+    if "include" in doc:
+        arr = doc["include"]
+        for glob in include:
+            if glob not in arr:
+                arr.append(glob)
+        out = _render_cut(doc)
+    else:
+        lead = []
+        for j, (k, item) in enumerate(doc.body):
+            if k is not None:
+                break
+            lead.append(item.as_string())
+            doc.body[j] = (None, Null())
+        out = (
+            "".join(lead)
+            + f"include = {_toml_string_array(include)}\n\n"
+            + _render_cut(doc)
+        )
+    data = tomllib.loads(text)
+    data["include"] = list(dict.fromkeys(data.get("include", []) + include))
+    _refuse_changed([(out, data)])
+    return out
+
+
 def _set_key(tbl, key: str, value, _tk) -> None:
     """Assign a NEW or changed *key* on *tbl*, below the table's own values.
 

@@ -1026,6 +1026,12 @@ components in can change. The root `CMakeLists.txt` wiring and the umbrella
 header's includes are re-sorted to match — the order `jm apply` writes — and
 nothing in them is added or removed.
 
+Every comment survives. A moved table takes its comments to its fragment:
+the ones inside it, and the comment lines directly above its header (no
+blank line between). A comment a blank line separates from the next header
+stays with the table above it. The manifest keeps everything else as you
+wrote it.
+
 ```sh
 just-makeit migrate-to-fragments
 ```
@@ -1040,7 +1046,8 @@ ______________________________________________________________________
 The objects-only subset of `migrate-to-fragments`: each `[<obj>]` section
 moves to `objects/<obj>.toml` and every `[module.X]` stays inline. Prefer
 `migrate-to-fragments` unless you want the modules to stay put. It re-sorts
-the root `CMakeLists.txt` wiring and the umbrella header the same way.
+the root `CMakeLists.txt` wiring and the umbrella header the same way, and
+keeps every comment the same way.
 
 ```sh
 just-makeit split-objects
