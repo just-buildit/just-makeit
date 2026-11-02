@@ -466,6 +466,14 @@ def test_load_dump_load_in_both_layouts(
                 bad.append(f"central: {key} = <{label}>")
             _migrate.run(src)
             assert (src / "just-makeit.toml").read_text().startswith("include")
+            # gh-2437: migrating CUTS the manifest, so it changes no value
+            # -- not even `_dump`'s heredoc newline. The fragment layout's
+            # `_dump` is a new fragment's writer: drop them and save.
+            if C.load(src) != before:
+                bad.append(f"migrated: {key} = <{label}>")
+            for frag in [*src.glob("objects/*.toml"), *src.glob("modules/*")]:
+                frag.unlink()
+            C.save(src, before)
             if C.load(src) != want:
                 bad.append(f"fragments: {key} = <{label}>")
         if not loaded:
