@@ -89,3 +89,18 @@ def test_the_script_spells_a_one_name_list_as_the_cli_takes_it(tmp_path):
     assert out.returncode == 0, out.stderr
     assert "code:float[]:derived:nx" in out.stdout, out.stdout
     assert "['nx']" not in out.stdout
+
+
+def test_the_script_notes_a_2d_extent_list_it_cannot_spell():
+    """No CLI flag names a 2-D array's extents, so the script says so.
+
+    It used to format the list into the flag, `derived:['ny', 'nx']`, which
+    replays as a 1-D length named `['ny', 'nx']`.
+    """
+    from just_makeit._script import _init_param_carry, _param_notes
+
+    row = {"name": "ref", "type": "float[][]", "derived": ["ny", "nx"]}
+    spec, carried = _init_param_carry(row)
+    assert spec == "ref:float[][]"
+    notes = "".join(_param_notes("init-param", row, carried, "--init-param"))
+    assert 'derived = ["ny", "nx"]' in notes
