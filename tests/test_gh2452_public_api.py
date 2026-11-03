@@ -26,6 +26,7 @@ Two properties hold the fix:
 
 from __future__ import annotations
 
+import pkgutil
 import re
 import subprocess
 import sys
@@ -48,12 +49,21 @@ _SPAN = re.compile(
 _PATH = re.compile(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\(.*\))?")
 
 
+#: The one-word names a ``literal`` cannot use as a manifest key: every
+#: submodule of the package, and every ``_``-prefixed attribute of it.
+#: ``_template`` and ``_group`` are neither, so they keep the key reading.
+_JM_INTERNAL = {m.name for m in pkgutil.iter_modules(just_makeit.__path__)} | {
+    n for n in vars(just_makeit) if n.startswith("_") and not n.endswith("__")
+}
+
+
 def _citations(doc: str) -> list[tuple[str, bool]]:
     """Each code reference in *doc*: ``(path, is_xref)``.
 
     *is_xref* is true for a role or single-backtick span, which names an
     object; a ``literal`` naming one bare word (``include``, ``_group``)
-    is a manifest key or a value, so only its dotted paths count. A
+    is a manifest key or a value, so only its dotted paths count -- unless
+    the word is one of `_JM_INTERNAL`, which names jm's internals. A
     role's ``title <target>`` form is read for its target, and a leading
     ``~`` or ``!`` is dropped.
     """
@@ -65,7 +75,7 @@ def _citations(doc: str) -> list[tuple[str, bool]]:
             target = re.fullmatch(r".*<(.+)>", text)
             text = (target[1] if target else text).lstrip("~!")
         path = _PATH.fullmatch(text)
-        if path and (is_xref or "." in path[1]):
+        if path and (is_xref or "." in path[1] or path[1] in _JM_INTERNAL):
             out.append((path[1], is_xref))
     return out
 
@@ -118,7 +128,10 @@ def test_public_docstring_cites_only_public_names(name):
         if len(segments) == 1:
             # A relative reference: a member of the documented object,
             # or a name the package exports.
-            assert is_xref
+            assert is_xref, (
+                f"just_makeit.{name}'s docstring cites ``{path}``, a "
+                f"just_makeit submodule; cite the public re-export"
+            )
             assert hasattr(obj, path) or hasattr(just_makeit, path), (
                 f"just_makeit.{name}'s docstring cites {path!r}, which is "
                 f"neither its own attribute nor a just_makeit name"
@@ -139,7 +152,8 @@ def test_the_parser_reads_every_span_shape():
     """Armed: each shape a private path could hide in is read as one."""
     doc = (
         "``a.b`` `c.d` :class:`e.f` :meth:`~g.h` :func:`t <i.j>` "
-        ":meth:`report` ``include`` ``x.y(root)``"
+        ":meth:`report` ``include`` ``_template`` ``_report`` "
+        "``scripts`` ``x.y(root)``"
     )
     assert _citations(doc) == [
         ("a.b", False),
@@ -148,5 +162,7 @@ def test_the_parser_reads_every_span_shape():
         ("g.h", True),
         ("i.j", True),
         ("report", True),
+        ("_report", False),
+        ("scripts", False),
         ("x.y", False),
     ]
