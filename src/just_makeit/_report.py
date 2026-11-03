@@ -47,6 +47,10 @@ class Refusal(ValueError):
     ``error: <message>`` and exits 1. Set ``JM_DEBUG=1`` to get the traceback
     back.
 
+    Public as ``just_makeit.Refusal`` (gh-2452): this class, re-exported,
+    so a script calling ``just_makeit.load_manifest`` can catch a refused
+    manifest by name and read every problem from ``.errors``.
+
     Parameters
     ----------
     message : str
@@ -79,6 +83,24 @@ class Refusal(ValueError):
     >>> print(r.report())
     error: a: bad
     error: b: worse
+
+    A manifest ``just_makeit.load_manifest`` refuses, caught by the
+    public name:
+
+    >>> import pathlib, shutil, tempfile
+    >>> import just_makeit
+    >>> root = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (root / "just-makeit.toml").write_text(
+    ...     '[project]\\nname = "demo"\\nversion = "0.1.0"\\n'
+    ...     '[module.a]\\nobjects = []\\nplatforms = ["plan9"]\\n'
+    ...     '[module.b]\\nobjects = []\\nplatforms = ["plan9"]\\n'
+    ... )
+    >>> try:
+    ...     just_makeit.load_manifest(root)
+    ... except just_makeit.Refusal as exc:
+    ...     print(len(exc.errors), all("plan9" in e for e in exc.errors))
+    2 True
+    >>> shutil.rmtree(root)
     """
 
     def __init__(self, message, errors=None) -> None:

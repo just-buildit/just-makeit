@@ -13,8 +13,31 @@
 # module namespace, so the first access caches into globals() and every later
 # one is a plain attribute lookup.
 
+#
+# gh-2452: the rest of the public API that lives in a private module is
+# re-exported the same lazy way, one row per name: the module that DEFINES
+# it, so `just_makeit.<name> is <module>.<name>` -- one implementation, not a
+# copy -- and `_config`'s import cost is paid only by a caller who asks.
+# `tests/test_gh2452_public_api.py` holds the identity.
+#
+# ``just_makeit.components(cfg)`` -- `_config.components`: a manifest's
+#     component names, every top-level key but the reserved sections and
+#     ``include``.
+# ``just_makeit.Refusal`` -- `_report.Refusal`: the ``ValueError`` jm raises
+#     when it refuses a manifest, carrying each problem in ``.errors``.
+_REEXPORTS = {
+    "components": "_config",
+    "Refusal": "_report",
+}
 
-def __getattr__(name: str) -> str:
+
+def __getattr__(name: str) -> object:
+    if name in _REEXPORTS:
+        from importlib import import_module
+
+        value = getattr(import_module(f".{_REEXPORTS[name]}", __name__), name)
+        globals()[name] = value
+        return value
     if name == "__version__":
         from importlib.metadata import PackageNotFoundError, version
 
@@ -47,8 +70,8 @@ def load_manifest(root) -> dict:
     each ``[<obj>]`` / ``[module.X]`` table lives in ``objects/*.toml`` /
     ``modules/*.toml``; a ``tomllib`` parse of the root alone finds none
     of them. This function returns the manifest every jm command works
-    from -- the same dict ``jm apply`` renders -- because it IS that
-    reader (``just_makeit._config.load``), not a second merge.
+    from -- the same dict ``jm apply`` renders -- because it IS jm's own
+    reader, not a second merge.
 
     What that reader does, in order:
 
@@ -88,12 +111,14 @@ def load_manifest(root) -> dict:
         raises ``tomllib.TOMLDecodeError``. A manifest jm refuses (a
         module declared in two fragments, a ``[project]`` table in a
         fragment, an unknown platform, ...) raises
-        ``just_makeit._report.Refusal``, whose message names every
-        problem, one per line; nothing is printed. Both are
-        ``ValueError`` subclasses.
+        ``just_makeit.Refusal``, whose message names every problem,
+        one per line, and whose ``.errors`` holds them as a tuple;
+        nothing is printed. Both are ``ValueError`` subclasses.
 
     See Also
     --------
+    ``just_makeit.components`` lists the result's component names.
+
     The CLI form, for tools that are not Python: ``just-makeit manifest
     --json`` prints this same dict as JSON on stdout.
 
@@ -146,5 +171,5 @@ def load_manifest(root) -> dict:
 
 
 def __dir__() -> list:
-    """Keep ``__version__`` visible to `dir()` despite being lazy."""
-    return sorted(set(globals()) | {"__version__"})
+    """Keep the lazy names visible to `dir()` before their first access."""
+    return sorted(set(globals()) | {"__version__", *_REEXPORTS})
