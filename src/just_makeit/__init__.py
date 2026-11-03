@@ -84,11 +84,13 @@ def load_manifest(root) -> dict:
     FileNotFoundError
         If *root* holds no ``just-makeit.toml``.
     ValueError
-        If jm refuses the manifest (a module declared in two fragments, a
-        ``[project]`` table in a fragment, an unknown platform, ...), as
-        every jm command would. It is a ``just_makeit._report.Refusal``
-        whose message names every problem, one per line; nothing is
-        printed.
+        If the manifest cannot be used. A file that is not valid TOML
+        raises ``tomllib.TOMLDecodeError``. A manifest jm refuses (a
+        module declared in two fragments, a ``[project]`` table in a
+        fragment, an unknown platform, ...) raises
+        ``just_makeit._report.Refusal``, whose message names every
+        problem, one per line; nothing is printed. Both are
+        ``ValueError`` subclasses.
 
     See Also
     --------

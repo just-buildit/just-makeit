@@ -175,3 +175,22 @@ def test_apply_prints_every_error_a_refusal_carries(
     res = run_cli("apply", cwd=root)
     assert res.returncode == 1, res.stdout + res.stderr
     assert "error: gh2440 one\nerror: gh2440 two" in res.stderr, res.stderr
+
+
+def test_a_toml_datetime_prints_as_rfc_3339(tmp_path):
+    """`manifest --json` writes a TOML date-time with the `T`, not as the
+    `str()` of a Python datetime."""
+    _ok("new", "p", cwd=tmp_path)
+    root = tmp_path / "p"
+    manifest = root / C.FILENAME
+    text = manifest.read_text(encoding="utf-8")
+    manifest.write_text(
+        text.replace(
+            "[project]\n", "[project]\nreleased = 2024-01-02T03:04:05Z\n"
+        ),
+        encoding="utf-8",
+    )
+    out = _ok("manifest", "--json", cwd=root)
+    assert (
+        json.loads(out)["project"]["released"] == "2024-01-02T03:04:05+00:00"
+    )
