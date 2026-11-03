@@ -545,6 +545,14 @@ def is_versioned(
         writes all or part of on every ``jm apply``, and for one jm
         does not write.
 
+    Raises
+    ------
+    FileNotFoundError
+        If *root* holds no ``just-makeit.toml``. A root that is not the
+        project -- the wrong working directory, a typo -- would
+        otherwise be answered from an empty manifest, and a gate handed
+        it would get a confident answer about no project at all.
+
     See Also
     --------
     ``just_makeit.load_manifest`` reads the manifest this consults.
@@ -566,13 +574,31 @@ def is_versioned(
     False
     >>> is_versioned("native/tests/jm_test.h", str(root))
     True
+
+    A directory that is not a project is refused, not answered:
+
+    >>> is_versioned("native/tests/jm_test.h", root / "native")
+    ... # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+    ...
+    FileNotFoundError: no just-makeit.toml in ...
     >>> shutil.rmtree(root)
     """
     # A str root is a path, as everywhere else in the public API; inside
     # jm a str owner is refused as a bare package name (gh-1583), so it
-    # is made a Path here rather than passed through.
+    # is made a Path here rather than passed through. A manifest dict is
+    # jm's own owner form and is passed as is.
     if isinstance(root, (str, os.PathLike)):
+        from . import _config as C
+
         root = Path(root)
+        # `_incpath.manifest` searches upward and reads no manifest as an
+        # empty one, which is right for jm probing a path and wrong for a
+        # caller who named a project root (`load_manifest` refuses it the
+        # same way). `outdated`'s root is `status`'s, which has already
+        # refused a root with no manifest.
+        if not (root / C.FILENAME).is_file():
+            raise FileNotFoundError(f"no {C.FILENAME} in {root}")
     rule = classify(path, root)
     return rule is not None and rule.versioned
 

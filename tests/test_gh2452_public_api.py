@@ -102,6 +102,28 @@ def test_is_versioned_is_the_createonly_function():
     assert just_makeit.is_versioned is _createonly.is_versioned
 
 
+def test_is_versioned_takes_jm_s_manifest_owner():
+    """The manifest-dict owner jm passes internally is not a path, so it
+    skips the public root's coercion and manifest check (gh-2455)."""
+    owner = {"project": {"name": "p", "schema": "8"}}
+    assert just_makeit.is_versioned("native/inc/p/jm_perf.h", owner)
+    assert not just_makeit.is_versioned("native/inc/p/helper.h", owner)
+
+
+def test_is_versioned_refuses_a_root_with_no_manifest(tmp_path):
+    """A root that is not a project is refused, not answered from an
+    empty manifest; a nested one is refused too, not found by searching
+    upward (gh-2455)."""
+    (tmp_path / "just-makeit.toml").write_text(
+        '[project]\nname = "p"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "native").mkdir()
+    assert just_makeit.is_versioned("native/tests/jm_test.h", tmp_path)
+    for root in (tmp_path / "native", str(tmp_path / "absent")):
+        with pytest.raises(FileNotFoundError, match="just-makeit.toml"):
+            just_makeit.is_versioned("native/tests/jm_test.h", root)
+
+
 def test_dir_lists_the_lazy_names():
     """Before first access: a fresh interpreter, because the identity
     tests above cache each name into the package's globals, where
