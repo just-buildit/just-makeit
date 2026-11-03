@@ -146,10 +146,10 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                         ),
                     )
                 )
-        # gh-1400: and its views. A view renders as a synthetic component,
-        # so its members resolve against re-keyed blocks -- ask the overlay,
-        # never the parent's list.
-        from ._stubs import view_overlay
+        # gh-1400: and its views. A view renders as a synthetic component
+        # whose members resolve under its parent's stem (`stub_stem`,
+        # gh-2406) -- ask the overlay, never the parent's list.
+        from ._stubs import stub_stem, view_overlay
 
         staged = {**cfg, comp: {**cfg.get(comp, {}), "_doc_blocks": blocks}}
         for view in C.views(cfg, comp):
@@ -161,7 +161,7 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                     synth,
                     prop,
                     vblocks,
-                    csym=CSYM.stem(cfg_v, synth),
+                    csym=stub_stem(cfg_v, synth),
                     enums=C.enums(cfg_v),
                 )
                 if is_stub:
@@ -177,7 +177,7 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                     )
             for method in C.methods(cfg_v, synth):
                 _, is_stub = method_doc(
-                    synth, method, vblocks, csym=CSYM.stem(cfg_v, synth)
+                    synth, method, vblocks, csym=stub_stem(cfg_v, synth)
                 )
                 if is_stub:
                     mname = str(method.get("name") or "")
