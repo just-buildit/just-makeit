@@ -566,11 +566,17 @@ def _consumed_fn_errors(cfg: dict) -> "list[str]":
 
 
 def _refuse(errors: "list[str]") -> None:
-    """Print each manifest error and exit; a template that cannot expand, or
-    a family that cannot be included, has no meaning to fall back to."""
-    for e in dict.fromkeys(errors):
-        print(f"error: {e}", file=_sys.stderr)
-    raise SystemExit(1)
+    """Refuse with every manifest error at once; a template that cannot
+    expand, or a family that cannot be included, has no meaning to fall
+    back to.
+
+    Raises a :class:`Refusal` carrying each error, duplicates dropped
+    (gh-2440). It printed them and raised ``SystemExit(1)``, which is right
+    for a command and wrong for a library call (`just_makeit.load_manifest`):
+    a script got its stderr written to and an exit to catch. The CLI
+    boundary prints the refusal as the same ``error:`` lines, exit 1.
+    """
+    raise Refusal.of(errors)
 
 
 def _expand_templates(cfg: dict) -> None:

@@ -46,6 +46,7 @@ from just_makeit import _coerce  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _context as Ctx  # noqa: E402
 from just_makeit._keys import STATE_KEYS  # noqa: E402
+from just_makeit._report import Refusal  # noqa: E402
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -360,31 +361,31 @@ def test_a_state_hint_loads(tmp_path):
 
 @pytest.mark.parametrize("value", [1, True, "", ["a"]])
 def test_a_non_string_hint_is_refused(tmp_path, capsys, value):
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         _load_with(
             tmp_path, _state(name="s", type="uint8_t[8]", str_hint=value)
         )
-    err = capsys.readouterr().err
+    err = refused.value.report()
     assert "[[fld.state]] s: str_hint" in err
     assert "must be a non-empty string" in err
 
 
 @pytest.mark.parametrize("stype", ["int", "double"])
 def test_a_hint_on_a_scalar_field_is_refused(tmp_path, capsys, stype):
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         _load_with(tmp_path, _state(name="n", type=stype, str_hint="x"))
-    err = capsys.readouterr().err
+    err = refused.value.report()
     assert "[[fld.state]] n: str_hint is read only by an array" in err
 
 
 def test_a_hint_on_an_opaque_field_is_refused(tmp_path, capsys):
     """An opaque field has no ``set_<name>`` at all."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         _load_with(
             tmp_path,
             _state(name="o", type="uint8_t[8]", opaque=True, str_hint="x"),
         )
-    err = capsys.readouterr().err
+    err = refused.value.report()
     assert "str_hint is never shown on an opaque state field" in err
 
 
@@ -407,9 +408,9 @@ def test_a_hint_on_an_opaque_field_is_refused(tmp_path, capsys):
 def test_a_hint_on_a_property_names_the_state_row(
     tmp_path, capsys, tail, where
 ):
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         _load_with(tmp_path, tail)
-    err = capsys.readouterr().err
+    err = refused.value.report()
     assert f"{where}: str_hint is never shown on a property" in err
     assert "declare the hint on its [[fld.state]] row" in err
 

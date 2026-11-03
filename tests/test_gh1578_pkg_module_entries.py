@@ -19,6 +19,7 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit import _config as C
+from just_makeit._report import Refusal  # noqa: E402
 
 
 def _cfg(*entries):
@@ -52,9 +53,9 @@ def test_each_pc5_spelling_splits(entry, name, op, version):
     ["zlib >> 1.2", "zlib >=", ">= 1.2", "zlib 1.2", "", "a b", 3, None],
 )
 def test_anything_else_is_refused(entry, capsys):
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         C.pkg_module_entries(_cfg(entry))
-    assert "pkg_modules entry" in capsys.readouterr().err
+    assert "pkg_modules entry" in refused.value.report()
 
 
 @pytest.fixture
