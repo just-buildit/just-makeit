@@ -1108,15 +1108,18 @@ for name in components(load_manifest(".")):
 reported `OUTDATED`. A gate on `jm status --check` passes on an empty
 `OUTDATED` list, which reads the same whether every compared file is
 current or jm has stopped comparing one; asking per committed file proves
-jm still compares it:
+jm still compares it. Name the files rather than globbing for them: a glob
+that matches nothing asserts nothing. A root with no `just-makeit.toml`
+raises `FileNotFoundError`, so the wrong working directory fails too:
 
 ```python
 from pathlib import Path
 
 from just_makeit import is_versioned
 
-for header in Path("native/tests").glob("jm_*.h"):
-    assert is_versioned(header.as_posix(), "."), header
+for header in ("native/tests/jm_test.h", "native/benchmarks/jm_bench.h"):
+    assert Path(header).is_file(), header
+    assert is_versioned(header, "."), header
 ```
 
 ______________________________________________________________________
