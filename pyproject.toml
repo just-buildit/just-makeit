@@ -92,6 +92,8 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
+    # A block only a type checker reads; it never runs (gh-2452).
+    "if TYPE_CHECKING:",
 ]
 
 
