@@ -1077,6 +1077,32 @@ starting with `_` (`_template`, `_group`, ...) is a marker jm adds while
 loading, not part of the schema. `--json` is the only format, and it is
 required.
 
+A refusal is a `just_makeit.Refusal`, a `ValueError` whose `.errors`
+holds every problem it found, one string each:
+
+```python
+import just_makeit
+
+try:
+    cfg = just_makeit.load_manifest(".")
+except just_makeit.Refusal as exc:
+    for problem in exc.errors:
+        print(problem)
+```
+
+`just_makeit.components(cfg)` lists the manifest's components: every
+object, standalone or in a module, including one no module lists. Use it
+rather than collecting the `[module.X] objects` lists, which miss the
+standalone ones, or skipping the reserved sections by hand, which goes
+stale the day jm adds one:
+
+```python
+from just_makeit import components, load_manifest
+
+for name in components(load_manifest(".")):
+    print(name)
+```
+
 ______________________________________________________________________
 
 ## `just-makeit split-objects`

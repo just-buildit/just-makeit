@@ -1971,9 +1971,53 @@ NOT_COMPONENTS = (*RESERVED_SECTIONS, "include")
 
 
 def components(cfg: dict) -> list[str]:
-    """Return component names: every top-level key but `NOT_COMPONENTS`.
+    """Return a manifest's component names, in manifest order.
 
-    A loaded project or a raw manifest alike:
+    Public as ``just_makeit.components`` (gh-2452): this function,
+    re-exported, not a copy. A component is every top-level table but
+    jm's reserved sections (``[project]``, ``[module.X]``, ``[[enum]]``,
+    ``[codec]``, ...) and the ``include`` list of fragment globs. That
+    covers every
+    object -- standalone, in a module, or in a fragment no module lists
+    -- so the union of the ``[module.X] objects`` lists is not the same
+    answer, and a script that spells its own copy of the reserved set
+    drifts the day jm adds a section (gh-2434).
+
+    Parameters
+    ----------
+    cfg : dict
+        A manifest: what ``just_makeit.load_manifest`` returns, or a raw
+        parse of ``just-makeit.toml``, which may still hold ``include``.
+
+    Returns
+    -------
+    list of str
+        The component names, in the order *cfg* holds them: a new list
+        on every call, and *cfg* is not changed.
+
+    Examples
+    --------
+    On a ``just_makeit.load_manifest`` result, where ``fir`` and
+    ``solo`` live in fragments and no module lists ``solo``:
+
+    >>> import pathlib, shutil, tempfile
+    >>> from just_makeit import components, load_manifest
+    >>> root = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (root / "just-makeit.toml").write_text(
+    ...     'include = ["objects/*.toml"]\\n'
+    ...     '[project]\\nname = "demo"\\nversion = "0.1.0"\\n'
+    ...     '[module.filter]\\nobjects = ["fir"]\\n'
+    ... )
+    >>> (root / "objects").mkdir()
+    >>> for name in ("fir", "solo"):
+    ...     _ = (root / "objects" / f"{name}.toml").write_text(
+    ...         f'[{name}]\\narg_type = "float"\\nreturn_type = "float"\\n'
+    ...     )
+    >>> sorted(components(load_manifest(root)))
+    ['fir', 'solo']
+    >>> shutil.rmtree(root)
+
+    A raw manifest alike:
 
     >>> components({"include": ["objects/*.toml"], "project": {},
     ...             "enum": [], "fir": {}})
