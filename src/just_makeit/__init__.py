@@ -12,7 +12,6 @@
 # PEP 562: a module-level `__getattr__` runs only for names *not* found in the
 # module namespace, so the first access caches into globals() and every later
 # one is a plain attribute lookup.
-
 #
 # gh-2452: the rest of the public API that lives in a private module is
 # re-exported the same lazy way, one row per name: the module that DEFINES
@@ -29,6 +28,27 @@ _REEXPORTS = {
     "components": "_config",
     "Refusal": "_report",
 }
+
+# What a type checker sees for the lazy names. `__getattr__` returns
+# `object`, so without these a caller's `components(...)` is "not callable"
+# and `except Refusal` "must derive from BaseException". `TYPE_CHECKING` is
+# spelled locally, not imported from `typing`: mypy treats the name as true,
+# and `import just_makeit` stays off `typing` (gh-764). At runtime the block
+# never runs, so the names stay out of globals() and `__getattr__` still
+# resolves them on first access. `tests/test_gh2452_public_api_mypy.py`
+# type-checks a caller.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from ._config import components as components
+    from ._report import Refusal as Refusal
+
+    __version__: str
+del TYPE_CHECKING  # a flag for this block, not an attribute of jm's
+
+#: `from just_makeit import *` names the public API. A star import reads
+#: each name, so it resolves every lazy one -- `_config` included; only
+#: the named-import and attribute forms stay lazy.
+__all__ = ["load_manifest", "components", "Refusal", "__version__"]
 
 
 def __getattr__(name: str) -> object:

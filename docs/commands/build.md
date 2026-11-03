@@ -1071,14 +1071,13 @@ for name, mod in cfg.get("module", {}).items():
 ```
 
 `load_manifest` raises `FileNotFoundError` when the directory has no
-`just-makeit.toml`, and `ValueError` for a manifest jm refuses; the CLI
-exits 1. The result is yours to change; nothing is written back. A key
+`just-makeit.toml`, and `just_makeit.Refusal` (a `ValueError`) for a
+manifest jm refuses; the CLI exits 1. The result is yours to change; nothing is written back. A key
 starting with `_` (`_template`, `_group`, ...) is a marker jm adds while
 loading, not part of the schema. `--json` is the only format, and it is
 required.
 
-A refusal is a `just_makeit.Refusal`, a `ValueError` whose `.errors`
-holds every problem it found, one string each:
+A refusal's `.errors` holds every problem it found, one string each:
 
 ```python
 import just_makeit
