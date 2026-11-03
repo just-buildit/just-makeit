@@ -54,6 +54,7 @@ The classification is a declared judgement — it is about intent, so it must be
 from __future__ import annotations
 
 import functools
+import os
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -499,9 +500,80 @@ def classify(rel_posix: str, owner: "INC.Owner") -> Rule | None:
     return None
 
 
-def is_versioned(rel_posix: str, owner: "INC.Owner") -> bool:
-    """True when a difference from jm's current render means *outdated*."""
-    rule = classify(rel_posix, owner)
+def is_versioned(
+    path: str, root: "INC.Owner | str | os.PathLike[str]"
+) -> bool:
+    """Whether jm compares *path* against its current render.
+
+    Public as ``just_makeit.is_versioned`` (gh-2455). ``jm status``
+    reports a file OUTDATED when it is versioned and its bytes differ
+    from what jm renders today. A file that is not versioned is never
+    reported, however far it has drifted: either its render is only
+    starting content (the author's ``<comp>_core.c``), or jm writes
+    all or part of it on every ``jm apply``, and ``jm status`` sees its
+    drift another way.
+
+    That makes an empty OUTDATED list ambiguous to a gate built on
+    ``jm status --check``: it reads the same whether every compared file
+    is current or jm has stopped comparing one. Asking this function,
+    per committed file, whether jm still compares it tells the two
+    apart -- a release that reclassified a vendored header would turn
+    that question red instead of leaving the gate green for good.
+
+    The answer comes from the same classification ``jm status`` uses, so
+    it cannot disagree with what ``status`` reports. It depends only on
+    *path* and the project's manifest: *path* need not exist, and its
+    contents are never read.
+
+    Parameters
+    ----------
+    path : str
+        The file, relative to the project root, with ``/`` separators
+        on every platform: ``"native/tests/jm_test.h"``.
+    root : str or os.PathLike
+        The project root: the directory holding ``just-makeit.toml``.
+        The manifest decides the header layout and the package name,
+        which the umbrella header and every header under ``native/inc``
+        are matched by.
+
+    Returns
+    -------
+    bool
+        True when a difference between *path* and jm's current render
+        of it means ``jm status`` reports it OUTDATED. False for a file
+        whose differences are the author's own work, for one jm
+        writes all or part of on every ``jm apply``, and for one jm
+        does not write.
+
+    See Also
+    --------
+    ``just_makeit.load_manifest`` reads the manifest this consults.
+
+    Examples
+    --------
+    In a project, the test harness jm vendors is compared, and the
+    author's algorithm is not:
+
+    >>> import pathlib, shutil, tempfile
+    >>> from just_makeit import is_versioned
+    >>> root = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (root / "just-makeit.toml").write_text(
+    ...     '[project]\\nname = "demo"\\nversion = "0.1.0"\\n'
+    ... )
+    >>> is_versioned("native/tests/jm_test.h", root)
+    True
+    >>> is_versioned("native/src/gain/gain_core.c", root)
+    False
+    >>> is_versioned("native/tests/jm_test.h", str(root))
+    True
+    >>> shutil.rmtree(root)
+    """
+    # A str root is a path, as everywhere else in the public API; inside
+    # jm a str owner is refused as a bare package name (gh-1583), so it
+    # is made a Path here rather than passed through.
+    if isinstance(root, (str, os.PathLike)):
+        root = Path(root)
+    rule = classify(path, root)
     return rule is not None and rule.versioned
 
 
