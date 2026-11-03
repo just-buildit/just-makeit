@@ -176,8 +176,18 @@ def _init_param_carry(p: dict) -> tuple[str, frozenset[str]]:
     # `<name>_len` instead of the author's leading named length — a script
     # that rebuilds the project with a DIFFERENT create() prototype, which is
     # the divergence class this docstring is about.
-    if p.get("derived"):
-        spec = f"{name}:{typ}:derived:{p['derived']}"
+    #
+    # gh-2409: `derived` is a name or, in gh-1097's spelling, a list of them.
+    # The CLI names one 1-D length, so a one-name list spells as that name
+    # (formatting the list printed `derived:['nx']`). A 2-D array's extent
+    # list has no CLI spelling: it stays out of the carried set, so
+    # `_param_notes` names it rather than the script replaying a different
+    # prototype.
+    _derived = p.get("derived")
+    if isinstance(_derived, (list, tuple)) and len(_derived) == 1:
+        _derived = _derived[0]
+    if _derived and isinstance(_derived, str):
+        spec = f"{name}:{typ}:derived:{_derived}"
         return spec, frozenset({"name", "type", "derived"})
     if p.get("optional"):
         spec = f"{name}:{typ}:optional"
