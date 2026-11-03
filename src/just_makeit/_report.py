@@ -47,23 +47,23 @@ class Refusal(ValueError):
     ``error: <message>`` and exits 1. Set ``JM_DEBUG=1`` to get the traceback
     back.
 
-    ``tests/test_gh1777_refusal_ratchet.py`` holds the count of bare
-    ``raise ValueError`` sites per file, and it may only shrink: a new
-    deliberate refusal uses this type.
-
-    Examples
-    --------
-    A refusal may name several problems at once (gh-2440): *errors* holds
-    them, one per ``error:`` line, and the message is their join. Without
-    *errors* the one message is the one error. :meth:`report` is how every
-    printer renders it, so each problem reads ``error: ...`` on its own line.
-
     Parameters
     ----------
     message : str
         The whole report.
     errors : iterable of str, optional
         The problems, one per line of :meth:`report`; default: *message*.
+
+    Notes
+    -----
+    A refusal may name several problems at once (gh-2440): *errors* holds
+    them, one per ``error:`` line, and the message is their join. Without
+    *errors* the one message is the one error. :meth:`report` is how every
+    printer renders it, so each problem reads ``error: ...`` on its own line.
+
+    ``tests/test_gh1777_refusal_ratchet.py`` holds the count of bare
+    ``raise ValueError`` sites per file, and it may only shrink: a new
+    deliberate refusal uses this type.
 
     Examples
     --------

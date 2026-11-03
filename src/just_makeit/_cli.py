@@ -880,6 +880,56 @@ def _refuse_argument(cmd: str, arg: str) -> None:
     sys.exit(2)
 
 
+def _json_toml_value(value):
+    """The JSON for a TOML value `json` cannot encode itself (gh-2440).
+
+    TOML has date, time and date-time values; JSON has none. Each becomes
+    its RFC 3339 text (``isoformat``, with the ``T``), which is what a TOML
+    reader and a JSON consumer both parse back. A merged manifest holds
+    nothing else `json` lacks, so anything else is a bug, and raises rather
+    than printing as some ``str()`` a consumer cannot read back.
+
+    Parameters
+    ----------
+    value : object
+        What `json.dumps` could not encode.
+
+    Returns
+    -------
+    str
+        The ISO 8601 / RFC 3339 text of a date, time or date-time.
+
+    Raises
+    ------
+    TypeError
+        For any other type, as `json.dumps` itself would.
+
+    Examples
+    --------
+    >>> import datetime, json
+    >>> when = datetime.datetime(2024, 1, 2, 3, 4, 5,
+    ...                          tzinfo=datetime.timezone.utc)
+    >>> json.dumps(when, default=_json_toml_value)
+    '"2024-01-02T03:04:05+00:00"'
+    >>> _json_toml_value(datetime.date(2024, 1, 2))
+    '2024-01-02'
+    >>> _json_toml_value(datetime.time(3, 4, 5))
+    '03:04:05'
+    >>> _json_toml_value(object())
+    Traceback (most recent call last):
+    ...
+    TypeError: manifest value of type object is not JSON serializable
+    """
+    import datetime
+
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    raise TypeError(
+        f"manifest value of type {type(value).__name__} "
+        "is not JSON serializable"
+    )
+
+
 def _no_arguments(cmd: str, args: "list[str]") -> None:
     """Refuse the first of *args* (argv after *cmd*), if there is one."""
     if args:
@@ -1448,9 +1498,7 @@ def _main() -> None:
         except FileNotFoundError as exc:
             print(f"error: {exc}.", file=sys.stderr)
             sys.exit(1)
-        # `default=str`: TOML has date/time values, JSON does not; their
-        # ISO text is what `tomllib` parsed.
-        print(json.dumps(cfg, indent=2, default=str))
+        print(json.dumps(cfg, indent=2, default=_json_toml_value))
 
     elif cmd == "adopt":
         # gh-1448. `--check` reads; without it, adopt WRITES -- but only for
