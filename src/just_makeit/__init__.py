@@ -126,6 +126,7 @@ def load_manifest(root) -> dict:
     from pathlib import Path
 
     from . import _config
+    from ._report import Refusal
 
     root = Path(root)
     path = root / _config.FILENAME
@@ -141,7 +142,7 @@ def load_manifest(root) -> dict:
         # A few of `load`'s refusals print their errors and exit, which is
         # right for a command and wrong for a library call: a script that
         # asked for a dict should get an exception it can catch.
-        raise ValueError(
+        raise Refusal(
             f"jm refused {path}; the errors are printed above on stderr"
         ) from exc
     # No copy: `load` parses the files afresh on every call and keeps no
