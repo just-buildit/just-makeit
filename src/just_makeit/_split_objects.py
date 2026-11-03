@@ -79,3 +79,8 @@ def run(root: Path) -> None:
 
     print()
     print(f"Done!  {len(components)} object section(s) moved to objects/.")
+    # gh-2440: the same move out of the root, so the same reader note.
+    from ._migrate import READER_NOTE
+
+    print()
+    print(READER_NOTE)
