@@ -1,5 +1,10 @@
 """gh-2452: `components` and `Refusal` are public, and public docs say so.
 
+gh-2455 adds `is_versioned` under the same two properties: doppler's
+`status --check` gate imported the private `_createonly.is_versioned` to
+prove jm still compares each vendored header, since an empty OUTDATED
+list reads the same when jm has stopped comparing one.
+
 doppler's `scripts/check_bench_coverage.py` imported the private
 `_config.components`, because no public name listed a manifest's
 components and a script cannot derive the list on its own: the union of
@@ -34,10 +39,10 @@ import sys
 import pytest
 
 import just_makeit
-from just_makeit import _config, _report
+from just_makeit import _config, _createonly, _report
 
 #: The public API whose docstrings the citation check reads, by name.
-PUBLIC = ("load_manifest", "components", "Refusal")
+PUBLIC = ("load_manifest", "components", "Refusal", "is_versioned")
 
 #: One reST code span: an optional ``:role:``, then ``literal`` or `tick`.
 #: The double-backtick branch comes first, so ``x`` is not read as `x`.
@@ -93,15 +98,40 @@ def test_refusal_is_the_report_class():
     assert just_makeit.Refusal is _report.Refusal
 
 
+def test_is_versioned_is_the_createonly_function():
+    assert just_makeit.is_versioned is _createonly.is_versioned
+
+
 def test_dir_lists_the_lazy_names():
-    assert {"components", "Refusal"} <= set(dir(just_makeit))
-
-
-def test_import_does_not_load_config():
-    """The re-export is lazy: `import just_makeit` stays off `_config`,
-    which every CLI invocation would otherwise pay for (gh-764)."""
+    """Before first access: a fresh interpreter, because the identity
+    tests above cache each name into the package's globals, where
+    ``dir()`` would find it whatever `__dir__` returned."""
     code = (
-        "import sys, just_makeit; print('just_makeit._config' in sys.modules)"
+        "import just_makeit; "
+        "print(sorted({'components', 'Refusal', 'is_versioned'} "
+        "- set(dir(just_makeit))))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert out == "[]"
+
+
+def test_all_names_the_public_api():
+    assert set(just_makeit.__all__) == {*PUBLIC, "__version__"}
+
+
+@pytest.mark.parametrize("module", ["_config", "_createonly"])
+def test_import_does_not_load_the_defining_module(module):
+    """The re-export is lazy: `import just_makeit` stays off `_config`
+    and `_createonly`, which every CLI invocation would otherwise pay for
+    (gh-764)."""
+    code = (
+        "import sys, just_makeit; "
+        f"print('just_makeit.{module}' in sys.modules)"
     )
     out = subprocess.run(
         [sys.executable, "-c", code],

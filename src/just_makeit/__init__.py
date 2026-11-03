@@ -24,9 +24,13 @@
 #     ``include``.
 # ``just_makeit.Refusal`` -- `_report.Refusal`: the ``ValueError`` jm raises
 #     when it refuses a manifest, carrying each problem in ``.errors``.
+# ``just_makeit.is_versioned(path, root)`` -- `_createonly.is_versioned`
+#     (gh-2455): whether ``jm status`` compares a file against jm's current
+#     render, so a gate on an empty OUTDATED list can prove it still asks.
 _REEXPORTS = {
     "components": "_config",
     "Refusal": "_report",
+    "is_versioned": "_createonly",
 }
 
 # What a type checker sees for the lazy names. `__getattr__` returns
@@ -40,6 +44,7 @@ _REEXPORTS = {
 TYPE_CHECKING = False
 if TYPE_CHECKING:
     from ._config import components as components
+    from ._createonly import is_versioned as is_versioned
     from ._report import Refusal as Refusal
 
     __version__: str
@@ -48,7 +53,13 @@ del TYPE_CHECKING  # a flag for this block, not an attribute of jm's
 #: `from just_makeit import *` names the public API. A star import reads
 #: each name, so it resolves every lazy one -- `_config` included; only
 #: the named-import and attribute forms stay lazy.
-__all__ = ["load_manifest", "components", "Refusal", "__version__"]
+__all__ = [
+    "load_manifest",
+    "components",
+    "Refusal",
+    "is_versioned",
+    "__version__",
+]
 
 
 def __getattr__(name: str) -> object:

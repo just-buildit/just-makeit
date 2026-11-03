@@ -1,9 +1,9 @@
 """gh-2452: a type checker reads the lazy public names as what they are.
 
 `just_makeit.__getattr__` returns `object`, so the lazy re-exports --
-``components``, ``Refusal``, ``__version__`` -- read to mypy as `object`
-unless the package declares them under ``TYPE_CHECKING``. Without that a
-caller's ``components(cfg)`` is "not callable", ``except Refusal`` "must
+``components``, ``Refusal``, ``is_versioned`` (gh-2455), ``__version__``
+-- read to mypy as `object` unless the package declares them under
+``TYPE_CHECKING``. Without that a caller's ``components(cfg)`` is "not callable", ``except Refusal`` "must
 derive from BaseException" and ``v: str = __version__`` an incompatible
 assignment. This type-checks such a caller and requires exit 0.
 
@@ -25,7 +25,9 @@ import just_makeit
 _CALLER = textwrap.dedent(
     """\
     import just_makeit
-    from just_makeit import Refusal, components, load_manifest
+    from pathlib import Path
+
+    from just_makeit import Refusal, components, is_versioned, load_manifest
 
     version: str = just_makeit.__version__
     try:
@@ -36,6 +38,8 @@ _CALLER = textwrap.dedent(
         also: list[str] = just_makeit.components({})
     except just_makeit.Refusal:
         pass
+    b: bool = is_versioned("x", Path("."))
+    also_b: bool = just_makeit.is_versioned("x", ".")
     """
 )
 

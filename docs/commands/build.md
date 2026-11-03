@@ -1102,6 +1102,23 @@ for name in components(load_manifest(".")):
     print(name)
 ```
 
+`just_makeit.is_versioned(path, root)` says whether
+[`jm status`](#just-makeit-status) compares `path` (project-relative,
+`/`-separated) against jm's current render, so that a difference is
+reported `OUTDATED`. A gate on `jm status --check` passes on an empty
+`OUTDATED` list, which reads the same whether every compared file is
+current or jm has stopped comparing one; asking per committed file proves
+jm still compares it:
+
+```python
+from pathlib import Path
+
+from just_makeit import is_versioned
+
+for header in Path("native/tests").glob("jm_*.h"):
+    assert is_versioned(header.as_posix(), "."), header
+```
+
 ______________________________________________________________________
 
 ## `just-makeit split-objects`
