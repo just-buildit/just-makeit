@@ -145,3 +145,25 @@ def test_the_failure_is_reported_in_both_output_modes(tmp_path, as_json):
                 code = exc.code if isinstance(exc.code, int) else 1
     assert code != 0
     assert "--error names the exception" in err.getvalue(), err.getvalue()
+
+
+def test_a_raised_refusal_is_explained_too(tmp_path, monkeypatch):
+    """gh-2440: `_config._refuse` raises a Refusal instead of printing and
+    exiting, so the replay can end that way as well; status still explains
+    it, with every error the refusal carries, and still fails."""
+    from just_makeit import _apply
+    from just_makeit._report import Refusal
+
+    root = tmp_path / "p"
+    with contextlib.redirect_stdout(io.StringIO()):
+        new_run("p", root, [], [])
+
+    def _refuses(*_a, **_k):
+        raise Refusal.of(["first gh2440 problem", "second gh2440 problem"])
+
+    monkeypatch.setattr(_apply, "run", _refuses)
+    out, code = _status_stderr(root)
+    assert code == 1, out
+    assert "error: first gh2440 problem" in out, out
+    assert "error: second gh2440 problem" in out, out
+    assert "NOT modified" in out, out

@@ -90,6 +90,7 @@ from . import _stubs
 from . import _textio
 from . import _incpath as INC
 from ._apply import _SKIP_DIRS
+from ._report import Refusal
 
 # Directories/files never copied into the scratch tree (build artefacts,
 # VCS, caches) — not manifest-owned, and copying them only slows status.
@@ -633,14 +634,18 @@ def run(
                     honor_status_allow=False,
                     replay_out=replay_root,
                 )
-        except SystemExit as _exc:
+        except (SystemExit, Refusal) as _exc:
             # stderr first: that is where apply puts `error:`. stdout is the
             # fallback for the few exits that print there, and is not shown
             # otherwise — it is the progress log this block exists to hide.
+            # gh-2440: a refusal raised rather than printed carries its own
+            # `error:` lines.
             _why = (
                 _replay_err.getvalue().strip()
                 or _replay_out.getvalue().strip()
             )
+            if isinstance(_exc, Refusal):
+                _why = "\n".join(filter(None, [_why, _exc.report()]))
             print(
                 "error: the internal `apply` replay refused this manifest, "
                 "so no status report can be produced.\n"
@@ -657,9 +662,8 @@ def run(
                 "shows the same failure with its full output.",
                 file=sys.stderr,
             )
-            raise SystemExit(
-                _exc.code if isinstance(_exc.code, int) else 1
-            ) from None
+            _code = getattr(_exc, "code", 1)
+            raise SystemExit(_code if isinstance(_code, int) else 1) from None
         finally:
             _obj._FRAGMENT_ROOT_OVERRIDE = None
 

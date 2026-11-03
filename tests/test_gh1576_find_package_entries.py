@@ -15,6 +15,7 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit import _config as C
+from just_makeit._report import Refusal  # noqa: E402
 
 
 def _cfg(*entries):
@@ -51,9 +52,9 @@ def test_string_and_table_entries_read_alike():
     ],
 )
 def test_a_malformed_entry_is_refused(entry, capsys):
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         C.find_package_entries(_cfg(entry))
-    assert "find_packages entry" in capsys.readouterr().err
+    assert "find_packages entry" in refused.value.report()
 
 
 @pytest.fixture

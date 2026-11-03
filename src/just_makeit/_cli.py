@@ -813,7 +813,8 @@ def main() -> None:
             if _debug():
                 raise
             sys.stdout.flush()
-            print(f"error: {exc}", file=sys.stderr)
+            # gh-2440: one `error:` line per problem the refusal names.
+            print(exc.report(), file=sys.stderr)
             sys.exit(1)
 
 

@@ -53,11 +53,67 @@ class Refusal(ValueError):
 
     Examples
     --------
+    A refusal may name several problems at once (gh-2440): *errors* holds
+    them, one per ``error:`` line, and the message is their join. Without
+    *errors* the one message is the one error. :meth:`report` is how every
+    printer renders it, so each problem reads ``error: ...`` on its own line.
+
+    Parameters
+    ----------
+    message : str
+        The whole report.
+    errors : iterable of str, optional
+        The problems, one per line of :meth:`report`; default: *message*.
+
+    Examples
+    --------
     >>> issubclass(Refusal, ValueError)
     True
     >>> str(Refusal("objects/gen.toml: 'gen' already exists."))
     "objects/gen.toml: 'gen' already exists."
+    >>> print(Refusal("one").report())
+    error: one
+    >>> r = Refusal.of(["a: bad", "b: worse"])
+    >>> r.errors
+    ('a: bad', 'b: worse')
+    >>> print(r.report())
+    error: a: bad
+    error: b: worse
     """
+
+    def __init__(self, message, errors=None) -> None:
+        super().__init__(message)
+        self.errors = tuple(errors) if errors else (str(message),)
+
+    @classmethod
+    def of(cls, errors) -> "Refusal":
+        """A refusal naming each of *errors*, duplicates dropped, in order."""
+        unique = tuple(dict.fromkeys(errors))
+        return cls("\n".join(unique), unique)
+
+    def report(self) -> str:
+        """Each error as an ``error: <text>`` line, as the CLI prints it."""
+        return "\n".join(f"error: {e}" for e in self.errors)
+
+
+def error_report(exc: BaseException) -> str:
+    """*exc* as the ``error:`` lines a command prints before exiting 1.
+
+    A :class:`Refusal` renders every error it carries on its own line; any
+    other exception -- a ``ValueError`` some handler also catches -- is one
+    ``error: <message>`` line, as before.
+
+    Examples
+    --------
+    >>> print(error_report(ValueError("bad")))
+    error: bad
+    >>> print(error_report(Refusal.of(["x", "y", "x"])))
+    error: x
+    error: y
+    """
+    if isinstance(exc, Refusal):
+        return exc.report()
+    return f"error: {exc}"
 
 
 #: Marks a warning whose condition `jm status --check` counts as drift. The

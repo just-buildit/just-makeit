@@ -24,6 +24,7 @@ import pytest
 from _jmrun import run_cli
 from just_makeit import _config as C
 from just_makeit import _libwiring as W
+from just_makeit._report import Refusal  # noqa: E402
 
 _OBJ_CMAKE = (
     "add_library(util_obj OBJECT util.c)\n"
@@ -213,9 +214,9 @@ def test_apply_keeps_an_authors_wiring_under_a_no_generate_module(tmp_path):
 )
 def test_a_manifest_it_cannot_build_is_refused(tmp_path, table, why, capsys):
     root = _project(tmp_path, table)
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         C.project_libraries(C.load(root))
-    assert why in capsys.readouterr().err
+    assert why in refused.value.report()
 
 
 def test_lib_pkg_is_read_by_name_not_prefix():

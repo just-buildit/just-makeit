@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from just_makeit import _composer  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
+from just_makeit._report import Refusal  # noqa: E402
 from test_gh1711_composer_owned_pointer import (  # noqa: E402
     COMPOSER_TOML,
     FRAME,
@@ -143,9 +144,9 @@ class TestTheKey:
         """gh-1722's check: a name is truthy, and would render a
         two-argument call to the one-argument reader it names."""
         C.save(tmp_path, _with(**{**FRAME, "parse_why": "frame_parse"}))
-        with pytest.raises(SystemExit):
+        with pytest.raises(Refusal) as refused:
             C.load(tmp_path)
-        err = capsys.readouterr().err
+        err = refused.value.report()
         assert (
             f"[[module.{MOD}.source.fields]] frame: "
             "parse_why = 'frame_parse' must be true or false"
