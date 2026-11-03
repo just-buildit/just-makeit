@@ -4161,7 +4161,9 @@ def _apply_manifest(
             # The replay's scopes and why each is there: `replay_project`.
             replay_project(cfg, temp_root, root)
         except (ValueError, FileNotFoundError) as e:
-            print(f"error: {e}", file=sys.stderr)
+            from ._report import error_report
+
+            print(error_report(e), file=sys.stderr)
             sys.exit(1)
         # gh-493: reformat the throwaway scaffold to the project's house style
         # *before* it is compared against the real tree, so a c_style project's
@@ -4264,7 +4266,9 @@ def _apply_manifest(
             # Same shape as the replay's handler above: the message is
             # already written for a reader, so print it and stop rather than
             # decorating a stack trace with it.
-            print(f"error: {e}", file=sys.stderr)
+            from ._report import error_report
+
+            print(error_report(e), file=sys.stderr)
             sys.exit(1)
 
         # gh-183: record the generating jm version (monotonic; surgical

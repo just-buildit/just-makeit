@@ -86,8 +86,9 @@ def load_manifest(root) -> dict:
     ValueError
         If jm refuses the manifest (a module declared in two fragments, a
         ``[project]`` table in a fragment, an unknown platform, ...), as
-        every jm command would. Most refusals carry their message; a few
-        print each error to stderr first, and the exception says so.
+        every jm command would. It is a ``just_makeit._report.Refusal``
+        whose message names every problem, one per line; nothing is
+        printed.
 
     See Also
     --------
@@ -126,7 +127,6 @@ def load_manifest(root) -> dict:
     from pathlib import Path
 
     from . import _config
-    from ._report import Refusal
 
     root = Path(root)
     path = root / _config.FILENAME
@@ -136,15 +136,7 @@ def load_manifest(root) -> dict:
         # caller who named a project: an empty dict would read as "no
         # modules" and let a script pass on nothing.
         raise FileNotFoundError(f"no {_config.FILENAME} in {root}")
-    try:
-        cfg = _config.load(root)
-    except SystemExit as exc:
-        # A few of `load`'s refusals print their errors and exit, which is
-        # right for a command and wrong for a library call: a script that
-        # asked for a dict should get an exception it can catch.
-        raise Refusal(
-            f"jm refused {path}; the errors are printed above on stderr"
-        ) from exc
+    cfg = _config.load(root)
     # No copy: `load` parses the files afresh on every call and keeps no
     # reference, so the dict is already the caller's.
     # `tests/test_gh2440_load_manifest.py` holds that property.

@@ -42,6 +42,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from just_makeit._report import Refusal  # noqa: E402
 
 from _jmrun import JmRun, run_cli
 
@@ -154,10 +155,9 @@ class TestTheClosedParamsList:
         (root / C.FILENAME).write_text(
             (root / C.FILENAME).read_text() + bad, "utf-8"
         )
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err), pytest.raises(SystemExit):
+        with pytest.raises(Refusal) as refused:
             C.load(root)
-        assert says in err.getvalue()
+        assert says in refused.value.report()
 
     def test_a_slot_naming_no_param_is_refused(self, tmp_path):
         bad = TEMPLATE.replace('"F32To{Elem}"', '"F32To{Elme}"')
@@ -167,10 +167,9 @@ class TestTheClosedParamsList:
         (root / C.FILENAME).write_text(
             (root / C.FILENAME).read_text() + bad, "utf-8"
         )
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err), pytest.raises(SystemExit):
+        with pytest.raises(Refusal) as refused:
             C.load(root)
-        assert "`{Elme}` is not one of its params" in err.getvalue()
+        assert "`{Elme}` is not one of its params" in refused.value.report()
 
 
 class TestAnInstanceCannotBeEditedDirectly:
@@ -178,7 +177,7 @@ class TestAnInstanceCannotBeEditedDirectly:
         root = _project(tmp_path)
         core = root / "native" / "src" / "f32_to_i16" / "f32_to_i16_core.c"
         before = core.read_text()
-        with pytest.raises(SystemExit):
+        with pytest.raises(Refusal):
             _quiet(
                 method_run,
                 root,
@@ -196,7 +195,7 @@ class TestAnInstanceCannotBeEditedDirectly:
         root = _project(tmp_path)
         cfg = C.load(root)
         cfg["f32_to_i16"]["mutable"] = "true"
-        with pytest.raises(SystemExit):
+        with pytest.raises(Refusal):
             _quiet(C.save, root, cfg)
         assert "mutable" not in str(C.load(root)["f32_to_i16"])
 

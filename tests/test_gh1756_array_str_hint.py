@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from _jmrun import run_cli  # noqa: E402
 from just_makeit import _coerce, _docsync  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
+from just_makeit._report import Refusal  # noqa: E402
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -326,20 +327,20 @@ def _load_with(tmp_path: Path, row: dict, table: str = "init_params"):
 
 @pytest.mark.parametrize("value", [1, True, "", ["a"]])
 def test_a_non_string_hint_is_refused_at_load(tmp_path, capsys, value):
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         _load_with(
             tmp_path, {"name": "s", "type": "uint8_t[]", "str_hint": value}
         )
-    err = capsys.readouterr().err
+    err = refused.value.report()
     assert "[[fld.init_params]] s: str_hint" in err
     assert "must be a non-empty string" in err
 
 
 @pytest.mark.parametrize("ptype", ["int", "double", "path"])
 def test_a_hint_on_a_scalar_is_refused_at_load(tmp_path, capsys, ptype):
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         _load_with(tmp_path, {"name": "n", "type": ptype, "str_hint": "x"})
-    assert "str_hint is read only by an array" in capsys.readouterr().err
+    assert "str_hint is read only by an array" in refused.value.report()
 
 
 @pytest.mark.parametrize(
@@ -353,9 +354,9 @@ def test_a_hint_on_a_scalar_is_refused_at_load(tmp_path, capsys, ptype):
 )
 def test_a_hint_that_could_never_show_is_refused(tmp_path, capsys, row, table):
     """Each refuses a non-ndarray before ``jm_array_arg`` runs."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         _load_with(tmp_path, row | {"str_hint": "x"}, table)
-    assert "str_hint is never shown on" in capsys.readouterr().err
+    assert "str_hint is never shown on" in refused.value.report()
 
 
 def test_a_record_param_without_a_hint_still_loads(tmp_path):

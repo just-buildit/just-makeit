@@ -14,6 +14,9 @@ The contract held here, on a fragment-layout project built by jm itself:
 - `just-makeit manifest --json` prints that same dict,
 - the returned dict is the caller's to mutate,
 - `migrate-to-fragments` and `split-objects` tell the author to switch.
+- a manifest refusal reaches a library caller as a `Refusal` naming every
+  problem, with nothing printed, while the CLI (and `apply`'s own handlers)
+  still print one `error:` line per problem and exit 1.
 """
 
 import json
@@ -32,6 +35,7 @@ import just_makeit
 from just_makeit import _config as C
 from just_makeit._migrate import READER_NOTE
 from just_makeit._config import tomllib
+from just_makeit._report import Refusal
 
 
 def _ok(*args: str, cwd: Path) -> str:
@@ -109,15 +113,65 @@ def test_a_migration_points_at_the_reader(cmd, tmp_path):
     assert READER_NOTE not in _ok(cmd, cwd=root)
 
 
-def test_a_refusal_is_an_exception_not_an_exit(tmp_path):
-    """A refusal `load` reports by exiting reaches a script as ValueError."""
+@pytest.fixture
+def refused(tmp_path) -> Path:
+    """A fragment project whose two modules each name a platform jm does
+    not know: two problems `load` reports through `_config._refuse`."""
     _ok("new", "p", cwd=tmp_path)
     root = tmp_path / "p"
-    _ok("module", "filt", cwd=root)
-    frag = root / "modules" / "filt.toml"
-    frag.write_text(
-        frag.read_text(encoding="utf-8") + 'platforms = ["plan9"]\n',
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError):
-        just_makeit.load_manifest(root)
+    for mod in ("alpha", "beta"):
+        _ok("module", mod, cwd=root)
+    for mod in ("alpha", "beta"):
+        frag = root / "modules" / f"{mod}.toml"
+        frag.write_text(
+            frag.read_text(encoding="utf-8") + 'platforms = ["plan9"]\n',
+            encoding="utf-8",
+        )
+    return root
+
+
+def test_a_refusal_is_an_exception_not_an_exit(refused, capsys):
+    """A library caller gets a Refusal naming every problem, and nothing
+    on stderr: `_refuse` used to print each one and raise SystemExit."""
+    capsys.readouterr()
+    with pytest.raises(Refusal) as info:
+        just_makeit.load_manifest(refused)
+    with pytest.raises(Refusal):
+        C.load(refused)
+    errors = info.value.errors
+    assert len(errors) == 2, errors
+    assert any("[module.alpha]" in e for e in errors), errors
+    assert any("[module.beta]" in e for e in errors), errors
+    assert str(info.value) == "\n".join(errors)
+    assert capsys.readouterr().err == ""
+
+
+def test_the_cli_prints_every_error_line(refused):
+    """The command line still reads one `error:` line per problem, exit 1."""
+    res = run_cli("manifest", "--json", cwd=refused)
+    assert res.returncode == 1, res.stdout + res.stderr
+    lines = res.stderr.strip().splitlines()
+    assert len(lines) == 2, res.stderr
+    assert all(ln.startswith("error: ") for ln in lines), res.stderr
+    assert "[module.alpha]" in lines[0] or "[module.alpha]" in lines[1]
+    assert res.stdout == ""
+
+
+@pytest.mark.parametrize("seam", ["replay_project", "_owned_fragments"])
+def test_apply_prints_every_error_a_refusal_carries(
+    seam, monkeypatch, tmp_path
+):
+    """`apply`'s own handlers print a caught refusal as the CLI does: one
+    `error:` line per problem, exit 1."""
+    from just_makeit import _apply
+
+    _ok("new", "p", cwd=tmp_path)
+    root = tmp_path / "p"
+
+    def _refuses(*_a, **_k):
+        raise Refusal.of(["gh2440 one", "gh2440 two"])
+
+    monkeypatch.setattr(_apply, seam, _refuses)
+    res = run_cli("apply", cwd=root)
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "error: gh2440 one\nerror: gh2440 two" in res.stderr, res.stderr

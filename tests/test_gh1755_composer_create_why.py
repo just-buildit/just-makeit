@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from just_makeit import _composer  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _csym  # noqa: E402
+from just_makeit._report import Refusal  # noqa: E402
 from test_composer_codegen import _cfg  # noqa: E402
 from test_gh1711_composer_owned_pointer import (  # noqa: E402
     COMPOSER_TOML,
@@ -221,9 +222,9 @@ class TestTheKeys:
         """gh-1722's check: a name is truthy, and would render a call
         whose trailing argument the named function may not take."""
         C.save(tmp_path, _mod_cfg(create_why="wfm_make_why"))
-        with pytest.raises(SystemExit):
+        with pytest.raises(Refusal) as refused:
             C.load(tmp_path)
-        err = capsys.readouterr().err
+        err = refused.value.report()
         assert (
             f"[module.{MOD}] create_why = 'wfm_make_why' must be true or false"
         ) in err, err

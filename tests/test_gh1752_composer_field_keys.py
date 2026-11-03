@@ -18,8 +18,6 @@ exactly like the expected noise.
 
 from __future__ import annotations
 
-import contextlib
-import io
 import pathlib
 import sys
 
@@ -34,6 +32,7 @@ from just_makeit._keys import (  # noqa: E402
     project_field_keys,
     unknown_keys,
 )
+from just_makeit._report import Refusal  # noqa: E402
 from test_composer_codegen import _cfg  # noqa: E402
 
 MOD = "wfm_compose"
@@ -132,10 +131,9 @@ class TestTheDeclarationIsRefusedWhenWrong:
 
     def test_load_refuses_it(self, tmp_path: pathlib.Path) -> None:
         C.save(tmp_path, _declared(["cli", "doc"]))
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err), pytest.raises(SystemExit):
+        with pytest.raises(Refusal) as refused:
             C.load(tmp_path)
-        assert "composer_field_keys lists `doc`" in err.getvalue()
+        assert "composer_field_keys lists `doc`" in refused.value.report()
 
 
 def test_the_declaration_and_the_keys_survive_a_save(
