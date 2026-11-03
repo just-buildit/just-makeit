@@ -1,5 +1,56 @@
 ## [Unreleased]
 
+## [0.115.0] — 2026-11-03
+
+### Added
+
+- **`just_makeit.load_manifest(root)` and `just-makeit manifest --json`
+    read the merged manifest** (gh-2440). Under the fragment layout every
+    `[<obj>]` and `[module.X]` table lives in a file `include` names, so a
+    script parsing `just-makeit.toml` with `tomllib` found no modules and
+    could pass on nothing; the only reader that merges the fragments was the
+    private `_config.load`. `load_manifest` is now the public, documented
+    form of that same reader -- the manifest `jm apply` renders, templates
+    and `init_groups` expanded -- returning a dict the caller may change,
+    and raising `FileNotFoundError` for a directory with no manifest and
+    `ValueError` for one jm refuses. `just-makeit manifest --json` prints
+    the same dict for tools that are not Python. `migrate-to-fragments` and
+    `split-objects` end with a note pointing such scripts at both.
+
+### Fixed
+
+- **A view documents itself on both faces, not its parent or a synthetic
+    name** (gh-2406, gh-2408). A view's `.pyi` was rendered from a copy of
+    its parent's manifest table, while its binding reads several keys from
+    the view. A setter's Raises in the stub named
+    `<stem>__view_<v>_set_<prop>`, a function no header declares, where the
+    runtime names the parent's setter it calls. The stub's class Raises
+    quoted the parent's `create_error_message` and listed the parent's
+    warnings, and it advertised the parent's `stream()`, which a view does
+    not have. The runtime class docstring had no Raises or Warns at all, and
+    a view's `__enter__` / `__exit__` named the parent's class. Both faces
+    now read the view's own create error, warnings and class name, and the
+    stub spells the C stem the binding calls.
+
+- **`derived = ["nx"]` names a 1-D array init-param's length** (gh-2409).
+    gh-1097 made `derived` a list for a 2-D array's extents, and only the
+    2-D path read the list. On a 1-D array, an object's or a view's,
+    `jm apply` crashed with an `AttributeError` because the prototype said
+    `size_t ['nx']`. A one-name list now means what the bare string means.
+    A list naming more extents than the array has is refused, naming the
+    param. `jm script` used to write such a param as `derived:['nx']` and
+    now writes `derived:nx`.
+
+- **A manifest refusal is an exception a library caller can catch, naming
+    every problem** (gh-2440). Several of `load`'s checks (templates,
+    families, platforms, `why` keys, str hints, `retain`, ...) and a few in
+    `apply` and `upgrade` printed each error to stderr and raised
+    `SystemExit(1)`, so `just_makeit.load_manifest` on a bad manifest wrote
+    to the caller's stderr and exited. They now raise `Refusal` carrying
+    every deduplicated error (`.errors`), and nothing is printed until the
+    CLI reports it: still one `error:` line per problem, still exit 1.
+    `jm status` keeps its explanation when the internal replay refuses.
+
 ## [0.114.2] — 2026-11-01
 
 ### Fixed
