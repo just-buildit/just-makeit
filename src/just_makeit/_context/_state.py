@@ -719,7 +719,12 @@ def _build_no_state_init_ctx(
             # gh-900: length first, and named. The value is still the
             # `{pname}_len` local — only the declared parameter's name and
             # position differ, so nothing downstream of the call changes.
-            _dname = _derived_len[pname]
+            # gh-2409: through the one reading of `derived` the 2-D branch
+            # above uses, so the list spelling (`derived = ["nx"]`, gh-1097's
+            # form) names the extent rather than reaching the prototype as
+            # `size_t ['nx']`, and a list naming more extents than the array
+            # has is refused, naming the param.
+            (_dname,) = _ctor_extent_names(pname, _derived_len[pname], 1)
             return (
                 f"size_t {_dname}, const {adisp} *{pname}",
                 f" * @param {_dname}  Number of {adisp} elements in"
@@ -2723,7 +2728,7 @@ def _ctor_extent_names(pname: str, derived, ndim: int) -> "list[str]":
 
     Raises
     ------
-    ValueError
+    Refusal
         When the list's length does not match the array's rank. A ``derived``
         naming one extent of a 2-D array would silently drop the other from
         the declaration while the binding still passed it.
@@ -2734,10 +2739,12 @@ def _ctor_extent_names(pname: str, derived, ndim: int) -> "list[str]":
     ['ny', 'nx']
     >>> _ctor_extent_names("ref", "", 2)
     ['ref_dim0', 'ref_dim1']
+    >>> _ctor_extent_names("code", ["nx"], 1)
+    ['nx']
     >>> _ctor_extent_names("ref", ["ny"], 2)
     Traceback (most recent call last):
         ...
-    ValueError: init_param 'ref': `derived` names 1 extent but the array is 2-D. Name every extent, in the order create() takes them.
+    just_makeit._report.Refusal: init_param 'ref': `derived` names 1 extent but the array is 2-D. Name every extent, in the order create() takes them.
     """
     if isinstance(derived, str):
         derived = [derived] if derived else []
@@ -2745,7 +2752,7 @@ def _ctor_extent_names(pname: str, derived, ndim: int) -> "list[str]":
     if not names:
         return [f"{pname}_dim{i}" for i in range(ndim)]
     if len(names) != ndim:
-        raise ValueError(
+        raise Refusal(
             f"init_param '{pname}': `derived` names {len(names)} extent"
             f"{'' if len(names) == 1 else 's'} but the array is {ndim}-D."
             " Name every extent, in the order create() takes them."
