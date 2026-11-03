@@ -13,12 +13,14 @@ Two properties hold the fix:
 - **One implementation each.** ``just_makeit.components`` and
   ``just_makeit.Refusal`` ARE the private objects, re-exported, so a fix
   to either reaches both spellings.
-- **Public docs cite only public names.** Every ``just_makeit.<path>``
-  the three public docstrings cite in double backticks resolves through
-  the package namespace with no ``_``-prefixed segment, and none of them
-  cites a bare private module path (``_config.load``). The citations are
-  parsed out of the reST literal spans, not found by a substring search,
-  and each docstring must cite at least one public name, so the check
+- **Public docs cite only public names.** Every code reference the three
+  public docstrings make -- a ``literal``, a `default-role` span, or a
+  :role:`target` -- is parsed out of its span and matched whole, not found
+  by a substring search. A dotted path has no ``_``-prefixed segment, and
+  one rooted at ``just_makeit`` resolves through the package namespace. A
+  single name in a role or single backticks (`:meth:` ``report``) names a
+  public attribute of the documented object or of the package. Each
+  docstring must cite at least one ``just_makeit.<path>``, so the check
   cannot pass on a docstring it failed to read.
 """
 
@@ -36,21 +38,41 @@ from just_makeit import _config, _report
 #: The public API whose docstrings the citation check reads, by name.
 PUBLIC = ("load_manifest", "components", "Refusal")
 
-#: One reST inline literal: ``...``.
-_LITERAL = re.compile(r"``([^`]+)``")
+#: One reST code span: an optional ``:role:``, then ``literal`` or `tick`.
+#: The double-backtick branch comes first, so ``x`` is not read as `x`.
+_SPAN = re.compile(
+    r"(?::(?P<role>[\w.:-]+):)?(?:``(?P<lit>[^`]+)``|`(?P<tick>[^`]+)`)"
+)
 
-#: A dotted Python path, optionally called: ``just_makeit.load_manifest(root)``.
-_DOTTED = re.compile(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)(?:\(.*\))?")
+#: A Python path, optionally called: ``just_makeit.load_manifest(root)``.
+_PATH = re.compile(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\(.*\))?")
 
 
-def _dotted_citations(doc: str) -> list[str]:
-    """Every literal span of *doc* that is a whole dotted Python path."""
+def _citations(doc: str) -> list[tuple[str, bool]]:
+    """Each code reference in *doc*: ``(path, is_xref)``.
+
+    *is_xref* is true for a role or single-backtick span, which names an
+    object; a ``literal`` naming one bare word (``include``, ``_group``)
+    is a manifest key or a value, so only its dotted paths count. A
+    role's ``title <target>`` form is read for its target, and a leading
+    ``~`` or ``!`` is dropped.
+    """
     out = []
-    for span in _LITERAL.findall(doc):
-        m = _DOTTED.fullmatch(span.strip())
-        if m:
-            out.append(m.group(1))
+    for m in _SPAN.finditer(doc):
+        text = (m["lit"] or m["tick"]).strip()
+        is_xref = m["lit"] is None
+        if is_xref:
+            target = re.fullmatch(r".*<(.+)>", text)
+            text = (target[1] if target else text).lstrip("~!")
+        path = _PATH.fullmatch(text)
+        if path and (is_xref or "." in path[1]):
+            out.append((path[1], is_xref))
     return out
+
+
+def _private(segment: str) -> bool:
+    """A ``_name``, not a dunder such as ``__version__``."""
+    return segment.startswith("_") and not segment.endswith("__")
 
 
 def test_components_is_the_config_function():
@@ -82,23 +104,49 @@ def test_import_does_not_load_config():
 
 @pytest.mark.parametrize("name", PUBLIC)
 def test_public_docstring_cites_only_public_names(name):
-    doc = getattr(just_makeit, name).__doc__ or ""
-    cited = _dotted_citations(doc)
-    public = [c for c in cited if c.split(".")[0] == "just_makeit"]
-    assert public, f"just_makeit.{name}'s docstring cites no public name"
-    for path in cited:
+    obj = getattr(just_makeit, name)
+    cited = _citations(obj.__doc__ or "")
+    rooted = [p for p, _ in cited if p.split(".")[0] == "just_makeit"]
+    assert rooted, f"just_makeit.{name}'s docstring cites no public name"
+    for path, is_xref in cited:
         segments = path.split(".")
-        private = [s for s in segments if s.startswith("_")]
+        private = [s for s in segments if _private(s)]
         assert not private, (
-            f"just_makeit.{name}'s docstring cites ``{path}``: "
+            f"just_makeit.{name}'s docstring cites {path!r}: "
             f"{private} is private; cite the just_makeit.<name> re-export"
         )
+        if len(segments) == 1:
+            # A relative reference: a member of the documented object,
+            # or a name the package exports.
+            assert is_xref
+            assert hasattr(obj, path) or hasattr(just_makeit, path), (
+                f"just_makeit.{name}'s docstring cites {path!r}, which is "
+                f"neither its own attribute nor a just_makeit name"
+            )
+            continue
         if segments[0] != "just_makeit":
             continue
-        obj = just_makeit
+        target = just_makeit
         for seg in segments[1:]:
-            assert hasattr(obj, seg), (
-                f"just_makeit.{name}'s docstring cites ``{path}``, "
+            assert hasattr(target, seg), (
+                f"just_makeit.{name}'s docstring cites {path!r}, "
                 f"which does not resolve at {seg!r}"
             )
-            obj = getattr(obj, seg)
+            target = getattr(target, seg)
+
+
+def test_the_parser_reads_every_span_shape():
+    """Armed: each shape a private path could hide in is read as one."""
+    doc = (
+        "``a.b`` `c.d` :class:`e.f` :meth:`~g.h` :func:`t <i.j>` "
+        ":meth:`report` ``include`` ``x.y(root)``"
+    )
+    assert _citations(doc) == [
+        ("a.b", False),
+        ("c.d", True),
+        ("e.f", True),
+        ("g.h", True),
+        ("i.j", True),
+        ("report", True),
+        ("x.y", False),
+    ]
