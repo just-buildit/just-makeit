@@ -38,6 +38,118 @@ def __getattr__(name: str) -> str:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def load_manifest(root) -> dict:
+    """Read a project's merged manifest: the root plus every fragment.
+
+    This is the public, stable way for a project's own scripts to read
+    ``just-makeit.toml`` (gh-2440). Under the fragment layout the root
+    file holds only ``[project]`` and an ``include`` list of globs, and
+    each ``[<obj>]`` / ``[module.X]`` table lives in ``objects/*.toml`` /
+    ``modules/*.toml``; a ``tomllib`` parse of the root alone finds none
+    of them. This function returns the manifest every jm command works
+    from -- the same dict ``jm apply`` renders -- because it IS that
+    reader (``just_makeit._config.load``), not a second merge.
+
+    What that reader does, in order:
+
+    1. Parses ``just-makeit.toml`` and removes its ``include`` key.
+    2. Merges each file the ``include`` globs name, sorted by path:
+       component tables are added, a ``[module.X]`` is set once (a
+       conflicting redefinition is refused), and
+       ``[[module.X.functions]]`` rows concatenate across fragments.
+    3. Expands every ``[template.X]`` into its instance components and
+       every ``[[<obj>.init_groups]]`` into real ``init_params`` rows.
+    4. Resolves an omitted ``[project] version`` from ``pyproject.toml``.
+    5. Validates the result, refusing a manifest jm would refuse.
+
+    A key whose name starts with ``_`` (``_template``, ``_group``,
+    ``_version_deferred``, ...) is a marker jm adds while loading; it is
+    not part of the manifest schema and may change between releases.
+
+    Parameters
+    ----------
+    root : str or os.PathLike
+        The project root: the directory holding ``just-makeit.toml``.
+
+    Returns
+    -------
+    dict
+        The merged manifest, as plain TOML values (``dict``, ``list``,
+        ``str``, ``int``, ``float``, ``bool``). The dict is the caller's:
+        built afresh on every call, so mutating it changes neither the
+        project nor a later call's result. It is never written back.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *root* holds no ``just-makeit.toml``.
+    ValueError
+        If jm refuses the manifest (a module declared in two fragments, a
+        ``[project]`` table in a fragment, an unknown platform, ...), as
+        every jm command would. Most refusals carry their message; a few
+        print each error to stderr first, and the exception says so.
+
+    See Also
+    --------
+    The CLI form, for tools that are not Python: ``just-makeit manifest
+    --json`` prints this same dict as JSON on stdout.
+
+    Examples
+    --------
+    A fragment-layout project whose module lives in ``modules/``:
+
+    >>> import pathlib, shutil, tempfile
+    >>> from just_makeit import load_manifest
+    >>> root = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (root / "just-makeit.toml").write_text(
+    ...     'include = ["modules/*.toml"]\\n'
+    ...     '[project]\\nname = "demo"\\nversion = "0.1.0"\\n'
+    ... )
+    >>> (root / "modules").mkdir()
+    >>> _ = (root / "modules" / "filter.toml").write_text(
+    ...     '[module.filter]\\nobjects = []\\n'
+    ... )
+    >>> cfg = load_manifest(root)
+    >>> sorted(cfg["module"])
+    ['filter']
+    >>> cfg["project"]["name"]
+    'demo'
+    >>> "include" in cfg
+    False
+    >>> cfg["module"].clear()
+    >>> sorted(load_manifest(root)["module"])
+    ['filter']
+    >>> shutil.rmtree(root)
+    """
+    # Imported here, not at module level: `import just_makeit` is on every
+    # CLI invocation's path, and `_config` is not cheap (gh-764).
+    from pathlib import Path
+
+    from . import _config
+
+    root = Path(root)
+    path = root / _config.FILENAME
+    if not path.is_file():
+        # `_config.load` reads a missing manifest as an empty one, which
+        # is right for a jm command probing a directory and wrong for a
+        # caller who named a project: an empty dict would read as "no
+        # modules" and let a script pass on nothing.
+        raise FileNotFoundError(f"no {_config.FILENAME} in {root}")
+    try:
+        cfg = _config.load(root)
+    except SystemExit as exc:
+        # A few of `load`'s refusals print their errors and exit, which is
+        # right for a command and wrong for a library call: a script that
+        # asked for a dict should get an exception it can catch.
+        raise ValueError(
+            f"jm refused {path}; the errors are printed above on stderr"
+        ) from exc
+    # No copy: `load` parses the files afresh on every call and keeps no
+    # reference, so the dict is already the caller's.
+    # `tests/test_gh2440_load_manifest.py` holds that property.
+    return cfg
+
+
 def __dir__() -> list:
     """Keep ``__version__`` visible to `dir()` despite being lazy."""
     return sorted(set(globals()) | {"__version__"})

@@ -1036,8 +1036,46 @@ wrote it.
 just-makeit migrate-to-fragments
 ```
 
+A script of your own that parsed `just-makeit.toml` with `tomllib` read
+every table from that one file; after the move it finds none of them. The
+command ends with a note saying so: switch such a script to
+[`just-makeit manifest --json`](#just-makeit-manifest-json) or
+`just_makeit.load_manifest`.
+
 See [Migrating an existing
 project](../declarative-scaffolding.md#migrating-an-existing-project).
+
+______________________________________________________________________
+
+## `just-makeit manifest --json`
+
+Print the merged manifest as JSON on stdout: `just-makeit.toml` plus every
+fragment its `include` names, with templates and `init_groups` expanded --
+the manifest `jm apply` renders. Read-only. This is the stable way for a
+project's own tooling to read the manifest; parsing `just-makeit.toml`
+alone misses every table that lives in `objects/*.toml` or
+`modules/*.toml`.
+
+```sh
+just-makeit manifest --json | jq '.module | keys'
+```
+
+From Python, the same dict, with no subprocess:
+
+```python
+from just_makeit import load_manifest
+
+cfg = load_manifest(".")          # the project root
+for name, mod in cfg.get("module", {}).items():
+    print(name, mod.get("objects", []))
+```
+
+`load_manifest` raises `FileNotFoundError` when the directory has no
+`just-makeit.toml`, and `ValueError` for a manifest jm refuses; the CLI
+exits 1. The result is yours to change; nothing is written back. A key
+starting with `_` (`_template`, `_group`, ...) is a marker jm adds while
+loading, not part of the schema. `--json` is the only format, and it is
+required.
 
 ______________________________________________________________________
 
@@ -1047,7 +1085,8 @@ The objects-only subset of `migrate-to-fragments`: each `[<obj>]` section
 moves to `objects/<obj>.toml` and every `[module.X]` stays inline. Prefer
 `migrate-to-fragments` unless you want the modules to stay put. It re-sorts
 the root `CMakeLists.txt` wiring and the umbrella header the same way, and
-keeps every comment the same way.
+keeps every comment the same way. It ends with the same note about scripts that parse
+`just-makeit.toml` directly.
 
 ```sh
 just-makeit split-objects

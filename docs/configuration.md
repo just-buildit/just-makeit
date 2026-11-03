@@ -51,6 +51,13 @@ holds it changes. Pass `--no-fragments` to `jm new` to inline everything into
 a single `just-makeit.toml`, as older projects (and the "combined schema" tab
 below) do.
 
+To read the manifest from a script, read the **merged** one, not the root
+file: `just_makeit.load_manifest(root)` in Python, or
+[`just-makeit manifest --json`](commands/build.md#just-makeit-manifest-json)
+from anything else. Both return what every jm command works from, every
+fragment included; a `tomllib` parse of `just-makeit.toml` alone sees no
+object or module of a fragment-layout project.
+
 === "File tree"
 
     ```
