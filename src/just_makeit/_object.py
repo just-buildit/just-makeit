@@ -1327,7 +1327,11 @@ def fragment_destroy_ctx(
         ctx["ComponentW"],
         C.destroy_spec(cfg, obj),
         C.methods(cfg, obj),
-        class_name=C.class_name(cfg, obj) or "",
+        # gh-2408 follow-on: the class this fragment binds, which for a view
+        # is the VIEW's -- `C.class_name(cfg, obj)` is the parent's, so a
+        # view's runtime `__enter__` / `__exit__` prose named the parent
+        # while its stub named the view.
+        class_name=ctx["Component"],
         # gh-1323: so the destructor is the counterpart of whatever
         # `create_fn` names, not always `<comp>_destroy`. gh-1326: the
         # module path dropped it, so it derived nothing here even though
@@ -1555,7 +1559,22 @@ def _make_view_ctx(
     # same evidence, so the question is "is anything authored", not "is there
     # a summary".
     _vblk = (doc_blocks or {}).get(view["create_fn"])
-    if _vtp or (_vblk is not None and _vblk.params):
+    # gh-2408: and a declared failure or warning, read from the view's
+    # overlay -- the one place a view's create_error / warnings resolve for
+    # the stub beside this -- so its Raises quotes the message this binding
+    # raises. This face rendered no Raises or Warns at all, while the stub
+    # quoted the PARENT's message. Gated exactly as the parent's tp_doc is
+    # (`build_component_ctxs`).
+    _vsynth, _vcfg = S.view_overlay(cfg, obj, view)
+    _cls_raises, _cls_warns = S.class_diagnostics(_vcfg, _vsynth)
+    _cls_enums = C.enum_choice_docs(cfg, doc_blocks)
+    if (
+        _vtp
+        or (_vblk is not None and _vblk.params)
+        or _cls_raises
+        or _cls_warns
+        or _cls_enums
+    ):
         _vinit = C.view_init_params(cfg, obj, view)
         ctx["tp_doc"] = _build_ml_doc(
             S.class_runtime_doc(
@@ -1574,6 +1593,9 @@ def _make_view_ctx(
                     cfg, obj, init_params=_vinit
                 ),
                 create_fn=view["create_fn"],
+                raises=_cls_raises,
+                warns=_cls_warns,
+                enum_choices=_cls_enums,
                 csym=ctx["csym"],
             )
         )
