@@ -449,6 +449,10 @@ Commands:
   upgrade                       Migrate an older project's just-makeit.toml to the
                                 current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
+  manifest --json               Print the merged manifest (just-makeit.toml plus
+                                every fragment its include names) as JSON on
+                                stdout: what `apply` reads. From Python:
+                                just_makeit.load_manifest(root).
   adopt --check [--module ID | --all]
                                 Would a module object's binding fragment be safe as jm's
                                 content? The whole project unless --module narrows it.
@@ -1419,6 +1423,34 @@ def _main() -> None:
 
         _script.run(Path.cwd())
 
+    elif cmd == "manifest":
+        # gh-2440: the merged manifest for a tool that is not Python, through
+        # the one public reader, so the CLI and the API cannot disagree.
+        # `--json` is required rather than implied, so another format can
+        # be added later without changing what a bare `manifest` prints.
+        import json
+
+        from . import load_manifest
+
+        for a in args[1:]:
+            if a != "--json":
+                _refuse_argument(cmd, a)
+        if "--json" not in args[1:]:
+            print(
+                "error: 'manifest' requires --json; "
+                "see 'just-makeit manifest --help'.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        try:
+            cfg = load_manifest(Path.cwd())
+        except FileNotFoundError as exc:
+            print(f"error: {exc}.", file=sys.stderr)
+            sys.exit(1)
+        # `default=str`: TOML has date/time values, JSON does not; their
+        # ISO text is what `tomllib` parsed.
+        print(json.dumps(cfg, indent=2, default=str))
+
     elif cmd == "adopt":
         # gh-1448. `--check` reads; without it, adopt WRITES -- but only for
         # targets named on this command line (objects, `--module`, `--all`).
@@ -2147,6 +2179,7 @@ COMMANDS: "dict[str, str]" = {
     "view": MUTATING,
     "warning": MUTATING,
     "dry-run": READ_ONLY,
+    "manifest": READ_ONLY,
     "script": READ_ONLY,
     "status": READ_ONLY,
     "version": READ_ONLY,

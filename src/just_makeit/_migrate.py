@@ -35,6 +35,17 @@ from pathlib import Path
 
 from . import _config as C
 
+#: Printed once after a migration that moved anything (gh-2440). A project
+#: script that parsed ``just-makeit.toml`` with ``tomllib`` read every table
+#: from that one file; after the move it finds none and, unless it checks,
+#: passes on nothing. `split-objects` prints it too.
+READER_NOTE = (
+    "Note: tables now live in the files `include` names. A script that\n"
+    "parses just-makeit.toml directly sees none of them; read the merged\n"
+    "manifest with just_makeit.load_manifest(root) or\n"
+    "`just-makeit manifest --json` instead."
+)
+
 
 def run(root: Path) -> None:
     cfg_path = root / C.FILENAME
@@ -125,3 +136,5 @@ def run(root: Path) -> None:
         f"Done!  Moved {len(components)} object(s) and {len(modules)} "
         f"module(s) into fragments."
     )
+    print()
+    print(READER_NOTE)
