@@ -572,7 +572,7 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     names = native_names(cfg)
     new_dirs = {core_dir(name, cfg) for name in names}
     others = [_with_layout(cfg, v) for v in LAYOUTS if v != here]
-    seen_dirs, seen_files = _recorded_places(root, cfg, names)
+    seen_dirs, seen_files, weak_dirs = _recorded_places(root, cfg, names)
     out: "list[tuple[str, str]]" = []
 
     def add(pair: "tuple[str, str]") -> None:
@@ -603,12 +603,44 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
                 files |= {f.name for f in old_abs.iterdir() if f.is_file()}
             for f in sorted(files):
                 add((rel(f"{old_dir}/{f}", cfg), rel(f"{new_dir}/{f}", cfg)))
+        # A place only the sacred core's first include names moves jm's
+        # named headers and nothing else, and only when the header there
+        # carries this component's own guard: anything less is not jm's.
+        for old_dir in sorted(weak_dirs.get(name, ())):
+            if old_dir == new_dir or old_dir in old_dirs:
+                continue
+            if _guarded(root, cfg, old_dir, name):
+                for f in sorted(
+                    f.format(name) for f in NAMED_HEADERS.values()
+                ):
+                    add(
+                        (
+                            rel(f"{old_dir}/{f}", cfg),
+                            rel(f"{new_dir}/{f}", cfg),
+                        )
+                    )
     return out
+
+
+def _guarded(root: "Path | None", cfg: dict, d: str, name: str) -> bool:
+    """Whether ``<d>/<name>_core.h`` under *root*'s header root opens with
+    *name*'s own include guard, ``<STEM>_CORE_H`` (`_csym.upper`)."""
+    from . import _csym
+
+    if root is None:
+        return False
+    h = path(root, f"{d}/{NAMED_HEADERS['core'].format(name)}", cfg)
+    if not h.is_file():
+        return False
+    m = _csym._GUARD_LINE.search(
+        h.read_text(encoding="utf-8", errors="replace")
+    )
+    return bool(m) and m.group(1) == _csym.upper(cfg, name)
 
 
 def _recorded_places(
     root: "Path | None", cfg: dict, names: "list[str]"
-) -> "tuple[dict[str, set[str]], dict[str, set[str]]]":
+) -> "tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]":
     """Where jm last PUT each component's files, as its own records say
     (gh-2427).
 
@@ -621,25 +653,33 @@ def _recorded_places(
     read from the files jm wrote naming them, which still name them until
     the run that moves them re-renders:
 
-    - ``native/src/<name>/CMakeLists.txt``, jm's render: the core library's
-      include directory (``native/inc/<pkg>/<dir>``, ending in the name),
-      and the sources of jm's own ``test_<name>_core`` / ``bench_<name>_core``
-      targets;
-    - ``native/src/<name>/<name>_core.c``, scaffolded including its own
-      header first: that first ``#include``, when it names ``<name>_core.h``.
+    - ``native/src/<name>/CMakeLists.txt``, jm's render: the sources of
+      jm's own ``test_<name>_core`` / ``bench_<name>_core`` targets, whose
+      directory below its tree, when there is one, is the component's
+      directory in the mirroring layout that wrote it (the include
+      directory there says the same, so it is not read twice);
+    - under ``nested`` only, ``native/src/<name>/<name>_core.c``, scaffolded
+      including its own header first: that first ``#include``, when it
+      names ``<name>_core.h``. The file is sacred, so this is the author's
+      content and a weaker word: returned apart, as the third map. In flat
+      and mirrored a package moves nothing, so it is never read there.
 
     Only paths spelled for *name* itself, by its own files. Returns
-    ``({name: {header dir below the header root}}, {name: {project-relative
-    native file}})``; empty for a manifest owner, and for a project whose
-    headers are not under its package yet (an unprefixed header root may
-    hold a half-upgraded ``<pkg>/`` tree, gh-1583: `upgrade` moves that).
+    ``({name: {header dir}}, {name: {project-relative native file}},
+    {name: {header dir known only from the core's first include}})``, each
+    header dir below the header root; all empty for a manifest owner, and
+    for a project whose headers are not under its package yet (an
+    unprefixed header root may hold a half-upgraded ``<pkg>/`` tree,
+    gh-1583: `upgrade` moves that).
     """
     import re
 
     dirs: "dict[str, set[str]]" = {}
     files: "dict[str, set[str]]" = {}
+    weak: "dict[str, set[str]]" = {}
     if root is None or not prefixed(cfg):
-        return dirs, files
+        return dirs, files, weak
+    nested = layout(cfg) == "nested"
     pre = re.escape(prefix(cfg))
     src = Path(root) / "native" / "src"
     for name in names:
@@ -647,12 +687,6 @@ def _recorded_places(
         here = src / name
         cmake = here / "CMakeLists.txt"
         text = cmake.read_text(encoding="utf-8") if cmake.is_file() else ""
-        for m in re.finditer(
-            rf"\$\{{CMAKE_SOURCE_DIR\}}/{re.escape(INC_DIR)}/{pre}"
-            rf"((?:[\w.-]+/)*{n})\)",
-            text,
-        ):
-            dirs.setdefault(name, set()).add(m.group(1))
         kinds = "|".join(
             re.escape(f.format(name)) for _t, f in NATIVE_FILES.values()
         )
@@ -663,8 +697,22 @@ def _recorded_places(
             text,
         ):
             files.setdefault(name, set()).add(m.group(1))
+            # A test or bench below its tree's root was written by a
+            # mirroring layout, at the component's directory then.
+            sub = m.group(1).split("/", 2)[2].rsplit("/", 1)
+            if (
+                len(sub) == 2
+                and (sub[0] + "/").endswith(f"/{name}/")
+                or (len(sub) == 2 and sub[0] == name)
+            ):
+                dirs.setdefault(name, set()).add(sub[0])
+        # The sacred core's first include is the AUTHOR's content, not a
+        # record jm owns: read only under nested, where a package can move a
+        # module core whose CMakeLists names no include directory, and kept
+        # apart -- :func:`relocations` trusts it for the named headers only,
+        # behind the component's own guard.
         core = here / f"{name}_core.c"
-        if core.is_file():
+        if nested and core.is_file():
             first = re.search(
                 r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"',
                 core.read_text(encoding="utf-8", errors="replace"),
@@ -674,26 +722,8 @@ def _recorded_places(
                 rf"{pre}((?:[\w.-]+/)*{n})/{n}_core\.h", first.group(1)
             )
             if got:
-                dirs.setdefault(name, set()).add(got.group(1))
-    return dirs, files
-    core = NAMED_HEADERS["core"].format("")
-    hroot = header_root(root, cfg)
-    if hroot.is_dir():
-        for h in hroot.rglob("*" + core):
-            name = h.name[: -len(core)]
-            if h.parent.name == name and h.is_file():
-                dirs.setdefault(name, set()).add(
-                    h.parent.relative_to(hroot).as_posix()
-                )
-    for tree in HARNESS:
-        base = root / tree
-        if base.is_dir():
-            for c in base.rglob("*.c"):
-                if c.parent != base and c.is_file():
-                    files.setdefault(c.name, set()).add(
-                        c.relative_to(root).as_posix()
-                    )
-    return dirs, files
+                weak.setdefault(name, set()).add(got.group(1))
+    return dirs, files, weak
 
 
 #: gh-2423: the per-component slots :func:`native_slots` fills, which
