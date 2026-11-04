@@ -1143,3 +1143,32 @@ def test_a_header_path_is_asked_of_the_manifest_in_hand():
     assert hits == [], "\n".join(hits)
     probe = "def f(root, cfg, c):\n    return INC.core_h(root, c)\n"
     assert _placements_off_the_manifest(ast.parse(probe), "probe")
+
+
+def test_leaving_nested_and_changing_package_in_one_edit(tmp_path):
+    """The former package is in no manifest once both change: the tree is
+    read, so the headers still come home to the flat layout."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    _jm(root, "module", "radio")
+    _jm(root, "object", "fir", "--module", "radio")
+    _jm(root, "apply")
+    frag = root / "modules" / "radio.toml"
+    frag.write_text(
+        frag.read_text(encoding="utf-8").replace(
+            "[module.radio]\n", '[module.radio]\npackage = "front"\n'
+        ),
+        encoding="utf-8",
+    )
+    _declare(root, "")
+    _jm(root, "apply")
+    assert (
+        INC.core_h(root, "fir") == INC.header_root(root) / "fir" / "fir_core.h"
+    )
+    assert INC.core_h(root, "fir").is_file()
+    hroot = INC.header_root(root)
+    assert (hroot / "radio" / "radio_core.h").is_file()  # the flat cname dir
+    for left in ("radio/fir", "radio/radio", "front"):
+        assert not (hroot / left).exists(), left
+    _jm(root, "status", "--check")

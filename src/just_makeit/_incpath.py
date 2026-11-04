@@ -621,12 +621,18 @@ def _former_places(
     a former :func:`core_dir` gives, so a file of the author's in some other
     directory is not mistaken for one.
 
-    Returns ``({name: {header dir below the header root}}, {file name:
-    {project-relative path}})``; both empty for a manifest owner.
+    Read in every layout, so leaving ``nested`` and changing a ``package``
+    in one edit still moves everything; only for a prefixed project
+    (gh-1583). Returns ``({name: {header dir below the header root}},
+    {file name: {project-relative path}})``; both empty otherwise, and for
+    a manifest owner.
     """
     dirs: "dict[str, set[str]]" = {}
     files: "dict[str, set[str]]" = {}
-    if root is None:
+    # An unprefixed project's header root may hold a prefixed tree's
+    # ``<pkg>/`` (an upgrade half done, gh-1583): that is another header
+    # layout, not a former place, and `upgrade` decides what moves there.
+    if root is None or not prefixed(cfg):
         return dirs, files
     core = NAMED_HEADERS["core"].format("")
     hroot = header_root(root, cfg)
