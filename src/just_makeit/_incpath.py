@@ -536,9 +536,10 @@ def _project_root(owner: Owner) -> "Path | None":
 
 def relocations(owner: Owner) -> "list[tuple[str, str]]":
     """``(old, new)`` for every generated native file and header, from
-    where each OTHER layout puts it -- or, read off the tree, where a
-    former :func:`core_dir` left it (:func:`_former_places`) -- to where
-    *owner*'s does (gh-2423, gh-2427).
+    where each OTHER layout puts it -- or where jm's own records say it
+    last put it (:func:`_recorded_places`: a former ``package``, never a
+    file matched by its shape) -- to where *owner*'s does (gh-2423,
+    gh-2427).
 
     Read as renames by :mod:`_createonly` (gh-1472): `apply` does not create
     a file at *new* beside one at *old*, `upgrade` and `apply` move it --
@@ -571,7 +572,7 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     names = native_names(cfg)
     new_dirs = {core_dir(name, cfg) for name in names}
     others = [_with_layout(cfg, v) for v in LAYOUTS if v != here]
-    seen_dirs, seen_files = _former_places(root, cfg)
+    seen_dirs, seen_files = _recorded_places(root, cfg, names)
     out: "list[tuple[str, str]]" = []
 
     def add(pair: "tuple[str, str]") -> None:
@@ -583,8 +584,8 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
             new = native_rel(kind, name, cfg)
             for other in others:
                 add((native_rel(kind, name, other), new))
-            for old in sorted(seen_files.get(fname.format(name), ())):
-                if old.rsplit("/", 2)[-2] == name:
+            for old in sorted(seen_files.get(name, ())):
+                if old.rsplit("/", 1)[-1] == fname.format(name):
                     add((old, new))
         new_dir = core_dir(name, cfg)
         old_dirs = [core_dir(name, other) for other in others]
@@ -605,35 +606,76 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     return out
 
 
-def _former_places(
-    root: "Path | None", cfg: dict
+def _recorded_places(
+    root: "Path | None", cfg: dict, names: "list[str]"
 ) -> "tuple[dict[str, set[str]], dict[str, set[str]]]":
-    """Where the tree at *root* holds a component's files today, whatever
-    the manifest now says (gh-2427).
+    """Where jm last PUT each component's files, as its own records say
+    (gh-2427).
 
     A component's directory moves for more reasons than a layout switch:
-    under ``nested`` a module's declared ``package`` decides it too, and a
-    manifest edit there leaves the header, test and bench where the old
-    package put them, with nothing in the manifest saying where that was.
-    So the tree is read: each ``<dir>/<name>/<name>_core.h`` below the
-    header root, and each generated native file whose directory is named
-    for its component (``.../<name>/test_<name>_core.c``) -- the shape only
-    a former :func:`core_dir` gives, so a file of the author's in some other
-    directory is not mistaken for one.
+    under ``nested`` a module's ``package`` decides it too, and once the
+    manifest's ``package`` changes nothing in the manifest says where the
+    old one put the header, test and bench. Those places are not guessed by
+    matching file names in the tree -- a vendored copy of another jm
+    project has exactly jm's shapes, and is not this project's. They are
+    read from the files jm wrote naming them, which still name them until
+    the run that moves them re-renders:
 
-    Read in every layout, so leaving ``nested`` and changing a ``package``
-    in one edit still moves everything; only for a prefixed project
-    (gh-1583). Returns ``({name: {header dir below the header root}},
-    {file name: {project-relative path}})``; both empty otherwise, and for
-    a manifest owner.
+    - ``native/src/<name>/CMakeLists.txt``, jm's render: the core library's
+      include directory (``native/inc/<pkg>/<dir>``, ending in the name),
+      and the sources of jm's own ``test_<name>_core`` / ``bench_<name>_core``
+      targets;
+    - ``native/src/<name>/<name>_core.c``, scaffolded including its own
+      header first: that first ``#include``, when it names ``<name>_core.h``.
+
+    Only paths spelled for *name* itself, by its own files. Returns
+    ``({name: {header dir below the header root}}, {name: {project-relative
+    native file}})``; empty for a manifest owner, and for a project whose
+    headers are not under its package yet (an unprefixed header root may
+    hold a half-upgraded ``<pkg>/`` tree, gh-1583: `upgrade` moves that).
     """
+    import re
+
     dirs: "dict[str, set[str]]" = {}
     files: "dict[str, set[str]]" = {}
-    # An unprefixed project's header root may hold a prefixed tree's
-    # ``<pkg>/`` (an upgrade half done, gh-1583): that is another header
-    # layout, not a former place, and `upgrade` decides what moves there.
     if root is None or not prefixed(cfg):
         return dirs, files
+    pre = re.escape(prefix(cfg))
+    src = Path(root) / "native" / "src"
+    for name in names:
+        n = re.escape(name)
+        here = src / name
+        cmake = here / "CMakeLists.txt"
+        text = cmake.read_text(encoding="utf-8") if cmake.is_file() else ""
+        for m in re.finditer(
+            rf"\$\{{CMAKE_SOURCE_DIR\}}/{re.escape(INC_DIR)}/{pre}"
+            rf"((?:[\w.-]+/)*{n})\)",
+            text,
+        ):
+            dirs.setdefault(name, set()).add(m.group(1))
+        kinds = "|".join(
+            re.escape(f.format(name)) for _t, f in NATIVE_FILES.values()
+        )
+        for m in re.finditer(
+            r"\$\{CMAKE_SOURCE_DIR\}/((?:"
+            + "|".join(re.escape(t) for t in HARNESS)
+            + rf")(?:/[\w.-]+)*/(?:{kinds}))(?![\w.])",
+            text,
+        ):
+            files.setdefault(name, set()).add(m.group(1))
+        core = here / f"{name}_core.c"
+        if core.is_file():
+            first = re.search(
+                r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"',
+                core.read_text(encoding="utf-8", errors="replace"),
+                re.M,
+            )
+            got = first and re.fullmatch(
+                rf"{pre}((?:[\w.-]+/)*{n})/{n}_core\.h", first.group(1)
+            )
+            if got:
+                dirs.setdefault(name, set()).add(got.group(1))
+    return dirs, files
     core = NAMED_HEADERS["core"].format("")
     hroot = header_root(root, cfg)
     if hroot.is_dir():
