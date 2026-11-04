@@ -8,7 +8,7 @@
 #include <numpy/arrayobject.h>
 #include "/*<<inc_prefix>>*/clib_common.h"
 
-#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<core_include>>*/"
 
 /*<<jm_array_arg_c>>*/
 

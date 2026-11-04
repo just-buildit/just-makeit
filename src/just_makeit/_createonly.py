@@ -227,7 +227,7 @@ RULES: tuple[Rule, ...] = (
     Rule("README.md", AUTHOR, "the author's prose."),
     Rule("docs/**", AUTHOR, "the author's prose."),
     Rule(
-        "inc:*/*_core.h",
+        "inc:**/*_core.h",
         AUTHOR,
         "sacred: the author's struct and inline step() body.",
     ),
@@ -318,13 +318,13 @@ RULES: tuple[Rule, ...] = (
     # gh-1659: these two were classified only by that glob crossing `/`,
     # which is why neither had a rule of its own.
     Rule(
-        "inc:*/*_bridge.h",
+        "inc:**/*_bridge.h",
         RECONCILED,
         "a composer module's seam prototypes (gh-998): jm's, reconciled from"
         " the replay like the module's `_ext.c`.",
     ),
     Rule(
-        "inc:*/*_procglobal.h",
+        "inc:**/*_procglobal.h",
         RECONCILED,
         "the `process_global` contract header (gh-1117), reconciled from the"
         " replay (gh-1140).",

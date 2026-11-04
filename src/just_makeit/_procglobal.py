@@ -350,9 +350,10 @@ def contract_decls(cfg: dict, comp: str, indent: int = 0) -> "list[str]":
     return [pad + d.format(csym=csym) for d, _ in _CONTRACT]
 
 
-def header_name(comp: str) -> str:
-    """Relative path of the generated contract header for *comp*."""
-    return f"{comp}/{comp}_procglobal.h"
+def header_name(comp: str, owner: "INC.Owner") -> str:
+    """Relative path of the generated contract header for *comp*, below
+    the header root: beside its ``_core.h`` in every layout (gh-2427)."""
+    return INC.named_header("procglobal", comp, owner)
 
 
 def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
@@ -486,7 +487,7 @@ def orphan_headers(root: Path, cfg: dict) -> "list[str]":
         rel
         for comp in C.components(cfg)
         if not is_process_global(cfg, comp)
-        and (root / (rel := INC.rel(header_name(comp), root))).is_file()
+        and (root / (rel := INC.rel(header_name(comp, root), root))).is_file()
     ]
 
 

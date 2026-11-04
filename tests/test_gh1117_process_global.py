@@ -338,6 +338,7 @@ class TestEveryEmitterSplicesIt:
                 "procglobal": "    /*HERE*/\n",
                 **INC.ctx_slots({"project": {"name": "p", "schema": "7"}}),
                 **CSYM.slots({"project": {"name": "p"}}, "flag"),
+                **INC.native_slots({"project": {"name": "p"}}, "flag"),
             },
         )
         assert "    /*HERE*/" in out

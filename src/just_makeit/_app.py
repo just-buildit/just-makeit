@@ -1453,6 +1453,8 @@ def _build_fn_ctx(
         "package": pkg,
         "version": C.project_version(cfg),
         "module": module,
+        # gh-2427: the module core's header, where the layout puts it.
+        "core_include": INC.core_include(C.module_paths(module).cname, cfg),
         "function": function,
         "argparse_state_args": _argparse_block(fn_flags),
         "arg_parse_block": arg_parse_block,
@@ -1780,6 +1782,8 @@ def _build_ctx(
         "component": component,
         "Component": Component,
         **CSYM.slots(cfg, component),
+        # gh-2427: the component's header, where the layout puts it.
+        "core_include": INC.core_include(component, cfg),
         "argparse_state_args": _argparse_block(argparse_flags),
         "py_io_loop": py_io_loop,
         "arg_parse_block": arg_parse_block,

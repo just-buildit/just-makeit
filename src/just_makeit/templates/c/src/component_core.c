@@ -1,4 +1,4 @@
-#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<core_include>>*/"
 /*<<state_struct_def>>*/
 /*<<csym>>*/_state_t *
 /*<<create_name>>*/(/*<<create_params>>*/)

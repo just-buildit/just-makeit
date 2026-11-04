@@ -1966,6 +1966,8 @@ def _write_module_test_and_bench(
     ctx = {
         # gh-1583: the tests include the project's headers, in its layout.
         **INC.ctx_slots(root),
+        # gh-2427: and the module core's header, where the layout puts it.
+        **INC.native_slots(root, cname),
         "module": cname,
         "scaffold_checks": str(checks),
         "module_fn_smoke_calls": smoke,
@@ -3294,6 +3296,12 @@ def run(
         vars_ = [] if _has_opaque else [("gain", "double", "0.0")]
     else:
         vars_ = list(state_vars)
+    # gh-2427: the manifest as it will read once this object joins its
+    # module. In the nested layout an object's header, and every native file
+    # mirroring it, sit under the module's path (`_incpath.core_dir`), and
+    # the manifest records the membership only after the files below are
+    # written -- so where they go is asked of this owner, not of the disk.
+    layout_owner = C.with_module_member(cfg, module, object_name)
     ctx = _make_object_ctx(
         object_name,
         module,
@@ -3319,7 +3327,7 @@ def run(
         ],
         block_sizes=C.project_bench_block_sizes(cfg),
         create_fn=create_fn,
-        owner=cfg,
+        owner=layout_owner,
         # gh-1761: no `str_hints` here. This ctx renders the module object's
         # create-only files, never its binding fragment: that is
         # `_regenerate_module`'s, which reads the hint back from the
@@ -3528,7 +3536,7 @@ def run(
     # C library files (OBJECT lib only — no standalone Python module).
     # Object creation is create-only (the verb errors on a duplicate name),
     # so the sacred files are written fresh — never spliced.
-    core_h_path = INC.core_h(root, comp)
+    core_h_path = INC.core_h(root, comp, layout_owner)
     _write(
         core_h_path,
         r(R.COMPONENT_CORE_H),
@@ -3564,7 +3572,10 @@ def run(
     # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).
     _copy_external_cmake_blocks(root, comp, obj_cmake_path)
     # gh-806: via the one renderer that stamps the scaffold check count.
-    _write(INC.native_path(root, "test", comp), R.render_component_test_c(ctx))
+    _write(
+        INC.native_path(root, "test", comp, layout_owner),
+        R.render_component_test_c(ctx),
+    )
     # gh-934: the shared assertion harness, written once per project like
     # jm_bench.h beside the benchmarks. Create-only -- `apply` never rewrites
     # it, so a project may extend it.
@@ -3574,7 +3585,7 @@ def run(
         _write(jm_test_h, r(R.JM_TEST_H))
 
     _write(
-        INC.native_path(root, "bench", comp),
+        INC.native_path(root, "bench", comp, layout_owner),
         r(R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C),
     )
     jm_bench_h = root / INC.harness_rel(INC.BENCH_DIR)
@@ -3687,7 +3698,7 @@ def run(
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
         _write(
-            INC.path(root, _procglobal.header_name(comp)),
+            INC.path(root, _procglobal.header_name(comp, layout_owner)),
             _pg_h,
         )
     # gh-541/gh-544: persist the destructor contract BEFORE the aggregate

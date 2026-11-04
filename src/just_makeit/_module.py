@@ -114,16 +114,6 @@ def run(
         # gh-1591: the stem the module's C symbols and guard derive from.
         **CSYM.slots(cfg, cname),
     }
-    # C header and implementation for module-level functions
-    _write(
-        INC.core_h(root, cname),
-        T.render(T.MODULE_CORE_H, mod_ctx),
-    )
-    _write(
-        root / "native" / "src" / cname / f"{cname}_core.c",
-        T.render(T.MODULE_CORE_C, mod_ctx),
-    )
-
     # Ensure C test and benchmark directories exist (even before any objects
     # or functions are added — users may want to write their own C tests).
     for subdir in INC.HARNESS:
@@ -166,6 +156,20 @@ def run(
         ] = "true"
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
+
+    # C header and implementation for module-level functions. After the
+    # manifest records the module: in the nested layout its header's
+    # directory is the module's package (gh-2427), which only the manifest
+    # holding it can say.
+    mod_ctx.update(INC.native_slots(cfg, cname))
+    _write(
+        INC.core_h(root, cname, cfg),
+        T.render(T.MODULE_CORE_H, mod_ctx),
+    )
+    _write(
+        root / "native" / "src" / cname / f"{cname}_core.c",
+        T.render(T.MODULE_CORE_C, mod_ctx),
+    )
 
     # gh-2070: the module's glue -- `<cname>_ext.c`, its CMakeLists, the
     # re-export `__init__.py`, the `.pyi` and the root CMakeLists wiring --

@@ -1,5 +1,5 @@
 /* bench_/*<<component>>*/_core.c — no step() to benchmark */
-#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<core_include>>*/"
 #include "jm_bench.h"
 #include <stdio.h>
 #include <stdlib.h>

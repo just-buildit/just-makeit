@@ -1941,7 +1941,7 @@ def run(
     # stale. `_apply._reconcile_procglobal_headers` is what makes it true.
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
-        _write(INC.path(root, _procglobal.header_name(comp)), _pg_h)
+        _write(INC.path(root, _procglobal.header_name(comp, root)), _pg_h)
 
     build = C.build_system(cfg)
 

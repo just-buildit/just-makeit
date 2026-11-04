@@ -534,11 +534,11 @@ def test_upgrade_makes_the_same_moves(tmp_path):
 def test_an_unknown_layout_is_refused_before_anything_is_written(tmp_path):
     root = tmp_path / "p"
     _jm(tmp_path, "new", "p")
-    _declare(root, "nested")
+    _declare(root, "sideways")
     r = run_cli("object", "gain", cwd=root)
     assert r.returncode != 0
-    assert "[project] layout 'nested'" in r.stderr, r.stderr
+    assert "[project] layout 'sideways'" in r.stderr, r.stderr
     assert not (root / INC.TESTS_DIR).exists()
     r = run_cli("apply", cwd=root)
     assert r.returncode != 0
-    assert "[project] layout 'nested'" in r.stderr, r.stderr
+    assert "[project] layout 'sideways'" in r.stderr, r.stderr

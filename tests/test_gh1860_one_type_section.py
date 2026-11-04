@@ -104,7 +104,12 @@ def test_module_section_includes_its_own_core_header():
         for t in set(re.findall(r"<<(\w+)>>", R.COMPONENT_TYPE_SECTION))
         - {"type_core_include"}
     }
-    ctx.update(inc_prefix="pkg/", component="gain")
+    ctx.update(
+        inc_prefix="pkg/",
+        component="gain",
+        # gh-2427: the header's spelling, as `_incpath.native_slots` gives it.
+        core_include="pkg/gain/gain_core.h",
+    )
     out = R.render_type_section(ctx)
     include = '#include "pkg/gain/gain_core.h"'
     assert out.count(include) == 1
