@@ -188,7 +188,7 @@ def run(
     )
     create_params = vctx["create_params"]
 
-    core_h = INC.core_h(root, object_name)
+    core_h = INC.core_h(root, object_name, cfg)
     proto = f"{csym}_state_t *{create_fn}({create_params});"
     if _inject_decls_into_core_h(
         core_h, object_name, [proto], family=C.core_family(cfg, object_name)

@@ -6255,7 +6255,7 @@ def materialize(
     _bridge_h = render_bridge_h(cfg, module)
     if _bridge_h:
         _write(
-            INC.path(root, bridge_h(module, root)),
+            INC.path(root, bridge_h(module, cfg)),
             _bridge_h,
         )
     _write(

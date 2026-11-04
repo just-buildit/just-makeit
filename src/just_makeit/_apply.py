@@ -1314,7 +1314,7 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
         impl_body = _resolve_impl(sec, octx, root, f"object {comp}")
         if impl_body is None:
             continue
-        h_path = INC.core_h(root, comp)
+        h_path = INC.core_h(root, comp, cfg)
         if not h_path.exists():
             continue
         original = h_path.read_text(encoding="utf-8")
@@ -1396,7 +1396,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
         csym = CSYM.stem(cfg, comp)
         void_decl = re.compile(rf"\bvoid(\s+){csym}_destroy\b")
 
-        h_path = INC.core_h(root, comp)
+        h_path = INC.core_h(root, comp, cfg)
         if h_path.exists():
             text = h_path.read_text(encoding="utf-8")
             new = void_decl.sub(rf"int\g<1>{csym}_destroy", text)
@@ -2825,7 +2825,7 @@ def missing_family_headers(root: Path, cfg: dict) -> "list[tuple[str, str]]":
     out = []
     for comp in C.components(cfg):
         fam = C.core_family(cfg, comp)
-        if fam and not (INC.inc_dir(root) / fam.header).is_file():
+        if fam and not INC.resolve(root, fam.header).is_file():
             out.append((comp, fam.header))
     return out
 
@@ -3018,7 +3018,7 @@ def _sync_aggregates(
             if C.is_composer_module(cfg, mod) and _composer.render_bridge_h(
                 cfg, mod
             ):
-                glue.append(INC.rel(_composer.bridge_h(mod, root), root))
+                glue.append(INC.rel(_composer.bridge_h(mod, cfg), root))
             for rel in glue:
                 if _overwrite_if_changed(
                     root / rel,
@@ -3078,7 +3078,7 @@ def _sync_aggregates(
         # also create-only. The module header accumulates function
         # declarations: inject any the manifest implies that are missing,
         # splice-free.
-        rel = INC.core_rel(mp.cname, root)
+        rel = INC.core_rel(mp.cname, cfg)
         if _refresh_core_h_decls(root / rel, temp_root / rel, mp.cname):
             if root / rel not in updated:
                 updated.append(root / rel)
@@ -3088,7 +3088,7 @@ def _sync_aggregates(
         from ._init import _inject_includes_into_core_h
 
         for obj in C.module_objects(cfg, mod):
-            obj_h = INC.core_h(root, obj)
+            obj_h = INC.core_h(root, obj, cfg)
             if _inject_includes_into_core_h(
                 obj_h,
                 obj,
@@ -3255,7 +3255,7 @@ def _sync_aggregates(
         # `jm regenerate` for a structural change. _core.c is fully sacred:
         # never in any merge loop, created once by _sync_missing.
         if _refresh_component_core_h(root, temp_root, cfg, comp):
-            updated.append(root / INC.core_rel(comp, root))
+            updated.append(root / INC.core_rel(comp, cfg))
 
     # gh-627: a module object's header needs the accessor prototype for a
     # manifest-declared property, or the freshly spliced binding calls an
@@ -3276,7 +3276,7 @@ def _sync_aggregates(
             continue
         if comp not in cfg:
             continue
-        core_h = INC.core_h(root, comp)
+        core_h = INC.core_h(root, comp, cfg)
         if not core_h.exists():
             continue
         # gh-1310: a macro-family member takes the FULL reconcile a standalone
@@ -3382,7 +3382,7 @@ def _reconcile_procglobal_headers(
         elif only_mod is not None:
             if comp not in C.module_objects(cfg, only_mod):
                 continue
-        rel = INC.rel(_procglobal.header_name(comp, root), root)
+        rel = INC.rel(_procglobal.header_name(comp, cfg), root)
         if not (temp_root / rel).is_file():
             continue
         if _overwrite_if_changed(
@@ -3415,7 +3415,7 @@ def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
     in the temp header is not swept along. `variable_output` methods declare a
     sibling `_max_out`, and it is as undeclared as its method.
     """
-    temp_h = INC.core_h(temp_root, comp)
+    temp_h = INC.core_h(temp_root, comp, cfg)
     if not temp_h.exists():
         return []
     from ._init import _core_h_decl_lines
@@ -3498,7 +3498,7 @@ def _refresh_component_core_h(
     property fix. Extending it to module objects is a migration in its own
     right. Returns True when the file changed.
     """
-    rel = INC.core_rel(comp, root)
+    rel = INC.core_rel(comp, cfg)
     changed = _refresh_core_h_decls(
         root / rel, temp_root / rel, comp, C.core_family(cfg, comp)
     )
@@ -4091,7 +4091,7 @@ def _apply_manifest(
             f" writes no PyInit_ there: it keeps its OWN copy of {_comp}'s"
             f" process-global state while every other module shares one."
             f" Add the adopt to its hand-written binding —"
-            f" {INC.rel(_procglobal.header_name(_comp, root), root)} shows it, with the"
+            f" {INC.rel(_procglobal.header_name(_comp, cfg), root)} shows it, with the"
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
@@ -4185,7 +4185,15 @@ def _apply_manifest(
     # replay, which reads the real tree's headers (their docs, the author's
     # bodies) from where this layout puts them. Every refusal above has been
     # asked; the command's `_undo` record covers a later one (gh-1867).
+    _moves = [(o, n) for o, n in INC.relocations(root) if (root / o).is_file()]
     relocated = _relocate_native(root)
+    # A moved file is the same file at a new path: it carries its "before"
+    # digest along, so the report says what changed in it, not `create`
+    # (gh-2427; a rename prints its own `renamed` line).
+    for _old, _new in _moves:
+        if (root / _new).is_file() and not (root / _old).exists():
+            _before.setdefault(_new, _before.get(_old))
+            _before.pop(_old, None)
     if any(p.name.endswith(".toml") for p in relocated):
         # A manifest string named a moved header and was respelled.
         cfg = C.load(root)
@@ -4454,7 +4462,7 @@ def _apply_manifest(
             _report.warn(
                 f"{obj}.{name} default mismatch: "
                 f"manifest={m_dflt!r} header={h_dflt!r} "
-                f"({INC.core_rel(obj, root)}) — one of these is stale",
+                f"({INC.core_rel(obj, cfg)}) — one of these is stale",
                 gates=True,
                 stream=sys.stdout,
                 indent="  ",

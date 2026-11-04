@@ -88,7 +88,7 @@ def run(root: Path) -> None:
         print(f"  create  {simd_h}")
 
     for comp in comps:
-        core_h = INC.core_h(root, comp)
+        core_h = INC.core_h(root, comp, cfg)
         if core_h.exists():
             if _patch_core_h(core_h, comp):
                 print(f"  update  {core_h}")

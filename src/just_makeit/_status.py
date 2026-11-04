@@ -2239,7 +2239,7 @@ def run(
         for obj, name, m_dflt, h_dflt in drift_entries:
             print(
                 f"  ! {obj}.{name}: manifest={m_dflt!r} header={h_dflt!r} "
-                f"({INC.core_rel(obj, root)})"
+                f"({INC.core_rel(obj, cfg)})"
             )
         print(
             "  One of these is stale — jm can't tell which; update the "

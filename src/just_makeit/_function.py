@@ -480,7 +480,7 @@ def run(
 
     fn_rel, core_rel, _ = homes(cfg, cname, fn_name)
     fn_c = root / fn_rel
-    core_h = INC.core_h(root, cname)
+    core_h = INC.core_h(root, cname, cfg)
 
     core_c = root / core_rel
     # gh-247: a module may opt to keep all its free functions in one TU

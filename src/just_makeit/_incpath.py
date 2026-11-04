@@ -296,6 +296,20 @@ def inc_dir(root: Path) -> Path:
     return Path(root) / INC_DIR
 
 
+def resolve(root: Path, spelling: str) -> Path:
+    """The file ``#include "<spelling>"`` finds through the ``-I`` directory
+    of the project at *root* -- *spelling* as written, by jm or the author.
+
+    The one join onto the ``-I`` root outside this module (gh-2427): a
+    component's own header is placed by :func:`core_h`, never by joining a
+    name here, and ``tests/test_gh2427_nested_layout.py`` refuses that.
+
+    >>> resolve(Path("p"), "p/fir/fir_core.h").as_posix()
+    'p/native/inc/p/fir/fir_core.h'
+    """
+    return inc_dir(root) / spelling
+
+
 def header_root(root: Path, owner: "Owner | None" = None) -> Path:
     """The directory the project at *root* writes its own headers into.
 
@@ -522,7 +536,9 @@ def _project_root(owner: Owner) -> "Path | None":
 
 def relocations(owner: Owner) -> "list[tuple[str, str]]":
     """``(old, new)`` for every generated native file and header, from
-    where each OTHER layout puts it to where *owner*'s does (gh-2423).
+    where each OTHER layout puts it -- or, read off the tree, where a
+    former :func:`core_dir` left it (:func:`_former_places`) -- to where
+    *owner*'s does (gh-2423, gh-2427).
 
     Read as renames by :mod:`_createonly` (gh-1472): `apply` does not create
     a file at *new* beside one at *old*, `upgrade` and `apply` move it --
@@ -554,20 +570,26 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     root = _project_root(owner)
     names = native_names(cfg)
     new_dirs = {core_dir(name, cfg) for name in names}
+    others = [_with_layout(cfg, v) for v in LAYOUTS if v != here]
+    seen_dirs, seen_files = _former_places(root, cfg)
     out: "list[tuple[str, str]]" = []
-    for value in LAYOUTS:
-        if value == here:
-            continue
-        other = _with_layout(cfg, value)
-        for name in names:
-            for kind in NATIVE_FILES:
-                pair = (
-                    native_rel(kind, name, other),
-                    native_rel(kind, name, cfg),
-                )
-                if pair[0] != pair[1] and pair not in out:
-                    out.append(pair)
-            old_dir, new_dir = core_dir(name, other), core_dir(name, cfg)
+
+    def add(pair: "tuple[str, str]") -> None:
+        if pair[0] != pair[1] and pair not in out:
+            out.append(pair)
+
+    for name in names:
+        for kind, (_tree, fname) in NATIVE_FILES.items():
+            new = native_rel(kind, name, cfg)
+            for other in others:
+                add((native_rel(kind, name, other), new))
+            for old in sorted(seen_files.get(fname.format(name), ())):
+                if old.rsplit("/", 2)[-2] == name:
+                    add((old, new))
+        new_dir = core_dir(name, cfg)
+        old_dirs = [core_dir(name, other) for other in others]
+        old_dirs += sorted(seen_dirs.get(name, ()))
+        for old_dir in dict.fromkeys(old_dirs):
             if old_dir == new_dir:
                 continue
             files = {f.format(name) for f in NAMED_HEADERS.values()}
@@ -579,10 +601,51 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
             ):
                 files |= {f.name for f in old_abs.iterdir() if f.is_file()}
             for f in sorted(files):
-                pair = (rel(f"{old_dir}/{f}", cfg), rel(f"{new_dir}/{f}", cfg))
-                if pair not in out:
-                    out.append(pair)
+                add((rel(f"{old_dir}/{f}", cfg), rel(f"{new_dir}/{f}", cfg)))
     return out
+
+
+def _former_places(
+    root: "Path | None", cfg: dict
+) -> "tuple[dict[str, set[str]], dict[str, set[str]]]":
+    """Where the tree at *root* holds a component's files today, whatever
+    the manifest now says (gh-2427).
+
+    A component's directory moves for more reasons than a layout switch:
+    under ``nested`` a module's declared ``package`` decides it too, and a
+    manifest edit there leaves the header, test and bench where the old
+    package put them, with nothing in the manifest saying where that was.
+    So the tree is read: each ``<dir>/<name>/<name>_core.h`` below the
+    header root, and each generated native file whose directory is named
+    for its component (``.../<name>/test_<name>_core.c``) -- the shape only
+    a former :func:`core_dir` gives, so a file of the author's in some other
+    directory is not mistaken for one.
+
+    Returns ``({name: {header dir below the header root}}, {file name:
+    {project-relative path}})``; both empty for a manifest owner.
+    """
+    dirs: "dict[str, set[str]]" = {}
+    files: "dict[str, set[str]]" = {}
+    if root is None:
+        return dirs, files
+    core = NAMED_HEADERS["core"].format("")
+    hroot = header_root(root, cfg)
+    if hroot.is_dir():
+        for h in hroot.rglob("*" + core):
+            name = h.name[: -len(core)]
+            if h.parent.name == name and h.is_file():
+                dirs.setdefault(name, set()).add(
+                    h.parent.relative_to(hroot).as_posix()
+                )
+    for tree in HARNESS:
+        base = root / tree
+        if base.is_dir():
+            for c in base.rglob("*.c"):
+                if c.parent != base and c.is_file():
+                    files.setdefault(c.name, set()).add(
+                        c.relative_to(root).as_posix()
+                    )
+    return dirs, files
 
 
 #: gh-2423: the per-component slots :func:`native_slots` fills, which
