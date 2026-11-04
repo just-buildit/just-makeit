@@ -163,11 +163,12 @@ def _object_paths(
     from . import _invariants
 
     paths = [
-        INC.path(root, obj),
+        # Its header directory, wherever the layout puts it (gh-2427).
+        INC.path(root, INC.core_dir(obj, cfg)),
         root / "native" / "src" / obj,
         # The C test, the gh-1361 link table and the C bench, where the
         # project's layout puts them (gh-2423).
-        *(INC.native_path(root, kind, obj) for kind in INC.NATIVE_FILES),
+        *(INC.native_path(root, kind, obj, cfg) for kind in INC.NATIVE_FILES),
         # gh-1978: jm's element contract (gh-1404). Left behind, it imported
         # the removed class, and the project's Python tests failed to
         # collect on a tree `status --check` called clean.
@@ -222,12 +223,12 @@ def _strip_cmake_module(root: Path, module: str) -> None:
     _strip_cmake_object(root, module)
 
 
-def _strip_umbrella(root: Path, pkg: str, obj: str) -> None:
+def _strip_umbrella(root: Path, cfg: dict, pkg: str, obj: str) -> None:
     """Drop the object's #include line from the umbrella header."""
     umbrella = INC.path(root, f"{pkg}.h")
     if not umbrella.exists():
         return
-    include = f'#include "{INC.core_include(obj, root)}"\n'
+    include = f'#include "{INC.core_include(obj, cfg)}"\n'
     text = umbrella.read_text(encoding="utf-8")
     # `_init.insert_umbrella_include` writes the line AND a blank one after
     # it; take both back, or the blank one is left over and the next `apply`
@@ -264,19 +265,35 @@ def _strip_pkg_init(root: Path, pkg: str, obj: str, Component: str) -> None:
         print(f"  update  {init}")
 
 
-def _prune_native_dirs(root: Path, name: str) -> None:
+def _prune_native_dirs(root: Path, cfg: dict, name: str) -> None:
     """Remove *name*'s mirrored native directories once they are empty.
 
     gh-2423: in the mirrored layout a component's C test and bench sit in a
     directory of their own; with them gone, an empty one is clutter jm
     made. One still holding anything -- the author's own test beside jm's
     -- stays, and a tree's root (the flat layout's directory) is never one.
+
+    gh-2427: in the nested layout that directory, and the header's, sit
+    below the module's path; each ancestor left empty goes too, up to the
+    tree's root.
     """
-    for tree in INC.HARNESS:
-        d = root / INC.native_dir(tree, name, root)
-        if d != root / tree and d.is_dir() and not any(d.iterdir()):
-            d.rmdir()
-            print(f"  remove  {d}/")
+    dirs = [
+        (root / INC.native_dir(tree, name, cfg), root / tree)
+        for tree in INC.HARNESS
+    ]
+    dirs.append(
+        (INC.path(root, INC.core_dir(name, cfg)), INC.header_root(root, cfg))
+    )
+    for d, top in dirs:
+        while d != top and top in d.parents:
+            # Already gone (`_rm` took the header directory whole): its
+            # parent may still be left empty.
+            if d.exists():
+                if not d.is_dir() or any(d.iterdir()):
+                    break
+                d.rmdir()
+                print(f"  remove  {d}/")
+            d = d.parent
 
 
 def _remove_object_files(
@@ -285,9 +302,9 @@ def _remove_object_files(
     """Delete every generated file/dir for *obj* and strip its build wiring."""
     for path in _object_paths(root, cfg, pkg, obj, module):
         _rm(path)
-    _prune_native_dirs(root, obj)
+    _prune_native_dirs(root, cfg, obj)
     _strip_cmake_object(root, obj)
-    _strip_umbrella(root, pkg, obj)
+    _strip_umbrella(root, cfg, pkg, obj)
     if module is None:
         _strip_pkg_init(root, pkg, obj, _to_title(obj))
 
@@ -463,8 +480,14 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     # The module's own files (cname for the flat native dir, pypath for the
     # nested Python subpackage).
     mp = C.module_paths(module)
-    _rm(INC.path(root, mp.cname))
+    _rm(INC.path(root, INC.core_dir(mp.cname, cfg)))
     _rm(root / "native" / "src" / mp.cname)
+    # A function-bearing module's own C test and bench (gh-1034), as the
+    # last function's removal takes them (gh-1479): left behind, they
+    # included the header removed above.
+    for kind in INC.NATIVE_FILES:
+        _rm(INC.native_path(root, kind, mp.cname, cfg))
+    _prune_native_dirs(root, cfg, mp.cname)
     # gh-523: a module that landed inside a *shared* package owns only its own
     # .pyi there — the package belongs to whoever else lives in it (doppler's
     # `wfm` also holds Synth / Composer). Deleting the directory would take
@@ -962,8 +985,8 @@ def _remove_function_core_harness(
     if C.collocated_object(cfg, module):
         return
     for kind in INC.NATIVE_FILES:
-        _rm(INC.native_path(root, kind, cname))
-    _prune_native_dirs(root, cname)
+        _rm(INC.native_path(root, kind, cname, cfg))
+    _prune_native_dirs(root, cfg, cname)
 
 
 def _regenerate_object_bindings(

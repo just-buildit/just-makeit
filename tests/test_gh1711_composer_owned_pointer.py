@@ -169,7 +169,7 @@ class TestEveryFaceCallsItsFunction:
             "char *frame_format(const wfm_frame_desc_t *);",
         ):
             assert proto in h, proto
-        inc = f'#include "{_composer.bridge_h(MOD)}"'
+        inc = f'#include "{_composer.bridge_h(MOD, cfg)}"'
         assert inc in _composer.render_ext(cfg, MOD)
         assert inc in _composer.render_cli(cfg, MOD)
         # ...and so `c_prefix` never reads them as derived names (gh-1694).

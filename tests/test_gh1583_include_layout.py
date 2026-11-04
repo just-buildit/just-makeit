@@ -115,6 +115,14 @@ def test_only_incpath_spells_the_include_root():
 _LOCAL_HEADERS = {"jm_test.h", "jm_bench.h"}
 _INCLUDE = re.compile(r'^#include "([^"]+)"', re.M)
 
+#: gh-2427: a component's ``_core.h`` is spelled whole by
+#: `_incpath.core_include`, prefix and directory both, through this slot.
+_CORE_INCLUDE = "/*<<core_include>>*/"
+
+
+def _owner_spelled(target: str) -> bool:
+    return target.startswith("/*<<inc_prefix>>*/") or target == _CORE_INCLUDE
+
 
 def test_every_template_include_of_a_generated_header_uses_the_slot():
     bad = []
@@ -125,11 +133,12 @@ def test_every_template_include_of_a_generated_header_uses_the_slot():
             target = m.group(1)
             if target in _LOCAL_HEADERS:
                 continue
-            if not target.startswith("/*<<inc_prefix>>*/"):
+            if not _owner_spelled(target):
                 bad.append(f'{path.relative_to(PKG)}: #include "{target}"')
     assert bad == [], (
         "an #include of a header under the include root starts with "
-        '"/*<<inc_prefix>>*/":\n' + "\n".join(bad)
+        '"/*<<inc_prefix>>*/", or is a component\'s own `_core.h` spelled '
+        '"/*<<core_include>>*/" (gh-2427):\n' + "\n".join(bad)
     )
 
 
@@ -241,4 +250,5 @@ def test_the_gates_see_what_they_guard():
         if p.is_file()
         for m in _INCLUDE.finditer(p.read_text(encoding="utf-8"))
     ]
-    assert sum(t.startswith("/*<<inc_prefix>>*/") for t in includes) >= 10
+    assert sum(t.startswith("/*<<inc_prefix>>*/") for t in includes) >= 5
+    assert sum(t == _CORE_INCLUDE for t in includes) >= 10

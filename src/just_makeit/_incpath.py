@@ -208,13 +208,33 @@ def include(name: str, owner: Owner) -> str:
     return prefix(owner) + name
 
 
+#: gh-2427: every header jm names after a component or a module's cname, by
+#: kind, ``{}`` being the name. Each sits in the name's :func:`core_dir`, and
+#: :func:`named_header` is the one spelling of where.
+NAMED_HEADERS: "dict[str, str]" = {
+    "core": "{}_core.h",
+    "bridge": "{}_bridge.h",
+    "procglobal": "{}_procglobal.h",
+}
+
+
+def named_header(kind: str, name: str, owner: Owner) -> str:
+    """*name*'s header of *kind* (a :data:`NAMED_HEADERS` key), relative to
+    the header root.
+
+    >>> named_header("bridge", "dsp_mix", {"project": {"name": "p"}})
+    'dsp_mix/dsp_mix_bridge.h'
+    """
+    return f"{core_dir(name, owner)}/{NAMED_HEADERS[kind].format(name)}"
+
+
 def core_include(comp: str, owner: Owner) -> str:
     """How an ``#include`` spells *comp*'s ``_core.h``.
 
     >>> core_include("gain", {"project": {"name": "my_proj", "schema": "8"}})
     'my_proj/gain/gain_core.h'
     """
-    return include(f"{core_dir(comp)}/{comp}_core.h", owner)
+    return include(named_header("core", comp, owner), owner)
 
 
 def rel(name: str, owner: Owner) -> str:
@@ -232,7 +252,7 @@ def core_rel(comp: str, owner: Owner) -> str:
     >>> core_rel("gain", {"project": {"name": "my_proj", "schema": "8"}})
     'native/inc/my_proj/gain/gain_core.h'
     """
-    return rel(f"{core_dir(comp)}/{comp}_core.h", owner)
+    return rel(named_header("core", comp, owner), owner)
 
 
 def layout_free(rel_posix: str, owner: Owner) -> str:
@@ -292,32 +312,69 @@ def path(root: Path, name: str, owner: "Owner | None" = None) -> Path:
 
 def core_h(root: Path, comp: str, owner: "Owner | None" = None) -> Path:
     """*comp*'s ``_core.h`` under the project at *root*."""
-    return path(root, f"{core_dir(comp)}/{comp}_core.h", owner)
+    return path(
+        root,
+        named_header("core", comp, root if owner is None else owner),
+        owner,
+    )
 
 
-def core_dir(comp: str) -> str:
+def core_dir(comp: str, owner: Owner) -> str:
     """*comp*'s directory below the header root, POSIX-spelled.
 
     gh-2423. THE answer to "where does this component live in the C tree":
     its ``_core.h`` is :func:`core_rel`'s ``<header root>/<core_dir>/``,
-    and in the mirrored layout its generated test and benchmark sit at the
-    same ``<core_dir>`` below their own trees (:func:`native_rel`). A
-    component's header does not follow its module today -- an object of
-    ``[module."dsp.filters"]`` keeps ``native/inc/<pkg>/fir/`` -- so neither
-    does anything that mirrors it; the day it does, it moves here and every
-    mirror moves with it.
+    and in the mirrored and nested layouts its generated test and benchmark
+    sit at the same ``<core_dir>`` below their own trees (:func:`native_rel`).
 
-    >>> core_dir("fir")
+    gh-2427: in the ``nested`` layout it follows the component's module --
+    ``<module package>/<comp>``, the package being
+    :func:`_config.module_package_resolved`, the one answer to where the
+    module's Python lives -- so the C header tree and the Python package
+    read as one path. *comp* may be a module's cname as well as an object:
+    a function-bearing module's own core, a composer's bridge, and the
+    collocated object (which IS the module's core) all land in the module's
+    directory by the same rule. Everywhere else, and for a standalone
+    component, it is the component's own name.
+
+    >>> core_dir("fir", {"project": {"name": "p"}})
     'fir'
+    >>> o = {"project": {"name": "p", "layout": "nested"},
+    ...      "module": {"rx.ss.burst": {"objects": ["fir"]}}, "fir": {}}
+    >>> core_dir("fir", o)
+    'rx/ss/burst/fir'
+    >>> core_dir("rx_ss_burst", o)
+    'rx/ss/burst/rx_ss_burst'
     """
-    return comp
+    cfg = manifest(owner)
+    if layout(cfg) != "nested":
+        return comp
+    package = _module_package_of(cfg, comp)
+    return f"{package}/{comp}" if package else comp
+
+
+def _module_package_of(cfg: dict, name: str) -> str:
+    """The resolved package of the module *name* belongs to: the module
+    listing it as an object, else the module whose cname it is; ``""`` for
+    a standalone component (gh-2427)."""
+    from . import _config as C
+
+    module = C.module_of(cfg, name)
+    if not module:
+        module = next(
+            (m for m in C.modules(cfg) if C.module_paths(m).cname == name),
+            "",
+        )
+    return C.module_package_resolved(cfg, module) if module else ""
 
 
 #: gh-2423: ``[project] layout``. ``flat`` (the default) writes every
 #: generated native test and benchmark directly in its tree; ``mirrored``
 #: writes each one under the tree at its component's :func:`core_dir`, the
-#: directory its header has below ``native/inc/<pkg>/``.
-LAYOUTS = ("flat", "mirrored")
+#: directory its header has below ``native/inc/<pkg>/``. gh-2427: ``nested``
+#: mirrors the same way, and moves that directory itself under the
+#: component's module path (:func:`core_dir`).
+LAYOUTS = ("flat", "mirrored", "nested")
 
 #: The trees jm writes a component's C test and C benchmark into. Each holds
 #: its harness header at its root, in every layout: a nested file finds it
@@ -364,6 +421,16 @@ def layout(owner: Owner) -> str:
     return raw
 
 
+def mirrors(owner: Owner) -> bool:
+    """Whether *owner*'s generated native tests and benchmarks sit under
+    their component's :func:`core_dir` -- every layout but ``flat``.
+
+    >>> mirrors({"project": {"name": "p", "layout": "nested"}})
+    True
+    """
+    return layout(owner) != "flat"
+
+
 def native_dir(tree: str, comp: str, owner: Owner) -> str:
     """The directory *comp*'s file in *tree* sits in, project-relative.
 
@@ -373,8 +440,8 @@ def native_dir(tree: str, comp: str, owner: Owner) -> str:
     >>> native_dir(TESTS_DIR, "fir", o)
     'native/tests/fir'
     """
-    if layout(owner) == "mirrored":
-        return f"{tree}/{core_dir(comp)}"
+    if mirrors(owner):
+        return f"{tree}/{core_dir(comp, owner)}"
     return tree
 
 
@@ -419,9 +486,7 @@ def native_sources(root: Path, tree: str, owner: Owner) -> "list[Path]":
     base = Path(root) / tree
     if not base.is_dir():
         return []
-    found = (
-        base.rglob("*.c") if layout(owner) == "mirrored" else base.glob("*.c")
-    )
+    found = base.rglob("*.c") if mirrors(owner) else base.glob("*.c")
     return sorted(p for p in found if p.is_file())
 
 
@@ -439,33 +504,85 @@ def native_names(cfg: dict) -> "list[str]":
     return names
 
 
+def _with_layout(cfg: dict, value: str) -> dict:
+    """*cfg* with its ``[project] layout`` replaced by *value*."""
+    return {**cfg, "project": {**(cfg.get("project") or {}), "layout": value}}
+
+
+def _project_root(owner: Owner) -> "Path | None":
+    """The project root a path *owner* sits in; ``None`` for a manifest."""
+    if isinstance(owner, dict):
+        return None
+    here = Path(owner).resolve()
+    for d in (here, *here.parents):
+        if (d / "just-makeit.toml").is_file():
+            return d
+    return None
+
+
 def relocations(owner: Owner) -> "list[tuple[str, str]]":
-    """``(old, new)`` for every generated native file, from where the OTHER
-    layout puts it to where *owner*'s does (gh-2423).
+    """``(old, new)`` for every generated native file and header, from
+    where each OTHER layout puts it to where *owner*'s does (gh-2423).
 
     Read as renames by :mod:`_createonly` (gh-1472): `apply` does not create
     a file at *new* beside one at *old*, `upgrade` and `apply` move it --
     the author's bytes come along -- and `status` names *old* until it is
-    gone. Both directions from one table: switching back moves them back.
+    gone. Every direction from one table: switching back moves them back.
+
+    gh-2427: a header moves when its :func:`core_dir` does (into or out of
+    the ``nested`` layout). Each header jm names after the component
+    (:data:`NAMED_HEADERS`) moves, and -- when *owner* is a path, so the
+    tree can be read -- every other file directly in the old directory too:
+    it is the component's directory, and an author's header beside the core
+    belongs with it. Files only, never a subdirectory, so an object of
+    ``fir.sub`` moving ``fir/`` to ``fir/sub/fir/`` does not move a
+    directory into itself; and nothing but the named headers is read from
+    an old directory that is an ancestor of some component's new one,
+    because what else sits there is not this component's.
 
     >>> o = {"project": {"name": "p", "layout": "mirrored"}, "fir": {}}
     >>> relocations(o)[0]
     ('native/tests/test_fir_core.c', 'native/tests/fir/test_fir_core.c')
+    >>> o = {"project": {"name": "p", "layout": "nested", "schema": "8"},
+    ...      "module": {"dsp": {"objects": ["fir"]}}, "fir": {}}
+    >>> ("native/inc/p/fir/fir_core.h", "native/inc/p/dsp/fir/fir_core.h") in (
+    ...     relocations(o))
+    True
     """
     cfg = manifest(owner)
     here = layout(cfg)
-    other = {
-        **cfg,
-        "project": {
-            **(cfg.get("project") or {}),
-            "layout": next(v for v in LAYOUTS if v != here),
-        },
-    }
-    return [
-        (native_rel(kind, name, other), native_rel(kind, name, cfg))
-        for name in native_names(cfg)
-        for kind in NATIVE_FILES
-    ]
+    root = _project_root(owner)
+    names = native_names(cfg)
+    new_dirs = {core_dir(name, cfg) for name in names}
+    out: "list[tuple[str, str]]" = []
+    for value in LAYOUTS:
+        if value == here:
+            continue
+        other = _with_layout(cfg, value)
+        for name in names:
+            for kind in NATIVE_FILES:
+                pair = (
+                    native_rel(kind, name, other),
+                    native_rel(kind, name, cfg),
+                )
+                if pair[0] != pair[1] and pair not in out:
+                    out.append(pair)
+            old_dir, new_dir = core_dir(name, other), core_dir(name, cfg)
+            if old_dir == new_dir:
+                continue
+            files = {f.format(name) for f in NAMED_HEADERS.values()}
+            old_abs = None if root is None else path(root, old_dir, cfg)
+            if (
+                old_abs is not None
+                and old_abs.is_dir()
+                and not any(d.startswith(old_dir + "/") for d in new_dirs)
+            ):
+                files |= {f.name for f in old_abs.iterdir() if f.is_file()}
+            for f in sorted(files):
+                pair = (rel(f"{old_dir}/{f}", cfg), rel(f"{new_dir}/{f}", cfg))
+                if pair not in out:
+                    out.append(pair)
+    return out
 
 
 #: gh-2423: the per-component slots :func:`native_slots` fills, which
@@ -478,6 +595,8 @@ NATIVE_SLOTS = (
     "native_test_inc",
     "native_test_inc_object",
     "native_test_inc_make",
+    "core_include",
+    "core_dir",
 )
 
 
@@ -508,7 +627,7 @@ def native_slots(owner: Owner, comp: str) -> "dict[str, str]":
     >>> s["native_bench_c"], s["native_test_inc_make"]
     ('native/benchmarks/fir/bench_fir_core.c', ' -Inative/tests')
     """
-    nested = layout(owner) == "mirrored"
+    nested = mirrors(owner)
     return {
         "native_test_c": native_rel("test", comp, owner),
         "native_symbols_c": native_rel("symbols", comp, owner),
@@ -518,6 +637,11 @@ def native_slots(owner: Owner, comp: str) -> "dict[str, str]":
         "native_test_inc": _cmake_continuation(12) if nested else "",
         "native_test_inc_object": _cmake_continuation(35) if nested else "",
         "native_test_inc_make": f" -I{TESTS_DIR}" if nested else "",
+        # gh-2427: how an ``#include`` spells the component's ``_core.h``,
+        # and its directory below the header root (a CMake template leads
+        # it with ``native/inc/<<inc_prefix>>``).
+        "core_include": core_include(comp, owner),
+        "core_dir": core_dir(comp, owner),
     }
 
 

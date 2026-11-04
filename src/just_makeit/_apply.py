@@ -1647,7 +1647,7 @@ def reconcile_backend_makefile(
 
 
 def _relocate_native(root: Path) -> "list[Path]":
-    """Move each generated native test and bench to *root*'s layout.
+    """Move each generated native test, bench and header to *root*'s layout.
 
     gh-2423. The layout's moves are `_createonly` renames
     (:func:`_incpath.relocations`), and `upgrade` makes every rename; `apply`
@@ -1668,27 +1668,53 @@ def _relocate_native(root: Path) -> "list[Path]":
     the source left (:func:`_include_left_dirs`), as jm's own test target
     is given ``native/tests``.
 
-    Returns the build files respelled, for the run's change report.
+    gh-2427: a header moved into or out of the nested layout takes every
+    ``#include`` (and manifest string) naming it along, through the one
+    respeller of a header move, `_upgrade.respell_includes` -- the sacred
+    ``_core.c`` includes its own header, so without it a switched project
+    does not compile. Only a spelling that resolves to a moved header is
+    touched.
+
+    Returns the files respelled, for the run's change report.
     """
     from . import _upgrade
 
     moves = INC.relocations(root)
-    _upgrade._rename_superseded(
-        root, [(o, n) for o, n in moves if (root / o).is_file()]
-    )
+    pending = [(o, n) for o, n in moves if (root / o).is_file()]
+    _upgrade._rename_superseded(root, pending)
     landed = [
         (o, n)
         for o, n in moves
         if (root / n).is_file() and not (root / o).exists()
     ]
-    # Switching back to flat empties the mirrored directories: an empty one
+    # Switching back to flat empties the mirrored directories, and a move out
+    # of the nested layout the module's directories above them: an empty one
     # is jm's leftover, and a tree's own root is never removed.
+    tops = {root / t for t in INC.HARNESS} | {INC.header_root(root)}
     for old, _new in landed:
         d = (root / old).parent
-        if d.name and d not in {root / t for t in INC.HARNESS}:
-            if d.is_dir() and not any(d.iterdir()):
-                d.rmdir()
+        while d not in tops and root in d.parents:
+            if not d.is_dir() or any(d.iterdir()):
+                break
+            d.rmdir()
+            d = d.parent
     respelled: "list[Path]" = []
+    if not landed:
+        return respelled
+    # The headers THIS run moved: the respell walks every C file of the
+    # project (18.7 s on doppler's tree, measured 2026-11-04), so it is paid
+    # once, by the run that moves, not by every `apply` of a settled tree.
+    inc_head = INC.INC_DIR + "/"
+    headers = {
+        o[len(inc_head) :]: n[len(inc_head) :]
+        for o, n in landed
+        if o.startswith(inc_head) and (o, n) in pending
+    }
+    if headers:
+        respelled += [
+            root / rel for rel in _upgrade.respell_includes(root, headers)
+        ]
+    landed = [(o, n) for o, n in landed if not o.startswith(inc_head)]
     if not landed:
         return respelled
     # gh-2429: each component CMakeLists' `<d>_extra.cmake` too, asked of
@@ -2992,7 +3018,7 @@ def _sync_aggregates(
             if C.is_composer_module(cfg, mod) and _composer.render_bridge_h(
                 cfg, mod
             ):
-                glue.append(INC.rel(_composer.bridge_h(mod), root))
+                glue.append(INC.rel(_composer.bridge_h(mod, root), root))
             for rel in glue:
                 if _overwrite_if_changed(
                     root / rel,
@@ -3356,7 +3382,7 @@ def _reconcile_procglobal_headers(
         elif only_mod is not None:
             if comp not in C.module_objects(cfg, only_mod):
                 continue
-        rel = INC.rel(_procglobal.header_name(comp), root)
+        rel = INC.rel(_procglobal.header_name(comp, root), root)
         if not (temp_root / rel).is_file():
             continue
         if _overwrite_if_changed(
@@ -4065,7 +4091,7 @@ def _apply_manifest(
             f" writes no PyInit_ there: it keeps its OWN copy of {_comp}'s"
             f" process-global state while every other module shares one."
             f" Add the adopt to its hand-written binding —"
-            f" {INC.rel(_procglobal.header_name(_comp), root)} shows it, with the"
+            f" {INC.rel(_procglobal.header_name(_comp, root), root)} shows it, with the"
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
@@ -4150,6 +4176,19 @@ def _apply_manifest(
     # gh-1474: before anything below writes, so the report can be decided by
     # the bytes each file ends with rather than by who wrote to it.
     _before = _tree_digests(root)
+
+    # gh-2423: a native test or bench still where another `[project]
+    # layout` puts it moves to where this one does, before anything is
+    # materialised -- so no scaffold lands beside the author's copy, and the
+    # CMake reconciled below names a file that is there. A move, not a
+    # re-render: the bytes are theirs. gh-2427: and a header, before the
+    # replay, which reads the real tree's headers (their docs, the author's
+    # bodies) from where this layout puts them. Every refusal above has been
+    # asked; the command's `_undo` record covers a later one (gh-1867).
+    relocated = _relocate_native(root)
+    if any(p.name.endswith(".toml") for p in relocated):
+        # A manifest string named a moved header and was respelled.
+        cfg = C.load(root)
 
     from . import _object as _obj_mod
 
@@ -4242,12 +4281,6 @@ def _apply_manifest(
             _backend = reconcile_backend_makefile(root, cfg, temp_root)
             if _backend:
                 print(_backend)
-            # gh-2423: a native test or bench still where the other
-            # `[project] layout` puts it moves to where this one does,
-            # before anything is materialised -- so no scaffold lands beside
-            # the author's copy, and the CMake reconciled below names a file
-            # that is there. A move, not a re-render: the bytes are theirs.
-            relocated = _relocate_native(root)
             created = _sync_missing(temp_root, root, _owned | _scaffolds)
             impl_patched = _patch_step_impls(root, cfg)
             # gh-541: promote an already-scaffolded component's sacred
@@ -4434,7 +4467,7 @@ def _apply_manifest(
 
     for obj in C.components(cfg):
         if _linkcheck.write(root, cfg, obj):
-            updated.append(_linkcheck.symbols_file(root, obj))
+            updated.append(_linkcheck.symbols_file(root, obj, cfg))
 
     # gh-1404: the element contract between a writer and a reader. Beside
     # the link-check table above and for the same reason -- the scaffolded

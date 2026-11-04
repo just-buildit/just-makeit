@@ -2075,6 +2075,26 @@ def module_objects(cfg: dict, module: str) -> list[str]:
     return list(cfg.get("module", {}).get(module, {}).get("objects", []))
 
 
+def with_module_member(cfg: dict, module: "str | None", obj: str) -> dict:
+    """*cfg* as it reads once *obj* is a member of *module* -- *cfg* itself
+    when *module* is falsy or already lists it. A copy; *cfg* is untouched.
+
+    For a writer that places an object's files before the manifest records
+    the membership (gh-2427: in the nested layout the module decides where
+    the object's header goes, `_incpath.core_dir`).
+
+    >>> with_module_member({"module": {"m": {"objects": []}}}, "m", "x")
+    {'module': {'m': {'objects': ['x']}}}
+    """
+    if not module or obj in module_objects(cfg, module):
+        return cfg
+    mods = dict(cfg.get("module") or {})
+    entry = dict(mods.get(module) or {})
+    entry["objects"] = [*module_objects(cfg, module), obj]
+    mods[module] = entry
+    return {**cfg, "module": mods}
+
+
 def component_module(cfg: dict, component: str) -> str | None:
     """Return the module that owns this component, or None if self-contained."""
     for mod, data in cfg.get("module", {}).items():

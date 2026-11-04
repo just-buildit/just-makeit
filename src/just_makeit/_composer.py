@@ -5123,7 +5123,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     # reach them only by writing a second copy. They are published in
     # `<cname>_bridge.h` now and included, which is what makes the count one.
     if render_bridge_h(cfg, module):
-        bridge = INC.include(bridge_h(module), cfg)
+        bridge = INC.include(bridge_h(module, cfg), cfg)
         gen_includes += f'#include "{bridge}"\n'
 
     # gh-1583: the include of a jm header is spelled by the layout.
@@ -5976,16 +5976,17 @@ def render_pyi(cfg: dict, module: str) -> str:
     return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
-def bridge_h(module: str) -> str:
+def bridge_h(module: str, owner: "INC.Owner") -> str:
     """Where *module*'s gh-998 seam header lives, relative to the project's
     header root. The one spelling :func:`materialize` writes, the binding
     includes, `apply` syncs and :mod:`_csym` reads (gh-1694).
 
-    >>> bridge_h("dsp.mix")
+    >>> bridge_h("dsp.mix", {"project": {"name": "p"}})
     'dsp_mix/dsp_mix_bridge.h'
+
+    Beside the module's own core, in every layout (gh-2427).
     """
-    cname = C.module_paths(module).cname
-    return f"{cname}/{cname}_bridge.h"
+    return INC.named_header("bridge", C.module_paths(module).cname, owner)
 
 
 def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
@@ -6254,7 +6255,7 @@ def materialize(
     _bridge_h = render_bridge_h(cfg, module)
     if _bridge_h:
         _write(
-            INC.path(root, bridge_h(module)),
+            INC.path(root, bridge_h(module, root)),
             _bridge_h,
         )
     _write(
@@ -7398,7 +7399,7 @@ def render_cli(cfg: dict, module: str) -> str:
     # one place a seam's prototype is written -- and so are an owned
     # pointer's parse_fn and free_fn, which --<name> calls (gh-1711).
     bridge_inc = (
-        f'#include "{INC.include(bridge_h(module), cfg)}"\n'
+        f'#include "{INC.include(bridge_h(module, cfg), cfg)}"\n'
         if _coerce_str_fns(cfg, module) or _owned_ptrs(cfg, module)
         else ""
     )

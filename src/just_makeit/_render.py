@@ -343,14 +343,14 @@ def object_core_decl(component: str, header_only: bool) -> str:
     add_library(fir_core OBJECT fir_core.c)
     target_include_directories(
       fir_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc
-                      ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>fir)
+                      ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>><<core_dir>>)
     >>> print(object_core_decl("ring", header_only=True))
     # INTERFACE library — the core is header-only, so there is nothing to
     # compile, and an OBJECT library with no sources fails configure.
     add_library(ring_core INTERFACE)
     target_include_directories(
       ring_core INTERFACE ${CMAKE_SOURCE_DIR}/native/inc
-                          ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>ring)
+                          ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>><<core_dir>>)
     """
     inc = INC.CMAKE_INC
     if header_only:
@@ -369,7 +369,7 @@ def object_core_decl(component: str, header_only: bool) -> str:
             + inc
             + chr(10)
             + " " * len(head)
-            + f"{inc}/<<inc_prefix>>{component})"
+            + f"{inc}/<<inc_prefix>><<core_dir>>)"
         )
     head = f"  {component}_core PUBLIC "
     return (
@@ -383,7 +383,7 @@ def object_core_decl(component: str, header_only: bool) -> str:
         + inc
         + chr(10)
         + " " * len(head)
-        + f"{inc}/<<inc_prefix>>{component})"
+        + f"{inc}/<<inc_prefix>><<core_dir>>)"
     )
 
 
@@ -466,7 +466,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
     add_library(fir_core INTERFACE)
     target_include_directories(fir_core INTERFACE
         ${CMAKE_SOURCE_DIR}/native/inc
-        ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>fir)
+        ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>><<core_dir>>)
     """
     inc = INC.CMAKE_INC
     if header_only:
@@ -483,7 +483,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
             + chr(10)
             + f"    {inc}"
             + chr(10)
-            + f"    {inc}/<<inc_prefix>>{component})"
+            + f"    {inc}/<<inc_prefix>><<core_dir>>)"
         )
     return (
         "# OBJECT library — pure C core, no Python dependency."
@@ -497,7 +497,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
         + chr(10)
         + f"    {inc}"
         + chr(10)
-        + f"    {inc}/<<inc_prefix>>{component})"
+        + f"    {inc}/<<inc_prefix>><<core_dir>>)"
     )
 
 
@@ -852,9 +852,7 @@ def render_component_test_c(ctx: dict) -> str:
 # the component name for standalone components, or the module name otherwise.
 
 # The `_core.h` include a module object's section opens with, after its banner.
-_TYPE_CORE_INCLUDE = (
-    '#include "<<inc_prefix>><<component>>/<<component>>_core.h"\n\n'
-)
+_TYPE_CORE_INCLUDE = '#include "<<core_include>>"\n\n'
 
 
 def render_type_section(ctx: dict) -> str:
@@ -2703,7 +2701,7 @@ def render_module_ext_aggregator(
     )
     has_module_fns = bool(functions)
     module_core_include = (
-        f'#include "<<inc_prefix>>{module}/{module}_core.h"\n'
+        f'#include "{INC.core_include(module, owner)}"\n'
         if has_module_fns
         else ""
     )

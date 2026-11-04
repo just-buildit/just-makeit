@@ -441,7 +441,7 @@ def _echoed(cfg: dict) -> "dict[str, set[str]]":
     from . import _config as C
 
     return {
-        _composer.bridge_h(mod): set(_composer.seam_fns(cfg, mod))
+        _composer.bridge_h(mod, cfg): set(_composer.seam_fns(cfg, mod))
         for mod in C.modules(cfg)
         if C.is_composer_module(cfg, mod)
     }
@@ -1265,9 +1265,8 @@ def stray_prefixes(root: Path, cfg: dict) -> "dict[str, str]":
 
     want = prefix(cfg)
     out = {}
-    hroot = INC.header_root(root, cfg)
     for comp in C.components(cfg):
-        h = hroot / comp / f"{comp}_core.h"
+        h = INC.core_h(root, comp, cfg)
         if not h.is_file():
             continue
         m = _GUARD_LINE.search(h.read_text(encoding="utf-8", errors="replace"))
