@@ -3005,7 +3005,7 @@ def _backing_doc_blocks(
     header_rel = C.handle_header(cfg, module)
     if not header_rel or project_root is None:
         return {}
-    hp = INC.inc_dir(Path(project_root)) / header_rel
+    hp = INC.resolve(Path(project_root), header_rel)
     if not hp.exists():
         return {}
     from ._docstring import extract_doc_blocks

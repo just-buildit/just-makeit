@@ -36,7 +36,17 @@ GATES:
    step, and the round trip is byte-identical. `upgrade` makes the same
    moves. A module path under an object's own name moves no directory into
    itself.
-6. `remove` leaves no empty module directory behind.
+6. `remove` leaves no empty module directory behind, and never takes a
+   component whose directory sits below the removed one's (a module object
+   or a standalone object above another module's members), author edits
+   intact.
+7. A composer's bridge header lands beside its core under nested, fresh and
+   switched, and builds clean -- and no function holding the manifest asks
+   the disk where a component's file goes (apply's replay records no
+   composer module).
+8. Changing a module's `package` under nested moves its headers, tests and
+   benches, both ways, as a layout switch does.
+9. `jm module --help` says the headers follow `--package` under nested.
 """
 
 from __future__ import annotations
@@ -85,8 +95,14 @@ def _prose(tree) -> "set[int]":
     }
 
 
+_PCT = re.compile(r"%[-#0 +]*\d*(?:\.\d+)?[sdrai]")
+_FMT = re.compile(r"\{[^{}]*\}")
+
+
 def _shape(node) -> "str | None":
-    """An f-string as text with each placeholder as NUL; a str as is."""
+    """A string BUILT from names, as text with each name as NUL: an
+    f-string, a ``+`` concatenation, a ``%`` format or a ``.format`` call
+    on a literal; a plain literal as is. ``None`` for anything else."""
     if isinstance(node, ast.JoinedStr):
         return "".join(
             p.value if isinstance(p, ast.Constant) else "\x00"
@@ -94,6 +110,28 @@ def _shape(node) -> "str | None":
         )
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _shape(node.left), _shape(node.right)
+        if left is None and right is None:
+            return None
+        return (left if left is not None else "\x00") + (
+            right if right is not None else "\x00"
+        )
+    if (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Mod)
+        and isinstance(node.left, ast.Constant)
+        and isinstance(node.left.value, str)
+    ):
+        return _PCT.sub("\x00", node.left.value)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+        and isinstance(node.func.value, ast.Constant)
+        and isinstance(node.func.value.value, str)
+    ):
+        return _FMT.sub("\x00", node.func.value.value)
     return None
 
 
@@ -101,26 +139,87 @@ def _shape(node) -> "str | None":
 _KINDS = "|".join(
     re.escape(f.replace("{}", "")) for f in INC.NAMED_HEADERS.values()
 )
-#: ``{x}/{x}_core.h`` and kin: a directory spelled as the bare name.
-_HAND_DIR = re.compile(rf"\x00/\x00({_KINDS})")
+#: A path to a named header built from a name: ``{x}/{x}_core.h``,
+#: ``{d}/{x}_bridge.h``. A bare ``{x}_core.h`` is a label in a message.
+_HAND_DIR = re.compile(rf"/[^\s]*\x00({_KINDS})$|\x00/\x00({_KINDS})")
 #: ``<<inc_prefix>>`` glued to a name: the CMake include directory by hand.
 _HAND_SLOT = re.compile(r"<<inc_prefix>>(\x00|<<(component|module)>>)")
 
+#: The `_incpath` calls whose result is a header directory: joining a name
+#: onto one spells a component's directory by hand (`INC.resolve` is the
+#: one join for an include spelling).
+_ROOTS = {"header_root", "inc_dir"}
+#: The `_incpath` calls taking a header-relative name second.
+_NAMERS = {"path"}
 
-def _is_incpath_call(node, name: str) -> bool:
-    f = getattr(node, "func", None)
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(f, ast.Attribute)
-        and f.attr == name
-        and isinstance(f.value, ast.Name)
-        and f.value.id == "INC"
-    )
+
+def _incpath_names(tree) -> "dict[str, str]":
+    """``{local name: _incpath attribute}`` for a ``from ._incpath import``."""
+    out = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith(
+            "_incpath"
+        ):
+            for alias in node.names:
+                out[alias.asname or alias.name] = alias.name
+    return out
+
+
+def _incpath_call(node, names: "dict[str, str]") -> "str | None":
+    """The `_incpath` function *node* calls, by any spelling, else None."""
+    if not isinstance(node, ast.Call):
+        return None
+    f = node.func
+    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+        if f.value.id in ("INC", "_incpath"):
+            return f.attr
+    if isinstance(f, ast.Name) and f.id in names:
+        return names[f.id]
+    return None
+
+
+def _div_chain(node) -> "list":
+    """``a / b / c`` as ``[a, b, c]``."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _div_chain(node.left) + [node.right]
+    return [node]
+
+
+def _is_literal(node) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
 def _findings(tree, rel) -> "list[str]":
     prose = _prose(tree)
+    names = _incpath_names(tree)
+    # Names bound to a header directory, per enclosing function (or the
+    # module): a name means what its own scope assigned it.
+    scope_of: "dict[int, int]" = {}
+
+    def mark(node, scope):
+        for child in ast.iter_child_nodes(node):
+            inner = (
+                child
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else scope
+            )
+            scope_of[id(child)] = id(inner)
+            mark(child, inner)
+
+    mark(tree, tree)
+    bound: "dict[int, set[str]]" = {}
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Assign)
+            and _incpath_call(n.value, names) in _ROOTS
+        ):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    bound.setdefault(scope_of.get(id(n), id(tree)), set()).add(
+                        t.id
+                    )
     hits = []
+    seen_div: "set[int]" = set()
     for node in ast.walk(tree):
         if id(node) in prose:
             continue
@@ -129,21 +228,40 @@ def _findings(tree, rel) -> "list[str]":
             _HAND_DIR.search(text) or _HAND_SLOT.search(text)
         ):
             hits.append(f"{rel}:{node.lineno}  {text[:70]!r}")
-        # `header_root(...) / name`: a component's directory by hand.
+        # `<header dir> / name ...`: a component's directory by hand, the
+        # header directory called or bound to a name first.
         if (
             isinstance(node, ast.BinOp)
             and isinstance(node.op, ast.Div)
-            and _is_incpath_call(node.left, "header_root")
-            and isinstance(node.right, ast.Name)
+            and id(node) not in seen_div
         ):
-            hits.append(f"{rel}:{node.lineno}  header_root(..) / name")
-        # `INC.path(root, name)`: the same, one call deep.
-        if (
-            _is_incpath_call(node, "path")
-            and len(node.args) >= 2
-            and isinstance(node.args[1], ast.Name)
-        ):
-            hits.append(f"{rel}:{node.lineno}  INC.path(root, name)")
+            chain = _div_chain(node)
+            for sub in ast.walk(node):
+                seen_div.add(id(sub))
+            base, rest = chain[0], chain[1:]
+            from_root = _incpath_call(base, names) in _ROOTS or (
+                isinstance(base, ast.Name)
+                and base.id
+                in bound.get(scope_of.get(id(node), id(tree)), set())
+            )
+            if from_root and not all(_is_literal(r) for r in rest):
+                hits.append(f"{rel}:{node.lineno}  <header dir> / name")
+            literals = [r.value for r in rest if _is_literal(r)]
+            if any(
+                a == "native" and b == "inc"
+                for a, b in zip(literals, literals[1:])
+            ) and not all(_is_literal(r) for r in rest):
+                hits.append(f"{rel}:{node.lineno}  ... / 'native' / 'inc' / x")
+        # `INC.path(root, name)`: the same, one call deep. A name that is
+        # itself a call (`INC.core_dir(...)`, `bridge_h(...)`) or a file
+        # (`f"{pkg}.h"`) is not a hand-spelled directory.
+        if _incpath_call(node, names) in _NAMERS and len(node.args) >= 2:
+            arg = node.args[1]
+            shape = _shape(arg)
+            if isinstance(arg, (ast.Name, ast.Attribute, ast.Subscript)) or (
+                shape is not None and "\x00" in shape and ".h" not in shape
+            ):
+                hits.append(f"{rel}:{node.lineno}  INC.path(root, name)")
     return hits
 
 
@@ -179,17 +297,50 @@ def test_only_incpath_spells_a_component_header_path():
     )
 
 
+#: Every shape the gate refuses, one per line: each must be a finding.
+_PROBE = """\
+a = f'{c}/{c}_core.h'
+b = f'{m}/{m}_bridge.h'
+c = f'{inc}/<<inc_prefix>>{component})'
+d = INC.header_root(proj) / comp
+e = INC.path(root, obj)
+f = f'{x}/{x}_procglobal.h'
+g = INC.path(root, f'{comp}')
+h = INC.path(root, self.comp)
+i = INC.inc_dir(root) / comp
+j = comp + '/' + comp + '_core.h'
+k = '%s/%s_core.h' % (comp, comp)
+l = '{}/{}_core.h'.format(comp, comp)
+m = root / 'native' / 'inc' / pkg / comp
+def stray(root, cfg, comp):
+    hroot = INC.header_root(root, cfg)
+    return hroot / comp / f"{comp}_core.h"
+"""
+
+#: ...and what it must let through: a literal file, an include spelling
+#: resolved by `INC.resolve`, a label naming a file, a directory from a call.
+_ALLOWED = """\
+a = INC.header_root(root) / "jm_perf.h"
+b = INC.resolve(root, h)
+c = f"remove the body from {cname}_core.h"
+d = INC.path(root, f"{pkg}.h")
+e = INC.path(root, INC.core_dir(obj, cfg))
+"""
+
+
 def test_the_gate_sees_what_it_guards():
-    """Feed the gate each shape it refuses and require a finding for each."""
-    src = (
-        "a = f'{c}/{c}_core.h'\n"
-        "b = f'{m}/{m}_bridge.h'\n"
-        "c = f'{inc}/<<inc_prefix>>{component})'\n"
-        "d = INC.header_root(proj) / comp\n"
-        "e = INC.path(root, obj)\n"
-        "f = f'{x}/{x}_procglobal.h'\n"
-    )
-    assert len(_findings(ast.parse(src), "probe")) == 6
+    """Feed the gate each shape it refuses and require a finding for each,
+    and each shape it allows and require none."""
+    lines = [ln for ln in _PROBE.splitlines() if not ln.startswith(" ")]
+    src = _PROBE + "from ._incpath import path\nn = path(root, comp)\n"
+    found = _findings(ast.parse(src), "probe")
+    # One finding per top-level statement (the `def` counts once), and one
+    # for the bare `path` imported from `_incpath`.
+    assert len(found) == len(lines) + 1, found
+    assert {f.split()[0] for f in found} == {
+        f"probe:{n}" for n in (*range(1, 14), 16, 18)
+    }, found
+    assert _findings(ast.parse(_ALLOWED), "probe") == []
     assert _TEMPLATE_HAND.search(
         '#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/'
         '_core.h"'
@@ -572,7 +723,14 @@ def test_switching_moves_headers_and_mirrors_every_way(tmp_path):
     r = run_cli("status", cwd=root)
     old_h = INC.rel("fir/fir_core.h", root)
     assert old_h in r.stdout.split("SUPERSEDED", 1)[-1], r.stdout
-    _jm(root, "apply")
+    r = _jm(root, "apply")
+    # A move is reported as one: renamed, then `update` where its includes
+    # were respelled -- never `create` (the file existed before the run).
+    assert "Materialized 0 new file(s)" in r.stdout, r.stdout
+    assert not [
+        ln for ln in r.stdout.splitlines() if ln.startswith("  create")
+    ]
+    assert f"renamed {old_h} -> " in r.stdout
     assert INC.core_dir("fir", root) == "rx/ss/burst/fir"
     _assert_settled(root)
     if shutil.which("cmake"):
@@ -670,3 +828,318 @@ def test_remove_leaves_nothing_of_the_module_behind(tmp_path, layout):
     ]
     assert empty == []
     _jm(root, "status", "--check")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        # [module.radio] package "front" puts fir at front/fir/; a module
+        # packaged "front/fir" puts tap at front/fir/tap/, below it.
+        (
+            (
+                ("module", "radio", "--package", "front"),
+                ("object", "fir", "--module", "radio"),
+                ("module", "taps", "--package", "front/fir"),
+                ("object", "tap", "--module", "taps"),
+            ),
+            "fir",
+            "tap",
+        ),
+        # A standalone `rx` sits above every member of [module."rx.ss"].
+        (
+            (
+                ("object", "rx"),
+                ("module", "rx.ss"),
+                ("object", "tap", "--module", "rx.ss"),
+            ),
+            "rx",
+            "tap",
+        ),
+    ],
+    ids=["module-object", "standalone"],
+)
+def test_remove_keeps_a_component_nested_below_the_removed_one(
+    tmp_path, build
+):
+    """B1: under nested one component's directory may be an ancestor of
+    another's, and removing the outer one deleted the inner header whole --
+    the author's edits with it. Only the removed component's own part goes."""
+    steps, gone, kept = build
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    for step in steps:
+        _jm(root, *step)
+    _jm(root, "apply")
+    inner = INC.core_h(root, kept)
+    assert INC.core_h(root, gone).parent in inner.parents
+    mine = "/* AUTHOR */\n"
+    inner.write_text(
+        inner.read_text(encoding="utf-8") + mine, encoding="utf-8"
+    )
+    survivors = {
+        p: p.read_bytes()
+        for p in INC.header_root(root).rglob("*_core.h")
+        if INC.core_h(root, gone).parent != p.parent and p.parent.name != gone
+    }
+    _jm(root, "remove", "object", gone, "--force")
+    assert not INC.core_h(root, gone).exists()
+    assert inner.read_text(encoding="utf-8").endswith(mine)
+    for path, data in survivors.items():
+        assert path.read_bytes() == data, path
+    _jm(root, "status", "--check")
+
+
+# ── B2: a composer's bridge header under nested ─────────────────────────────
+
+_SEAMS = PKG / "examples" / "composer_seams" / ".steps"
+
+
+def _composer_project(where: Path, layout: str) -> Path:
+    """The composer_seams example's project, in *layout*: the backing header
+    and every include of a header jm places spelled through `_incpath`."""
+    _jm(where, "new", "studio")
+    root = where / "studio"
+    _declare(root, layout)
+    _jm(
+        root,
+        "object",
+        "clip",
+        "--state",
+        "level:double:0.0",
+        "--arg-type",
+        "void",
+        "--return-type",
+        "float _Complex",
+    )
+    backing = root / "native" / "src" / "backing"
+    backing.mkdir(parents=True)
+    playlist_h = INC.core_h(root, "playlist", _with_composer(root))
+    playlist_h.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(_SEAMS / "02_playlist_core.h", playlist_h)
+    old = '"studio/playlist/playlist_core.h"'
+    (backing / "playlist_core.c").write_text(
+        (_SEAMS / "02_playlist_core.c")
+        .read_text(encoding="utf-8")
+        .replace(
+            old,
+            f'"{INC.core_include("playlist", _with_composer(root))}"',
+        ),
+        encoding="utf-8",
+    )
+    shutil.copy(_SEAMS / "02_CMakeLists.txt", backing / "CMakeLists.txt")
+    r = subprocess.run(
+        [sys.executable, str(_SEAMS / "03_manifest.py")],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    _jm(root, "apply")
+    bridge = INC.include(_composer.bridge_h("playlist", root), root)
+    (backing / "playlist_bridge.c").write_text(
+        (_SEAMS / "05_playlist_bridge.c")
+        .read_text(encoding="utf-8")
+        .replace('"studio/playlist/playlist_bridge.h"', f'"{bridge}"'),
+        encoding="utf-8",
+    )
+    # The hand-written method the example's manifest registers.
+    shutil.copy(
+        _SEAMS / "05b_playlist_ext_extra.c",
+        root / "native" / "src" / "playlist" / "playlist_ext_extra.c",
+    )
+    # The example's c_deps core is folded into no library (`status` says
+    # UNWIRED, as the example's own tree does); wire it as status advises.
+    top = root / "CMakeLists.txt"
+    top.write_text(
+        top.read_text(encoding="utf-8")
+        + "\ntarget_sources(studio_lib PRIVATE $<TARGET_OBJECTS:backing_core>)"
+        + "\ntarget_sources(studio_lib_static PRIVATE"
+        + " $<TARGET_OBJECTS:backing_core>)\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def _with_composer(root: Path) -> dict:
+    """*root*'s manifest as it reads once the composer module is declared:
+    the backing header is written before the manifest names the module."""
+    cfg = C.load(root)
+    return {**cfg, "module": {**cfg.get("module", {}), "playlist": {}}}
+
+
+def _builds(root: Path, tmp_path: Path) -> None:
+    if not shutil.which("cmake"):
+        return
+    build = tmp_path / "build"
+    for cmd in (
+        [
+            "cmake",
+            "-S",
+            str(root),
+            "-B",
+            str(build),
+            f"-DPython3_EXECUTABLE={sys.executable}",
+        ],
+        ["cmake", "--build", str(build), "-j4"],
+    ):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        assert r.returncode == 0, (cmd, r.stdout[-3000:], r.stderr[-3000:])
+    shutil.rmtree(build)
+
+
+@pytest.mark.parametrize("start", ["nested", ""], ids=["fresh", "switched"])
+def test_a_composer_bridge_lands_beside_its_core_under_nested(tmp_path, start):
+    """B2: apply's replay tree records no composer module, so a bridge
+    placed by the replay's manifest went flat while the binding and the
+    reconcile spelled it nested: a fresh project did not build, and a switch
+    was refused as a C-symbol collision. Placed by the manifest, both work."""
+    root = _composer_project(tmp_path, start)
+    if not start:
+        _jm(root, "status", "--check")
+        _declare(root, "nested")
+        _jm(root, "apply")
+    bridge = INC.path(root, _composer.bridge_h("playlist", root))
+    assert _composer.bridge_h("playlist", root) == (
+        "playlist/playlist/playlist_bridge.h"
+    )
+    assert bridge.is_file()
+    assert not INC.path(root, "playlist/playlist_bridge.h").exists()
+    for f in _c_files(root):
+        for target in _INCLUDE.findall(f.read_text(encoding="utf-8")):
+            if target.startswith("studio/"):
+                assert INC.resolve(root, target).is_file(), (f, target)
+    _jm(root, "status", "--check")
+    _builds(root, tmp_path)
+
+
+# ── S2: a module's `package` moves its headers too ─────────────────────────
+
+
+def test_changing_a_modules_package_moves_its_headers(tmp_path):
+    """S2: under nested the module's `package` decides where its headers
+    go, and a manifest edit of it left them where the old package put them:
+    `apply` refused forever on the stranded header's guard. It is the same
+    move as a layout switch, read off the tree, both ways."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    _jm(root, "module", "radio")
+    _jm(root, "object", "fir", "--module", "radio")
+    _jm(
+        root,
+        "function",
+        "f",
+        "--module",
+        "radio",
+        "--param",
+        "x:double",
+        "--return-type",
+        "double",
+    )
+    _jm(root, "apply")
+    test = INC.native_path(root, "test", "fir")
+    test.write_text(
+        test.read_text(encoding="utf-8") + _MINE_TEST, encoding="utf-8"
+    )
+    frag = root / "modules" / "radio.toml"
+    plain = frag.read_text(encoding="utf-8")
+    for package, want in (("front/end", "front/end"), ("", "radio")):
+        text = (
+            plain.replace(
+                "[module.radio]\n", f'[module.radio]\npackage = "{package}"\n'
+            )
+            if package
+            else plain
+        )
+        frag.write_text(text, encoding="utf-8")
+        r = run_cli("status", cwd=root)
+        assert "SUPERSEDED" in r.stdout, r.stdout
+        _jm(root, "apply")
+        for name in ("fir", "radio"):
+            assert INC.core_dir(name, root) == f"{want}/{name}"
+            assert INC.core_h(root, name).is_file()
+        core = (root / "native" / "src" / "fir" / "fir_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert f'#include "{INC.core_include("fir", root)}"' in core
+        assert (
+            INC.native_path(root, "test", "fir")
+            .read_text(encoding="utf-8")
+            .endswith(_MINE_TEST)
+        )
+        stale = [
+            p.relative_to(root).as_posix()
+            for p in (root / "native").rglob("*")
+            if (p.is_dir() and not any(p.iterdir()))
+            or p.name in ("fir_core.h", "test_fir_core.c")
+            and p.parent.parent.name not in want.split("/")[-1:]
+        ]
+        assert stale == [], stale
+        _jm(root, "status", "--check")
+
+
+def test_module_help_says_the_headers_follow_package_under_nested():
+    """N2: `--package` said the C side keeps the module's own name, which
+    the nested layout's headers no longer do."""
+    r = run_cli("module", "--help")
+    text = " ".join((r.stdout + r.stderr).split())
+    start = text.index("--package DIR")
+    end = text.find(" --", start + len("--package DIR"))
+    entry = text[start : end if end >= 0 else len(text)]
+    assert "The C side keeps the module's own name." not in entry
+    assert 'layout = "nested" the headers' in entry, entry
+
+
+#: Every call that places a component's file by its `core_dir`.
+_PLACERS = {
+    "core_h",
+    "core_include",
+    "core_rel",
+    "core_dir",
+    "named_header",
+    "native_path",
+    "native_rel",
+    "native_dir",
+    "native_slots",
+    "bridge_h",
+    "header_name",
+    "symbols_file",
+}
+
+
+def _placements_off_the_manifest(tree, rel) -> "list[str]":
+    hits = []
+    for f in ast.walk(tree):
+        if not isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_cfg = any(
+            isinstance(n, ast.Name) and n.id == "cfg" for n in ast.walk(f)
+        ) or "cfg" in {a.arg for a in f.args.args + f.args.kwonlyargs}
+        if not has_cfg:
+            continue
+        for n in ast.walk(f):
+            if not isinstance(n, ast.Call):
+                continue
+            name = (
+                n.func.attr
+                if isinstance(n.func, ast.Attribute)
+                else getattr(n.func, "id", "")
+            )
+            text = ast.unparse(n)
+            if name in _PLACERS and not re.search(r"cfg|owner|tree", text):
+                hits.append(f"{rel}:{n.lineno}  {text[:70]}")
+    return sorted(set(hits))
+
+
+def test_a_header_path_is_asked_of_the_manifest_in_hand():
+    """B2's class: where a component's file goes depends on its module under
+    nested, and the tree a writer stands in may not say so -- apply's replay
+    records no composer module, an object's membership is saved after its
+    files. A function holding the manifest asks IT, never the disk."""
+    hits = []
+    for rel, tree in _modules():
+        hits += _placements_off_the_manifest(tree, rel)
+    assert hits == [], "\n".join(hits)
+    probe = "def f(root, cfg, c):\n    return INC.core_h(root, c)\n"
+    assert _placements_off_the_manifest(ast.parse(probe), "probe")

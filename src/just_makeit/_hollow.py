@@ -479,7 +479,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
     # saw in the listing are the two sources: `components` follows manifest
     # key order, `module_objects` follows the `objects = [...]` array.
     for comp in C.components(cfg):
-        src = INC.native_path(root, "bench", comp)
+        src = INC.native_path(root, "bench", comp, cfg)
         if not src.is_file():
             continue
         try:
@@ -504,7 +504,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
         if not fns:
             continue
         cname = C.module_paths(mod).cname
-        src = INC.native_path(root, "bench", cname)
+        src = INC.native_path(root, "bench", cname, cfg)
         if not src.is_file():
             continue
         try:

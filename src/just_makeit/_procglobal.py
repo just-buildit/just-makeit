@@ -487,7 +487,7 @@ def orphan_headers(root: Path, cfg: dict) -> "list[str]":
         rel
         for comp in C.components(cfg)
         if not is_process_global(cfg, comp)
-        and (root / (rel := INC.rel(header_name(comp, root), root))).is_file()
+        and (root / (rel := INC.rel(header_name(comp, cfg), root))).is_file()
     ]
 
 

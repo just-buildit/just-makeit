@@ -156,6 +156,34 @@ def _rm(path: Path) -> None:
         print(f"  remove  {path}")
 
 
+def _header_dir_paths(root: Path, cfg: dict, name: str) -> "list[Path]":
+    """What removing *name* deletes of its header directory.
+
+    The directory whole, as jm always has -- unless another component's
+    directory lies below it, which the nested layout allows (gh-2427): an
+    object of ``[module.radio] package = "front"`` has ``front/fir/``, and
+    an object of a module packaged ``front/fir`` has ``front/fir/tap/``; a
+    standalone ``rx`` sits above every member of ``[module."rx.ss"]``. Then
+    only *name*'s own part goes: each file directly in the directory, and
+    each subdirectory that neither is nor holds another component's. The
+    same unit :func:`_incpath.relocations` moves -- files, never a directory
+    that holds someone else's.
+    """
+    d = INC.path(root, INC.core_dir(name, cfg))
+    others = [
+        INC.path(root, INC.core_dir(n, cfg))
+        for n in INC.native_names(cfg)
+        if n != name
+    ]
+    if not d.is_dir() or not any(d in o.parents for o in others):
+        return [d]
+    return [
+        child
+        for child in sorted(d.iterdir())
+        if not any(child == o or child in o.parents for o in others)
+    ]
+
+
 def _object_paths(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> list[Path]:
@@ -163,8 +191,9 @@ def _object_paths(
     from . import _invariants
 
     paths = [
-        # Its header directory, wherever the layout puts it (gh-2427).
-        INC.path(root, INC.core_dir(obj, cfg)),
+        # Its header directory, wherever the layout puts it (gh-2427), and
+        # never another component's below it.
+        *_header_dir_paths(root, cfg, obj),
         root / "native" / "src" / obj,
         # The C test, the gh-1361 link table and the C bench, where the
         # project's layout puts them (gh-2423).
@@ -345,7 +374,7 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     _refuse_what_an_app_names(cfg, f"object '{obj}'", objects={obj})
     module = C.component_module(cfg, obj)
 
-    core_h = INC.core_h(root, obj)
+    core_h = INC.core_h(root, obj, cfg)
     if C.is_no_step(cfg, obj):
         core_c = root / "native" / "src" / obj / f"{obj}_core.c"
         implemented = _core_c_warn_if_implemented(
@@ -456,7 +485,7 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
                 C.is_no_state(cfg, obj),
                 bool(C.methods(cfg, obj)),
             )
-        return _warn_if_implemented(INC.core_h(root, obj))
+        return _warn_if_implemented(INC.core_h(root, obj, cfg))
 
     any_implemented = any(_obj_implemented(obj) for obj in objects)
     prompt_note = (
@@ -480,7 +509,8 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     # The module's own files (cname for the flat native dir, pypath for the
     # nested Python subpackage).
     mp = C.module_paths(module)
-    _rm(INC.path(root, INC.core_dir(mp.cname, cfg)))
+    for path in _header_dir_paths(root, cfg, mp.cname):
+        _rm(path)
     _rm(root / "native" / "src" / mp.cname)
     # A function-bearing module's own C test and bench (gh-1034), as the
     # last function's removal takes them (gh-1479): left behind, they
@@ -640,7 +670,7 @@ def _remove_state(
         cfg, obj, f"remove state field '{name}' from '{obj}'"
     )
 
-    core_h = INC.core_h(root, obj)
+    core_h = INC.core_h(root, obj, cfg)
     core_c = root / "native" / "src" / obj / f"{obj}_core.c"
     _warn_if_state_ref(core_h, core_c, name)
 
@@ -941,7 +971,7 @@ def _remove_function(
     # `_strip_decl_from_header` on a missing file is a no-op. The creating side
     # crashed outright, which is the only reason this half was never reached.
     cname = C.module_paths(module).cname
-    core_h = INC.core_h(root, cname)
+    core_h = INC.core_h(root, cname, cfg)
     if not inline:
         fn_c = root / "native" / "src" / cname / f"{name}.c"
         if fn_c.exists():

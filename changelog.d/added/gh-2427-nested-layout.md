@@ -11,7 +11,11 @@
     follow it through `_incpath.core_dir`. Switching an existing project
     either way is the key and `jm apply` (or `jm upgrade`): the headers move
     with your edits, a header of yours beside the core comes along, and each
-    `#include` that resolves to a moved header is respelled. `flat` and
+    `#include` that resolves to a moved header is respelled; changing a
+    module's `package` under `nested` is the same move, and `apply` reports
+    each as a rename, not a new file. `jm remove` takes only the removed
+    component's own files when another component's directory sits below
+    its own. `flat` and
     `mirrored` render byte-identically to before. `jm remove module` now also
     removes a function-bearing module's own C test and benchmark, which it
     left behind including the header it had just deleted.

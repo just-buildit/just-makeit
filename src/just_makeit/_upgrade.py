@@ -428,7 +428,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
         version = C.project_version(cfg)
         perf = C.is_perf(cfg)
         for comp in C.components(cfg):
-            bench_c = INC.native_path(root, "bench", comp)
+            bench_c = INC.native_path(root, "bench", comp, cfg)
             if not bench_c.exists():
                 continue
             no_step = C.is_no_step(cfg, comp)
@@ -570,7 +570,6 @@ def respell_includes(root: Path, moved: "dict[str, str]") -> "list[str]":
     - a quoted string in the manifest or a fragment it includes (``header =
       "wfm/wfm.h"`` and its kin: jm emits them into ``#include`` verbatim).
     """
-    inc = INC.inc_dir(root)
 
     def spell(match: "re.Match[str]", here: Path) -> str:
         lead, open_, name, close = match.groups()
@@ -583,7 +582,7 @@ def respell_includes(root: Path, moved: "dict[str, str]") -> "list[str]":
         if (
             open_ == '"'
             and beside.is_file()
-            and beside.resolve() != (inc / name).resolve()
+            and beside.resolve() != INC.resolve(root, name).resolve()
         ):
             return match.group(0)
         return f"{lead}{open_}{moved[name]}{close}"

@@ -3504,7 +3504,7 @@ def run(
             # the object is not in the manifest yet, which is the gh-790 trap
             # the standalone path in `_init.run` already reads around.
             for h in _param_headers_at_create(cfg, object_name, init_params)
-            if (INC.inc_dir(root) / h).exists()
+            if INC.resolve(root, h).exists()
         ]
     )
 

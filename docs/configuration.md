@@ -1385,7 +1385,12 @@ re-exports the module's classes, so they import from `<pkg>.<package>`, and
 everything jm writes that names one follows it (gh-2054): the `.pyi` and
 runtime doctests, `test_<obj>.py` and the element contract beside it, an
 `object` reference's `.pyi` import, and the `pep723` and `console` apps. The
-extension keeps its own name inside it (`<pkg>/<package>/<module>.so`).
+extension keeps its own name inside it (`<pkg>/<package>/<module>.so`), and
+so do its C symbols and `native/src/`. Under `layout = "nested"` the C
+headers follow `package` too (gh-2427): each member's header, test and
+benchmark sit at `<package>/<object>/`, and changing `package` on an
+existing module is a move `jm apply` makes, with the includes naming the
+moved headers respelled.
 Declare it with `jm module <name> --package <dir>`: set in the manifest after
 the module exists, the key leaves what `jm module` wrote in the module's own
 directory behind (gh-2081). The value is a directory below `src/<pkg>/`: one

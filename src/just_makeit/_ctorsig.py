@@ -274,7 +274,7 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
         out.append(
             CtorDrift(
                 component=comp,
-                rel=INC.core_rel(comp, root),
+                rel=INC.core_rel(comp, cfg),
                 declared=declared,
                 rendered=_norm(rendered),
                 csym=_csym.stem(cfg, comp),
@@ -368,7 +368,7 @@ def example_drift(root: Path, cfg: dict) -> list[ExampleDrift]:
         out.append(
             ExampleDrift(
                 component=comp,
-                rel=INC.core_rel(comp, root),
+                rel=INC.core_rel(comp, cfg),
                 line=text.count("\n", 0, offset) + 1,
                 call=call.group(1),
                 passed=passed,

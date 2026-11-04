@@ -927,7 +927,7 @@ def _inject_includes_into_core_h(
     text = original = path.read_text(encoding="utf-8")
     # *extra* is spelled as the author wrote it: relative to the -I directory.
     wanted = _dep_header_includes(root, deps) + [
-        f'#include "{h}"' for h in extra if (INC.inc_dir(root) / h).exists()
+        f'#include "{h}"' for h in extra if INC.resolve(root, h).exists()
     ]
     missing = [inc for inc in wanted if inc not in text]
     if not missing:
@@ -1195,7 +1195,7 @@ def insert_umbrella_include(root: "Path", comp: str) -> bool:
     if not umbrella.exists():
         return False
     text = umbrella.read_text(encoding="utf-8")
-    include_line = f'#include "{INC.core_include(comp, umbrella)}"\n'
+    include_line = f'#include "{INC.core_include(comp, cfg)}"\n'
     if include_line in text:
         return False
     last_endif = text.rfind("#endif")
@@ -1791,7 +1791,7 @@ def run(
             for h in _param_headers_at_create(
                 cfg, ctx["component"], init_params
             )
-            if (INC.inc_dir(root) / h).exists()
+            if INC.resolve(root, h).exists()
         ]
     )
 
@@ -1895,7 +1895,7 @@ def run(
 
     # C headers. Object creation is create-only (the verb errors on a
     # duplicate name), so the sacred files are written fresh — never spliced.
-    core_h_path = INC.core_h(root, comp)
+    core_h_path = INC.core_h(root, comp, cfg)
     _write(
         core_h_path,
         r(core_h_tmpl),
@@ -1904,7 +1904,7 @@ def run(
     if impl_body is not None and not no_step:
         from . import _impl as I
 
-        h_path = INC.core_h(root, comp)
+        h_path = INC.core_h(root, comp, cfg)
         h_text = h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(
             h_text, f"{CSYM.stem(root, comp)}_step", impl_body
@@ -1941,7 +1941,7 @@ def run(
     # stale. `_apply._reconcile_procglobal_headers` is what makes it true.
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
-        _write(INC.path(root, _procglobal.header_name(comp, root)), _pg_h)
+        _write(INC.path(root, _procglobal.header_name(comp, cfg)), _pg_h)
 
     build = C.build_system(cfg)
 
@@ -1953,7 +1953,10 @@ def run(
 
     # C test
     # gh-806: via the one renderer that stamps the scaffold check count.
-    _write(INC.native_path(root, "test", comp), R.render_component_test_c(ctx))
+    _write(
+        INC.native_path(root, "test", comp, cfg),
+        R.render_component_test_c(ctx),
+    )
     # gh-1361: the link-check table the C test build names. Written here so
     # the build files never name a source that does not exist; the binding
     # writers refresh it once the calls are known.
@@ -1969,7 +1972,7 @@ def run(
         _write(jm_test_h, r(R.JM_TEST_H))
 
     # C benchmark
-    _write(INC.native_path(root, "bench", comp), r(bench_c_tmpl))
+    _write(INC.native_path(root, "bench", comp, cfg), r(bench_c_tmpl))
     jm_bench_h = root / INC.harness_rel(INC.BENCH_DIR)
     if not jm_bench_h.exists():
         _write(jm_bench_h, R.JM_BENCH_H)

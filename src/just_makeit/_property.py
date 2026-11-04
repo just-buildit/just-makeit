@@ -83,7 +83,7 @@ def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
         if not props:
             continue
         try:
-            text = INC.core_h(root, comp).read_text(encoding="utf-8")
+            text = INC.core_h(root, comp, cfg).read_text(encoding="utf-8")
         except OSError:
             continue
         for p in props:
@@ -98,7 +98,7 @@ def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
             out.append(
                 f"`{comp}.{p['name']}` is writable and declares no `error`,"
                 f" so its binding calls {fn}() as a bare statement, but"
-                f" {INC.core_rel(comp, root)} declares it returning"
+                f" {INC.core_rel(comp, cfg)} declares it returning"
                 f" `{ret}`: the status would be discarded, and an"
                 " assignment C refused would succeed in Python. Declare"
                 " `error` on the property (gh-2182) so the binding raises"
@@ -419,7 +419,7 @@ def run(
     # must not send the author there. The getter/setter bodies are the
     # author's either way; only the file named changes.
     _body_file = (
-        INC.core_rel(object_name, root)
+        INC.core_rel(object_name, cfg)
         if C.is_header_only(cfg, object_name)
         else f"native/src/{object_name}/{object_name}_core.c"
     )
@@ -603,7 +603,7 @@ def run(
     #                    value unless it returns a PyObject *). A PyObject *
     #                    value_fn needs Python.h and so is forward-declared in
     #                    the glue instead -- see _methods._container_getter.
-    core_h = INC.core_h(root, object_name)
+    core_h = INC.core_h(root, object_name, cfg)
     if container:
         fns = CSYM.container_accessors(csym, prop_entry)
         state_t = f"const {csym}_state_t *"

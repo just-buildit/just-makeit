@@ -267,7 +267,7 @@ def run(
             " itself."
         )
 
-    core_h = INC.core_h(root, component)
+    core_h = INC.core_h(root, component, cfg)
     core_c = root / "native" / "src" / component / f"{component}_core.c"
     preserved_h: dict[str, str] = {}
     preserved_c: dict[str, str] = {}

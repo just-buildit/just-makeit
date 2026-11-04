@@ -561,7 +561,7 @@ def write(root: Path, cfg: dict, comp: str, pkg: str) -> bool:
     # Where the body lives follows `header_only`, exactly as the core
     # library's kind does.
     core = (
-        INC.core_h(root, comp)
+        INC.core_h(root, comp, cfg)
         if C.is_header_only(cfg, comp)
         else root / "native" / "src" / comp / f"{comp}_core.c"
     )

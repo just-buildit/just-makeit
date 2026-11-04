@@ -113,7 +113,7 @@ def _example_sources(root: Path, cfg: dict) -> dict[str, tuple[Path, str]]:
     for obj in C.components(cfg):
         _add(
             _load_doc_blocks(root, obj) or {},
-            INC.core_h(root, obj),
+            INC.core_h(root, obj, cfg),
         )
     for mod in C.modules(cfg):
         try:
