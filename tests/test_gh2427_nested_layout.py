@@ -210,10 +210,12 @@ def _findings(tree, rel) -> "list[str]":
     bound: "dict[int, set[str]]" = {}
     for n in ast.walk(tree):
         if (
-            isinstance(n, ast.Assign)
+            isinstance(n, (ast.Assign, ast.AnnAssign))
+            and n.value is not None
             and _incpath_call(n.value, names) in _ROOTS
         ):
-            for t in n.targets:
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            for t in targets:
                 if isinstance(t, ast.Name):
                     bound.setdefault(scope_of.get(id(n), id(tree)), set()).add(
                         t.id
@@ -252,6 +254,25 @@ def _findings(tree, rel) -> "list[str]":
                 for a, b in zip(literals, literals[1:])
             ) and not all(_is_literal(r) for r in rest):
                 hits.append(f"{rel}:{node.lineno}  ... / 'native' / 'inc' / x")
+        # `<header dir>.joinpath(name, ...)`: the same join, spelled as a
+        # method.
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "joinpath"
+        ):
+            base = node.func.value
+            if (
+                _incpath_call(base, names) in _ROOTS
+                or (
+                    isinstance(base, ast.Name)
+                    and base.id
+                    in bound.get(scope_of.get(id(node), id(tree)), set())
+                )
+            ) and not all(_is_literal(a) for a in node.args):
+                hits.append(
+                    f"{rel}:{node.lineno}  <header dir>.joinpath(name)"
+                )
         # `INC.path(root, name)`: the same, one call deep. A name that is
         # itself a call (`INC.core_dir(...)`, `bridge_h(...)`) or a file
         # (`f"{pkg}.h"`) is not a hand-spelled directory.
@@ -315,6 +336,10 @@ m = root / 'native' / 'inc' / pkg / comp
 def stray(root, cfg, comp):
     hroot = INC.header_root(root, cfg)
     return hroot / comp / f"{comp}_core.h"
+def annotated(root, comp):
+    hr: Path = INC.header_root(root)
+    return hr / comp
+o = INC.header_root(root).joinpath(comp)
 """
 
 #: ...and what it must let through: a literal file, an include spelling
@@ -338,7 +363,7 @@ def test_the_gate_sees_what_it_guards():
     # for the bare `path` imported from `_incpath`.
     assert len(found) == len(lines) + 1, found
     assert {f.split()[0] for f in found} == {
-        f"probe:{n}" for n in (*range(1, 14), 16, 18)
+        f"probe:{n}" for n in (*range(1, 14), 16, 19, 20, 22)
     }, found
     assert _findings(ast.parse(_ALLOWED), "probe") == []
     assert _TEMPLATE_HAND.search(
@@ -1020,7 +1045,8 @@ def test_changing_a_modules_package_moves_its_headers(tmp_path):
     """S2: under nested the module's `package` decides where its headers
     go, and a manifest edit of it left them where the old package put them:
     `apply` refused forever on the stranded header's guard. It is the same
-    move as a layout switch, read off the tree, both ways."""
+    move as a layout switch, read from jm's own records of where it put
+    them (the component CMakeLists, the core's first include), both ways."""
     _jm(tmp_path, "new", "p")
     root = tmp_path / "p"
     _declare(root, "nested")
@@ -1041,6 +1067,15 @@ def test_changing_a_modules_package_moves_its_headers(tmp_path):
     test = INC.native_path(root, "test", "fir")
     test.write_text(
         test.read_text(encoding="utf-8") + _MINE_TEST, encoding="utf-8"
+    )
+    # The author's own first include: fir's former place is then on record
+    # only in its CMakeLists, and the module core's only in its _core.c --
+    # each record is load-bearing.
+    core_c = root / "native" / "src" / "fir" / "fir_core.c"
+    core_c.write_text(
+        f'#include "{INC.include("clib_common.h", root)}"\n'
+        + core_c.read_text(encoding="utf-8"),
+        encoding="utf-8",
     )
     frag = root / "modules" / "radio.toml"
     plain = frag.read_text(encoding="utf-8")
@@ -1146,8 +1181,9 @@ def test_a_header_path_is_asked_of_the_manifest_in_hand():
 
 
 def test_leaving_nested_and_changing_package_in_one_edit(tmp_path):
-    """The former package is in no manifest once both change: the tree is
-    read, so the headers still come home to the flat layout."""
+    """The former package is in no manifest once both change: jm's own
+    records of where it put the files say, so they still come home to the
+    flat layout."""
     _jm(tmp_path, "new", "p")
     root = tmp_path / "p"
     _declare(root, "nested")
@@ -1172,3 +1208,39 @@ def test_leaving_nested_and_changing_package_in_one_edit(tmp_path):
     for left in ("radio/fir", "radio/radio", "front"):
         assert not (hroot / left).exists(), left
     _jm(root, "status", "--check")
+
+
+@pytest.mark.parametrize("layout", ["", "mirrored", "nested"])
+def test_a_foreign_file_in_jms_shape_is_never_a_former_place(tmp_path, layout):
+    """A vendored copy of another jm project, and an author's legacy test,
+    have exactly the shapes jm writes (``third_party/fir/fir_core.h``,
+    ``legacy/fir/test_fir_core.c``). A former place is read from jm's own
+    records, never matched in the tree: `status --check` stays clean, and
+    `apply` moves nothing of theirs."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, layout)
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "apply")
+    vendored = INC.header_root(root) / "third_party" / "fir"
+    vendored.mkdir(parents=True)
+    foreign = {
+        vendored / "fir_core.h": "/* vendored */\n",
+        vendored / "helper.h": "/* vendored helper */\n",
+        root / INC.TESTS_DIR / "legacy" / "fir" / "test_fir_core.c": (
+            "int main(void) { return 0; }\n"
+        ),
+    }
+    for path, text in foreign.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    assert not [o for o, _n in INC.relocations(root) if (root / o).exists()], (
+        INC.relocations(root)
+    )
+    _jm(root, "status", "--check")
+    before = _digest(root)
+    _jm(root, "apply")
+    for path, text in foreign.items():
+        assert path.read_text(encoding="utf-8") == text, path
+    assert _digest(root) == before
