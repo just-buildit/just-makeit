@@ -1069,8 +1069,7 @@ def test_changing_a_modules_package_moves_its_headers(tmp_path):
         test.read_text(encoding="utf-8") + _MINE_TEST, encoding="utf-8"
     )
     # The author's own first include: fir's former place is then on record
-    # only in its CMakeLists, and the module core's only in its _core.c --
-    # each record is load-bearing.
+    # only in its CMakeLists.
     core_c = root / "native" / "src" / "fir" / "fir_core.c"
     core_c.write_text(
         f'#include "{INC.include("clib_common.h", root)}"\n'
@@ -1189,6 +1188,20 @@ def test_leaving_nested_and_changing_package_in_one_edit(tmp_path):
     _declare(root, "nested")
     _jm(root, "module", "radio")
     _jm(root, "object", "fir", "--module", "radio")
+    # A function core: its test target is the CMake record of the module
+    # core's directory. A module with no functions has none but its sacred
+    # _core.c, which is read under nested only (gh-2463 is that case).
+    _jm(
+        root,
+        "function",
+        "f",
+        "--module",
+        "radio",
+        "--param",
+        "x:double",
+        "--return-type",
+        "double",
+    )
     _jm(root, "apply")
     frag = root / "modules" / "radio.toml"
     frag.write_text(
@@ -1244,3 +1257,76 @@ def test_a_foreign_file_in_jms_shape_is_never_a_former_place(tmp_path, layout):
     for path, text in foreign.items():
         assert path.read_text(encoding="utf-8") == text, path
     assert _digest(root) == before
+
+
+@pytest.mark.parametrize("layout", ["", "mirrored", "nested"])
+def test_the_sacred_cores_first_include_is_not_a_record_outside_nested(
+    tmp_path, layout
+):
+    """The core's first include is the author's: here it names a vendored
+    ``third_party/fir/fir_core.h`` (no fir guard) beside a ``helper.h``.
+    Flat and mirrored never read it, so it is no place at all; under nested
+    a place known only from it moves jm's named headers, and only behind
+    the component's own guard -- which a foreign header lacks."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, layout)
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "object", "gain", "--module", "dsp")
+    _jm(root, "apply")
+    vendored = INC.header_root(root) / "third_party" / "fir"
+    vendored.mkdir(parents=True)
+    foreign = {
+        vendored / "fir_core.h": "/* vendored, its own guard */\n",
+        vendored / "helper.h": "/* vendored helper */\n",
+    }
+    for path, text in foreign.items():
+        path.write_text(text, encoding="utf-8")
+    core_c = root / "native" / "src" / "fir" / "fir_core.c"
+    core_c.write_text(
+        f'#include "{INC.include("third_party/fir/fir_core.h", root)}"\n'
+        + core_c.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    cfg = C.load(root)
+    weak = INC._recorded_places(root, cfg, INC.native_names(cfg))[2]
+    if layout == "nested":
+        assert weak["fir"] == {"third_party/fir"}
+    else:
+        assert weak == {}
+    assert not [o for o, _n in INC.relocations(root) if (root / o).exists()]
+    _jm(root, "status", "--check")
+    before = _digest(root)
+    _jm(root, "apply")
+    for path, text in foreign.items():
+        assert path.read_text(encoding="utf-8") == text, path
+    assert _digest(root) == before
+
+
+def test_a_place_known_only_from_the_core_moves_jms_headers_only(tmp_path):
+    """A module with no functions records its core's directory nowhere but
+    the sacred ``_core.c``'s first include -- the author's content. Under
+    nested a package change moves that core's named headers on it, behind
+    the module's own guard, and leaves every other file there alone."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    _jm(root, "module", "radio")
+    _jm(root, "object", "fir", "--module", "radio")
+    _jm(root, "apply")
+    old = INC.core_h(root, "radio")
+    helper = old.parent / "helper.h"
+    helper.write_text(_MINE_H, encoding="utf-8")
+    frag = root / "modules" / "radio.toml"
+    frag.write_text(
+        frag.read_text(encoding="utf-8").replace(
+            "[module.radio]\n", '[module.radio]\npackage = "front"\n'
+        ),
+        encoding="utf-8",
+    )
+    _jm(root, "apply")
+    assert INC.core_dir("radio", root) == "front/radio"
+    assert INC.core_h(root, "radio").is_file() and not old.exists()
+    assert helper.read_text(encoding="utf-8") == _MINE_H
+    _jm(root, "status", "--check")
