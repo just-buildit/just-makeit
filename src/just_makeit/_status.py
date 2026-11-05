@@ -130,6 +130,27 @@ def _COPY_IGNORE(directory: str, names: list) -> set:
     }
 
 
+def _changed_since(live: Path, read: "bytes | None") -> bool:
+    """Whether *live* no longer holds what status read from it.
+
+    *read* is the file's bytes in status's one snapshot of the project, or
+    ``None`` when the file was absent then. True when the file has been
+    created, deleted or rewritten since: anything status concludes about it
+    from *read* is then about a file that no longer exists (gh-2488).
+
+    >>> import tempfile
+    >>> f = Path(tempfile.mkdtemp()) / "x"
+    >>> _changed_since(f, None)
+    False
+    >>> _ = f.write_bytes(b"a")
+    >>> [_changed_since(f, r) for r in (b"a", b"b", None)]
+    [False, True, True]
+    """
+    if not live.is_file():
+        return read is not None
+    return read is None or live.read_bytes() != read
+
+
 def _walk_managed(base: Path) -> list[Path]:
     """Return manifest-owned files under *base*, as relative paths."""
     out: list[Path] = []
@@ -567,14 +588,31 @@ def run(
     ok_count = 0
     # gh-1641: files that differ from jm's render only in CRLF versus LF.
     eol_entries: list[str] = []
+    # gh-2488: (path, allowed) for a file the replay changed whose live
+    # copy was written while status ran -- not drift, not current: unknown.
+    racing_entries: list[tuple[str, bool]] = []
+    superseded_pairs: "list[tuple[str, str]]" = []
+    relocating_pairs: "set[tuple[str, str]]" = set()
     with tempfile.TemporaryDirectory(prefix="jm-status-") as tmp:
         # gh-764: `root.name` is "" for a relative root — `jm status` run as
         # `_status.run(Path("."))` collapsed the scratch path onto the temp
         # directory itself and died in `copytree` with FileExistsError.
         # Resolve for the *name* only; `root` itself stays as the caller gave
         # it, so reported paths are unchanged.
-        scratch = Path(tmp) / (root.resolve().name or "project")
-        shutil.copytree(root, scratch, ignore=_COPY_IGNORE)
+        _name = root.resolve().name or "project"
+        scratch = Path(tmp) / _name
+        # gh-2488: ONE read of the live tree, and every comparison below is
+        # against it. `snap` is that read, kept untouched; `scratch` is a
+        # copy of it for the replay to change. Comparing the replay with the
+        # live tree re-read afterwards reported whatever was written in
+        # between -- a `.pytest_cache` entry, a hand-written note -- as
+        # STALE, a file `jm apply` would rewrite, although apply never
+        # touches it. The second copy reads only the private temp tree, so
+        # nothing can move under it, and `_COPY_IGNORE` has already kept the
+        # caches and build trees out of both.
+        snap = Path(tmp) / "jm-snapshot" / _name
+        shutil.copytree(root, snap, ignore=_COPY_IGNORE)
+        shutil.copytree(snap, scratch, symlinks=True)
         # gh-767: drop the glue `apply` renders but never writes back, so the
         # replay below materializes jm's current output for it and the
         # comparison can see it at all. Scratch only — the real tree is never
@@ -621,7 +659,7 @@ def run(
         # aggregator publishes, so the replay reads the user's.
         from . import _object as _obj
 
-        _obj._FRAGMENT_ROOT_OVERRIDE = root
+        _obj._FRAGMENT_ROOT_OVERRIDE = snap
         try:
             with (
                 contextlib.redirect_stdout(_replay_out),
@@ -675,16 +713,18 @@ def run(
         from . import _linkcheck
 
         for _comp in C.components(cfg):
-            _srcs = _linkcheck.binding_sources(root, cfg, _comp)
+            _srcs = _linkcheck.binding_sources(snap, cfg, _comp)
             if any(
-                s.relative_to(root).as_posix() in unreconciled for s in _srcs
+                s.relative_to(snap).as_posix() in unreconciled for s in _srcs
             ):
-                _linkcheck.write(scratch, cfg, _comp, binding_root=root)
+                _linkcheck.write(scratch, cfg, _comp, binding_root=snap)
 
         # gh-949: computed inside the temp directory's lifetime, against the
-        # *real* root rather than the scratch copy. For a versioned file the
-        # two are identical (that is the whole point — `apply` never touched
-        # it), so this is the same answer with the honest operand.
+        # project as it was read rather than the scratch copy. For a
+        # versioned file the two are identical (that is the whole point —
+        # `apply` never touched it), so this is the same answer with the
+        # honest operand. gh-2488: that read is `snap`, not the live root
+        # read again now, so every finding here describes the same tree.
         # `status_allow`/`--allow` suppress it like any other deviation: a
         # project that has deliberately taken its Makefile over says so once
         # and stops hearing about it. Suppressible because adopting jm's
@@ -700,10 +740,10 @@ def run(
         _cur_mf = replay_root / "Makefile"
         _other = _new_mod.other_backend(cfg)
         if _cur_mf.is_file() and _new_mod.is_other_backend_makefile(
-            root,
+            snap,
             _cur_mf.read_text(encoding="utf-8").replace("\r\n", "\n"),
             _other,
-            lambda: _apply_mod._other_backend_makefile(cfg, root),
+            lambda: _apply_mod._other_backend_makefile(cfg, snap),
         ):
             _backend = _other
         # gh-2465: the author's definitions against the declarations the
@@ -711,10 +751,10 @@ def run(
         # same render, inside the temp tree's lifetime.
         from . import _ctorsig
 
-        _order_drift = _ctorsig.order_drift(root, replay_root, cfg)
+        _order_drift = _ctorsig.order_drift(snap, replay_root, cfg)
         outdated_entries = [
             (p, _is_allowed(p, allow_patterns))
-            for p in _createonly.outdated(root, replay_root)
+            for p in _createonly.outdated(snap, replay_root)
             if not (_backend and p == "Makefile")
         ]
         backend_entries = (
@@ -732,17 +772,17 @@ def run(
         packaging_entries = [
             (v, _is_allowed(v.path, allow_patterns))
             for v in _adopt.packaging_survey(
-                root, replay_root, C.project_name(cfg)
+                snap, replay_root, C.project_name(cfg)
             )
             if v.state == "behind"
         ]
         # gh-975: the other half of what the replay knows about a create-only
         # file — not "is it behind" but "can jm still write into it". Same
-        # operands as `outdated` above and for the same reason: the real root,
-        # inside the temp tree's lifetime.
+        # operands as `outdated` above and for the same reason: the project
+        # as read (`snap`), inside the temp tree's lifetime.
         unanchored_entries = [
             (p, a, _is_allowed(p, allow_patterns))
-            for (p, a) in _createonly.missing_anchors(root, replay_root)
+            for (p, a) in _createonly.missing_anchors(snap, replay_root)
         ]
         # gh-1626: the cores `apply` leaves unwired, asked of the scratch
         # copy it has just run on -- so the UNWIRED advice below is decided
@@ -789,20 +829,37 @@ def run(
         # the new place, absent from the tree until the move. It is that
         # move, listed once under SUPERSEDED -- not also a file `apply`
         # will create. Still counted: `apply` changes the tree.
-        _moving = {n for _o, n in _createonly.relocating(root)}
+        _moving = {n for _o, n in _createonly.relocating(snap)}
+        # gh-2488: and the SUPERSEDED report below asks the same snapshot,
+        # so its "`jm apply` makes these moves" agrees with `moved` here.
+        superseded_pairs = _createonly.superseded(snap)
+        relocating_pairs = set(_createonly.relocating(snap))
         for rel in _walk_managed(scratch):
-            real = root / rel
+            real = snap / rel
             after = (scratch / rel).read_bytes()
             rel_posix = rel.as_posix()
             # gh-830: every managed path, so an allow entry that
             # matches none of them can be named below.
             managed_paths.append(rel_posix)
             dropped: frozenset = frozenset()
-            if not real.exists():
+            before = real.read_bytes() if real.is_file() else None
+            # gh-2488: a file the replay changed is a finding about the
+            # live project only while the live file is still what was read.
+            # One written since -- by the build, an editor, a test run --
+            # cannot be classified from this run's read, in either
+            # direction, so it is named as that and gates: `--check` must
+            # not pass over an owned file it could not compare. A file the
+            # replay did NOT change is never re-read at all: it matched in
+            # the snapshot, whatever has been written to the tree since.
+            if before != after and _changed_since(root / rel, before):
+                racing_entries.append(
+                    (rel_posix, _is_allowed(rel_posix, allow_patterns))
+                )
+                continue
+            if before is None:
                 state = "moved" if rel_posix in _moving else "missing"
                 diff = ""
             else:
-                before = real.read_bytes()
                 # gh-785: asked before the equality shortcut below, and
                 # before anything classifies the file. An unparseable `.pyi`
                 # is the one finding here that `jm apply` does not fix but
@@ -1183,6 +1240,12 @@ def run(
         # gh-2465: gates, never suppressed, for gh-1076's reasons -- and one
         # more: this one compiles, so nothing else will ever say it.
         + len(_order_drift)
+        # gh-2488: gates unless allowed. A file jm owns that it could not
+        # compare is not a pass: passing would certify a file this run
+        # never read, and the drift it may hold is the drift `--check`
+        # exists to catch. Not STALE either -- nothing says `apply` would
+        # change it. Re-running on a quiet tree settles it.
+        + sum(1 for _p, al in racing_entries if not al)
     )
 
     if as_json:
@@ -1360,6 +1423,11 @@ def run(
                     # gh-1641: a CRLF checkout of a current file. Never
                     # counted, and never `allowed`: there is nothing to allow.
                     "line_endings": list(eol_entries),
+                    # gh-2488: replay-changed files written while status
+                    # ran; counted unless allowed. Re-run.
+                    "changed_during_run": [
+                        {"path": p, "allowed": a} for (p, a) in racing_entries
+                    ],
                     # gh-1459/gh-1471: root-template fixes the project's
                     # root CMakeLists.txt lacks. Reported, never counted, on
                     # `outdated`'s reasoning: the file is the author's.
@@ -1771,6 +1839,25 @@ def run(
             " your own edits\n"
             "  to it are here too. Diff before replacing; see"
             " docs/upgrading.md. Not counted."
+        )
+        print()
+
+    # gh-2488: printed under --check too: it can fail the gate, and the
+    # paths are what tells a CI reader which tool was writing.
+    if racing_entries:
+        print(
+            f"CHANGED WHILE STATUS RAN ({len(racing_entries)}) — written"
+            " after status read the project:"
+        )
+        for p, al in racing_entries:
+            print(f"  ? {p}" + ("  (allowed — not counted)" if al else ""))
+        print(
+            "  jm's replay would change these, but each was rewritten"
+            " before status could\n"
+            "  compare it, so this run cannot say whether it drifted."
+            " Re-run `jm status`\n"
+            "  once nothing is writing to the project. Not STALE; counted"
+            " unless allowed."
         )
         print()
 
@@ -2274,7 +2361,8 @@ def run(
     # gh-1472: a file jm has renamed, still under its old name. `apply` holds
     # the new one back rather than create a default beside it, so this is
     # the one place a reader learns the rename is waiting.
-    _superseded = _createonly.superseded(root)
+    # gh-2488: both asked of the snapshot the drift above was read from.
+    _superseded = superseded_pairs
     if _superseded:
         print(f"SUPERSEDED ({len(_superseded)}) — file(s) jm has renamed:")
         for _old, _new in _superseded:
@@ -2282,7 +2370,7 @@ def run(
             print(f"    {_apply.superseded_advice(root, _old, _new)}")
         # gh-2429: a move `apply` makes is drift (counted as `moved`);
         # only the renames left for `upgrade` are not.
-        _moves = set(_createonly.relocating(root))
+        _moves = relocating_pairs
         if set(_superseded) <= _moves:
             print("  `jm apply` makes these moves.")
         elif _moves:
@@ -2585,6 +2673,8 @@ def run(
         # alone would be right and unread.
         and not _ctor_drift
         and not _order_drift
+        # gh-2488: "up to date" over a file this run could not compare.
+        and not any(not al for _p, al in racing_entries)
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -2756,6 +2846,12 @@ def run(
             + (
                 f", {len(_order_drift)} param-order (!)"
                 if _order_drift
+                else ""
+            )
+            + (
+                f", {sum(1 for _p, al in racing_entries if not al)}"
+                " changed-during-run (!)"
+                if any(not al for _p, al in racing_entries)
                 else ""
             )
             + (", unbuilt not checked" if _orphans_unchecked else "")
