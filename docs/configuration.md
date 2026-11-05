@@ -2384,9 +2384,30 @@ ______________________________________________________________________
 The file is plain TOML — you can edit it directly. `just-makeit` will read
 your changes on the next command. The rules:
 
-- **Order matters for state variables**: `[[<object>.state]]` entries are
-    emitted in the order they appear, which controls constructor argument order
-    in both C and Python.
+- **Order matters here**:
+
+    | What you order                                                          | What the order controls                                                                                                                                                                                             |
+    | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | Scalar keys before `[[…]]` entries                                      | Which table a key belongs to; see the next rule.                                                                                                                                                                    |
+    | `[[enum]]` `values`                                                     | The C integer of each choice, so append only, never reorder ([named enums](types.md#named-enums-enum-single-source-of-truth)).                                                                                      |
+    | `[[<object>.state]]`                                                    | The C struct's field order. Also the constructor's parameter order, in C and Python, **only when the object has no `init_params`**: with them, the constructor takes the `init_params` alone.                       |
+    | `[[<object>.init_params]]`                                              | The constructor's parameter order, in C and Python.                                                                                                                                                                 |
+    | A method's or function's `params`, `result_fields`, a record's `fields` | Call order, result order and column order ([named parameters](commands/extend.md#named-parameters-param), [record shapes](commands/extend.md#record-shapes), [`jm record`](commands/extend.md#just-makeit-record)). |
+    | `[module.X] objects`                                                    | The module's load order, which the root `CMakeLists.txt` blocks and the umbrella header's includes follow ([`--before`](commands/scaffold.md#just-makeit-object)).                                                  |
+    | Component and module tables                                             | The same two files' order. In a split layout, fragments load in file-name order ([`migrate-to-fragments`](commands/build.md#just-makeit-migrate-to-fragments)).                                                     |
+
+    What does **not** matter: the order of keys inside a table, and the order
+    of one kind of `[[…]]` array against another (`[[<object>.methods]]` before
+    or after `[[<object>.state]]`).
+
+    Reordering parameters is an API change for every positional caller, C and
+    Python. The definition in your `_core.c` is yours, so jm does not reorder
+    it. When the manifest's order and the definition's disagree with the same
+    types (the case C compiles without a word), `jm apply` refuses and
+    `jm status` reports [`ORDER`](commands/build.md#why-order-gates-and-reads-your-definitions):
+    reorder the definition's parameters and every call site, or restore the
+    manifest's order.
+
 - **Keys must come before sub-table arrays**: all scalar keys on an object
     section (`impl`, `create_impl`, `reset_impl`, `destroy_impl`, `arg_type`, `mutable`, …)
     must appear **before** the first `[[<object>.state]]` or
@@ -2395,6 +2416,7 @@ your changes on the next command. The rules:
     so keys placed after a `[[…]]` line become keys of that entry. jm warns
     that the entry carries an unknown key (`unknown state key …`), and the
     key has no effect.
+
 - **Editing a signature** in TOML (removing a state variable, changing a
     method's return type) propagates to the glue files (`_ext.c`, `.pyi`,
     `CMakeLists.txt`) and the public declarations in `_core.h` on the next
@@ -2403,5 +2425,6 @@ your changes on the next command. The rules:
     Hand-written bodies are lifted and spliced back by best-effort text
     matching; `--discard` resets to the bare scaffold. Either way,
     `git stash` first.
+
 - **Don't rename the file** — `just-makeit` always looks for `just-makeit.toml`
     at the project root.

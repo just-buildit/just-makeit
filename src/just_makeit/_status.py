@@ -633,6 +633,8 @@ def run(
                     scratch,
                     honor_status_allow=False,
                     replay_out=replay_root,
+                    # gh-2465: reported below as ORDER, not refused.
+                    refuse_order=False,
                 )
         except (SystemExit, Refusal) as _exc:
             # stderr first: that is where apply puts `error:`. stdout is the
@@ -706,6 +708,12 @@ def run(
             lambda: _apply_mod._other_backend_makefile(cfg, root),
         ):
             _backend = _other
+        # gh-2465: the author's definitions against the declarations the
+        # replay renders -- the same call `apply` refuses on, asked of the
+        # same render, inside the temp tree's lifetime.
+        from . import _ctorsig
+
+        _order_drift = _ctorsig.order_drift(root, replay_root, cfg)
         outdated_entries = [
             (p, _is_allowed(p, allow_patterns))
             for p in _createonly.outdated(root, replay_root)
@@ -1174,6 +1182,9 @@ def run(
         # quietly resolves; and while the two disagree, `jm regenerate` writes
         # a create() that does not compile. A project cannot mean that.
         + len(_ctor_drift)
+        # gh-2465: gates, never suppressed, for gh-1076's reasons -- and one
+        # more: this one compiles, so nothing else will ever say it.
+        + len(_order_drift)
     )
 
     if as_json:
@@ -1291,6 +1302,17 @@ def run(
                         }
                         for d in _ctor_drift
                     ],
+                    # gh-2465: both orders, and where the definition is.
+                    "param_order_drift": [
+                        {
+                            "function": d.fn,
+                            "path": d.rel,
+                            "line": d.line,
+                            "definition": d.defined,
+                            "manifest": d.rendered,
+                        }
+                        for d in _order_drift
+                    ],
                     # gh-1502: advisory, like `silent_benchmarks` below.
                     "create_example_drift": [
                         {
@@ -1299,6 +1321,16 @@ def run(
                             "line": e.line,
                             "passed": e.passed,
                             "declared": e.declared,
+                            # gh-2465: the two name lists, when the count
+                            # agrees and the order does not; else null.
+                            "order": (
+                                {
+                                    "passed": e.order[0],
+                                    "declared": e.order[1],
+                                }
+                                if e.order is not None
+                                else None
+                            ),
                         }
                         for e in _example_drift
                     ],
@@ -2070,6 +2102,27 @@ def run(
         )
         print()
 
+    # gh-2465: printed under --check too, for gh-1076's reason above.
+    if _order_drift:
+        print(
+            f"ORDER ({len(_order_drift)}) — a definition takes the manifest's"
+            " parameters in another order:"
+        )
+        for d in _order_drift:
+            print(f"  ! {d.rel}:{d.line}")
+            print(f"      definition: {d.fn}({d.defined})")
+            print(f"      manifest:   {d.fn}({d.rendered})")
+        print(
+            "  The same types, so C compiles every call and a caller following"
+            " the header\n"
+            "  passes those arguments swapped. `jm apply` refuses until they"
+            " agree: reorder\n"
+            "  the definition's parameters (and every call site), or restore"
+            " the manifest's\n"
+            "  order. Not suppressible. See gh-2465."
+        )
+        print()
+
     # gh-1033: the stand-down, printed in the UNBUILT block's own place so a
     # reader meets it where they would have met the finding. `_orphans` is
     # empty here by construction, so without this the section is simply
@@ -2141,9 +2194,16 @@ def run(
     if _example_drift:
         print(
             f"EXAMPLE ({len(_example_drift)}) — a header's @code example"
-            " calls create() with the wrong number of arguments:"
+            " calls create() with the wrong arguments:"
         )
         for e in _example_drift:
+            if e.order is not None:
+                # gh-2465: the right names, in another order.
+                print(
+                    f"  ~ {e.rel}:{e.line}  {e.call}({e.order[0]}),"
+                    f" declared ({e.order[1]})"
+                )
+                continue
             print(
                 f"  ~ {e.rel}:{e.line}  {e.call}() given {e.passed},"
                 f" declared {e.declared}"
@@ -2496,6 +2556,7 @@ def run(
         # disagrees with is the sentence that issue is about — the exit code
         # alone would be right and unread.
         and not _ctor_drift
+        and not _order_drift
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -2664,6 +2725,11 @@ def run(
             # skimming this line must not read the absent "unbuilt" term as
             # zero unbuilt sources.
             + (f", {len(_ctor_drift)} ctor-drift (!)" if _ctor_drift else "")
+            + (
+                f", {len(_order_drift)} param-order (!)"
+                if _order_drift
+                else ""
+            )
             + (", unbuilt not checked" if _orphans_unchecked else "")
             + (f", {len(_silent)} silent bench" if _silent else "")
             + (

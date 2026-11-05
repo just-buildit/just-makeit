@@ -32,10 +32,17 @@ it already holds the rendered form. This asks it to verify what it injected
 rather than only write it — one targeted comparison that does not depend on
 the whole-file diff, and therefore answers the same way in both layouts.
 
-`_core.c` is not read. It does not need to be: a definition that disagrees
-with its own header will not compile, so checking the header puts the
-definition under the compiler's gate for free. That is the whole reason this
-is worth doing at the header rather than by parsing C.
+`_core.c` is not read by that check. A definition that disagrees with its
+own header in a parameter's TYPE or count will not compile, so checking the
+header puts that much of the definition under the compiler's gate for free.
+
+What the compiler cannot see is the same types in a different order: swap two
+``double`` parameters in the manifest and `apply` rewrites the prototype, the
+definition keeps the old order, and every caller following the header passes
+them swapped (gh-2465). So :func:`order_drift` does read the author's C: the
+declarations the replay renders against the definitions the author wrote,
+for every function jm declares -- `create()`, a method, a module function --
+and `apply` refuses, `status` reports, what it finds.
 
 Which side is stale is not decidable here, exactly as with the gh-442
 init-param default drift this sits beside — jm cannot know whether the author
@@ -283,6 +290,175 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
     return out
 
 
+#: A parameter list with at most one level of nested parentheses (a
+#: function-pointer parameter), and never a ``;``, ``{`` or ``}`` -- so a
+#: match cannot run from one function's name across another's body.
+_PARAMS = r"([^;{}()]*(?:\([^;{}()]*\)[^;{}()]*)*)"
+_SIGNATURE = re.compile(r"\b([A-Za-z_]\w*)\s*\(" + _PARAMS + r"\)\s*([;{])")
+
+#: Qualifiers a definition may add or drop against its declaration without
+#: changing which argument binds to which parameter (``JM_RESTRICT`` is
+#: gh-169's decorative one).
+_QUALIFIERS = re.compile(
+    r"\b(?:const|volatile|restrict|__restrict__|__restrict|JM_RESTRICT)\b"
+)
+
+
+def signatures(text: str) -> "list[tuple[str, str, str, int]]":
+    """``(name, params, kind, offset)`` for each file-scope function in *text*.
+
+    *kind* is ``"decl"`` for a prototype (ends in ``;``) and ``"def"`` for a
+    definition (a body brace follows). Read on `_docsync._code_mask`, so a
+    comment or string never answers, and kept to file scope with
+    `_csym._file_scope`, so a call inside a body (``f(a, b);``), a control
+    statement (``if (x) {``) and a ``#define`` are not functions. *offset* is
+    where the name starts in *text*; *params* is sliced from *text* itself.
+
+    Examples
+    --------
+    >>> signatures('''int f(int a, int b);
+    ... /* g(int x); */
+    ... static inline int g(int y, int z) { return f(z, y); }
+    ... ''')
+    [('f', 'int a, int b', 'decl', 4), ('g', 'int y, int z', 'def', 55)]
+    """
+    from ._docsync import _code_mask
+
+    mask = _code_mask(text)
+    scope = _csym._file_scope(mask)
+    out = []
+    for m in _SIGNATURE.finditer(mask):
+        # A name inside a body, or on a preprocessor line, is blank in the
+        # file-scope view.
+        if scope[m.start(1)] == " ":
+            continue
+        kind = "decl" if m.group(3) == ";" else "def"
+        params = " ".join(text[m.start(2) : m.end(2)].split())
+        out.append((m.group(1), params, kind, m.start(1)))
+    return out
+
+
+def _shape(params: str) -> "tuple[list[str], list[str]] | None":
+    """``(types, names)`` of a parameter list, or None when it is not one.
+
+    Qualifiers are dropped from the types (:data:`_QUALIFIERS`): they never
+    change which argument binds where, which is the only question asked.
+    None for anything that is not ``type name`` items -- an unnamed
+    parameter, an array, a function pointer -- so a list jm cannot read
+    plainly is never a finding.
+
+    Examples
+    --------
+    >>> _shape("const double *x, size_t n")
+    (['double *', 'size_t'], ['x', 'n'])
+    >>> _shape("int, int") is None
+    True
+    """
+    types, names = [], []
+    for p in split_params(_norm(params)):
+        m = re.fullmatch(r"(.*?[\s*])(\w+)", p)
+        if m is None or not m.group(1).strip():
+            return None
+        t = " ".join(_QUALIFIERS.sub(" ", m.group(1)).split())
+        if not t:
+            return None
+        types.append(t)
+        names.append(m.group(2))
+    return types, names
+
+
+def reordered(rendered: str, defined: str) -> bool:
+    """Whether *defined* binds the arguments *rendered* names elsewhere.
+
+    The silent case only (gh-2465): the same parameter count and types, so C
+    compiles a call through the declaration against the definition, and a
+    parameter name both lists share sitting at a different position, so
+    that argument lands in another parameter. A type or count difference is
+    the compiler's to report; a renamed parameter still binds positionally
+    the same, and is not a reorder.
+
+    Examples
+    --------
+    >>> reordered("double rate, double gain", "double gain, double rate")
+    True
+    >>> reordered("double rate, double gain", "double rate, double g")
+    False
+    >>> reordered("double a, int b", "int b, double a")
+    False
+    """
+    r, d = _shape(rendered), _shape(defined)
+    if r is None or d is None or r[0] != d[0]:
+        return False
+    at = {n: i for i, n in enumerate(d[1])}
+    return any(n in at and at[n] != i for i, n in enumerate(r[1]))
+
+
+@dataclass(frozen=True)
+class OrderDrift:
+    """A definition taking the manifest's parameters in another order."""
+
+    fn: str  #: the C function
+    rel: str  #: POSIX path of the defining file, relative to the root
+    line: int  #: 1-based line of the definition's name
+    defined: str  #: the parameter list as the definition spells it
+    rendered: str  #: the parameter list jm renders from the manifest
+
+    def describe(self) -> str:
+        """The refusal and the finding: both orders and both ways out."""
+        return (
+            f"{self.rel}:{self.line} defines {self.fn}({self.defined}), but"
+            f" the manifest declares {self.fn}({self.rendered}): the same"
+            " types in another order, so C compiles every call and a caller"
+            " following the header passes those arguments swapped. Reorder"
+            " the definition's parameters (and every call site) to match the"
+            " manifest, or restore the manifest's order (gh-2465)"
+        )
+
+
+def order_drift(root: Path, tree: Path, cfg: dict) -> "list[OrderDrift]":
+    """Every author definition whose parameter order the manifest's render
+    does not share (gh-2465).
+
+    *tree* is a replay of *cfg* (`_apply.replay_project`'s render). Every
+    prototype and inline definition in its headers is a declaration jm
+    renders from the manifest -- the one `apply` writes into the sacred
+    header, or the one the binding calls -- so the comparison needs no list
+    of declaration kinds: `create()` from state or `init_params`, a method's
+    `params`, a module function, an ``inline`` one, a seam. The other side is
+    every definition in the author's C (`_csym._author_files`: a `_core.c`,
+    the sacred `_core.h`, a module function's `.c`), the bodies jm never
+    rewrites.
+
+    Only :func:`reordered` pairs are reported. *root*'s own headers are not
+    read for declarations: an apply on an older jm has already rewritten
+    them, and the definition beside the rewrite is what still disagrees.
+    """
+    rendered: "dict[str, str]" = {}
+    hdrs = INC.header_root(tree, cfg)
+    for h in sorted(hdrs.rglob("*.h")) if hdrs.is_dir() else ():
+        text = h.read_text(encoding="utf-8", errors="replace")
+        for name, params, _kind, _at in signatures(text):
+            rendered.setdefault(name, params)
+    out: "list[OrderDrift]" = []
+    for path in _csym._author_files(root):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for name, params, kind, at in signatures(text):
+            if kind != "def" or name not in rendered:
+                continue
+            if not reordered(rendered[name], params):
+                continue
+            out.append(
+                OrderDrift(
+                    fn=name,
+                    rel=path.relative_to(root).as_posix(),
+                    line=text.count("\n", 0, at) + 1,
+                    defined=_norm(params),
+                    rendered=_norm(rendered[name]),
+                )
+            )
+    return out
+
+
 @dataclass(frozen=True)
 class ExampleDrift:
     """A file-comment example calling `create()` with the wrong arg count.
@@ -296,8 +472,14 @@ class ExampleDrift:
     **Advisory, never counted.** The header is sacred: the only way to clear
     a gating finding here would be for the author to retype what jm
     rendered, which is not an action jm may require of author text. The
-    count is all this compares -- values and names are the author's to
+    count is what this compares -- values and names are the author's to
     choose, and jm cannot tell a stale argument from a deliberate one.
+
+    gh-2465 adds the one order jm can read: an example passing exactly the
+    prototype's parameter names, as jm scaffolds it, in another order. That
+    is a call the header's own reader copies with the arguments swapped.
+    *order* is ``(passed, declared)``, the two name lists, when that is the
+    finding; the counts then agree.
     """
 
     component: str
@@ -306,9 +488,19 @@ class ExampleDrift:
     call: str  #: the called symbol, as the example spells it
     passed: int  #: arguments the example passes
     declared: int  #: parameters the prototype declares
+    order: "tuple[str, str] | None" = None  #: gh-2465, see above
 
     def describe(self) -> str:
         """One advisory line pair, naming the line and what to change."""
+        if self.order is not None:
+            return (
+                f"{self.rel}:{self.line}\n"
+                f"  the @code example calls {self.call}({self.order[0]});"
+                " the prototype\n"
+                f"  declares ({self.order[1]}). Advisory: the example is"
+                " your text, and jm does not\n"
+                "  rewrite it. Update the call to match the declaration."
+            )
         return (
             f"{self.rel}:{self.line}\n"
             f"  the @code example calls {self.call}() with {self.passed}"
@@ -360,10 +552,17 @@ def example_drift(root: Path, cfg: dict) -> list[ExampleDrift]:
                 break
         if end is None:
             continue
-        passed = len(split_params(rest[:end]))
+        args = split_params(rest[:end])
+        passed = len(args)
         want = len(split_params(declared))
+        order = None
         if passed == want:
-            continue
+            # gh-2465: the names jm scaffolds, in another order.
+            shape = _shape(declared)
+            names = shape[1] if shape is not None else args
+            if args == names or sorted(args) != sorted(names):
+                continue
+            order = (", ".join(args), ", ".join(names))
         offset = head.start() + block.start(1) + call.start(1)
         out.append(
             ExampleDrift(
@@ -373,6 +572,7 @@ def example_drift(root: Path, cfg: dict) -> list[ExampleDrift]:
                 call=call.group(1),
                 passed=passed,
                 declared=want,
+                order=order,
             )
         )
     return out

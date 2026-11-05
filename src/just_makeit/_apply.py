@@ -3974,6 +3974,7 @@ def run(
     *,
     honor_status_allow: bool = True,
     replay_out: Path | None = None,
+    refuse_order: bool = True,
 ) -> None:
     """Reconcile *root* against its manifest.
 
@@ -3982,6 +3983,11 @@ def run(
     there before anything in *root* is touched, and survives this call. Only
     `status` uses it, to compare create-only files that `apply` itself will
     never rewrite; passing it does not change what `apply` does.
+
+    ``refuse_order`` -- gh-2465. False only from `status`, whose scratch
+    apply must not refuse a definition whose parameter order the manifest
+    does not share: `status` reports that itself, as ``ORDER``, beside
+    everything else it finds, from the same `_ctorsig.order_drift`.
     """
     # gh-823: apply is the command where these findings are actionable, so
     # it is the one that counts them and says how many matter. Reset here
@@ -4017,6 +4023,7 @@ def run(
         only,
         honor_status_allow=honor_status_allow,
         replay_out=replay_out,
+        refuse_order=refuse_order,
     )
 
 
@@ -4026,6 +4033,7 @@ def _apply_manifest(
     *,
     honor_status_allow: bool,
     replay_out: "Path | None",
+    refuse_order: bool,
 ) -> None:
     """The body of :func:`run`, once any fragment is composed.
 
@@ -4212,6 +4220,16 @@ def _apply_manifest(
 
             print(error_report(e), file=sys.stderr)
             sys.exit(1)
+        # gh-2465: a declaration rendered into an order the author's
+        # definition does not have, with the same types, compiles and swaps
+        # the arguments of every caller who follows the header. Asked of the
+        # replay just made, before the first write into the tree.
+        if refuse_order:
+            from . import _ctorsig
+
+            _reorders = _ctorsig.order_drift(root, temp_root, cfg)
+            if _reorders:
+                C._refuse([d.describe() for d in _reorders])
         # gh-493: reformat the throwaway scaffold to the project's house style
         # *before* it is compared against the real tree, so a c_style project's
         # on-disk (formatted) *_ext.c glue matches the freshly rendered glue
