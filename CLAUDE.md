@@ -211,8 +211,10 @@ A module id may be **dotted** (`--module dsp.filters`) to nest it in a
 subpackage: `from my_project.dsp.filters import Fir`. `C.module_paths(id)`
 (a `ModulePaths` NamedTuple) splits the name's three roles — `leaf` (`filters`:
 `PyInit_`/`.m_name`/`.so` basename via CMake `OUTPUT_NAME`), `cname`
-(`dsp_filters`: the unique CMake target + flat `native/src/<cname>/` dir, so
-the `add_subdirectory` regex stays a single `\w+`), and `pypath` (`dsp/filters`:
+(`dsp_filters`: the unique CMake target, and the last part of the module's
+source directory -- `native/src/<cname>/`, or under `layout = "nested"`
+`native/src/<package>/<cname>/`; the root wiring's `add_subdirectory` regex,
+`_incpath.SUBDIR_RE`, takes a path whose last part is the name, gh-2459), and `pypath` (`dsp/filters`:
 the Python output dir). Intermediate packages get a plain `__init__.py`
 (`_init.ensure_parent_packages`). `Ctx.make_module_ctx` supplies the render
 slots (`module`=cname, `module_leaf`, `module_pypath`, `module_output_name`,

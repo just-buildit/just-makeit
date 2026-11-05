@@ -2138,6 +2138,7 @@ def run(
             comp,
             dep_core_libs(depends_on)
             + ([] if header_only else [f"{comp}_core"]),
+            owner=cfg,
         )
 
     print()

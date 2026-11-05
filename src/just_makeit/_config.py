@@ -354,7 +354,7 @@ def load(root: Path) -> dict:
     # silence.
     from ._extrahook import warn_unwired_hooks
 
-    warn_unwired_hooks(root)
+    warn_unwired_hooks(root, cfg=cfg)
     return cfg
 
 

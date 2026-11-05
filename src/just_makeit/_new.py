@@ -103,7 +103,7 @@ def _write_project_wiring(root: Path, project: str, cfg: dict) -> None:
     from ._libwiring import splice_cmake_component
 
     for dep in C.c_deps(cfg):
-        splice_cmake_component(root, project, dep, [])
+        splice_cmake_component(root, project, dep, [], c_dep=True)
     cmake = root / "CMakeLists.txt"
     if _splice_cmake_external_deps(cmake, cfg):
         print(f"  update  {cmake}")

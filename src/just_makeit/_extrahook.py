@@ -64,7 +64,9 @@ def _includes(text: str, name: str) -> bool:
     return bool(pat.search(text))
 
 
-def unwired_hooks(root: Path) -> list[tuple[Path, Path]]:
+def unwired_hooks(
+    root: Path, cfg: "dict | None" = None
+) -> list[tuple[Path, Path]]:
     """Every ``(hook, ext_c)`` pair where *ext_c* does not include *hook*.
 
     Walks ``native/src/*/`` rather than the manifest, because the file being
@@ -79,7 +81,9 @@ def unwired_hooks(root: Path) -> list[tuple[Path, Path]]:
     if not src.is_dir():
         return []
     found: list[tuple[Path, Path]] = []
-    for d in sorted(p for p in src.iterdir() if p.is_dir()):
+    # gh-2459: the nested layout's component directories sit deeper; the
+    # manifest in hand says where.
+    for d in INC.src_dirs(root, cfg or {}):
         ext_c = d / f"{d.name}_ext.c"
         if not ext_c.is_file():
             continue
@@ -121,7 +125,9 @@ def describe(hook: Path, ext_c: Path) -> str:
 _SEEN: set[str] = set()
 
 
-def warn_unwired_hooks(root: Path, stream=None) -> list[str]:
+def warn_unwired_hooks(
+    root: Path, stream=None, cfg: "dict | None" = None
+) -> list[str]:
     """Report every hand-written hook nothing includes. Returns the messages.
 
     **Advisory, never gating.** For a `kind = "handle"` / `"capsule"` module
@@ -133,7 +139,7 @@ def warn_unwired_hooks(root: Path, stream=None) -> list[str]:
     from . import _report
 
     out: list[str] = []
-    for hook, ext_c in unwired_hooks(root):
+    for hook, ext_c in unwired_hooks(root, cfg):
         text = describe(hook, ext_c)
         if text in _SEEN:
             continue

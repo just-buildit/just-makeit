@@ -3121,4 +3121,6 @@ def materialize(
     # _module.run's own writer, as _capsule.materialize does (gh-1985).
     from ._libwiring import MODULES_SENTINEL, splice_cmake_component
 
-    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)
+    splice_cmake_component(
+        root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL, owner=cfg
+    )

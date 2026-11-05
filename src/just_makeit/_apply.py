@@ -1724,9 +1724,7 @@ def _relocate_native(root: Path) -> "list[Path]":
     build_files = [
         root / "CMakeLists.txt",
         root / "Makefile",
-        *_libwiring.with_hooks(
-            sorted(INC.src_root(root).glob("*/CMakeLists.txt"))
-        ),
+        *_libwiring.with_hooks(INC.src_cmakelists(root, C.load(root))),
     ]
     for path in build_files:
         if not path.is_file():
@@ -2114,14 +2112,18 @@ def _splice_cmake_components(
     real = real_path.read_text(encoding="utf-8")
     temp = temp_path.read_text(encoding="utf-8")
 
-    # The regex captures the native-dir token, which for a nested module is its
-    # cname (dsp_filters), not the dotted id — so classify against cnames.
+    # The regex captures the native-dir path, whose last part for a nested
+    # module is its cname (dsp_filters), not the dotted id -- so classify
+    # against cnames. gh-2459: in the nested layout the path is the module's
+    # package path too; its last part is still the name.
     module_names = C.module_cnames(cfg)
     component_blocks: list[str] = []
     module_blocks: list[str] = []
-    for m in _SUBDIR_BLOCK.finditer(temp):
+    for m in _libwiring.jm_blocks(temp, cfg):
         (
-            module_blocks if m.group(1) in module_names else component_blocks
+            module_blocks
+            if INC.subdir_name(m.group(1)) in module_names
+            else component_blocks
         ).append(m.group(0))
 
     # c_deps: pure add_subdirectory, no Python scaffolding.
@@ -2130,7 +2132,7 @@ def _splice_cmake_components(
     seen_blocks = {b.split("\n")[0] for b in component_blocks}
     dep_blocks: list[str] = []
     for dep in C.c_deps(cfg):
-        line = INC.subdir_line(dep, cfg)
+        line = INC.c_dep_line(dep)
         if line.rstrip("\n") not in seen_blocks:
             dep_blocks.append(line)
     component_blocks = dep_blocks + component_blocks
@@ -2143,7 +2145,7 @@ def _splice_cmake_components(
             if line.rstrip("\n") not in seen_mod_blocks:
                 module_blocks.append(line)
 
-    new_real = _SUBDIR_BLOCK.sub("", real)
+    new_real = _libwiring.strip_jm_blocks(real, cfg, real_path.parent)
 
     def _insert(text: str, sentinel: str, content: str) -> str:
         if not content or sentinel not in text:
@@ -2493,7 +2495,13 @@ def _warn_dropped_cmake(real: Path, original: str, rendered: str) -> None:
     if not dropped:
         return
     d = real.parent.name
-    src = INC.src_dir(d, real)
+    # The file's own directory: under `nested` it sits below its module's
+    # package, so it is read off the path, not rebuilt from its name.
+    src = real.parent.as_posix()
+    for parent in real.parents:
+        if (parent / "just-makeit.toml").is_file():
+            src = real.parent.relative_to(parent).as_posix()
+            break
     _report.warn(
         f"{src}/CMakeLists.txt is regenerated, and it carries "
         f"{', '.join(f'{n}()' for n in dropped)} that jm does not write -- "
@@ -2642,10 +2650,9 @@ def _refuse_cmake_that_would_lose(
     """
     reconciled = _reconciled_cmake_dirs(cfg)
     lost: "list[tuple[str, list[str]]]" = []
-    src = INC.src_root(temp_root)
-    for temp in sorted(src.glob("*/CMakeLists.txt")) if src.is_dir() else []:
+    for temp in INC.src_cmakelists(temp_root, cfg):
         d = temp.parent.name
-        rel = INC.src_rel(d, "CMakeLists.txt", cfg)
+        rel = temp.relative_to(temp_root).as_posix()
         real = root / rel
         if not real.is_file() or _status_allowed(cfg, rel):
             continue
@@ -2661,7 +2668,7 @@ def _refuse_cmake_that_would_lose(
             if lib not in kept
         ]
         if gone:
-            lost.append((d, gone))
+            lost.append((rel, gone))
     if not lost:
         return
     from ._render import extra_cmake_name
@@ -2670,10 +2677,11 @@ def _refuse_cmake_that_would_lose(
         "`jm apply` would erase an OBJECT library it does not write, so it"
         " wrote\nnothing:"
     ]
-    for d, gone in lost:
+    for rel, gone in lost:
+        d = rel.rsplit("/", 2)[-2]
         lines.append(
-            f"  {INC.src_rel(d, 'CMakeLists.txt', cfg)}: {', '.join(gone)}"
-            f" -> {INC.src_rel(d, extra_cmake_name(d), cfg)}"
+            f"  {rel}: {', '.join(gone)}"
+            f" -> {rel.rsplit('/', 1)[0]}/{extra_cmake_name(d)}"
         )
     lines.append(
         "Each CMakeLists.txt here is regenerated from the manifest, and a"
@@ -2852,7 +2860,7 @@ def _add_cmake_block_for(
     temp = temp_path.read_text(encoding="utf-8")
     block: str | None = None
     for m in _SUBDIR_BLOCK.finditer(temp):
-        if m.group(1) == comp:
+        if INC.subdir_name(m.group(1)) == comp:
             block = m.group(0)
             break
     if block is None:
