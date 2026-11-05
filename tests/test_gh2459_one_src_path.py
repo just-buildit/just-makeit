@@ -336,7 +336,10 @@ def test_the_answers_agree(layout):
         assert INC.src_rel(name, "x.c", cfg) == f"{d}/x.c"
         line = INC.subdir_line(name, cfg)
         m = re.fullmatch(INC.SUBDIR_RE + r"\n", line)
-        assert m and m.group(1) == name, line
-        assert d.startswith(INC.SRC_DIR + "/")
+        assert m and m.group(1) == INC.src_below(name, cfg), line
+        assert INC.subdir_name(m.group(1)) == name
+        assert d == f"{INC.SRC_DIR}/{INC.src_below(name, cfg)}"
+        # gh-2459: the C sits where the header does.
+        assert INC.src_below(name, cfg) == INC.core_dir(name, cfg)
     with pytest.raises(TypeError):
         INC.src_dir("fir", "p")

@@ -461,13 +461,17 @@ def _compile(pattern: str, pkg: str) -> "re.Pattern[str]":
 def _name(rel_posix: str, owner: "INC.Owner") -> str:
     """The name *rel_posix* is matched by: a header below the ``-I`` root by
     its layout-free ``inc:`` name, so ``native/inc/p.h`` and
-    ``native/inc/p/p.h`` are both ``inc:p.h``; anything else by its path.
+    ``native/inc/p/p.h`` are both ``inc:p.h``; a file in a component's
+    source directory by the name it has in the flat layout
+    (:func:`_incpath.src_layout_free`, gh-2459); anything else by its path.
 
     Only below the ``-I`` root: :func:`_incpath.layout_free` also names an
     INSTALLED copy ``inc:``, and a copy under ``install/include/`` is not a
     file `apply` writes."""
     if rel_posix.startswith(INC.INC_DIR + "/"):
         return INC.layout_free(rel_posix, owner)
+    if rel_posix.startswith(INC.SRC_DIR + "/"):
+        return INC.src_layout_free(rel_posix, owner)
     return rel_posix
 
 

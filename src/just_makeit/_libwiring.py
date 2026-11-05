@@ -194,7 +194,9 @@ def with_hooks(cmakes: "list[Path]") -> "list[Path]":
     return out
 
 
-def component_core_libs(root: Path, comp: str) -> list[str]:
+def component_core_libs(
+    root: Path, comp: str, owner: "INC.Owner | None" = None
+) -> list[str]:
     """The OBJECT libraries ``native/src/<comp>/CMakeLists.txt`` declares.
 
     The root CMakeLists folds each of these into the project's combined C
@@ -212,7 +214,7 @@ def component_core_libs(root: Path, comp: str) -> list[str]:
     Returns an empty list when the component has no CMakeLists (the `make`
     build backend, or a component not yet written).
     """
-    path = INC.src_path(root, comp) / "CMakeLists.txt"
+    path = INC.src_path(root, comp, owner) / "CMakeLists.txt"
     if not path.exists():
         return []
     return object_libraries(path.read_text(encoding="utf-8"))
@@ -574,15 +576,36 @@ SUBDIR_BLOCK = re.compile(
 )
 
 
+def jm_blocks(text: str, cfg: dict, root: "Path | None" = None) -> list:
+    """The :data:`SUBDIR_BLOCK` matches in *text* that are jm's own wiring
+    under *cfg* (`_incpath.jm_subdir`): every one-part path, as ever, and a
+    deeper one only where jm puts -- or, given *root*, just moved -- a
+    component's C (gh-2459). A vendored ``native/src/third_party/x`` the
+    author wires is not jm's, so nothing rewrites or excuses it."""
+    return [
+        m
+        for m in SUBDIR_BLOCK.finditer(text)
+        if INC.jm_subdir(m.group(1), cfg, root)
+    ]
+
+
+def strip_jm_blocks(text: str, cfg: dict, root: "Path | None") -> str:
+    """*text* with each of :func:`jm_blocks` removed."""
+    for m in reversed(jm_blocks(text, cfg, root)):
+        text = text[: m.start()] + text[m.end() :]
+    return text
+
+
 def _jm_wired_pairs(root: Path) -> "set[tuple[str, str]]":
     """The ``(target, core)`` pairs jm's own root wiring states -- which the
     next `apply` rewrites, so they are not the project's claim on a core."""
     path = root / "CMakeLists.txt"
     if not path.is_file():
         return set()
+    cfg = C.load(root)
     runs = "".join(
         m.group(2)
-        for m in SUBDIR_BLOCK.finditer(path.read_text(encoding="utf-8"))
+        for m in jm_blocks(path.read_text(encoding="utf-8"), cfg, root)
     )
     return set(_WIRING.findall(runs))
 
@@ -718,9 +741,13 @@ def section_order(cfg: dict) -> "dict[str, list[str]]":
     gen, hand = [], []
     for mod in C.modules(cfg):
         cname = C.module_paths(mod).cname
-        (hand if C.is_no_generate_module(cfg, mod) else gen).append(cname)
+        below = INC.src_below(cname, cfg)
+        (hand if C.is_no_generate_module(cfg, mod) else gen).append(below)
     return {
-        COMPONENTS_SENTINEL: [*C.c_deps(cfg), *reversed(C.object_order(cfg))],
+        COMPONENTS_SENTINEL: [
+            *C.c_deps(cfg),
+            *(INC.src_below(o, cfg) for o in reversed(C.object_order(cfg))),
+        ],
         MODULES_SENTINEL: [*reversed(gen), *hand],
     }
 
@@ -755,7 +782,9 @@ def order_sections(text: str, cfg: dict) -> str:
             continue
         start = text.index("\n", text.index(sentinel)) + 1
         run, end = [], start
-        while m := SUBDIR_BLOCK.match(text, end):
+        while (m := SUBDIR_BLOCK.match(text, end)) and INC.jm_subdir(
+            m.group(1), cfg
+        ):
             run.append(m)
             end = m.end()
         rank: dict[str, int] = {}
@@ -819,6 +848,8 @@ def splice_cmake_component(
     comp: str,
     cores: list[str],
     sentinel: str = COMPONENTS_SENTINEL,
+    owner: "INC.Owner | None" = None,
+    c_dep: bool = False,
 ) -> None:
     """Wire *comp* into the root CMakeLists: ``add_subdirectory`` under
     *sentinel*, and :func:`cmake_core_wiring` for *cores* directly beneath it.
@@ -837,13 +868,22 @@ def splice_cmake_component(
     *comp* FIRST: a block for a name the saved manifest does not hold yet is
     one the order cannot place, and it stays directly under the sentinel,
     which is exactly the history-ordered write this fixes.
+
+    gh-2459: the line names *comp*'s source directory as *owner* (the
+    manifest in hand; *root* when omitted) places it -- under a replay the
+    root's manifest is the replay's, which holds no composer module -- and
+    a *c_dep* by its fixed place (`_incpath.c_dep_line`).
     """
     cmake_path = root / "CMakeLists.txt"
     if not cmake_path.exists():
         return
     text = cmake_path.read_text(encoding="utf-8")
     original = text
-    sub = INC.subdir_line(comp, root)
+    sub = (
+        INC.c_dep_line(comp)
+        if c_dep
+        else INC.subdir_line(comp, root if owner is None else owner)
+    )
     if sub not in text:
         if sentinel in text:
             idx = text.index("\n", text.index(sentinel)) + 1

@@ -58,9 +58,10 @@ Commands:
                                 package`), e.g. beside an existing package's classes;
                                 they import from <pkg>.DIR. DIR is identifiers
                                 separated by / (dsp/io), or . for the package itself.
-                                The C symbols and native/src/ keep the module's own
-                                name; under [project] layout = "nested" the headers
-                                (and their tests and benches) follow DIR.
+                                The C symbols keep the module's own name, and so
+                                does native/src/; under [project] layout = "nested"
+                                the headers (and their C, tests and benches) follow
+                                DIR.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
     --preset NAME               Named shorthand for a common shape:

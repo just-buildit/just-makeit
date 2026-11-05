@@ -8,8 +8,8 @@ answer to "where does this component live in the C tree"; under ``nested``
 it answers ``<module package>/<comp>``, the package read from
 ``_config.module_package_resolved``, and the header, its tests and benches,
 every ``#include`` of it, the bridge and process-global headers beside it
-and the CMake include directories all move with it. ``native/src`` does not
-move here: that is gh-2459.
+and the CMake include directories all move with it. gh-2459 moves its C
+source directory too (``tests/test_gh2459_nested_src.py``).
 
 GATES:
 
@@ -632,7 +632,13 @@ def _nest(text: str, package: str) -> str:
     """*text* with every spelling of a member's directory -- the header's,
     each mirror's, the include's -- moved under *package*."""
     for name in _MEMBERS:
-        for lead in ("native/inc/p/", "native/tests/", "native/benchmarks/"):
+        for lead in (
+            "native/inc/p/",
+            "native/tests/",
+            "native/benchmarks/",
+            # gh-2459: and the C source directory.
+            "native/src/",
+        ):
             text = re.sub(
                 rf"(?<!\w){re.escape(lead + name)}(?=[/)])",
                 f"{lead}{package}/{name}",
@@ -759,7 +765,7 @@ def _author_edits(root: Path) -> None:
     )
     spelled = INC.include(f"{INC.core_dir('fir', root)}/fir_taps.h", root)
     for comp in ("fir", "gain"):
-        core = root / "native" / "src" / comp / f"{comp}_core.c"
+        core = INC.src_path(root, comp) / f"{comp}_core.c"
         core.write_text(
             f'#include "{spelled}"\n' + core.read_text(encoding="utf-8"),
             encoding="utf-8",
@@ -775,7 +781,7 @@ def _assert_settled(root: Path) -> None:
     assert taps.read_text(encoding="utf-8") == _MINE_H
     spelled = INC.include(f"{INC.core_dir('fir', root)}/fir_taps.h", root)
     for comp in ("fir", "gain"):
-        core = (root / "native" / "src" / comp / f"{comp}_core.c").read_text(
+        core = (INC.src_path(root, comp) / f"{comp}_core.c").read_text(
             encoding="utf-8"
         )
         assert core.startswith(f'#include "{spelled}"\n'), comp
@@ -849,7 +855,7 @@ def test_upgrade_makes_the_same_moves(tmp_path):
     assert INC.core_dir("fir", root) == "rx/ss/burst/fir"
     for old, _new in INC.relocations(root):
         assert not (root / old).exists(), old
-    core = (root / "native" / "src" / "fir" / "fir_core.c").read_text(
+    core = (INC.src_path(root, "fir") / "fir_core.c").read_text(
         encoding="utf-8"
     )
     assert f'#include "{INC.core_include("fir", root)}"' in core
@@ -1029,7 +1035,7 @@ def _composer_project(where: Path, layout: str) -> Path:
     # The hand-written method the example's manifest registers.
     shutil.copy(
         _SEAMS / "05b_playlist_ext_extra.c",
-        root / "native" / "src" / "playlist" / "playlist_ext_extra.c",
+        INC.src_path(root, "playlist") / "playlist_ext_extra.c",
     )
     # The example's c_deps core is folded into no library (`status` says
     # UNWIRED, as the example's own tree does); wire it as status advises.
@@ -1128,7 +1134,7 @@ def test_changing_a_modules_package_moves_its_headers(tmp_path):
     )
     # The author's own first include: fir's former place is then on record
     # only in its CMakeLists.
-    core_c = root / "native" / "src" / "fir" / "fir_core.c"
+    core_c = INC.src_path(root, "fir") / "fir_core.c"
     core_c.write_text(
         f'#include "{INC.include("clib_common.h", root)}"\n'
         + core_c.read_text(encoding="utf-8"),
@@ -1151,7 +1157,7 @@ def test_changing_a_modules_package_moves_its_headers(tmp_path):
         for name in ("fir", "radio"):
             assert INC.core_dir(name, root) == f"{want}/{name}"
             assert INC.core_h(root, name).is_file()
-        core = (root / "native" / "src" / "fir" / "fir_core.c").read_text(
+        core = (INC.src_path(root, "fir") / "fir_core.c").read_text(
             encoding="utf-8"
         )
         assert f'#include "{INC.core_include("fir", root)}"' in core
@@ -1197,6 +1203,14 @@ _PLACERS = {
     "bridge_h",
     "header_name",
     "symbols_file",
+    # gh-2459: and its C source directory, which follows the header's.
+    "src_dir",
+    "src_path",
+    "src_rel",
+    "src_below",
+    "subdir_line",
+    "component_core_libs",
+    "_module_extra_files",
 }
 
 
@@ -1341,7 +1355,7 @@ def test_the_sacred_cores_first_include_is_not_a_record_outside_nested(
     }
     for path, text in foreign.items():
         path.write_text(text, encoding="utf-8")
-    core_c = root / "native" / "src" / "fir" / "fir_core.c"
+    core_c = INC.src_path(root, "fir") / "fir_core.c"
     core_c.write_text(
         f'#include "{INC.include("third_party/fir/fir_core.h", root)}"\n'
         + core_c.read_text(encoding="utf-8"),

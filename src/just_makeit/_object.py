@@ -666,7 +666,9 @@ def _copy_external_cmake_blocks(
     if not src_dir.exists():
         return
 
-    for cmake_file in sorted(src_dir.glob("*/CMakeLists.txt")):
+    # gh-2459: every component's directory, the nested layout's deeper ones
+    # included.
+    for cmake_file in INC.src_cmakelists(root, C.load(root)):
         if cmake_file.parent.name == new_comp:
             continue
         text = cmake_file.read_text(encoding="utf-8")
@@ -2004,7 +2006,10 @@ def _write_module_test_and_bench(
 
 
 def _module_extra_files(
-    root: Path, cname: str, comp_ctxs: "list[dict]"
+    root: Path,
+    cname: str,
+    comp_ctxs: "list[dict]",
+    owner: "INC.Owner | None" = None,
 ) -> "set[str]":
     """The hand-written ``*_extra.c`` / ``*_prologue.c`` hooks module *cname*
     has on disk.
@@ -2019,7 +2024,9 @@ def _module_extra_files(
     doppler duplicated ~55 lines of ``read_dict()`` verbatim across two sacred
     fragments rather than pick one to include from the other.
     """
-    ext_dir = INC.src_path(root, cname)
+    # *owner*: the manifest in hand -- under a replay *root*'s is the
+    # replay's, which may not place the module's directory yet (gh-2459).
+    ext_dir = INC.src_path(root, cname, owner)
     found: set[str] = set()
     for ctx in comp_ctxs:
         comp = ctx.get("frag_id", ctx["component"])
@@ -2087,7 +2094,7 @@ def render_module_ext_c(
     if functions is None:
         functions = C.module_functions(cfg, module)
     if extra_files is None:
-        extra_files = _module_extra_files(root, mp.cname, comp_ctxs)
+        extra_files = _module_extra_files(root, mp.cname, comp_ctxs, cfg)
     comp_ctxs = _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
     return R.render_module_ext_aggregator(
         module,
@@ -2627,7 +2634,7 @@ def _regenerate_module_now(
             )
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
-    extra_files = _module_extra_files(root, cname, comp_ctxs)
+    extra_files = _module_extra_files(root, cname, comp_ctxs, cfg)
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
     _write(
@@ -2922,8 +2929,9 @@ def _regenerate_module_now(
         root,
         pkg,
         cname,
-        component_core_libs(root, cname),
+        component_core_libs(root, cname, cfg),
         sentinel=MODULES_SENTINEL,
+        owner=cfg,
     )
 
     # Subpackage __init__.py — merge new exports into existing file so that
@@ -3582,13 +3590,13 @@ def run(
     # no build. This path wrote it unconditionally, which is how a module
     # object ended up with an INTERFACE library AND a source file.
     if not header_only:
-        core_c_path = INC.src_path(root, comp, cfg) / f"{comp}_core.c"
+        core_c_path = INC.src_path(root, comp, layout_owner) / f"{comp}_core.c"
         _write(
             core_c_path,
             r(R.COMPONENT_CORE_C),
             "update" if core_c_path.exists() else "create",
         )
-    obj_cmake_path = INC.src_path(root, comp, cfg) / "CMakeLists.txt"
+    obj_cmake_path = INC.src_path(root, comp, layout_owner) / "CMakeLists.txt"
     _write(
         obj_cmake_path, R.with_extra_cmake(r(R.CMAKE_LISTS_OBJECT_CORE), comp)
     )
@@ -3764,6 +3772,7 @@ def run(
         pkg,
         comp,
         _dep_core_libs(depends_on) + ([] if header_only else [f"{comp}_core"]),
+        owner=cfg,
     )
 
     # Umbrella header

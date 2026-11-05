@@ -847,4 +847,6 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
     # (gh-1985) -- this was one of three private copies that put it on top.
     from ._libwiring import MODULES_SENTINEL, splice_cmake_component
 
-    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)
+    splice_cmake_component(
+        root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL, owner=cfg
+    )

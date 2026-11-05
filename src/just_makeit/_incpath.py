@@ -395,21 +395,6 @@ SRC_DIR = "native/src"
 APP_DIR = f"{SRC_DIR}/app"
 
 
-def _src_owner(owner: Owner) -> Owner:
-    """*owner*, refused when it cannot say which project it is.
-
-    The source directory does not depend on the layout yet, so nothing is
-    loaded: this only holds every caller to passing a real owner, the one
-    gh-2459 part 2 reads the layout from.
-    """
-    if owner is None or isinstance(owner, str):
-        raise TypeError(
-            f"_incpath owner {owner!r}: pass the project's root or its"
-            " manifest (gh-2459)"
-        )
-    return owner
-
-
 def src_dir(name: str, owner: Owner) -> str:
     """*name*'s C source directory, project-relative and POSIX-spelled.
 
@@ -418,11 +403,35 @@ def src_dir(name: str, owner: Owner) -> str:
     here, and the root ``CMakeLists.txt`` wires it by this path
     (:func:`subdir_line`). *name* is a component or a module's cname.
 
+    It is :data:`SRC_DIR` / :func:`core_dir`, the directory the
+    component's header has below the header root: ``<name>`` in the flat
+    and mirrored layouts, ``<module package>/<name>`` in the nested one,
+    so the C, the header and the Python package read as one path. A
+    ``no_generate`` module's directory is the author's, written by hand
+    and wired as written, so it stays ``<name>`` in every layout; a
+    ``c_dep`` is not a component at all (:func:`c_dep_line`).
+
     >>> src_dir("fir", {"project": {"name": "p"}})
     'native/src/fir'
+    >>> o = {"project": {"name": "p", "layout": "nested"},
+    ...      "module": {"rx.ss": {"objects": ["fir"]}}, "fir": {}}
+    >>> src_dir("fir", o), src_dir("rx_ss", o)
+    ('native/src/rx/ss/fir', 'native/src/rx/ss/rx_ss')
     """
-    _src_owner(owner)
-    return f"{SRC_DIR}/{name}"
+    cfg = manifest(owner)
+    if _hand_written_module(cfg, name):
+        return f"{SRC_DIR}/{name}"
+    return f"{SRC_DIR}/{core_dir(name, cfg)}"
+
+
+def _hand_written_module(cfg: dict, name: str) -> bool:
+    """Whether *name* is the cname of a ``no_generate`` module."""
+    from . import _config as C
+
+    return any(
+        C.module_paths(m).cname == name and C.is_no_generate_module(cfg, m)
+        for m in C.modules(cfg)
+    )
 
 
 def src_path(root: Path, name: str, owner: "Owner | None" = None) -> Path:
@@ -455,6 +464,37 @@ def src_root(root: Path) -> Path:
     return Path(root) / SRC_DIR
 
 
+def src_dirs(root: Path, cfg: dict) -> "list[Path]":
+    """Every source directory under *root*: each one directly below the
+    source tree, and each component's or module's (:func:`src_dir`, which
+    under ``nested`` sits deeper), sorted and once each (gh-2459).
+
+    What a scan over "every ``native/src/<d>/``" walks. The directories
+    directly below keep every reader seeing what it always saw -- a
+    ``c_dep``, a hand-made directory -- and the components' add where the
+    nested layout puts them, read from the manifest in hand rather than
+    matched in the tree.
+    """
+    base = src_root(root)
+    found = (
+        {p for p in base.iterdir() if p.is_dir()} if base.is_dir() else set()
+    )
+    for name in native_names(cfg):
+        d = src_path(root, name, cfg)
+        if d.is_dir():
+            found.add(d)
+    return sorted(found)
+
+
+def src_cmakelists(root: Path, cfg: dict) -> "list[Path]":
+    """The ``CMakeLists.txt`` of each of :func:`src_dirs` that has one."""
+    return [
+        d / "CMakeLists.txt"
+        for d in src_dirs(root, cfg)
+        if (d / "CMakeLists.txt").is_file()
+    ]
+
+
 def lib_c_rel(pkg: str) -> str:
     """The ``<pkg>_lib.c`` stub `jm new` writes, project-relative.
 
@@ -478,6 +518,16 @@ def c_dep_path(root: Path, dep: str) -> Path:
     return src_root(root) / dep
 
 
+def c_dep_line(dep: str) -> str:
+    """The root ``CMakeLists.txt`` line wiring the ``c_dep`` *dep*: always
+    ``native/src/<dep>``, in every layout (it is never a component's).
+
+    >>> c_dep_line("vendor")
+    'add_subdirectory(native/src/vendor)\\n'
+    """
+    return f"add_subdirectory({SRC_DIR}/{dep})\n"
+
+
 def subdir_line(name: str, owner: Owner) -> str:
     """The root ``CMakeLists.txt`` line wiring *name*'s source directory.
 
@@ -488,8 +538,140 @@ def subdir_line(name: str, owner: Owner) -> str:
 
 
 #: The regex for one :func:`subdir_line` (without its newline), its group
-#: the name: what every reader of the root wiring matches.
-SUBDIR_RE = rf"add_subdirectory\({re.escape(SRC_DIR)}/(\w+)\)"
+#: the directory below :data:`SRC_DIR`: one name in the flat and mirrored
+#: layouts, a path in the nested one, whose last part is always the name
+#: (:func:`subdir_name`).
+SUBDIR_RE = rf"add_subdirectory\({re.escape(SRC_DIR)}/(\w+(?:/\w+)*)\)"
+
+
+def subdir_name(path: str) -> str:
+    """The component a :data:`SUBDIR_RE` group names: its last part.
+
+    >>> subdir_name("rx/ss/fir"), subdir_name("fir")
+    ('fir', 'fir')
+    """
+    return path.rsplit("/", 1)[-1]
+
+
+def jm_subdir(path: str, cfg: dict, root: "Path | None" = None) -> bool:
+    """Whether the root wiring line for *path* (a :data:`SUBDIR_RE` group)
+    is jm's to rewrite, under the manifest *cfg* (gh-2459).
+
+    A one-part path is, as it has always been. A deeper one is jm's only
+    when its last part is one of *cfg*'s components or module cnames, it
+    is no ``c_dep``, and it is either where :func:`src_dir` puts that
+    component now, or -- given *root* -- a directory holding no
+    ``CMakeLists.txt`` any more: a place a layout switch or a ``package``
+    change just moved the component out of. Any other deep line (a
+    vendored ``native/src/third_party/fir``) is the author's, and kept.
+
+    >>> o = {"project": {"name": "p", "layout": "nested"},
+    ...      "module": {"rx": {"objects": ["fir"]}}, "fir": {}}
+    >>> jm_subdir("rx/fir", o), jm_subdir("third_party/fir", o)
+    (True, False)
+    """
+    from . import _config as C
+
+    if "/" not in path:
+        return True
+    name = subdir_name(path)
+    if name not in native_names(cfg) or path in C.c_deps(cfg):
+        return False
+    if path == src_below(name, cfg):
+        return True
+    return (
+        root is not None
+        and not (Path(root) / SRC_DIR / path / "CMakeLists.txt").is_file()
+    )
+
+
+def recorded_src(root: "Path | None", cfg: dict) -> "dict[str, str]":
+    """Where jm last put each component's C, as the root wiring says, when
+    that is not where :func:`src_dir` puts it now (gh-2459).
+
+    The root ``CMakeLists.txt`` wires every component's source directory
+    by path, and the run that moves the directory re-renders that line, so
+    until then it names the old one: a layout switch, or under ``nested`` a
+    module ``package`` change, which leaves nothing in the manifest saying
+    where the old package put it. A line counts only when:
+
+    - the root does not already wire the component where it goes now (a
+      component wired twice would declare its targets twice, so a second
+      line naming it is not this project's record of it);
+    - its last part is the component, and it is no ``c_dep``;
+    - the directory's ``CMakeLists.txt`` ends with jm's own hook for the
+      component (`_render.with_extra_cmake`): jm rendered it.
+
+    So in a project that never moved -- every flat or mirrored one, and a
+    settled nested one -- nothing is recorded: the root wires each
+    component where it is. Returns ``{name: directory below SRC_DIR}``;
+    empty for a manifest owner or a tree with no root ``CMakeLists.txt``.
+    """
+    from . import _config as C
+    from . import _render
+
+    out: "dict[str, str]" = {}
+    if root is None:
+        return out
+    top = Path(root) / "CMakeLists.txt"
+    if not top.is_file():
+        return out
+    lines = [
+        m.group(1)
+        for m in re.finditer(
+            "^" + SUBDIR_RE, top.read_text(encoding="utf-8"), re.M
+        )
+    ]
+    deps = set(C.c_deps(cfg))
+    for name in native_names(cfg):
+        now = src_below(name, cfg)
+        if now in lines:
+            continue
+        hook = _render.extra_cmake_name(name)
+        for path in lines:
+            if subdir_name(path) != name or path in deps or path == now:
+                continue
+            cmake = Path(root) / SRC_DIR / path / "CMakeLists.txt"
+            if cmake.is_file() and (
+                f"/{hook} OPTIONAL)" in cmake.read_text(encoding="utf-8")
+            ):
+                out[name] = path
+                break
+    return out
+
+
+def src_layout_free(rel_posix: str, owner: Owner) -> str:
+    """*rel_posix* (project-relative, below :data:`SRC_DIR`) as the flat
+    layout names it: a file directly in a component's source directory is
+    ``native/src/<name>/<file>`` wherever the layout puts that directory;
+    anything else -- a ``c_dep``, a vendored tree -- is unchanged (gh-2459).
+
+    >>> o = {"project": {"name": "p", "layout": "nested"},
+    ...      "module": {"rx": {"objects": ["fir"]}}, "fir": {}}
+    >>> src_layout_free("native/src/rx/fir/fir_core.c", o)
+    'native/src/fir/fir_core.c'
+    >>> src_layout_free("native/src/third_party/fir/fir_core.c", o)
+    'native/src/third_party/fir/fir_core.c'
+    """
+    d, _, f = rel_posix.rpartition("/")
+    below = d[len(SRC_DIR) + 1 :]
+    if "/" not in below:
+        return rel_posix
+    name = subdir_name(below)
+    cfg = manifest(owner)
+    if name in native_names(cfg) and below == src_below(name, cfg):
+        return f"{SRC_DIR}/{name}/{f}"
+    return rel_posix
+
+
+def src_below(name: str, owner: Owner) -> str:
+    """*name*'s source directory below :data:`SRC_DIR`: what the root
+    wiring's :data:`SUBDIR_RE` group holds for it.
+
+    >>> src_below("fir", {"project": {"name": "p"}})
+    'fir'
+    """
+    return src_dir(name, owner)[len(SRC_DIR) + 1 :]
 
 
 #: gh-2423: ``[project] layout``. ``flat`` (the default) writes every
@@ -667,6 +849,12 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     an old directory that is an ancestor of some component's new one,
     because what else sits there is not this component's.
 
+    gh-2459: a component's C source directory moves by the same unit, from
+    where the root wiring last put it (:func:`recorded_src`), when *owner*
+    is a path: every file directly in the old directory, or only the files
+    jm names after the component when the old one is an ancestor of some
+    component's new one.
+
     >>> o = {"project": {"name": "p", "layout": "mirrored"}, "fir": {}}
     >>> relocations(o)[0]
     ('native/tests/test_fir_core.c', 'native/tests/fir/test_fir_core.c')
@@ -729,7 +917,46 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
                             rel(f"{new_dir}/{f}", cfg),
                         )
                     )
+    # gh-2459: a component's C follows from where the root wiring last put
+    # it (:func:`recorded_src`) -- never from a directory matched in the
+    # tree. Every file directly in the old directory moves, file by file,
+    # so a module path under the component's own name moves no directory
+    # into itself; when the old directory is an ancestor of some
+    # component's new one, only the files jm names after this component
+    # move, because what else sits there is not its.
+    moved = recorded_src(root, cfg)
+    new_below = {src_below(n, cfg) for n in names}
+    for name in names:
+        if name not in moved or root is None:
+            continue
+        old = moved[name]
+        old_abs = Path(root) / SRC_DIR / old
+        if not old_abs.is_dir():
+            continue
+        shared = any(d.startswith(old + "/") for d in new_below)
+        new = src_dir(name, cfg)
+        for f in sorted(old_abs.iterdir()):
+            if f.is_file() and (
+                not shared or _named_source(f.name, name, cfg)
+            ):
+                add((f"{SRC_DIR}/{old}/{f.name}", f"{new}/{f.name}"))
     return out
+
+
+def _named_source(fname: str, name: str, cfg: dict) -> bool:
+    """Whether *fname*, in *name*'s source directory, is a file jm names
+    after *name*: its CMakeLists, a ``<name>_*`` file (core, binding,
+    fragments, hooks), or one of its module's function sources."""
+    from . import _config as C
+
+    if fname == "CMakeLists.txt" or fname.startswith(f"{name}_"):
+        return True
+    return any(
+        fname == f"{fn['name']}.c"
+        for mod in C.modules(cfg)
+        if C.module_paths(mod).cname == name
+        for fn in C.module_functions(cfg, mod)
+    )
 
 
 def _guarded(root: "Path | None", cfg: dict, d: str, name: str) -> bool:
@@ -791,48 +1018,54 @@ def _recorded_places(
         return dirs, files, weak
     nested = layout(cfg) == "nested"
     pre = re.escape(prefix(cfg))
-    src = Path(root) / "native" / "src"
+    # gh-2459: the component's CMakeLists and core sit in its source
+    # directory -- where it goes now, and where the root wiring says jm put
+    # it last, until the run that moves it.
+    moved = recorded_src(root, cfg)
     for name in names:
         n = re.escape(name)
-        here = src / name
-        cmake = here / "CMakeLists.txt"
-        text = cmake.read_text(encoding="utf-8") if cmake.is_file() else ""
-        kinds = "|".join(
-            re.escape(f.format(name)) for _t, f in NATIVE_FILES.values()
-        )
-        for m in re.finditer(
-            r"\$\{CMAKE_SOURCE_DIR\}/((?:"
-            + "|".join(re.escape(t) for t in HARNESS)
-            + rf")(?:/[\w.-]+)*/(?:{kinds}))(?![\w.])",
-            text,
-        ):
-            files.setdefault(name, set()).add(m.group(1))
-            # A test or bench below its tree's root was written by a
-            # mirroring layout, at the component's directory then.
-            sub = m.group(1).split("/", 2)[2].rsplit("/", 1)
-            if (
-                len(sub) == 2
-                and (sub[0] + "/").endswith(f"/{name}/")
-                or (len(sub) == 2 and sub[0] == name)
+        heres = [Path(root) / src_dir(name, cfg)]
+        if name in moved:
+            heres.append(Path(root) / SRC_DIR / moved[name])
+        for here in heres:
+            cmake = here / "CMakeLists.txt"
+            text = cmake.read_text(encoding="utf-8") if cmake.is_file() else ""
+            kinds = "|".join(
+                re.escape(f.format(name)) for _t, f in NATIVE_FILES.values()
+            )
+            for m in re.finditer(
+                r"\$\{CMAKE_SOURCE_DIR\}/((?:"
+                + "|".join(re.escape(t) for t in HARNESS)
+                + rf")(?:/[\w.-]+)*/(?:{kinds}))(?![\w.])",
+                text,
             ):
-                dirs.setdefault(name, set()).add(sub[0])
-        # The sacred core's first include is the AUTHOR's content, not a
-        # record jm owns: read only under nested, where a package can move a
-        # module core whose CMakeLists names no include directory, and kept
-        # apart -- :func:`relocations` trusts it for the named headers only,
-        # behind the component's own guard.
-        core = here / f"{name}_core.c"
-        if nested and core.is_file():
-            first = re.search(
-                r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"',
-                core.read_text(encoding="utf-8", errors="replace"),
-                re.M,
-            )
-            got = first and re.fullmatch(
-                rf"{pre}((?:[\w.-]+/)*{n})/{n}_core\.h", first.group(1)
-            )
-            if got:
-                weak.setdefault(name, set()).add(got.group(1))
+                files.setdefault(name, set()).add(m.group(1))
+                # A test or bench below its tree's root was written by a
+                # mirroring layout, at the component's directory then.
+                sub = m.group(1).split("/", 2)[2].rsplit("/", 1)
+                if (
+                    len(sub) == 2
+                    and (sub[0] + "/").endswith(f"/{name}/")
+                    or (len(sub) == 2 and sub[0] == name)
+                ):
+                    dirs.setdefault(name, set()).add(sub[0])
+            # The sacred core's first include is the AUTHOR's content, not a
+            # record jm owns: read only under nested, where a package can move a
+            # module core whose CMakeLists names no include directory, and kept
+            # apart -- :func:`relocations` trusts it for the named headers only,
+            # behind the component's own guard.
+            core = here / f"{name}_core.c"
+            if nested and core.is_file():
+                first = re.search(
+                    r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"',
+                    core.read_text(encoding="utf-8", errors="replace"),
+                    re.M,
+                )
+                got = first and re.fullmatch(
+                    rf"{pre}((?:[\w.-]+/)*{n})/{n}_core\.h", first.group(1)
+                )
+                if got:
+                    weak.setdefault(name, set()).add(got.group(1))
     return dirs, files, weak
 
 
