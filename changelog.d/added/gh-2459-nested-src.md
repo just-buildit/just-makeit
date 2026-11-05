@@ -23,3 +23,20 @@
     project carries no record and its manifest is unchanged; a file jm has
     no record of placing is named by `jm status` (`ADVICE`) and by the
     collision it causes, and never moved.
+- **jm writes, and moves, only what it can show is its own** (gh-2459).
+    Before moving out of the place its record names, `jm apply` (and `jm   upgrade`) replays the recorded manifest and requires the component's
+    CMakeLists there to be jm's render, byte for byte; a stale or
+    hand-edited record is refused, naming both places. A component's new
+    place must be empty or hold only what jm renders there, and a sacred
+    `_core.c` / `_core.h` already there is always someone else's: a vendored
+    directory where a new component would go is refused and left alone,
+    whatever its files are named, and `jm object` / `jm module` refuse
+    directories that already hold files. This changes the flat layout too: a
+    generated module whose directory already holds a hand-written
+    `native/src/<module>/CMakeLists.txt` used to have it overwritten and is
+    now refused -- declare `no_generate = "true"` to keep the directory
+    yours. And a CMakeLists rendered by an older jm fails the check on a
+    layout switch or `package` change: restore it, run `jm apply` once on
+    this version, then change it. A project last applied by jm 0.119 or
+    older should run `jm apply` once before changing a layout or a module's
+    `package`; `apply --only` refuses while files wait to move.

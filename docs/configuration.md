@@ -370,15 +370,26 @@ files sit under, and moves nothing for the change.
 
 Before anything moves, jm checks the record against the tree: the
 component's CMakeLists at its recorded place must be the one jm renders
-there, and its core must include its own header. If not -- a hand-edited or
-stale record, or a vendored directory where the record points -- jm refuses,
-naming both places, and moves nothing. It writes a component only into a
-directory it can show is its own: a new place already holding a vendored
-CMakeLists, or a copy of another project's component, is refused, not
-written into. A file jm has no record of placing -- moved by hand, say --
-stays where it is: `jm status` lists it under `ADVICE`, and a collision it
-causes names where it is and where the manifest puts it. `jm apply --only`
-refuses while files are waiting to move: moving is a whole-project step.
+there, byte for byte (riders jm keeps, such as an `if(VAR)` wiring block,
+allowed). If not -- a hand-edited or stale record, or a vendored directory
+where the record points -- jm refuses, naming both places, and moves
+nothing. **A CMakeLists rendered by an older jm fails that check too**, so
+the first layout or `package` change after a jm upgrade that changed the
+template is refused: restore the layout or package, run `jm apply` once on
+this version, then change it again.
+
+jm writes a component only into a place it can show is its own. A new place
+-- where a component moves to, or where jm never put it -- must be empty, or
+hold only files jm renders there for that component, byte for byte; a
+`<c>_core.c` or `<c>_core.h` already sitting there is always someone
+else's. So a vendored directory where a new component would go (under
+`nested`, `native/src/<package>/` can be `third_party/` or `ext/`) is
+refused and left as it is, whatever its files are named, and `jm object`
+refuses one whose directories already hold files. A file jm has no record of
+placing -- moved by hand, say -- stays where it is: `jm status` lists it
+under `ADVICE`, and the refusal it causes names where it is and where the
+manifest puts it. `jm apply --only` refuses while files are waiting to move:
+moving is a whole-project step.
 
 Into or out of `nested`, a header moves too, and every other file directly
 in its directory comes along with it, so a header of yours beside the core
@@ -387,9 +398,9 @@ header, and any manifest string naming one (a `header =`), is respelled to
 its new place: the sacred `<c>_core.c` includes its own header, so without
 it the project would not compile. Only a spelling that resolves to a moved
 header is touched; an include that finds a different file beside its own
-source is left as you wrote it. The respell is part of the move: a header you
-move yourself, ahead of `apply`, is found in place, and the includes naming
-it are yours to respell. When the old directory holds another
+source is left as you wrote it. Move a component's header or C yourself, ahead
+of `apply`, and its new place already holds its sacred core: `apply` refuses
+that place rather than take it for its own, so let `apply` make the move. When the old directory holds another
 component's new one (an object `fir` of `[module."fir.sub"]`, whose
 `fir/` becomes `fir/sub/fir/`), only the headers jm names move, and a
 header of yours stays where its include already finds it.

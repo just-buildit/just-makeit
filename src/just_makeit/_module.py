@@ -163,7 +163,7 @@ def run(
     # holding it can say.
     mod_ctx.update(INC.native_slots(cfg, cname))
     # gh-2459: only into a directory jm can show is its own.
-    INC.refuse_foreign(root, cfg, cname)
+    INC.refuse_occupied(root, cfg, cname)
     _write(
         INC.core_h(root, cname, cfg),
         T.render(T.MODULE_CORE_H, mod_ctx),

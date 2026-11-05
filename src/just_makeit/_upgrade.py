@@ -863,6 +863,12 @@ def _report_repairs(root: Path) -> None:
     schema bump -- so wiring it only into the migration loop would have meant
     it never ran for anybody who was up to date, which is everybody it is for.
     """
+    # gh-2459: the native moves are renames too, and only out of a place jm
+    # can show is its own -- the same check `apply` asks before it moves.
+    from . import _apply
+    from . import _config as C
+
+    _apply._refuse_unverified_moves(root, C.load(root), None)
     _rename_superseded(root)
     _report_c_prefix(root)
     fixed = _repair_complex_spelling(root)

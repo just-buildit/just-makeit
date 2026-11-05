@@ -692,25 +692,36 @@ _VENDOR_ONLY = "add_library(vendor_fir STATIC vendor_fir.c)\n"
 
 
 def _vendor(
-    root: Path, below: str, kind: str = "vendor", donor: "Path | None" = None
+    root: Path,
+    below: str,
+    kind: str = "vendorfir",
+    donor: "Path | None" = None,
 ) -> dict:
     """A vendored ``native/src/<below>/``, wired by the author; returns its
-    bytes, to compare after. ``vendor``: its own target, and a
-    ``fir_core.c`` that even includes this project's header -- only the
-    CMakeLists says it is not jm's. ``donor``: a verbatim copy of another
-    jm project's ``fir`` -- jm's targets, jm's file names; only its core's
-    include of that project's header says it is not this one's."""
+    bytes, to compare after. Every shape here names files the way jm names
+    ``fir``'s, so nothing but jm's own render can tell it from jm's:
+
+    - ``vendorfir``: its own target over ``fir_ext.c`` / ``fir_taps.c``;
+    - ``fir_core``: a library that happens to be called ``fir_core``;
+    - ``donor``: a verbatim copy of another jm project's ``fir``.
+    """
     d = root / "native" / "src" / below
     if kind == "donor":
         shutil.copytree(INC.src_path(donor, "fir"), d)
     else:
         d.mkdir(parents=True)
-        (d / "CMakeLists.txt").write_text(_VENDOR_ONLY, "utf-8")
-        spelled = INC.core_include(
-            "fir", C.with_module_member(C.load(root), "tp", "fir")
+        lib = "vendorfir" if kind == "vendorfir" else "fir_core"
+        (d / "CMakeLists.txt").write_text(
+            f"add_library({lib} STATIC fir_ext.c fir_taps.c)\n"
+            f"target_include_directories({lib} PUBLIC"
+            " ${CMAKE_CURRENT_LIST_DIR})\n",
+            "utf-8",
         )
-        (d / "fir_core.c").write_text(
-            f'#include "{spelled}"\n/* VENDOR */\n', "utf-8"
+        (d / "fir_ext.c").write_text(
+            "int fir_ext_gain(void){return 1;}\n", "utf-8"
+        )
+        (d / "fir_taps.c").write_text(
+            "int fir_taps(void){return 2;}\n", "utf-8"
         )
     top = root / "CMakeLists.txt"
     top.write_text(
@@ -729,31 +740,33 @@ def _untouched(root: Path, foreign: dict, below: str) -> None:
     assert (root / "CMakeLists.txt").read_text("utf-8").count(line) == 1
 
 
-# A verbatim flat copy of another project's `fir` at the flat place, declared
-# by a fragment -- jm's own name in jm's own namespace, with the same targets
-# and the same test paths -- is the one shape jm cannot tell from its own; at
-# `jm object` its core's include of the other project's header still says so.
-# (Left out: a known limit, in the PR.)
 @pytest.mark.parametrize(
     "layout,kind,how",
     [
         (lay, kind, how)
         for lay in ("", "mirrored", "nested")
-        for kind in ("vendor", "donor")
+        for kind in ("vendorfir", "fir_core", "header")
         for how in ("cli", "fragment")
-        if (lay, kind, how) != ("", "donor", "fragment")
-    ],
+    ]
+    # At `jm object` a verbatim copy of another project's `fir` is refused
+    # too; declared by a fragment, a copy holding `fir_core.c` is the one
+    # shape jm cannot tell from a component it placed (a known limit, in the
+    # PR).
+    + [(lay, "donor", "cli") for lay in ("", "mirrored", "nested")],
 )
 def test_a_new_place_holding_a_vendored_dir_is_refused(
     tmp_path, layout, how, kind
 ):
-    """N1: the place a new component goes already holds the author's
-    vendored directory -- under nested ``native/src/<package>/`` overlaps
-    names like ``third_party``. jm refuses, naming it, and writes nothing
-    there: whether the component comes from `jm object` or a fragment."""
-    _jm(tmp_path, "new", "donor")
+    """R1: the place a new component goes already holds the author's files
+    -- under nested ``native/src/<package>/`` overlaps names like
+    ``third_party``. Whatever they are named, and whatever their CMakeLists
+    says, they are not what jm renders there: jm refuses, naming them, and
+    writes nothing, whether the component comes from `jm object` or a
+    fragment. ``header``: a vendored ``fir_core.h`` carrying exactly the
+    guard jm would write, in a project with no C prefix."""
+    _jm(tmp_path, "new", "donor", "--no-c-prefix")
     _jm(tmp_path / "donor", "object", "fir")
-    _jm(tmp_path, "new", "p")
+    _jm(tmp_path, "new", "p", "--no-c-prefix")
     root = tmp_path / "p"
     _declare(root, layout)
     _jm(root, "object", "amp")
@@ -761,7 +774,21 @@ def test_a_new_place_holding_a_vendored_dir_is_refused(
     _jm(root, "apply")
     probe = C.with_module_member(C.load(root), "tp", "fir")
     below = INC.src_below("fir", probe)
-    foreign = _vendor(root, below, kind, tmp_path / "donor")
+    if kind == "header":
+        from just_makeit import _csym
+
+        vh = INC.core_h(root, "fir", probe)
+        vh.parent.mkdir(parents=True, exist_ok=True)
+        guard = _csym.upper(probe, "fir") + "_CORE_H"
+        vh.write_text(
+            f"#ifndef {guard}\n#define {guard}\n/* VENDOR */\n#endif\n",
+            "utf-8",
+        )
+        foreign = {vh: vh.read_bytes()}
+        named = INC.rel(INC.core_dir("fir", probe), probe)
+    else:
+        foreign = _vendor(root, below, kind, tmp_path / "donor")
+        named = f"native/src/{below}/"
     if how == "cli":
         r = run_cli("object", "fir", "--module", "tp", cwd=root)
     else:
@@ -780,9 +807,13 @@ def test_a_new_place_holding_a_vendored_dir_is_refused(
         assert '"fir"' in mod.read_text("utf-8")
         r = run_cli("apply", cwd=root)
     assert r.returncode != 0, r.stdout
-    assert f"native/src/{below}/" in " ".join(r.stderr.split()), r.stderr
-    assert "its own" in r.stderr
-    _untouched(root, foreign, below)
+    text = " ".join(r.stderr.split())
+    assert named in text, text
+    assert "its own" in text, text
+    for path, data in foreign.items():
+        assert path.read_bytes() == data, path
+    if kind != "header":
+        _untouched(root, foreign, below)
 
 
 @pytest.mark.parametrize("case", ["package", "layout"])
@@ -844,10 +875,10 @@ def test_a_record_pointing_at_a_vendored_dir_is_refused(tmp_path, case):
         assert "The record may be stale" in text, text
         assert "Merge anything" not in text, text
     assert _digest(root) == before
-    # `upgrade` makes renames without apply's check: the moves it is given
-    # are only those jm can show are out of its own directories.
-    assert not [o for o, _n in INC.relocations(root) if (root / o).exists()]
-    _jm(root, "upgrade")
+    # `upgrade` makes the same moves, so it asks the same check first.
+    r = run_cli("upgrade", cwd=root)
+    assert r.returncode != 0, r.stdout
+    assert "The record may be stale" in " ".join(r.stderr.split())
     for path, data in foreign.items():
         assert path.read_bytes() == data, path
     assert core.read_text("utf-8").endswith("/* AUTHOR */\n")
@@ -1011,14 +1042,14 @@ def test_a_switch_never_moves_into_a_vendored_dir(tmp_path, start, what):
     assert below == "third_party/fir"
     if what == "src":
         foreign = _vendor(root, below)
-        want = f"native/src/{below}/ already holds files jm did not write"
+        want = f"which already hold native/src/{below}/CMakeLists.txt"
     else:
         # Only a vendored header where fir's goes.
         vh = INC.core_h(root, "fir")
         vh.parent.mkdir(parents=True)
         vh.write_text("#ifndef VENDOR_H\n#define VENDOR_H\n#endif\n", "utf-8")
         foreign = {vh: vh.read_bytes()}
-        want = f"{INC.core_rel('fir', root)} is not `fir`'s header"
+        want = f"which already hold {INC.core_rel('fir', root)}"
     before = _digest(root)
     r = run_cli("apply", cwd=root)
     assert r.returncode != 0, r.stdout
@@ -1028,3 +1059,35 @@ def test_a_switch_never_moves_into_a_vendored_dir(tmp_path, start, what):
         _untouched(root, foreign, below)
     for path, data in foreign.items():
         assert path.read_bytes() == data, path
+
+
+@pytest.mark.parametrize("start", ["", "mirrored"])
+def test_a_verified_core_with_riders_jm_keeps_still_moves(tmp_path, start):
+    """R2: the recorded place's CMakeLists is jm's render plus a rider jm
+    itself keeps across every apply -- an author's ``if(VAR)`` wiring block
+    (gh-271). That is still jm's file: the switch verifies it and moves the
+    component, rider and all."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, start)
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "apply")
+    cml = INC.src_path(root, "fir") / "CMakeLists.txt"
+    rider = (
+        "if(MY_EXTRA_LIB)\n"
+        "  target_link_libraries(fir_core PUBLIC ${MY_EXTRA_LIB})\n"
+        "endif()"
+    )
+    cml.write_text(cml.read_text("utf-8").rstrip("\n") + "\n\n" + rider + "\n")
+    _jm(root, "apply")
+    assert rider in cml.read_text("utf-8")  # jm keeps it
+    _jm(root, "status", "--check")
+    _declare(root, "nested")
+    r = _jm(root, "apply")
+    assert "renamed" in r.stdout, r.stdout
+    moved = INC.src_path(root, "fir") / "CMakeLists.txt"
+    assert moved != cml and moved.is_file() and not cml.exists()
+    assert rider in moved.read_text("utf-8")
+    _assert_in_place(root)
+    _jm(root, "status", "--check")
