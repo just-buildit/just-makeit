@@ -1792,12 +1792,15 @@ def run(
             for core in _libwiring.declared_cores(root)
         }
         # gh-2494: an unrun benchmark's `<build file>:<target>` key is a
-        # finding key too, and the same false "stale" would follow.
-        _wiring_keys |= {u.key for u in _unrun}
+        # finding key too, and the same false "stale" would follow. Matched
+        # through `_is_allowed`, as the finding itself is, so a glob that
+        # suppresses an unrun target is not also called stale.
+        _unrun_keys = [u.key for u in _unrun]
         _unmatched = [
             pat
             for pat in _manifest_allow
             if pat not in _wiring_keys
+            and not any(_is_allowed(k, [pat]) for k in _unrun_keys)
             and not any(_is_allowed(f, [pat]) for f in managed_paths)
         ]
         if _unmatched:
