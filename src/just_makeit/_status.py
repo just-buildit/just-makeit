@@ -1118,6 +1118,14 @@ def run(
         o.rel: _is_allowed(o.rel, allow_patterns) for o in _orphans
     }
     _silent = _hollow.silent_benches(root, cfg)
+    # gh-2494: a bench target `jm bench` never runs. Gates like an orphan,
+    # beside which it is computed for the same JSON-parity reason. Its
+    # stand-down is the orphans' -- both read `_hollow._build_files` -- so
+    # `_orphans_unchecked` already says when neither scan ran.
+    _unrun = _hollow.unrun_benches(root, cfg) or []
+    _unrun_allowed = {
+        u.key: _is_allowed(u.key, allow_patterns) for u in _unrun
+    }
     # gh-984: components whose OBJECT library reaches no combined C library,
     # and wiring lines naming a core that is gone. Computed here, above the
     # JSON return, for the reason `_wide` and `_orphans` are: a gate that
@@ -1204,6 +1212,10 @@ def run(
         # carried one for weeks with CI green. `status_allow` remains the
         # escape hatch for a file a project keeps unbuilt on purpose.
         + sum(1 for o in _orphans if not _orphan_allowed[o.rel])
+        # gh-2494: and an unrun benchmark, on the same argument: a target
+        # that builds every time and that `jm bench` never runs is a green
+        # `make bench` over rows that are silently missing.
+        + sum(1 for u in _unrun if not _unrun_allowed[u.key])
         # gh-785: gates, and never suppressed by `status_allow` — the same
         # rule as the gh-426 dropped symbol it sits beside, for the same
         # reason. This is content loss, and it is the *last* moment anything
@@ -1356,6 +1368,18 @@ def run(
                     # no way to tell — the same silence the gate exists to
                     # break, one layer out.
                     "unbuilt_scanned": not _orphans_unchecked,
+                    # gh-2494: the defining build file, the target, and the
+                    # `status_allow` key that exempts it. Covered by
+                    # `unbuilt_scanned`: both scans read the same files.
+                    "unrun_benches": [
+                        {
+                            "path": u.rel,
+                            "target": u.target,
+                            "key": u.key,
+                            "allowed": _unrun_allowed[u.key],
+                        }
+                        for u in _unrun
+                    ],
                     # gh-1076: both sides, so a CI consumer can say which
                     # one moved without re-deriving jm's type renderer.
                     "ctor_signature_drift": [
@@ -1767,6 +1791,9 @@ def run(
             f"CMakeLists.txt:{core}"
             for core in _libwiring.declared_cores(root)
         }
+        # gh-2494: an unrun benchmark's `<build file>:<target>` key is a
+        # finding key too, and the same false "stale" would follow.
+        _wiring_keys |= {u.key for u in _unrun}
         _unmatched = [
             pat
             for pat in _manifest_allow
@@ -2256,6 +2283,25 @@ def run(
         )
         print()
 
+    # gh-2494: beside UNBUILT, the same failure from a third side -- the
+    # source is compiled and the target builds; nothing runs it.
+    if _unrun:
+        print(
+            f"UNRUN ({len(_unrun)}) — bench target(s) `jm bench` never runs:"
+        )
+        for u in _unrun:
+            tag = " [status_allow]" if _unrun_allowed[u.key] else ""
+            print(f"  {'~' if _unrun_allowed[u.key] else '!'} {u.key}{tag}")
+        print(
+            "  `jm bench` runs only bench_<s>_core for each benchmark it"
+            " knows of, so these\n"
+            "  build every time and their rows never reach a report. Rename"
+            " one onto that\n"
+            "  shape, or allow `<build file>:<target>` if something else"
+            " runs it. See gh-2494."
+        )
+        print()
+
     # gh-1448 review, edge 3: a fragment whose header says jm regenerates it,
     # for an object that no longer declares `fragment = "generated"`. Apply
     # leaves it alone, so the header is false -- the "Hand-patches are
@@ -2657,6 +2703,7 @@ def run(
         # is the precise sentence this issue is about; the exit code alone
         # would be right and unread.
         and not any(not _orphan_allowed[o.rel] for o in _orphans)
+        and not any(not _unrun_allowed[u.key] for u in _unrun)
         and not unparseable_entries
         # gh-975: and for the same reason again. "OK — up to date" over a
         # project whose module has no add_subdirectory() is the exact sentence
@@ -2702,6 +2749,8 @@ def run(
         # same as in sync. A silent benchmark qualifies the line too: the
         # project is in sync and one of its bench targets measures nothing.
         _orph = f"; {len(_orphans)} unbuilt (allowed)" if _orphans else ""
+        # gh-2494: the same qualification for an allowed unrun benchmark.
+        _orph += f"; {len(_unrun)} unrun (allowed)" if _unrun else ""
         # gh-1033: and the case where there is no count to give because
         # nothing was counted. gh-767's rule reaches this too — "up to date"
         # must not be said over a check that did not run, and here the reader
@@ -2839,6 +2888,12 @@ def run(
                 f", {sum(1 for o in _orphans if not _orphan_allowed[o.rel])}"
                 " unbuilt (!)"
                 if any(not _orphan_allowed[o.rel] for o in _orphans)
+                else ""
+            )
+            + (
+                f", {sum(1 for u in _unrun if not _unrun_allowed[u.key])}"
+                " unrun (!)"
+                if any(not _unrun_allowed[u.key] for u in _unrun)
                 else ""
             )
             # gh-1033: on this line too, and without a count — there is

@@ -156,7 +156,10 @@ def test_the_hook_is_respelled_both_ways(tmp_path):
             f"${{CMAKE_SOURCE_DIR}}/{old})" in hook
         ), hook
     assert len(_gives(hook, f"{INC.TESTS_DIR}/fir")) == 1, hook
-    _jm(root, "status", "--check")
+    # gh-2494: `bench_fir_hand` is a bench target `jm bench` never runs, so
+    # it is UNRUN; this test is about where its source moves, not about
+    # who runs it, so it is allowed by its finding key.
+    _jm(root, "status", "--check", "--allow", "CMakeLists.txt:bench_fir_hand")
 
 
 def _ctest(root: Path, build: Path) -> str:
