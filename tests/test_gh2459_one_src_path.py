@@ -68,13 +68,15 @@ _JOINERS = {"Path", "PurePath", "PurePosixPath", "PureWindowsPath"}
 _NAME = object()
 
 
-def _tokens(node, names, bound) -> "list | None":
+def _tokens(node, names, bound, known=None) -> "list | None":
     """*node* as a path: a list of literal parts, with :data:`_NAME` for
     each part built from anything else. ``None`` when *node* is not a path
-    join, a literal, the source tree, or a name bound to one of those."""
+    join, a literal, the source tree, or a name bound to one of those.
+    *known* maps the names a string may stand for to their text."""
+    known = _KNOWN if known is None else known
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-        left = _tokens(node.left, names, bound)
-        right = _tokens(node.right, names, bound)
+        left = _tokens(node.left, names, bound, known)
+        right = _tokens(node.right, names, bound, known)
         return (left if left is not None else [_NAME]) + (
             right if right is not None else [_NAME]
         )
@@ -83,7 +85,7 @@ def _tokens(node, names, bound) -> "list | None":
         args = None
         base: "list" = []
         if isinstance(f, ast.Attribute) and f.attr == "joinpath":
-            got = _tokens(f.value, names, bound)
+            got = _tokens(f.value, names, bound, known)
             base = got if got is not None else [_NAME]
             args = node.args
         elif (
@@ -93,22 +95,24 @@ def _tokens(node, names, bound) -> "list | None":
             and f.value.attr == "path"
         ):
             args = node.args  # os.path.join(...)
-        elif isinstance(f, ast.Name) and f.id in _JOINERS:
+        elif (isinstance(f, ast.Name) and f.id in _JOINERS) or (
+            isinstance(f, ast.Attribute) and f.attr in _JOINERS
+        ):
             args = node.args
         elif _incpath_call(node, names) in _TREE_CALLS:
             return list(_PARTS)
         if args is not None:
             out = list(base)
             for a in args:
-                got = _tokens(a, names, bound)
+                got = _tokens(a, names, bound, known)
                 out += got if got is not None else [_NAME]
             return out
         return None
     if isinstance(node, ast.NamedExpr):
-        return _tokens(node.value, names, bound)
+        return _tokens(node.value, names, bound, known)
     if isinstance(node, ast.Name) and node.id in bound:
         return list(bound[node.id])
-    text = _shape(node, _KNOWN)
+    text = _shape(node, known)
     if text is None or "\x00" in text:
         return None
     return [p for p in text.split("/") if p]
@@ -152,7 +156,11 @@ def _findings(tree, rel) -> "list[str]":
             mark(child, inner)
 
     mark(tree, tree)
+    # Per scope: names bound to a path ending partway into the source tree,
+    # and names bound to a string (a local ``S = "native/src"``). A function
+    # also sees what the module bound.
     bound: "dict[int, dict[str, list]]" = {}
+    strings: "dict[int, dict[str, str]]" = {}
     for n in ast.walk(tree):
         target = value = None
         if isinstance(n, ast.Assign) and len(n.targets) == 1:
@@ -160,34 +168,50 @@ def _findings(tree, rel) -> "list[str]":
         elif isinstance(n, (ast.AnnAssign, ast.NamedExpr)):
             target, value = n.target, n.value
         if isinstance(target, ast.Name) and value is not None:
+            scope = scope_of.get(id(n), id(tree))
             tail = _tail(_tokens(value, names, {}))
             if tail is not None:
-                bound.setdefault(scope_of.get(id(n), id(tree)), {})[
-                    target.id
-                ] = tail
+                bound.setdefault(scope, {})[target.id] = tail
+            text = _shape(value, _KNOWN)
+            if text is not None and "\x00" not in text:
+                strings.setdefault(scope, {})[target.id] = text
+
+    def visible(table, node):
+        scope = scope_of.get(id(node), id(tree))
+        return {**table.get(id(tree), {}), **table.get(scope, {})}
+
     hits: "list[str]" = []
     seen: "set[int]" = set()
+
+    def check_shape(node, known) -> None:
+        text = _shape(node, known)
+        if text is not None and _HAND.search(text):
+            hits.append(f"{rel}:{node.lineno}  {text[:70]!r}")
+
     for node in ast.walk(tree):
         if id(node) in seen or id(node) in prose:
             continue
-        here = bound.get(scope_of.get(id(node), id(tree)), {})
+        here = visible(bound, node)
+        known = {**_KNOWN, **visible(strings, node)}
         is_join = (
             isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
         ) or (
             isinstance(node, ast.Call)
             and _incpath_call(node, names) not in _TREE_CALLS
-            and _tokens(node, names, here) is not None
+            and _tokens(node, names, here, known) is not None
         )
         if is_join:
-            for sub in ast.walk(node):
-                seen.add(id(sub))
-            got = _tokens(node, names, here)
+            got = _tokens(node, names, here, known)
             if got is not None and _hand_join(got):
                 hits.append(f"{rel}:{node.lineno}  <src> / name")
+            # A join's own parts may each be a string built from a name:
+            # ``root / f"native/src/{x}"``, ``Path("native/src/" + x)``.
+            for sub in ast.walk(node):
+                seen.add(id(sub))
+                if sub is not node and id(sub) not in prose:
+                    check_shape(sub, known)
             continue
-        text = _shape(node, _KNOWN)
-        if text is not None and _HAND.search(text):
-            hits.append(f"{rel}:{node.lineno}  {text[:70]!r}")
+        check_shape(node, known)
     return sorted(set(hits))
 
 
@@ -241,6 +265,19 @@ def annotated(root, comp):
     return tree / comp
 def walrus(root, comp):
     return (t := INC.src_root(root)).joinpath(comp)
+p = root / f"native/src/{comp}/x.c"
+q = Path(f"native/src/{comp}")
+r = Path("native/src/" + comp)
+s = Path(root, f"native/src/{comp}")
+t = os.path.join(root, f"native/src/{comp}")
+u = root / ("native/src/%s" % comp)
+v = root / "native/src/{}".format(comp)
+w = pathlib.Path("native", "src", comp)
+def local_constant(comp):
+    S = "native/src"
+    return f"{S}/{comp}", S + "/" + comp
+x = os.sep.join(["native", "src", comp])
+y = "native" + os.sep + "src" + os.sep + comp
 """
 
 #: ...and what it lets through: a scan of the tree, a fixed file below it,
@@ -262,7 +299,10 @@ def test_the_gate_sees_what_it_guards():
     one is none."""
     found = _findings(ast.parse(_PROBE), "probe")
     lines = {f.split()[0] for f in found}
-    want = {f"probe:{n}" for n in (*range(1, 16), 18, 21, 23)}
+    want = {
+        f"probe:{n}"
+        for n in (*range(1, 16), 18, 21, *range(23, 32), 34, 35, 36)
+    }
     assert lines == want, sorted(lines ^ want)
     assert _findings(ast.parse(_ALLOWED), "probe") == []
     assert _TEMPLATE_HAND.search("<<src_dir>>/<<component>>_core.c") is None

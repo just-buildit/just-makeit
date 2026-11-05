@@ -428,6 +428,11 @@ def src_dir(name: str, owner: Owner) -> str:
 def src_path(root: Path, name: str, owner: "Owner | None" = None) -> Path:
     """:func:`src_dir` under *root*; *owner* defaults to *root*.
 
+    ``None`` here is not a missing owner but "the project at *root*": a
+    path inside the project names it, so *root* is always an owner to fall
+    back on. :func:`src_dir` has no *root* to fall back on, so it refuses
+    ``None`` rather than guess which project is meant.
+
     >>> src_path(Path("p"), "fir", {"project": {"name": "p"}}).as_posix()
     'p/native/src/fir'
     """
