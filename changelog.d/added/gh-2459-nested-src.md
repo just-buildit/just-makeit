@@ -42,3 +42,11 @@
     this version, then change it. A project last applied by jm 0.119 or
     older should run `jm apply` once before changing a layout or a module's
     `package`; `apply --only` refuses while files wait to move.
+- **Under `nested`, jm records the members it placed in each module**
+    (gh-2459): `[module.X] applied_objects`, beside `applied_package`,
+    written by `jm apply` and by the `jm object` that creates a member. A
+    member not on it -- declared since by a fragment -- has never been
+    placed by jm, so a directory already at its place, even one holding a
+    `<name>_core.c`, is checked and refused rather than written into. `jm   remove` takes the member off it. A module recorded before the key
+    existed has its members shown from the tree (their CMakeLists must be
+    jm's render) and recorded on the next `apply`.

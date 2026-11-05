@@ -154,6 +154,9 @@ def run(
         cfg.setdefault("module", {}).setdefault(module, {})[
             "functions_in_core"
         ] = "true"
+    # gh-2459: its directory is created below, where the nested layout puts
+    # it: on record.
+    C.record_created(cfg, module)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

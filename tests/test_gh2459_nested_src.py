@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -676,7 +677,13 @@ def test_a_module_declared_since_the_last_apply_has_no_former_place(
         _jm(root, "module", "third_party")
         want = "native/src/gainv"
     _jm(root, "object", "gainv", "--module", "third_party")
-    assert "gainv" in INC.unplaced(root)
+    # Created by the command under the record's layout, it is on record at
+    # its place (`package`); created while the project is flat, it is not
+    # (`layout`). Either way it has no former place.
+    if change == "package":
+        assert INC.placed(root, "gainv") is True
+    else:
+        assert "gainv" in INC.unplaced(root)
     _jm(root, "apply")
     for path, data in foreign.items():
         assert path.read_bytes() == data, path
@@ -799,12 +806,15 @@ def test_a_new_place_holding_a_vendored_dir_is_refused(
         )
         mod = root / "modules" / "tp.toml"
         mod.write_text(
-            mod.read_text("utf-8").replace(
-                "objects = []", 'objects = ["fir"]'
+            re.sub(
+                r"^objects = \[\]",
+                'objects = ["fir"]',
+                mod.read_text("utf-8"),
+                flags=re.M,
             ),
             encoding="utf-8",
         )
-        assert '"fir"' in mod.read_text("utf-8")
+        assert re.search(r'^objects = \["fir"\]', mod.read_text("utf-8"), re.M)
         r = run_cli("apply", cwd=root)
     assert r.returncode != 0, r.stdout
     text = " ".join(r.stderr.split())
@@ -975,10 +985,10 @@ def test_only_refuses_while_files_wait_to_move(tmp_path):
 
 
 def test_a_missing_record_is_advice_not_drift(tmp_path):
-    """A project last applied before the record: `status --check` says so
-    in jm's own words and does not fail on it, and reports no module
-    fragment as stale."""
-    root = _scaffold(tmp_path, "nested")
+    """A project last applied before the record (a mirrored one: its files
+    are where that jm put them): `status --check` says so in jm's own words
+    and does not fail on it, and reports no module fragment as stale."""
+    root = _scaffold(tmp_path, "mirrored")
     for toml in root.rglob("*.toml"):
         toml.write_text(
             re.sub(
@@ -1090,4 +1100,226 @@ def test_a_verified_core_with_riders_jm_keeps_still_moves(tmp_path, start):
     assert moved != cml and moved.is_file() and not cml.exists()
     assert rider in moved.read_text("utf-8")
     _assert_in_place(root)
+    _jm(root, "status", "--check")
+
+
+# ── 8. under nested, placement is the record's (review round 5) ───────────
+
+_VENDOR_CORE = "add_library(vendorfir STATIC fir_core.c)\n"
+
+
+def _vendor_core(root: Path, below: str) -> dict:
+    """A vendored directory holding its OWN ``fir_core.c`` -- jm's first
+    file's name -- and wired by the author at the end of the root."""
+    d = root / "native" / "src" / below
+    d.mkdir(parents=True)
+    (d / "CMakeLists.txt").write_text(_VENDOR_CORE, "utf-8")
+    (d / "fir_core.c").write_text(
+        "int vendor_fir(void){return 42;}\n", "utf-8"
+    )
+    top = root / "CMakeLists.txt"
+    top.write_text(
+        top.read_text("utf-8") + f"add_subdirectory(native/src/{below})\n",
+        encoding="utf-8",
+    )
+    return {p: p.read_bytes() for p in d.rglob("*") if p.is_file()}
+
+
+def _donor_fir(tmp_path: Path, module: str, package: "str | None") -> Path:
+    _jm(tmp_path, "new", "donor")
+    donor = tmp_path / "donor"
+    _declare(donor, "nested")
+    _jm(donor, "module", module, *(("--package", package) if package else ()))
+    _jm(donor, "object", "fir", "--module", module)
+    _jm(donor, "apply")
+    return donor
+
+
+@pytest.mark.parametrize(
+    "shape", ["new_module", "recorded_module", "unrecorded_project"]
+)
+def test_a_member_jm_never_placed_never_adopts_a_vendored_core(
+    tmp_path, shape
+):
+    """Q1: a vendored directory that holds its own ``fir_core.c`` sits where
+    a nested member goes. ``new_module`` (coll3): a module declared by
+    fragment, packaged over it. ``recorded_module`` (coll4): a module jm has
+    placed gains the member by fragment. Neither member is in its module's
+    ``applied_objects``, so its place is new: the sacred core already there
+    is someone else's, and jm refuses, writing nothing into it.
+    ``unrecorded_project``: the same over a project jm has never recorded --
+    the record cannot say, so the tree must show the place is jm's, and a
+    vendored CMakeLists does not."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    if shape in ("new_module", "unrecorded_project"):
+        donor = _donor_fir(tmp_path, "tp", "third_party")
+        if shape == "new_module":
+            _jm(root, "apply")
+        below = "third_party/fir"
+        foreign = _vendor_core(root, below)
+        (root / "modules").mkdir(exist_ok=True)
+        (root / "objects").mkdir(exist_ok=True)
+        for rel in ("modules/tp.toml", "objects/fir.toml"):
+            text = (donor / rel).read_text("utf-8")
+            (root / rel).write_text(
+                re.sub(r"^applied_\w+ = [^\n]*\n", "", text, flags=re.M),
+                "utf-8",
+            )
+    else:
+        _jm(root, "module", "ext")
+        _jm(root, "object", "amp", "--module", "ext")
+        _jm(root, "apply")
+        donor = _donor_fir(tmp_path, "ext", None)
+        below = "ext/fir"
+        foreign = _vendor_core(root, below)
+        (root / "objects" / "fir.toml").write_text(
+            (donor / "objects" / "fir.toml").read_text("utf-8"), "utf-8"
+        )
+        frag = root / "modules" / "ext.toml"
+        frag.write_text(
+            re.sub(
+                r'^objects = \["amp"\]',
+                'objects = ["amp", "fir"]',
+                frag.read_text("utf-8"),
+                flags=re.M,
+            ),
+            "utf-8",
+        )
+        assert INC.placed(C.load(root), "amp") is True
+    want = None if shape == "unrecorded_project" else False
+    assert INC.placed(C.load(root), "fir") is want
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0, r.stdout
+    text = " ".join(r.stderr.split())
+    named = (
+        f"native/src/{below}/CMakeLists.txt is not the CMakeLists jm renders"
+        if shape == "unrecorded_project"
+        else f"native/src/{below}/fir_core.c"
+    )
+    assert named in text, text
+    _untouched(root, foreign, below)
+
+
+def test_a_recorded_member_is_restored_and_regenerated(tmp_path):
+    """The record is what makes a member jm's: its deleted directory comes
+    back on `apply`, and `jm regenerate` rebuilds it, with no refusal."""
+    root = _scaffold(tmp_path, "nested")
+    assert INC.placed(root, "fir") is True
+    shutil.rmtree(INC.src_path(root, "fir"))
+    _jm(root, "apply")
+    assert (INC.src_path(root, "fir") / "fir_core.c").is_file()
+    _jm(root, "regenerate", "fir", "--force")
+    assert (INC.src_path(root, "fir") / "fir_core.c").is_file()
+    _jm(root, "apply")
+    _jm(root, "status", "--check")
+
+
+def test_a_removed_member_declared_again_is_checked_again(tmp_path):
+    """`jm remove` takes a member off its module's ``applied_objects``: the
+    same name declared again over a vendored directory is a new place, and
+    refused."""
+    root = _scaffold(tmp_path, "nested")
+    frag = (root / "objects" / "fir.toml").read_text("utf-8")
+    below = INC.src_below("fir", root)
+    _jm(root, "remove", "object", "fir", "--force")
+    assert "fir" not in C.load(root)["module"][_MODULE].get(
+        INC.APPLIED_OBJECTS, []
+    )
+    _jm(root, "apply")
+    foreign = _vendor_core(root, below)
+    (root / "objects" / "fir.toml").write_text(frag, "utf-8")
+    mod = root / "modules" / f"{C.module_paths(_MODULE).cname}.toml"
+    text = mod.read_text("utf-8")
+    mod.write_text(
+        re.sub(
+            r"^objects = \[", 'objects = ["fir", ', text, count=1, flags=re.M
+        ),
+        "utf-8",
+    )
+    assert "fir" in C.load(root)["module"][_MODULE]["objects"]
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0, r.stdout
+    _untouched(root, foreign, below)
+
+
+@pytest.mark.parametrize("own", [True, False])
+def test_a_record_without_members_is_shown_then_kept(tmp_path, own):
+    """A module record that predates ``applied_objects``: its members'
+    placement is unknown, so the tree must show it. A member whose
+    CMakeLists is jm's render there is recorded by the next apply, and
+    builds; one whose CMakeLists is someone else's is refused with the
+    restore-then-apply advice."""
+    root = _scaffold(tmp_path, "nested")
+    for toml in root.rglob("*.toml"):
+        toml.write_text(
+            re.sub(
+                r"^applied_objects = [^\n]*\n",
+                "",
+                toml.read_text("utf-8"),
+                flags=re.M,
+            ),
+            "utf-8",
+        )
+    assert "applied_objects" not in "".join(
+        t.read_text("utf-8") for t in root.rglob("*.toml")
+    )
+    assert INC.placed(C.load(root), "fir") is None
+    if own:
+        _jm(root, "apply")
+        cfg = C.load(root)
+        assert "fir" in cfg["module"][_MODULE][INC.APPLIED_OBJECTS]
+        assert INC.placed(root, "fir") is True
+        _jm(root, "status", "--check")
+        if shutil.which("cmake"):
+            build = tmp_path / "build"
+            for cmd in (
+                [
+                    "cmake",
+                    "-S",
+                    str(root),
+                    "-B",
+                    str(build),
+                    "-DBUILD_PYTHON=OFF",
+                ],
+                ["cmake", "--build", str(build), "-j4"],
+            ):
+                p = subprocess.run(cmd, capture_output=True, text=True)
+                assert p.returncode == 0, (
+                    cmd,
+                    p.stdout[-2000:],
+                    p.stderr[-2000:],
+                )
+    else:
+        cml = INC.src_path(root, "fir") / "CMakeLists.txt"
+        cml.write_text(_VENDOR_CORE, "utf-8")
+        before = _digest(root)
+        r = run_cli("apply", cwd=root)
+        assert r.returncode != 0
+        text = " ".join(r.stderr.split())
+        assert "run `jm apply` once on this version" in text, text
+        assert _digest(root) == before
+
+
+def test_a_settled_project_with_no_record_is_shown_then_recorded(tmp_path):
+    """Every key of the record gone (rec.sh's ``delkeys``): the record
+    cannot say, so the tree shows each member's place is jm's -- its
+    CMakeLists is jm's render there -- and the next apply records it."""
+    root = _scaffold(tmp_path, "nested")
+    for toml in root.rglob("*.toml"):
+        toml.write_text(
+            re.sub(
+                r"^applied_\w+ = [^\n]*\n",
+                "",
+                toml.read_text("utf-8"),
+                flags=re.M,
+            ),
+            "utf-8",
+        )
+    assert INC.placed(C.load(root), "fir") is None
+    _jm(root, "apply")
+    cfg = C.load(root)
+    assert cfg["project"][INC.APPLIED_LAYOUT] == "nested"
+    assert "fir" in cfg["module"][_MODULE][INC.APPLIED_OBJECTS]
     _jm(root, "status", "--check")

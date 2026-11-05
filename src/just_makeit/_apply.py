@@ -755,16 +755,32 @@ def _kind_cnames(cfg: dict) -> "set[str]":
     }
 
 
-def _never_placed(root: Path, cfg: dict, name: str, kinds: "set[str]") -> bool:
-    """Whether jm has never put *name* where *cfg* puts it (gh-2459): the
-    file it writes there first and keeps -- the sacred ``<name>_core.c`` (a
-    header-only component's ``<name>_core.h``; a kind module's binding,
-    which owns no core) -- is absent, and the root ``CMakeLists.txt`` does
-    not wire that directory. A component whose core was deleted to be
-    rendered again (`jm regenerate`, a deleted directory) is still wired
-    there: that is jm's place, put back. Read only to decide what is asked
-    before writing; nothing is moved on it. The `make` backend has no
-    wiring to read, and is never asked."""
+def _never_placed(
+    root: Path, cfg: dict, name: str, kinds: "set[str]"
+) -> "bool | None":
+    """Whether jm has never put *name* where *cfg* puts it (gh-2459).
+
+    Where that is its module's package -- its source directory is not the
+    flat ``native/src/<name>`` -- jm's record decides, which nothing in the
+    tree can fool (`_incpath.placed`): a member is placed when its module's
+    ``applied_objects`` names it. ``None`` when the module's record predates
+    that key: unknown, so :func:`_refuse_unowned_new_places` asks the tree
+    to show it -- the CMakeLists there must be jm's render.
+
+    At the flat place (every component in the flat and mirrored layouts, a
+    standalone one under nested) there is no record to read, and it is the
+    tree: the file jm writes there first and keeps -- the sacred
+    ``<name>_core.c`` (a header-only component's ``<name>_core.h``; a kind
+    module's binding, which owns no core) -- is absent, and the root
+    ``CMakeLists.txt`` does not wire that directory in jm's own blocks. A
+    component whose core was deleted to be rendered again (`jm
+    regenerate`, a deleted directory) is still wired there: that is jm's
+    place, put back. Read only to decide what is asked before writing;
+    nothing is moved on it. The `make` backend has no wiring to read, and
+    is never asked."""
+    if not INC.at_flat_place(name, cfg):
+        known = INC.placed(cfg, name)
+        return None if known is None else not known
     if C.build_system(cfg) != "cmake":
         return False
     if name in kinds:
@@ -794,12 +810,15 @@ def _never_placed(root: Path, cfg: dict, name: str, kinds: "set[str]") -> bool:
     return True
 
 
-def _new_places(root: Path, cfg: dict) -> "dict[str, list[tuple[str, bytes]]]":
+def _new_places(
+    root: Path, cfg: dict
+) -> "dict[str, tuple[list[tuple[str, bytes]], bool]]":
     """What already sits at each component's NEW place, before anything
     moves (gh-2459): per component with a move pending, or one jm has never
     put where the manifest puts it (:func:`_never_placed`), the files
     directly in its source and header directories -- project-relative path
-    and bytes."""
+    and bytes -- and whether its placement is unknown and must be shown
+    (:func:`_never_placed` returning ``None``)."""
     by_name = INC.relocations_by_name(root)
     # Per component, the directories its waiting moves land in.
     landing: "dict[str, set[Path]]" = {}
@@ -827,10 +846,11 @@ def _new_places(root: Path, cfg: dict) -> "dict[str, list[tuple[str, bytes]]]":
         }
         if name in landing:
             dirs = sorted(own & landing[name])
-        elif _never_placed(root, cfg, name, kinds):
-            dirs = sorted(own)
         else:
-            continue
+            never = _never_placed(root, cfg, name, kinds)
+            if never is False:
+                continue
+            dirs = sorted(own)
         files: "list[tuple[str, bytes]]" = []
         for d in dirs:
             if d.is_dir():
@@ -839,7 +859,7 @@ def _new_places(root: Path, cfg: dict) -> "dict[str, list[tuple[str, bytes]]]":
                     for f in sorted(d.iterdir())
                     if f.is_file()
                 ]
-        out[name] = files
+        out[name] = (files, name not in landing and never is None)
     return out
 
 
@@ -847,7 +867,7 @@ def _refuse_unowned_new_places(
     root: Path,
     temp_root: "Path | None",
     cfg: dict,
-    new: "dict[str, list[tuple[str, bytes]]]",
+    new: "dict[str, tuple[list[tuple[str, bytes]], bool]]",
 ) -> None:
     """Refuse to write a component into a new place that already held files
     jm cannot show are its own (gh-2459).
@@ -866,12 +886,48 @@ def _refuse_unowned_new_places(
 
     With *temp_root* None (before the render), only the sacred cores are
     asked: they need no render to be someone else's.
+
+    A member whose module's record predates ``applied_objects`` (placement
+    unknown, :func:`_never_placed`) is shown to be jm's by its CMakeLists
+    instead -- jm's render there (:func:`_cmake_is_jms`) -- and is recorded
+    by this apply; anything else is refused with what to do.
     """
     from . import _extrahook
 
     kinds = _kind_cnames(cfg)
     errors: "list[str]" = []
-    for name, files in new.items():
+    for name, (files, unknown) in new.items():
+        rel = INC.src_rel(name, "CMakeLists.txt", cfg)
+        # Unknown placement with a CMakeLists there: it must be jm's
+        # render. With none, nothing of jm's is there to show, and the
+        # place is asked as a new one, below.
+        if unknown and (root / rel).is_file():
+            if temp_root is None:
+                continue
+            real, mine = root / rel, temp_root / rel
+            if (
+                real.is_file()
+                and mine.is_file()
+                and _cmake_is_jms(
+                    real.read_text(encoding="utf-8"),
+                    mine.read_text(encoding="utf-8"),
+                    name,
+                    cfg,
+                )
+            ):
+                continue
+            errors.append(
+                f"jm has no record of placing `{name}` in"
+                f" {INC.src_dir(name, cfg)}/ (the project, or its module, was"
+                " last applied before jm recorded what it placed), and"
+                f" {rel} is not the CMakeLists jm renders there, so it cannot"
+                " show the directory is its own. If it is jm's, restore the"
+                " layout and package you last applied, run `jm apply` once"
+                " on this version, then change them again; if it is not,"
+                " move it, or choose another name or module package"
+                " (gh-2459)"
+            )
+            continue
         headers = INC.rel(INC.core_dir(name, cfg), cfg) + "/"
         sacred = {
             INC.src_rel(name, f"{name}_core.c", cfg),
