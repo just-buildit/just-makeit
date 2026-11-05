@@ -1283,7 +1283,7 @@ def serializable_triplet_parts(
     # symbol prefix and gains an `Obj` suffix on a no_state object. Passing
     # `_W` documented `--class-name DDC` as "Lets a DdcObj be used…" — a name
     # that appears nowhere in the API the reader is holding.
-    _glue = glue_methods(Component)
+    _glue = glue_methods(Component, status_table=bool(status_errors))
     _meth_c = {
         "state_bytes": "METH_NOARGS",
         "get_state": "METH_NOARGS",
