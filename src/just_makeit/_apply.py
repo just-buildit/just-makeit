@@ -730,10 +730,13 @@ def _refuse_unverified_moves(
                 " the files yourself. If it is only out of date, restore the"
                 " layout or package it records, run `jm apply`, then change"
                 " it again"
-                if recorded
-                else "Restore the layout and `package` you last applied, run"
-                " `jm apply` once on this version, then change them again;"
-                " or move the files yourself"
+                if recorded and _placement_changed(applied_cfg, cfg, name)
+                # No record, or one the layout and package still match: the
+                # CMakeLists differs from the render through some other
+                # edit (a `depends_on`, say), which is what to undo.
+                else "Undo the manifest edits made since the last apply, run"
+                " `jm apply` once on this version, then redo them; or move"
+                " the files yourself"
             )
             errors.append(
                 f"{where}, and the manifest puts it at"
@@ -743,6 +746,20 @@ def _refuse_unverified_moves(
             )
     if errors:
         C._refuse(errors)
+
+
+def _placement_changed(applied_cfg: dict, cfg: dict, name: str) -> bool:
+    """Whether *name*'s layout or module ``package`` differs between the
+    recorded manifest *applied_cfg* and *cfg* (gh-2459): the edit a move
+    refusal tells the author to restore, when it is the one made."""
+    if INC.layout(applied_cfg) != INC.layout(cfg):
+        return True
+    module = C.component_module(cfg, name) or next(
+        (m for m in C.modules(cfg) if C.module_paths(m).cname == name), None
+    )
+    return module is not None and C.module_package_resolved(
+        applied_cfg, module
+    ) != C.module_package_resolved(cfg, module)
 
 
 def _kind_cnames(cfg: dict) -> "set[str]":

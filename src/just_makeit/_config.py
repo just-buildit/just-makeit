@@ -7381,32 +7381,57 @@ def record_applied(root: Path, cfg: dict) -> "list[str]":
 def record_created(
     root: Path, cfg: dict, module: str, member: "str | None" = None
 ) -> None:
-    """Record in *cfg* that a command just created *module*'s directory, or
-    *member* in it, where the nested layout puts it (gh-2459).
+    """Record in *cfg* that a command just created *module*, or *member* in
+    it, in an empty place where the nested layout puts it (gh-2459).
 
     The command checked the directory was empty and wrote jm's render into
     it, so it is placed: `apply` must not take its sacred core for someone
     else's (`_incpath.placed`). Only under ``nested`` -- where a member's
-    directory is its module's package, not the flat ``native/src/<name>``
-    -- and only where the module's record can say so: a record that
-    predates ``applied_objects`` is left for `apply` to show and complete.
-    The caller saves *cfg*; :func:`record_applied` rewrites both keys after
-    the next full `apply`.
+    directory is its module's package, not the flat ``native/src/<name>``.
+    A command other than `apply` records only what it just created, and
+    never a claim about anything else:
 
-    Never ahead of the run that establishes the record: a project that
-    carries no ``applied_layout`` gets one here only when nothing waits to
-    move -- every file already where this layout puts it, so the record is
-    the tree -- and nothing at all otherwise (`_cli` refuses the command
-    first anyway, while files wait).
+    - *member* is appended to a module whose record already carries
+      ``applied_objects``; a module without one is left for `apply` to
+      show and record, members and all;
+    - a module's record is begun only by the `jm module` creating it
+      (*member* is ``None`` and it has no members yet): beginning it for a
+      module that already holds members would declare each of them never
+      placed;
+    - ``[project] applied_layout`` is written only when every module then
+      carries a complete record -- its package, and every member on its
+      ``applied_objects`` -- so the record never says less than the tree.
+      Otherwise nothing, and the next full `apply` writes it.
+
+    The caller saves *cfg*; :func:`record_applied` rewrites every key after
+    the next full `apply`.
     """
     from . import _incpath as INC
 
     if INC.layout(cfg) != "nested":
         return
+    table = cfg.setdefault("module", {}).setdefault(module, {})
+    if member is None:
+        if INC.APPLIED_PACKAGE not in table and not table.get("objects"):
+            table[INC.APPLIED_PACKAGE] = table.get(
+                "package", module_paths(module).pypath
+            )
+            table[INC.APPLIED_OBJECTS] = []
+    elif INC.APPLIED_OBJECTS in table:
+        if member not in table[INC.APPLIED_OBJECTS]:
+            table[INC.APPLIED_OBJECTS] = sorted(
+                [*table[INC.APPLIED_OBJECTS], member]
+            )
     project = cfg.setdefault("project", {})
-    if INC.APPLIED_LAYOUT not in project:
-        if [o for o, _n in INC.relocations(root) if (root / o).is_file()]:
-            return
+    if INC.APPLIED_LAYOUT in project:
+        return
+    tables = cfg.get("module", {})
+    if all(
+        INC.APPLIED_PACKAGE in tables.get(mod, {})
+        and set(tables[mod].get("objects", []))
+        <= set(tables[mod].get(INC.APPLIED_OBJECTS, ()))
+        for mod in modules(cfg)
+    ):
         # Through `record_applied`'s own line edit, so the key lands where
         # that writer puts it; the caller's save keeps an existing key's
         # place but appends a new one.
@@ -7414,17 +7439,6 @@ def record_created(
             root / FILENAME, r"project", INC.APPLIED_LAYOUT, INC.layout(cfg)
         )
         project[INC.APPLIED_LAYOUT] = INC.layout(cfg)
-    table = cfg.setdefault("module", {}).setdefault(module, {})
-    if INC.APPLIED_PACKAGE not in table:
-        table[INC.APPLIED_PACKAGE] = table.get(
-            "package", module_paths(module).pypath
-        )
-        table[INC.APPLIED_OBJECTS] = []
-    if member is not None and INC.APPLIED_OBJECTS in table:
-        if member not in table[INC.APPLIED_OBJECTS]:
-            table[INC.APPLIED_OBJECTS] = sorted(
-                [*table[INC.APPLIED_OBJECTS], member]
-            )
 
 
 def forget_placed(cfg: dict, module: str, member: str) -> None:
