@@ -99,19 +99,61 @@ _PCT = re.compile(r"%[-#0 +]*\d*(?:\.\d+)?[sdrai]")
 _FMT = re.compile(r"\{[^{}]*\}")
 
 
-def _shape(node) -> "str | None":
+def _known(node, known: "dict[str, str]") -> "str | None":
+    """The value of *node* when it names one of *known*'s `_incpath`
+    constants (``INC.SRC_DIR``, a bare ``SRC_DIR``), else None."""
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in ("INC", "_incpath")
+    ):
+        return known.get(node.attr)
+    if isinstance(node, ast.Name):
+        return known.get(node.id)
+    return None
+
+
+def _shape(node, known: "dict[str, str] | None" = None) -> "str | None":
     """A string BUILT from names, as text with each name as NUL: an
-    f-string, a ``+`` concatenation, a ``%`` format or a ``.format`` call
-    on a literal; a plain literal as is. ``None`` for anything else."""
+    f-string, a ``+`` concatenation, a ``%`` format, a ``.format`` call or
+    a ``sep.join([...])`` on a literal; a plain literal as is. ``None`` for
+    anything else.
+
+    gh-2459: *known* maps `_incpath` constants to their values, which are
+    read as the literal they stand for, so ``f"{INC.SRC_DIR}/{x}"`` is
+    the same spelling as ``f"native/src/{x}"``.
+    """
+    known = known or {}
+
+    def part(p) -> str:
+        if isinstance(p, ast.Constant) and isinstance(p.value, str):
+            return p.value
+        if isinstance(p, ast.FormattedValue):
+            p = p.value
+        got = _known(p, known)
+        if got is not None:
+            return got
+        inner = _shape(p, known)
+        return inner if inner is not None else "\x00"
+
     if isinstance(node, ast.JoinedStr):
-        return "".join(
-            p.value if isinstance(p, ast.Constant) else "\x00"
-            for p in node.values
-        )
+        return "".join(part(p) for p in node.values)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    if _known(node, known) is not None:
+        return _known(node, known)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and isinstance(node.func.value, ast.Constant)
+        and isinstance(node.func.value.value, str)
+        and len(node.args) == 1
+        and isinstance(node.args[0], (ast.List, ast.Tuple))
+    ):
+        return node.func.value.value.join(part(e) for e in node.args[0].elts)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _shape(node.left), _shape(node.right)
+        left, right = _shape(node.left, known), _shape(node.right, known)
         if left is None and right is None:
             return None
         return (left if left is not None else "\x00") + (

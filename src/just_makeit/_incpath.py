@@ -27,6 +27,7 @@ jm-generated header in a template that does not go through
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Union
 
@@ -380,6 +381,110 @@ def _module_package_of(cfg: dict, name: str) -> str:
             "",
         )
     return C.module_package_resolved(cfg, module) if module else ""
+
+
+#: gh-2459: the tree a project's C sources sit in, project-relative. Each
+#: component (or a module's cname) has its directory below it --
+#: :func:`src_dir` is the one spelling of where -- and jm's own files that
+#: are no component's (the ``<pkg>_lib.c`` stub, apps, a ``c_dep``) sit at
+#: fixed places below it (:func:`lib_c_rel`, :data:`APP_DIR`,
+#: :func:`c_dep_path`).
+SRC_DIR = "native/src"
+
+#: The directory ``jm app`` writes a C executable's ``main()`` into.
+APP_DIR = f"{SRC_DIR}/app"
+
+
+def _src_owner(owner: Owner) -> Owner:
+    """*owner*, refused when it cannot say which project it is.
+
+    The source directory does not depend on the layout yet, so nothing is
+    loaded: this only holds every caller to passing a real owner, the one
+    gh-2459 part 2 reads the layout from.
+    """
+    if owner is None or isinstance(owner, str):
+        raise TypeError(
+            f"_incpath owner {owner!r}: pass the project's root or its"
+            " manifest (gh-2459)"
+        )
+    return owner
+
+
+def src_dir(name: str, owner: Owner) -> str:
+    """*name*'s C source directory, project-relative and POSIX-spelled.
+
+    gh-2459. THE answer to "where is this component's C": its
+    ``_core.c``, ``_ext.c``, CMakeLists and every file beside them sit
+    here, and the root ``CMakeLists.txt`` wires it by this path
+    (:func:`subdir_line`). *name* is a component or a module's cname.
+
+    >>> src_dir("fir", {"project": {"name": "p"}})
+    'native/src/fir'
+    """
+    _src_owner(owner)
+    return f"{SRC_DIR}/{name}"
+
+
+def src_path(root: Path, name: str, owner: "Owner | None" = None) -> Path:
+    """:func:`src_dir` under *root*; *owner* defaults to *root*.
+
+    >>> src_path(Path("p"), "fir", {"project": {"name": "p"}}).as_posix()
+    'p/native/src/fir'
+    """
+    return Path(root) / src_dir(name, root if owner is None else owner)
+
+
+def src_rel(name: str, file: str, owner: Owner) -> str:
+    """*file* in *name*'s source directory, project-relative.
+
+    >>> src_rel("fir", "fir_core.c", {"project": {"name": "p"}})
+    'native/src/fir/fir_core.c'
+    """
+    return f"{src_dir(name, owner)}/{file}"
+
+
+def src_root(root: Path) -> Path:
+    """The source tree of the project at *root*: what a scan over every
+    source directory starts from. A component's own directory is
+    :func:`src_path`, never a name joined onto this."""
+    return Path(root) / SRC_DIR
+
+
+def lib_c_rel(pkg: str) -> str:
+    """The ``<pkg>_lib.c`` stub `jm new` writes, project-relative.
+
+    >>> lib_c_rel("p")
+    'native/src/p_lib.c'
+    """
+    return f"{SRC_DIR}/{pkg}_lib.c"
+
+
+def app_path(root: Path) -> Path:
+    """The directory ``jm app`` writes C executables into, under *root*."""
+    return Path(root) / APP_DIR
+
+
+def c_dep_path(root: Path, dep: str) -> Path:
+    """A vendored ``c_dep`` directory *dep*, under *root*'s source tree.
+
+    A ``c_dep`` is the author's C, not a component, so it never moves with
+    a layout.
+    """
+    return src_root(root) / dep
+
+
+def subdir_line(name: str, owner: Owner) -> str:
+    """The root ``CMakeLists.txt`` line wiring *name*'s source directory.
+
+    >>> subdir_line("fir", {"project": {"name": "p"}})
+    'add_subdirectory(native/src/fir)\\n'
+    """
+    return f"add_subdirectory({src_dir(name, owner)})\n"
+
+
+#: The regex for one :func:`subdir_line` (without its newline), its group
+#: the name: what every reader of the root wiring matches.
+SUBDIR_RE = rf"add_subdirectory\({re.escape(SRC_DIR)}/(\w+)\)"
 
 
 #: gh-2423: ``[project] layout``. ``flat`` (the default) writes every
@@ -738,6 +843,7 @@ NATIVE_SLOTS = (
     "native_test_inc_make",
     "core_include",
     "core_dir",
+    "src_dir",
 )
 
 
@@ -783,6 +889,8 @@ def native_slots(owner: Owner, comp: str) -> "dict[str, str]":
         # it with ``native/inc/<<inc_prefix>>``).
         "core_include": core_include(comp, owner),
         "core_dir": core_dir(comp, owner),
+        # gh-2459: the component's C source directory, project-relative.
+        "src_dir": src_dir(comp, owner),
     }
 
 

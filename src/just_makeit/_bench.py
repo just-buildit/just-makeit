@@ -26,6 +26,7 @@ Workflow
 from __future__ import annotations
 
 from . import _pins
+from . import _incpath as INC
 from . import _textio
 
 import contextlib
@@ -152,7 +153,9 @@ def _build_bench_target(
     return True
 
 
-def _find_bench_binary(build_dir: Path, comp: str) -> Path | None:
+def _find_bench_binary(
+    build_dir: Path, comp: str, owner: "INC.Owner"
+) -> Path | None:
     """Return the bench binary path, searching common cmake output spots.
 
     cmake places the binary in different locations depending on the
@@ -165,8 +168,8 @@ def _find_bench_binary(build_dir: Path, comp: str) -> Path | None:
         build_dir / f"{stem}.exe",
         build_dir / "Release" / stem,
         build_dir / "Release" / f"{stem}.exe",
-        build_dir / "native" / "src" / comp / stem,
-        build_dir / "native" / "src" / comp / f"{stem}.exe",
+        build_dir / INC.src_dir(comp, owner) / stem,
+        build_dir / INC.src_dir(comp, owner) / f"{stem}.exe",
     ]
     for p in candidates:
         if p.is_file():
@@ -298,7 +301,7 @@ def _collect_c(
                 root, build_dir, comp, fatal=comp not in optional
             ):
                 continue
-            binary = _find_bench_binary(build_dir, comp)
+            binary = _find_bench_binary(build_dir, comp, root)
             if binary is None:
                 # The target built, so this is not a bad guess to skip: the
                 # benchmark exists and jm cannot run it.

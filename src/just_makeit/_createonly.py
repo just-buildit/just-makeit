@@ -231,8 +231,10 @@ RULES: tuple[Rule, ...] = (
         AUTHOR,
         "sacred: the author's struct and inline step() body.",
     ),
-    Rule("native/src/*/*_core.c", AUTHOR, "sacred: the author's algorithm."),
-    Rule("native/src/*_lib.c", AUTHOR, "a stub the author fills in."),
+    Rule(
+        f"{INC.SRC_DIR}/*/*_core.c", AUTHOR, "sacred: the author's algorithm."
+    ),
+    Rule(f"{INC.SRC_DIR}/*_lib.c", AUTHOR, "a stub the author fills in."),
     Rule(
         _native_glob("test"),
         AUTHOR,
@@ -291,7 +293,7 @@ RULES: tuple[Rule, ...] = (
         " including whatever the package re-exports, alone. gh-959.",
     ),
     Rule(
-        "native/src/*/*_ext_*.c",
+        f"{INC.SRC_DIR}/*/*_ext_*.c",
         PARTIAL,
         "a module's per-object binding fragment — sacred, but `_docsync`"
         " refreshes its runtime __doc__ on every apply. gh-959.",
@@ -330,11 +332,11 @@ RULES: tuple[Rule, ...] = (
         " replay (gh-1140).",
     ),
     Rule(
-        "native/src/*/CMakeLists.txt",
+        f"{INC.SRC_DIR}/*/CMakeLists.txt",
         RECONCILED,
         "regenerated per component from the manifest.",
     ),
-    Rule("native/src/*/*_ext.c", RECONCILED, "generated CPython glue."),
+    Rule(f"{INC.SRC_DIR}/*/*_ext.c", RECONCILED, "generated CPython glue."),
     Rule(
         _native_glob("symbols"),
         DERIVED,
@@ -342,7 +344,7 @@ RULES: tuple[Rule, ...] = (
         " they stand in the tree -- which is what compiles (gh-1361).",
     ),
     Rule(
-        "native/src/app/*",
+        f"{INC.APP_DIR}/*",
         RECONCILED,
         "`jm app`'s executable. Classified from the measurement, against the"
         " first guess: `[[app]]` is in the manifest, so a replay re-runs the"

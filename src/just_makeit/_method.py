@@ -1133,7 +1133,7 @@ def already_provides(
     # matter who actually defines the symbol. The header is the fallback for
     # the one built-in that has no `_core.c` body at all: `step`, a `static
     # inline` in the header.
-    src = Path("native") / "src" / component / f"{component}_core.c"
+    src = Path(INC.src_rel(component, f"{component}_core.c", root))
     # gh-1583: the header's place depends on the project's layout.
     inc = Path(INC.core_rel(component, root))
     for rel, what in ((src, "defines"), (inc, "declares")):
@@ -2536,7 +2536,7 @@ def run(
     # file: an absent `_core.c` is also what a half-written tree looks like,
     # and the manifest is what every other face asks.
     _hdr_only = C.is_header_only(C.load(root), object_name)
-    core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
+    core_c = INC.src_path(root, object_name, cfg) / f"{object_name}_core.c"
     if manual_stub or codec:
         # manual_stub (gh-428): the C binding already exists, hand-written,
         # inside the user's already-sacred _ext_<obj>_extra.c fragment -- jm
@@ -2550,12 +2550,8 @@ def run(
         # Varargs methods live in a sacred per-method file compiled into the
         # Python extension DSO (not the pure-C OBJECT lib) so they can use
         # Python.h.  No _core.c or _core.h changes needed.
-        binding_c = (
-            root
-            / "native"
-            / "src"
-            / object_name
-            / C.varargs_core_c(object_name, method_name)
+        binding_c = INC.src_path(root, object_name, cfg) / C.varargs_core_c(
+            object_name, method_name
         )
         _write_varargs_core_c(binding_c, object_name, method_name, csym=csym)
     else:
@@ -3014,8 +3010,9 @@ def run(
         # struct + inline step() untouched); regenerate the glue (_ext.c, the
         # stub, and the component CMakeLists) from the manifest.
         core_h = INC.core_h(root, object_name, cfg)
-        ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
-        obj_cmake = root / "native" / "src" / object_name / "CMakeLists.txt"
+        obj_src = INC.src_path(root, object_name, cfg)
+        ext_c = obj_src / f"{object_name}_ext.c"
+        obj_cmake = obj_src / "CMakeLists.txt"
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
         # gh-1319: `record_dtype` names a type jm does not own. Say so HERE

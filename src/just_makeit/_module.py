@@ -167,7 +167,7 @@ def run(
         T.render(T.MODULE_CORE_H, mod_ctx),
     )
     _write(
-        root / "native" / "src" / cname / f"{cname}_core.c",
+        INC.src_path(root, cname, cfg) / f"{cname}_core.c",
         T.render(T.MODULE_CORE_C, mod_ctx),
     )
 

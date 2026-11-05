@@ -195,7 +195,7 @@ def run(
     ):
         print(f"  update  {core_h}")
 
-    core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
+    core_c = INC.src_path(root, object_name, cfg) / f"{object_name}_core.c"
     if core_c.exists():
         core_text = core_c.read_text(encoding="utf-8")
         # Idempotent: _append_to_core_c blindly appends, so only add the stub

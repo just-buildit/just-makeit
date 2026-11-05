@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import _config as C
+from . import _incpath as INC
 from . import _docsync
 from . import _object as O
 from . import _render as R
@@ -195,7 +196,7 @@ def survey(root: Path, cfg: dict, *, only_mod: str | None = None) -> list:
             continue
         if only_mod is not None and mod != only_mod:
             continue
-        ext_dir = root / "native" / "src" / C.module_paths(mod).cname
+        ext_dir = INC.src_path(root, C.module_paths(mod).cname, cfg)
         for ctx in O.build_component_ctxs(root, cfg, mod, pkg):
             comp = ctx["component"]
             frag_id = ctx.get("frag_id", comp)
@@ -453,7 +454,7 @@ def stale_tokens(root: Path, cfg: dict) -> list:
                 continue
             for fid in [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]:
                 name = f"{cname}_ext_{fid}.c"
-                f = root / "native" / "src" / cname / name
+                f = INC.src_path(root, cname, cfg) / name
                 if f.is_file() and R.is_owned_render(
                     f.read_text(encoding="utf-8"), name
                 ):

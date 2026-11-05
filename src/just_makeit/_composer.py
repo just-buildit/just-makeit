@@ -5077,7 +5077,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
         if extra_methods(cfg, module)
         or (
             root is not None
-            and (root / "native" / "src" / mp.cname / _extra_c).exists()
+            and (INC.src_path(root, mp.cname, cfg) / _extra_c).exists()
         )
         else ""
     )
@@ -6259,11 +6259,11 @@ def materialize(
             _bridge_h,
         )
     _write(
-        root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
+        INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_ext.c",
         render_ext(cfg, module, project_root or root),
     )
     _write(
-        root / "native" / "src" / mp.cname / "CMakeLists.txt",
+        INC.src_path(root, mp.cname, cfg) / "CMakeLists.txt",
         render_cmake(cfg, module),
     )
     _write(
@@ -6272,7 +6272,7 @@ def materialize(
     )
     if composer_cli(cfg, module).get("enabled"):
         _write(
-            root / "native" / "src" / mp.cname / f"{mp.cname}_cli.c",
+            INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_cli.c",
             render_cli(cfg, module),
         )
 
