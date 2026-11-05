@@ -2385,12 +2385,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     if C.is_serializable(cfg, obj):
         # gh-647: same prose as the standalone path and the runtime method
         # table, from the one definition in _gluedoc.
-        _glue = glue_methods(Component)
         # gh-2470: the declared set_state rows, as the standalone path
-        # documents them (`serializable_triplet_parts`).
+        # documents them (`serializable_triplet_parts`), prose included.
         from ._context._methods import set_state_raises_doc
 
-        _ss_raises = set_state_raises_doc(C.set_state_status_errors(cfg, obj))
+        _ss_rows = C.set_state_status_errors(cfg, obj)
+        _glue = glue_methods(Component, status_table=bool(_ss_rows))
+        _ss_raises = set_state_raises_doc(_ss_rows)
         for _n, _sig in (
             ("state_bytes", "self) -> int"),
             ("get_state", "self) -> bytes"),

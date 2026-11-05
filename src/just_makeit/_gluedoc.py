@@ -190,8 +190,23 @@ class GlueMethod:
         )
 
 
-def _serialization(Component: str) -> list[GlueMethod]:
-    """The ``--serializable`` triplet, parametrised by the wrapped type."""
+def _serialization(
+    Component: str, status_table: bool = False
+) -> list[GlueMethod]:
+    """The ``--serializable`` triplet, parametrised by the wrapped type.
+
+    *status_table* is whether ``set_state_status_errors`` declares rows
+    (gh-2470): the core's refusal then raises the class a row names, which
+    the ``Raises`` section lists, so the prose stops claiming it is always
+    ``ValueError``. Without rows the prose is unchanged byte for byte.
+    """
+    rejected = (
+        "``ValueError`` if its length differs from `state_bytes()`, the "
+        "exception listed under Raises if the core rejects it"
+        if status_table
+        else "``ValueError`` if its length differs from "
+        "`state_bytes()` or the core rejects it"
+    )
     destroyed = (
         f"Raises ``RuntimeError`` if the {Component} has already been "
         f"destroyed."
@@ -257,8 +272,7 @@ def _serialization(Component: str) -> list[GlueMethod]:
                     "construction parameters and refuse a blob built "
                     "differently.",
                     "Raises ``TypeError`` if *blob* is not bytes, "
-                    "``ValueError`` if its length differs from "
-                    f"`state_bytes()` or the core rejects it, and "
+                    f"{rejected}, and "
                     f"``RuntimeError`` if the {Component} has already been "
                     "destroyed.",
                 ],
@@ -435,6 +449,7 @@ def glue_methods(
     close_name: str = "destroy",
     finalizes: bool = False,
     lends: bool = False,
+    status_table: bool = False,
 ) -> dict[str, GlueMethod]:
     """Every generated glue method for *Component*, keyed by Python name.
 
@@ -453,6 +468,10 @@ def glue_methods(
         gh-2187. ``True`` for an object that hands out views into its
         memory, whose teardown defers the free to ``tp_dealloc``; the
         teardown's prose then says so. Affects ``close_name`` only.
+    status_table : bool, optional
+        gh-2470. ``True`` when the object declares
+        ``set_state_status_errors``, so ``set_state``'s prose defers the
+        core's refusal to the ``Raises`` section. Affects ``set_state`` only.
 
     Returns
     -------
@@ -470,7 +489,7 @@ def glue_methods(
     [('blob', 'bytes')]
     """
     out: dict[str, GlueMethod] = {}
-    for gm in _serialization(Component) + _lifecycle(
+    for gm in _serialization(Component, status_table) + _lifecycle(
         Component, close_name, finalizes, lends
     ):
         out[gm.name] = gm
