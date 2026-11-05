@@ -140,5 +140,7 @@ def test_arity_drift_is_reported_and_does_not_gate(tmp_path):
             "line": line,
             "passed": 1,
             "declared": 2,
+            # gh-2465: set only when the count agrees and the order does not.
+            "order": None,
         }
     ]
