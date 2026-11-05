@@ -3035,14 +3035,14 @@ def materialize(
     doc_blocks = _backing_doc_blocks(cfg, module, project_root or root)
 
     _write(
-        root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
+        INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_ext.c",
         # gh-1113: the SAME blocks the `.pyi` below is rendered from. They
         # were computed here and handed to one face only, so the header's
         # prose reached the stub and stopped.
         render_ext(cfg, module, doc_blocks),
     )
     _write(
-        root / "native" / "src" / mp.cname / "CMakeLists.txt",
+        INC.src_path(root, mp.cname, cfg) / "CMakeLists.txt",
         render_cmake(cfg, module),
     )
     _write(

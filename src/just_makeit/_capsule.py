@@ -829,11 +829,11 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
     out_pkg = C.module_package_resolved(cfg, module)
 
     _write(
-        root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
+        INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_ext.c",
         render_ext(cfg, module),
     )
     _write(
-        root / "native" / "src" / mp.cname / "CMakeLists.txt",
+        INC.src_path(root, mp.cname, cfg) / "CMakeLists.txt",
         render_cmake(cfg, module),
     )
     _write(

@@ -783,8 +783,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # otherwise the temp render drops the #include and apply reports the real
     # project's correctly-wired _ext.c as drift.
     for cname in [C.module_paths(m).cname for m in mods] + list(standalone):
-        src_dir = project_root / "native" / "src" / cname
-        dst_dir = temp_root / "native" / "src" / cname
+        src_dir = INC.src_path(project_root, cname, cfg)
+        dst_dir = INC.src_path(temp_root, cname, cfg)
         if src_dir.is_dir():
             dst_dir.mkdir(parents=True, exist_ok=True)
             for extra in src_dir.glob("*_extra.c"):
@@ -1404,7 +1404,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
                 _textio.write_text(h_path, new)
                 patched.append(h_path)
 
-        c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        c_path = INC.src_path(root, comp, cfg) / f"{comp}_core.c"
         if not c_path.exists():
             continue
         text = c_path.read_text(encoding="utf-8")
@@ -1454,9 +1454,7 @@ def _owned_fragments(root: Path, cfg: dict) -> set:
                 continue
             ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
             for fid in ids:
-                out.add(
-                    Path("native") / "src" / cname / f"{cname}_ext_{fid}.c"
-                )
+                out.add(Path(INC.src_rel(cname, f"{cname}_ext_{fid}.c", cfg)))
     return out
 
 
@@ -1724,7 +1722,7 @@ def _relocate_native(root: Path) -> "list[Path]":
         root / "CMakeLists.txt",
         root / "Makefile",
         *_libwiring.with_hooks(
-            sorted((root / "native" / "src").glob("*/CMakeLists.txt"))
+            sorted(INC.src_root(root).glob("*/CMakeLists.txt"))
         ),
     ]
     for path in build_files:
@@ -2129,7 +2127,7 @@ def _splice_cmake_components(
     seen_blocks = {b.split("\n")[0] for b in component_blocks}
     dep_blocks: list[str] = []
     for dep in C.c_deps(cfg):
-        line = f"add_subdirectory(native/src/{dep})\n"
+        line = INC.subdir_line(dep, cfg)
         if line.rstrip("\n") not in seen_blocks:
             dep_blocks.append(line)
     component_blocks = dep_blocks + component_blocks
@@ -2138,9 +2136,7 @@ def _splice_cmake_components(
     seen_mod_blocks = {b.split("\n")[0] for b in module_blocks}
     for mod in C.modules(cfg):
         if C.is_no_generate_module(cfg, mod):
-            line = (
-                f"add_subdirectory(native/src/{C.module_paths(mod).cname})\n"
-            )
+            line = INC.subdir_line(C.module_paths(mod).cname, cfg)
             if line.rstrip("\n") not in seen_mod_blocks:
                 module_blocks.append(line)
 
@@ -2494,10 +2490,11 @@ def _warn_dropped_cmake(real: Path, original: str, rendered: str) -> None:
     if not dropped:
         return
     d = real.parent.name
+    src = INC.src_dir(d, real)
     _report.warn(
-        f"native/src/{d}/CMakeLists.txt is regenerated, and it carries "
+        f"{src}/CMakeLists.txt is regenerated, and it carries "
         f"{', '.join(f'{n}()' for n in dropped)} that jm does not write -- "
-        f"`jm apply` drops it. Move it into native/src/{d}/{d}_extra.cmake, "
+        f"`jm apply` drops it. Move it into {src}/{d}_extra.cmake, "
         "which the generated file includes and jm never touches (gh-1351)."
     )
 
@@ -2642,10 +2639,10 @@ def _refuse_cmake_that_would_lose(
     """
     reconciled = _reconciled_cmake_dirs(cfg)
     lost: "list[tuple[str, list[str]]]" = []
-    src = temp_root / "native" / "src"
+    src = INC.src_root(temp_root)
     for temp in sorted(src.glob("*/CMakeLists.txt")) if src.is_dir() else []:
         d = temp.parent.name
-        rel = f"native/src/{d}/CMakeLists.txt"
+        rel = INC.src_rel(d, "CMakeLists.txt", cfg)
         real = root / rel
         if not real.is_file() or _status_allowed(cfg, rel):
             continue
@@ -2672,8 +2669,8 @@ def _refuse_cmake_that_would_lose(
     ]
     for d, gone in lost:
         lines.append(
-            f"  native/src/{d}/CMakeLists.txt: {', '.join(gone)}"
-            f" -> native/src/{d}/{extra_cmake_name(d)}"
+            f"  {INC.src_rel(d, 'CMakeLists.txt', cfg)}: {', '.join(gone)}"
+            f" -> {INC.src_rel(d, extra_cmake_name(d), cfg)}"
         )
     lines.append(
         "Each CMakeLists.txt here is regenerated from the manifest, and a"
@@ -2846,7 +2843,7 @@ def _add_cmake_block_for(
     """
     real = real_path.read_text(encoding="utf-8")
     # Guard: block already wired in.
-    if f"add_subdirectory(native/src/{comp})" in real:
+    if INC.subdir_line(comp, cfg).rstrip("\n") in real:
         return False
 
     temp = temp_path.read_text(encoding="utf-8")
@@ -2998,8 +2995,8 @@ def _sync_aggregates(
             mp = C.module_paths(mod)
             out_pkg = C.module_package_resolved(cfg, mod)
             glue = [
-                f"native/src/{mp.cname}/{mp.cname}_ext.c",
-                f"native/src/{mp.cname}/CMakeLists.txt",
+                INC.src_rel(mp.cname, f"{mp.cname}_ext.c", cfg),
+                INC.src_rel(mp.cname, "CMakeLists.txt", cfg),
                 f"src/{pkg}/{out_pkg}/{mp.leaf}.pyi",
             ]
             # gh-287: a composer with the optional c-face CLI also regenerates
@@ -3009,7 +3006,7 @@ def _sync_aggregates(
             if C.is_composer_module(cfg, mod) and _composer.composer_cli(
                 cfg, mod
             ).get("enabled"):
-                glue.append(f"native/src/{mp.cname}/{mp.cname}_cli.c")
+                glue.append(INC.src_rel(mp.cname, f"{mp.cname}_cli.c", cfg))
             # gh-998: and its published straight-C seams. Gated on the same
             # predicate `materialize` writes the file under — a list here that
             # disagreed with what was written into the temp tree is precisely
@@ -3061,8 +3058,8 @@ def _sync_aggregates(
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.
         for rel in (
-            f"native/src/{mp.cname}/{mp.cname}_ext.c",
-            f"native/src/{mp.cname}/CMakeLists.txt",
+            INC.src_rel(mp.cname, f"{mp.cname}_ext.c", cfg),
+            INC.src_rel(mp.cname, "CMakeLists.txt", cfg),
             f"src/{pkg}/{out_pkg}/{mp.leaf}.pyi",
         ):
             if _overwrite_if_changed(
@@ -3109,14 +3106,12 @@ def _sync_aggregates(
             # gh-1840: and, like every peer, never a file `status_allow`
             # names (gh-441) -- this one alone was rewritten anyway, so an
             # author keeping their module object's CMakeLists lost it.
-            _obj_cml = f"native/src/{obj}/CMakeLists.txt"
+            _obj_cml = INC.src_rel(obj, "CMakeLists.txt", cfg)
             if obj != C.collocated_object(cfg, mod) and not (
                 honor_status_allow and _status_allowed(cfg, _obj_cml)
             ):
-                obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
-                temp_cmake = (
-                    temp_root / "native" / "src" / obj / "CMakeLists.txt"
-                )
+                obj_cmake = root / _obj_cml
+                temp_cmake = temp_root / _obj_cml
                 if _reconcile_object_core_cmake(
                     obj_cmake,
                     temp_cmake,
@@ -3214,7 +3209,7 @@ def _sync_aggregates(
             for _rel, _render in (
                 (f"src/{pkg}/{comp}.pyi", _R.render_component_pyi),
                 (
-                    f"native/src/{comp}/{comp}_ext.c",
+                    INC.src_rel(comp, f"{comp}_ext.c", cfg),
                     lambda c: _R.render(_R.COMPONENT_EXT_C, c),
                 ),
             ):
@@ -3229,14 +3224,14 @@ def _sync_aggregates(
         # per-source properties, `if(VAR)` blocks — so it goes through the
         # same reconcile as a module object's (gh-1301), not a blind
         # overwrite.
-        _cml = f"native/src/{comp}/CMakeLists.txt"
+        _cml = INC.src_rel(comp, "CMakeLists.txt", cfg)
         if not (honor_status_allow and _status_allowed(cfg, _cml)):
             if _reconcile_object_core_cmake(
                 root / _cml, temp_root / _cml, comp, []
             ):
                 updated.append(root / _cml)
         for rel in (
-            f"native/src/{comp}/{comp}_ext.c",
+            INC.src_rel(comp, f"{comp}_ext.c", cfg),
             f"src/{pkg}/{comp}.pyi",
         ):
             if _overwrite_if_changed(
@@ -3599,7 +3594,7 @@ def component_core_sources(root: Path, comp: str) -> "list[str]":
     header as well as the source"* -- and gh-1294 did not carry it across. It
     is one list now so a third reader cannot get it wrong either.
     """
-    d = root / "native" / "src" / comp
+    d = INC.src_path(root, comp)
     out = [
         p.read_text(encoding="utf-8")
         for p in sorted(d.glob("*.c"))
@@ -3676,9 +3671,9 @@ def _splice_missing_core_definitions(
     comps += [o for m in mods for o in C.module_objects(cfg, m)]
 
     for comp in comps:
-        real_dir = root / "native" / "src" / comp
+        real_dir = INC.src_path(root, comp, cfg)
         core_c = real_dir / f"{comp}_core.c"
-        temp_c = temp_root / "native" / "src" / comp / f"{comp}_core.c"
+        temp_c = INC.src_path(temp_root, comp, cfg) / f"{comp}_core.c"
         if not core_c.exists() or not temp_c.exists():
             continue
         temp_text = temp_c.read_text(encoding="utf-8")
@@ -3702,14 +3697,14 @@ def _splice_missing_core_definitions(
         )
         if _extra:
             _report.warn(
-                f"native/src/{comp}/{comp}_core.c does not define "
+                f"{INC.src_rel(comp, f'{comp}_core.c', cfg)} does not define "
                 f"{', '.join(f'{n}()' for n in missing)}, which the manifest "
                 "declares and the binding calls — the extension will not "
                 f"link. {comp}_core also compiles "
                 f"{', '.join(_extra)}, so the body may live somewhere jm "
                 "cannot enumerate and appending it could define the symbol "
                 "twice -- write it yourself, or say where by putting it in "
-                f"native/src/{comp}/.",
+                f"{INC.src_dir(comp, cfg)}/.",
                 gates=True,
             )
             continue
@@ -3748,7 +3743,7 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
 
     updated: list[Path] = []
     for comp in C.components(cfg):
-        cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
+        cmake_path = INC.src_path(root, comp, cfg) / "CMakeLists.txt"
         if not cmake_path.exists():
             continue
         text = cmake_path.read_text(encoding="utf-8")
@@ -3956,7 +3951,7 @@ def _dangling_object_fragments(root: Path, cfg: dict) -> list[str]:
     for comp in C.components(cfg):
         if comp in module_owned:
             continue
-        cml = root / "native" / "src" / comp / "CMakeLists.txt"
+        cml = INC.src_path(root, comp, cfg) / "CMakeLists.txt"
         if not cml.exists():
             continue
         text = cml.read_text(encoding="utf-8")
@@ -4144,13 +4139,14 @@ def _apply_manifest(
         if dangling:
             lines = [
                 f"error: object '{o}' is defined but not listed in any "
-                f"[module.X].objects, and native/src/{o}/ already holds a "
+                f"[module.X].objects, and {INC.src_dir(o, cfg)}/ already"
+                " holds a "
                 f"module-style core lib.\n"
                 f"  Promoting it to a standalone module would overwrite those "
                 f"files. Resolve by either:\n"
                 f"    - add '{o}' back to a module's objects list, or\n"
                 f"    - remove the objects/{o}.toml fragment (and its "
-                f"native/src/{o}/ dir) if the object is gone."
+                f"{INC.src_dir(o, cfg)}/ dir) if the object is gone."
                 for o in dangling
             ]
             print("\n".join(lines), file=sys.stderr)

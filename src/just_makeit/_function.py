@@ -270,7 +270,7 @@ def homes(cfg: dict, cname: str, fn_name: str) -> "tuple[str, str, str]":
     >>> homes({"project": {"name": "p", "schema": "8"}}, "m", "calc")
     ('native/src/m/calc.c', 'native/src/m/m_core.c', 'native/inc/p/m/m_core.h')
     """
-    src = f"native/src/{cname}"
+    src = INC.src_dir(cname, cfg)
     return (
         f"{src}/{fn_name}.c",
         f"{src}/{cname}_core.c",

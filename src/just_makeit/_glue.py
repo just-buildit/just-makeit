@@ -427,7 +427,7 @@ def regenerate_standalone(
         root, object_name, C.extra_methods(cfg, object_name)
     )
 
-    ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
+    ext_c = INC.src_path(root, object_name, cfg) / f"{object_name}_ext.c"
     if ext_c.exists():
         _textio.write_text(ext_c, R.render(R.COMPONENT_EXT_C, ctx))
         print(f"  update  {ext_c}")

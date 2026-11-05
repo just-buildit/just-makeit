@@ -81,7 +81,7 @@ def append_component_body(
     if C.core_family(C.load(root), component) is not None:
         return header
     if not header_only:
-        path = root / "native" / "src" / component / f"{component}_core.c"
+        path = INC.src_path(root, component) / f"{component}_core.c"
         _textio.write_text(
             path, path.read_text(encoding="utf-8") + "\n" + stub
         )
@@ -143,7 +143,7 @@ def standalone_extra_include(
     slot existed.
     """
     extra = f"{component}_ext_extra.c"
-    if extra_methods or (root / "native" / "src" / component / extra).exists():
+    if extra_methods or (INC.src_path(root, component) / extra).exists():
         return (
             f'#include "{extra}"  /* hand-written — jm never modifies */\n\n'
         )
@@ -1920,13 +1920,13 @@ def run(
     # and would not compile it, leaving a file that looks authoritative and
     # reaches no build.
     if not header_only:
-        core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        core_c_path = INC.src_path(root, comp, cfg) / f"{comp}_core.c"
         _write(
             core_c_path,
             r(core_c_tmpl),
             "update" if core_c_path.exists() else "create",
         )
-    _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))
+    _write(INC.src_path(root, comp, cfg) / f"{comp}_ext.c", r(ext_c_tmpl))
 
     # gh-1117: the process-global contract header, when the component declares
     # `process_global`. Generated (never hand-edited), unlike the sacred
@@ -1947,7 +1947,7 @@ def run(
 
     if build == "cmake":
         _write(
-            root / "native" / "src" / comp / "CMakeLists.txt",
+            INC.src_path(root, comp, cfg) / "CMakeLists.txt",
             R.with_extra_cmake(r(R.CMAKE_LISTS_COMPONENT), comp),
         )
 

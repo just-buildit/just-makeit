@@ -245,7 +245,7 @@ def scaffold_accessor_bodies(
     from ._init import append_component_body
 
     header_only = C.is_header_only(C.load(root), object_name)
-    core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
+    core_c = INC.src_path(root, object_name) / f"{object_name}_core.c"
     if not header_only and not core_c.exists():
         return
     for decl in decls:
@@ -421,7 +421,7 @@ def run(
     _body_file = (
         INC.core_rel(object_name, cfg)
         if C.is_header_only(cfg, object_name)
-        else f"native/src/{object_name}/{object_name}_core.c"
+        else INC.src_rel(object_name, f"{object_name}_core.c", cfg)
     )
 
     # gh-519: an `enum` property presents its C int as the [[enum]] string on

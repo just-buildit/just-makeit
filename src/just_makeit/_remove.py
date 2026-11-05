@@ -194,7 +194,7 @@ def _object_paths(
         # Its header directory, wherever the layout puts it (gh-2427), and
         # never another component's below it.
         *_header_dir_paths(root, cfg, obj),
-        root / "native" / "src" / obj,
+        INC.src_path(root, obj, cfg),
         # The C test, the gh-1361 link table and the C bench, where the
         # project's layout puts them (gh-2423).
         *(INC.native_path(root, kind, obj, cfg) for kind in INC.NATIVE_FILES),
@@ -229,7 +229,7 @@ def _strip_cmake_object(root: Path, obj: str) -> None:
     kept = [
         ln
         for ln in lines
-        if ln.strip() != f"add_subdirectory(native/src/{obj})"
+        if ln.strip() != INC.subdir_line(obj, root).rstrip("\n")
         and f"$<TARGET_OBJECTS:{obj}_core>" not in ln
     ]
     if len(kept) != len(lines):
@@ -376,7 +376,7 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
 
     core_h = INC.core_h(root, obj, cfg)
     if C.is_no_step(cfg, obj):
-        core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+        core_c = INC.src_path(root, obj, cfg) / f"{obj}_core.c"
         implemented = _core_c_warn_if_implemented(
             core_c,
             C.is_no_state(cfg, obj),
@@ -479,7 +479,7 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
 
     def _obj_implemented(obj: str) -> bool:
         if C.is_no_step(cfg, obj):
-            core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+            core_c = INC.src_path(root, obj, cfg) / f"{obj}_core.c"
             return _core_c_warn_if_implemented(
                 core_c,
                 C.is_no_state(cfg, obj),
@@ -511,7 +511,7 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     mp = C.module_paths(module)
     for path in _header_dir_paths(root, cfg, mp.cname):
         _rm(path)
-    _rm(root / "native" / "src" / mp.cname)
+    _rm(INC.src_path(root, mp.cname, cfg))
     # A function-bearing module's own C test and bench (gh-1034), as the
     # last function's removal takes them (gh-1479): left behind, they
     # included the header removed above.
@@ -671,7 +671,7 @@ def _remove_state(
     )
 
     core_h = INC.core_h(root, obj, cfg)
-    core_c = root / "native" / "src" / obj / f"{obj}_core.c"
+    core_c = INC.src_path(root, obj, cfg) / f"{obj}_core.c"
     _warn_if_state_ref(core_h, core_c, name)
 
     if not _confirm(
@@ -973,7 +973,7 @@ def _remove_function(
     cname = C.module_paths(module).cname
     core_h = INC.core_h(root, cname, cfg)
     if not inline:
-        fn_c = root / "native" / "src" / cname / f"{name}.c"
+        fn_c = INC.src_path(root, cname, cfg) / f"{name}.c"
         if fn_c.exists():
             fn_c.unlink()
             print(f"  delete  {fn_c}")

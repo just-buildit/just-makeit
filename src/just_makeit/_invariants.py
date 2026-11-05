@@ -563,7 +563,7 @@ def write(root: Path, cfg: dict, comp: str, pkg: str) -> bool:
     core = (
         INC.core_h(root, comp, cfg)
         if C.is_header_only(cfg, comp)
-        else root / "native" / "src" / comp / f"{comp}_core.c"
+        else INC.src_path(root, comp, cfg) / f"{comp}_core.c"
     )
     core_c = core.read_text(encoding="utf-8") if core.exists() else ""
     text = render(cfg, comp, pkg, found, core_c, root)
