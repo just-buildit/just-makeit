@@ -557,9 +557,9 @@ def _line_of(text: str, name: str) -> int:
 
     mask = _code_mask(text)
     word = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
-    # Count lines in the string that matched: `_file_scope` keeps every line
-    # but shortens a preprocessor one to "\n", so its offsets are not the
-    # mask's.
+    # `_file_scope` keeps the mask's length (gh-2465), so either string's
+    # offset counts the same lines; it is tried first because a file-scope
+    # occurrence is the declaration.
     for where in (_file_scope(mask), mask):
         m = word.search(where)
         if m:
