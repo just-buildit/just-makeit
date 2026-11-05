@@ -1,7 +1,7 @@
 """_hollow.py — targets that pass without covering anything (gh-806).
 
-Two findings, one failure mode: **a build target that reports success while
-covering nothing.** Both are silent by construction, which is why they are
+Three findings, one failure mode: **a build target that reports success
+while covering nothing.** Both are silent by construction, which is why they are
 expensive — a red target gets fixed the day it appears.
 
 Orphans
@@ -64,6 +64,28 @@ and a header MACRO that names the accumulator itself, so the file never spells
 it, would still be called silent. The runtime verdict is the authoritative
 one; this scan is the advance notice for a tree nobody has benchmarked yet.
 
+Unrun benchmarks
+----------------
+``jm bench`` runs exactly one target per benchmark it knows of:
+``bench_<s>_core`` for each ``s`` in `_bench.runnable_comps` (gh-1023). A
+target over a benchmark source under any other name is built on every build
+and run by nothing, and neither finding above sees it: its source IS compiled,
+so it is no orphan, and it never runs, so it cannot be silent (gh-2494).
+
+Measured on doppler: a component merge moved one benchmark into a hand-owned
+``*_extra.cmake`` as ``add_executable(bench_correlator_1d ...)``, and an A/B
+of the merge found all ten of its rows missing while ``make bench`` and
+``jm status --check`` were both green.
+
+The detected property is lexical, like everything here: an
+``add_executable(<name> ...)`` in a build file this module already reads,
+where the name starts with ``bench_`` or the call names a file under the
+benchmark tree, and the name is not one ``jm bench`` runs. The run set is
+asked of `_bench.runnable_comps`, never restated, so "what ``jm bench``
+runs" has one definition. A target run some other way on purpose (doppler's
+``bench_stream`` has its own ``make bench-stream``) is allowed by the key
+``<build file>:<target>``.
+
 What this does *not* fix
 ------------------------
 The generated C is create-only, so the runtime half of gh-806 — a test that
@@ -81,6 +103,7 @@ from pathlib import Path
 from . import _config as C
 from . import _incpath as INC
 from . import _render as R
+from . import _targets
 
 #: Where jm puts each kind of generated C target, and the filename shape it
 #: uses. A file in one of these directories matching the pattern is jm-shaped
@@ -193,15 +216,52 @@ class SilentBench:
         )
 
 
-def _build_texts(root: Path) -> list[str] | None:
-    """Every file that can name a C target, read once.
+@dataclass(frozen=True)
+class UnrunBench:
+    """A benchmark target that ``jm bench`` never runs (gh-2494)."""
+
+    rel: str  #: POSIX path of the build file that defines the target
+    target: str  #: the ``add_executable`` name
+
+    @property
+    def key(self) -> str:
+        """The ``status_allow`` entry that exempts this one target.
+
+        ``<build file>:<target>``, the shape of gh-984's per-component
+        ``CMakeLists.txt:<core>``: a finding key rather than a path, so
+        allowing it says only what is meant. Allowing the build file itself
+        would also silence every bench target added to it later, and a
+        jm-rendered ``CMakeLists.txt`` is the file most likely to be in
+        ``status_allow`` already, for unrelated drift.
+        """
+        return f"{self.rel}:{self.target}"
+
+    def describe(self) -> str:
+        """One warning line, plus the reason it is worth reading."""
+        return (
+            f"{self.key}\n"
+            "  is a benchmark target `jm bench` never runs: it runs only\n"
+            "  bench_<s>_core for each benchmark it knows of, so this one\n"
+            "  builds on every build and none of its rows reach a report.\n"
+            "  Rename it bench_<s>_core over a bench_<s>_core.c source, or\n"
+            f"  add '{self.key}' to status_allow if something else runs it."
+        )
+
+
+def _build_files(root: Path) -> list[tuple[str, str]] | None:
+    """Every file that can name a C target, read once, with its path.
+
+    Each entry is ``(project-relative POSIX path, text)``. The path is what
+    `unrun_benches` names a finding by; every other reader wants only the
+    text, through `_build_texts`, so the two cannot come to read different
+    sets of files.
 
     Returns ``None`` when one of them enumerates sources by wildcard, which
     makes "is this file compiled?" unanswerable by reading — see `_GLOB_HINT`.
     """
     from . import _apply
 
-    texts: list[str] = []
+    files: list[tuple[str, str]] = []
     for cml in sorted(root.rglob("CMakeLists.txt")):
         # gh-1031: `build/` is generated output. `vendor/` is somebody else's
         # build system, and reading it was actively harmful: one vendored
@@ -234,7 +294,7 @@ def _build_texts(root: Path) -> list[str] | None:
         ):
             continue
         try:
-            texts.append(cml.read_text(encoding="utf-8"))
+            files.append((rel.as_posix(), cml.read_text(encoding="utf-8")))
         except OSError:
             continue
         # gh-1432: every CMakeLists jm renders under `native/src/<d>/`
@@ -250,7 +310,12 @@ def _build_texts(root: Path) -> list[str] | None:
         hook = cml.parent / R.extra_cmake_name(cml.parent.name)
         if hook.is_file():
             try:
-                texts.append(hook.read_text(encoding="utf-8"))
+                files.append(
+                    (
+                        hook.relative_to(root).as_posix(),
+                        hook.read_text(encoding="utf-8"),
+                    )
+                )
             except OSError:
                 pass
     # `build = "make"` projects name their C tests in the root Makefile's
@@ -259,12 +324,18 @@ def _build_texts(root: Path) -> list[str] | None:
         path = root / extra
         if path.is_file():
             try:
-                texts.append(path.read_text(encoding="utf-8"))
+                files.append((extra, path.read_text(encoding="utf-8")))
             except OSError:
                 pass
-    if any(_GLOB_HINT.search(t) for t in texts):
+    if any(_GLOB_HINT.search(t) for _rel, t in files):
         return None
-    return texts
+    return files
+
+
+def _build_texts(root: Path) -> list[str] | None:
+    """The text of every file `_build_files` reads; ``None`` likewise."""
+    files = _build_files(root)
+    return None if files is None else [t for _rel, t in files]
 
 
 def _is_built(stem: str, texts: list[str]) -> bool:
@@ -416,6 +487,101 @@ def orphans(root: Path, cfg: dict) -> list[Orphan] | None:
     return found
 
 
+def _own_build_file(root: Path, rel: str) -> bool:
+    """Is *rel* a build file of THIS project, whose benchmarks it runs?
+
+    `_build_files` reads more than that, and for the orphan scan reading
+    more is the safe direction: a stray name read as "built" only misses a
+    finding. `unrun_benches` has the opposite asymmetry -- every extra file
+    read is a target it may call unrun and gate on -- so it answers for this
+    project's files alone. Measured on doppler, which the first draft gated
+    on ninety-odd targets from three kinds of file that are not its own:
+
+    * a **nested project**: a directory below *root* with its own manifest
+      (doppler's ``examples/downstream-jm``) is benchmarked by its own
+      ``jm bench``, from its own run set;
+    * a **hidden directory** (``.venv``, a ``.claude/worktrees`` checkout):
+      an installed jm's bundled example trees and whole second copies of
+      the project live there, and none of it is built by this tree.
+
+    Both are facts about a directory, read off the tree, never a guess about
+    what a foreign build file means.
+    """
+    parts = Path(rel).parts[:-1]
+    if any(p.startswith(".") for p in parts):
+        return False
+    return not any(
+        (root.joinpath(*parts[:i]) / C.FILENAME).is_file()
+        for i in range(1, len(parts) + 1)
+    )
+
+
+def unrun_benches(root: Path, cfg: dict) -> list[UnrunBench] | None:
+    """Every benchmark target in the build files that ``jm bench`` never runs.
+
+    A target is a benchmark when its name starts with ``bench_`` or its
+    ``add_executable`` call names a file under the benchmark tree
+    (`_incpath.BENCH_DIR`): either is how a reader of the build file would
+    recognise one, and the doppler case had both. It is unrun when its name
+    is not ``bench_<s>_core`` for any ``s`` in `_bench.runnable_comps` --
+    the run set itself, asked rather than restated, so this and ``jm bench``
+    cannot disagree about what runs.
+
+    Lexical, for `_targets._ADD_EXECUTABLE_RE`'s reasons: a name spelled
+    inside an ``if()`` jm cannot evaluate is still reported, which errs
+    toward a finding with a ``status_allow`` escape rather than toward
+    silence. The call's argument list is read to its first ``)``, which
+    covers CMake's ``${...}`` and ``$<...>`` spellings; a parenthesis inside
+    a source path is not one this tries to understand. jm's own app block
+    is skipped, as `_targets.declared_in_cmake` skips it: its targets are
+    jm's, and an app is not a benchmark. Only this project's own build
+    files are read (`_own_build_file`): a nested project's targets are run
+    by its own ``jm bench``.
+
+    Returns
+    -------
+    list of UnrunBench or None
+        ``None`` when a build file enumerates sources by wildcard -- the
+        stand-down `orphans` takes, for the same reason and on the same
+        files, and distinct from the empty list (gh-1033).
+
+    Examples
+    --------
+    >>> import tempfile, pathlib
+    >>> d = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (d / "CMakeLists.txt").write_text(
+    ...     "add_executable(\\n  bench_corr_1d\\n"
+    ...     "  native/benchmarks/corr/bench_corr_1d.c)\\n")
+    >>> [u.key for u in unrun_benches(d, {"project": {"name": "d"}})]
+    ['CMakeLists.txt:bench_corr_1d']
+    """
+    from . import _bench
+
+    files = _build_files(root)
+    if files is None:
+        return None
+    _tree, fmt = INC.NATIVE_FILES["bench"]
+    runs = {
+        fmt.format(s)[: -len(".c")]
+        for s in _bench.runnable_comps(root, cfg)[0]
+    }
+    found: list[UnrunBench] = []
+    for rel, text in files:
+        if not _own_build_file(root, rel):
+            continue
+        text = _targets._without_jm_app_block(text)
+        for m in _targets._ADD_EXECUTABLE_RE.finditer(text):
+            name = m.group(1)
+            close = text.find(")", m.end())
+            args = text[m.end() : close if close != -1 else len(text)]
+            if not (name.startswith("bench_") or INC.BENCH_DIR in args):
+                continue
+            if name in runs:
+                continue
+            found.append(UnrunBench(rel=rel, target=name))
+    return found
+
+
 def records_nothing(body: str) -> bool:
     r"""Whether a benchmark source visibly cannot record a measurement.
 
@@ -525,7 +691,7 @@ def silent_benches(root: Path, cfg: dict) -> list[SilentBench]:
 
 
 def report(root: Path, cfg: dict, *, stream=None, indent: str = "  ") -> None:
-    """Print both findings through `_report`, weighted.
+    """Print every finding through `_report`, weighted.
 
     An orphan **gates**: `jm status --check` counts it, because "a real test
     suite is on disk and nothing runs it" is not a matter of taste, and the
@@ -557,6 +723,17 @@ def report(root: Path, cfg: dict, *, stream=None, indent: str = "  ") -> None:
         _report.warn(
             orphan.describe(),
             gates=not _is_allowed(orphan.rel, allow),
+            stream=stream,
+            indent=indent,
+        )
+    # gh-2494: gates like an orphan, on the same argument -- a benchmark
+    # nothing runs is a green `make bench` over missing rows. `None` was
+    # already said above: both scans read the same files and stand down
+    # together.
+    for unrun in unrun_benches(root, cfg) or []:
+        _report.warn(
+            unrun.describe(),
+            gates=not _is_allowed(unrun.key, allow),
             stream=stream,
             indent=indent,
         )

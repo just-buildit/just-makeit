@@ -422,9 +422,11 @@ new method or computed property is additive instead — `jm method` /
 
 `apply` also warns about the files it did **not** touch: a
 `native/tests/test_*_core.c` or `native/benchmarks/bench_*_core.c` that no
-build file compiles, and a generated benchmark that records no measurement.
-The first is marked `!` because it fails `jm status --check` — see
-[Why `UNBUILT` gates](#why-unbuilt-gates).
+build file compiles, a benchmark target `jm bench` never runs, and a
+generated benchmark that records no measurement. The first two are marked `!`
+because they fail `jm status --check` — see
+[Why `UNBUILT` gates](#why-unbuilt-gates) and
+[Why `UNRUN` gates](#why-unrun-gates).
 
 It also warns before rendering over a `.pyi` that does not parse, naming the
 hand-written members that will not survive — see
@@ -747,6 +749,31 @@ benchmark. A project that builds none — one predating the `make` backend's
 failing the gate for something no `jm apply` can clear is the thing this
 deliberately does not do. It arms itself the moment the project gains bench
 rules.
+
+### Why `UNRUN` gates
+
+`jm bench` runs exactly one target per benchmark it knows of:
+`bench_<s>_core`. A target over a benchmark source under any other name is
+built on every build and run by nothing, and `UNBUILT` cannot see it, because
+its source *is* compiled (gh-2494). doppler lost all ten rows of a
+`bench_correlator_1d` wired in a hand-owned `*_extra.cmake` that way, with
+`make bench` and `jm status --check` both green.
+
+So `UNRUN` lists every `add_executable` in the same build files `UNBUILT`
+reads whose name starts with `bench_`, or that names a file under
+`native/benchmarks/`, and that `jm bench` does not run. The run set is the one
+`jm bench` uses, not a second copy of it. Only the project's own build files
+count: one under a hidden directory (`.venv`, a second checkout) or inside a
+nested project with its own `just-makeit.toml` is not read, since that
+project's own `jm bench` runs its benchmarks. Rename the target onto
+`bench_<s>_core` over a `bench_<s>_core.c` source and `jm bench` picks it up.
+
+A benchmark run some other way on purpose is exempted by naming the target,
+not the file: `<build file>:<target>` in `[project] status_allow`, for example
+`native/src/stream/CMakeLists.txt:bench_stream`. Allowing the whole build file
+would also silence every benchmark added to it later. Like `UNBUILT`, the scan
+stands down on a build file that globs its sources, and says so as
+`UNCHECKED`.
 
 ### Why `CTOR` gates, and why it reads the header rather than the `_core.c`
 
