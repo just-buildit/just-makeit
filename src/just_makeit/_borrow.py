@@ -123,6 +123,7 @@ from ._context._diagnostics import (
     format_raise_c,
     placeholders,
     reason_raise_c,
+    status_row_message,
 )
 
 
@@ -726,11 +727,56 @@ def status_dispatch_c(
     if not rows or not status_fn(m):
         return out
     name = str(m.get("name", "<method>"))
-    out += (
-        f"        switch ({status_fn(m)}({state_expr}, {count_param(m)})) {{\n"
+    return out + status_switch_c(
+        rows,
+        name,
+        message_slots(m, csym, properties),
+        subject=f"{status_fn(m)}({state_expr}, {count_param(m)})",
     )
-    out += status_cases_c(rows, name, message_slots(m, csym, properties))
-    return out + "        default: break;\n        }\n"
+
+
+def status_switch_c(
+    rows: list[dict],
+    name: str,
+    slots: "dict[str, tuple[str, str]]",
+    why: str = "",
+    *,
+    subject: str = "_rc",
+) -> str:
+    """The ``switch`` a declared table puts ahead of a site's own raise.
+
+    Every face that carries a ``status_errors`` table wraps
+    :func:`status_cases_c` in this one block: a borrow switches on its
+    ``status_fn``'s answer (gh-1418), a ``check_return`` function
+    (gh-1614), a ``status_return`` method, a handle method and a
+    serializable ``set_state`` on the status the call returned (gh-2470).
+    Every case returns, so falling out through ``default: break;`` IS the
+    site's fallback, which the caller emits right after.
+
+    Empty without rows, so a site that declares none renders exactly what
+    it did before the table existed.
+
+    Examples
+    --------
+    >>> rows = [{"status": "DP_ERR_MEMORY", "error": "MemoryError"}]
+    >>> print(status_switch_c(rows, "f", {}), end="")
+            switch (_rc) {
+            case DP_ERR_MEMORY:
+            PyErr_SetString(PyExc_MemoryError,
+            "f failed (DP_ERR_MEMORY)");
+            return NULL;
+            default: break;
+            }
+    >>> status_switch_c([], "f", {})
+    ''
+    """
+    if not rows:
+        return ""
+    return (
+        f"        switch ({subject}) {{\n"
+        + status_cases_c(rows, name, slots, why)
+        + "        default: break;\n        }\n"
+    )
 
 
 def status_cases_c(
@@ -775,8 +821,7 @@ def status_cases_c(
         # gh-1426 C: `format_raise_c` falls back to `empty_raise_c` when the
         # message references nothing, so the static case keeps exactly one
         # spelling rather than a second that happens to agree today.
-        message = str(row.get("message", "") or "").strip()
-        message = message or f"{name} failed ({row['status']})"
+        message = status_row_message(row, name)
         out += f"        case {row['status']}:\n"
         if not why:
             out += format_raise_c(category, message, slots, indent=8)
@@ -803,18 +848,37 @@ def why_not(
     """
     name = m.get("name", "<method>")
     if not is_borrow(m):
+        # gh-2470: a `status_return` method reads a status too -- the int
+        # its kernel returned -- so the rows have something to match. The
+        # `status_fn` stays a borrow's: here the status IS the return.
+        if m.get("status_return") and status_rows(m) and not status_fn(m):
+            return rows_why_not(
+                status_rows(m),
+                f"method '{name}'",
+                message_slots(m, component, properties),
+            )
         # gh-1418: the keys are a BORROW's, and a borrow's only failure
         # signal is the NULL they read. Accepted on any other shape they
         # would be recorded, exit 0, and dropped -- which is the whole
         # finding of this issue, one shape over.
         if status_fn(m) or status_rows(m):
+            if m.get("status_return"):
+                return (
+                    f"method '{name}': `status_fn` names the function a "
+                    f"BORROW asks why it returned NULL.\n"
+                    f"  This method returns its status, so its "
+                    f"`status_errors` rows match that return directly.\n"
+                    f"  Drop `status_fn`."
+                )
             return (
                 f"method '{name}': `status_fn` / `status_errors` describe "
-                f"why a BORROW returned NULL.\n"
-                f"  This method is not a borrow, so there is no NULL to "
-                f"explain. Declare `borrow`, or drop\n"
-                f"  the keys -- a method that reports failure another way "
-                f"uses `error` / `error_message`."
+                f"why a BORROW returned NULL, or which\n"
+                f"  exception a `status_return` method's status raises.\n"
+                f"  This method is not a borrow and returns no status, so "
+                f"there is nothing to read.\n  Declare `borrow` or "
+                f"`status_return`, or drop the keys -- a method that "
+                f"reports failure\n  another way uses `error` / "
+                f"`error_message`."
             )
         return ""
     params = m.get("params") or []

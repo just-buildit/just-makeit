@@ -874,13 +874,72 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
         )
     if out:
         return out
-    return [
+    # gh-2470: a declared row raises ahead of the blanket class, so each is
+    # documented first and the blanket entry says it covers the rest.
+    rows = list(m.get("status_errors") or [])
+    subject = str(m.get("fn") if handle else m.get("name", ""))
+    return status_rows_raises_doc(rows, subject) + [
         (
             category,
-            f"If the C call returns a non-zero status. The exception message "
-            f"is ``{message}``, with the return code appended (gh-869).",
+            f"If the C call returns "
+            f"{'any other' if rows else 'a'} non-zero status. The exception "
+            f"message is ``{message}``, with the return code appended "
+            f"(gh-869).",
         )
     ]
+
+
+def status_row_message(row: dict, name: str) -> str:
+    """The text a ``status_errors`` row raises with (gh-1418, gh-2470).
+
+    The row's own ``message`` when it declares one, else ``<name> failed
+    (<STATUS>)``. One reading for the emitter (`_borrow.status_cases_c`)
+    and the ``Raises`` section (`status_rows_raises_doc`), so the text a
+    caller reads in the docs is the text the binding raises.
+
+    Examples
+    --------
+    >>> status_row_message({"status": "E_NOMEM", "error": "MemoryError"}, "f")
+    'f failed (E_NOMEM)'
+    >>> status_row_message({"status": "E", "error": "OSError",
+    ...                     "message": " gone "}, "f")
+    'gone'
+    """
+    message = str(row.get("message", "") or "").strip()
+    return message or f"{name} failed ({row['status']})"
+
+
+def status_rows_raises_doc(
+    rows: "list[dict]", name: str
+) -> "list[tuple[str, str]]":
+    """One ``Raises`` entry per ``status_errors`` row (gh-2470).
+
+    The rows are rendered by `_borrow.status_cases_c`; this documents the
+    same rows, in the same order, with the message that emitter falls back
+    to when a row declares none -- so the class and the text a caller reads
+    in the ``.pyi`` are the ones the binding raises.
+
+    Examples
+    --------
+    >>> status_rows_raises_doc(
+    ...     [{"status": "DP_ERR_MEMORY", "error": "MemoryError"}], "set_freq")
+    [('MemoryError', 'If the C call returns ``DP_ERR_MEMORY``. The exception \
+message is ``set_freq failed (DP_ERR_MEMORY)``.')]
+    >>> status_rows_raises_doc([], "set_freq")
+    []
+    """
+    out: "list[tuple[str, str]]" = []
+    for row in rows:
+        status = str(row.get("status", ""))
+        message = status_row_message(row, name)
+        out.append(
+            (
+                str(row.get("error", "")),
+                f"If the C call returns ``{status}``. The exception message "
+                f"is ``{message}``.",
+            )
+        )
+    return out
 
 
 def empty_is_none(m: dict) -> bool:

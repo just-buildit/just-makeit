@@ -119,6 +119,7 @@ def run(args: list[str]) -> None:
     mutable = False
     step_delegates = False
     serializable = False
+    set_state_status_errors: list[dict] = []
     streamable = False
     async_stream = False
     stream_block_default_obj: int | None = None
@@ -269,6 +270,21 @@ def run(args: list[str]) -> None:
             i += 1
         elif tok == "--serializable":
             serializable = True
+            i += 1
+        elif tok == "--set-state-status-error":
+            # gh-2470: the colon spec `jm method --status-error` reads, for
+            # the serializable set_state's status.
+            from ._borrow import parse_status_error
+
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --set-state-status-error requires "
+                    "STATUS:ExcName[:message]",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            set_state_status_errors.append(parse_status_error(remaining[i]))
             i += 1
         elif tok == "--init-param":
             ip_var, i = parse_init_param_flag(remaining, i)
@@ -459,6 +475,7 @@ def run(args: list[str]) -> None:
         mutable=mutable,
         step_delegates=step_delegates,
         serializable=serializable,
+        set_state_status_errors=set_state_status_errors or None,
         streamable=streamable,
         async_stream=async_stream,
         stream_block_default=stream_block_default_obj,

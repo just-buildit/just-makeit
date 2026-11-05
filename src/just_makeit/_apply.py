@@ -412,6 +412,9 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "step_delegates": C.step_delegates(cfg, comp),
         "opaque_state": C.is_opaque_state(cfg, comp),
         "serializable": C.is_serializable(cfg, comp),
+        # gh-2470: manifest-and-flag, and the replay names each key -- an
+        # unnamed one is silently absent from the scratch manifest.
+        "set_state_status_errors": C.set_state_status_errors(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
         "async_stream": C.is_async_stream(cfg, comp),
         "stream_block_default": (

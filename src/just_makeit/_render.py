@@ -1788,13 +1788,9 @@ def _status_cases(
     to what it was before gh-1614. Rows and their raises are the borrow
     table's own emitter (`_borrow.status_cases_c`).
     """
-    if not rows:
-        return ""
     slots = _borrow.message_slots({"name": fn_name, "params": params})
-    return (
-        "        switch (_rc) {\n"
-        + _borrow.status_cases_c(rows, c_name, slots, WHY_LOCAL if why else "")
-        + "        default: break;\n        }\n"
+    return _borrow.status_switch_c(
+        rows, c_name, slots, WHY_LOCAL if why else ""
     )
 
 

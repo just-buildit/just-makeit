@@ -329,6 +329,11 @@ def load(root: Path) -> dict:
     consumed_errors = _consumed_fn_errors(cfg)
     if consumed_errors:
         _refuse(consumed_errors)
+    # gh-2470: a set_state status table with no set_state, or a row the
+    # shared validator refuses on every other table face.
+    set_state_errors = _set_state_status_errors_errors(cfg)
+    if set_state_errors:
+        _refuse(set_state_errors)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
@@ -3371,6 +3376,89 @@ def is_serializable(cfg: dict, component: str) -> bool:
     return _truthy(
         cfg.get("module", {}).get(component, {}).get("serializable")
     )
+
+
+#: The key naming a serializable ``set_state``'s status -> exception rows
+#: (gh-2470). Named for the member it governs, as ``create_error`` is for
+#: ``create()``; its rows are a method's ``status_errors`` rows.
+SET_STATE_STATUS_ERRORS = "set_state_status_errors"
+
+
+def set_state_status_errors(cfg: dict, component: str) -> "list[dict]":
+    """The rows mapping ``<comp>_set_state``'s status to exceptions.
+
+    Read from the same two tables `is_serializable` reads -- an object's
+    ``[<comp>]`` and a ``kind = "handle"`` ``[module.<comp>]`` -- so the
+    key sits beside the flag it refines. ``[]`` when undeclared, which
+    renders ``set_state`` exactly as before the key existed.
+
+    Examples
+    --------
+    >>> rows = [{"status": "E_NOMEM", "error": "MemoryError"}]
+    >>> set_state_status_errors(
+    ...     {"acq": {"serializable": "true",
+    ...              "set_state_status_errors": rows}}, "acq")
+    [{'status': 'E_NOMEM', 'error': 'MemoryError'}]
+    >>> set_state_status_errors({"acq": {"serializable": "true"}}, "acq")
+    []
+    """
+    for tbl in (cfg.get(component), cfg.get("module", {}).get(component)):
+        if isinstance(tbl, dict) and tbl.get(SET_STATE_STATUS_ERRORS):
+            return list(tbl[SET_STATE_STATUS_ERRORS])
+    return []
+
+
+def _set_state_status_errors_errors(cfg: dict) -> "list[str]":
+    """Every ``set_state_status_errors`` no ``set_state`` would read (gh-2470).
+
+    Two refusals: the key on a component that is not ``serializable`` --
+    there is no ``set_state`` to raise from, so the rows would be recorded
+    and dropped (the gh-1418 shape) -- and a row the shared validator
+    (`_borrow.rows_why_not`) refuses on every other table face. No message
+    slot is in scope: ``set_state`` takes nothing but the blob.
+
+    Examples
+    --------
+    >>> rows = [{"status": "E_NOMEM", "error": "MemoryError"}]
+    >>> _set_state_status_errors_errors(
+    ...     {"acq": {"set_state_status_errors": rows}})[0].split(":")[0]
+    '[acq] set_state_status_errors'
+    >>> _set_state_status_errors_errors(
+    ...     {"acq": {"serializable": "true",
+    ...              "set_state_status_errors": rows}})
+    []
+    """
+    from ._borrow import rows_why_not
+
+    errors: list[str] = []
+    tables = [(f"[{k}]", k, v) for k, v in cfg.items()]
+    tables += [
+        (f"[module.{k}]", k, v) for k, v in (cfg.get("module") or {}).items()
+    ]
+    for where, comp, tbl in tables:
+        if not isinstance(tbl, dict) or SET_STATE_STATUS_ERRORS not in tbl:
+            continue
+        rows = tbl[SET_STATE_STATUS_ERRORS]
+        if not _truthy(tbl.get("serializable")):
+            errors.append(
+                f"{where} {SET_STATE_STATUS_ERRORS}: maps the status "
+                f"`set_state` returns, and '{comp}' is not serializable, so "
+                "there is no set_state to raise from. Declare "
+                '`serializable = "true"`, or drop the key.'
+            )
+            continue
+        if not isinstance(rows, list) or not all(
+            isinstance(r, dict) for r in rows
+        ):
+            errors.append(
+                f"{where} {SET_STATE_STATUS_ERRORS}: must be a list of "
+                '{status = "...", error = "..."} rows.'
+            )
+            continue
+        why = rows_why_not(rows, f"{where} {SET_STATE_STATUS_ERRORS}", {})
+        if why:
+            errors.append(why)
+    return errors
 
 
 def step_delegates(cfg: dict, component: str) -> bool:
@@ -8073,6 +8161,7 @@ def add_component(
     create_fn_: str | None = None,
     doc_: str = "",
     init_post_parse_: str = "",
+    set_state_status_errors_: "list[dict] | None" = None,
 ) -> dict:
     # gh-1880: the renderer's own default, from its one owner. A copy here
     # lacked the `void -> float _Complex` branch, so a generator's manifest
@@ -8135,6 +8224,11 @@ def add_component(
         entry["step_delegates_to_steps"] = "true"
     if serializable_:
         entry["serializable"] = "true"
+    if set_state_status_errors_:
+        # gh-2470: beside the flag it refines; refused at load without it.
+        entry[SET_STATE_STATUS_ERRORS] = as_named_tables(
+            set_state_status_errors_
+        )
     if streamable_:
         entry["streamable"] = "true"
     if async_stream_:
@@ -8486,6 +8580,7 @@ _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
             "handle": (
                 "type_name", "create_fn", "init_fn", "close_fn",
                 "handle_type", "optional_backend", "serializable",
+                "set_state_status_errors",
                 "context_manager",
             ),
             "composer": ("composes", "sample_type"),
@@ -8500,6 +8595,7 @@ _OBJECT_ORDER = (
     "no_reset", "opaque_state", "process_global", "no_python_bench",
     "header_only",
     "core_macro", "core_header", "step_delegates_to_steps", "serializable",
+    "set_state_status_errors",
     "streamable", "async_stream", "stream_block_default", "class_name",
     "create_fn", "create_error", "create_error_message", "doc",
     "depends_on", "extra_link_libs", "extra_include_dirs", "core_args",
