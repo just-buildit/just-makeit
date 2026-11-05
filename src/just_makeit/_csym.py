@@ -342,7 +342,7 @@ def _file_scope(mask: str) -> str:
     and preprocessor line blanked too: what is left is file scope, where a
     header declares its functions and types. An ``extern "C" { ... }``
     block IS file scope -- every jm header wraps its declarations in one --
-    so its braces are transparent.
+    so its braces are transparent. The result is as long as *mask*.
 
     >>> _file_scope('extern " " {\\nint f(void);\\nint g(void) { h(); }\\n}')
     'extern " "  \\nint f(void);\\nint g(void)         \\n '
@@ -354,7 +354,9 @@ def _file_scope(mask: str) -> str:
     seen = ""
     for line in mask.splitlines(keepends=True):
         if not any(stack) and line.lstrip().startswith("#"):
-            out.append("\n")
+            # Blanked, not dropped: the view keeps *mask*'s length, so an
+            # offset found in one indexes the other (gh-2465).
+            out.append(re.sub(r"[^\n]", " ", line))
             continue
         buf = []
         for ch in line:
