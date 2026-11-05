@@ -44,7 +44,9 @@
     `package`; `apply --only` refuses while files wait to move.
 - **Under `nested`, jm records the members it placed in each module**
     (gh-2459): `[module.X] applied_objects`, beside `applied_package`,
-    written by `jm apply` and by the `jm object` that creates a member. A
+    written by `jm apply`; between applies, `jm module` begins a new
+    module's record and `jm object` adds the member it creates to a record
+    that exists, and neither writes anything else. A
     member not on it -- declared since by a fragment -- has never been
     placed by jm, so a directory already at its place, even one holding a
     `<name>_core.c`, is checked and refused rather than written into.

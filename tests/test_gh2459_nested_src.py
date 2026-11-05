@@ -571,6 +571,17 @@ def test_script_does_not_replay_the_record(nested):
     assert "applied_" not in r.stdout, r.stdout
 
 
+def _move_files(src: Path, dst: Path) -> None:
+    """Move the files directly in *src* to *dst*, by hand: file by file,
+    since a module's own directory can be the parent of its other place
+    (``native/src/dsp`` and ``native/src/dsp/dsp``)."""
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in [f for f in src.iterdir() if f.is_file()]:
+        shutil.move(str(f), str(dst / f.name))
+    if not any(src.iterdir()):
+        src.rmdir()
+
+
 def _before_the_record(root: Path) -> None:
     """*root*, a settled nested project, as a jm before the record left it
     (gh-2459): every component's C flat, its wiring flat, no ``applied_*``
@@ -581,7 +592,7 @@ def _before_the_record(root: Path) -> None:
         here = INC.src_path(root, name, cfg)
         flat = root / "native" / "src" / name
         if here != flat:
-            shutil.move(str(here), str(flat))
+            _move_files(here, flat)
             old[INC.src_below(name, cfg)] = name
     top = root / "CMakeLists.txt"
     text = top.read_text(encoding="utf-8")
@@ -1423,3 +1434,87 @@ def test_a_creation_while_files_wait_records_nothing(tmp_path):
     assert INC.APPLIED_LAYOUT not in cfg["project"]
     assert INC.APPLIED_PACKAGE not in cfg["module"][_MODULE]
     assert _digest(root) == before
+
+
+def test_a_member_created_beside_unrecorded_ones_records_nothing(tmp_path):
+    """dev.sh B: a nested project from a jm before the record, whose author
+    moved its C to the nested places by hand -- so nothing waits -- runs
+    ``jm object gain --module dsp``. Recording gain alone would begin a
+    module record without fir and declare fir never placed, and `apply`
+    would refuse fir's own directory. So the command writes no ``applied_*``
+    key: the next `apply` shows the tree, records fir and gain both, and
+    the project builds and its tests pass."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "apply")
+    _before_the_record(root)
+    cfg = C.load(root)
+    for name in INC.native_names(cfg):
+        flat = root / "native" / "src" / name
+        here = INC.src_path(root, name, cfg)
+        if flat != here and flat.is_dir():
+            _move_files(flat, here)
+    core = INC.src_path(root, "fir") / "fir_core.c"
+    core.write_text(core.read_text("utf-8") + "/* AUTHOR */\n", "utf-8")
+    assert not [o for o, _n in INC.relocations(root) if (root / o).is_file()]
+    _jm(root, "object", "gain", "--module", "dsp")
+    assert "applied_" not in "".join(
+        t.read_text("utf-8") for t in root.rglob("*.toml")
+    )
+    _jm(root, "apply")
+    cfg = C.load(root)
+    assert cfg["project"][INC.APPLIED_LAYOUT] == "nested"
+    assert cfg["module"]["dsp"][INC.APPLIED_OBJECTS] == ["fir", "gain"]
+    assert "/* AUTHOR */" in core.read_text("utf-8")
+    _assert_in_place(root)
+    _jm(root, "status", "--check")
+    if shutil.which("cmake"):
+        build = tmp_path / "build"
+        for cmd in (
+            ["cmake", "-S", str(root), "-B", str(build), "-DBUILD_PYTHON=OFF"],
+            ["cmake", "--build", str(build), "-j4"],
+            ["ctest", "--test-dir", str(build), "--output-on-failure"],
+        ):
+            p = subprocess.run(cmd, capture_output=True, text=True)
+            assert p.returncode == 0, (cmd, p.stdout[-2000:], p.stderr[-2000:])
+
+
+def test_a_dependency_edit_before_the_first_apply_names_that_edit(tmp_path):
+    """dep.sh: a project from a jm before the record whose author adds a
+    ``depends_on`` before the first `apply` here. The CMakeLists no longer
+    matches either render, so the move is refused -- naming the edit to
+    undo, not a layout or package the author never changed."""
+    root = _scaffold(tmp_path, "nested")
+    _before_the_record(root)
+    frag = root / "objects" / "fir.toml"
+    frag.write_text(
+        frag.read_text("utf-8").replace(
+            "[fir]\n", '[fir]\ndepends_on = ["amp"]\n', 1
+        ),
+        "utf-8",
+    )
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0
+    text = " ".join(r.stderr.split())
+    assert "Undo the manifest edits made since the last apply" in text, text
+    assert "Restore the layout" not in text, text
+
+
+def test_the_wait_fails_closed(tmp_path, monkeypatch):
+    """When jm cannot compute the moves, the mutating command does not run
+    unguarded: the failure stops it before it starts."""
+    from just_makeit import _cli
+
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+
+    def broken(_root):
+        raise RuntimeError("cannot read the record")
+
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(INC, "relocations", broken)
+    with pytest.raises(RuntimeError, match="cannot read the record"):
+        _cli._refuse_while_files_wait(["object", "amp"])

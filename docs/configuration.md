@@ -384,7 +384,10 @@ where the record points -- jm refuses, naming both places, and moves
 nothing. **A CMakeLists rendered by an older jm fails that check too**, so
 the first layout or `package` change after a jm upgrade that changed the
 template is refused: restore the layout or package, run `jm apply` once on
-this version, then change it again.
+this version, then change it again. The same holds for any other manifest
+edit that changes a component's CMakeLists (a `depends_on`, say) made
+before that first `apply`: undo it, run `jm apply` once, then redo it. The
+refusal names whichever applies.
 
 jm writes a component only into a place it can show is its own. A new place
 -- where a component moves to, or where jm never put it -- must be empty, or

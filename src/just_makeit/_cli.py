@@ -970,12 +970,9 @@ def _refuse_while_files_wait(args: "list[str]") -> None:
     from . import _incpath as INC
     from ._report import Refusal
 
-    try:
-        waiting = [
-            o for o, _n in INC.relocations(root) if (root / o).is_file()
-        ]
-    except Exception:  # noqa: BLE001 -- the command reports its own error
-        return
+    # Fails closed: a manifest the move computation cannot read raises
+    # here, before the command, never lets it run unguarded.
+    waiting = [o for o, _n in INC.relocations(root) if (root / o).is_file()]
     if waiting:
         raise Refusal(
             f"files are waiting to move ({len(waiting)}, first"
