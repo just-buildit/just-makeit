@@ -2241,6 +2241,18 @@ def run(
         )
         print()
 
+    # gh-2459: jm's record of what it placed, not yet written -- a project
+    # last applied by a jm before the record. Its own words, and no gate:
+    # the record is jm's state, not a definition the manifest lacks.
+    if INC.unrecorded(cfg):
+        print(
+            "RECORD — jm has not yet recorded where it placed this"
+            " project's files\n  ([project] applied_layout, [module.X]"
+            " applied_package); the next `jm apply`\n  records them. Not"
+            " drift; `--check` does not fail on it."
+        )
+        print()
+
     # gh-2459: a component found at neither its place nor the place jm
     # recorded putting it. Advice: jm moves only from its own record.
     _misplaced = INC.misplaced(root, cfg)

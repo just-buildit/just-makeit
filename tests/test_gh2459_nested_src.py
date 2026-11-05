@@ -684,3 +684,347 @@ def test_a_module_declared_since_the_last_apply_has_no_former_place(
     assert (INC.src_path(root, "gainv") / "gainv_core.c").is_file()
     assert top.read_text(encoding="utf-8").count(line) == 1
     assert "gainv" not in INC.unplaced(root)
+
+
+# ── 7. jm writes, and moves, only what it can show is its own ─────────────
+
+_VENDOR_ONLY = "add_library(vendor_fir STATIC vendor_fir.c)\n"
+
+
+def _vendor(
+    root: Path, below: str, kind: str = "vendor", donor: "Path | None" = None
+) -> dict:
+    """A vendored ``native/src/<below>/``, wired by the author; returns its
+    bytes, to compare after. ``vendor``: its own target, and a
+    ``fir_core.c`` that even includes this project's header -- only the
+    CMakeLists says it is not jm's. ``donor``: a verbatim copy of another
+    jm project's ``fir`` -- jm's targets, jm's file names; only its core's
+    include of that project's header says it is not this one's."""
+    d = root / "native" / "src" / below
+    if kind == "donor":
+        shutil.copytree(INC.src_path(donor, "fir"), d)
+    else:
+        d.mkdir(parents=True)
+        (d / "CMakeLists.txt").write_text(_VENDOR_ONLY, "utf-8")
+        spelled = INC.core_include(
+            "fir", C.with_module_member(C.load(root), "tp", "fir")
+        )
+        (d / "fir_core.c").write_text(
+            f'#include "{spelled}"\n/* VENDOR */\n', "utf-8"
+        )
+    top = root / "CMakeLists.txt"
+    top.write_text(
+        top.read_text("utf-8") + f"add_subdirectory(native/src/{below})\n",
+        encoding="utf-8",
+    )
+    return {p: p.read_bytes() for p in d.rglob("*") if p.is_file()}
+
+
+def _untouched(root: Path, foreign: dict, below: str) -> None:
+    for path, data in foreign.items():
+        assert path.read_bytes() == data, path
+    d = root / "native" / "src" / below
+    assert sorted(p for p in d.rglob("*") if p.is_file()) == sorted(foreign)
+    line = f"add_subdirectory(native/src/{below})\n"
+    assert (root / "CMakeLists.txt").read_text("utf-8").count(line) == 1
+
+
+# A verbatim flat copy of another project's `fir` at the flat place, declared
+# by a fragment -- jm's own name in jm's own namespace, with the same targets
+# and the same test paths -- is the one shape jm cannot tell from its own; at
+# `jm object` its core's include of the other project's header still says so.
+# (Left out: a known limit, in the PR.)
+@pytest.mark.parametrize(
+    "layout,kind,how",
+    [
+        (lay, kind, how)
+        for lay in ("", "mirrored", "nested")
+        for kind in ("vendor", "donor")
+        for how in ("cli", "fragment")
+        if (lay, kind, how) != ("", "donor", "fragment")
+    ],
+)
+def test_a_new_place_holding_a_vendored_dir_is_refused(
+    tmp_path, layout, how, kind
+):
+    """N1: the place a new component goes already holds the author's
+    vendored directory -- under nested ``native/src/<package>/`` overlaps
+    names like ``third_party``. jm refuses, naming it, and writes nothing
+    there: whether the component comes from `jm object` or a fragment."""
+    _jm(tmp_path, "new", "donor")
+    _jm(tmp_path / "donor", "object", "fir")
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, layout)
+    _jm(root, "object", "amp")
+    _jm(root, "module", "tp", "--package", "third_party")
+    _jm(root, "apply")
+    probe = C.with_module_member(C.load(root), "tp", "fir")
+    below = INC.src_below("fir", probe)
+    foreign = _vendor(root, below, kind, tmp_path / "donor")
+    if how == "cli":
+        r = run_cli("object", "fir", "--module", "tp", cwd=root)
+    else:
+        frag = root / "objects" / "fir.toml"
+        frag.write_text(
+            (tmp_path / "donor" / "objects" / "fir.toml").read_text("utf-8"),
+            encoding="utf-8",
+        )
+        mod = root / "modules" / "tp.toml"
+        mod.write_text(
+            mod.read_text("utf-8").replace(
+                "objects = []", 'objects = ["fir"]'
+            ),
+            encoding="utf-8",
+        )
+        assert '"fir"' in mod.read_text("utf-8")
+        r = run_cli("apply", cwd=root)
+    assert r.returncode != 0, r.stdout
+    assert f"native/src/{below}/" in " ".join(r.stderr.split()), r.stderr
+    assert "its own" in r.stderr
+    _untouched(root, foreign, below)
+
+
+@pytest.mark.parametrize("case", ["package", "layout"])
+def test_a_record_pointing_at_a_vendored_dir_is_refused(tmp_path, case):
+    """N2: a hand-edited (or stale) record names a vendored directory as a
+    component's former place. jm checks the record against the tree first:
+    the CMakeLists there is not the one jm renders, so it refuses, naming
+    both places and the record, and moves and strips nothing."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested" if case == "package" else "mirrored")
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "apply")
+    core = INC.src_path(root, "fir") / "fir_core.c"
+    core.write_text(core.read_text("utf-8") + "/* AUTHOR */\n", "utf-8")
+    frag = root / "modules" / "dsp.toml"
+    if case == "package":
+        foreign = _vendor(root, "third_party/fir")
+        frag.write_text(
+            re.sub(
+                r'^applied_package = "[^"]*"',
+                'applied_package = "third_party"',
+                frag.read_text("utf-8"),
+                flags=re.M,
+            ),
+            encoding="utf-8",
+        )
+        below = "third_party/fir"
+    else:
+        foreign = _vendor(root, "dsp/fir")
+        top = root / "just-makeit.toml"
+        top.write_text(
+            top.read_text("utf-8").replace(
+                'applied_layout = "mirrored"', 'applied_layout = "nested"'
+            ),
+            encoding="utf-8",
+        )
+        frag.write_text(
+            frag.read_text("utf-8").replace(
+                "[module.dsp]\n", '[module.dsp]\napplied_package = "dsp"\n'
+            ),
+            encoding="utf-8",
+        )
+        below = "dsp/fir"
+    # ...and a vendored header where that record puts fir's.
+    vh = INC.header_root(root) / below / "fir_core.h"
+    vh.parent.mkdir(parents=True, exist_ok=True)
+    vh.write_text(
+        "#ifndef VENDOR_FIR_H\n#define VENDOR_FIR_H\n#endif\n", "utf-8"
+    )
+    foreign[vh] = vh.read_bytes()
+    before = _digest(root)
+    for cmd in ("status", "apply"):
+        r = run_cli(cmd, cwd=root)
+        assert r.returncode != 0, (cmd, r.stdout)
+        text = " ".join((r.stdout + r.stderr).split())
+        assert f"last placed `fir` at native/src/{below}/" in text, text
+        assert "The record may be stale" in text, text
+        assert "Merge anything" not in text, text
+    assert _digest(root) == before
+    # `upgrade` makes renames without apply's check: the moves it is given
+    # are only those jm can show are out of its own directories.
+    assert not [o for o, _n in INC.relocations(root) if (root / o).exists()]
+    _jm(root, "upgrade")
+    for path, data in foreign.items():
+        assert path.read_bytes() == data, path
+    assert core.read_text("utf-8").endswith("/* AUTHOR */\n")
+
+
+def test_a_package_changed_before_the_first_apply_names_the_fix(tmp_path):
+    """N3: a nested project last applied by a jm before the record (its C
+    flat, no record) whose package changed before its first apply here.
+    jm cannot show the flat directory's CMakeLists is what it renders for
+    either package, so it refuses -- saying to apply once before changing
+    the package -- instead of a C-prefix collision."""
+    root = _scaffold(tmp_path, "nested")
+    cfg = C.load(root)
+    package = C.module_package_resolved(cfg, _MODULE)
+    for name in INC.native_names(cfg):
+        here = INC.src_path(root, name, cfg)
+        flat = root / "native" / "src" / name
+        if here != flat:
+            shutil.move(str(here), str(flat))
+    top = root / "CMakeLists.txt"
+    top.write_text(
+        top.read_text("utf-8").replace(
+            f"native/src/{package}/", "native/src/"
+        ),
+        encoding="utf-8",
+    )
+    for toml in root.rglob("*.toml"):
+        toml.write_text(
+            re.sub(
+                r"^applied_\w+ = [^\n]*\n",
+                "",
+                toml.read_text("utf-8"),
+                flags=re.M,
+            ),
+            encoding="utf-8",
+        )
+    frag = root / "modules" / f"{C.module_paths(_MODULE).cname}.toml"
+    frag.write_text(
+        frag.read_text("utf-8").replace(
+            f'[module."{_MODULE}"]\n',
+            f'[module."{_MODULE}"]\npackage = "front"\n',
+        ),
+        encoding="utf-8",
+    )
+    assert 'package = "front"' in frag.read_text("utf-8")
+    before = _digest(root)
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0
+    text = " ".join(r.stderr.split())
+    assert "jm has no record of placing" in text, text
+    assert "run `jm apply` once on this version" in text, text
+    assert "choose another c_prefix" not in text, text
+    assert _digest(root) == before
+
+
+def test_a_package_a_merge_dropped_is_named_not_collided(tmp_path):
+    """N3: a merge keeps one side's module table, so the package the files
+    sit under is in no manifest and no record. jm moves nothing; the
+    refusal names where each file is (found by its content, as advice) and
+    where the manifest puts it -- not a C-prefix collision."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "apply")
+    frag = root / "modules" / "dsp.toml"
+    plain = frag.read_text("utf-8")
+    frag.write_text(
+        plain.replace("[module.dsp]\n", '[module.dsp]\npackage = "front"\n'),
+        encoding="utf-8",
+    )
+    _jm(root, "apply")
+    frag.write_text(plain, encoding="utf-8")  # the other side's table
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0
+    text = " ".join(r.stderr.split())
+    assert "native/src/front/fir/CMakeLists.txt belongs to `fir`" in text, text
+    assert "choose another c_prefix" not in text, text
+
+
+def test_only_refuses_while_files_wait_to_move(tmp_path):
+    """N4: moving is a whole-project step, recorded by a full apply;
+    `apply --only` refuses while a move is pending, and moves nothing."""
+    root = _scaffold(tmp_path, "")
+    _declare(root, "nested")
+    before = _digest(root)
+    r = run_cli("apply", "--only=fir", cwd=root)
+    assert r.returncode != 0
+    assert "Run `jm apply`" in " ".join(r.stderr.split()), r.stderr
+    assert _digest(root) == before
+    _jm(root, "apply")
+    _assert_in_place(root)
+
+
+def test_a_missing_record_is_advice_not_drift(tmp_path):
+    """A project last applied before the record: `status --check` says so
+    in jm's own words and does not fail on it, and reports no module
+    fragment as stale."""
+    root = _scaffold(tmp_path, "nested")
+    for toml in root.rglob("*.toml"):
+        toml.write_text(
+            re.sub(
+                r"^applied_\w+ = [^\n]*\n",
+                "",
+                toml.read_text("utf-8"),
+                flags=re.M,
+            ),
+            encoding="utf-8",
+        )
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "RECORD" in r.stdout, r.stdout
+    assert "STALE" not in r.stdout, r.stdout
+
+
+def test_an_author_file_at_a_flat_test_path_stays_unrecorded(tmp_path):
+    """A mirrored project last applied before the record, with the author's
+    own file at the flat test path beside jm's mirrored test. It reads as
+    last applied flat, but jm's own build names the mirrored test, not the
+    flat one: the flat file is not jm's, so nothing is listed to move and
+    no "merge then delete" advice is given about it."""
+    root = _scaffold(tmp_path, "mirrored")
+    for toml in root.rglob("*.toml"):
+        toml.write_text(
+            re.sub(
+                r"^applied_\w+ = [^\n]*\n",
+                "",
+                toml.read_text("utf-8"),
+                flags=re.M,
+            ),
+            encoding="utf-8",
+        )
+    mine = root / "native" / "tests" / "test_fir_core.c"
+    mine.write_text("/* AUTHOR-FLAT-PATH */\n", "utf-8")
+    assert not [o for o, _n in INC.relocations(root) if (root / o).exists()]
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "SUPERSEDED" not in r.stdout, r.stdout
+    _jm(root, "apply")
+    assert mine.read_text("utf-8") == "/* AUTHOR-FLAT-PATH */\n"
+    assert INC.native_path(root, "test", "fir").is_file()
+
+
+@pytest.mark.parametrize("what", ["src", "header"])
+@pytest.mark.parametrize("start", ["", "mirrored"])
+def test_a_switch_never_moves_into_a_vendored_dir(tmp_path, start, what):
+    """N1, by a switch: under nested ``fir`` of module ``third_party`` goes
+    to ``native/src/third_party/fir``, which already holds the author's
+    vendored directory. jm's own files may be moved from their verified
+    place, but never into a directory jm cannot show is its own: the apply
+    is refused and the tree is left exactly as it was."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, start)
+    _jm(root, "module", "third_party")
+    _jm(root, "object", "fir", "--module", "third_party")
+    _jm(root, "apply")
+    _declare(root, "nested")
+    below = INC.src_below("fir", C.load(root))
+    assert below == "third_party/fir"
+    if what == "src":
+        foreign = _vendor(root, below)
+        want = f"native/src/{below}/ already holds files jm did not write"
+    else:
+        # Only a vendored header where fir's goes.
+        vh = INC.core_h(root, "fir")
+        vh.parent.mkdir(parents=True)
+        vh.write_text("#ifndef VENDOR_H\n#define VENDOR_H\n#endif\n", "utf-8")
+        foreign = {vh: vh.read_bytes()}
+        want = f"{INC.core_rel('fir', root)} is not `fir`'s header"
+    before = _digest(root)
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0, r.stdout
+    assert want in " ".join(r.stderr.split()), r.stderr
+    assert _digest(root) == before
+    if what == "src":
+        _untouched(root, foreign, below)
+    for path, data in foreign.items():
+        assert path.read_bytes() == data, path

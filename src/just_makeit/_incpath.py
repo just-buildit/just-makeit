@@ -627,6 +627,24 @@ def applied(owner: Owner) -> dict:
     return out
 
 
+def unrecorded(owner: Owner) -> bool:
+    """Whether the next full `apply` would add to jm's record: a layout it
+    has not recorded placing, or under ``nested`` a module with no
+    ``applied_package`` -- a project last applied by a jm before the
+    record, or never (gh-2459)."""
+    from . import _config as C
+
+    cfg = manifest(owner)
+    now = layout(cfg)
+    was = (cfg.get("project") or {}).get(APPLIED_LAYOUT, LAYOUTS[0])
+    if now != was:
+        return True
+    return now == "nested" and any(
+        APPLIED_PACKAGE not in (cfg["module"].get(m) or {})
+        for m in C.modules(cfg)
+    )
+
+
 def unplaced(owner: Owner) -> "set[str]":
     """The names jm has no record of placing: under an applied ``nested``
     layout, each object and the cname of every module carrying no
@@ -830,10 +848,32 @@ def _with_layout(cfg: dict, value: str) -> dict:
     return {**cfg, "project": {**(cfg.get("project") or {}), "layout": value}}
 
 
+def _package_variants(cfg: dict) -> "list[dict]":
+    """*cfg* as declared, with every module at its default package (its
+    own path), and with every module at its recorded ``applied_package`` --
+    the places a module's files may have been put by a package change jm
+    did not record (gh-2459)."""
+    mods = cfg.get("module") or {}
+    default = {
+        m: {k: v for k, v in (t or {}).items() if k != "package"}
+        for m, t in mods.items()
+    }
+    recorded = {
+        m: (
+            {**t, "package": t[APPLIED_PACKAGE]}
+            if APPLIED_PACKAGE in (t or {})
+            else t
+        )
+        for m, t in mods.items()
+    }
+    return [cfg, {**cfg, "module": default}, {**cfg, "module": recorded}]
+
+
 def misplaced(root: Path, cfg: dict) -> "list[tuple[str, str, str]]":
     """``(name, found, expected)`` for each component whose core header or
     source CMakeLists is at neither the place *cfg* puts it nor the place jm
-    recorded putting it (:func:`applied`), but at another layout's place
+    recorded putting it (:func:`applied`), but at another layout's place,
+    or another package's -- the module's default, or its recorded one
     (gh-2459).
 
     Advice for `status`, never a move: a former place is only ever where
@@ -842,12 +882,22 @@ def misplaced(root: Path, cfg: dict) -> "list[tuple[str, str, str]]":
     until the author moves it. Each path project-relative.
     """
     was = applied(cfg)
-    variants = [_with_layout(cfg, v) for v in LAYOUTS]
+    variants = [
+        _with_layout(packed, v)
+        for packed in _package_variants(cfg)
+        for v in LAYOUTS
+    ]
     out: "list[tuple[str, str, str]]" = []
     for name in native_names(cfg):
-        for place in (
-            lambda o: core_rel(name, o),
-            lambda o: src_rel(name, "CMakeLists.txt", o),
+        for place, owns in (
+            (
+                lambda o: core_rel(name, o),
+                lambda p: guarded(p, cfg, name),
+            ),
+            (
+                lambda o: src_rel(name, "CMakeLists.txt", o),
+                lambda p: declares(p.read_text(encoding="utf-8"), name),
+            ),
         ):
             now, then = place(cfg), place(was)
             if (root / now).is_file() or (root / then).is_file():
@@ -857,6 +907,16 @@ def misplaced(root: Path, cfg: dict) -> "list[tuple[str, str, str]]":
                 if found not in (now, then) and (root / found).is_file():
                     out.append((name, found, now))
                     break
+            else:
+                # Nowhere jm computes: a package the manifest no longer
+                # names (a merge that kept one side's table). Looked for by
+                # name, and named only when its content is the component's
+                # -- advice, never a place jm moves from.
+                fname = now.rsplit("/", 1)[-1]
+                for p in sorted(Path(root).glob(f"native/**/{name}/{fname}")):
+                    if p.is_file() and owns(p):
+                        out.append((name, p.relative_to(root).as_posix(), now))
+                        break
     return out
 
 
@@ -911,6 +971,15 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     >>> relocations(o)
     []
     """
+    out: "list[tuple[str, str]]" = []
+    for pairs in relocations_by_name(owner).values():
+        out += [p for p in pairs if p not in out]
+    return out
+
+
+def relocations_by_name(owner: Owner) -> "dict[str, list[tuple[str, str]]]":
+    """:func:`relocations`, keyed by the component (or module cname) each
+    move belongs to; a name with nothing to move is absent (gh-2459)."""
     cfg = manifest(owner)
     was = applied(cfg)
     root = _project_root(owner)
@@ -918,17 +987,30 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     every = native_names(cfg)
     new_dirs = {core_dir(n, cfg) for n in every}
     new_src = {src_dir(n, cfg) for n in every}
-    out: "list[tuple[str, str]]" = []
-
-    def add(pair: "tuple[str, str]") -> None:
-        if pair[0] != pair[1] and pair not in out:
-            out.append(pair)
+    by_name: "dict[str, list[tuple[str, str]]]" = {}
 
     for name in names:
+        out = by_name.setdefault(name, [])
+
+        def add(pair: "tuple[str, str]", out=out) -> None:
+            if pair[0] != pair[1] and pair not in out:
+                out.append(pair)
+
+        # Content is read only to REFUSE a move (gh-2459): a former place is
+        # the record's, and a file there moves only when jm can show it is
+        # its own -- a test or bench the component's own build names there,
+        # a header directory whose core carries the component's guard, a
+        # source directory whose CMakeLists builds its targets.
+        builds = [] if root is None else _build_texts(root, name, (was, cfg))
         for kind in NATIVE_FILES:
-            add((native_rel(kind, name, was), native_rel(kind, name, cfg)))
+            old_rel = native_rel(kind, name, was)
+            if builds and not any(_names_path(t, old_rel) for t in builds):
+                continue
+            add((old_rel, native_rel(kind, name, cfg)))
         old_dir, new_dir = core_dir(name, was), core_dir(name, cfg)
-        if old_dir != new_dir:
+        if old_dir != new_dir and (
+            root is None or _headers_owned(root, cfg, old_dir, name)
+        ):
             files = {f.format(name) for f in NAMED_HEADERS.values()}
             old_abs = None if root is None else path(root, old_dir, cfg)
             if (
@@ -940,18 +1022,201 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
             for f in sorted(files):
                 add((rel(f"{old_dir}/{f}", cfg), rel(f"{new_dir}/{f}", cfg)))
         old, new = src_dir(name, was), src_dir(name, cfg)
-        if old == new or root is None:
-            continue
-        old_abs = Path(root) / old
-        if not old_abs.is_dir():
-            continue
-        shared = any(d.startswith(old + "/") for d in new_src)
-        for f in sorted(old_abs.iterdir()):
-            if f.is_file() and (
-                not shared or _named_source(f.name, name, cfg)
-            ):
-                add((f"{old}/{f.name}", f"{new}/{f.name}"))
+        old_abs = Path(root) / old if root is not None else None
+        if (
+            old != new
+            and old_abs is not None
+            and old_abs.is_dir()
+            and src_owned(root, name, was, (was, cfg))
+        ):
+            shared = any(d.startswith(old + "/") for d in new_src)
+            for f in sorted(old_abs.iterdir()):
+                if f.is_file() and (
+                    not shared or _named_source(f.name, name, cfg)
+                ):
+                    add((f"{old}/{f.name}", f"{new}/{f.name}"))
+    return {n: pairs for n, pairs in by_name.items() if pairs}
+
+
+def _build_texts(
+    root: Path, name: str, owners: "tuple[dict, ...]"
+) -> "list[str]":
+    """The build files that name *name*'s test and bench sources: its
+    CMakeLists at its source directory under each of *owners*, and the
+    ``make`` backend's root ``Makefile``; those that exist."""
+    found = [
+        Path(root) / src_rel(name, "CMakeLists.txt", o) for o in owners
+    ] + [Path(root) / "Makefile"]
+    return [
+        p.read_text(encoding="utf-8")
+        for p in dict.fromkeys(found)
+        if p.is_file()
+    ]
+
+
+def _names_path(text: str, rel_posix: str) -> bool:
+    """Whether *text* names the project-relative *rel_posix* as a whole
+    path token."""
+    return bool(
+        re.search(rf"(?<![\w.-]){re.escape(rel_posix)}(?![\w.-])", text)
+    )
+
+
+def _headers_owned(root: Path, cfg: dict, d: str, name: str) -> bool:
+    """Whether the header directory *d* is *name*'s by its content: its
+    ``<name>_core.h`` carries *name*'s own guard. A kind or hand-written
+    module's core header is its author's, and is not asked; a directory
+    with no core header holds nothing jm named to move."""
+    from . import _config as C
+
+    for m in C.modules(cfg):
+        if C.module_paths(m).cname == name and (
+            C.is_no_generate_module(cfg, m)
+            or (cfg["module"].get(m) or {}).get("kind")
+        ):
+            return True
+    core = path(root, f"{d}/{NAMED_HEADERS['core'].format(name)}", cfg)
+    return not core.exists() or guarded(core, cfg, name)
+
+
+def cmake_owned(text: str, name: str, owners: "tuple[dict, ...]") -> bool:
+    """Whether *text*, a CMakeLists at *name*'s place, is jm's for *name*
+    in this project: it builds *name*'s targets (:func:`declares`), and
+    each test or bench source of *name*'s it names is where one of *owners*
+    puts it -- a copy of another project's names that project's (gh-2459).
+    Read only to refuse."""
+    if not declares(text, name):
+        return False
+    tails = {NATIVE_FILES[k][1].format(name) for k in NATIVE_FILES}
+    named = re.findall(
+        r"\$\{CMAKE_SOURCE_DIR\}/((?:"
+        + "|".join(re.escape(t) for t in HARNESS)
+        + r")(?:/[\w.-]+)*/("
+        + "|".join(re.escape(t) for t in tails)
+        + r"))(?![\w.])",
+        text,
+    )
+    ours = {native_rel(k, name, o) for k in NATIVE_FILES for o in owners}
+    return all(p in ours for p, _f in named)
+
+
+def src_owned(
+    root: Path, name: str, where: dict, spellings: "tuple[dict, ...]"
+) -> bool:
+    """Whether *name*'s source directory under *where* is its own by its
+    content: a CMakeLists there builds *name*'s targets (:func:`declares`),
+    and a ``<name>_core.c`` there includes *name*'s header as jm spells it
+    under one of *spellings* -- a copy of another project's core includes
+    that project's. Read only to refuse a move (gh-2459)."""
+    d = src_path(root, name, where)
+    cml = d / "CMakeLists.txt"
+    if not cml.is_file() or not declares(
+        cml.read_text(encoding="utf-8"), name
+    ):
+        return False
+    core = d / f"{name}_core.c"
+    if not core.is_file():
+        return True
+    text = core.read_text(encoding="utf-8", errors="replace")
+    return any(
+        f'#include "{core_include(name, o)}"' in text for o in spellings
+    )
+
+
+def declares(text: str, name: str) -> bool:
+    """Whether *text*, a CMakeLists, builds one of *name*'s own targets --
+    its core library, its extension module, or its binding source -- the
+    way every CMakeLists jm renders for *name* does (gh-2459).
+
+    Used only to REFUSE: a CMakeLists at *name*'s place that builds none of
+    them is not jm's for *name* (a vendored ``add_library(vendor_fir ...)``),
+    so jm writes nothing there.
+
+    >>> declares("add_library(fir_core OBJECT fir_core.c)", "fir")
+    True
+    >>> declares("add_library(vendor_fir STATIC v.c)", "fir")
+    False
+    """
+    n = re.escape(name)
+    return bool(
+        re.search(
+            rf"\badd_library\(\s*{n}_core\b"
+            rf"|\bPython3_add_library\(\s*{n}\b"
+            rf"|(?<![\w.]){n}_ext\.c\b",
+            text,
+        )
+    )
+
+
+def guarded(header: Path, cfg: dict, name: str) -> bool:
+    """Whether *header* opens with *name*'s own include guard (the one jm
+    renders, ``<STEM>_CORE_H``): a ``<name>_core.h`` another project wrote
+    carries its own (gh-2459)."""
+    from . import _csym
+
+    if not header.is_file():
+        return False
+    m = _csym._GUARD_LINE.search(
+        header.read_text(encoding="utf-8", errors="replace")
+    )
+    return bool(m) and m.group(1) == _csym.upper(cfg, name)
+
+
+def foreign_files(root: Path, cfg: dict, name: str) -> "list[str]":
+    """The files at *name*'s source and header directories that jm cannot
+    show are its own for *name* (gh-2459): in the source directory, a file
+    jm does not name for it, a CMakeLists building none of its targets
+    (:func:`declares`), or a ``<name>_core.c`` not including its header; in
+    the header directory, a ``<name>_core.h`` without its guard. Files
+    only: a subdirectory is another component's place, or nobody's.
+
+    What a command creating *name* asks before it writes there: jm writes
+    a component only into a directory it can show is its own. Each path
+    project-relative, sorted.
+    """
+    out: "list[str]" = []
+    d = src_path(root, name, cfg)
+    if d.is_dir():
+        for f in sorted(d.iterdir()):
+            if not f.is_file():
+                continue
+            if f.name == "CMakeLists.txt":
+                ok = declares(f.read_text(encoding="utf-8"), name)
+            elif f.name == f"{name}_core.c":
+                # Another project's core includes that project's header.
+                ok = f'#include "{core_include(name, cfg)}"' in f.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            else:
+                ok = _named_source(f.name, name, cfg)
+            if not ok:
+                out.append(f.relative_to(root).as_posix())
+    # The header directory: jm writes only the headers it names, beside
+    # whatever the author keeps there (a foreign type's header an
+    # `init_param` names), so only a `<name>_core.h` that is not the
+    # component's -- another guard -- makes it someone else's.
+    core = core_h(root, name, cfg)
+    if core.is_file() and not guarded(core, cfg, name):
+        out.append(core.relative_to(root).as_posix())
     return out
+
+
+def refuse_foreign(root: Path, cfg: dict, name: str) -> None:
+    """Refuse to create *name* where :func:`foreign_files` finds files jm
+    did not write for it, naming each and what to do (gh-2459)."""
+    found = foreign_files(root, cfg, name)
+    if found:
+        from . import _config as C
+
+        C._refuse(
+            [
+                f"{src_dir(name, cfg)}/ and its header directory hold files"
+                f" jm did not write for `{name}`: {', '.join(found)}. jm"
+                " writes a component only into a directory it can show is"
+                " its own -- move them, or choose another name or module"
+                " package (gh-2459)"
+            ]
+        )
 
 
 def _named_source(fname: str, name: str, cfg: dict) -> bool:
