@@ -7309,7 +7309,11 @@ def record_applied(root: Path, cfg: dict) -> "list[str]":
       the package it was placed under, for each module while the layout is
       ``nested`` -- its own path when it declares none, because the key's
       absence means "never placed" (`_incpath.unplaced`) -- and removed in
-      every other layout, where a package moves nothing.
+      every other layout, where a package moves nothing;
+    - ``[module.X] applied_objects`` beside it: the members placed in that
+      package, under ``nested`` only -- where a member's source directory is
+      its module's, not the flat ``native/src/<name>`` -- so a member
+      declared since is not taken as placed (`_incpath.placed`).
 
     Surgical line edits, as :func:`stamp_jm_version` makes, so nothing
     else in any file changes. Called by a full `apply` after its last
@@ -7332,34 +7336,91 @@ def record_applied(root: Path, cfg: dict) -> "list[str]":
     _owners, module_owners, _ = _provenance(root)
     for mod in modules(cfg):
         table = cfg.setdefault("module", {}).setdefault(mod, {})
-        want = (
-            table.get("package", module_paths(mod).pypath)
-            if now == "nested"
-            else None
+        nested = now == "nested"
+        wants = (
+            (
+                INC.APPLIED_PACKAGE,
+                table.get("package", module_paths(mod).pypath)
+                if nested
+                else None,
+            ),
+            (
+                INC.APPLIED_OBJECTS,
+                sorted(module_objects(cfg, mod)) if nested else None,
+            ),
         )
-        if table.get(INC.APPLIED_PACKAGE) == want:
-            continue
         quoted = _re.escape(mod) if "." not in mod else None
         header = (
             rf"module\.(?:{quoted}|\"{_re.escape(mod)}\"|'{_re.escape(mod)}')"
             if quoted
             else rf"module\.(?:\"{_re.escape(mod)}\"|'{_re.escape(mod)}')"
         )
-        _set_table_key(
-            module_owners.get(mod, root / FILENAME),
-            header,
-            INC.APPLIED_PACKAGE,
-            want,
-            spelled=f"module.{_toml_key(mod)}",
-        )
-        if want is None:
-            table.pop(INC.APPLIED_PACKAGE, None)
-        else:
-            table[INC.APPLIED_PACKAGE] = want
-        notes.append(f"[module.{mod}] {INC.APPLIED_PACKAGE} = {want!r}")
+        for key, want in wants:
+            if table.get(key) == want:
+                continue
+            _set_table_key(
+                module_owners.get(mod, root / FILENAME),
+                header,
+                key,
+                want,
+                spelled=f"module.{_toml_key(mod)}",
+                after=INC.APPLIED_PACKAGE
+                if key == INC.APPLIED_OBJECTS
+                else None,
+            )
+            if want is None:
+                table.pop(key, None)
+            else:
+                table[key] = want
+            notes.append(f"[module.{mod}] {key} = {want!r}")
     if notes:
         _textio.wrote_toml()
     return notes
+
+
+def record_created(
+    cfg: dict, module: str, member: "str | None" = None
+) -> None:
+    """Record in *cfg* that a command just created *module*'s directory, or
+    *member* in it, where the nested layout puts it (gh-2459).
+
+    The command checked the directory was empty and wrote jm's render into
+    it, so it is placed: `apply` must not take its sacred core for someone
+    else's (`_incpath.placed`). Only under ``nested`` -- where a member's
+    directory is its module's package, not the flat ``native/src/<name>``
+    -- and only where the module's record can say so: a record that
+    predates ``applied_objects`` is left for `apply` to show and complete.
+    The caller saves *cfg*; :func:`record_applied` rewrites both keys after
+    the next full `apply`.
+    """
+    from . import _incpath as INC
+
+    if INC.layout(cfg) != "nested":
+        return
+    table = cfg.setdefault("module", {}).setdefault(module, {})
+    if INC.APPLIED_PACKAGE not in table:
+        table[INC.APPLIED_PACKAGE] = table.get(
+            "package", module_paths(module).pypath
+        )
+        table[INC.APPLIED_OBJECTS] = []
+    if member is not None and INC.APPLIED_OBJECTS in table:
+        if member not in table[INC.APPLIED_OBJECTS]:
+            table[INC.APPLIED_OBJECTS] = sorted(
+                [*table[INC.APPLIED_OBJECTS], member]
+            )
+
+
+def forget_placed(cfg: dict, module: str, member: str) -> None:
+    """Drop *member* from *module*'s ``applied_objects`` in *cfg* (gh-2459):
+    `jm remove` took it, so a member declared again under that name is a
+    new place, checked as one."""
+    from . import _incpath as INC
+
+    table = (cfg.get("module") or {}).get(module) or {}
+    if member in table.get(INC.APPLIED_OBJECTS, []):
+        table[INC.APPLIED_OBJECTS] = [
+            o for o in table[INC.APPLIED_OBJECTS] if o != member
+        ]
 
 
 def _toml_key(key: str) -> str:
@@ -7373,8 +7434,9 @@ def _set_table_key(
     path: Path,
     header: str,
     key: str,
-    value: "str | None",
+    value: "str | list[str] | None",
     spelled: "str | None" = None,
+    after: "str | None" = None,
 ) -> None:
     """Set ``key = value`` in the table whose header matches the regex
     *header* in the TOML file *path* -- replacing the key's line, adding it
@@ -7391,14 +7453,26 @@ def _set_table_key(
     stop = head.end() + (end.start() if end else len(text) - head.end())
     body = text[head.end() : stop]
     line = _re.compile(rf"^[ \t]*{_re.escape(key)}[ \t]*=[^\n]*\n", _re.M)
+    literal = (
+        "[" + ", ".join(_toml_basic_string(v) for v in value) + "]"
+        if isinstance(value, list)
+        else None
+        if value is None
+        else _toml_basic_string(value)
+    )
+    anchor = (
+        _re.compile(rf"^[ \t]*{_re.escape(after)}[ \t]*=[^\n]*\n", _re.M)
+        if after
+        else None
+    )
     if value is None:
         body = line.sub("", body, count=1)
     elif line.search(body):
-        body = line.sub(
-            lambda _m: f"{key} = {_toml_basic_string(value)}\n", body, count=1
-        )
+        body = line.sub(lambda _m: f"{key} = {literal}\n", body, count=1)
+    elif anchor is not None and (m := anchor.search(body)):
+        body = body[: m.end()] + f"{key} = {literal}\n" + body[m.end() :]
     else:
-        body = f"{key} = {_toml_basic_string(value)}\n" + body
+        body = f"{key} = {literal}\n" + body
     _textio.write_text(path, text[: head.end()] + body + text[stop:])
 
 
@@ -8674,16 +8748,16 @@ _MODULE_TAIL = (
     "composer", "json", "serializers", "settings",
 )  # fmt: skip
 _KIND_MODULE_HEAD = (
-    "applied_package", "no_generate", "kind", "backing", "capsule_name",
-    "package", "header",
+    "applied_package", "applied_objects", "no_generate", "kind", "backing",
+    "capsule_name", "package", "header",
 )  # fmt: skip
 #: ``[module.X]`` by kind; the rest of the kind's vocabulary follows sorted,
 #: as gh-1229 wrote it. A plain module has no vocabulary in `_keys`.
 _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
-    # gh-2459: `applied_package` is jm's record, written first by
-    # `record_applied`, so a later save leaves it where it stands.
-    "": ("applied_package", "no_generate", "functions_in_core", "objects",
-         "package")
+    # gh-2459: `applied_package` / `applied_objects` are jm's record,
+    # written first by `record_applied`, so a later save leaves them be.
+    "": ("applied_package", "applied_objects", "no_generate",
+         "functions_in_core", "objects", "package")
     + _MODULE_TAIL,
     **{
         kind: _KIND_MODULE_HEAD

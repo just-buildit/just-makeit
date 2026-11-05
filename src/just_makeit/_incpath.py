@@ -434,6 +434,17 @@ def _hand_written_module(cfg: dict, name: str) -> bool:
     )
 
 
+def at_flat_place(name: str, owner: Owner) -> bool:
+    """Whether *owner*'s manifest puts *name*'s C where the flat layout
+    does, ``native/src/<name>`` -- everything but a module's members and
+    core under ``nested`` (gh-2459).
+
+    >>> at_flat_place("fir", {"project": {"name": "p"}})
+    True
+    """
+    return src_dir(name, owner) == f"{SRC_DIR}/{name}"
+
+
 def src_path(root: Path, name: str, owner: "Owner | None" = None) -> Path:
     """:func:`src_dir` under *root*; *owner* defaults to *root*.
 
@@ -590,6 +601,9 @@ def jm_subdir(path: str, cfg: dict) -> bool:
 #: a file in the tree. `_config.record_applied` is their one writer.
 APPLIED_LAYOUT = "applied_layout"
 APPLIED_PACKAGE = "applied_package"
+#: gh-2459: and, beside it, the members jm has placed in that module's
+#: package -- recorded by `apply` and by the command that creates one there.
+APPLIED_OBJECTS = "applied_objects"
 
 
 def applied(owner: Owner) -> dict:
@@ -667,10 +681,69 @@ def unplaced(owner: Owner) -> "set[str]":
         return set()
     out: "set[str]" = set()
     for mod in C.modules(cfg):
-        if APPLIED_PACKAGE not in (cfg["module"].get(mod) or {}):
+        table = cfg["module"].get(mod) or {}
+        if APPLIED_PACKAGE not in table:
             out |= set(C.module_objects(cfg, mod))
             out.add(C.module_paths(mod).cname)
+        elif APPLIED_OBJECTS in table:
+            cname = C.module_paths(mod).cname
+            out |= {
+                o
+                for o in C.module_objects(cfg, mod)
+                if o != cname and o not in table[APPLIED_OBJECTS]
+            }
     return out
+
+
+def placed(owner: Owner, name: str) -> "bool | None":
+    """Whether jm's record says it placed *name* where *owner*'s manifest
+    puts its source now -- for a name whose place depends on its module's
+    package (gh-2459).
+
+    A module's own directory (its cname, and the object collocated there)
+    is placed when the module carries an ``applied_package`` that puts it
+    here; a member, when it is also in the module's ``applied_objects``.
+    ``None`` when the record cannot say: the module's record predates
+    ``applied_objects``, or the project carries no record at all (last
+    applied before it). Unknown, to be shown from the tree.
+
+    >>> o = {"project": {"name": "p", "layout": "nested"},
+    ...      "module": {"m": {"objects": ["a", "b"], "applied_package": "m",
+    ...                       "applied_objects": ["a"]}}, "a": {}, "b": {}}
+    >>> placed(o, "a"), placed(o, "b"), placed(o, "m")
+    (True, False, True)
+    """
+    from . import _config as C
+
+    cfg = manifest(owner)
+    for mod in C.modules(cfg):
+        table = cfg["module"].get(mod) or {}
+        cname = C.module_paths(mod).cname
+        members = C.module_objects(cfg, mod)
+        if name != cname and name not in members:
+            continue
+        if APPLIED_PACKAGE not in table:
+            # A project with no record at all (last applied before it, or
+            # never): unknown. One jm has recorded: a module it never
+            # placed, declared since.
+            if APPLIED_LAYOUT not in (cfg.get("project") or {}):
+                return None
+            return False
+        recorded = {
+            **cfg,
+            "module": {
+                **cfg["module"],
+                mod: {**table, "package": table[APPLIED_PACKAGE]},
+            },
+        }
+        if src_dir(name, recorded) != src_dir(name, cfg):
+            return False
+        if name == cname:
+            return True
+        if APPLIED_OBJECTS not in table:
+            return None
+        return name in table[APPLIED_OBJECTS]
+    return True
 
 
 def src_layout_free(rel_posix: str, owner: Owner) -> str:

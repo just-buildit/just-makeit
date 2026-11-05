@@ -680,7 +680,7 @@ def test_nested_is_mirrored_with_the_module_directories_moved(
     # it under; a mirrored one has no use for the record.
     got = {
         rel: re.sub(
-            r'^applied_package = "[^"]*"\n',
+            r"^applied_(package|objects) = [^\n]*\n",
             "",
             data.decode("utf-8", "surrogateescape"),
             flags=re.M,

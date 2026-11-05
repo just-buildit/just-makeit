@@ -442,6 +442,8 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         objs = cfg["module"][module].get("objects", [])
         if obj in objs:
             objs.remove(obj)
+        # gh-2459: and off jm's record of the members it placed there.
+        C.forget_placed(cfg, module, obj)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 

@@ -870,6 +870,14 @@ def _report_repairs(root: Path) -> None:
 
     _apply._refuse_unverified_moves(root, C.load(root), None)
     _rename_superseded(root)
+    # Every native move landed: jm placed those files, so it records where
+    # (the root wiring follows on the next `apply`, which also records). A
+    # move left waiting -- a file in both places -- keeps the old record,
+    # so it is still found.
+    from . import _incpath as INC
+
+    if not [o for o, _n in INC.relocations(root) if (root / o).is_file()]:
+        C.record_applied(root, C.load(root))
     _report_c_prefix(root)
     fixed = _repair_complex_spelling(root)
     if not fixed:

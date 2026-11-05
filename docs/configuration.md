@@ -351,7 +351,8 @@ the component move.
 
 **Where a file was is jm's record, not a guess.** `jm apply` records what it
 placed in the manifest -- `[project] applied_layout`, and under `nested`
-each module's `applied_package` -- and computes every former place from
+each module's `applied_package` and the members it placed there,
+`applied_objects` -- and computes every former place from
 that record: a component's directories under the recorded layout and
 package, against the current ones. Nothing in the tree is read to find one,
 so a vendored directory shaped like jm's (`native/src/third_party/fir/`), or
