@@ -7379,7 +7379,7 @@ def record_applied(root: Path, cfg: dict) -> "list[str]":
 
 
 def record_created(
-    cfg: dict, module: str, member: "str | None" = None
+    root: Path, cfg: dict, module: str, member: "str | None" = None
 ) -> None:
     """Record in *cfg* that a command just created *module*'s directory, or
     *member* in it, where the nested layout puts it (gh-2459).
@@ -7392,11 +7392,28 @@ def record_created(
     predates ``applied_objects`` is left for `apply` to show and complete.
     The caller saves *cfg*; :func:`record_applied` rewrites both keys after
     the next full `apply`.
+
+    Never ahead of the run that establishes the record: a project that
+    carries no ``applied_layout`` gets one here only when nothing waits to
+    move -- every file already where this layout puts it, so the record is
+    the tree -- and nothing at all otherwise (`_cli` refuses the command
+    first anyway, while files wait).
     """
     from . import _incpath as INC
 
     if INC.layout(cfg) != "nested":
         return
+    project = cfg.setdefault("project", {})
+    if INC.APPLIED_LAYOUT not in project:
+        if [o for o, _n in INC.relocations(root) if (root / o).is_file()]:
+            return
+        # Through `record_applied`'s own line edit, so the key lands where
+        # that writer puts it; the caller's save keeps an existing key's
+        # place but appends a new one.
+        _set_table_key(
+            root / FILENAME, r"project", INC.APPLIED_LAYOUT, INC.layout(cfg)
+        )
+        project[INC.APPLIED_LAYOUT] = INC.layout(cfg)
     table = cfg.setdefault("module", {}).setdefault(module, {})
     if INC.APPLIED_PACKAGE not in table:
         table[INC.APPLIED_PACKAGE] = table.get(

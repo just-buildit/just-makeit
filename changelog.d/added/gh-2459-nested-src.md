@@ -51,3 +51,7 @@
     `jm remove` takes the member off it. A module recorded before the key
     existed has its members shown from the tree (their CMakeLists must be
     jm's render) and recorded on the next `apply`.
+- **After upgrading jm on a nested project, run `jm apply` first** when
+    files need to move (gh-2459): until it has, every other mutating
+    command refuses with "files are waiting to move: run `jm apply` first"
+    and leaves the tree as it was; `jm upgrade` still runs.

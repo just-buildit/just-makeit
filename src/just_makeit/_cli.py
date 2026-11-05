@@ -816,6 +816,7 @@ def main() -> None:
 
     with _undo.guard(_project_changed_by(sys.argv[1:])):
         try:
+            _refuse_while_files_wait(sys.argv[1:])
             _main()
             _undo.commit()
         except Refusal as exc:
@@ -943,6 +944,46 @@ def _no_arguments(cmd: str, args: "list[str]") -> None:
     """Refuse the first of *args* (argv after *cmd*), if there is one."""
     if args:
         _refuse_argument(cmd, args[0])
+
+
+#: The commands that make the moves a layout or ``package`` change leaves
+#: waiting (gh-2459): every other MUTATING command waits for them.
+_MOVERS = frozenset({"apply", "upgrade"})
+
+
+def _refuse_while_files_wait(args: "list[str]") -> None:
+    """Refuse a MUTATING command, other than the ones that move
+    (:data:`_MOVERS`), while files wait to move (gh-2459).
+
+    A layout or ``package`` change leaves each component's files where jm
+    last put them until `jm apply` (or `jm upgrade`) moves them, and jm's
+    record of what it placed is written by that run. A command that writes
+    a component meanwhile writes it where the new layout puts it, beside
+    files still at the old place -- a module's glue at its new directory,
+    its C at the old one, both wired. So it waits. Keyed off `COMMANDS`'
+    MUTATING classification, the same one `_undo` reads: a command added
+    tomorrow waits too, with nothing to register.
+    """
+    root = _project_changed_by(args)
+    if root is None or args[0] in _MOVERS or _HELP & set(args[1:]):
+        return
+    from . import _incpath as INC
+    from ._report import Refusal
+
+    try:
+        waiting = [
+            o for o, _n in INC.relocations(root) if (root / o).is_file()
+        ]
+    except Exception:  # noqa: BLE001 -- the command reports its own error
+        return
+    if waiting:
+        raise Refusal(
+            f"files are waiting to move ({len(waiting)}, first"
+            f" {waiting[0]}): run `jm apply` first. A layout or `package`"
+            f" change is made by `jm apply`; `jm {args[0]}` writes where the"
+            " new layout puts things, so it runs once the files have moved"
+            " (gh-2459)"
+        )
 
 
 def _project_changed_by(args: "list[str]") -> "Path | None":

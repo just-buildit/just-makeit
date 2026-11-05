@@ -369,6 +369,13 @@ put them, and its C moves to the nested place on the first `apply` (`jm status` 
 or a module's `package`**: until then jm has no record of the package your
 files sit under, and moves nothing for the change.
 
+**While files wait to move, run `jm apply` before anything else.** After
+upgrading jm on such a project, or after changing `layout` or a module's
+`package`, every mutating command except `jm apply` and `jm upgrade`
+refuses with "files are waiting to move: run `jm apply` first" and leaves
+the tree as it was: it would write where the new layout puts things,
+beside files still at the old place.
+
 Before anything moves, jm checks the record against the tree: the
 component's CMakeLists at its recorded place must be the one jm renders
 there, byte for byte (riders jm keeps, such as an `if(VAR)` wiring block,

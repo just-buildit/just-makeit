@@ -3680,7 +3680,7 @@ def run(
     C.add_to_module(cfg, module, comp, before=before)
     # gh-2459: placed where the nested layout puts it, in an empty
     # directory (checked above): on record, so `apply` knows it is jm's.
-    C.record_created(cfg, module, comp)
+    C.record_created(root, cfg, module, comp)
     C.add_component(
         cfg,
         comp,
