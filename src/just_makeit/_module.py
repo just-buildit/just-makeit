@@ -156,7 +156,7 @@ def run(
         ] = "true"
     # gh-2459: its directory is created below, where the nested layout puts
     # it: on record.
-    C.record_created(cfg, module)
+    C.record_created(root, cfg, module)
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 

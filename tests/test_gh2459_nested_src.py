@@ -65,6 +65,7 @@ from test_gh2427_nested_layout import (
     _author_edits,
     _composer_project,
     _declare,
+    _builds,
     _digest,
     _jm,
     _scaffold,
@@ -570,12 +571,10 @@ def test_script_does_not_replay_the_record(nested):
     assert "applied_" not in r.stdout, r.stdout
 
 
-def test_a_project_switched_before_the_record_moves_only_its_c(tmp_path):
-    """A nested project from jm 0.118: headers, tests and benches nested,
-    C flat, no record. It reads as last applied flat, so nothing already
-    nested is found at a flat place, and its C -- which 0.118 never nested
-    -- moves on the first `apply`."""
-    root = _scaffold(tmp_path, "nested")
+def _before_the_record(root: Path) -> None:
+    """*root*, a settled nested project, as a jm before the record left it
+    (gh-2459): every component's C flat, its wiring flat, no ``applied_*``
+    key -- so its C waits to move."""
     cfg = C.load(root)
     old = {}
     for name in INC.native_names(cfg):
@@ -595,13 +594,22 @@ def test_a_project_switched_before_the_record_moves_only_its_c(tmp_path):
     for toml in root.rglob("*.toml"):
         toml.write_text(
             re.sub(
-                r"^applied_(layout|package) = [^\n]*\n",
+                r"^applied_\w+ = [^\n]*\n",
                 "",
                 toml.read_text("utf-8"),
                 flags=re.M,
             ),
             encoding="utf-8",
         )
+
+
+def test_a_project_switched_before_the_record_moves_only_its_c(tmp_path):
+    """A nested project from jm 0.118: headers, tests and benches nested,
+    C flat, no record. It reads as last applied flat, so nothing already
+    nested is found at a flat place, and its C -- which 0.118 never nested
+    -- moves on the first `apply`."""
+    root = _scaffold(tmp_path, "nested")
+    _before_the_record(root)
     headers = {p: p.read_bytes() for p in (root / INC.INC_DIR).rglob("*.h")}
     _jm(root, "apply")
     for path, data in headers.items():
@@ -651,9 +659,9 @@ def test_a_module_declared_since_the_last_apply_has_no_former_place(
     vendors another jm project's ``gainv`` at ``native/src/third_party/
     gainv`` -- the very place a nested module ``third_party`` puts it --
     then declares that module, holding a ``gainv``, packaged elsewhere or
-    with the project switched back to flat. The module carries no
-    ``applied_package``: no record, so no former place, and the vendored
-    copy stays."""
+    with the project switched back to flat (and that switch applied). The
+    module carries no ``applied_package``: no record, so no former place,
+    and the vendored copy stays."""
     _jm(tmp_path, "new", "donor")
     donor = tmp_path / "donor"
     _jm(donor, "object", "gainv")
@@ -673,17 +681,21 @@ def test_a_module_declared_since_the_last_apply_has_no_former_place(
         _jm(root, "module", "third_party", "--package", "vend")
         want = "native/src/vend/gainv"
     else:
+        # The switch is applied first: with files waiting to move, every
+        # other mutating command refuses (`_cli`).
         _declare(root, "")
+        _jm(root, "apply")
         _jm(root, "module", "third_party")
         want = "native/src/gainv"
     _jm(root, "object", "gainv", "--module", "third_party")
     # Created by the command under the record's layout, it is on record at
-    # its place (`package`); created while the project is flat, it is not
-    # (`layout`). Either way it has no former place.
+    # its place (`package`); created in a flat project, there is no record
+    # to be on (`layout`). Either way it has no former place.
     if change == "package":
         assert INC.placed(root, "gainv") is True
     else:
-        assert "gainv" in INC.unplaced(root)
+        assert INC.APPLIED_LAYOUT not in C.load(root)["project"]
+        assert INC.placed(root, "gainv") is None
     _jm(root, "apply")
     for path, data in foreign.items():
         assert path.read_bytes() == data, path
@@ -1323,3 +1335,91 @@ def test_a_settled_project_with_no_record_is_shown_then_recorded(tmp_path):
     assert cfg["project"][INC.APPLIED_LAYOUT] == "nested"
     assert "fir" in cfg["module"][_MODULE][INC.APPLIED_OBJECTS]
     _jm(root, "status", "--check")
+
+
+# ── 9. nothing else runs while files wait to move ─────────────────────────
+
+
+def _waits(r) -> None:
+    assert r.returncode != 0, r.stdout
+    text = " ".join(r.stderr.split())
+    assert "files are waiting to move" in text, text
+    assert "run `jm apply` first" in text, text
+
+
+def test_a_command_run_before_the_moves_waits_for_apply(tmp_path):
+    """migd.sh: a nested project from a jm before the record, its C still
+    flat, and the first command after upgrading jm is ``jm object mix
+    --module ...``. It would write mix where the nested layout puts it
+    while fir and gain wait at their flat places, and the next `apply`
+    could no longer tell jm's files from the author's. So it refuses,
+    naming `jm apply`, with the tree as it was; once `apply` has moved
+    the files the same command succeeds, and the project builds."""
+    root = _scaffold(tmp_path, "nested")
+    _before_the_record(root)
+    core = root / "native" / "src" / "fir" / "fir_core.c"
+    core.write_text(core.read_text("utf-8") + "/* AUTHOR-CORE */\n", "utf-8")
+    before = _digest(root)
+    mix = ("object", "mix", "--module", _MODULE)
+    _waits(run_cli(*mix, cwd=root))
+    assert _digest(root) == before
+    _jm(root, "apply")
+    _jm(root, *mix)
+    _jm(root, "apply")
+    _assert_in_place(root)
+    assert "AUTHOR-CORE" in (
+        INC.src_path(root, "fir") / "fir_core.c"
+    ).read_text("utf-8")
+    assert INC.placed(root, "mix") is True
+    _jm(root, "status", "--check")
+    _builds(root, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("method", "fir", "m", "--doc", "M."),
+        ("add", "--object", "amp", "--state", "k:double:1.0", "--force"),
+    ],
+    ids=["method", "add"],
+)
+def test_every_mutating_command_waits_for_the_moves(tmp_path, argv):
+    """The refusal is the MUTATING classification's, not one command's:
+    `jm method` and `jm add` wait too, on a component that is not moving
+    as well as one that is."""
+    root = _scaffold(tmp_path, "nested")
+    _before_the_record(root)
+    before = _digest(root)
+    _waits(run_cli(*argv, cwd=root))
+    assert _digest(root) == before
+    _jm(root, "apply")
+    _jm(root, *argv)
+
+
+@pytest.mark.parametrize("verb", ["apply", "upgrade"])
+def test_the_commands_that_move_files_do_not_wait(tmp_path, verb):
+    """`apply` makes the moves and `upgrade` comes first after upgrading
+    jm, so neither is refused while files wait."""
+    root = _scaffold(tmp_path, "nested")
+    _before_the_record(root)
+    assert INC.relocations(root)
+    r = run_cli(verb, cwd=root)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "waiting to move" not in r.stderr
+    _jm(root, "apply")
+    _assert_in_place(root)
+
+
+def test_a_creation_while_files_wait_records_nothing(tmp_path):
+    """Behind the refusal, `record_created` itself: with no
+    ``applied_layout`` and files waiting to move, it writes no key, in
+    *cfg* or the manifest -- the record is established by the `apply`
+    that makes the moves, never ahead of it."""
+    root = _scaffold(tmp_path, "nested")
+    _before_the_record(root)
+    before = _digest(root)
+    cfg = C.load(root)
+    C.record_created(root, cfg, _MODULE, "mix")
+    assert INC.APPLIED_LAYOUT not in cfg["project"]
+    assert INC.APPLIED_PACKAGE not in cfg["module"][_MODULE]
+    assert _digest(root) == before
