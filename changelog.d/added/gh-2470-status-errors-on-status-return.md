@@ -10,7 +10,9 @@
     on a `kind = "handle"` method whose `int` return is a status, and on the
     `exit` finalizer's `__exit__`, which raises what the finalizer raises. A
     serializable `set_state` takes the same rows as `set_state_status_errors`,
-    on the object or on a handle module (`jm object --serializable   --set-state-status-error STATUS:ExcName[:message]`). Every face renders
+    on the object or on a handle module
+    (`--set-state-status-error STATUS:ExcName[:message]` on `jm object`).
+    Every face renders
     through one switch (`_borrow.status_switch_c`) and one validator
     (`_borrow.rows_why_not`). A status with no row keeps today's exception,
     a project with no table renders byte for byte as before, and the `.pyi`
