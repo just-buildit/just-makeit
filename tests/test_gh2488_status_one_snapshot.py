@@ -19,11 +19,22 @@ every time, with no loop and no sleep. Three files:
   changed during the run and gates -- never as STALE.
 * ``src/demo/amp.pyi``, owned and stale before status starts, untouched
   during the run: still STALE. The regression guard.
+
+A second window sits between the two copies: the snapshot, then the scratch
+the replay runs on. ``shutil.copytree`` is wrapped so the live tree changes
+right after the first one -- an unowned file, a create-only ``Makefile``
+edit, a superseded ``jb.toml``. Every finding must still be the snapshot's:
+a scratch copied from the live tree, or an OUTDATED / SUPERSEDED check that
+reads the live tree, reports them.
+
+And each temp tree has a parent of its own: a project directory named like
+one of them (``jm-snapshot`` crashed ``copytree``) still reports.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -110,3 +121,81 @@ def test_check_gates_on_a_file_it_could_not_compare(proj: Path) -> None:
     assert "changed-during-run (!)" in out, out
     for rel in _UNOWNED:
         assert rel not in out, out
+
+
+@pytest.fixture
+def late_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> "Iterator[tuple[Path, str]]":
+    """A clean project written to between status's two copies.
+
+    Returns the root and the report of an unhooked run, the baseline.
+    """
+    assert run_cli("new", "demo", cwd=tmp_path).returncode == 0
+    root = tmp_path / "demo"
+    r = run_cli("object", "fir", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    base = run_cli("status", cwd=root)
+    assert base.returncode == 0, base.stdout + base.stderr
+
+    real_copytree = _status.shutil.copytree
+    done: list[bool] = []
+
+    def copy_then_write(src, dst, *args, **kwargs):
+        out = real_copytree(src, dst, *args, **kwargs)
+        # `copytree` recurses through its own global name, so a
+        # subdirectory's copy comes through here too: wait for the whole
+        # read of the project root.
+        if not done and Path(src) == root:
+            # Right after the snapshot: the live tree moves on.
+            done.append(True)
+            (root / "notes").mkdir(exist_ok=True)
+            (root / "notes" / "late.txt").write_text("x\n", encoding="utf-8")
+            with (root / "Makefile").open("a", encoding="utf-8") as f:
+                f.write("# written after the snapshot\n")
+            (root / "jb.toml").write_text("", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(_status.shutil, "copytree", copy_then_write)
+    yield root, base.stdout
+    assert done, "the hook never saw status copy the project root"
+
+
+def test_findings_are_the_snapshots(late_writes: "tuple[Path, str]") -> None:
+    root, base = late_writes
+    r = run_cli("status", cwd=root)
+    out = r.stdout + r.stderr
+    assert "notes/late.txt" not in out, out
+    assert "CHANGED WHILE STATUS RAN" not in out, out
+    assert "OUTDATED (" not in out, out
+    assert "SUPERSEDED (" not in out, out
+    assert "jb.toml" not in out, out
+    assert r.returncode == 0, out
+    assert out == base, out
+
+
+def test_json_findings_are_the_snapshots(
+    late_writes: "tuple[Path, str]",
+) -> None:
+    root, _base = late_writes
+    r = run_cli("status", "--json", cwd=root)
+    assert "notes/late.txt" not in r.stdout, r.stdout
+    rep = json.loads(r.stdout)
+    assert rep["changed_during_run"] == [], rep["changed_during_run"]
+    assert rep["outdated"] == [], rep["outdated"]
+    assert r.returncode == 0, r.stdout
+
+
+@pytest.mark.parametrize(
+    "dirname", ["jm-snapshot", "jm-replay", "snapshot", "scratch", "replay"]
+)
+def test_a_project_named_like_a_temp_tree(
+    tmp_path: Path, dirname: str
+) -> None:
+    assert run_cli("new", "demo", cwd=tmp_path).returncode == 0
+    root = (tmp_path / "demo").rename(tmp_path / dirname)
+    r = run_cli("object", "fir", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OK — up to date" in r.stdout, r.stdout
