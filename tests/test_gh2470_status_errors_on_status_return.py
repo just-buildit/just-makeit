@@ -223,6 +223,7 @@ def test_without_a_table_every_face_renders_as_before(tmp_path):
     assert _OLD_STATUS in _fn(ext, "Acq_set_freq(")
     # No Raises section appears on set_state, whose prose names the class.
     assert "Raises\n" not in _member_doc(_pyi(dest), "set_state")
+    assert "or the core rejects it" in _member_doc(_pyi(dest), "set_state")
     # And an emptied table is no table: the tree returns to that text.
     _declare_tables(dest)
     _quiet(apply_run, dest)
@@ -255,6 +256,9 @@ def test_the_pyi_raises_section_lists_each_declared_class(tmp_path):
     ):
         doc = _member_doc(pyi, member)
         raises = doc[doc.index("Raises\n") :]
+        # The prose above defers to that section rather than claiming the
+        # core's refusal is always ValueError.
+        assert "or the core rejects it" not in doc[: doc.index("Raises\n")]
         assert raises.index("MemoryError") < raises.index("P_ERR_INVALID")
         assert "``P_ERR_MEMORY``" in raises
         assert "``rejected``" in raises
@@ -285,6 +289,7 @@ def test_a_module_objects_stub_lists_the_set_state_rows(tmp_path):
     pyi = next((dest / "src/p").rglob("sig*.pyi")).read_text("utf-8")
     raises = _member_doc(pyi, "set_state")
     assert "MemoryError" in raises and "``P_ERR_MEMORY``" in raises
+    assert "or the core rejects it" not in raises
     frag = (dest / "native/src/sig/sig_ext_mix.c").read_text("utf-8")
     assert "case P_ERR_MEMORY:" in _fn(frag, "Mix_set_state(")
 
@@ -346,13 +351,25 @@ def test_jm_script_round_trips_both_tables(tmp_path):
     assert orig == replayed
 
 
-def test_apply_from_the_manifest_alone_keeps_the_rows(tmp_path):
+@pytest.mark.parametrize("documented", [True, False])
+def test_apply_from_the_manifest_alone_keeps_the_rows(tmp_path, documented):
     """A fresh checkout: the generated binding deleted, `apply` rebuilds it
     from the manifest, and `status --check` agrees with the tree -- which it
-    can only do if the replay it compares against carried the key."""
+    can only do if the replay it compares against carried the key.
+
+    Undocumented is the case that needs `_apply._object_kwargs` to forward
+    the key: a documented header makes `apply` re-render `_ext.c` from the
+    real manifest afterwards, which hides a replay that dropped it."""
     dest = _object_project(tmp_path / "p")
     _declare_tables(dest)
     _quiet(apply_run, dest)
+    if not documented:
+        header = dest / INC_ROOT / "acq/acq_core.h"
+        text = header.read_text(encoding="utf-8")
+        text = re.sub(r"[ \t]*/\*\*.*?\*/\n?", "", text, flags=re.S)
+        text = re.sub(r"[ \t]*///<[^\n]*", "", text)
+        assert "/**" not in text and "@brief" not in text
+        header.write_text(text, encoding="utf-8")
     (dest / "native/src/acq/acq_ext.c").unlink()
     _quiet(apply_run, dest)
     ext = _ext(dest)
@@ -375,19 +392,28 @@ def test_set_state_rows_without_serializable_are_refused(tmp_path):
         C.load(dest)
 
 
-def test_the_cli_refuses_set_state_rows_before_writing(tmp_path):
+@pytest.mark.parametrize(
+    "extra, spec, needle",
+    [
+        ((), "P_ERR_MEMORY:MemoryError", "not serializable"),
+        # set_state has no scalar in scope: the renderer cannot emit `{n}`,
+        # so this must be refused before `_init.run` renders anything.
+        (("--state", "n:int", "--serializable"), "E:MemoryError:n={n}",
+         "{n}, which is not in scope"),
+    ],
+)  # fmt: skip
+def test_the_cli_refuses_set_state_rows_before_writing(
+    tmp_path, extra, spec, needle
+):
     assert run_cli("new", "p", cwd=tmp_path).returncode == 0
     proj = tmp_path / "p"
     before = sorted(p.name for p in proj.rglob("*"))
     r = run_cli(
-        "object",
-        "acq",
-        "--set-state-status-error",
-        "P_ERR_MEMORY:MemoryError",
-        cwd=proj,
+        "object", "acq", *extra, "--set-state-status-error", spec, cwd=proj
     )
-    assert r.returncode != 0
-    assert "not serializable" in r.stderr
+    assert r.returncode == 1, r.stderr
+    assert r.stderr.startswith("error:") and needle in r.stderr, r.stderr
+    assert "Traceback" not in r.stderr
     assert sorted(p.name for p in proj.rglob("*")) == before
 
 
@@ -639,6 +665,7 @@ for n, cls, text in (
 
 assert "MemoryError" in Acq.set_freq.__doc__
 assert "MemoryError" in Acq.set_state.__doc__
+assert "or the core rejects it" not in Acq.set_state.__doc__
 print("OK")
 """
 

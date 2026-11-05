@@ -3116,11 +3116,25 @@ def run(
     # instead of appending it. Refused before anything is written.
     before: str = "",
     # gh-2470: `jm object --set-state-status-error` rows -- which exception
-    # each status `<obj>_set_state` returns raises. Validated where a
-    # hand-written manifest is, in `load`; a refusal there undoes the
-    # command (`_undo`), so nothing is left behind.
+    # each status `<obj>_set_state` returns raises.
     set_state_status_errors: "list[dict] | None" = None,
 ) -> None:
+    if set_state_status_errors:
+        # gh-2470: asked BEFORE anything renders, by the check `load` makes
+        # of a hand-written manifest. `load` runs only after `_init.run` has
+        # rendered the binding, and a row the renderer cannot emit (a
+        # `{slot}` set_state has no scope for) crashed it with a raw
+        # ValueError instead of this refusal.
+        _ss_why = C._set_state_status_errors_errors(
+            {
+                object_name: {
+                    "serializable": "true" if serializable else "",
+                    C.SET_STATE_STATUS_ERRORS: set_state_status_errors,
+                }
+            }
+        )
+        if _ss_why:
+            raise _report.Refusal(_ss_why[0])
     if before and (
         why := C.before_why_not(
             C.load(root) if (root / C.FILENAME).exists() else {},
