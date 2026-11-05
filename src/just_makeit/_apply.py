@@ -621,6 +621,177 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
         C._refuse(errors)
 
 
+def _cmake_is_jms(real: str, rendered: str, comp: str, cfg: dict) -> bool:
+    """Whether *real* is the CMakeLists jm renders as *rendered* for *comp*:
+    byte for byte, or -- where `apply` reconciles the file (gh-271) -- that
+    render with only the riders jm itself keeps put back. A hand-owned file
+    (gh-275) is not shown to be jm's by this (gh-2459)."""
+    if real == rendered:
+        return True
+    if comp not in _reconciled_cmake_dirs(cfg) or _is_hand_owned_object_cmake(
+        real, comp, rendered=rendered
+    ):
+        return False
+    include_dirs = list(C.component_extra_include_dirs(cfg, comp))
+    return _reconciled_object_core_cmake(
+        real, rendered, comp, include_dirs
+    ) == (real)
+
+
+def _refuse_unverified_moves(
+    root: Path, cfg: dict, only: "str | None"
+) -> "dict[str, str]":
+    """Refuse a move jm cannot show is out of its own directory (gh-2459).
+
+    A former place is computed from jm's record of what it last applied
+    (`_incpath.applied`); before anything moves out of one, the record is
+    checked against the tree. The component's CMakeLists at the recorded
+    place must be the one jm renders there for it (:func:`_cmake_is_jms`,
+    against a replay of the recorded manifest) -- a vendored directory, or
+    another project's copy, is not, and neither is a place a hand-edited
+    or stale record names. Then the author's files beside the verified core
+    move with it.
+
+    Also refused here: ``--only`` with a move pending (moving is a whole-
+    project step: the record follows a full `apply`), and a settled
+    component whose CMakeLists builds none of its targets (a vendored
+    directory where the flat layout puts a newly declared one).
+
+    Returns, per moving component, the CMakeLists jm rendered at its
+    recorded place, for :func:`_refuse_unowned_new_places`.
+    """
+    by_name = INC.relocations_by_name(root)
+    pending = {
+        n: [p for p in pairs if (root / p[0]).is_file()]
+        for n, pairs in by_name.items()
+    }
+    pending = {n: v for n, v in pending.items() if v}
+    if only is not None and pending:
+        C._refuse(
+            [
+                f"`--only {only}` cannot run while files are waiting to move"
+                f" ({', '.join(sorted(pending))}): moving is a whole-project"
+                " step, recorded by a full apply. Run `jm apply` (gh-2459)"
+            ]
+        )
+    errors: "list[str]" = []
+    unplaced = INC.unplaced(cfg)
+    hand = {
+        C.module_paths(m).cname
+        for m in C.modules(cfg)
+        if C.is_no_generate_module(cfg, m)
+    }
+    applied_cfg = INC.applied(cfg)
+    kinds = {
+        C.module_paths(m).cname
+        for m in C.modules(cfg)
+        if (cfg.get("module", {}).get(m) or {}).get("kind")
+    }
+    for name in INC.native_names(cfg):
+        if name in hand:
+            continue
+        # Where the component goes is jm's when its CMakeLists builds the
+        # component's targets and names its test and bench where this
+        # project puts them (now, or at the last apply): a vendored
+        # directory, or a copy of another project's component, is never
+        # written or moved into. The sacred core is never asked: it is the
+        # author's. A new place -- one it moves to, or any of one declared
+        # since the last apply -- must also not hold another `_core.h`.
+        new = name in by_name or name in unplaced
+        cml = INC.src_path(root, name, cfg) / "CMakeLists.txt"
+        if cml.is_file() and not INC.cmake_owned(
+            cml.read_text(encoding="utf-8"), name, (cfg, applied_cfg)
+        ):
+            errors.append(
+                f"{INC.src_dir(name, cfg)}/ already holds files jm did not"
+                f" write for `{name}` (its CMakeLists builds none of the"
+                " component's targets, or names another project's test and"
+                " bench), so it is not jm's: jm writes a component only into"
+                " a directory it can"
+                " show is its own. Move them, or choose another name or"
+                " module package (gh-2459)"
+            )
+        core = INC.core_h(root, name, cfg)
+        if (
+            new
+            and name not in kinds
+            and core.is_file()
+            and not INC.guarded(core, cfg, name)
+        ):
+            errors.append(
+                f"{core.relative_to(root).as_posix()} is not `{name}`'s"
+                " header (it lacks the component's own include guard): jm"
+                " writes a component only into a directory it can show is"
+                " its own. Move it, or choose another name or module"
+                " package (gh-2459)"
+            )
+    # Every component whose source directory the record puts elsewhere, and
+    # whose recorded directory holds anything: jm moves out of it only when
+    # it can show the files there are its own.
+    suspect = [
+        n
+        for n in INC.native_names(cfg)
+        if n not in unplaced
+        and n not in hand
+        and INC.src_dir(n, applied_cfg) != INC.src_dir(n, cfg)
+        and (d := INC.src_path(root, n, applied_cfg)).is_dir()
+        and any(f.is_file() for f in d.iterdir())
+    ]
+    if suspect and C.build_system(cfg) == "cmake":
+        renders: "dict[str, list[str]]" = {n: [] for n in suspect}
+        # What jm renders for each at its recorded place, under the recorded
+        # manifest -- and under the current one, whose CMakeLists text a
+        # project placed by a jm older than the record carries (0.119 nested
+        # its headers and tests, not its C).
+        for owner in (applied_cfg, cfg):
+            with tempfile.TemporaryDirectory(prefix="jm-placed-") as tmp:
+                t2 = Path(tmp) / C.project_name(cfg)
+                replay_project(owner, t2, root, prefix_checks=False)
+                for name in suspect:
+                    rel = INC.src_rel(name, "CMakeLists.txt", owner)
+                    if (t2 / rel).is_file():
+                        renders[name].append(
+                            (t2 / rel).read_text(encoding="utf-8")
+                        )
+        recorded = INC.APPLIED_LAYOUT in (cfg.get("project") or {})
+        for name in suspect:
+            rel = INC.src_rel(name, "CMakeLists.txt", applied_cfg)
+            real = root / rel
+            text = real.read_text(encoding="utf-8") if real.is_file() else ""
+            if any(
+                _cmake_is_jms(text, r, name, applied_cfg)
+                for r in renders[name]
+            ) and INC.src_owned(root, name, applied_cfg, (applied_cfg, cfg)):
+                continue
+            where = (
+                f"jm's record says it last placed `{name}` at"
+                f" {INC.src_dir(name, applied_cfg)}/"
+                if recorded
+                else f"jm has no record of placing `{name}` (the project was"
+                " last applied by a jm before the record), so it reads"
+                f" {INC.src_dir(name, applied_cfg)}/ as its last place"
+            )
+            fix = (
+                "The record may be stale: correct or delete `[project]"
+                " applied_layout` / `[module.X] applied_package`, or move"
+                " the files yourself. If it is only out of date, restore the"
+                " layout or package it records, run `jm apply`, then change"
+                " it again"
+                if recorded
+                else "Restore the layout and `package` you last applied, run"
+                " `jm apply` once on this version, then change them again;"
+                " or move the files yourself"
+            )
+            errors.append(
+                f"{where}, and the manifest puts it at"
+                f" {INC.src_dir(name, cfg)}/ -- but {rel} is not the"
+                " CMakeLists jm renders there, so jm cannot show those files"
+                f" are its own and moves none of them. {fix} (gh-2459)"
+            )
+    if errors:
+        C._refuse(errors)
+
+
 def misplaced_advice(root: Path, cfg: dict) -> "list[str]":
     """One sentence per file at a place jm has no record of putting it
     (`_incpath.misplaced`): where it is, where the manifest puts it, what
@@ -4218,6 +4389,9 @@ def _apply_manifest(
     # replay, which reads the real tree's headers (their docs, the author's
     # bodies) from where this layout puts them. Every refusal above has been
     # asked; the command's `_undo` record covers a later one (gh-1867).
+    # gh-2459: jm moves out of, or writes into, a directory only where it
+    # can show the files there are its own -- asked before the first move.
+    _refuse_unverified_moves(root, cfg, only)
     _moves = [(o, n) for o, n in INC.relocations(root) if (root / o).is_file()]
     relocated = _relocate_native(root)
     # A moved file is the same file at a new path: it carries its "before"
@@ -4369,7 +4543,9 @@ def _apply_manifest(
         # every former place -- after the moves (`_relocate_native`) and the
         # renders have landed and the last refusal has passed, and only for
         # a full apply: `--only` places one component, not the project.
-        if only is None:
+        # Never in `status`'s scratch run (`replay_out`): the record is jm's
+        # state, not a definition the author's manifest is missing.
+        if only is None and replay_out is None:
             for _note in C.record_applied(root, cfg):
                 print(f"  record  {_note}")
 

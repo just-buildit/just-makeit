@@ -361,11 +361,24 @@ The keys are jm's: leave them be. A flat project never carries them, and
 returning to `flat` removes them. `jm script` does not replay them; the
 rebuilt project's own `apply` writes them.
 
-A project switched with jm 0.118 or older has no record, and reads as last
-applied flat: its headers, tests and benches are already where 0.118 put
-them, and its C moves to the nested place on the first `apply`. A file jm
-has no record of placing -- moved by hand, say -- stays where it is: `jm status` lists it under `ADVICE`, and a collision it causes names where it is
-and where the manifest puts it.
+A project last applied by jm 0.119 or older has no record, and reads as
+last applied flat: its headers, tests and benches are already where that jm
+put them, and its C moves to the nested place on the first `apply` (`jm status` says the record is not written yet, under `RECORD`, without failing
+`--check`). **Run `jm apply` once on this version before changing a layout
+or a module's `package`**: until then jm has no record of the package your
+files sit under, and moves nothing for the change.
+
+Before anything moves, jm checks the record against the tree: the
+component's CMakeLists at its recorded place must be the one jm renders
+there, and its core must include its own header. If not -- a hand-edited or
+stale record, or a vendored directory where the record points -- jm refuses,
+naming both places, and moves nothing. It writes a component only into a
+directory it can show is its own: a new place already holding a vendored
+CMakeLists, or a copy of another project's component, is refused, not
+written into. A file jm has no record of placing -- moved by hand, say --
+stays where it is: `jm status` lists it under `ADVICE`, and a collision it
+causes names where it is and where the manifest puts it. `jm apply --only`
+refuses while files are waiting to move: moving is a whole-project step.
 
 Into or out of `nested`, a header moves too, and every other file directly
 in its directory comes along with it, so a header of yours beside the core

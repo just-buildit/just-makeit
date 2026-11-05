@@ -3569,6 +3569,9 @@ def run(
     # C library files (OBJECT lib only — no standalone Python module).
     # Object creation is create-only (the verb errors on a duplicate name),
     # so the sacred files are written fresh — never spliced.
+    # gh-2459: only into a directory jm can show is its own -- under nested
+    # `native/src/<package>/` overlaps names authors use (third_party, ext).
+    INC.refuse_foreign(root, layout_owner, comp)
     core_h_path = INC.core_h(root, comp, layout_owner)
     _write(
         core_h_path,
