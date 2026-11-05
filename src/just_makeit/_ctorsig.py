@@ -56,6 +56,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from . import _config as C
 from . import _csym
@@ -304,27 +305,90 @@ _QUALIFIERS = re.compile(
 )
 
 
-def signatures(text: str) -> "list[tuple[str, str, str, int]]":
-    """``(name, params, kind, offset)`` for each file-scope function in *text*.
+class Signature(NamedTuple):
+    """One file-scope function :func:`signatures` found."""
 
-    *kind* is ``"decl"`` for a prototype (ends in ``;``) and ``"def"`` for a
-    definition (a body brace follows). Read on `_docsync._code_mask`, so a
-    comment or string never answers, and kept to file scope with
+    name: str
+    params: str  #: the parameter list as compared: comments blanked
+    kind: str  #: ``"decl"`` (a prototype) or ``"def"`` (a body follows)
+    at: int  #: where the name starts in the text
+    static: bool  #: declared ``static`` (``static inline`` included)
+    spelled: str  #: the parameter list as written, for display
+
+
+_PP_IF = re.compile(r"^\s*#\s*if(?:n?def)?\b")
+_PP_IF0 = re.compile(r"^\s*#\s*if\s+0\s*$")
+_PP_ELSE = re.compile(r"^\s*#\s*(?:else|elif)\b")
+_PP_ENDIF = re.compile(r"^\s*#\s*endif\b")
+
+
+def _live(mask: str) -> str:
+    r"""*mask* with every ``#if 0`` region blanked, newlines kept.
+
+    The one conditional read without evaluating anything: ``#if 0`` is dead
+    code by construction, so a definition there is no definition (gh-2465).
+    A nested ``#if`` inside it is dead with it, and the region ends at its
+    own ``#endif`` -- or at an ``#else`` / ``#elif`` of its own, whose
+    branch is live. Every other conditional is left alone: both arms are
+    read, as they always were.
+
+    >>> _live("a\n#if 0\nb\n#if X\nc\n#endif\nd\n#else\ne\n#endif\n")
+    'a\n     \n \n     \n \n      \n \n#else\ne\n#endif\n'
+    """
+    out = []
+    depth = 0  # 0: live; else the #if nesting inside a dead region
+    for line in mask.splitlines(keepends=True):
+        if depth == 0:
+            if _PP_IF0.match(line):
+                depth = 1
+                out.append(re.sub(r"[^\n]", " ", line))
+                continue
+            out.append(line)
+            continue
+        if _PP_IF.match(line):
+            depth += 1
+        elif _PP_ENDIF.match(line):
+            depth -= 1
+            if depth == 0:
+                # The region's own #endif closes the conditional; blank it
+                # like the #if 0 that opened it.
+                out.append(re.sub(r"[^\n]", " ", line))
+                continue
+        elif depth == 1 and _PP_ELSE.match(line):
+            depth = 0
+            out.append(line)
+            continue
+        out.append(re.sub(r"[^\n]", " ", line))
+    return "".join(out)
+
+
+def signatures(text: str) -> "list[Signature]":
+    """Every file-scope function *text* declares or defines.
+
+    Read on `_docsync._code_mask`, so a comment or string never answers --
+    not even one inside a parameter list, which ``params`` has blanked
+    (``spelled`` keeps it, for display) -- and kept to file scope with
     `_csym._file_scope`, so a call inside a body (``f(a, b);``), a control
-    statement (``if (x) {``) and a ``#define`` are not functions. *offset* is
-    where the name starts in *text*; *params* is sliced from *text* itself.
+    statement (``if (x) {``) and a ``#define`` are not functions. An
+    ``#if 0`` region is dead code and is not read (:func:`_live`).
 
     Examples
     --------
-    >>> signatures('''int f(int a, int b);
+    >>> sigs = signatures('''int f(int a /* dB */, int b);
     ... /* g(int x); */
+    ... #if 0
+    ... int g(int z, int y) { return 0; }
+    ... #endif
     ... static inline int g(int y, int z) { return f(z, y); }
     ... ''')
-    [('f', 'int a, int b', 'decl', 4), ('g', 'int y, int z', 'def', 55)]
+    >>> [(x.name, x.params, x.kind, x.static) for x in sigs]
+    [('f', 'int a , int b', 'decl', False), ('g', 'int y, int z', 'def', True)]
+    >>> sigs[0].spelled
+    'int a /* dB */, int b'
     """
     from ._docsync import _code_mask
 
-    mask = _code_mask(text)
+    mask = _live(_code_mask(text))
     scope = _csym._file_scope(mask)
     out = []
     for m in _SIGNATURE.finditer(mask):
@@ -332,9 +396,22 @@ def signatures(text: str) -> "list[tuple[str, str, str, int]]":
         # file-scope view.
         if scope[m.start(1)] == " ":
             continue
-        kind = "decl" if m.group(3) == ";" else "def"
-        params = " ".join(text[m.start(2) : m.end(2)].split())
-        out.append((m.group(1), params, kind, m.start(1)))
+        # The declaration's specifiers run back to the previous statement,
+        # body or brace; read on the file-scope view, where a preprocessor
+        # line is blank.
+        head = mask[: m.start(1)]
+        cut = max(head.rfind(c) for c in ";{}")
+        static = bool(re.search(r"\bstatic\b", scope[cut + 1 : m.start(1)]))
+        out.append(
+            Signature(
+                name=m.group(1),
+                params=" ".join(mask[m.start(2) : m.end(2)].split()),
+                kind="decl" if m.group(3) == ";" else "def",
+                at=m.start(1),
+                static=static,
+                spelled=" ".join(text[m.start(2) : m.end(2)].split()),
+            )
+        )
     return out
 
 
@@ -433,27 +510,34 @@ def order_drift(root: Path, tree: Path, cfg: dict) -> "list[OrderDrift]":
     read for declarations: an apply on an older jm has already rewritten
     them, and the definition beside the rewrite is what still disagrees.
     """
-    rendered: "dict[str, str]" = {}
+    rendered: "dict[str, Signature]" = {}
     hdrs = INC.header_root(tree, cfg)
     for h in sorted(hdrs.rglob("*.h")) if hdrs.is_dir() else ():
         text = h.read_text(encoding="utf-8", errors="replace")
-        for name, params, _kind, _at in signatures(text):
-            rendered.setdefault(name, params)
+        for sig in signatures(text):
+            rendered.setdefault(sig.name, sig)
     out: "list[OrderDrift]" = []
     for path in _csym._author_files(root):
         text = path.read_text(encoding="utf-8", errors="replace")
-        for name, params, kind, at in signatures(text):
-            if kind != "def" or name not in rendered:
+        for sig in signatures(text):
+            want = rendered.get(sig.name)
+            if sig.kind != "def" or want is None:
                 continue
-            if not reordered(rendered[name], params):
+            # A `static` definition has internal linkage: it is never the
+            # definition of an extern prototype jm renders, only of one jm
+            # itself renders `static` (an `inline` function's).
+            if sig.static and not want.static:
+                continue
+            if not reordered(want.params, sig.params):
                 continue
             out.append(
                 OrderDrift(
-                    fn=name,
+                    fn=sig.name,
                     rel=path.relative_to(root).as_posix(),
-                    line=text.count("\n", 0, at) + 1,
-                    defined=_norm(params),
-                    rendered=_norm(rendered[name]),
+                    line=text.count("\n", 0, sig.at) + 1,
+                    # As written: `_norm` would pull a comment's `*` apart.
+                    defined=sig.spelled,
+                    rendered=want.spelled,
                 )
             )
     return out

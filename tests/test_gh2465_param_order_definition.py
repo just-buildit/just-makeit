@@ -317,3 +317,78 @@ def test_example_in_another_order_is_advisory(tmp_path):
     assert "p_amp_create(a, b), declared (b, a)" in r.stdout, r.stdout
     (ex,) = _status_json(root)["create_example_drift"]
     assert ex["order"] == {"passed": "a, b", "declared": "b, a"}
+
+
+def _amp(base: Path) -> Path:
+    """An applied `amp` whose create() takes `(double a, double b)`."""
+    root = _project(base, _KINDS[0][1])
+    assert run_cli("apply", cwd=root).returncode == 0
+    return root
+
+
+def test_dead_code_is_not_a_definition(tmp_path):
+    """An `#if 0` region -- nested `#if`s inside it too -- defines nothing."""
+    root = _amp(tmp_path)
+    core = root / "native" / "src" / "amp" / "amp_core.c"
+    core.write_text(
+        core.read_text(encoding="utf-8")
+        + "\n#if 0\n#ifdef OLD\nint x;\n#endif\n"
+        "p_amp_state_t *\np_amp_create(double b, double a)\n"
+        "{\n    return 0;\n}\n#endif\n",
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _status_json(root)["param_order_drift"] == []
+
+
+def test_a_static_definition_is_not_the_extern_one(tmp_path):
+    """A file-local function sharing a module function's name has internal
+    linkage: it is not the definition of jm's extern prototype."""
+    r = run_cli("new", "np", "--no-c-prefix", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    root = tmp_path / "np"
+    for cmd in (
+        ["module", "mm"],
+        [
+            "function",
+            "clampv",
+            "--module",
+            "mm",
+            "--param",
+            "lo:double",
+            "--param",
+            "hi:double",
+        ],
+    ):
+        r = run_cli(*cmd, cwd=root)
+        assert r.returncode == 0, r.stderr
+    vendor = root / "native" / "vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "v.c").write_text(
+        "static double clampv(double hi, double lo)\n"
+        "{\n    return hi < lo ? hi : lo;\n}\n",
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _status_json(root)["param_order_drift"] == []
+
+
+def test_a_comment_in_the_parameter_list_hides_nothing(tmp_path):
+    """The comparison reads the code, not the comments beside it."""
+    root = _amp(tmp_path)
+    core = root / "native" / "src" / "amp" / "amp_core.c"
+    text = core.read_text(encoding="utf-8")
+    new = text.replace(
+        "p_amp_create(double a, double b)",
+        "p_amp_create(double a /* dB */, double b /* Hz */)",
+        1,
+    )
+    assert new != text
+    core.write_text(new, encoding="utf-8")
+    _swap(root / "objects" / "amp.toml", "amp.state")
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0, r.stdout + r.stderr
+    # Displayed as written, comments and all.
+    assert "double a /* dB */, double b /* Hz */" in r.stderr, r.stderr
