@@ -576,22 +576,22 @@ SUBDIR_BLOCK = re.compile(
 )
 
 
-def jm_blocks(text: str, cfg: dict, root: "Path | None" = None) -> list:
+def jm_blocks(text: str, cfg: dict) -> list:
     """The :data:`SUBDIR_BLOCK` matches in *text* that are jm's own wiring
     under *cfg* (`_incpath.jm_subdir`): every one-part path, as ever, and a
-    deeper one only where jm puts -- or, given *root*, just moved -- a
-    component's C (gh-2459). A vendored ``native/src/third_party/x`` the
-    author wires is not jm's, so nothing rewrites or excuses it."""
+    deeper one only where jm puts a component's C now or put it at the last
+    `apply` (gh-2459). A vendored ``native/src/third_party/x`` the author
+    wires is not jm's, so nothing rewrites or excuses it."""
     return [
         m
         for m in SUBDIR_BLOCK.finditer(text)
-        if INC.jm_subdir(m.group(1), cfg, root)
+        if INC.jm_subdir(m.group(1), cfg)
     ]
 
 
-def strip_jm_blocks(text: str, cfg: dict, root: "Path | None") -> str:
+def strip_jm_blocks(text: str, cfg: dict) -> str:
     """*text* with each of :func:`jm_blocks` removed."""
-    for m in reversed(jm_blocks(text, cfg, root)):
+    for m in reversed(jm_blocks(text, cfg)):
         text = text[: m.start()] + text[m.end() :]
     return text
 
@@ -604,8 +604,7 @@ def _jm_wired_pairs(root: Path) -> "set[tuple[str, str]]":
         return set()
     cfg = C.load(root)
     runs = "".join(
-        m.group(2)
-        for m in jm_blocks(path.read_text(encoding="utf-8"), cfg, root)
+        m.group(2) for m in jm_blocks(path.read_text(encoding="utf-8"), cfg)
     )
     return set(_WIRING.findall(runs))
 

@@ -479,9 +479,18 @@ def _jm(cwd, *args):
 def _declare(root: Path, value: str) -> None:
     toml = root / "just-makeit.toml"
     text = toml.read_text(encoding="utf-8")
-    text = re.sub(r'^layout = "[^"]*"\n', "", text, flags=re.M)
-    if value:
-        text = text.replace("[project]\n", f'[project]\nlayout = "{value}"\n')
+    # The author's edit: the `layout` line changed where it stands, so jm's
+    # `applied_layout` record beside it (gh-2459) keeps its place.
+    if value and re.search(r'^layout = "[^"]*"$', text, flags=re.M):
+        text = re.sub(
+            r'^layout = "[^"]*"$', f'layout = "{value}"', text, flags=re.M
+        )
+    else:
+        text = re.sub(r'^layout = "[^"]*"\n', "", text, flags=re.M)
+        if value:
+            text = text.replace(
+                "[project]\n", f'[project]\nlayout = "{value}"\n'
+            )
     toml.write_text(text, encoding="utf-8")
 
 
@@ -667,8 +676,15 @@ def test_nested_is_mirrored_with_the_module_directories_moved(
         ).replace('layout = "mirrored"', 'layout = "nested"')
         for rel, data in _tree(mirrored).items()
     }
+    # gh-2459: a nested module's table records the package `apply` placed
+    # it under; a mirrored one has no use for the record.
     got = {
-        rel: data.decode("utf-8", "surrogateescape")
+        rel: re.sub(
+            r'^applied_package = "[^"]*"\n',
+            "",
+            data.decode("utf-8", "surrogateescape"),
+            flags=re.M,
+        )
         for rel, data in _tree(nested).items()
     }
     assert sorted(got) == sorted(want)
@@ -1141,15 +1157,19 @@ def test_changing_a_modules_package_moves_its_headers(tmp_path):
         encoding="utf-8",
     )
     frag = root / "modules" / "radio.toml"
-    plain = frag.read_text(encoding="utf-8")
     for package, want in (("front/end", "front/end"), ("", "radio")):
-        text = (
-            plain.replace(
+        # The author edits the `package` line only: jm's own record of what
+        # it last placed (gh-2459, `applied_package`) is in the same table.
+        text = re.sub(
+            r'^package = "[^"]*"\n',
+            "",
+            frag.read_text(encoding="utf-8"),
+            flags=re.M,
+        )
+        if package:
+            text = text.replace(
                 "[module.radio]\n", f'[module.radio]\npackage = "{package}"\n'
             )
-            if package
-            else plain
-        )
         frag.write_text(text, encoding="utf-8")
         r = run_cli("status", cwd=root)
         assert "SUPERSEDED" in r.stdout, r.stdout
@@ -1336,10 +1356,9 @@ def test_the_sacred_cores_first_include_is_not_a_record_outside_nested(
     tmp_path, layout
 ):
     """The core's first include is the author's: here it names a vendored
-    ``third_party/fir/fir_core.h`` (no fir guard) beside a ``helper.h``.
-    Flat and mirrored never read it, so it is no place at all; under nested
-    a place known only from it moves jm's named headers, and only behind
-    the component's own guard -- which a foreign header lacks."""
+    ``third_party/fir/fir_core.h`` beside a ``helper.h``. A former place is
+    computed from jm's record of what it last applied (gh-2459), so no
+    file's content is ever one, in any layout: nothing of theirs moves."""
     _jm(tmp_path, "new", "p")
     root = tmp_path / "p"
     _declare(root, layout)
@@ -1361,12 +1380,6 @@ def test_the_sacred_cores_first_include_is_not_a_record_outside_nested(
         + core_c.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    cfg = C.load(root)
-    weak = INC._recorded_places(root, cfg, INC.native_names(cfg))[2]
-    if layout == "nested":
-        assert weak["fir"] == {"third_party/fir"}
-    else:
-        assert weak == {}
     assert not [o for o, _n in INC.relocations(root) if (root / o).exists()]
     _jm(root, "status", "--check")
     before = _digest(root)
@@ -1376,11 +1389,13 @@ def test_the_sacred_cores_first_include_is_not_a_record_outside_nested(
     assert _digest(root) == before
 
 
-def test_a_place_known_only_from_the_core_moves_jms_headers_only(tmp_path):
-    """A module with no functions records its core's directory nowhere but
-    the sacred ``_core.c``'s first include -- the author's content. Under
-    nested a package change moves that core's named headers on it, behind
-    the module's own guard, and leaves every other file there alone."""
+def test_a_module_with_no_functions_moves_on_a_package_change(tmp_path):
+    """gh-2463: a module with no functions had its core's former directory
+    on record nowhere but the sacred ``_core.c``'s first include, so only
+    jm's named headers moved, and a rewritten include left them stranded.
+    The former place is now jm's record of the package it last applied
+    (gh-2459): the core's directory moves whole, an author's header beside
+    the core included, as any other component's does."""
     _jm(tmp_path, "new", "p")
     root = tmp_path / "p"
     _declare(root, "nested")
@@ -1400,5 +1415,7 @@ def test_a_place_known_only_from_the_core_moves_jms_headers_only(tmp_path):
     _jm(root, "apply")
     assert INC.core_dir("radio", root) == "front/radio"
     assert INC.core_h(root, "radio").is_file() and not old.exists()
-    assert helper.read_text(encoding="utf-8") == _MINE_H
+    moved = INC.core_h(root, "radio").parent / "helper.h"
+    assert moved.read_text(encoding="utf-8") == _MINE_H
+    assert not helper.exists()
     _jm(root, "status", "--check")

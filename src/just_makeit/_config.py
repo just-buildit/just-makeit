@@ -7295,6 +7295,113 @@ def set_jm_version(cfg: dict, ver: str) -> dict:
     return cfg
 
 
+def record_applied(root: Path, cfg: dict) -> "list[str]":
+    """Record in the manifest what this `apply` placed (gh-2459).
+
+    The one writer of `_incpath`'s :data:`~_incpath.APPLIED_LAYOUT` and
+    :data:`~_incpath.APPLIED_PACKAGE`, from which every later former place
+    is computed (`_incpath.applied`):
+
+    - ``[project] applied_layout``: *cfg*'s layout, written only when it is
+      not ``flat`` and removed when it is, so a flat project's manifest is
+      what it has always been;
+    - ``[module.X] applied_package``, in the file that declares the module:
+      the package it was placed under, for each module while the layout is
+      ``nested`` -- its own path when it declares none, because the key's
+      absence means "never placed" (`_incpath.unplaced`) -- and removed in
+      every other layout, where a package moves nothing.
+
+    Surgical line edits, as :func:`stamp_jm_version` makes, so nothing
+    else in any file changes. Called by a full `apply` after its last
+    refusal, once every move and render has landed. Returns one line per
+    key written or removed; updates *cfg* in place too.
+    """
+    from . import _incpath as INC
+
+    notes: "list[str]" = []
+    now = INC.layout(cfg)
+    project = cfg.setdefault("project", {})
+    want = None if now == INC.LAYOUTS[0] else now
+    if project.get(INC.APPLIED_LAYOUT) != want:
+        _set_table_key(root / FILENAME, r"project", INC.APPLIED_LAYOUT, want)
+        if want is None:
+            project.pop(INC.APPLIED_LAYOUT, None)
+        else:
+            project[INC.APPLIED_LAYOUT] = want
+        notes.append(f"[project] {INC.APPLIED_LAYOUT} = {want!r}")
+    _owners, module_owners, _ = _provenance(root)
+    for mod in modules(cfg):
+        table = cfg.setdefault("module", {}).setdefault(mod, {})
+        want = (
+            table.get("package", module_paths(mod).pypath)
+            if now == "nested"
+            else None
+        )
+        if table.get(INC.APPLIED_PACKAGE) == want:
+            continue
+        quoted = _re.escape(mod) if "." not in mod else None
+        header = (
+            rf"module\.(?:{quoted}|\"{_re.escape(mod)}\"|'{_re.escape(mod)}')"
+            if quoted
+            else rf"module\.(?:\"{_re.escape(mod)}\"|'{_re.escape(mod)}')"
+        )
+        _set_table_key(
+            module_owners.get(mod, root / FILENAME),
+            header,
+            INC.APPLIED_PACKAGE,
+            want,
+            spelled=f"module.{_toml_key(mod)}",
+        )
+        if want is None:
+            table.pop(INC.APPLIED_PACKAGE, None)
+        else:
+            table[INC.APPLIED_PACKAGE] = want
+        notes.append(f"[module.{mod}] {INC.APPLIED_PACKAGE} = {want!r}")
+    if notes:
+        _textio.wrote_toml()
+    return notes
+
+
+def _toml_key(key: str) -> str:
+    """*key* as a TOML key: bare when it can be, quoted otherwise."""
+    if _re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        return key
+    return _toml_basic_string(key)
+
+
+def _set_table_key(
+    path: Path,
+    header: str,
+    key: str,
+    value: "str | None",
+    spelled: "str | None" = None,
+) -> None:
+    """Set ``key = value`` in the table whose header matches the regex
+    *header* in the TOML file *path* -- replacing the key's line, adding it
+    under the header, or (*value* None) removing it. A table the file does
+    not spell is appended as ``[<spelled>]``."""
+    text = path.read_text(encoding="utf-8")
+    head = _re.search(rf"^\[{header}\][ \t]*(?:#[^\n]*)?\n", text, _re.M)
+    if head is None:
+        if value is None:
+            return
+        text = text.rstrip("\n") + f"\n\n[{spelled}]\n"
+        head = _re.search(rf"^\[{_re.escape(spelled)}\]\n", text, _re.M)
+    end = _re.search(r"^\[", text[head.end() :], _re.M)
+    stop = head.end() + (end.start() if end else len(text) - head.end())
+    body = text[head.end() : stop]
+    line = _re.compile(rf"^[ \t]*{_re.escape(key)}[ \t]*=[^\n]*\n", _re.M)
+    if value is None:
+        body = line.sub("", body, count=1)
+    elif line.search(body):
+        body = line.sub(
+            lambda _m: f"{key} = {_toml_basic_string(value)}\n", body, count=1
+        )
+    else:
+        body = f"{key} = {_toml_basic_string(value)}\n" + body
+    _textio.write_text(path, text[: head.end()] + body + text[stop:])
+
+
 def stamp_jm_version(root: Path, cfg: dict) -> str | None:
     """Record the running jm version in `[project].jm_version`, monotonically.
 
@@ -8567,12 +8674,16 @@ _MODULE_TAIL = (
     "composer", "json", "serializers", "settings",
 )  # fmt: skip
 _KIND_MODULE_HEAD = (
-    "no_generate", "kind", "backing", "capsule_name", "package", "header",
+    "applied_package", "no_generate", "kind", "backing", "capsule_name",
+    "package", "header",
 )  # fmt: skip
 #: ``[module.X]`` by kind; the rest of the kind's vocabulary follows sorted,
 #: as gh-1229 wrote it. A plain module has no vocabulary in `_keys`.
 _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
-    "": ("no_generate", "functions_in_core", "objects", "package")
+    # gh-2459: `applied_package` is jm's record, written first by
+    # `record_applied`, so a later save leaves it where it stands.
+    "": ("applied_package", "no_generate", "functions_in_core", "objects",
+         "package")
     + _MODULE_TAIL,
     **{
         kind: _KIND_MODULE_HEAD

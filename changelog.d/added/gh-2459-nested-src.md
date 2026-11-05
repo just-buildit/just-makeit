@@ -10,9 +10,16 @@
     hand-written one stay where they are. Switching layout, or changing a
     module's `package`, moves the C file by file, your own files beside the
     core included, and `jm status` names each pending move under
-    `SUPERSEDED`. Where the C was is read from the line jm wrote for it in
-    the root `CMakeLists.txt`, never matched in the tree, so a vendored
-    `native/src/third_party/` in jm's own shapes is never moved or rewired.
-    `jm remove` takes only a component's own files when another component's
-    directory sits below its own. The flat and mirrored layouts write
-    exactly what they did before.
+    `SUPERSEDED`. `jm remove` takes only a component's own files when
+    another component's directory sits below its own.
+- **Where a native file was is jm's record, never read off the tree**
+    (gh-2459, gh-2463). `jm apply` now records what it placed --
+    `[project] applied_layout` and, under `nested`, each module's
+    `applied_package` -- and every layout or package move is computed from
+    that record. jm used to infer a former place from CMake files and the
+    sacred core's first include, which could take a vendored directory in
+    jm's shapes for a component's, or strand a module's headers after a
+    `package` change with only a raw symbol collision to show for it. A flat
+    project carries no record and its manifest is unchanged; a file jm has
+    no record of placing is named by `jm status` (`ADVICE`) and by the
+    collision it causes, and never moved.

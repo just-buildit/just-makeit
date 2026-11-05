@@ -345,12 +345,27 @@ the old. Removing the key moves everything back.
 
 Into or out of `nested`, a component's C moves too: every file directly in
 its old `native/src/` directory, your own beside the core included, moves
-to the new one, and the root `CMakeLists.txt` is rewired. Where the C was is
-read from the root `CMakeLists.txt` itself -- the line jm wrote for it --
-never guessed from the tree, so a vendored directory shaped like jm's
-(`native/src/third_party/fir/`) is never taken for a component's. When the
-old directory holds another component's new one, only the files jm names
-after the component move.
+to the new one, and the root `CMakeLists.txt` is rewired. When the old
+directory holds another component's new one, only the files jm names after
+the component move.
+
+**Where a file was is jm's record, not a guess.** `jm apply` records what it
+placed in the manifest -- `[project] applied_layout`, and under `nested`
+each module's `applied_package` -- and computes every former place from
+that record: a component's directories under the recorded layout and
+package, against the current ones. Nothing in the tree is read to find one,
+so a vendored directory shaped like jm's (`native/src/third_party/fir/`), or
+an empty submodule directory you wire, is never moved or rewired, and a
+component or module declared since the last `apply` has no former place.
+The keys are jm's: leave them be. A flat project never carries them, and
+returning to `flat` removes them. `jm script` does not replay them; the
+rebuilt project's own `apply` writes them.
+
+A project switched with jm 0.118 or older has no record, and reads as last
+applied flat: its headers, tests and benches are already where 0.118 put
+them, and its C moves to the nested place on the first `apply`. A file jm
+has no record of placing -- moved by hand, say -- stays where it is: `jm status` lists it under `ADVICE`, and a collision it causes names where it is
+and where the manifest puts it.
 
 Into or out of `nested`, a header moves too, and every other file directly
 in its directory comes along with it, so a header of yours beside the core

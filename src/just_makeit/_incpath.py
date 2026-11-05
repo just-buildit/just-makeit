@@ -553,17 +553,18 @@ def subdir_name(path: str) -> str:
     return path.rsplit("/", 1)[-1]
 
 
-def jm_subdir(path: str, cfg: dict, root: "Path | None" = None) -> bool:
+def jm_subdir(path: str, cfg: dict) -> bool:
     """Whether the root wiring line for *path* (a :data:`SUBDIR_RE` group)
     is jm's to rewrite, under the manifest *cfg* (gh-2459).
 
     A one-part path is, as it has always been. A deeper one is jm's only
-    when its last part is one of *cfg*'s components or module cnames, it
-    is no ``c_dep``, and it is either where :func:`src_dir` puts that
-    component now, or -- given *root* -- a directory holding no
-    ``CMakeLists.txt`` any more: a place a layout switch or a ``package``
-    change just moved the component out of. Any other deep line (a
-    vendored ``native/src/third_party/fir``) is the author's, and kept.
+    when it is exactly where :func:`src_dir` puts one of *cfg*'s components
+    (or module cnames) now, or where it put it at the last `apply`
+    (:func:`applied`) -- the line a layout switch or a ``package`` change
+    leaves behind until the run that moves the component rewires it. Never
+    a ``c_dep``, and never read off the tree: a vendored
+    ``native/src/third_party/fir`` or an empty submodule directory the
+    author wires is theirs, whatever its last part is named.
 
     >>> o = {"project": {"name": "p", "layout": "nested"},
     ...      "module": {"rx": {"objects": ["fir"]}}, "fir": {}}
@@ -579,64 +580,78 @@ def jm_subdir(path: str, cfg: dict, root: "Path | None" = None) -> bool:
         return False
     if path == src_below(name, cfg):
         return True
-    return (
-        root is not None
-        and not (Path(root) / SRC_DIR / path / "CMakeLists.txt").is_file()
-    )
+    return name not in unplaced(cfg) and path == src_below(name, applied(cfg))
 
 
-def recorded_src(root: "Path | None", cfg: dict) -> "dict[str, str]":
-    """Where jm last put each component's C, as the root wiring says, when
-    that is not where :func:`src_dir` puts it now (gh-2459).
+#: gh-2459: the manifest keys jm itself maintains, recording what the last
+#: successful `apply` placed: ``[project] applied_layout`` and, under an
+#: applied ``nested`` layout, each placed module's ``applied_package``. A
+#: former place is computed from them (:func:`applied`), never inferred from
+#: a file in the tree. `_config.record_applied` is their one writer.
+APPLIED_LAYOUT = "applied_layout"
+APPLIED_PACKAGE = "applied_package"
 
-    The root ``CMakeLists.txt`` wires every component's source directory
-    by path, and the run that moves the directory re-renders that line, so
-    until then it names the old one: a layout switch, or under ``nested`` a
-    module ``package`` change, which leaves nothing in the manifest saying
-    where the old package put it. A line counts only when:
 
-    - the root does not already wire the component where it goes now (a
-      component wired twice would declare its targets twice, so a second
-      line naming it is not this project's record of it);
-    - its last part is the component, and it is no ``c_dep``;
-    - the directory's ``CMakeLists.txt`` ends with jm's own hook for the
-      component (`_render.with_extra_cmake`): jm rendered it.
+def applied(owner: Owner) -> dict:
+    """*owner*'s manifest as jm last applied it (gh-2459).
 
-    So in a project that never moved -- every flat or mirrored one, and a
-    settled nested one -- nothing is recorded: the root wires each
-    component where it is. Returns ``{name: directory below SRC_DIR}``;
-    empty for a manifest owner or a tree with no root ``CMakeLists.txt``.
+    The same manifest with ``[project] layout`` replaced by the recorded
+    ``applied_layout`` (``flat`` when there is none: a flat project carries
+    no record, and a project last applied before the record existed reads
+    as flat), and each module's ``package`` by its recorded
+    ``applied_package`` where there is one. Every place function evaluated
+    under it -- :func:`core_dir`, :func:`native_rel`, :func:`src_dir` --
+    answers where that `apply` put the file; where the answer equals the
+    current one, nothing moves.
+
+    >>> o = {"project": {"name": "p", "layout": "nested",
+    ...                  "applied_layout": "nested"},
+    ...      "module": {"radio": {"objects": ["fir"], "package": "front",
+    ...                           "applied_package": "radio"}}, "fir": {}}
+    >>> src_dir("fir", applied(o)), src_dir("fir", o)
+    ('native/src/radio/fir', 'native/src/front/fir')
+    """
+    cfg = manifest(owner)
+    project = dict(cfg.get("project") or {})
+    project["layout"] = project.get(APPLIED_LAYOUT, LAYOUTS[0])
+    out = {**cfg, "project": project}
+    if cfg.get("module"):
+        out["module"] = {
+            mod: (
+                {**table, "package": table[APPLIED_PACKAGE]}
+                if APPLIED_PACKAGE in (table or {})
+                else table
+            )
+            for mod, table in cfg["module"].items()
+        }
+    return out
+
+
+def unplaced(owner: Owner) -> "set[str]":
+    """The names jm has no record of placing: under an applied ``nested``
+    layout, each object and the cname of every module carrying no
+    ``applied_package`` -- declared since the last `apply` (gh-2459).
+
+    A name with no record has no former place: nothing of it moves, so a
+    module declared over a vendored tree never takes the tree for its old
+    directory. Empty when the applied layout is not ``nested``, where a
+    module's directory does not depend on its package.
+
+    >>> o = {"project": {"name": "p", "applied_layout": "nested"},
+    ...      "module": {"radio": {"objects": ["fir"]}}, "fir": {}}
+    >>> sorted(unplaced(o))
+    ['fir', 'radio']
     """
     from . import _config as C
-    from . import _render
 
-    out: "dict[str, str]" = {}
-    if root is None:
-        return out
-    top = Path(root) / "CMakeLists.txt"
-    if not top.is_file():
-        return out
-    lines = [
-        m.group(1)
-        for m in re.finditer(
-            "^" + SUBDIR_RE, top.read_text(encoding="utf-8"), re.M
-        )
-    ]
-    deps = set(C.c_deps(cfg))
-    for name in native_names(cfg):
-        now = src_below(name, cfg)
-        if now in lines:
-            continue
-        hook = _render.extra_cmake_name(name)
-        for path in lines:
-            if subdir_name(path) != name or path in deps or path == now:
-                continue
-            cmake = Path(root) / SRC_DIR / path / "CMakeLists.txt"
-            if cmake.is_file() and (
-                f"/{hook} OPTIONAL)" in cmake.read_text(encoding="utf-8")
-            ):
-                out[name] = path
-                break
+    cfg = manifest(owner)
+    if (cfg.get("project") or {}).get(APPLIED_LAYOUT) != "nested":
+        return set()
+    out: "set[str]" = set()
+    for mod in C.modules(cfg):
+        if APPLIED_PACKAGE not in (cfg["module"].get(mod) or {}):
+            out |= set(C.module_objects(cfg, mod))
+            out.add(C.module_paths(mod).cname)
     return out
 
 
@@ -815,6 +830,36 @@ def _with_layout(cfg: dict, value: str) -> dict:
     return {**cfg, "project": {**(cfg.get("project") or {}), "layout": value}}
 
 
+def misplaced(root: Path, cfg: dict) -> "list[tuple[str, str, str]]":
+    """``(name, found, expected)`` for each component whose core header or
+    source CMakeLists is at neither the place *cfg* puts it nor the place jm
+    recorded putting it (:func:`applied`), but at another layout's place
+    (gh-2459).
+
+    Advice for `status`, never a move: a former place is only ever where
+    jm's record says it put a file, so a file elsewhere -- a project
+    switched by hand, or by a jm older than the record -- stays where it is
+    until the author moves it. Each path project-relative.
+    """
+    was = applied(cfg)
+    variants = [_with_layout(cfg, v) for v in LAYOUTS]
+    out: "list[tuple[str, str, str]]" = []
+    for name in native_names(cfg):
+        for place in (
+            lambda o: core_rel(name, o),
+            lambda o: src_rel(name, "CMakeLists.txt", o),
+        ):
+            now, then = place(cfg), place(was)
+            if (root / now).is_file() or (root / then).is_file():
+                continue
+            for other in variants:
+                found = place(other)
+                if found not in (now, then) and (root / found).is_file():
+                    out.append((name, found, now))
+                    break
+    return out
+
+
 def _project_root(owner: Owner) -> "Path | None":
     """The project root a path *owner* sits in; ``None`` for a manifest."""
     if isinstance(owner, dict):
@@ -827,33 +872,31 @@ def _project_root(owner: Owner) -> "Path | None":
 
 
 def relocations(owner: Owner) -> "list[tuple[str, str]]":
-    """``(old, new)`` for every generated native file and header, from
-    where each OTHER layout puts it -- or where jm's own records say it
-    last put it (:func:`_recorded_places`: a former ``package``, never a
-    file matched by its shape) -- to where *owner*'s does (gh-2423,
-    gh-2427).
+    """``(old, new)`` for every generated native file, header and source
+    file, from where jm put it at the last `apply` (:func:`applied`, the
+    record in the manifest) to where *owner*'s manifest puts it now
+    (gh-2423, gh-2427, gh-2459).
 
     Read as renames by :mod:`_createonly` (gh-1472): `apply` does not create
     a file at *new* beside one at *old*, `upgrade` and `apply` move it --
     the author's bytes come along -- and `status` names *old* until it is
     gone. Every direction from one table: switching back moves them back.
 
-    gh-2427: a header moves when its :func:`core_dir` does (into or out of
-    the ``nested`` layout). Each header jm names after the component
-    (:data:`NAMED_HEADERS`) moves, and -- when *owner* is a path, so the
-    tree can be read -- every other file directly in the old directory too:
-    it is the component's directory, and an author's header beside the core
-    belongs with it. Files only, never a subdirectory, so an object of
-    ``fir.sub`` moving ``fir/`` to ``fir/sub/fir/`` does not move a
-    directory into itself; and nothing but the named headers is read from
-    an old directory that is an ancestor of some component's new one,
-    because what else sits there is not this component's.
+    A former place is computed, never inferred: each place function
+    evaluated under the recorded layout and packages. Where it equals the
+    current one nothing moves -- so a settled project, and every flat one,
+    has none -- and a name with no record (:func:`unplaced`) has none.
 
-    gh-2459: a component's C source directory moves by the same unit, from
-    where the root wiring last put it (:func:`recorded_src`), when *owner*
-    is a path: every file directly in the old directory, or only the files
-    jm names after the component when the old one is an ancestor of some
-    component's new one.
+    gh-2427: a header moves when its :func:`core_dir` does. Each header jm
+    names after the component (:data:`NAMED_HEADERS`) moves, and -- when
+    *owner* is a path, so the tree can be read -- every other file directly
+    in the old directory too: it is the component's directory, and an
+    author's header beside the core belongs with it. Files only, never a
+    subdirectory, so an object of ``fir.sub`` moving ``fir/`` to
+    ``fir/sub/fir/`` does not move a directory into itself; and nothing but
+    the named headers is read from an old directory that is an ancestor of
+    some component's new one, because what else sits there is not this
+    component's. gh-2459: its C source directory moves by the same unit.
 
     >>> o = {"project": {"name": "p", "layout": "mirrored"}, "fir": {}}
     >>> relocations(o)[0]
@@ -863,14 +906,18 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
     >>> ("native/inc/p/fir/fir_core.h", "native/inc/p/dsp/fir/fir_core.h") in (
     ...     relocations(o))
     True
+    >>> o["project"]["applied_layout"] = "nested"
+    >>> o["module"]["dsp"]["applied_package"] = "dsp"
+    >>> relocations(o)
+    []
     """
     cfg = manifest(owner)
-    here = layout(cfg)
+    was = applied(cfg)
     root = _project_root(owner)
-    names = native_names(cfg)
-    new_dirs = {core_dir(name, cfg) for name in names}
-    others = [_with_layout(cfg, v) for v in LAYOUTS if v != here]
-    seen_dirs, seen_files, weak_dirs = _recorded_places(root, cfg, names)
+    names = [n for n in native_names(cfg) if n not in unplaced(cfg)]
+    every = native_names(cfg)
+    new_dirs = {core_dir(n, cfg) for n in every}
+    new_src = {src_dir(n, cfg) for n in every}
     out: "list[tuple[str, str]]" = []
 
     def add(pair: "tuple[str, str]") -> None:
@@ -878,19 +925,10 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
             out.append(pair)
 
     for name in names:
-        for kind, (_tree, fname) in NATIVE_FILES.items():
-            new = native_rel(kind, name, cfg)
-            for other in others:
-                add((native_rel(kind, name, other), new))
-            for old in sorted(seen_files.get(name, ())):
-                if old.rsplit("/", 1)[-1] == fname.format(name):
-                    add((old, new))
-        new_dir = core_dir(name, cfg)
-        old_dirs = [core_dir(name, other) for other in others]
-        old_dirs += sorted(seen_dirs.get(name, ()))
-        for old_dir in dict.fromkeys(old_dirs):
-            if old_dir == new_dir:
-                continue
+        for kind in NATIVE_FILES:
+            add((native_rel(kind, name, was), native_rel(kind, name, cfg)))
+        old_dir, new_dir = core_dir(name, was), core_dir(name, cfg)
+        if old_dir != new_dir:
             files = {f.format(name) for f in NAMED_HEADERS.values()}
             old_abs = None if root is None else path(root, old_dir, cfg)
             if (
@@ -901,45 +939,18 @@ def relocations(owner: Owner) -> "list[tuple[str, str]]":
                 files |= {f.name for f in old_abs.iterdir() if f.is_file()}
             for f in sorted(files):
                 add((rel(f"{old_dir}/{f}", cfg), rel(f"{new_dir}/{f}", cfg)))
-        # A place only the sacred core's first include names moves jm's
-        # named headers and nothing else, and only when the header there
-        # carries this component's own guard: anything less is not jm's.
-        for old_dir in sorted(weak_dirs.get(name, ())):
-            if old_dir == new_dir or old_dir in old_dirs:
-                continue
-            if _guarded(root, cfg, old_dir, name):
-                for f in sorted(
-                    f.format(name) for f in NAMED_HEADERS.values()
-                ):
-                    add(
-                        (
-                            rel(f"{old_dir}/{f}", cfg),
-                            rel(f"{new_dir}/{f}", cfg),
-                        )
-                    )
-    # gh-2459: a component's C follows from where the root wiring last put
-    # it (:func:`recorded_src`) -- never from a directory matched in the
-    # tree. Every file directly in the old directory moves, file by file,
-    # so a module path under the component's own name moves no directory
-    # into itself; when the old directory is an ancestor of some
-    # component's new one, only the files jm names after this component
-    # move, because what else sits there is not its.
-    moved = recorded_src(root, cfg)
-    new_below = {src_below(n, cfg) for n in names}
-    for name in names:
-        if name not in moved or root is None:
+        old, new = src_dir(name, was), src_dir(name, cfg)
+        if old == new or root is None:
             continue
-        old = moved[name]
-        old_abs = Path(root) / SRC_DIR / old
+        old_abs = Path(root) / old
         if not old_abs.is_dir():
             continue
-        shared = any(d.startswith(old + "/") for d in new_below)
-        new = src_dir(name, cfg)
+        shared = any(d.startswith(old + "/") for d in new_src)
         for f in sorted(old_abs.iterdir()):
             if f.is_file() and (
                 not shared or _named_source(f.name, name, cfg)
             ):
-                add((f"{SRC_DIR}/{old}/{f.name}", f"{new}/{f.name}"))
+                add((f"{old}/{f.name}", f"{new}/{f.name}"))
     return out
 
 
@@ -957,116 +968,6 @@ def _named_source(fname: str, name: str, cfg: dict) -> bool:
         if C.module_paths(mod).cname == name
         for fn in C.module_functions(cfg, mod)
     )
-
-
-def _guarded(root: "Path | None", cfg: dict, d: str, name: str) -> bool:
-    """Whether ``<d>/<name>_core.h`` under *root*'s header root opens with
-    *name*'s own include guard, ``<STEM>_CORE_H`` (`_csym.upper`)."""
-    from . import _csym
-
-    if root is None:
-        return False
-    h = path(root, f"{d}/{NAMED_HEADERS['core'].format(name)}", cfg)
-    if not h.is_file():
-        return False
-    m = _csym._GUARD_LINE.search(
-        h.read_text(encoding="utf-8", errors="replace")
-    )
-    return bool(m) and m.group(1) == _csym.upper(cfg, name)
-
-
-def _recorded_places(
-    root: "Path | None", cfg: dict, names: "list[str]"
-) -> "tuple[dict[str, set[str]], dict[str, set[str]], dict[str, set[str]]]":
-    """Where jm last PUT each component's files, as its own records say
-    (gh-2427).
-
-    A component's directory moves for more reasons than a layout switch:
-    under ``nested`` a module's ``package`` decides it too, and once the
-    manifest's ``package`` changes nothing in the manifest says where the
-    old one put the header, test and bench. Those places are not guessed by
-    matching file names in the tree -- a vendored copy of another jm
-    project has exactly jm's shapes, and is not this project's. They are
-    read from the files jm wrote naming them, which still name them until
-    the run that moves them re-renders:
-
-    - ``native/src/<name>/CMakeLists.txt``, jm's render: the sources of
-      jm's own ``test_<name>_core`` / ``bench_<name>_core`` targets, whose
-      directory below its tree, when there is one, is the component's
-      directory in the mirroring layout that wrote it (the include
-      directory there says the same, so it is not read twice);
-    - under ``nested`` only, ``native/src/<name>/<name>_core.c``, scaffolded
-      including its own header first: that first ``#include``, when it
-      names ``<name>_core.h``. The file is sacred, so this is the author's
-      content and a weaker word: returned apart, as the third map. In flat
-      and mirrored a package moves nothing, so it is never read there.
-
-    Only paths spelled for *name* itself, by its own files. Returns
-    ``({name: {header dir}}, {name: {project-relative native file}},
-    {name: {header dir known only from the core's first include}})``, each
-    header dir below the header root; all empty for a manifest owner, and
-    for a project whose headers are not under its package yet (an
-    unprefixed header root may hold a half-upgraded ``<pkg>/`` tree,
-    gh-1583: `upgrade` moves that).
-    """
-    import re
-
-    dirs: "dict[str, set[str]]" = {}
-    files: "dict[str, set[str]]" = {}
-    weak: "dict[str, set[str]]" = {}
-    if root is None or not prefixed(cfg):
-        return dirs, files, weak
-    nested = layout(cfg) == "nested"
-    pre = re.escape(prefix(cfg))
-    # gh-2459: the component's CMakeLists and core sit in its source
-    # directory -- where it goes now, and where the root wiring says jm put
-    # it last, until the run that moves it.
-    moved = recorded_src(root, cfg)
-    for name in names:
-        n = re.escape(name)
-        heres = [Path(root) / src_dir(name, cfg)]
-        if name in moved:
-            heres.append(Path(root) / SRC_DIR / moved[name])
-        for here in heres:
-            cmake = here / "CMakeLists.txt"
-            text = cmake.read_text(encoding="utf-8") if cmake.is_file() else ""
-            kinds = "|".join(
-                re.escape(f.format(name)) for _t, f in NATIVE_FILES.values()
-            )
-            for m in re.finditer(
-                r"\$\{CMAKE_SOURCE_DIR\}/((?:"
-                + "|".join(re.escape(t) for t in HARNESS)
-                + rf")(?:/[\w.-]+)*/(?:{kinds}))(?![\w.])",
-                text,
-            ):
-                files.setdefault(name, set()).add(m.group(1))
-                # A test or bench below its tree's root was written by a
-                # mirroring layout, at the component's directory then.
-                sub = m.group(1).split("/", 2)[2].rsplit("/", 1)
-                if (
-                    len(sub) == 2
-                    and (sub[0] + "/").endswith(f"/{name}/")
-                    or (len(sub) == 2 and sub[0] == name)
-                ):
-                    dirs.setdefault(name, set()).add(sub[0])
-            # The sacred core's first include is the AUTHOR's content, not a
-            # record jm owns: read only under nested, where a package can move a
-            # module core whose CMakeLists names no include directory, and kept
-            # apart -- :func:`relocations` trusts it for the named headers only,
-            # behind the component's own guard.
-            core = here / f"{name}_core.c"
-            if nested and core.is_file():
-                first = re.search(
-                    r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"',
-                    core.read_text(encoding="utf-8", errors="replace"),
-                    re.M,
-                )
-                got = first and re.fullmatch(
-                    rf"{pre}((?:[\w.-]+/)*{n})/{n}_core\.h", first.group(1)
-                )
-                if got:
-                    weak.setdefault(name, set()).add(got.group(1))
-    return dirs, files, weak
 
 
 #: gh-2423: the per-component slots :func:`native_slots` fills, which
