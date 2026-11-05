@@ -1,7 +1,7 @@
 """_hollow.py — targets that pass without covering anything (gh-806).
 
 Three findings, one failure mode: **a build target that reports success
-while covering nothing.** Both are silent by construction, which is why they are
+while covering nothing.** All are silent by construction, which is why they are
 expensive — a red target gets fixed the day it appears.
 
 Orphans

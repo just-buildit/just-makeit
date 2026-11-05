@@ -168,6 +168,22 @@ def test_status_allow_exempts_the_one_target(project: Path) -> None:
     assert "STALE ALLOW" not in plain.stdout, plain.stdout
 
 
+def test_a_glob_allow_that_suppresses_is_not_stale(project: Path) -> None:
+    """A glob is honoured by the finding, so it is not "stale" either.
+
+    `_is_allowed` matches by fnmatch; reading staleness by exact key
+    suppressed the target and called the same pattern stale in one run.
+    """
+    _hook(project).write_text(_DOPPLER_SHAPE, encoding="utf-8")
+    _allow(project, "native/src/o/*:bench_*")
+
+    r = run_cli("status", "--check", cwd=project)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"~ {_KEY} [status_allow]" in r.stdout
+    plain = run_cli("status", cwd=project)
+    assert "STALE ALLOW" not in plain.stdout, plain.stdout
+
+
 def test_a_wildcard_build_file_stands_the_scan_down(project: Path) -> None:
     """``None``, never ``[]``: the scan did not run (gh-1033)."""
     _hook(project).write_text(
