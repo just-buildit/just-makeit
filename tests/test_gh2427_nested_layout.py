@@ -101,7 +101,15 @@ _FMT = re.compile(r"\{[^{}]*\}")
 
 def _known(node, known: "dict[str, str]") -> "str | None":
     """The value of *node* when it names one of *known*'s `_incpath`
-    constants (``INC.SRC_DIR``, a bare ``SRC_DIR``), else None."""
+    constants (``INC.SRC_DIR``, a bare ``SRC_DIR``), or is ``os.sep``
+    (read as ``/``), else None."""
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "os"
+        and node.attr == "sep"
+    ):
+        return "/"
     if (
         isinstance(node, ast.Attribute)
         and isinstance(node.value, ast.Name)
@@ -146,12 +154,20 @@ def _shape(node, known: "dict[str, str] | None" = None) -> "str | None":
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "join"
-        and isinstance(node.func.value, ast.Constant)
-        and isinstance(node.func.value.value, str)
+        and (
+            isinstance(node.func.value, ast.Constant)
+            and isinstance(node.func.value.value, str)
+            or _known(node.func.value, known) is not None
+        )
         and len(node.args) == 1
         and isinstance(node.args[0], (ast.List, ast.Tuple))
     ):
-        return node.func.value.value.join(part(e) for e in node.args[0].elts)
+        sep = (
+            node.func.value.value
+            if isinstance(node.func.value, ast.Constant)
+            else _known(node.func.value, known)
+        )
+        return sep.join(part(e) for e in node.args[0].elts)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         left, right = _shape(node.left, known), _shape(node.right, known)
         if left is None and right is None:
