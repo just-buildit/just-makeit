@@ -611,9 +611,27 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 " every C symbol jm derives, and the C you wrote has to"
                 " follow: run `jm upgrade`, which respells it"
             )
+    # gh-2459 (gh-2463): a collision with a component's own C found where
+    # jm has no record of putting it -- moved by hand, or by a jm older than
+    # the record -- says so, rather than naming each symbol twice.
+    if clash:
+        clash = misplaced_advice(project_root, cfg) or clash
     errors += clash
     if errors:
         C._refuse(errors)
+
+
+def misplaced_advice(root: Path, cfg: dict) -> "list[str]":
+    """One sentence per file at a place jm has no record of putting it
+    (`_incpath.misplaced`): where it is, where the manifest puts it, what
+    to do. Empty when there is none."""
+    return [
+        f"{found} belongs to `{name}`, but jm has no record of placing it"
+        f" there, and the manifest puts it at {want}: move it there, with"
+        " the files beside it, or declare the layout or package it was"
+        " placed under (gh-2459)"
+        for name, found, want in INC.misplaced(root, cfg)
+    ]
 
 
 def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
@@ -2145,7 +2163,7 @@ def _splice_cmake_components(
             if line.rstrip("\n") not in seen_mod_blocks:
                 module_blocks.append(line)
 
-    new_real = _libwiring.strip_jm_blocks(real, cfg, real_path.parent)
+    new_real = _libwiring.strip_jm_blocks(real, cfg)
 
     def _insert(text: str, sentinel: str, content: str) -> str:
         if not content or sentinel not in text:
@@ -4346,6 +4364,14 @@ def _apply_manifest(
             print(
                 f"  stamp   {C.FILENAME}  [project] jm_version = {_stamped}\n"
             )
+
+        # gh-2459: and what this run placed, from which the next run computes
+        # every former place -- after the moves (`_relocate_native`) and the
+        # renders have landed and the last refusal has passed, and only for
+        # a full apply: `--only` places one component, not the project.
+        if only is None:
+            for _note in C.record_applied(root, cfg):
+                print(f"  record  {_note}")
 
         # gh-1294: a declared method with no body in `_core.c`. INSIDE the
         # `with`, because the stub text is the temp tree's and that tree is a

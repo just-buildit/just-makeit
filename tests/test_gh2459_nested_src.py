@@ -6,8 +6,9 @@ its C stayed in ``native/src/<name>/``. `_incpath.src_dir` is now
 ``native/src/<core_dir>`` -- ``native/src/<module package>/<name>`` under
 nested, ``native/src/<name>`` in the flat and mirrored layouts -- and the
 root wiring names that path. A switch, or a module ``package`` change, moves
-the C file by file from where the root wiring last put it
-(`_incpath.recorded_src`), never from a directory matched in the tree.
+the C file by file from where jm last put it -- computed from the record
+`apply` keeps in the manifest (``applied_layout``, ``applied_package``;
+`_incpath.applied`), never from a file in the tree.
 
 GATES:
 
@@ -22,10 +23,18 @@ GATES:
 3. Changing a module's ``package`` under nested moves its C, both ways.
 4. A foreign tree in jm's own shapes -- a vendored ``native/src/third_party``
    holding a copy of jm's own rendered CMakeLists, wired by the author --
-   is never a former place, in any layout: nothing is recorded, `apply`
-   moves and rewrites none of it, `status --check` is clean.
+   is never a former place, in any layout: nothing is listed to move,
+   `apply` moves and rewrites none of it, `status --check` is clean.
 5. Removing a component whose source directory is an ancestor of another's
    leaves the other's C, and leaves no empty directory behind.
+6. The record, not the tree (review of #2481): a component declared over
+   a vendored directory carrying jm's hook line, or a verbatim copy of
+   another jm project's (F1), and an empty submodule directory the author
+   wires (F2), are never a former place, in any layout; nor is a module
+   declared since the last `apply`. A flat project carries no record and
+   returning to flat removes it; `jm script` never replays it; a project
+   switched before the record moves only its C; a file jm has no record of
+   placing is named, never moved.
 
 The e2e build of a nested project (two objects, one depending on the other,
 a module function, a standalone object) and of a composer with a bridge is
@@ -68,7 +77,7 @@ def _wired(root: Path) -> "set[str]":
     """The source directories jm's root wiring names."""
     text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
     cfg = C.load(root)
-    return {m.group(1) for m in _libwiring.jm_blocks(text, cfg, root)}
+    return {m.group(1) for m in _libwiring.jm_blocks(text, cfg)}
 
 
 def _assert_in_place(root: Path) -> None:
@@ -80,7 +89,8 @@ def _assert_in_place(root: Path) -> None:
         assert INC.src_below(name, cfg) == INC.core_dir(name, cfg)
     deps = set(C.c_deps(cfg))
     assert _wired(root) - deps == {INC.src_below(n, cfg) for n in names}
-    assert INC.recorded_src(root, cfg) == {}
+    # Settled: the record is what is declared, so nothing has a former place.
+    assert INC.relocations(root) == []
 
 
 # ── 1. every component's C in its src_dir ───────────────────────────────────
@@ -212,7 +222,7 @@ def test_switching_to_nested_and_back_moves_the_c(tmp_path, start):
 
     _declare(root, "nested")
     cfg = C.load(root)
-    assert INC.recorded_src(root, cfg)["fir"] == "fir"
+    assert INC.src_dir("fir", INC.applied(cfg)) == "native/src/fir"
     r = run_cli("status", cwd=root)
     assert old in r.stdout.split("SUPERSEDED", 1)[-1], r.stdout
     r = _jm(root, "apply")
@@ -301,10 +311,9 @@ def test_changing_a_modules_package_moves_its_c(tmp_path):
 
     _set_package(root, "front/end")
     cfg = C.load(root)
-    assert INC.recorded_src(root, cfg) == {
-        "fir": "radio/fir",
-        "radio": "radio/radio",
-    }
+    was = INC.applied(cfg)
+    assert INC.src_dir("fir", was) == "native/src/radio/fir"
+    assert INC.src_dir("radio", was) == "native/src/radio/radio"
     _jm(root, "apply")
     assert INC.src_dir("fir", root) == "native/src/front/end/fir"
     _assert_author_c(root)
@@ -375,12 +384,10 @@ def test_a_foreign_tree_in_jms_shape_is_never_a_former_place(tmp_path, layout):
     assert len(lines) == 3
 
     cfg = C.load(root)
-    assert INC.recorded_src(root, cfg) == {}
-    moved = [o for o, _n in INC.relocations(root) if (root / o).exists()]
-    assert moved == [], moved
-    assert {
-        m.group(1) for m in _libwiring.jm_blocks(text, cfg, root)
-    }.isdisjoint({"third_party/fir", "third_party/amp", "third_party/dsp"})
+    assert INC.relocations(root) == []
+    assert {m.group(1) for m in _libwiring.jm_blocks(text, cfg)}.isdisjoint(
+        {"third_party/fir", "third_party/amp", "third_party/dsp"}
+    )
     _jm(root, "status", "--check")
     before = _digest(root)
     _jm(root, "apply")
@@ -389,10 +396,11 @@ def test_a_foreign_tree_in_jms_shape_is_never_a_former_place(tmp_path, layout):
     # Then a switch: jm's own directories move, the vendored tree does not.
     _declare(root, "" if layout == "nested" else "nested")
     cfg = C.load(root)
-    assert INC.recorded_src(root, cfg) == {
-        "fir": INC.src_below("fir", _with(cfg, layout)),
-        "dsp": INC.src_below("dsp", _with(cfg, layout)),
-    }
+    was = INC.applied(cfg)
+    for name in ("fir", "dsp"):
+        assert INC.src_below(name, was) == INC.src_below(
+            name, _with(cfg, layout)
+        )
     _jm(root, "apply")
     for path, data in foreign.items():
         assert path.read_bytes() == data, path
@@ -445,3 +453,234 @@ def test_remove_keeps_a_component_s_c_below_the_removed_one(tmp_path):
     ]
     assert empty == []
     assert not (root / "native" / "src" / "rx").exists()
+
+
+# ── 6. the record, not the tree (review of #2481) ──────────────────────────
+
+_VENDOR_CMAKE = (
+    "add_library(vendor_fir STATIC vendor_fir.c)\n"
+    "# local tweaks, if any\n"
+    "include(${CMAKE_CURRENT_LIST_DIR}/fir_extra.cmake OPTIONAL)\n"
+)
+
+
+@pytest.mark.parametrize("layout", ["", "mirrored", "nested"])
+def test_a_newly_declared_component_never_takes_a_vendored_dir(
+    tmp_path, layout
+):
+    """F1: the author vendors ``native/src/third_party/fir`` (its own target,
+    jm's hook line at the end) and a verbatim copy of another jm project's
+    ``fir`` directory, wires both, then declares ``fir`` with a dropped-in
+    fragment. A component with no record has no former place: `apply`
+    writes ``fir`` where it goes and touches none of theirs."""
+    _jm(tmp_path, "new", "donor")
+    donor = tmp_path / "donor"
+    _jm(donor, "object", "fir")
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, layout)
+    _jm(root, "object", "amp")
+    _jm(root, "apply")
+    tp = root / "native" / "src" / "third_party"
+    (tp / "fir").mkdir(parents=True)
+    (tp / "fir" / "CMakeLists.txt").write_text(_VENDOR_CMAKE, "utf-8")
+    (tp / "fir" / "vendor_fir.c").write_text(
+        "int vendor_fir(void) { return 42; }\n", "utf-8"
+    )
+    shutil.copytree(INC.src_path(donor, "fir"), tp / "donor_fir" / "fir")
+    top = root / "CMakeLists.txt"
+    top.write_text(
+        top.read_text(encoding="utf-8")
+        + "add_subdirectory(native/src/third_party/fir)\n"
+        + "add_subdirectory(native/src/third_party/donor_fir/fir)\n",
+        encoding="utf-8",
+    )
+    foreign = {p: p.read_bytes() for p in tp.rglob("*") if p.is_file()}
+    shutil.copy(donor / "objects" / "fir.toml", root / "objects" / "fir.toml")
+    assert INC.relocations(root) == []
+    _jm(root, "apply")
+    for path, data in foreign.items():
+        assert path.read_bytes() == data, path
+    assert sorted(p for p in tp.rglob("*") if p.is_file()) == sorted(foreign)
+    text = top.read_text(encoding="utf-8")
+    assert "add_subdirectory(native/src/third_party/fir)\n" in text
+    assert "add_subdirectory(native/src/third_party/donor_fir/fir)\n" in text
+    assert (INC.src_path(root, "fir") / "fir_core.c").is_file()
+    _jm(root, "status", "--check")
+
+
+@pytest.mark.parametrize("layout", ["", "mirrored", "nested"])
+def test_an_empty_wired_directory_is_never_a_place_jm_left(tmp_path, layout):
+    """F2: an uninitialised submodule -- an empty ``native/src/ext/amp`` --
+    wired by the author, guarded and unguarded. A missing CMakeLists is not
+    a record: `status` reports nothing stale, `apply` keeps the lines."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, layout)
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "amp", "--module", "dsp")
+    _jm(root, "apply")
+    (root / "native" / "src" / "ext" / "amp").mkdir(parents=True)
+    top = root / "CMakeLists.txt"
+    top.write_text(
+        top.read_text(encoding="utf-8")
+        + "if(EXISTS ${CMAKE_SOURCE_DIR}/native/src/ext/amp/CMakeLists.txt)\n"
+        + "  add_subdirectory(native/src/ext/amp)\nendif()\n"
+        + "add_subdirectory(native/src/ext/amp)\n",
+        encoding="utf-8",
+    )
+    before = top.read_bytes()
+    r = run_cli("status", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "STALE" not in r.stdout, r.stdout
+    _jm(root, "apply")
+    assert top.read_bytes() == before
+
+
+def test_a_flat_project_carries_no_record(tmp_path):
+    """The record is written only where it differs from the default, so a
+    flat project's manifest is what it has always been; a nested one
+    carries it, and returning to flat takes it out again."""
+    root = _scaffold(tmp_path, "")
+    texts = {p: p.read_text("utf-8") for p in root.rglob("*.toml")}
+    for text in texts.values():
+        assert INC.APPLIED_LAYOUT not in text
+        assert INC.APPLIED_PACKAGE not in text
+    _declare(root, "nested")
+    _jm(root, "apply")
+    cfg = C.load(root)
+    assert cfg["project"][INC.APPLIED_LAYOUT] == "nested"
+    assert (
+        cfg["module"][_MODULE][INC.APPLIED_PACKAGE]
+        == C.module_paths(_MODULE).pypath
+    )
+    _declare(root, "")
+    _jm(root, "apply")
+    assert {p: p.read_text("utf-8") for p in root.rglob("*.toml")} == texts
+
+
+def test_script_does_not_replay_the_record(nested):
+    """``applied_*`` are derived: the replayed project's own `apply`
+    writes them, so `jm script` never emits them."""
+    assert INC.APPLIED_LAYOUT in (nested / "just-makeit.toml").read_text(
+        "utf-8"
+    )
+    r = _jm(nested, "script")
+    assert "applied_" not in r.stdout, r.stdout
+
+
+def test_a_project_switched_before_the_record_moves_only_its_c(tmp_path):
+    """A nested project from jm 0.118: headers, tests and benches nested,
+    C flat, no record. It reads as last applied flat, so nothing already
+    nested is found at a flat place, and its C -- which 0.118 never nested
+    -- moves on the first `apply`."""
+    root = _scaffold(tmp_path, "nested")
+    cfg = C.load(root)
+    old = {}
+    for name in INC.native_names(cfg):
+        here = INC.src_path(root, name, cfg)
+        flat = root / "native" / "src" / name
+        if here != flat:
+            shutil.move(str(here), str(flat))
+            old[INC.src_below(name, cfg)] = name
+    top = root / "CMakeLists.txt"
+    text = top.read_text(encoding="utf-8")
+    for below, name in old.items():
+        text = text.replace(
+            f"add_subdirectory(native/src/{below})",
+            f"add_subdirectory(native/src/{name})",
+        )
+    top.write_text(text, encoding="utf-8")
+    for toml in root.rglob("*.toml"):
+        toml.write_text(
+            re.sub(
+                r"^applied_(layout|package) = [^\n]*\n",
+                "",
+                toml.read_text("utf-8"),
+                flags=re.M,
+            ),
+            encoding="utf-8",
+        )
+    headers = {p: p.read_bytes() for p in (root / INC.INC_DIR).rglob("*.h")}
+    _jm(root, "apply")
+    for path, data in headers.items():
+        assert path.read_bytes() == data, path
+    _assert_in_place(root)
+    _jm(root, "status", "--check")
+
+
+@pytest.mark.parametrize("prefix", [True, False])
+def test_a_file_jm_has_no_record_of_is_named_not_moved(tmp_path, prefix):
+    """A component moved by hand (or by a jm before the record) sits where
+    jm never recorded putting it. jm moves nothing: with a C prefix the
+    collision `apply` refuses says where the file is and where it goes
+    (gh-2463); without one `status` advises the same."""
+    _jm(tmp_path, "new", "p", *(() if prefix else ("--no-c-prefix",)))
+    root = tmp_path / "p"
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "apply")
+    here = INC.src_path(root, "fir")
+    _declare(root, "nested")
+    _jm(root, "apply")
+    nested_dir = INC.src_path(root, "fir")
+    shutil.move(str(nested_dir), str(here))
+    hint = (
+        "native/src/fir/CMakeLists.txt belongs to `fir`, but jm has no"
+        " record of placing it there, and the manifest puts it at"
+        " native/src/dsp/fir/CMakeLists.txt"
+    )
+    if prefix:
+        r = run_cli("apply", cwd=root)
+        assert r.returncode != 0
+        assert hint in " ".join(r.stderr.split()), r.stderr
+        assert "already declares" not in r.stderr, r.stderr
+    else:
+        r = run_cli("status", cwd=root)
+        assert "ADVICE (1)" in r.stdout, r.stdout
+        assert "? native/src/fir/CMakeLists.txt" in r.stdout
+    assert here.is_dir() and not nested_dir.exists()
+
+
+@pytest.mark.parametrize("change", ["package", "layout"])
+def test_a_module_declared_since_the_last_apply_has_no_former_place(
+    tmp_path, change
+):
+    """F1 for modules: in a nested project jm has recorded, the author
+    vendors another jm project's ``gainv`` at ``native/src/third_party/
+    gainv`` -- the very place a nested module ``third_party`` puts it --
+    then declares that module, holding a ``gainv``, packaged elsewhere or
+    with the project switched back to flat. The module carries no
+    ``applied_package``: no record, so no former place, and the vendored
+    copy stays."""
+    _jm(tmp_path, "new", "donor")
+    donor = tmp_path / "donor"
+    _jm(donor, "object", "gainv")
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    _jm(root, "module", "dsp")
+    _jm(root, "object", "fir", "--module", "dsp")
+    _jm(root, "apply")
+    vendored = root / "native" / "src" / "third_party" / "gainv"
+    shutil.copytree(INC.src_path(donor, "gainv"), vendored)
+    foreign = {p: p.read_bytes() for p in vendored.rglob("*") if p.is_file()}
+    top = root / "CMakeLists.txt"
+    line = "add_subdirectory(native/src/third_party/gainv)\n"
+    top.write_text(top.read_text(encoding="utf-8") + line, encoding="utf-8")
+    if change == "package":
+        _jm(root, "module", "third_party", "--package", "vend")
+        want = "native/src/vend/gainv"
+    else:
+        _declare(root, "")
+        _jm(root, "module", "third_party")
+        want = "native/src/gainv"
+    _jm(root, "object", "gainv", "--module", "third_party")
+    assert "gainv" in INC.unplaced(root)
+    _jm(root, "apply")
+    for path, data in foreign.items():
+        assert path.read_bytes() == data, path
+    assert INC.src_dir("gainv", root) == want
+    assert (INC.src_path(root, "gainv") / "gainv_core.c").is_file()
+    assert top.read_text(encoding="utf-8").count(line) == 1
+    assert "gainv" not in INC.unplaced(root)

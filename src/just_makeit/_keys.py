@@ -634,6 +634,9 @@ _SHARED_MODULE_KEYS = frozenset(
         "kind",
         "backing",
         "package",
+        # gh-2459: jm's record of the package `apply` last placed the
+        # module under (`_config.record_applied`).
+        "applied_package",
         "header",
         "depends_on",
         "extra_link_libs",

@@ -42,6 +42,8 @@ _REPRESENTATIVE: dict[str, object] = {
     # -- shared ------------------------------------------------------------
     "backing": "ring",
     "package": "pkg",
+    # gh-2459: jm's record of the package `apply` last placed it under.
+    "applied_package": "pkg",
     "header": "p/ring.h",
     "depends_on": ["other"],
     "extra_link_libs": ["m"],

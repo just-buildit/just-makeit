@@ -2241,6 +2241,24 @@ def run(
         )
         print()
 
+    # gh-2459: a component found at neither its place nor the place jm
+    # recorded putting it. Advice: jm moves only from its own record.
+    _misplaced = INC.misplaced(root, cfg)
+    if _misplaced:
+        print(
+            f"ADVICE ({len(_misplaced)}) — file(s) at a place jm has no"
+            " record of putting them:"
+        )
+        for _name, _found, _want in _misplaced:
+            print(f"  ? {_found}  ({_name}: the manifest puts it at {_want})")
+        print(
+            "  jm moves a file only from where it recorded placing it"
+            " ([project] applied_layout,\n  [module.X] applied_package)."
+            " Move these yourself, or declare the layout or\n  package they"
+            " were placed under. Not drift; `--check` does not fail on it."
+        )
+        print()
+
     # gh-1472: a file jm has renamed, still under its old name. `apply` holds
     # the new one back rather than create a default beside it, so this is
     # the one place a reader learns the rename is waiting.
