@@ -600,7 +600,11 @@ def run(
         # Resolve for the *name* only; `root` itself stays as the caller gave
         # it, so reported paths are unchanged.
         _name = root.resolve().name or "project"
-        scratch = Path(tmp) / _name
+        # Each tree under a parent of its own, so no project name can be
+        # another tree's path: with `scratch` at `<tmp>/<name>`, a project
+        # directory named `jm-snapshot` was the snapshot's parent and the
+        # copy died with FileExistsError (gh-2488 review).
+        scratch = Path(tmp) / "scratch" / _name
         # gh-2488: ONE read of the live tree, and every comparison below is
         # against it. `snap` is that read, kept untouched; `scratch` is a
         # copy of it for the replay to change. Comparing the replay with the
@@ -610,7 +614,7 @@ def run(
         # touches it. The second copy reads only the private temp tree, so
         # nothing can move under it, and `_COPY_IGNORE` has already kept the
         # caches and build trees out of both.
-        snap = Path(tmp) / "jm-snapshot" / _name
+        snap = Path(tmp) / "snapshot" / _name
         shutil.copytree(root, snap, ignore=_COPY_IGNORE)
         shutil.copytree(snap, scratch, symlinks=True)
         # gh-767: drop the glue `apply` renders but never writes back, so the
@@ -654,7 +658,7 @@ def run(
         # both sides carry whatever the project already had, however many
         # versions behind that is. The replay tree is the only place jm's
         # *current* render of those files exists.
-        replay_root = Path(tmp) / "jm-replay"
+        replay_root = Path(tmp) / "replay"
         # gh-2344: the fragments deleted above are what decides what the
         # aggregator publishes, so the replay reads the user's.
         from . import _object as _obj
