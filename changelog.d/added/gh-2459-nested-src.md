@@ -24,7 +24,9 @@
     no record of placing is named by `jm status` (`ADVICE`) and by the
     collision it causes, and never moved.
 - **jm writes, and moves, only what it can show is its own** (gh-2459).
-    Before moving out of the place its record names, `jm apply` (and `jm   upgrade`) replays the recorded manifest and requires the component's
+    Before moving out of the place its record names, `jm apply`
+    (and `jm upgrade`) replays the recorded manifest and requires the
+    component's
     CMakeLists there to be jm's render, byte for byte; a stale or
     hand-edited record is refused, naming both places. A component's new
     place must be empty or hold only what jm renders there, and a sacred
