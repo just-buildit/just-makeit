@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from . import _incpath as INC
 from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
 
 #: The calling convention a row gets when it declares none -- the common
@@ -243,7 +244,7 @@ def binding_unit(
         sys.stdout.write(out.getvalue())
         sys.stderr.write(err.getvalue())
         raise
-    return f"native/src/{cname}/{cname}_ext.c", text
+    return INC.src_rel(cname, f"{cname}_ext.c", cfg), text
 
 
 def binding_names(text: str) -> "frozenset[str]":

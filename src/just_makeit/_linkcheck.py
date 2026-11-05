@@ -195,12 +195,12 @@ def binding_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":
     mod = C.module_of(cfg, comp)
     if mod:
         cname = C.module_paths(mod).cname
-        d = root / "native" / "src" / cname
+        d = INC.src_path(root, cname, cfg)
         # gh-504: a view's fragment calls the parent's core too. Its id has
         # one owner, `_view_frag_id`, as `_status` and `_apply` read it.
         frags = [comp] + [_view_frag_id(v) for v in C.views(cfg, comp)]
         return [d / f"{cname}_ext_{f}.c" for f in frags]
-    return [root / "native" / "src" / comp / f"{comp}_ext.c"]
+    return [INC.src_path(root, comp, cfg) / f"{comp}_ext.c"]
 
 
 def hook_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":

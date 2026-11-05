@@ -237,9 +237,7 @@ def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
                 continue
             frag_ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
             for frag_id in frag_ids:
-                rel = (
-                    Path("native") / "src" / cname / f"{cname}_ext_{frag_id}.c"
-                )
+                rel = Path(INC.src_rel(cname, f"{cname}_ext_{frag_id}.c", cfg))
                 if (root / rel).is_file():
                     out.add(rel.as_posix())
     return out
@@ -1916,7 +1914,7 @@ def run(
         for u in _unwired:
             tag = " [status_allow]" if _wiring_allowed[u.core] else ""
             print(
-                f"  ⊘ {u.core} (native/src/{u.component}) — missing from "
+                f"  ⊘ {u.core} ({INC.src_dir(u.component, cfg)}) — missing from "
                 f"{', '.join(u.targets)}{tag}"
             )
         # gh-1626: the advice is per core, from the replay -- what apply

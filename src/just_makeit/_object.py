@@ -662,7 +662,7 @@ def _copy_external_cmake_blocks(
     ``if(DOPPLER_C_LIB)`` blocks — every new component inherits the same
     conditional include/link paths automatically.
     """
-    src_dir = root / "native" / "src"
+    src_dir = INC.src_root(root)
     if not src_dir.exists():
         return
 
@@ -2016,7 +2016,7 @@ def _module_extra_files(
     doppler duplicated ~55 lines of ``read_dict()`` verbatim across two sacred
     fragments rather than pick one to include from the other.
     """
-    ext_dir = root / "native" / "src" / cname
+    ext_dir = INC.src_path(root, cname)
     found: set[str] = set()
     for ctx in comp_ctxs:
         comp = ctx.get("frag_id", ctx["component"])
@@ -2536,7 +2536,7 @@ def _regenerate_module_now(
     # when migrating from a pre-split layout.  Only functions whose names
     # appear in the freshly rendered template survive (no cross-contamination).
     functions = C.module_functions(cfg, module)
-    ext_dir = root / "native" / "src" / cname
+    ext_dir = INC.src_path(root, cname, cfg)
     ext_c_path = ext_dir / f"{cname}_ext.c"
 
     # Load migration source once: existing monolith bodies (used as fallback
@@ -2830,7 +2830,7 @@ def _regenerate_module_now(
             # Append the collocated object's extra sources: a legacy
             # _methods.c (migration) plus every module-level function .c.
             extra_srcs = []
-            methods_c = root / "native" / "src" / obj / f"{obj}_methods.c"
+            methods_c = INC.src_path(root, obj, cfg) / f"{obj}_methods.c"
             if methods_c.exists():
                 extra_srcs.append(f"{obj}_methods.c")
             extra_srcs.extend(fn_srcs)
@@ -2896,7 +2896,7 @@ def _regenerate_module_now(
             f"{_lines} to let jm own the target instead (gh-1034)."
         )
     _write(
-        root / "native" / "src" / cname / "CMakeLists.txt",
+        INC.src_path(root, cname, cfg) / "CMakeLists.txt",
         R.with_extra_cmake(
             collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
             cname,
@@ -3557,13 +3557,13 @@ def run(
     # no build. This path wrote it unconditionally, which is how a module
     # object ended up with an INTERFACE library AND a source file.
     if not header_only:
-        core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        core_c_path = INC.src_path(root, comp, cfg) / f"{comp}_core.c"
         _write(
             core_c_path,
             r(R.COMPONENT_CORE_C),
             "update" if core_c_path.exists() else "create",
         )
-    obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
+    obj_cmake_path = INC.src_path(root, comp, cfg) / "CMakeLists.txt"
     _write(
         obj_cmake_path, R.with_extra_cmake(r(R.CMAKE_LISTS_OBJECT_CORE), comp)
     )

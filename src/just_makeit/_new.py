@@ -385,7 +385,7 @@ def run(
             root / "cmake" / config_in,
             T.owned_packaging(r(T.CMAKE_CONFIG_IN), config_in),
         )
-        _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
+        _write(root / INC.lib_c_rel(project), r(T.LIB_STUB_C))
 
     cfg = C.from_new(
         project,

@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import _config as C
+from . import _incpath as INC
 
 
 COMPONENTS_SENTINEL = "# ── Components"
@@ -211,7 +212,7 @@ def component_core_libs(root: Path, comp: str) -> list[str]:
     Returns an empty list when the component has no CMakeLists (the `make`
     build backend, or a component not yet written).
     """
-    path = root / "native" / "src" / comp / "CMakeLists.txt"
+    path = INC.src_path(root, comp) / "CMakeLists.txt"
     if not path.exists():
         return []
     return object_libraries(path.read_text(encoding="utf-8"))
@@ -227,7 +228,7 @@ def declared_cores(root: Path) -> dict[str, str]:
     has caught up with it.
     """
     found: dict[str, str] = {}
-    src = root / "native" / "src"
+    src = INC.src_root(root)
     if not src.is_dir():
         return found
     # gh-988: every depth, not just `native/src/*/`. A hand-owned `c_dep` is
@@ -566,7 +567,7 @@ def folded_pairs(root: Path) -> "set[tuple[str, str]]":
 #: ``add_subdirectory``. Any other target under it is the author's: widening
 #: this would have apply DELETE that line, and excuse it from the refusal.
 SUBDIR_BLOCK = re.compile(
-    r"^add_subdirectory\(native/src/(\w+)\)[ \t]*\n"
+    "^" + INC.SUBDIR_RE + r"[ \t]*\n"
     r"((?:^target_sources\(\w+ PRIVATE \$<TARGET_OBJECTS:\w+_core>\)"
     r"[ \t]*\n)*)",
     re.M,
@@ -842,7 +843,7 @@ def splice_cmake_component(
         return
     text = cmake_path.read_text(encoding="utf-8")
     original = text
-    sub = f"add_subdirectory(native/src/{comp})\n"
+    sub = INC.subdir_line(comp, root)
     if sub not in text:
         if sentinel in text:
             idx = text.index("\n", text.index(sentinel)) + 1

@@ -59,6 +59,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _incpath as INC
 from . import _fmtprobe
 
 
@@ -108,7 +109,7 @@ def _generated_c_files(root: Path) -> list[Path]:
 
     Sorted for a stable invocation order (and stable test assertions).
     """
-    src = root / "native" / "src"
+    src = INC.src_root(root)
     if not src.is_dir():
         return []
     return sorted(

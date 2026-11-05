@@ -208,7 +208,7 @@ def _rewrite_makefile_bench(text: str) -> str:
 # `docs/upgrading.md` was a `perl -pi -e` block the author ran by hand.
 _COMPLEX_DIRS = (
     INC.INC_DIR,
-    "native/src",
+    INC.SRC_DIR,
     *INC.HARNESS,
 )
 

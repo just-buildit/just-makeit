@@ -35,6 +35,7 @@ distinctions between them are all load-bearing:
 from __future__ import annotations
 
 from . import _textio
+from . import _incpath as INC
 
 from . import _outbuf
 from ._types import _CTYPE_META
@@ -306,7 +307,7 @@ def withdraw_overridden_builtin(
     if not overridden_builtin_slots(component, [method], ctx):
         return False, ""  # names the built-in rather than replacing it
 
-    core_c = root / "native" / "src" / component / f"{component}_core.c"
+    core_c = INC.src_path(root, component, cfg) / f"{component}_core.c"
     if not core_c.is_file():
         return False, ""
     text = core_c.read_text(encoding="utf-8")

@@ -34,6 +34,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from . import _incpath as INC
+
 #: Suffixes jm treats as a hand-written hook. Both are documented as "jm never
 #: creates or modifies" files, which is what makes an unwired one a silent
 #: loss rather than stale output jm would fix on its own.
@@ -73,7 +75,7 @@ def unwired_hooks(root: Path) -> list[tuple[Path, Path]]:
 
     Returns paths relative to *root*, sorted, so the caller's output is stable.
     """
-    src = root / "native" / "src"
+    src = INC.src_root(root)
     if not src.is_dir():
         return []
     found: list[tuple[Path, Path]] = []

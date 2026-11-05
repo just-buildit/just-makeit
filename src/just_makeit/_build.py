@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from . import _incpath as INC
 from ._bench import _project_python
 
 # gh-1950. pytest exits 5 when it collects nothing. A functions-only module
@@ -290,7 +291,7 @@ def cmd_dry_run() -> None:
     print()
 
     # C sources
-    native = root / "native" / "src"
+    native = INC.src_root(root)
     if native.is_dir():
         c_files = sorted(native.rglob("*.c"))
         if c_files:
