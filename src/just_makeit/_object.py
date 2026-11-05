@@ -1340,6 +1340,7 @@ def fragment_destroy_ctx(
         csym=ctx["csym"],
         lends=lends,
         releases=releases,
+        properties=C.properties(cfg, obj),
     )
 
 
@@ -1439,6 +1440,7 @@ def _make_view_ctx(
             records=C.records(cfg, obj),  # gh-1405
             properties=C.properties(cfg, obj),  # gh-1426
             csym=ctx["csym"],
+            set_state_status_errors=C.set_state_status_errors(cfg, obj),
         )
     )
     for _slot in _override_slots:
@@ -1717,6 +1719,7 @@ def build_component_ctxs(
                 csym=ctx["csym"],
                 # gh-1997: the object's own; a view (above) has none.
                 extra_methods=C.extra_methods(cfg, obj),
+                set_state_status_errors=C.set_state_status_errors(cfg, obj),
             )
         )
         for _slot in _override_slots:
@@ -3112,6 +3115,11 @@ def run(
     # member in the module's `objects` list (its gh-1985 load order)
     # instead of appending it. Refused before anything is written.
     before: str = "",
+    # gh-2470: `jm object --set-state-status-error` rows -- which exception
+    # each status `<obj>_set_state` returns raises. Validated where a
+    # hand-written manifest is, in `load`; a refusal there undoes the
+    # command (`_undo`), so nothing is left behind.
+    set_state_status_errors: "list[dict] | None" = None,
 ) -> None:
     if before and (
         why := C.before_why_not(
@@ -3213,6 +3221,7 @@ def run(
             mutable=mutable,
             step_delegates=step_delegates,
             serializable=serializable,
+            set_state_status_errors=set_state_status_errors,
             streamable=streamable,
             async_stream=async_stream,
             stream_block_default=stream_block_default,
@@ -3346,6 +3355,7 @@ def run(
             no_state=no_state,
             serializable=serializable,
             csym=ctx["csym"],
+            set_state_status_errors=set_state_status_errors,
         )
     )
     # gh-1509: the C triplet the binding calls, declared in the sacred
@@ -3400,6 +3410,7 @@ def run(
             lends=_borrow.lends_from(
                 _methods_now, C.properties(cfg, ctx["component"]), vars_
             ),
+            properties=C.properties(cfg, ctx["component"]),
         )
     )
 
@@ -3663,6 +3674,7 @@ def run(
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,
+        set_state_status_errors_=set_state_status_errors,
         streamable_=streamable,
         async_stream_=async_stream,
         stream_block_default_=stream_block_default,

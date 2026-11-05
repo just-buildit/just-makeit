@@ -2450,6 +2450,8 @@ def run(
             # declarations -- the divergence this issue is a catalogue of.
             "status_fn": status_fn,
             "status_errors": status_errors or [],
+            # gh-2470: a returned status is the other thing a row can match.
+            "status_return": status_return,
         },
         # gh-1426 C: the message slots resolve against THIS object's
         # params and properties, so the refusal moved to just after

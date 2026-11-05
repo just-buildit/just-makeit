@@ -68,6 +68,10 @@ OBJECT_KEYS = frozenset(
         # gh-2316: the object has no Python benchmark; the C one stays.
         "no_python_bench",
         "serializable",
+        # gh-2470: the status -> exception rows of the serializable
+        # `set_state`, named for that member as `create_error` is for
+        # `create()`. Refused at load without `serializable`.
+        "set_state_status_errors",
         "streamable",
         "stream_block_default",
         "async_stream",
@@ -313,7 +317,8 @@ METHOD_KEYS = frozenset(
         # function that owns the precedence (called with the state and the
         # borrow's count, since "never satisfiable" is a property of both);
         # `status_errors` maps its answers to exceptions. Inert apart, so
-        # `_borrow.why_not` refuses either alone.
+        # `_borrow.why_not` refuses either alone. gh-2470: on a
+        # `status_return` method the rows match the returned status itself.
         "status_fn",
         "status_errors",
         # gh-1426 A: this method RELEASES the named borrows. Its count
@@ -670,6 +675,9 @@ HANDLE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "getters",
     "factories",
     "capsule",
+    # gh-2470: the object face's key, for the handle's serializable
+    # `set_state` (gh-403), which only a handle generates.
+    "set_state_status_errors",
 }
 CAPSULE_MODULE_KEYS = _SHARED_MODULE_KEYS | {
     "create_fn",
@@ -725,6 +733,9 @@ HANDLE_METHOD_KEYS = frozenset(
         "error",
         "error_message",
         "status_return",
+        # gh-2470: the gh-1418 status -> exception table, matched against
+        # the status a status-returning method's C call returns.
+        "status_errors",
         "out_len_fn",
         "doc",
     }

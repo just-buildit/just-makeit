@@ -482,6 +482,9 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     serializable=C.is_serializable(cfg, comp),
                     codecs=C.codecs(cfg),
                     csym=comp_ctx["csym"],
+                    set_state_status_errors=C.set_state_status_errors(
+                        cfg, comp
+                    ),
                 )
             )
             # NO_STEP components with no init_params have an empty

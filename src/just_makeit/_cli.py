@@ -97,6 +97,10 @@ Commands:
                                 elastic / pure-transducer face): a byte copy
                                 of the declared state when every field is
                                 plain, else a stub whose set_state() raises.
+    --set-state-status-error STATUS:ExcName[:message]
+                                Raise ExcName when <obj>_set_state returns
+                                STATUS; repeatable, needs --serializable.
+                                Any other non-zero status keeps ValueError.
     --init-param name:type[:default]  User-facing constructor param; repeatable.
                                       Composes with --state: init params drive the ctor,
                                       state stays internal (manage via --impl create::...).
@@ -178,7 +182,9 @@ Commands:
                                 of --status-fn to one exception. Repeatable.
                                 A status with no row falls through to
                                 --none-on-empty, else the blanket raise, so
-                                two borrows can share one table.
+                                two borrows can share one table. With
+                                --status-return, the row matches the status
+                                the method returns; others keep --error.
     --pass-capacity             Append a trailing `size_t max_out` to the C
                                 signature and pass the buffer capacity at the
                                 call site (for a bounds-checking C API).
