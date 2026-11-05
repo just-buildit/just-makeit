@@ -338,6 +338,12 @@ def _object_flags(
 
     if C.is_serializable(cfg, comp):
         parts.append(_bool_flag("--serializable"))
+        # gh-2470: the colon spec `_record_flags` writes for a method's
+        # `--status-error`, one flag per row.
+        for row in C.set_state_status_errors(cfg, comp):
+            parts.append(
+                _flag("--set-state-status-error", _status_error_spec(row))
+            )
 
     if C.step_delegates(cfg, comp):
         parts.append(_bool_flag("--step-delegates-to-steps"))
@@ -464,12 +470,30 @@ def _record_flags(entry: dict) -> list[str]:
     if entry.get("status_fn"):
         parts.append(_flag("--status-fn", str(entry["status_fn"])))
     for row in entry.get("status_errors", []) or []:
-        spec = f"{row.get('status', '')}:{row.get('error', '')}"
-        if row.get("message"):
-            spec += f":{row['message']}"
-        parts.append(_flag("--status-error", spec))
+        parts.append(_flag("--status-error", _status_error_spec(row)))
 
     return parts
+
+
+def _status_error_spec(row: dict) -> str:
+    """``STATUS:ExcName[:message]`` for one ``status_errors`` row.
+
+    The inverse of `_borrow.parse_status_error`, shared by a method's
+    ``--status-error`` and an object's ``--set-state-status-error``
+    (gh-2470), so one row is spelled one way on replay.
+
+    Examples
+    --------
+    >>> _status_error_spec({"status": "E", "error": "OSError"})
+    'E:OSError'
+    >>> _status_error_spec({"status": "E", "error": "OSError",
+    ...                     "message": "gone: really"})
+    'E:OSError:gone: really'
+    """
+    spec = f"{row.get('status', '')}:{row.get('error', '')}"
+    if row.get("message"):
+        spec += f":{row['message']}"
+    return spec
 
 
 def _record_decl_flags(rec: dict) -> list[str]:

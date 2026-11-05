@@ -2386,13 +2386,20 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # gh-647: same prose as the standalone path and the runtime method
         # table, from the one definition in _gluedoc.
         _glue = glue_methods(Component)
+        # gh-2470: the declared set_state rows, as the standalone path
+        # documents them (`serializable_triplet_parts`).
+        from ._context._methods import set_state_raises_doc
+
+        _ss_raises = set_state_raises_doc(C.set_state_status_errors(cfg, obj))
         for _n, _sig in (
             ("state_bytes", "self) -> int"),
             ("get_state", "self) -> bytes"),
             ("set_state", "self, blob: bytes) -> None"),
         ):
             lines += ["", f"    def {_n}({_sig}:"]
-            lines += _glue[_n].pyi_doc()
+            lines += _glue[_n].pyi_doc(
+                raises=(_ss_raises or None) if _n == "set_state" else None
+            )
 
     # gh-1997: the methods the author wrote in the object's `_extra.c`, after
     # the generated ones as their rows are -- through the one member emitter

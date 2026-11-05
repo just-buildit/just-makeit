@@ -55,6 +55,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "functions": [{"name": "f", "return_type": "int"}],
     "functions_in_core": "true",
     "serializable": "true",
+    # gh-2470: valid only beside `serializable`, which every face here sets.
+    "set_state_status_errors": [{"status": "E_X", "error": "MemoryError"}],
     "optional_backend": "true",
     "platforms": ["linux", "macos"],
     "init_params": [{"name": "n", "type": "int"}],

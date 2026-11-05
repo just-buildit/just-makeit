@@ -3013,6 +3013,7 @@ def refresh_module_fragment_docs(
                     ctx["Component"],
                     wp,
                     csym=ctx["csym"],
+                    status_errors=C.set_state_status_errors(cfg, comp),
                 )
                 updated = transplant_state_triplet(updated, c_funcs, pmd)
             if updated != existing:

@@ -585,7 +585,14 @@ def _exit_raise(
     )
 
 
-def _exit_body(component: str, method: dict, raise_pair, *, csym: str) -> str:
+def _exit_body(
+    component: str,
+    method: dict,
+    raise_pair,
+    *,
+    csym: str,
+    properties: "list[dict] | None" = None,
+) -> str:
     """``__exit__``'s body when ``exit`` names a finalizing method (gh-805 §H).
 
     Two differences from `_teardown_body`, and both are the point:
@@ -634,11 +641,21 @@ def _exit_body(component: str, method: dict, raise_pair, *, csym: str) -> str:
             guard + f"    (void){c_fn}(self->handle);\n    Py_RETURN_NONE;\n"
         )
 
+    from .. import _borrow
+
     category, message = raise_pair
     return (
         guard
         + f"    int _rc = {c_fn}(self->handle);\n"
         + "    if (_rc != 0) {\n"
+        # gh-2470: the finalizer's own rows, as its explicit call raises
+        # them -- the two calls disagreeing about raising is gh-541. No
+        # param is in scope here: the finalizer is called on the handle.
+        + _borrow.status_switch_c(
+            _borrow.status_rows(method),
+            str(method.get("name", "")),
+            _borrow.message_slots({}, csym, properties),
+        )
         + _rc_raise_c(category, message)
         + "    }\n"
         "    Py_RETURN_NONE;\n"
@@ -656,6 +673,7 @@ def make_destroy_ctx(
     csym: str,
     lends: bool,
     releases: "bool | None" = None,
+    properties: "list[dict] | None" = None,
 ) -> dict[str, str]:
     """Build every slot the destructor touches (gh-541 / gh-544).
 
@@ -698,6 +716,12 @@ def make_destroy_ctx(
         manifest is in hand — it is correct for creation *and* replay, since
         an absent component yields ``[]`` — and ``[]`` only where the render
         genuinely predates any method (the template seeds).
+    properties : list of dict or None
+        The component's properties: what an ``exit`` finalizer's
+        ``status_errors`` message may name (gh-2470). ``__exit__`` raises
+        the rows the finalizer's own binding raises, so it resolves the
+        slots against the same scope. A path that omits this while a row
+        names a property fails loudly in `format_raise_c`, naming it.
 
     Returns
     -------
@@ -958,7 +982,12 @@ def make_destroy_ctx(
     _exit_pair = _exit_raise(component, spec, exit_method)
     _exit_raises: list[tuple[str, str]] = []
     if _exit_pair is not None:
-        _exit_raises = [
+        from ._diagnostics import status_rows_raises_doc
+
+        # gh-2470: the finalizer's rows raise first, as `_exit_body` emits.
+        _exit_raises = status_rows_raises_doc(
+            list(exit_method.get("status_errors") or []), exit_name
+        ) + [
             (
                 _exit_pair[0],
                 (
@@ -1000,7 +1029,13 @@ def make_destroy_ctx(
         # DIFFERENT C calls, and the agreement that matters moves with it —
         # __exit__ now shares its raise semantics with the finalizer it calls.
         "destroy_exit_body": (
-            _exit_body(component, exit_method, _exit_pair, csym=csym)
+            _exit_body(
+                component,
+                exit_method,
+                _exit_pair,
+                csym=csym,
+                properties=properties,
+            )
             if exit_method
             else body
         ),

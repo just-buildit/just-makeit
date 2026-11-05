@@ -1393,6 +1393,7 @@ def run(
     mutable: bool = False,
     step_delegates: bool = False,
     serializable: bool = False,
+    set_state_status_errors: "list[dict] | None" = None,
     streamable: bool = False,
     async_stream: bool = False,
     stream_block_default: int | None = None,
@@ -1599,6 +1600,7 @@ def run(
             serializable=serializable,
             csym=ctx["csym"],
             extra_methods=extra_methods,  # gh-1997
+            set_state_status_errors=set_state_status_errors,  # gh-2470
         )
     )
     # gh-1509: the C triplet that binding calls, declared in the sacred
@@ -1661,6 +1663,7 @@ def run(
             lends=_borrow.lends_from(
                 _methods_now, C.properties(cfg, component), vars_
             ),
+            properties=C.properties(cfg, component),
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
@@ -2069,6 +2072,7 @@ def run(
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,
+        set_state_status_errors_=set_state_status_errors,
         streamable_=streamable,
         async_stream_=async_stream,
         stream_block_default_=stream_block_default,
