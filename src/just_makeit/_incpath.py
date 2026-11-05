@@ -896,7 +896,10 @@ def misplaced(root: Path, cfg: dict) -> "list[tuple[str, str, str]]":
             ),
             (
                 lambda o: src_rel(name, "CMakeLists.txt", o),
-                lambda p: declares(p.read_text(encoding="utf-8"), name),
+                lambda p: (
+                    (p.parent / f"{name}_core.c").is_file()
+                    or (p.parent / f"{name}_ext.c").is_file()
+                ),
             ),
         ):
             now, then = place(cfg), place(was)
@@ -1023,12 +1026,7 @@ def relocations_by_name(owner: Owner) -> "dict[str, list[tuple[str, str]]]":
                 add((rel(f"{old_dir}/{f}", cfg), rel(f"{new_dir}/{f}", cfg)))
         old, new = src_dir(name, was), src_dir(name, cfg)
         old_abs = Path(root) / old if root is not None else None
-        if (
-            old != new
-            and old_abs is not None
-            and old_abs.is_dir()
-            and src_owned(root, name, was, (was, cfg))
-        ):
+        if old != new and old_abs is not None and old_abs.is_dir():
             shared = any(d.startswith(old + "/") for d in new_src)
             for f in sorted(old_abs.iterdir()):
                 if f.is_file() and (
@@ -1079,75 +1077,6 @@ def _headers_owned(root: Path, cfg: dict, d: str, name: str) -> bool:
     return not core.exists() or guarded(core, cfg, name)
 
 
-def cmake_owned(text: str, name: str, owners: "tuple[dict, ...]") -> bool:
-    """Whether *text*, a CMakeLists at *name*'s place, is jm's for *name*
-    in this project: it builds *name*'s targets (:func:`declares`), and
-    each test or bench source of *name*'s it names is where one of *owners*
-    puts it -- a copy of another project's names that project's (gh-2459).
-    Read only to refuse."""
-    if not declares(text, name):
-        return False
-    tails = {NATIVE_FILES[k][1].format(name) for k in NATIVE_FILES}
-    named = re.findall(
-        r"\$\{CMAKE_SOURCE_DIR\}/((?:"
-        + "|".join(re.escape(t) for t in HARNESS)
-        + r")(?:/[\w.-]+)*/("
-        + "|".join(re.escape(t) for t in tails)
-        + r"))(?![\w.])",
-        text,
-    )
-    ours = {native_rel(k, name, o) for k in NATIVE_FILES for o in owners}
-    return all(p in ours for p, _f in named)
-
-
-def src_owned(
-    root: Path, name: str, where: dict, spellings: "tuple[dict, ...]"
-) -> bool:
-    """Whether *name*'s source directory under *where* is its own by its
-    content: a CMakeLists there builds *name*'s targets (:func:`declares`),
-    and a ``<name>_core.c`` there includes *name*'s header as jm spells it
-    under one of *spellings* -- a copy of another project's core includes
-    that project's. Read only to refuse a move (gh-2459)."""
-    d = src_path(root, name, where)
-    cml = d / "CMakeLists.txt"
-    if not cml.is_file() or not declares(
-        cml.read_text(encoding="utf-8"), name
-    ):
-        return False
-    core = d / f"{name}_core.c"
-    if not core.is_file():
-        return True
-    text = core.read_text(encoding="utf-8", errors="replace")
-    return any(
-        f'#include "{core_include(name, o)}"' in text for o in spellings
-    )
-
-
-def declares(text: str, name: str) -> bool:
-    """Whether *text*, a CMakeLists, builds one of *name*'s own targets --
-    its core library, its extension module, or its binding source -- the
-    way every CMakeLists jm renders for *name* does (gh-2459).
-
-    Used only to REFUSE: a CMakeLists at *name*'s place that builds none of
-    them is not jm's for *name* (a vendored ``add_library(vendor_fir ...)``),
-    so jm writes nothing there.
-
-    >>> declares("add_library(fir_core OBJECT fir_core.c)", "fir")
-    True
-    >>> declares("add_library(vendor_fir STATIC v.c)", "fir")
-    False
-    """
-    n = re.escape(name)
-    return bool(
-        re.search(
-            rf"\badd_library\(\s*{n}_core\b"
-            rf"|\bPython3_add_library\(\s*{n}\b"
-            rf"|(?<![\w.]){n}_ext\.c\b",
-            text,
-        )
-    )
-
-
 def guarded(header: Path, cfg: dict, name: str) -> bool:
     """Whether *header* opens with *name*'s own include guard (the one jm
     renders, ``<STEM>_CORE_H``): a ``<name>_core.h`` another project wrote
@@ -1162,59 +1091,54 @@ def guarded(header: Path, cfg: dict, name: str) -> bool:
     return bool(m) and m.group(1) == _csym.upper(cfg, name)
 
 
-def foreign_files(root: Path, cfg: dict, name: str) -> "list[str]":
-    """The files at *name*'s source and header directories that jm cannot
-    show are its own for *name* (gh-2459): in the source directory, a file
-    jm does not name for it, a CMakeLists building none of its targets
-    (:func:`declares`), or a ``<name>_core.c`` not including its header; in
-    the header directory, a ``<name>_core.h`` without its guard. Files
-    only: a subdirectory is another component's place, or nobody's.
+def occupied(root: Path, cfg: dict, name: str) -> "list[str]":
+    """What already occupies *name*'s place (gh-2459): every file in its
+    source directory (files only: a subdirectory is another component's
+    place, or nobody's), and any header jm names after it in its header
+    directory. Each project-relative.
 
-    What a command creating *name* asks before it writes there: jm writes
-    a component only into a directory it can show is its own. Each path
-    project-relative, sorted.
+    A command creating *name* writes there only when this is empty: jm
+    writes into a directory only when it can show the files there are its
+    own, and before a component exists nothing there can be.
     """
+    from ._extrahook import KEPT_SUFFIXES
+
     out: "list[str]" = []
     d = src_path(root, name, cfg)
     if d.is_dir():
-        for f in sorted(d.iterdir()):
-            if not f.is_file():
-                continue
-            if f.name == "CMakeLists.txt":
-                ok = declares(f.read_text(encoding="utf-8"), name)
-            elif f.name == f"{name}_core.c":
-                # Another project's core includes that project's header.
-                ok = f'#include "{core_include(name, cfg)}"' in f.read_text(
-                    encoding="utf-8", errors="replace"
-                )
-            else:
-                ok = _named_source(f.name, name, cfg)
-            if not ok:
-                out.append(f.relative_to(root).as_posix())
-    # The header directory: jm writes only the headers it names, beside
-    # whatever the author keeps there (a foreign type's header an
-    # `init_param` names), so only a `<name>_core.h` that is not the
-    # component's -- another guard -- makes it someone else's.
-    core = core_h(root, name, cfg)
-    if core.is_file() and not guarded(core, cfg, name):
-        out.append(core.relative_to(root).as_posix())
+        # The hooks jm includes by name and never writes may be staged
+        # before the component exists: they are jm's contract, not files
+        # it would write over.
+        out += [
+            f.relative_to(root).as_posix()
+            for f in sorted(d.iterdir())
+            if f.is_file() and not f.name.endswith(KEPT_SUFFIXES)
+        ]
+    # The header directory: jm writes only the headers it names there, so a
+    # header of the author's beside them (a foreign type's) is left as it
+    # is; one jm would write is not.
+    for kind in NAMED_HEADERS:
+        h = path(root, named_header(kind, name, cfg), cfg)
+        if h.is_file():
+            out.append(h.relative_to(root).as_posix())
     return out
 
 
-def refuse_foreign(root: Path, cfg: dict, name: str) -> None:
-    """Refuse to create *name* where :func:`foreign_files` finds files jm
-    did not write for it, naming each and what to do (gh-2459)."""
-    found = foreign_files(root, cfg, name)
+def refuse_occupied(root: Path, cfg: dict, name: str) -> None:
+    """Refuse to create *name* where :func:`occupied` finds any file,
+    naming each and what to do (gh-2459)."""
+    found = occupied(root, cfg, name)
     if found:
         from . import _config as C
 
         C._refuse(
             [
-                f"{src_dir(name, cfg)}/ and its header directory hold files"
-                f" jm did not write for `{name}`: {', '.join(found)}. jm"
-                " writes a component only into a directory it can show is"
-                " its own -- move them, or choose another name or module"
-                " package (gh-2459)"
+                f"`{name}` goes in {src_dir(name, cfg)}/ and"
+                f" {rel(core_dir(name, cfg), cfg)}/, which already hold"
+                f" {', '.join(found)}: jm creates a component only in"
+                " directories that are empty, because it cannot show files"
+                " already there are its own. Move them, or choose another"
+                " name or module package (gh-2459)"
             ]
         )
 

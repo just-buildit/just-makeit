@@ -640,25 +640,21 @@ def _cmake_is_jms(real: str, rendered: str, comp: str, cfg: dict) -> bool:
 
 def _refuse_unverified_moves(
     root: Path, cfg: dict, only: "str | None"
-) -> "dict[str, str]":
+) -> None:
     """Refuse a move jm cannot show is out of its own directory (gh-2459).
 
     A former place is computed from jm's record of what it last applied
     (`_incpath.applied`); before anything moves out of one, the record is
     checked against the tree. The component's CMakeLists at the recorded
     place must be the one jm renders there for it (:func:`_cmake_is_jms`,
-    against a replay of the recorded manifest) -- a vendored directory, or
-    another project's copy, is not, and neither is a place a hand-edited
-    or stale record names. Then the author's files beside the verified core
-    move with it.
+    against a replay of the recorded manifest, and of the current one) --
+    a vendored directory, or another project's copy, is not, and neither is
+    a place a hand-edited or stale record names. Then the author's files
+    beside the verified core move with it.
 
-    Also refused here: ``--only`` with a move pending (moving is a whole-
-    project step: the record follows a full `apply`), and a settled
-    component whose CMakeLists builds none of its targets (a vendored
-    directory where the flat layout puts a newly declared one).
-
-    Returns, per moving component, the CMakeLists jm rendered at its
-    recorded place, for :func:`_refuse_unowned_new_places`.
+    Also refused here: ``--only`` with a move pending -- moving is a
+    whole-project step, recorded by a full `apply`. `jm upgrade`, which
+    makes the same moves, asks this too.
     """
     by_name = INC.relocations_by_name(root)
     pending = {
@@ -682,49 +678,6 @@ def _refuse_unverified_moves(
         if C.is_no_generate_module(cfg, m)
     }
     applied_cfg = INC.applied(cfg)
-    kinds = {
-        C.module_paths(m).cname
-        for m in C.modules(cfg)
-        if (cfg.get("module", {}).get(m) or {}).get("kind")
-    }
-    for name in INC.native_names(cfg):
-        if name in hand:
-            continue
-        # Where the component goes is jm's when its CMakeLists builds the
-        # component's targets and names its test and bench where this
-        # project puts them (now, or at the last apply): a vendored
-        # directory, or a copy of another project's component, is never
-        # written or moved into. The sacred core is never asked: it is the
-        # author's. A new place -- one it moves to, or any of one declared
-        # since the last apply -- must also not hold another `_core.h`.
-        new = name in by_name or name in unplaced
-        cml = INC.src_path(root, name, cfg) / "CMakeLists.txt"
-        if cml.is_file() and not INC.cmake_owned(
-            cml.read_text(encoding="utf-8"), name, (cfg, applied_cfg)
-        ):
-            errors.append(
-                f"{INC.src_dir(name, cfg)}/ already holds files jm did not"
-                f" write for `{name}` (its CMakeLists builds none of the"
-                " component's targets, or names another project's test and"
-                " bench), so it is not jm's: jm writes a component only into"
-                " a directory it can"
-                " show is its own. Move them, or choose another name or"
-                " module package (gh-2459)"
-            )
-        core = INC.core_h(root, name, cfg)
-        if (
-            new
-            and name not in kinds
-            and core.is_file()
-            and not INC.guarded(core, cfg, name)
-        ):
-            errors.append(
-                f"{core.relative_to(root).as_posix()} is not `{name}`'s"
-                " header (it lacks the component's own include guard): jm"
-                " writes a component only into a directory it can show is"
-                " its own. Move it, or choose another name or module"
-                " package (gh-2459)"
-            )
     # Every component whose source directory the record puts elsewhere, and
     # whose recorded directory holds anything: jm moves out of it only when
     # it can show the files there are its own.
@@ -761,7 +714,7 @@ def _refuse_unverified_moves(
             if any(
                 _cmake_is_jms(text, r, name, applied_cfg)
                 for r in renders[name]
-            ) and INC.src_owned(root, name, applied_cfg, (applied_cfg, cfg)):
+            ):
                 continue
             where = (
                 f"jm's record says it last placed `{name}` at"
@@ -790,6 +743,186 @@ def _refuse_unverified_moves(
             )
     if errors:
         C._refuse(errors)
+
+
+def _kind_cnames(cfg: dict) -> "set[str]":
+    """The cnames of the ``kind`` modules (handle, capsule, composer): their
+    ``<cname>_core.h`` is their backing's, the author's by design."""
+    return {
+        C.module_paths(m).cname
+        for m in C.modules(cfg)
+        if (cfg.get("module", {}).get(m) or {}).get("kind")
+    }
+
+
+def _never_placed(root: Path, cfg: dict, name: str, kinds: "set[str]") -> bool:
+    """Whether jm has never put *name* where *cfg* puts it (gh-2459): the
+    file it writes there first and keeps -- the sacred ``<name>_core.c`` (a
+    header-only component's ``<name>_core.h``; a kind module's binding,
+    which owns no core) -- is absent, and the root ``CMakeLists.txt`` does
+    not wire that directory. A component whose core was deleted to be
+    rendered again (`jm regenerate`, a deleted directory) is still wired
+    there: that is jm's place, put back. Read only to decide what is asked
+    before writing; nothing is moved on it. The `make` backend has no
+    wiring to read, and is never asked."""
+    if C.build_system(cfg) != "cmake":
+        return False
+    if name in kinds:
+        first = INC.src_path(root, name, cfg) / f"{name}_ext.c"
+    elif name in C.components(cfg) and C.is_header_only(cfg, name):
+        first = INC.core_h(root, name, cfg)
+    else:
+        first = INC.src_path(root, name, cfg) / f"{name}_core.c"
+    if first.is_file():
+        return False
+    top = root / "CMakeLists.txt"
+    if not top.is_file():
+        return True
+    line = INC.subdir_line(name, cfg).rstrip("\n")
+    # jm's own wiring is the run under its sentinels; the same line the
+    # author appends elsewhere (wiring a vendored directory) is theirs.
+    text = top.read_text(encoding="utf-8")
+    for sentinel in (_COMPONENTS_ANCHOR, _MODULES_ANCHOR):
+        at = text.find(sentinel)
+        if at < 0:
+            continue
+        start = text.index("\n", at) + 1
+        end = text.find("\n# ──", start)
+        run = text[start : end if end >= 0 else len(text)]
+        if re.search(rf"^[ \t]*{re.escape(line)}[ \t]*$", run, re.M):
+            return False
+    return True
+
+
+def _new_places(root: Path, cfg: dict) -> "dict[str, list[tuple[str, bytes]]]":
+    """What already sits at each component's NEW place, before anything
+    moves (gh-2459): per component with a move pending, or one jm has never
+    put where the manifest puts it (:func:`_never_placed`), the files
+    directly in its source and header directories -- project-relative path
+    and bytes."""
+    by_name = INC.relocations_by_name(root)
+    # Per component, the directories its waiting moves land in.
+    landing: "dict[str, set[Path]]" = {}
+    for n, pairs in by_name.items():
+        for o, dest in pairs:
+            if (root / o).is_file():
+                landing.setdefault(n, set()).add((root / dest).parent)
+    hand = {
+        C.module_paths(m).cname
+        for m in C.modules(cfg)
+        if C.is_no_generate_module(cfg, m)
+    }
+    kinds = _kind_cnames(cfg)
+    out: "dict[str, list[tuple[str, bytes]]]" = {}
+    for name in INC.native_names(cfg):
+        if name in hand:
+            continue
+        # A component with moves waiting is new where they land (a switch
+        # can move its tests alone, and a project placed before the record
+        # already has its headers here); one jm never put here is new in
+        # both its directories.
+        own = {
+            INC.src_path(root, name, cfg),
+            INC.path(root, INC.core_dir(name, cfg), cfg),
+        }
+        if name in landing:
+            dirs = sorted(own & landing[name])
+        elif _never_placed(root, cfg, name, kinds):
+            dirs = sorted(own)
+        else:
+            continue
+        files: "list[tuple[str, bytes]]" = []
+        for d in dirs:
+            if d.is_dir():
+                files += [
+                    (f.relative_to(root).as_posix(), f.read_bytes())
+                    for f in sorted(d.iterdir())
+                    if f.is_file()
+                ]
+        out[name] = files
+    return out
+
+
+def _refuse_unowned_new_places(
+    root: Path,
+    temp_root: "Path | None",
+    cfg: dict,
+    new: "dict[str, list[tuple[str, bytes]]]",
+) -> None:
+    """Refuse to write a component into a new place that already held files
+    jm cannot show are its own (gh-2459).
+
+    A new source directory (:func:`_new_places`) must have been empty, or
+    every file in it one jm's replay renders there for the component, byte
+    for byte. A sacred ``<name>_core.c`` / ``<name>_core.h`` already sitting
+    at a new place is always someone else's: jm writes it once, when it
+    creates the component, and never into a directory that has one. Nothing
+    is matched by name or pattern: a vendored ``native/src/third_party/fir``
+    -- whatever its CMakeLists says -- is not what jm renders, so it is
+    never written into. In a header directory jm writes only the headers it
+    names, never building the directory, so there the sacred core header and
+    each header jm renders are asked, and an author's other headers are
+    left as they are (a kind module's core header is its backing's).
+
+    With *temp_root* None (before the render), only the sacred cores are
+    asked: they need no render to be someone else's.
+    """
+    from . import _extrahook
+
+    kinds = _kind_cnames(cfg)
+    errors: "list[str]" = []
+    for name, files in new.items():
+        headers = INC.rel(INC.core_dir(name, cfg), cfg) + "/"
+        sacred = {
+            INC.src_rel(name, f"{name}_core.c", cfg),
+            INC.core_rel(name, cfg),
+        }
+        bad = []
+        for rel, data in files:
+            # jm's own contract with the author: the hooks it includes by
+            # name and never writes (`_extrahook.KEPT_SUFFIXES`) may be
+            # staged before the component exists.
+            if rel.endswith(_extrahook.KEPT_SUFFIXES):
+                continue
+            if temp_root is None:
+                # Before the render: only a sacred core is asked.
+                if rel in sacred and name not in kinds:
+                    bad.append(rel)
+                continue
+            mine = temp_root / rel
+            # In a header directory jm writes only the headers it names; a
+            # header of the author's beside them (a foreign type's, or one
+            # a move from an ancestor directory left where its include finds
+            # it) is never written over and never built, so only a sacred
+            # core header, or one jm renders there, is asked of it.
+            # A kind module's directories hold the author's backing beside
+            # jm's binding by design: only what jm renders there is asked.
+            if name in kinds and not mine.is_file():
+                continue
+            if (
+                rel.startswith(headers)
+                and not mine.is_file()
+                and rel not in sacred
+            ):
+                continue
+            if (
+                (rel in sacred and name not in kinds)
+                or not mine.is_file()
+                or mine.read_bytes() != data
+            ):
+                bad.append(rel)
+        if bad:
+            errors.append(
+                f"`{name}` goes in {INC.src_dir(name, cfg)}/ and {headers},"
+                f" which already hold {', '.join(bad)} -- files jm does not"
+                " render there for it, so it cannot show they are its own"
+                " and writes nothing into them. Move them, or choose another"
+                " name or module package (gh-2459)"
+            )
+    if errors:
+        # A component jm finds elsewhere -- moved by hand, or by a jm older
+        # than the record -- is named as that, which is what to fix.
+        C._refuse(misplaced_advice(root, cfg) or errors)
 
 
 def misplaced_advice(root: Path, cfg: dict) -> "list[str]":
@@ -4392,6 +4525,10 @@ def _apply_manifest(
     # gh-2459: jm moves out of, or writes into, a directory only where it
     # can show the files there are its own -- asked before the first move.
     _refuse_unverified_moves(root, cfg, only)
+    _new_place_files = _new_places(root, cfg)
+    # A sacred core already at a new place needs no render to be foreign:
+    # refused before anything moves next to it.
+    _refuse_unowned_new_places(root, None, cfg, _new_place_files)
     _moves = [(o, n) for o, n in INC.relocations(root) if (root / o).is_file()]
     relocated = _relocate_native(root)
     # A moved file is the same file at a new path: it carries its "before"
@@ -4419,6 +4556,9 @@ def _apply_manifest(
 
             print(error_report(e), file=sys.stderr)
             sys.exit(1)
+        # gh-2459: a component's new place held nothing jm cannot show is
+        # its own -- asked of the render just made, before the first write.
+        _refuse_unowned_new_places(root, temp_root, cfg, _new_place_files)
         # gh-2465: a declaration rendered into an order the author's
         # definition does not have, with the same types, compiles and swaps
         # the arguments of every caller who follows the header. Asked of the

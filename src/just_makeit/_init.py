@@ -1899,7 +1899,7 @@ def run(
     # C headers. Object creation is create-only (the verb errors on a
     # duplicate name), so the sacred files are written fresh — never spliced.
     # gh-2459: only into a directory jm can show is its own.
-    INC.refuse_foreign(root, cfg, comp)
+    INC.refuse_occupied(root, cfg, comp)
     core_h_path = INC.core_h(root, comp, cfg)
     _write(
         core_h_path,

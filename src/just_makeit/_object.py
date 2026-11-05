@@ -3571,7 +3571,10 @@ def run(
     # so the sacred files are written fresh — never spliced.
     # gh-2459: only into a directory jm can show is its own -- under nested
     # `native/src/<package>/` overlaps names authors use (third_party, ext).
-    INC.refuse_foreign(root, layout_owner, comp)
+    # (The object that shares its module's directory finds the module's
+    # own files there, written a command ago.)
+    if comp != C.collocated_object(layout_owner, module):
+        INC.refuse_occupied(root, layout_owner, comp)
     core_h_path = INC.core_h(root, comp, layout_owner)
     _write(
         core_h_path,
