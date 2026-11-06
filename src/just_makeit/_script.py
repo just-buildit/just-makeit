@@ -743,6 +743,11 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--error", str(m["error"])))
     if m.get("error_message"):
         parts.append(_flag("--error-message", str(m["error_message"])))
+    # gh-2498: a method's manifest `doc` is its docstring; dropped here, a
+    # replayed method fell back to the header's or jm's text, and a view's
+    # doc-only override replayed as a line stating nothing.
+    if m.get("doc"):
+        parts.append(_flag("--doc", str(m["doc"])))
 
     # gh-1074: found by the enumerator gate added with `count_name`, not by
     # a report — three flags `jm method` accepts that `jm script` never
@@ -1204,11 +1209,7 @@ def run(root: Path) -> None:
                 out.append(
                     _render_cmd(
                         ["just-makeit", "method", comp, m["name"]],
-                        _method_flags(m, mod)
-                        # gh-2498: a view's override of a member is its doc
-                        # (or message), so a line without it states nothing.
-                        + ([_flag("--doc", m["doc"])] if m.get("doc") else [])
-                        + [_flag("--view", cls)],
+                        _method_flags(m, mod) + [_flag("--view", cls)],
                     )
                 )
             for p in C.view_properties(v):

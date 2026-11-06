@@ -52,7 +52,7 @@ from ._init import (
 from ._object import _regenerate_module
 from . import _linkcheck
 from . import _incpath as INC
-from ._context._diagnostics import DEFAULT_COUNT_TYPE
+from ._context._diagnostics import DEFAULT_COUNT_TYPE, method_raises
 
 # gh-805 §B: the return types on which `_rc < 0` is a meaningful test.
 # Enumerated rather than derived from `_CTYPE_META[...]["kind"] == "int"`,
@@ -1688,12 +1688,7 @@ def _run_view_override(
         (m for m in C.methods(cfg, object_name) if m["name"] == method_name),
         {},
     )
-    if error_message and not (
-        parent.get("error_negative")
-        or parent.get("status_return")
-        or parent.get("error_on_empty")
-        or parent.get("error_sentinel")
-    ):
+    if error_message and not method_raises(parent):
         raise _report.Refusal(
             f"{target}: error_message is the text of a refusal, and "
             f"'{object_name}.{method_name}' declares none (error_negative, "
@@ -2033,19 +2028,16 @@ def run(
     if _shape_err:
         print(f"error: {_shape_err}", file=sys.stderr)
         sys.exit(1)
-    # gh-823 Ask D: `status_return` raises too, so it may name the exception
-    # and carry the message. The key was never the problem — both were already
-    # read from the manifest; only `error_negative`'s emitter looked at them.
-    # This gate is what turned that into a refusal rather than a silent no-op.
-    # gh-1159: `error_on_empty` is a THIRD way a method raises, so it
-    # licenses these two exactly as the other triggers do. Left out, the
-    # keys would be refused on the one shape whose whole purpose is to
-    # explain a refusal.
-    # gh-2012: `error_sentinel` is a fourth, and `error_negative` over a
-    # variable_output count is the third reached from a new shape -- the
-    # same key, so it needs no line here.
-    _raises_somehow = (
-        error_negative or status_return or error_on_empty or error_sentinel
+    # gh-823 Ask D: `error` / `error_message` are refused rather than
+    # silently ignored on a method with no way to raise. Which keys are a
+    # way to raise is `method_raises`'s one answer (gh-2498).
+    _raises_somehow = method_raises(
+        {
+            "error_negative": error_negative,
+            "status_return": status_return,
+            "error_on_empty": error_on_empty,
+            "error_sentinel": error_sentinel,
+        }
     )
     if error and not _raises_somehow:
         print(

@@ -585,6 +585,46 @@ def _raise_pair(m: dict, subject: str) -> "tuple[str, str]":
     )
 
 
+def method_raises(m: dict) -> bool:
+    """Whether method entry *m* declares a way its call is REFUSED.
+
+    The one reading of "this method raises", for every reader: the emitter
+    and both doc faces through `declared_raise`, `_method.run`'s refusal of
+    an ``error`` / ``error_message`` with nothing to license it, and a
+    view's ``error_message`` override, which may only reword a refusal the
+    parent declares (gh-2498). Three copies of this key set existed until
+    then, and a fourth way to raise would have reached whichever copy its
+    author found.
+
+    - ``error_negative``: a negative return is a refusal.
+    - ``status_return``: gh-823 Ask D -- it raises too, so it may name the
+      exception and carry the message.
+    - ``error_on_empty``: gh-1159 -- a ``variable_output`` method has no
+      status to carry, its one return IS the length, so this is how it says
+      a zero-length result is a refusal rather than an empty answer. Left
+      out, the keys were refused on the one shape whose purpose is to
+      explain a refusal, and a binding that raised beside a ``.pyi`` that
+      documented no exception was the gh-869 split.
+    - ``error_sentinel``: gh-2012 -- the unsigned count's refusal value, for
+      a kernel whose zero is a real answer. A signed count needs no line:
+      it is ``error_negative`` over a ``variable_output`` count, the same
+      key reached from a new shape.
+
+    Examples
+    --------
+    >>> method_raises({"name": "run"})
+    False
+    >>> method_raises({"name": "run", "error_sentinel": "SIZE_MAX"})
+    True
+    """
+    return bool(
+        m.get("error_negative")
+        or m.get("status_return")
+        or m.get("error_on_empty")
+        or m.get("error_sentinel")
+    )
+
+
 def declared_raise(m: dict) -> "tuple[str, str] | None":
     """``(category, message)`` a declared method raises, or ``None``.
 
@@ -621,22 +661,7 @@ def declared_raise(m: dict) -> "tuple[str, str] | None":
     ...                 "error": "OSError", "error_message": "bad offset"})
     ('OSError', 'bad offset')
     """
-    if not (
-        m.get("status_return")
-        or m.get("error_negative")
-        # gh-1159: a `variable_output` method has no status to carry -- its one
-        # return value IS the length -- so `error_on_empty` is how it says a
-        # zero-length result is a REFUSAL rather than an empty answer. It
-        # belongs in this trigger and not beside it, because the whole point of
-        # `declared_raise` is that the emitter and both doc faces decide from
-        # one reading: a binding that raises and a `.pyi` that documents no
-        # exception is the gh-869 split.
-        or m.get("error_on_empty")
-        # gh-2012: the unsigned count's refusal value, for a kernel whose
-        # zero is a real answer. A signed count needs no line here: it is
-        # `error_negative`, the trigger above.
-        or m.get("error_sentinel")
-    ):
+    if not method_raises(m):
         return None
     return _raise_pair(m, str(m.get("name", "")))
 
