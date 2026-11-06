@@ -33,6 +33,7 @@ the file is left untouched, so a second ``jm apply`` produces no diff.
 from __future__ import annotations
 
 from . import _textio
+from . import _incpath as INC
 
 import re
 from pathlib import Path
@@ -2827,7 +2828,7 @@ def refresh_module_fragment_docs(
         # fragment was "missing" and skipped: `apply` refreshed no doc in a
         # dotted module and said nothing.
         cname = C.module_paths(mod).cname
-        ext_dir = root / "native" / "src" / cname
+        ext_dir = INC.src_path(root, cname, cfg)
         derived = O.build_component_ctxs(root, cfg, mod, pkg)
         # gh-504: key by frag_id, not component — a view shares its parent's
         # `component` but owns a distinct fragment (`<mod>_ext_<frag_id>.c`), so
@@ -3013,6 +3014,7 @@ def refresh_module_fragment_docs(
                     ctx["Component"],
                     wp,
                     csym=ctx["csym"],
+                    status_errors=C.set_state_status_errors(cfg, comp),
                 )
                 updated = transplant_state_triplet(updated, c_funcs, pmd)
             if updated != existing:

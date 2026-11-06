@@ -46,6 +46,9 @@ htmlcov/
 nosetests.xml
 coverage.xml
 junit.xml
+# CI's test legs write it here (ci.yml PYTEST_ADDOPTS --junitxml) for the
+# artifact upload; canonical's tree check refuses a test run that leaves it.
+pytest-report.xml
 # gh-2078: what `make coverage-shard` leaves for the combined gate
 coverage-shards/
 *.cover

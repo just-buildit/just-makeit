@@ -2,8 +2,8 @@
 
   <!-- jbx is just-bashit's tool, so it wears just-bashit's colours: a gray
        tile (darker than its logo's #46484d), the amber prompt and a white
-       cursor, with the same square ends. One line: the cursor sits on the
-       chevron's own centre line. -->
+       cursor, with the same square ends. The cursor is one bar, low and
+       tight to the chevron, the underscore of a >_ prompt. -->
   <rect width="200" height="200" rx="32" fill="#2b2d31"/>
 
   <!-- Run: the prompt chevron -->
@@ -16,9 +16,8 @@
     stroke-linejoin="miter"
   />
 
-  <!-- Discard: the cursor fades out and nothing is left behind -->
-  <rect x="118" y="78" width="24" height="44" fill="#ffffff"/>
-  <rect x="148" y="78" width="14" height="44" fill="#ffffff" fill-opacity="0.55"/>
-  <rect x="168" y="78" width="8" height="44" fill="#ffffff" fill-opacity="0.25"/>
+  <!-- Discard: a single low cursor bar, sitting on the chevron's
+       baseline like the underscore of a >_ prompt -->
+  <rect x="104" y="129" width="40" height="18" fill="#ffffff"/>
 
 </svg>

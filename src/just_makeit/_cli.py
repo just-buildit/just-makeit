@@ -58,7 +58,10 @@ Commands:
                                 package`), e.g. beside an existing package's classes;
                                 they import from <pkg>.DIR. DIR is identifiers
                                 separated by / (dsp/io), or . for the package itself.
-                                The C side keeps the module's own name.
+                                The C symbols keep the module's own name, and so
+                                does native/src/; under [project] layout = "nested"
+                                the headers (and their C, tests and benches) follow
+                                DIR.
 
   object <name> [OPTIONS]       Add a Python-wrapped C type to a project.
     --preset NAME               Named shorthand for a common shape:
@@ -95,6 +98,10 @@ Commands:
                                 elastic / pure-transducer face): a byte copy
                                 of the declared state when every field is
                                 plain, else a stub whose set_state() raises.
+    --set-state-status-error STATUS:ExcName[:message]
+                                Raise ExcName when <obj>_set_state returns
+                                STATUS; repeatable, needs --serializable.
+                                Any other non-zero status keeps ValueError.
     --init-param name:type[:default]  User-facing constructor param; repeatable.
                                       Composes with --state: init params drive the ctor,
                                       state stays internal (manage via --impl create::...).
@@ -176,7 +183,9 @@ Commands:
                                 of --status-fn to one exception. Repeatable.
                                 A status with no row falls through to
                                 --none-on-empty, else the blanket raise, so
-                                two borrows can share one table.
+                                two borrows can share one table. With
+                                --status-return, the row matches the status
+                                the method returns; others keep --error.
     --pass-capacity             Append a trailing `size_t max_out` to the C
                                 signature and pass the buffer capacity at the
                                 call site (for a bounds-checking C API).
@@ -449,6 +458,10 @@ Commands:
   upgrade                       Migrate an older project's just-makeit.toml to the
                                 current schema, unlocking newer features.
   script                        Print a shell script that fully reconstructs this project via CLI.
+  manifest --json               Print the merged manifest (just-makeit.toml plus
+                                every fragment its include names) as JSON on
+                                stdout: what `apply` reads. From Python:
+                                just_makeit.load_manifest(root).
   adopt --check [--module ID | --all]
                                 Would a module object's binding fragment be safe as jm's
                                 content? The whole project unless --module narrows it.
@@ -803,14 +816,171 @@ def main() -> None:
 
     with _undo.guard(_project_changed_by(sys.argv[1:])):
         try:
+            _refuse_while_files_wait(sys.argv[1:])
             _main()
             _undo.commit()
         except Refusal as exc:
             if _debug():
                 raise
             sys.stdout.flush()
-            print(f"error: {exc}", file=sys.stderr)
+            # gh-2440: one `error:` line per problem the refusal names.
+            print(exc.report(), file=sys.stderr)
             sys.exit(1)
+
+
+#: The tokens that ask a command for its usage instead of running it.
+_HELP = frozenset({"-h", "--help"})
+
+#: The commands that hand their argv to another program, which answers
+#: ``--help`` itself: `test` to pytest, `install-deps` to its script.
+_FORWARDS_ARGV = frozenset({"test", "install-deps"})
+
+
+def command_usage(cmd: str) -> str:
+    """The usage of *cmd*: its own entries of the top-level ``_USAGE``.
+
+    An entry starts on a line indented two spaces whose first word is the
+    command, and runs over its deeper-indented continuation lines to the
+    next entry or blank line. A command with several forms (``adopt``) has
+    several entries, and all of them are returned. The one usage text
+    serves both ``jm --help`` and ``jm <cmd> --help``, so the two cannot
+    disagree.
+
+    Parameters
+    ----------
+    cmd : str
+        A command `_main` dispatches.
+
+    Returns
+    -------
+    str
+        ``Usage: just-makeit`` followed by the command's entries.
+
+    Examples
+    --------
+    >>> print(command_usage("perf"))  # doctest: +NORMALIZE_WHITESPACE
+    Usage: just-makeit
+      perf                          Retrofit JM_HOT/JM_FORCEINLINE without
+      touching user code.
+    """
+    lines: "list[str]" = []
+    inside = False
+    for line in _USAGE.splitlines():
+        if re.match(r"  \S", line):
+            inside = line.split()[0].rstrip(",") == cmd
+        elif not line.strip():
+            inside = False
+        if inside:
+            lines.append(line)
+    return "\n".join(["Usage: just-makeit", *lines])
+
+
+def _refuse_argument(cmd: str, arg: str) -> None:
+    """Exit 2 on *arg*, an argument *cmd* does not take (gh-2434).
+
+    A command that took no arguments used to ignore them, so a typo, or
+    an option it does not have, ran the command anyway -- which, for a
+    MUTATING one, changed the project.
+    """
+    print(
+        f"error: '{cmd}' does not take '{arg}'; "
+        f"see 'just-makeit {cmd} --help'.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _json_toml_value(value):
+    """The JSON for a TOML value `json` cannot encode itself (gh-2440).
+
+    TOML has date, time and date-time values; JSON has none. Each becomes
+    its RFC 3339 text (``isoformat``, with the ``T``), which is what a TOML
+    reader and a JSON consumer both parse back. A merged manifest holds
+    nothing else `json` lacks, so anything else is a bug, and raises rather
+    than printing as some ``str()`` a consumer cannot read back.
+
+    Parameters
+    ----------
+    value : object
+        What `json.dumps` could not encode.
+
+    Returns
+    -------
+    str
+        The ISO 8601 / RFC 3339 text of a date, time or date-time.
+
+    Raises
+    ------
+    TypeError
+        For any other type, as `json.dumps` itself would.
+
+    Examples
+    --------
+    >>> import datetime, json
+    >>> when = datetime.datetime(2024, 1, 2, 3, 4, 5,
+    ...                          tzinfo=datetime.timezone.utc)
+    >>> json.dumps(when, default=_json_toml_value)
+    '"2024-01-02T03:04:05+00:00"'
+    >>> _json_toml_value(datetime.date(2024, 1, 2))
+    '2024-01-02'
+    >>> _json_toml_value(datetime.time(3, 4, 5))
+    '03:04:05'
+    >>> _json_toml_value(object())
+    Traceback (most recent call last):
+    ...
+    TypeError: manifest value of type object is not JSON serializable
+    """
+    import datetime
+
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    raise TypeError(
+        f"manifest value of type {type(value).__name__} "
+        "is not JSON serializable"
+    )
+
+
+def _no_arguments(cmd: str, args: "list[str]") -> None:
+    """Refuse the first of *args* (argv after *cmd*), if there is one."""
+    if args:
+        _refuse_argument(cmd, args[0])
+
+
+#: The commands that make the moves a layout or ``package`` change leaves
+#: waiting (gh-2459): every other MUTATING command waits for them.
+_MOVERS = frozenset({"apply", "upgrade"})
+
+
+def _refuse_while_files_wait(args: "list[str]") -> None:
+    """Refuse a MUTATING command, other than the ones that move
+    (:data:`_MOVERS`), while files wait to move (gh-2459).
+
+    A layout or ``package`` change leaves each component's files where jm
+    last put them until `jm apply` (or `jm upgrade`) moves them, and jm's
+    record of what it placed is written by that run. A command that writes
+    a component meanwhile writes it where the new layout puts it, beside
+    files still at the old place -- a module's glue at its new directory,
+    its C at the old one, both wired. So it waits. Keyed off `COMMANDS`'
+    MUTATING classification, the same one `_undo` reads: a command added
+    tomorrow waits too, with nothing to register.
+    """
+    root = _project_changed_by(args)
+    if root is None or args[0] in _MOVERS or _HELP & set(args[1:]):
+        return
+    from . import _incpath as INC
+    from ._report import Refusal
+
+    # Fails closed: a manifest the move computation cannot read raises
+    # here, before the command, never lets it run unguarded.
+    waiting = [o for o, _n in INC.relocations(root) if (root / o).is_file()]
+    if waiting:
+        raise Refusal(
+            f"files are waiting to move ({len(waiting)}, first"
+            f" {waiting[0]}): run `jm apply` first. A layout or `package`"
+            f" change is made by `jm apply`; `jm {args[0]}` writes where the"
+            " new layout puts things, so it runs once the files have moved"
+            " (gh-2459)"
+        )
 
 
 def _project_changed_by(args: "list[str]") -> "Path | None":
@@ -847,6 +1017,14 @@ def _main() -> None:
         return
 
     cmd = args[0]
+
+    # gh-2434: `<cmd> --help` prints the command's usage and runs nothing.
+    # Asked here, before any branch, so no command can forget it: three
+    # never read their argv, `migrate-to-fragments --help` migrated, and
+    # `build --help` built a wheel into a directory named `--help`.
+    if cmd in COMMANDS and cmd not in _FORWARDS_ARGV and _HELP & set(args[1:]):
+        print(command_usage(cmd))
+        return
 
     if cmd == "new":
         from ._cli_new import run as _cmd_new
@@ -1332,14 +1510,42 @@ def _main() -> None:
         _add.run(Path.cwd(), component, state_vars, force=force)
 
     elif cmd == "perf":
+        _no_arguments(cmd, args[1:])
         from . import _perf
 
         _perf.run(Path.cwd())
 
     elif cmd == "script":
+        _no_arguments(cmd, args[1:])
         from . import _script
 
         _script.run(Path.cwd())
+
+    elif cmd == "manifest":
+        # gh-2440: the merged manifest for a tool that is not Python, through
+        # the one public reader, so the CLI and the API cannot disagree.
+        # `--json` is required rather than implied, so another format can
+        # be added later without changing what a bare `manifest` prints.
+        import json
+
+        from . import load_manifest
+
+        for a in args[1:]:
+            if a != "--json":
+                _refuse_argument(cmd, a)
+        if "--json" not in args[1:]:
+            print(
+                "error: 'manifest' requires --json; "
+                "see 'just-makeit manifest --help'.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        try:
+            cfg = load_manifest(Path.cwd())
+        except FileNotFoundError as exc:
+            print(f"error: {exc}.", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(cfg, indent=2, default=_json_toml_value))
 
     elif cmd == "adopt":
         # gh-1448. `--check` reads; without it, adopt WRITES -- but only for
@@ -1357,10 +1563,6 @@ def _main() -> None:
             "       just-makeit adopt --packaging [--check]"
             " [--accept <path>]..."
         )
-        # gh-1569: `--help` was an unknown option.
-        if "--help" in args[1:] or "-h" in args[1:]:
-            print(_usage)
-            sys.exit(0)
         # gh-1569: the options this parser accepts are READ from the usage
         # text, and those followed by `<...>` take a value -- so an option
         # cannot be accepted without the usage naming it, and the two cannot
@@ -1566,6 +1768,15 @@ def _main() -> None:
                     print("error: --allow requires a path", file=sys.stderr)
                     sys.exit(1)
                 _allow.append(_args[_i])
+            elif _args[_i] not in (
+                "--json",
+                "--diff",
+                "--check",
+                "--strict-examples",
+                "--shared-cores",
+            ):
+                # gh-2434: ignored, so `--chek` ran a plain status.
+                _refuse_argument(cmd, _args[_i])
             _i += 1
         sys.exit(
             min(
@@ -1697,6 +1908,9 @@ def _main() -> None:
                     )
                     sys.exit(1)
                 i += 2
+            elif a.startswith("-"):
+                # gh-2434: taken for a component name, after the build.
+                _refuse_argument(cmd, a)
             else:
                 comps.append(a)
                 i += 1
@@ -1749,6 +1963,10 @@ def _main() -> None:
     elif cmd == "build":
         from . import _build
 
+        # gh-2434: one optional wheel directory. An option, or a second
+        # path, was taken for it (or ignored) and the build ran anyway.
+        for extra in [a for a in args[1:] if a.startswith("-")] + args[2:]:
+            _refuse_argument(cmd, extra)
         _build.cmd_build(args[1:])
 
     elif cmd == "test":
@@ -1757,6 +1975,7 @@ def _main() -> None:
         _build.cmd_test(args[1:])
 
     elif cmd == "dry-run":
+        _no_arguments(cmd, args[1:])
         from . import _build
 
         _build.cmd_dry_run()
@@ -1851,6 +2070,9 @@ def _main() -> None:
                 app_commands.append(_parse_command(tok[len("--command=") :]))
             elif tok == "--argc-argv":
                 argc_argv = True
+            else:
+                # gh-2434: skipped, it scaffolded the app anyway.
+                _refuse_argument(cmd, tok)
             i += 1
         _app.run(
             Path.cwd(),
@@ -1870,17 +2092,20 @@ def _main() -> None:
         _example.run(args[1] if len(args) > 1 else None)
 
     elif cmd == "upgrade":
+        _no_arguments(cmd, args[1:])
         from . import _upgrade
 
         _upgrade.run(Path.cwd())
 
     elif cmd == "split-objects":
+        _no_arguments(cmd, args[1:])
         _warn_schema()
         from . import _split_objects
 
         _split_objects.run(Path.cwd())
 
     elif cmd == "migrate-to-fragments":
+        _no_arguments(cmd, args[1:])
         _warn_schema()
         from . import _migrate
 
@@ -1963,6 +2188,7 @@ def _main() -> None:
         _ci.run(Path.cwd(), provider=provider, force=force)
 
     elif cmd == "version":
+        _no_arguments(cmd, args[1:])
         from . import __version__
 
         print(__version__)
@@ -2049,6 +2275,7 @@ COMMANDS: "dict[str, str]" = {
     "view": MUTATING,
     "warning": MUTATING,
     "dry-run": READ_ONLY,
+    "manifest": READ_ONLY,
     "script": READ_ONLY,
     "status": READ_ONLY,
     "version": READ_ONLY,

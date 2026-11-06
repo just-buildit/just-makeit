@@ -3314,6 +3314,23 @@ def _capsule_getset_c(
     return fn, row
 
 
+def _again_c(fail: str, release: str = "") -> str:
+    """The closed guard again, after the last conversion (gh-2380).
+
+    A composer method checks ``destroyed`` first and converts its arguments
+    after, and converting runs Python (an ``__index__``, a ``__float__``)
+    that can ``close()`` the composer; the backing then ran on a state
+    ``close()`` had freed. *fail* is what the refusal returns.
+    """
+    return _inflight.recheck(
+        "self",
+        "k(self->state)",
+        release,
+        "composer already closed",
+        fail=fail,
+    )
+
+
 def render_serializers(
     cfg: dict,
     module: str,
@@ -3411,7 +3428,7 @@ def render_serializers(
         return NULL;
     }}
 {decls_s}
-{parse}{enum_s}    size_t _n; int _rep = 0, _cont = 0;
+{parse}{enum_s}{_again_c("NULL")}    size_t _n; int _rep = 0, _cont = 0;
     const {seg_struct} *segs =
         {segments_fn}(self->state, &_n, &_rep, &_cont);
     char *_js = {fn}({call_prefix}segs, _n);
@@ -4893,6 +4910,7 @@ def _settings_getset_c(
                 scalar_parse_c(
                     ctype, "value", "_v", "return -1;", label=n, meta=meta
                 )
+                + _again_c("-1")
                 + f"    {st['setter_fn']}(self->state, _v);\n"
                 f"    return 0;\n"
             )
@@ -5059,7 +5077,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
         if extra_methods(cfg, module)
         or (
             root is not None
-            and (root / "native" / "src" / mp.cname / _extra_c).exists()
+            and (INC.src_path(root, mp.cname, cfg) / _extra_c).exists()
         )
         else ""
     )
@@ -5105,7 +5123,7 @@ def render_ext(cfg: dict, module: str, root: "Path | None" = None) -> str:
     # reach them only by writing a second copy. They are published in
     # `<cname>_bridge.h` now and included, which is what makes the count one.
     if render_bridge_h(cfg, module):
-        bridge = INC.include(bridge_h(module), cfg)
+        bridge = INC.include(bridge_h(module, cfg), cfg)
         gen_includes += f'#include "{bridge}"\n'
 
     # gh-1583: the include of a jm header is spelled by the layout.
@@ -5958,16 +5976,17 @@ def render_pyi(cfg: dict, module: str) -> str:
     return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
-def bridge_h(module: str) -> str:
+def bridge_h(module: str, owner: "INC.Owner") -> str:
     """Where *module*'s gh-998 seam header lives, relative to the project's
     header root. The one spelling :func:`materialize` writes, the binding
     includes, `apply` syncs and :mod:`_csym` reads (gh-1694).
 
-    >>> bridge_h("dsp.mix")
+    >>> bridge_h("dsp.mix", {"project": {"name": "p"}})
     'dsp_mix/dsp_mix_bridge.h'
+
+    Beside the module's own core, in every layout (gh-2427).
     """
-    cname = C.module_paths(module).cname
-    return f"{cname}/{cname}_bridge.h"
+    return INC.named_header("bridge", C.module_paths(module).cname, owner)
 
 
 def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
@@ -6236,15 +6255,15 @@ def materialize(
     _bridge_h = render_bridge_h(cfg, module)
     if _bridge_h:
         _write(
-            INC.path(root, bridge_h(module)),
+            INC.path(root, bridge_h(module, cfg)),
             _bridge_h,
         )
     _write(
-        root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
+        INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_ext.c",
         render_ext(cfg, module, project_root or root),
     )
     _write(
-        root / "native" / "src" / mp.cname / "CMakeLists.txt",
+        INC.src_path(root, mp.cname, cfg) / "CMakeLists.txt",
         render_cmake(cfg, module),
     )
     _write(
@@ -6253,7 +6272,7 @@ def materialize(
     )
     if composer_cli(cfg, module).get("enabled"):
         _write(
-            root / "native" / "src" / mp.cname / f"{mp.cname}_cli.c",
+            INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_cli.c",
             render_cli(cfg, module),
         )
 
@@ -6261,7 +6280,9 @@ def materialize(
     # _module.run's own writer, as _capsule.materialize does (gh-1985).
     from ._libwiring import MODULES_SENTINEL, splice_cmake_component
 
-    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)
+    splice_cmake_component(
+        root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL, owner=cfg
+    )
 
 
 # ── generic JSON ser/de from the [[enum]] SSOT (gh-287) ──────────────────────
@@ -7380,7 +7401,7 @@ def render_cli(cfg: dict, module: str) -> str:
     # one place a seam's prototype is written -- and so are an owned
     # pointer's parse_fn and free_fn, which --<name> calls (gh-1711).
     bridge_inc = (
-        f'#include "{INC.include(bridge_h(module), cfg)}"\n'
+        f'#include "{INC.include(bridge_h(module, cfg), cfg)}"\n'
         if _coerce_str_fns(cfg, module) or _owned_ptrs(cfg, module)
         else ""
     )

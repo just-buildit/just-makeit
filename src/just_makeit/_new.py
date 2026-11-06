@@ -103,7 +103,7 @@ def _write_project_wiring(root: Path, project: str, cfg: dict) -> None:
     from ._libwiring import splice_cmake_component
 
     for dep in C.c_deps(cfg):
-        splice_cmake_component(root, project, dep, [])
+        splice_cmake_component(root, project, dep, [], c_dep=True)
     cmake = root / "CMakeLists.txt"
     if _splice_cmake_external_deps(cmake, cfg):
         print(f"  update  {cmake}")
@@ -266,6 +266,7 @@ def run(
     schema: int | None = None,
     c_prefix: "str | None | object" = DEFAULT_C_PREFIX,
     version: str = "0.1.0",
+    layout: "str | None" = None,
 ) -> None:
     C.require_name(project, "project")
     # gh-1583: the schema decides the header layout, and the manifest that
@@ -289,6 +290,12 @@ def run(
     if c_prefix is not None:
         owner["project"]["c_prefix"] = c_prefix
         C.c_prefix(owner)
+    # gh-2423: the native layout, validated before anything is written. Only
+    # `apply`'s replay passes it -- `jm new` itself writes no file it moves,
+    # so a new project declares it in its manifest before its first object.
+    if layout is not None:
+        owner["project"]["layout"] = layout
+        INC.layout(owner)
 
     root = dest or (Path.cwd() / project)
     if root.exists() and any(root.iterdir()):
@@ -378,7 +385,7 @@ def run(
             root / "cmake" / config_in,
             T.owned_packaging(r(T.CMAKE_CONFIG_IN), config_in),
         )
-        _write(root / "native" / "src" / f"{project}_lib.c", r(T.LIB_STUB_C))
+        _write(root / INC.lib_c_rel(project), r(T.LIB_STUB_C))
 
     cfg = C.from_new(
         project,
@@ -390,6 +397,8 @@ def run(
     )
     if c_prefix is not None:
         cfg.setdefault("project", {})["c_prefix"] = c_prefix
+    if layout is not None:
+        cfg.setdefault("project", {})["layout"] = layout
     # External-dep declarations land in [project]; the root wiring they
     # declare is written below, once the manifest holding them is saved.
     if find_packages:

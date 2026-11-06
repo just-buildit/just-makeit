@@ -151,8 +151,13 @@ def module_targets_block(
     has_functions: bool,
     taken: "frozenset[str]" = frozenset(),
     extra_libs: Sequence[str] = (),
+    *,
+    owner: "INC.Owner",
 ) -> str:
     """CMake `test_`/`bench_<cname>_core` targets for a module (gh-1034).
+
+    *owner* is the project, whose `[project] layout` places the sources
+    (gh-2423).
 
     Empty unless the module declares at least one free function, so a module
     that is purely a container for objects renders byte-identically to before
@@ -188,9 +193,9 @@ def module_targets_block(
     libs = _module_link_libs(cname, extra_libs)
     blocks = []
     if f"test_{cname}_core" not in taken:
-        blocks.append(_module_test_target(cname, libs))
+        blocks.append(_module_test_target(cname, libs, owner))
     if f"bench_{cname}_core" not in taken:
-        blocks.append(_module_bench_target(cname, libs))
+        blocks.append(bench_target(cname, libs, owner))
     return "".join(blocks)
 
 
@@ -219,27 +224,36 @@ def _module_link_libs(cname: str, extra_libs: Sequence[str]) -> str:
     return "\n    " + "\n    ".join(parts)
 
 
-def _module_test_target(cname: str, libs: str) -> str:
+def _module_test_target(cname: str, libs: str, owner: "INC.Owner") -> str:
     """The `test_<cname>_core` CMake target for a module (gh-1034)."""
+    slots = INC.native_slots(owner, cname)
     return (
         f"\nadd_executable(test_{cname}_core\n"
-        f"    ${{CMAKE_SOURCE_DIR}}/native/tests/test_{cname}_core.c)\n"
+        f"    ${{CMAKE_SOURCE_DIR}}/{slots['native_test_c']})\n"
         f"target_link_libraries(test_{cname}_core PRIVATE{libs})\n"
         f"target_include_directories(test_{cname}_core\n"
-        f"    PRIVATE {INC.CMAKE_INC})\n"
+        f"    PRIVATE {INC.CMAKE_INC}{slots['native_test_inc']})\n"
         f"add_test(NAME test_{cname}_core COMMAND test_{cname}_core)\n"
     )
 
 
-def _module_bench_target(cname: str, libs: str) -> str:
-    """The `bench_<cname>_core` CMake target for a module (gh-1034)."""
+def bench_target(name: str, libs: str, owner: "INC.Owner") -> str:
+    """The `bench_<name>_core` CMake target (gh-1034), *libs* being the text
+    after ``PRIVATE``, its own leading space included.
+
+    The one spelling of a bench target jm emits in Python: a module's
+    (:func:`module_targets_block`) and the one `apply` appends to a
+    component CMakeLists that predates the template's (gh-2423 folded that
+    second copy in, which spelled the source path by hand).
+    """
+    slots = INC.native_slots(owner, name)
     return (
-        f"\nadd_executable(bench_{cname}_core\n"
-        f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/bench_{cname}_core.c)\n"
-        f"target_link_libraries(bench_{cname}_core PRIVATE{libs})\n"
-        f"target_include_directories(bench_{cname}_core\n"
+        f"\nadd_executable(bench_{name}_core\n"
+        f"    ${{CMAKE_SOURCE_DIR}}/{slots['native_bench_c']})\n"
+        f"target_link_libraries(bench_{name}_core PRIVATE{libs})\n"
+        f"target_include_directories(bench_{name}_core\n"
         f"    PRIVATE {INC.CMAKE_INC}\n"
-        f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
+        f"            ${{CMAKE_SOURCE_DIR}}/{slots['native_bench_inc']})\n"
     )
 
 
@@ -329,14 +343,14 @@ def object_core_decl(component: str, header_only: bool) -> str:
     add_library(fir_core OBJECT fir_core.c)
     target_include_directories(
       fir_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc
-                      ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>fir)
+                      ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>><<core_dir>>)
     >>> print(object_core_decl("ring", header_only=True))
     # INTERFACE library — the core is header-only, so there is nothing to
     # compile, and an OBJECT library with no sources fails configure.
     add_library(ring_core INTERFACE)
     target_include_directories(
       ring_core INTERFACE ${CMAKE_SOURCE_DIR}/native/inc
-                          ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>ring)
+                          ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>><<core_dir>>)
     """
     inc = INC.CMAKE_INC
     if header_only:
@@ -355,7 +369,7 @@ def object_core_decl(component: str, header_only: bool) -> str:
             + inc
             + chr(10)
             + " " * len(head)
-            + f"{inc}/<<inc_prefix>>{component})"
+            + f"{inc}/<<inc_prefix>><<core_dir>>)"
         )
     head = f"  {component}_core PUBLIC "
     return (
@@ -369,7 +383,7 @@ def object_core_decl(component: str, header_only: bool) -> str:
         + inc
         + chr(10)
         + " " * len(head)
-        + f"{inc}/<<inc_prefix>>{component})"
+        + f"{inc}/<<inc_prefix>><<core_dir>>)"
     )
 
 
@@ -452,7 +466,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
     add_library(fir_core INTERFACE)
     target_include_directories(fir_core INTERFACE
         ${CMAKE_SOURCE_DIR}/native/inc
-        ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>>fir)
+        ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>><<core_dir>>)
     """
     inc = INC.CMAKE_INC
     if header_only:
@@ -469,7 +483,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
             + chr(10)
             + f"    {inc}"
             + chr(10)
-            + f"    {inc}/<<inc_prefix>>{component})"
+            + f"    {inc}/<<inc_prefix>><<core_dir>>)"
         )
     return (
         "# OBJECT library — pure C core, no Python dependency."
@@ -483,7 +497,7 @@ def component_core_decl(component: str, header_only: bool) -> str:
         + chr(10)
         + f"    {inc}"
         + chr(10)
-        + f"    {inc}/<<inc_prefix>>{component})"
+        + f"    {inc}/<<inc_prefix>><<core_dir>>)"
     )
 
 
@@ -674,6 +688,16 @@ def render(template: str, ctx: dict) -> str:
             )
             for s in CSYM.SLOTS
         ),
+        # gh-2423: and where a component's native test and benchmark sit,
+        # which `[project] layout` decides.
+        *(
+            (
+                s,
+                "the project's native layout; add `_incpath.native_slots("
+                "<project root or manifest>, <name>)` to it (gh-2423)",
+            )
+            for s in INC.NATIVE_SLOTS
+        ),
     ):
         if f"<<{_slot}>>" in template and _slot not in ctx:
             raise ValueError(
@@ -828,9 +852,7 @@ def render_component_test_c(ctx: dict) -> str:
 # the component name for standalone components, or the module name otherwise.
 
 # The `_core.h` include a module object's section opens with, after its banner.
-_TYPE_CORE_INCLUDE = (
-    '#include "<<inc_prefix>><<component>>/<<component>>_core.h"\n\n'
-)
+_TYPE_CORE_INCLUDE = '#include "<<core_include>>"\n\n'
 
 
 def render_type_section(ctx: dict) -> str:
@@ -1766,13 +1788,9 @@ def _status_cases(
     to what it was before gh-1614. Rows and their raises are the borrow
     table's own emitter (`_borrow.status_cases_c`).
     """
-    if not rows:
-        return ""
     slots = _borrow.message_slots({"name": fn_name, "params": params})
-    return (
-        "        switch (_rc) {\n"
-        + _borrow.status_cases_c(rows, c_name, slots, WHY_LOCAL if why else "")
-        + "        default: break;\n        }\n"
+    return _borrow.status_switch_c(
+        rows, c_name, slots, WHY_LOCAL if why else ""
     )
 
 
@@ -2679,7 +2697,7 @@ def render_module_ext_aggregator(
     )
     has_module_fns = bool(functions)
     module_core_include = (
-        f'#include "<<inc_prefix>>{module}/{module}_core.h"\n'
+        f'#include "{INC.core_include(module, owner)}"\n'
         if has_module_fns
         else ""
     )

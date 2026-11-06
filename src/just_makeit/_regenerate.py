@@ -267,8 +267,8 @@ def run(
             " itself."
         )
 
-    core_h = INC.core_h(root, component)
-    core_c = root / "native" / "src" / component / f"{component}_core.c"
+    core_h = INC.core_h(root, component, cfg)
+    core_c = INC.src_path(root, component, cfg) / f"{component}_core.c"
     preserved_h: dict[str, str] = {}
     preserved_c: dict[str, str] = {}
     # gh-903: the author owns every `*_max_out` signature (gh-761), and

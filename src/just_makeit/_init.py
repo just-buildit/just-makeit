@@ -81,7 +81,7 @@ def append_component_body(
     if C.core_family(C.load(root), component) is not None:
         return header
     if not header_only:
-        path = root / "native" / "src" / component / f"{component}_core.c"
+        path = INC.src_path(root, component) / f"{component}_core.c"
         _textio.write_text(
             path, path.read_text(encoding="utf-8") + "\n" + stub
         )
@@ -143,7 +143,7 @@ def standalone_extra_include(
     slot existed.
     """
     extra = f"{component}_ext_extra.c"
-    if extra_methods or (root / "native" / "src" / component / extra).exists():
+    if extra_methods or (INC.src_path(root, component) / extra).exists():
         return (
             f'#include "{extra}"  /* hand-written — jm never modifies */\n\n'
         )
@@ -167,6 +167,9 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         # only its project's manifest can say -- beside the file stem above,
         # which stays the component's name.
         **CSYM.slots(owner, component),
+        # gh-2423: where its native test and benchmark sit, which only its
+        # project's `[project] layout` can say.
+        **INC.native_slots(owner, component),
         # Default empty; paths with `depends_on` override it (gh-170). Keeps
         # the `<<depends_includes>>` slot from leaking on paths that have no
         # dependency info to inject.
@@ -924,7 +927,7 @@ def _inject_includes_into_core_h(
     text = original = path.read_text(encoding="utf-8")
     # *extra* is spelled as the author wrote it: relative to the -I directory.
     wanted = _dep_header_includes(root, deps) + [
-        f'#include "{h}"' for h in extra if (INC.inc_dir(root) / h).exists()
+        f'#include "{h}"' for h in extra if INC.resolve(root, h).exists()
     ]
     missing = [inc for inc in wanted if inc not in text]
     if not missing:
@@ -1116,13 +1119,36 @@ def settle_aggregate_order(root: "Path") -> "list[Path]":
     command that promises an unchanged project left ``status --check`` red
     on two files it never mentioned.
 
-    Only the order moves (:func:`_libwiring.order_sections`,
-    :func:`order_umbrella_includes`): no line is added or dropped.
+    The umbrella's includes are re-sorted (:func:`order_umbrella_includes`):
+    no line is added or dropped. The root CMakeLists' component and module
+    sections are spliced from a replay, exactly as `apply` splices them
+    (:func:`_apply._splice_cmake_components`), because their content follows
+    the order too, not only their sequence (gh-2434): a ``target_sources``
+    line folding a core that several components depend on sits in the block
+    of whichever of them the replay reaches first, so a re-sort that moved
+    blocks whole kept it under the wrong one. Measured on doppler
+    (2026-11-01): 35 module fragments put 37 cores' wiring pairs under
+    another block, some from the Modules section to the Components one.
+    Asking the replay where they go is the one answer; a second derivation
+    of it here would drift from it. It costs a replay, as `apply` does.
     """
+    import tempfile
+
+    from . import _apply
+
     cfg = C.load(root)
     changed = []
+    cmake = root / "CMakeLists.txt"
+    if cmake.is_file():
+        with tempfile.TemporaryDirectory(prefix="jm-settle-") as tmp:
+            temp_root = Path(tmp) / C.project_name(cfg)
+            _apply.replay_project(cfg, temp_root, root)
+            temp_cmake = temp_root / "CMakeLists.txt"
+            if temp_cmake.is_file() and _apply._splice_cmake_components(
+                cmake, temp_cmake, cfg
+            ):
+                changed.append(cmake)
     for path, order in (
-        (root / "CMakeLists.txt", order_sections),
         (INC.path(root, f"{C.project_name(cfg)}.h"), order_umbrella_includes),
     ):
         if not path.is_file():
@@ -1169,7 +1195,7 @@ def insert_umbrella_include(root: "Path", comp: str) -> bool:
     if not umbrella.exists():
         return False
     text = umbrella.read_text(encoding="utf-8")
-    include_line = f'#include "{INC.core_include(comp, umbrella)}"\n'
+    include_line = f'#include "{INC.core_include(comp, cfg)}"\n'
     if include_line in text:
         return False
     last_endif = text.rfind("#endif")
@@ -1367,6 +1393,7 @@ def run(
     mutable: bool = False,
     step_delegates: bool = False,
     serializable: bool = False,
+    set_state_status_errors: "list[dict] | None" = None,
     streamable: bool = False,
     async_stream: bool = False,
     stream_block_default: int | None = None,
@@ -1573,6 +1600,7 @@ def run(
             serializable=serializable,
             csym=ctx["csym"],
             extra_methods=extra_methods,  # gh-1997
+            set_state_status_errors=set_state_status_errors,  # gh-2470
         )
     )
     # gh-1509: the C triplet that binding calls, declared in the sacred
@@ -1635,6 +1663,7 @@ def run(
             lends=_borrow.lends_from(
                 _methods_now, C.properties(cfg, component), vars_
             ),
+            properties=C.properties(cfg, component),
         )
     )
     # Stream generator (gh-201). At creation there are no extra methods yet, so
@@ -1765,7 +1794,7 @@ def run(
             for h in _param_headers_at_create(
                 cfg, ctx["component"], init_params
             )
-            if (INC.inc_dir(root) / h).exists()
+            if INC.resolve(root, h).exists()
         ]
     )
 
@@ -1869,7 +1898,9 @@ def run(
 
     # C headers. Object creation is create-only (the verb errors on a
     # duplicate name), so the sacred files are written fresh — never spliced.
-    core_h_path = INC.core_h(root, comp)
+    # gh-2459: only into a directory jm can show is its own.
+    INC.refuse_occupied(root, cfg, comp)
+    core_h_path = INC.core_h(root, comp, cfg)
     _write(
         core_h_path,
         r(core_h_tmpl),
@@ -1878,7 +1909,7 @@ def run(
     if impl_body is not None and not no_step:
         from . import _impl as I
 
-        h_path = INC.core_h(root, comp)
+        h_path = INC.core_h(root, comp, cfg)
         h_text = h_path.read_text(encoding="utf-8")
         h_text = I.patch_function_body(
             h_text, f"{CSYM.stem(root, comp)}_step", impl_body
@@ -1894,13 +1925,13 @@ def run(
     # and would not compile it, leaving a file that looks authoritative and
     # reaches no build.
     if not header_only:
-        core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        core_c_path = INC.src_path(root, comp, cfg) / f"{comp}_core.c"
         _write(
             core_c_path,
             r(core_c_tmpl),
             "update" if core_c_path.exists() else "create",
         )
-    _write(root / "native" / "src" / comp / f"{comp}_ext.c", r(ext_c_tmpl))
+    _write(INC.src_path(root, comp, cfg) / f"{comp}_ext.c", r(ext_c_tmpl))
 
     # gh-1117: the process-global contract header, when the component declares
     # `process_global`. Generated (never hand-edited), unlike the sacred
@@ -1915,20 +1946,20 @@ def run(
     # stale. `_apply._reconcile_procglobal_headers` is what makes it true.
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
-        _write(INC.path(root, _procglobal.header_name(comp)), _pg_h)
+        _write(INC.path(root, _procglobal.header_name(comp, cfg)), _pg_h)
 
     build = C.build_system(cfg)
 
     if build == "cmake":
         _write(
-            root / "native" / "src" / comp / "CMakeLists.txt",
+            INC.src_path(root, comp, cfg) / "CMakeLists.txt",
             R.with_extra_cmake(r(R.CMAKE_LISTS_COMPONENT), comp),
         )
 
     # C test
     # gh-806: via the one renderer that stamps the scaffold check count.
     _write(
-        root / "native" / "tests" / f"test_{comp}_core.c",
+        INC.native_path(root, "test", comp, cfg),
         R.render_component_test_c(ctx),
     )
     # gh-1361: the link-check table the C test build names. Written here so
@@ -1940,17 +1971,14 @@ def run(
     # gh-934: the shared assertion harness, written once per project like
     # jm_bench.h beside the benchmarks. Create-only -- `apply` never rewrites
     # it, so a project may extend it.
-    jm_test_h = root / "native" / "tests" / "jm_test.h"
+    jm_test_h = root / INC.harness_rel(INC.TESTS_DIR)
     if not jm_test_h.exists():
         # Rendered: its #include of clib_common.h is spelled by the layout.
         _write(jm_test_h, r(R.JM_TEST_H))
 
     # C benchmark
-    _write(
-        root / "native" / "benchmarks" / f"bench_{comp}_core.c",
-        r(bench_c_tmpl),
-    )
-    jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
+    _write(INC.native_path(root, "bench", comp, cfg), r(bench_c_tmpl))
+    jm_bench_h = root / INC.harness_rel(INC.BENCH_DIR)
     if not jm_bench_h.exists():
         _write(jm_bench_h, R.JM_BENCH_H)
 
@@ -2046,6 +2074,7 @@ def run(
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,
+        set_state_status_errors_=set_state_status_errors,
         streamable_=streamable,
         async_stream_=async_stream,
         stream_block_default_=stream_block_default,
@@ -2111,6 +2140,7 @@ def run(
             comp,
             dep_core_libs(depends_on)
             + ([] if header_only else [f"{comp}_core"]),
+            owner=cfg,
         )
 
     print()

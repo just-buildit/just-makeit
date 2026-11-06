@@ -329,6 +329,11 @@ def load(root: Path) -> dict:
     consumed_errors = _consumed_fn_errors(cfg)
     if consumed_errors:
         _refuse(consumed_errors)
+    # gh-2470: a set_state status table with no set_state, or a row the
+    # shared validator refuses on every other table face.
+    set_state_errors = _set_state_status_errors_errors(cfg)
+    if set_state_errors:
+        _refuse(set_state_errors)
     # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
     # After the fragment merge, so a split-layout project resolves the same.
     _resolve_deferred_version(cfg, root)
@@ -349,7 +354,7 @@ def load(root: Path) -> dict:
     # silence.
     from ._extrahook import warn_unwired_hooks
 
-    warn_unwired_hooks(root)
+    warn_unwired_hooks(root, cfg=cfg)
     return cfg
 
 
@@ -566,11 +571,17 @@ def _consumed_fn_errors(cfg: dict) -> "list[str]":
 
 
 def _refuse(errors: "list[str]") -> None:
-    """Print each manifest error and exit; a template that cannot expand, or
-    a family that cannot be included, has no meaning to fall back to."""
-    for e in dict.fromkeys(errors):
-        print(f"error: {e}", file=_sys.stderr)
-    raise SystemExit(1)
+    """Refuse with every manifest error at once; a template that cannot
+    expand, or a family that cannot be included, has no meaning to fall
+    back to.
+
+    Raises a :class:`Refusal` carrying each error, duplicates dropped
+    (gh-2440). It printed them and raised ``SystemExit(1)``, which is right
+    for a command and wrong for a library call (`just_makeit.load_manifest`):
+    a script got its stderr written to and an exit to catch. The CLI
+    boundary prints the refusal as the same ``error:`` lines, exit 1.
+    """
+    raise Refusal.of(errors)
 
 
 def _expand_templates(cfg: dict) -> None:
@@ -764,6 +775,10 @@ def _provenance(
         return owners, module_owners, []
     with manifest_path.open("rb") as f:
         manifest = tomllib.load(f)
+    # Every top-level section but the three placed by other means, not only
+    # components: `save` routes a `[template]` to the file that owns it, so
+    # these ask "which file declares this key", which is not
+    # `components()`'s question (gh-2434).
     for k in manifest:
         if k not in ("project", "module", "include"):
             owners[k] = manifest_path
@@ -933,6 +948,259 @@ def _hand_on_tail(src, dst, _tk) -> None:
     if text:
         dst_owner.append(None, _tk.ws(text))
     owner.append(None, _tk.nl())
+
+
+# -- Splitting a manifest into fragments (gh-2437) ---------------------------
+
+
+def _header_units(container, path: tuple = ()):
+    """Yield ``(path, item)`` for every table and table array with a header
+    of its own, in the order the document renders them.
+
+    A super table (``module`` in ``[module.mod]``) renders no header, so its
+    children are the units instead. *path* is the key path to the unit.
+    """
+    from tomlkit.items import AoT, Table
+
+    for k, v in container.body:
+        if k is None:
+            continue
+        if isinstance(v, Table) and v.is_super_table():
+            yield from _header_units(v.value, path + (k.key,))
+        elif isinstance(v, (Table, AoT)):
+            yield path + (k.key,), v
+
+
+def _claim_unit_comments(doc) -> "list[tuple[tuple, object]]":
+    """Move the comment run directly above each header into that header.
+
+    The rule is gh-1701's for a table array's rows, applied to every header
+    in the file: the comment lines TOUCHING a header (no blank line between
+    them and it) belong to that header, and move with it. tomlkit filed them
+    as the last items of whatever renders above; after this they live in the
+    unit's own ``trivia.indent`` (a table array's: its first row's), which
+    tomlkit renders immediately before the header, so the text is
+    byte-identical. Any other comment -- one inside a table, or one a blank
+    line separates from the next header -- belongs to the table whose body
+    it is in. Returns the units, in render order.
+    """
+    from tomlkit.items import AoT
+
+    units = list(_header_units(doc))
+    body = doc.body
+    for i, (path, item) in enumerate(units):
+        if i:
+            owner = _tail(units[i - 1][1])
+            stop = len(owner.body) if owner is not None else 0
+        else:
+            owner = doc
+            stop = next(
+                j
+                for j, (k, _) in enumerate(body)
+                if k is not None and k.key == path[0]
+            )
+        if owner is None:
+            continue
+        text = _cut_trailing(owner, stop, comments_only=True)
+        head = item.body[0] if isinstance(item, AoT) else item
+        head.trivia.indent = text + head.trivia.indent
+    return units
+
+
+def _parse_claimed(text: str):
+    """*text* as a tomlkit document whose headers own their comments.
+
+    Refuses when claiming changed the rendered text, so a document that
+    cannot be cut without losing a byte is never cut.
+    """
+    import tomlkit as _tk
+
+    doc = _tk.loads(text)
+    _claim_unit_comments(doc)
+    if doc.as_string() != text:
+        raise Refusal(
+            "could not lift the manifest's tables out unchanged; "
+            "nothing was written."
+        )
+    return doc
+
+
+def _render_cut(doc) -> str:
+    """A cut document's text: no leading blank lines, one final newline."""
+    return doc.as_string().lstrip("\n").rstrip("\n") + "\n"
+
+
+def _refuse_changed(pairs) -> None:
+    """Refuse unless each ``(text, values)`` pair parses to its values."""
+    if any(tomllib.loads(t) != want for t, want in pairs):
+        raise Refusal(
+            "could not split the manifest without changing a value; "
+            "nothing was written."
+        )
+
+
+def split_manifest(
+    text: str, objects: "list[str]", move_modules: bool
+) -> "tuple[str, dict[str, str], dict[str, str]]":
+    """Cut the manifest *text* into a root file and per-component fragments,
+    keeping every comment and the root file's layout.
+
+    The one slicer behind ``migrate-to-fragments`` and ``split-objects``.
+    Both rebuilt each file from plain dicts with `_dump`, which deleted every
+    comment in the manifest -- 621 lines on doppler, the ones on
+    ``[project]`` keys included (gh-2437). Instead the document is parsed
+    once with tomlkit and each moved table is cut out of it whole: its
+    header, its body, its sub-tables and table arrays, and every comment in
+    them, byte for byte. The root file is the same document with those
+    tables removed, so every comment and blank line it keeps is untouched.
+    `set_include` then gives it the ``include`` list.
+
+    Which comments a table takes: the run of comment lines directly above
+    its header (no blank line between), and everything inside its body. A
+    comment a blank line separates from the next header stays with the
+    table above it, as it does when a table array row moves (gh-1701); see
+    `_claim_unit_comments`.
+
+    Parameters
+    ----------
+    text : str
+        The manifest as it is on disk.
+    objects : list of str
+        The top-level component tables to move, one fragment each.
+    move_modules : bool
+        Move every ``[module.X]``, one fragment each. The ``module`` table
+        moves whole, or not at all.
+
+    Returns
+    -------
+    root : str
+        The root manifest's new text, ``include`` untouched.
+    object_frags : dict
+        Each moved object's fragment text, by name.
+    module_frags : dict
+        Each moved module's fragment text, by module id.
+
+    A table written in more than one place -- a module object's table
+    between two ``[module.X]`` headers splits ``module`` in two -- is cut
+    from each place, and its pieces join in file order in its fragment.
+
+    Raises
+    ------
+    Refusal
+        When the cut would change a value or drop a byte. Nothing is
+        written.
+
+    Examples
+    --------
+    >>> root, objs, mods = split_manifest(
+    ...     '[project]\\nname = "p"  # why\\n\\n# the engine\\n[eng]\\n'
+    ...     "x = 1\\n", ["eng"], False)
+    >>> print(root, end="")
+    [project]
+    name = "p"  # why
+    >>> print(objs["eng"], end="")
+    # the engine
+    [eng]
+    x = 1
+    """
+    import tomlkit as _tk
+
+    doc = _parse_claimed(text)
+
+    def _entries(key: str):
+        # A table may be written in more than one place: a module object's
+        # table between two ``[module.X]`` headers splits ``module`` in two.
+        # Each place is cut on its own, in file order.
+        return [(k, v) for k, v in doc.body if k is not None and k.key == key]
+
+    def _cut(pieces) -> str:
+        # One fragment from its pieces, each a ``(key, item)`` of a fresh
+        # document, a blank line between two of them.
+        texts = []
+        for k, v in pieces:
+            frag = _tk.document()
+            frag.append(k, v)
+            texts.append(_render_cut(frag))
+        return "\n".join(texts)
+
+    object_frags = {comp: _cut(_entries(comp)) for comp in objects}
+    for comp in objects:
+        doc.remove(comp)
+
+    by_module: dict[str, list] = {}
+    if move_modules and "module" in doc:
+        for _, part in _entries("module"):
+            for k, v in part.value.body:
+                if k is None:
+                    continue
+                sup = _tk.table(is_super_table=True)
+                sup.append(k, v)
+                by_module.setdefault(k.key, []).append(("module", sup))
+        doc.remove("module")
+    module_frags = {m: _cut(p) for m, p in by_module.items()}
+    root = _render_cut(doc)
+
+    # The cut is a fact, not a hope: every file parses back to exactly the
+    # values the manifest held.
+    data = tomllib.loads(text)
+    moved = set(objects) | ({"module"} if move_modules else set())
+    _refuse_changed(
+        [(root, {k: v for k, v in data.items() if k not in moved})]
+        + [(t, {c: data[c]}) for c, t in object_frags.items()]
+        + [
+            (t, {"module": {m: data["module"][m]}})
+            for m, t in module_frags.items()
+        ]
+    )
+    return root, object_frags, module_frags
+
+
+def set_include(text: str, include: "list[str]") -> str:
+    """Give the manifest *text* the ``include`` list *include*, keeping
+    every comment.
+
+    An existing ``include`` array is extended in place, so its own comments
+    and layout survive. Otherwise the list is written after the file's
+    opening comment block -- what precedes the first key once each header
+    owns the comments touching it (`_claim_unit_comments`) -- and before
+    everything else; with no opening block it is the first line, as a new
+    manifest writes it.
+
+    Examples
+    --------
+    >>> print(set_include("# header\\n\\n[project]\\n", ["a/*.toml"]),
+    ...       end="")
+    # header
+    <BLANKLINE>
+    include = ["a/*.toml"]
+    <BLANKLINE>
+    [project]
+    """
+    from tomlkit.items import Null
+
+    doc = _parse_claimed(text)
+    if "include" in doc:
+        arr = doc["include"]
+        for glob in include:
+            if glob not in arr:
+                arr.append(glob)
+        out = _render_cut(doc)
+    else:
+        lead = []
+        for j, (k, item) in enumerate(doc.body):
+            if k is not None:
+                break
+            lead.append(item.as_string())
+            doc.body[j] = (None, Null())
+        out = (
+            "".join(lead)
+            + f"include = {_toml_string_array(include)}\n\n"
+            + _render_cut(doc)
+        )
+    data = tomllib.loads(text)
+    data["include"] = list(dict.fromkeys(data.get("include", []) + include))
+    _refuse_changed([(out, data)])
+    return out
 
 
 def _set_key(tbl, key: str, value, _tk) -> None:
@@ -1445,6 +1713,10 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     # re-dumping deleted all of it. An unchanged component is not touched at
     # all, so the common case (declare one warning on one object) leaves every
     # other component's text byte-identical.
+    # Every top-level section this file carries but the three handled above,
+    # not only components: `[[enum]]`, `[codec]`, `[[app]]` and `[[group]]`
+    # are synced here too, so this is deliberately not `components()`
+    # (gh-2434).
     new_comps = {
         k: v
         for k, v in cfg.items()
@@ -1600,16 +1872,12 @@ def save(root: Path, cfg: dict) -> None:
     # the manifest, so the fragment layout survives a mutating command.
     by_file: dict[Path, dict] = {}
     for key, value in cfg.items():
-        if key in (
-            "project",
-            "module",
-            "include",
-            "app",
-            "enum",
-            "codec",
-            "template",
-        ):
-            continue  # `app`/`enum`/`codec`, like `project`, live in the manifest
+        if key in NOT_COMPONENTS:
+            # Each is placed below: `project`, `app`, `enum`, `codec` and
+            # `group` in the manifest, `template` with its owner, `module`
+            # per module (gh-2434: `group` was missing here, so a new one in
+            # a split project was written to objects/group.toml too).
+            continue
         if key in owners:
             dst = owners[key]
         elif split_layout:
@@ -1699,10 +1967,68 @@ RESERVED_SECTIONS = (
     "template",
 )
 
+#: The top-level keys that are not components: the reserved sections and
+#: `include`, the manifest's fragment list. A loaded project has no
+#: `include`, but a raw manifest (`load_manifest`) does, and its readers
+#: spelled their own copy of this -- `migrate-to-fragments`'s lacked
+#: `[[enum]]` and `[codec]` and filed them under objects/ (gh-2434).
+NOT_COMPONENTS = (*RESERVED_SECTIONS, "include")
+
 
 def components(cfg: dict) -> list[str]:
-    """Return component names — all top-level keys except reserved sections."""
-    return [k for k in cfg if k not in RESERVED_SECTIONS]
+    """Return a manifest's component names, in manifest order.
+
+    Public as ``just_makeit.components`` (gh-2452): this function,
+    re-exported, not a copy. A component is every top-level table but
+    jm's reserved sections (``[project]``, ``[module.X]``, ``[[enum]]``,
+    ``[codec]``, ...) and the ``include`` list of fragment globs. That
+    covers every
+    object -- standalone, in a module, or in a fragment no module lists
+    -- so the union of the ``[module.X] objects`` lists is not the same
+    answer, and a script that spells its own copy of the reserved set
+    drifts the day jm adds a section (gh-2434).
+
+    Parameters
+    ----------
+    cfg : dict
+        A manifest: what ``just_makeit.load_manifest`` returns, or a raw
+        parse of ``just-makeit.toml``, which may still hold ``include``.
+
+    Returns
+    -------
+    list of str
+        The component names, in the order *cfg* holds them: a new list
+        on every call, and *cfg* is not changed.
+
+    Examples
+    --------
+    On a ``just_makeit.load_manifest`` result, where ``fir`` and
+    ``solo`` live in fragments and no module lists ``solo``:
+
+    >>> import pathlib, shutil, tempfile
+    >>> from just_makeit import components, load_manifest
+    >>> root = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (root / "just-makeit.toml").write_text(
+    ...     'include = ["objects/*.toml"]\\n'
+    ...     '[project]\\nname = "demo"\\nversion = "0.1.0"\\n'
+    ...     '[module.filter]\\nobjects = ["fir"]\\n'
+    ... )
+    >>> (root / "objects").mkdir()
+    >>> for name in ("fir", "solo"):
+    ...     _ = (root / "objects" / f"{name}.toml").write_text(
+    ...         f'[{name}]\\narg_type = "float"\\nreturn_type = "float"\\n'
+    ...     )
+    >>> sorted(components(load_manifest(root)))
+    ['fir', 'solo']
+    >>> shutil.rmtree(root)
+
+    A raw manifest alike:
+
+    >>> components({"include": ["objects/*.toml"], "project": {},
+    ...             "enum": [], "fir": {}})
+    ['fir']
+    """
+    return [k for k in cfg if k not in NOT_COMPONENTS]
 
 
 def declared_methods(cfg: dict) -> "list[tuple[str, dict]]":
@@ -1752,6 +2078,26 @@ def modules(cfg: dict) -> list[str]:
 def module_objects(cfg: dict, module: str) -> list[str]:
     """Return the object names belonging to the given module."""
     return list(cfg.get("module", {}).get(module, {}).get("objects", []))
+
+
+def with_module_member(cfg: dict, module: "str | None", obj: str) -> dict:
+    """*cfg* as it reads once *obj* is a member of *module* -- *cfg* itself
+    when *module* is falsy or already lists it. A copy; *cfg* is untouched.
+
+    For a writer that places an object's files before the manifest records
+    the membership (gh-2427: in the nested layout the module decides where
+    the object's header goes, `_incpath.core_dir`).
+
+    >>> with_module_member({"module": {"m": {"objects": []}}}, "m", "x")
+    {'module': {'m': {'objects': ['x']}}}
+    """
+    if not module or obj in module_objects(cfg, module):
+        return cfg
+    mods = dict(cfg.get("module") or {})
+    entry = dict(mods.get(module) or {})
+    entry["objects"] = [*module_objects(cfg, module), obj]
+    mods[module] = entry
+    return {**cfg, "module": mods}
 
 
 def component_module(cfg: dict, component: str) -> str | None:
@@ -3030,6 +3376,89 @@ def is_serializable(cfg: dict, component: str) -> bool:
     return _truthy(
         cfg.get("module", {}).get(component, {}).get("serializable")
     )
+
+
+#: The key naming a serializable ``set_state``'s status -> exception rows
+#: (gh-2470). Named for the member it governs, as ``create_error`` is for
+#: ``create()``; its rows are a method's ``status_errors`` rows.
+SET_STATE_STATUS_ERRORS = "set_state_status_errors"
+
+
+def set_state_status_errors(cfg: dict, component: str) -> "list[dict]":
+    """The rows mapping ``<comp>_set_state``'s status to exceptions.
+
+    Read from the same two tables `is_serializable` reads -- an object's
+    ``[<comp>]`` and a ``kind = "handle"`` ``[module.<comp>]`` -- so the
+    key sits beside the flag it refines. ``[]`` when undeclared, which
+    renders ``set_state`` exactly as before the key existed.
+
+    Examples
+    --------
+    >>> rows = [{"status": "E_NOMEM", "error": "MemoryError"}]
+    >>> set_state_status_errors(
+    ...     {"acq": {"serializable": "true",
+    ...              "set_state_status_errors": rows}}, "acq")
+    [{'status': 'E_NOMEM', 'error': 'MemoryError'}]
+    >>> set_state_status_errors({"acq": {"serializable": "true"}}, "acq")
+    []
+    """
+    for tbl in (cfg.get(component), cfg.get("module", {}).get(component)):
+        if isinstance(tbl, dict) and tbl.get(SET_STATE_STATUS_ERRORS):
+            return list(tbl[SET_STATE_STATUS_ERRORS])
+    return []
+
+
+def _set_state_status_errors_errors(cfg: dict) -> "list[str]":
+    """Every ``set_state_status_errors`` no ``set_state`` would read (gh-2470).
+
+    Two refusals: the key on a component that is not ``serializable`` --
+    there is no ``set_state`` to raise from, so the rows would be recorded
+    and dropped (the gh-1418 shape) -- and a row the shared validator
+    (`_borrow.rows_why_not`) refuses on every other table face. No message
+    slot is in scope: ``set_state`` takes nothing but the blob.
+
+    Examples
+    --------
+    >>> rows = [{"status": "E_NOMEM", "error": "MemoryError"}]
+    >>> _set_state_status_errors_errors(
+    ...     {"acq": {"set_state_status_errors": rows}})[0].split(":")[0]
+    '[acq] set_state_status_errors'
+    >>> _set_state_status_errors_errors(
+    ...     {"acq": {"serializable": "true",
+    ...              "set_state_status_errors": rows}})
+    []
+    """
+    from ._borrow import rows_why_not
+
+    errors: list[str] = []
+    tables = [(f"[{k}]", k, v) for k, v in cfg.items()]
+    tables += [
+        (f"[module.{k}]", k, v) for k, v in (cfg.get("module") or {}).items()
+    ]
+    for where, comp, tbl in tables:
+        if not isinstance(tbl, dict) or SET_STATE_STATUS_ERRORS not in tbl:
+            continue
+        rows = tbl[SET_STATE_STATUS_ERRORS]
+        if not _truthy(tbl.get("serializable")):
+            errors.append(
+                f"{where} {SET_STATE_STATUS_ERRORS}: maps the status "
+                f"`set_state` returns, and '{comp}' is not serializable, so "
+                "there is no set_state to raise from. Declare "
+                '`serializable = "true"`, or drop the key.'
+            )
+            continue
+        if not isinstance(rows, list) or not all(
+            isinstance(r, dict) for r in rows
+        ):
+            errors.append(
+                f"{where} {SET_STATE_STATUS_ERRORS}: must be a list of "
+                '{status = "...", error = "..."} rows.'
+            )
+            continue
+        why = rows_why_not(rows, f"{where} {SET_STATE_STATUS_ERRORS}", {})
+        if why:
+            errors.append(why)
+    return errors
 
 
 def step_delegates(cfg: dict, component: str) -> bool:
@@ -6866,6 +7295,218 @@ def set_jm_version(cfg: dict, ver: str) -> dict:
     return cfg
 
 
+def record_applied(root: Path, cfg: dict) -> "list[str]":
+    """Record in the manifest what this `apply` placed (gh-2459).
+
+    The one writer of `_incpath`'s :data:`~_incpath.APPLIED_LAYOUT` and
+    :data:`~_incpath.APPLIED_PACKAGE`, from which every later former place
+    is computed (`_incpath.applied`):
+
+    - ``[project] applied_layout``: *cfg*'s layout, written only when it is
+      not ``flat`` and removed when it is, so a flat project's manifest is
+      what it has always been;
+    - ``[module.X] applied_package``, in the file that declares the module:
+      the package it was placed under, for each module while the layout is
+      ``nested`` -- its own path when it declares none, because the key's
+      absence means "never placed" (`_incpath.unplaced`) -- and removed in
+      every other layout, where a package moves nothing;
+    - ``[module.X] applied_objects`` beside it: the members placed in that
+      package, under ``nested`` only -- where a member's source directory is
+      its module's, not the flat ``native/src/<name>`` -- so a member
+      declared since is not taken as placed (`_incpath.placed`).
+
+    Surgical line edits, as :func:`stamp_jm_version` makes, so nothing
+    else in any file changes. Called by a full `apply` after its last
+    refusal, once every move and render has landed. Returns one line per
+    key written or removed; updates *cfg* in place too.
+    """
+    from . import _incpath as INC
+
+    notes: "list[str]" = []
+    now = INC.layout(cfg)
+    project = cfg.setdefault("project", {})
+    want = None if now == INC.LAYOUTS[0] else now
+    if project.get(INC.APPLIED_LAYOUT) != want:
+        _set_table_key(root / FILENAME, r"project", INC.APPLIED_LAYOUT, want)
+        if want is None:
+            project.pop(INC.APPLIED_LAYOUT, None)
+        else:
+            project[INC.APPLIED_LAYOUT] = want
+        notes.append(f"[project] {INC.APPLIED_LAYOUT} = {want!r}")
+    _owners, module_owners, _ = _provenance(root)
+    for mod in modules(cfg):
+        table = cfg.setdefault("module", {}).setdefault(mod, {})
+        nested = now == "nested"
+        wants = (
+            (
+                INC.APPLIED_PACKAGE,
+                table.get("package", module_paths(mod).pypath)
+                if nested
+                else None,
+            ),
+            (
+                INC.APPLIED_OBJECTS,
+                sorted(module_objects(cfg, mod)) if nested else None,
+            ),
+        )
+        quoted = _re.escape(mod) if "." not in mod else None
+        header = (
+            rf"module\.(?:{quoted}|\"{_re.escape(mod)}\"|'{_re.escape(mod)}')"
+            if quoted
+            else rf"module\.(?:\"{_re.escape(mod)}\"|'{_re.escape(mod)}')"
+        )
+        for key, want in wants:
+            if table.get(key) == want:
+                continue
+            _set_table_key(
+                module_owners.get(mod, root / FILENAME),
+                header,
+                key,
+                want,
+                spelled=f"module.{_toml_key(mod)}",
+                after=INC.APPLIED_PACKAGE
+                if key == INC.APPLIED_OBJECTS
+                else None,
+            )
+            if want is None:
+                table.pop(key, None)
+            else:
+                table[key] = want
+            notes.append(f"[module.{mod}] {key} = {want!r}")
+    if notes:
+        _textio.wrote_toml()
+    return notes
+
+
+def record_created(
+    root: Path, cfg: dict, module: str, member: "str | None" = None
+) -> None:
+    """Record in *cfg* that a command just created *module*, or *member* in
+    it, in an empty place where the nested layout puts it (gh-2459).
+
+    The command checked the directory was empty and wrote jm's render into
+    it, so it is placed: `apply` must not take its sacred core for someone
+    else's (`_incpath.placed`). Only under ``nested`` -- where a member's
+    directory is its module's package, not the flat ``native/src/<name>``.
+    A command other than `apply` records only what it just created, and
+    never a claim about anything else:
+
+    - *member* is appended to a module whose record already carries
+      ``applied_objects``; a module without one is left for `apply` to
+      show and record, members and all;
+    - a module's record is begun only by the `jm module` creating it
+      (*member* is ``None`` and it has no members yet): beginning it for a
+      module that already holds members would declare each of them never
+      placed;
+    - ``[project] applied_layout`` is written only when every module then
+      carries a complete record -- its package, and every member on its
+      ``applied_objects`` -- so the record never says less than the tree.
+      Otherwise nothing, and the next full `apply` writes it.
+
+    The caller saves *cfg*; :func:`record_applied` rewrites every key after
+    the next full `apply`.
+    """
+    from . import _incpath as INC
+
+    if INC.layout(cfg) != "nested":
+        return
+    table = cfg.setdefault("module", {}).setdefault(module, {})
+    if member is None:
+        if INC.APPLIED_PACKAGE not in table and not table.get("objects"):
+            table[INC.APPLIED_PACKAGE] = table.get(
+                "package", module_paths(module).pypath
+            )
+            table[INC.APPLIED_OBJECTS] = []
+    elif INC.APPLIED_OBJECTS in table:
+        if member not in table[INC.APPLIED_OBJECTS]:
+            table[INC.APPLIED_OBJECTS] = sorted(
+                [*table[INC.APPLIED_OBJECTS], member]
+            )
+    project = cfg.setdefault("project", {})
+    if INC.APPLIED_LAYOUT in project:
+        return
+    tables = cfg.get("module", {})
+    if all(
+        INC.APPLIED_PACKAGE in tables.get(mod, {})
+        and set(tables[mod].get("objects", []))
+        <= set(tables[mod].get(INC.APPLIED_OBJECTS, ()))
+        for mod in modules(cfg)
+    ):
+        # Through `record_applied`'s own line edit, so the key lands where
+        # that writer puts it; the caller's save keeps an existing key's
+        # place but appends a new one.
+        _set_table_key(
+            root / FILENAME, r"project", INC.APPLIED_LAYOUT, INC.layout(cfg)
+        )
+        project[INC.APPLIED_LAYOUT] = INC.layout(cfg)
+
+
+def forget_placed(cfg: dict, module: str, member: str) -> None:
+    """Drop *member* from *module*'s ``applied_objects`` in *cfg* (gh-2459):
+    `jm remove` took it, so a member declared again under that name is a
+    new place, checked as one."""
+    from . import _incpath as INC
+
+    table = (cfg.get("module") or {}).get(module) or {}
+    if member in table.get(INC.APPLIED_OBJECTS, []):
+        table[INC.APPLIED_OBJECTS] = [
+            o for o in table[INC.APPLIED_OBJECTS] if o != member
+        ]
+
+
+def _toml_key(key: str) -> str:
+    """*key* as a TOML key: bare when it can be, quoted otherwise."""
+    if _re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        return key
+    return _toml_basic_string(key)
+
+
+def _set_table_key(
+    path: Path,
+    header: str,
+    key: str,
+    value: "str | list[str] | None",
+    spelled: "str | None" = None,
+    after: "str | None" = None,
+) -> None:
+    """Set ``key = value`` in the table whose header matches the regex
+    *header* in the TOML file *path* -- replacing the key's line, adding it
+    under the header, or (*value* None) removing it. A table the file does
+    not spell is appended as ``[<spelled>]``."""
+    text = path.read_text(encoding="utf-8")
+    head = _re.search(rf"^\[{header}\][ \t]*(?:#[^\n]*)?\n", text, _re.M)
+    if head is None:
+        if value is None:
+            return
+        text = text.rstrip("\n") + f"\n\n[{spelled}]\n"
+        head = _re.search(rf"^\[{_re.escape(spelled)}\]\n", text, _re.M)
+    end = _re.search(r"^\[", text[head.end() :], _re.M)
+    stop = head.end() + (end.start() if end else len(text) - head.end())
+    body = text[head.end() : stop]
+    line = _re.compile(rf"^[ \t]*{_re.escape(key)}[ \t]*=[^\n]*\n", _re.M)
+    literal = (
+        "[" + ", ".join(_toml_basic_string(v) for v in value) + "]"
+        if isinstance(value, list)
+        else None
+        if value is None
+        else _toml_basic_string(value)
+    )
+    anchor = (
+        _re.compile(rf"^[ \t]*{_re.escape(after)}[ \t]*=[^\n]*\n", _re.M)
+        if after
+        else None
+    )
+    if value is None:
+        body = line.sub("", body, count=1)
+    elif line.search(body):
+        body = line.sub(lambda _m: f"{key} = {literal}\n", body, count=1)
+    elif anchor is not None and (m := anchor.search(body)):
+        body = body[: m.end()] + f"{key} = {literal}\n" + body[m.end() :]
+    else:
+        body = f"{key} = {literal}\n" + body
+    _textio.write_text(path, text[: head.end()] + body + text[stop:])
+
+
 def stamp_jm_version(root: Path, cfg: dict) -> str | None:
     """Record the running jm version in `[project].jm_version`, monotonically.
 
@@ -7732,6 +8373,7 @@ def add_component(
     create_fn_: str | None = None,
     doc_: str = "",
     init_post_parse_: str = "",
+    set_state_status_errors_: "list[dict] | None" = None,
 ) -> dict:
     # gh-1880: the renderer's own default, from its one owner. A copy here
     # lacked the `void -> float _Complex` branch, so a generator's manifest
@@ -7794,6 +8436,11 @@ def add_component(
         entry["step_delegates_to_steps"] = "true"
     if serializable_:
         entry["serializable"] = "true"
+    if set_state_status_errors_:
+        # gh-2470: beside the flag it refines; refused at load without it.
+        entry[SET_STATE_STATUS_ERRORS] = as_named_tables(
+            set_state_status_errors_
+        )
     if streamable_:
         entry["streamable"] = "true"
     if async_stream_:
@@ -8132,12 +8779,16 @@ _MODULE_TAIL = (
     "composer", "json", "serializers", "settings",
 )  # fmt: skip
 _KIND_MODULE_HEAD = (
-    "no_generate", "kind", "backing", "capsule_name", "package", "header",
+    "applied_package", "applied_objects", "no_generate", "kind", "backing",
+    "capsule_name", "package", "header",
 )  # fmt: skip
 #: ``[module.X]`` by kind; the rest of the kind's vocabulary follows sorted,
 #: as gh-1229 wrote it. A plain module has no vocabulary in `_keys`.
 _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
-    "": ("no_generate", "functions_in_core", "objects", "package")
+    # gh-2459: `applied_package` / `applied_objects` are jm's record,
+    # written first by `record_applied`, so a later save leaves them be.
+    "": ("applied_package", "applied_objects", "no_generate",
+         "functions_in_core", "objects", "package")
     + _MODULE_TAIL,
     **{
         kind: _KIND_MODULE_HEAD
@@ -8145,6 +8796,7 @@ _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
             "handle": (
                 "type_name", "create_fn", "init_fn", "close_fn",
                 "handle_type", "optional_backend", "serializable",
+                "set_state_status_errors",
                 "context_manager",
             ),
             "composer": ("composes", "sample_type"),
@@ -8159,6 +8811,7 @@ _OBJECT_ORDER = (
     "no_reset", "opaque_state", "process_global", "no_python_bench",
     "header_only",
     "core_macro", "core_header", "step_delegates_to_steps", "serializable",
+    "set_state_status_errors",
     "streamable", "async_stream", "stream_block_default", "class_name",
     "create_fn", "create_error", "create_error_message", "doc",
     "depends_on", "extra_link_libs", "extra_include_dirs", "core_args",

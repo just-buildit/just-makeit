@@ -30,8 +30,13 @@ _EXCLUDED = ("just_makeit.templates", "just_makeit.examples")
 
 
 def _modules():
-    """Every importable library module in the package."""
-    out = []
+    """Every importable library module in the package, and the package.
+
+    `walk_packages` yields only what is BELOW ``just_makeit``, so the
+    package's own ``__init__`` -- where the public API lives, with its
+    examples (gh-2440: `load_manifest`) -- is added by name.
+    """
+    out = ["just_makeit"]
     for info in pkgutil.walk_packages(
         just_makeit.__path__, prefix="just_makeit."
     ):

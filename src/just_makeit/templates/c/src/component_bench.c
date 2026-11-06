@@ -1,4 +1,4 @@
-#include "/*<<inc_prefix>>*//*<<component>>*///*<<component>>*/_core.h"
+#include "/*<<core_include>>*/"
 #include "jm_bench.h"
 #include "/*<<inc_prefix>>*/clib_common.h"
 #include <stdint.h>

@@ -164,7 +164,8 @@ class TestZeroChurnForEverythingElse:
         ).read_text(encoding="utf-8")
 
     def test_targets_block_is_empty_without_functions(self):
-        assert R.module_targets_block("holder", False) == ""
+        o = {"project": {"name": "p"}}
+        assert R.module_targets_block("holder", False, owner=o) == ""
 
     def test_adding_an_object_does_not_remove_the_module_targets(
         self, project

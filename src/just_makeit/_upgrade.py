@@ -208,9 +208,8 @@ def _rewrite_makefile_bench(text: str) -> str:
 # `docs/upgrading.md` was a `perl -pi -e` block the author ran by hand.
 _COMPLEX_DIRS = (
     INC.INC_DIR,
-    "native/src",
-    "native/tests",
-    "native/benchmarks",
+    INC.SRC_DIR,
+    *INC.HARNESS,
 )
 
 #: Longest first. Not load-bearing -- rewriting `double complex` inside
@@ -338,7 +337,7 @@ MIGRATIONS: dict[int, list] = {
     3: [
         # Schema 4 adds jm_bench.h (per-round stats + pytest-benchmark JSON)
         # and regenerates bench C files to use the new timing structure.
-        AddFile("native/benchmarks/jm_bench.h", "JM_BENCH_H"),
+        AddFile(INC.harness_rel(INC.BENCH_DIR), "JM_BENCH_H"),
         RegenBench(),
     ],
     4: [
@@ -429,7 +428,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
         version = C.project_version(cfg)
         perf = C.is_perf(cfg)
         for comp in C.components(cfg):
-            bench_c = root / "native" / "benchmarks" / f"bench_{comp}_core.c"
+            bench_c = INC.native_path(root, "bench", comp, cfg)
             if not bench_c.exists():
                 continue
             no_step = C.is_no_step(cfg, comp)
@@ -444,6 +443,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     "version": version,
                     **INC.ctx_slots(cfg),
                     **CSYM.slots(cfg, comp),
+                    **INC.native_slots(cfg, comp),
                 }
             )
             arg_type = C.arg_type(cfg, comp)
@@ -482,6 +482,9 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     serializable=C.is_serializable(cfg, comp),
                     codecs=C.codecs(cfg),
                     csym=comp_ctx["csym"],
+                    set_state_status_errors=C.set_state_status_errors(
+                        cfg, comp
+                    ),
                 )
             )
             # NO_STEP components with no init_params have an empty
@@ -554,6 +557,63 @@ def _project_files(root: Path, want) -> "list[Path]":
     return out
 
 
+def respell_includes(root: Path, moved: "dict[str, str]") -> "list[str]":
+    """Respell every reference to a moved header; the files rewritten.
+
+    *moved* maps each header's old spelling below the ``-I`` root to its new
+    one. The one respeller of a header move -- gh-1583's move under the
+    package and gh-2427's move into or out of the nested layout -- and it
+    rewrites, each only where it names a header that moves:
+
+    - an ``#include`` in any of the project's C or C++ files. A quoted
+      include that resolves beside its own file to a DIFFERENT file from
+      the ``-I`` lookup is left alone: C finds that one first, so the
+      author's spelling decides what is included (a vendored library's own
+      ``"config.h"``);
+    - a quoted string in the manifest or a fragment it includes (``header =
+      "wfm/wfm.h"`` and its kin: jm emits them into ``#include`` verbatim).
+    """
+
+    def spell(match: "re.Match[str]", here: Path) -> str:
+        lead, open_, name, close = match.groups()
+        if name not in moved:
+            return match.group(0)
+        # The same file -- every header directly in native/inc, the
+        # umbrella among them -- takes the canonical spelling, as jm renders
+        # it.
+        beside = here.parent / name
+        if (
+            open_ == '"'
+            and beside.is_file()
+            and beside.resolve() != INC.resolve(root, name).resolve()
+        ):
+            return match.group(0)
+        return f"{lead}{open_}{moved[name]}{close}"
+
+    touched: "list[str]" = []
+    for f in _project_files(root, lambda p: p.suffix in _C_SUFFIXES):
+        text = f.read_text(encoding="utf-8", errors="surrogateescape")
+        new = _INCLUDE_LINE.sub(lambda m: spell(m, f), text)
+        if new != text:
+            _textio.write_text(f, new)
+            touched.append(f.relative_to(root).as_posix())
+
+    for f in C.manifest_files(root):
+        text = f.read_text(encoding="utf-8")
+        new = _TOML_STRING.sub(
+            lambda m: (
+                f"{m.group(1)}{moved[m.group(2)]}{m.group(1)}"
+                if m.group(2) in moved
+                else m.group(0)
+            ),
+            text,
+        )
+        if new != text:
+            _textio.write_text(f, new)
+            touched.append(f.relative_to(root).as_posix())
+    return touched
+
+
 def _prefix_headers(root: Path) -> None:
     """Move ``native/inc/*`` under ``native/inc/<pkg>/`` and respell every
     reference to a moved header (gh-1583, schema 7 -> 8).
@@ -602,46 +662,9 @@ def _prefix_headers(root: Path) -> None:
     moved |= {m[: -len(".in")] for m in moved if m.endswith(".in")}
     entries = sorted(p.name for p in inc.iterdir())
 
-    def spell(match: "re.Match[str]", here: Path) -> str:
-        lead, open_, name, close = match.groups()
-        if name not in moved:
-            return match.group(0)
-        # A quoted include is looked up beside its own file first. Kept only
-        # when that finds a DIFFERENT file from the -I lookup: then the
-        # author's spelling decides what is included. The same file -- every
-        # header directly in native/inc, the umbrella among them -- takes the
-        # canonical spelling, as jm renders it.
-        beside = here.parent / name
-        if (
-            open_ == '"'
-            and beside.is_file()
-            and beside.resolve() != (inc / name).resolve()
-        ):
-            return match.group(0)
-        return f"{lead}{open_}{INC.include(name, to)}{close}"
-
-    touched: "list[str]" = []
-    for f in _project_files(root, lambda p: p.suffix in _C_SUFFIXES):
-        text = f.read_text(encoding="utf-8", errors="surrogateescape")
-        new = _INCLUDE_LINE.sub(lambda m: spell(m, f), text)
-        if new != text:
-            _textio.write_text(f, new)
-            touched.append(f.relative_to(root).as_posix())
-
-    manifests = C.manifest_files(root)
-    for f in manifests:
-        text = f.read_text(encoding="utf-8")
-        new = _TOML_STRING.sub(
-            lambda m: (
-                f"{m.group(1)}{INC.include(m.group(2), to)}{m.group(1)}"
-                if m.group(2) in moved
-                else m.group(0)
-            ),
-            text,
-        )
-        if new != text:
-            _textio.write_text(f, new)
-            touched.append(f.relative_to(root).as_posix())
+    touched = respell_includes(
+        root, {name: INC.include(name, to) for name in moved}
+    )
 
     old_rel = re.compile(
         rf"{re.escape(INC.INC_DIR)}/({'|'.join(map(re.escape, entries))})(?=[/\s\")}}$]|$)",
@@ -702,8 +725,13 @@ def _where_declared(root: Path, unknown) -> str:
     return f"{frag.relative_to(root).as_posix()}: " if frag.exists() else ""
 
 
-def _rename_superseded(root: Path) -> None:
+def _rename_superseded(
+    root: Path, pairs: "list[tuple[str, str]] | None" = None
+) -> None:
     """Move each file jm has renamed to its new name (gh-1472).
+
+    *pairs* narrows it to those renames, each still pending; `apply` passes
+    the native layout's moves (gh-2423), which it makes itself.
 
     A rename, not a re-render: the old file may carry the author's additions
     (a ``jb.toml`` with ``[runtime.*]`` packages), and a fresh default under
@@ -714,10 +742,11 @@ def _rename_superseded(root: Path) -> None:
     from . import _apply
     from . import _createonly
 
-    for old, new in _createonly.superseded(root):
+    for old, new in _createonly.superseded(root) if pairs is None else pairs:
         if (root / new).exists():
             print(f"\n{_apply.superseded_advice(root, old, new)}")
             continue
+        (root / new).parent.mkdir(parents=True, exist_ok=True)
         (root / old).rename(root / new)
         # An owned file's token names it (gh-1589): carry the ownership
         # across the rename, or the moved file silently becomes the author's.
@@ -834,7 +863,21 @@ def _report_repairs(root: Path) -> None:
     schema bump -- so wiring it only into the migration loop would have meant
     it never ran for anybody who was up to date, which is everybody it is for.
     """
+    # gh-2459: the native moves are renames too, and only out of a place jm
+    # can show is its own -- the same check `apply` asks before it moves.
+    from . import _apply
+    from . import _config as C
+
+    _apply._refuse_unverified_moves(root, C.load(root), None)
     _rename_superseded(root)
+    # Every native move landed: jm placed those files, so it records where
+    # (the root wiring follows on the next `apply`, which also records). A
+    # move left waiting -- a file in both places -- keeps the old record,
+    # so it is still found.
+    from . import _incpath as INC
+
+    if not [o for o, _n in INC.relocations(root) if (root / o).is_file()]:
+        C.record_applied(root, C.load(root))
     _report_c_prefix(root)
     fixed = _repair_complex_spelling(root)
     if not fixed:
@@ -891,6 +934,16 @@ def run(root: Path) -> None:
     if not cfg:
         print("error: no just-makeit.toml found.", file=sys.stderr)
         sys.exit(1)
+    # gh-2427: the layout's moves first, through `apply`'s mover, so a moved
+    # header takes the includes naming it along -- the renames
+    # `_report_repairs` makes would move it bare -- and before the replay
+    # below compares the tree with jm's render, which puts every header
+    # where this layout does: a header still in the other place reads there
+    # as an author's file declaring jm's names.
+    from . import _apply
+
+    if _apply._relocate_native(root):
+        cfg = C.load(root)
     _refuse_prefix_collisions(root, cfg)
 
     current = C.schema_version(cfg)

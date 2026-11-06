@@ -72,6 +72,7 @@ from ._diagnostics import (
     property_raises_doc,
     raises_doc,
     setter_return_type,
+    status_rows_raises_doc,
 )
 from ._parse import (
     _build_ml_doc,
@@ -1202,7 +1203,12 @@ def _bench_method_block(
 
 
 def serializable_triplet_parts(
-    component: str, Component: str, wrapper_prefix: str, *, csym: str
+    component: str,
+    Component: str,
+    wrapper_prefix: str,
+    *,
+    csym: str,
+    status_errors: "list[dict] | None" = None,
 ) -> tuple[list[str], str, str]:
     """The gh-400 state-blob binding for one object, as reusable text.
 
@@ -1261,14 +1267,11 @@ def serializable_triplet_parts(
             f' "state blob size mismatch");\n'
             f"        return NULL;\n"
             f"    }}\n"
-            f"    if ({csym}_set_state(self->handle,"
-            f" PyBytes_AS_STRING(arg)) != 0) {{\n"
-            f"        PyErr_SetString(PyExc_ValueError,"
-            f' "set_state rejected the blob");\n'
-            f"        return NULL;\n"
-            f"    }}\n"
-            f"    Py_RETURN_NONE;\n"
-            f"}}"
+            + set_state_check_c(
+                f"{csym}_set_state(self->handle, PyBytes_AS_STRING(arg))",
+                status_errors,
+            )
+            + "    Py_RETURN_NONE;\n}"
         ),
     ]
     # gh-647: one definition of this prose, rendered to both faces. The
@@ -1280,15 +1283,18 @@ def serializable_triplet_parts(
     # symbol prefix and gains an `Obj` suffix on a no_state object. Passing
     # `_W` documented `--class-name DDC` as "Lets a DdcObj be used…" — a name
     # that appears nowhere in the API the reader is holding.
-    _glue = glue_methods(Component)
+    _glue = glue_methods(Component, status_table=bool(status_errors))
     _meth_c = {
         "state_bytes": "METH_NOARGS",
         "get_state": "METH_NOARGS",
         "set_state": "METH_O",
     }
+    # gh-2470: only set_state can raise a declared class, and only with rows;
+    # None leaves every doc byte-identical to before the key existed.
+    _raises = {"set_state": set_state_raises_doc(status_errors) or None}
     pmd = "".join(
         f'    {{"{n}", (PyCFunction){_W}_{n}, {flags},\n'
-        f"     {_build_ml_doc(_glue[n].c_doc_lines())}}},\n"
+        f"     {_build_ml_doc(_glue[n].c_doc_lines(_raises.get(n)))}}},\n"
         for n, flags in _meth_c.items()
     )
     _sigs = {
@@ -1297,10 +1303,92 @@ def serializable_triplet_parts(
         "set_state": "self, blob: bytes) -> None",
     }
     pyi = "\n".join(
-        f"    def {n}({sig}:\n" + "\n".join(_glue[n].pyi_doc())
+        f"    def {n}({sig}:\n"
+        + "\n".join(_glue[n].pyi_doc(raises=_raises.get(n)))
         for n, sig in _sigs.items()
     )
     return c_funcs, pmd, pyi
+
+
+#: What a serializable ``set_state`` raises when its core refuses the blob
+#: and no ``set_state_status_errors`` row names the status.
+SET_STATE_REJECTED = "set_state rejected the blob"
+
+
+def set_state_check_c(call: str, rows: "list[dict] | None" = None) -> str:
+    """The C testing a ``set_state`` core call's status, for both faces.
+
+    One emitter for the object binding (`serializable_triplet_parts`) and a
+    ``kind = "handle"`` module's (gh-403), which carried the same text
+    twice. Without *rows* it is the original one-line test, byte for byte;
+    with them (gh-2470) the status is kept as ``_rc`` and each row raises
+    its declared class through `_borrow.status_switch_c`, the switch every
+    table face shares, ahead of the blanket ``ValueError``.
+
+    Examples
+    --------
+    >>> print(set_state_check_c("f_set_state(h, b)"), end="")
+        if (f_set_state(h, b) != 0) {
+            PyErr_SetString(PyExc_ValueError, "set_state rejected the blob");
+            return NULL;
+        }
+    >>> rows = [{"status": "E_NOMEM", "error": "MemoryError"}]
+    >>> print(set_state_check_c("f_set_state(h, b)", rows), end="")
+        int _rc = f_set_state(h, b);
+        if (_rc != 0) {
+            switch (_rc) {
+            case E_NOMEM:
+            PyErr_SetString(PyExc_MemoryError,
+            "set_state failed (E_NOMEM)");
+            return NULL;
+            default: break;
+            }
+            PyErr_SetString(PyExc_ValueError, "set_state rejected the blob");
+            return NULL;
+        }
+    """
+    fallback = (
+        f'        PyErr_SetString(PyExc_ValueError, "{SET_STATE_REJECTED}");\n'
+        "        return NULL;\n"
+        "    }\n"
+    )
+    if not rows:
+        return f"    if ({call} != 0) {{\n" + fallback
+    return (
+        f"    int _rc = {call};\n"
+        "    if (_rc != 0) {\n"
+        + _borrow.status_switch_c(list(rows), "set_state", {})
+        + fallback
+    )
+
+
+def set_state_raises_doc(
+    rows: "list[dict] | None",
+) -> "list[tuple[str, str]]":
+    """``set_state``'s ``Raises`` entries under a status table (gh-2470).
+
+    One per row, then the blanket ``ValueError`` for every other status --
+    the order `set_state_check_c` tests them in. Empty without rows: the
+    method's prose already names the ``ValueError``, and adding a section
+    there would move every existing project's docs.
+
+    Examples
+    --------
+    >>> set_state_raises_doc(None)
+    []
+    >>> [c for c, _ in set_state_raises_doc(
+    ...     [{"status": "E_NOMEM", "error": "MemoryError"}])]
+    ['MemoryError', 'ValueError']
+    """
+    if not rows:
+        return []
+    return status_rows_raises_doc(list(rows), "set_state") + [
+        (
+            "ValueError",
+            "If the C core rejects the blob with any other non-zero status. "
+            f"The exception message is ``{SET_STATE_REJECTED}``.",
+        )
+    ]
 
 
 def state_blob_fields(
@@ -2069,6 +2157,7 @@ def make_methods_ctx(
     csym: str,
     extra_methods: "list[dict] | None" = None,
     host: "MethodHost | None" = None,
+    set_state_status_errors: "list[dict] | None" = None,
 ) -> dict[str, str]:
     """Generate template context keys for extra named methods.
 
@@ -5048,6 +5137,14 @@ def make_methods_ctx(
                 _check_c = (
                     "    if (_rc != 0) {\n"
                     + ("        Py_DECREF(_out);\n" if out_type else "")
+                    # gh-2470: a declared status -> exception row raises
+                    # first; a status with no row falls out of the switch
+                    # into the method's own raise, unchanged.
+                    + _borrow.status_switch_c(
+                        _borrow.status_rows(m),
+                        name,
+                        _borrow.message_slots(m, csym, properties),
+                    )
                     + _rc_raise_c(*_raise_pair)
                     + "    }\n"
                     if status_return
@@ -5351,6 +5448,7 @@ def make_methods_ctx(
             Component,
             wrapper_prefix,
             csym=csym,
+            status_errors=set_state_status_errors,
         )
         method_c_parts.extend(_c_funcs)
         pmd_lines.append(_pmd)

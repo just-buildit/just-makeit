@@ -6,7 +6,7 @@
  * the one with nothing checking it. An object has had this file since the
  * beginning.
  */
-#include "/*<<inc_prefix>>*//*<<module>>*///*<<module>>*/_core.h"
+#include "/*<<core_include>>*/"
 
 /* Both defines come BEFORE the include: jm_test.h defaults each if the
  * including file has not set it, so a later define would be ignored. */

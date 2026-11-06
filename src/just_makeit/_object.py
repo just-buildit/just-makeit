@@ -662,11 +662,13 @@ def _copy_external_cmake_blocks(
     ``if(DOPPLER_C_LIB)`` blocks — every new component inherits the same
     conditional include/link paths automatically.
     """
-    src_dir = root / "native" / "src"
+    src_dir = INC.src_root(root)
     if not src_dir.exists():
         return
 
-    for cmake_file in sorted(src_dir.glob("*/CMakeLists.txt")):
+    # gh-2459: every component's directory, the nested layout's deeper ones
+    # included.
+    for cmake_file in INC.src_cmakelists(root, C.load(root)):
         if cmake_file.parent.name == new_comp:
             continue
         text = cmake_file.read_text(encoding="utf-8")
@@ -759,13 +761,32 @@ def package_siblings(cfg: dict, module: str) -> list[str]:
     its own ``from .<leaf> import ...`` line; the returned leaves let
     :func:`_merge_module_init` recognise the neighbour's exports and leave them
     alone instead of pruning them out of ``__all__`` on every other apply.
+
+    gh-2434: and the submodules each such neighbour re-exports from
+    (``[module.X] reexports``), whose ``from .<sub> import ...`` line is that
+    neighbour's too. Without them a module merged AFTER the one declaring
+    the reexport pruned its names out of ``__all__``, so the file depended
+    on module order: doppler's ``wfm`` lost ``Synth`` and the other
+    ``compose`` names the moment `migrate-to-fragments` loaded ``wfm``
+    before its package siblings.
+
+    >>> cfg = {"module": {"a": {"reexports": {"helper": ["H"]}},
+    ...                   "b": {"package": "a"}}}
+    >>> package_siblings(cfg, "b")
+    ['a', 'helper']
     """
     out_pkg = C.module_package_resolved(cfg, module)
-    return [
-        C.module_paths(other).leaf
-        for other in C.modules(cfg)
-        if other != module and C.module_package_resolved(cfg, other) == out_pkg
-    ]
+    out: "list[str]" = []
+    for other in C.modules(cfg):
+        if other == module or C.module_package_resolved(cfg, other) != out_pkg:
+            continue
+        for leaf in (
+            C.module_paths(other).leaf,
+            *C.module_reexports(cfg, other),
+        ):
+            if leaf not in out:
+                out.append(leaf)
+    return out
 
 
 def _leading_docstring(text: str) -> str:
@@ -1308,7 +1329,11 @@ def fragment_destroy_ctx(
         ctx["ComponentW"],
         C.destroy_spec(cfg, obj),
         C.methods(cfg, obj),
-        class_name=C.class_name(cfg, obj) or "",
+        # gh-2408 follow-on: the class this fragment binds, which for a view
+        # is the VIEW's -- `C.class_name(cfg, obj)` is the parent's, so a
+        # view's runtime `__enter__` / `__exit__` prose named the parent
+        # while its stub named the view.
+        class_name=ctx["Component"],
         # gh-1323: so the destructor is the counterpart of whatever
         # `create_fn` names, not always `<comp>_destroy`. gh-1326: the
         # module path dropped it, so it derived nothing here even though
@@ -1317,6 +1342,7 @@ def fragment_destroy_ctx(
         csym=ctx["csym"],
         lends=lends,
         releases=releases,
+        properties=C.properties(cfg, obj),
     )
 
 
@@ -1416,6 +1442,7 @@ def _make_view_ctx(
             records=C.records(cfg, obj),  # gh-1405
             properties=C.properties(cfg, obj),  # gh-1426
             csym=ctx["csym"],
+            set_state_status_errors=C.set_state_status_errors(cfg, obj),
         )
     )
     for _slot in _override_slots:
@@ -1536,7 +1563,22 @@ def _make_view_ctx(
     # same evidence, so the question is "is anything authored", not "is there
     # a summary".
     _vblk = (doc_blocks or {}).get(view["create_fn"])
-    if _vtp or (_vblk is not None and _vblk.params):
+    # gh-2408: and a declared failure or warning, read from the view's
+    # overlay -- the one place a view's create_error / warnings resolve for
+    # the stub beside this -- so its Raises quotes the message this binding
+    # raises. This face rendered no Raises or Warns at all, while the stub
+    # quoted the PARENT's message. Gated exactly as the parent's tp_doc is
+    # (`build_component_ctxs`).
+    _vsynth, _vcfg = S.view_overlay(cfg, obj, view)
+    _cls_raises, _cls_warns = S.class_diagnostics(_vcfg, _vsynth)
+    _cls_enums = C.enum_choice_docs(cfg, doc_blocks)
+    if (
+        _vtp
+        or (_vblk is not None and _vblk.params)
+        or _cls_raises
+        or _cls_warns
+        or _cls_enums
+    ):
         _vinit = C.view_init_params(cfg, obj, view)
         ctx["tp_doc"] = _build_ml_doc(
             S.class_runtime_doc(
@@ -1555,6 +1597,9 @@ def _make_view_ctx(
                     cfg, obj, init_params=_vinit
                 ),
                 create_fn=view["create_fn"],
+                raises=_cls_raises,
+                warns=_cls_warns,
+                enum_choices=_cls_enums,
                 csym=ctx["csym"],
             )
         )
@@ -1676,6 +1721,7 @@ def build_component_ctxs(
                 csym=ctx["csym"],
                 # gh-1997: the object's own; a view (above) has none.
                 extra_methods=C.extra_methods(cfg, obj),
+                set_state_status_errors=C.set_state_status_errors(cfg, obj),
             )
         )
         for _slot in _override_slots:
@@ -1925,6 +1971,8 @@ def _write_module_test_and_bench(
     ctx = {
         # gh-1583: the tests include the project's headers, in its layout.
         **INC.ctx_slots(root),
+        # gh-2427: and the module core's header, where the layout puts it.
+        **INC.native_slots(root, cname),
         "module": cname,
         "scaffold_checks": str(checks),
         "module_fn_smoke_calls": smoke,
@@ -1934,33 +1982,23 @@ def _write_module_test_and_bench(
             csym=CSYM.stem(root, cname),
         ),
     }
-    for sub, stem, tmpl, shared, shared_tmpl in (
-        (
-            "tests",
-            f"test_{cname}_core.c",
-            R.MODULE_TEST_C,
-            "jm_test.h",
-            R.JM_TEST_H,
-        ),
-        (
-            "benchmarks",
-            f"bench_{cname}_core.c",
-            R.MODULE_BENCH_C,
-            "jm_bench.h",
-            R.JM_BENCH_H,
-        ),
+    for kind, tmpl, shared_tmpl in (
+        ("test", R.MODULE_TEST_C, R.JM_TEST_H),
+        ("bench", R.MODULE_BENCH_C, R.JM_BENCH_H),
     ):
         # The shared harness, written once per project. A quoted include
         # resolves against the including file's own directory, which is how
         # an object's test finds it — so a module's test in the same
         # directory needs it present for the identical reason, and a
-        # function-only project had never had anything write it.
-        harness = root / "native" / sub / shared
+        # function-only project had never had anything write it. It stays
+        # at the tree's root in the mirrored layout (gh-2423), where the
+        # target's include path finds it instead.
+        harness = root / INC.harness_rel(INC.NATIVE_FILES[kind][0])
         if not harness.exists():
             harness.parent.mkdir(parents=True, exist_ok=True)
             # Rendered: jm_test.h spells its includes by the layout.
             _write(harness, R.render(shared_tmpl, ctx))
-        dest = root / "native" / sub / stem
+        dest = INC.native_path(root, kind, cname)
         if dest.exists():
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1968,7 +2006,10 @@ def _write_module_test_and_bench(
 
 
 def _module_extra_files(
-    root: Path, cname: str, comp_ctxs: "list[dict]"
+    root: Path,
+    cname: str,
+    comp_ctxs: "list[dict]",
+    owner: "INC.Owner | None" = None,
 ) -> "set[str]":
     """The hand-written ``*_extra.c`` / ``*_prologue.c`` hooks module *cname*
     has on disk.
@@ -1983,7 +2024,9 @@ def _module_extra_files(
     doppler duplicated ~55 lines of ``read_dict()`` verbatim across two sacred
     fragments rather than pick one to include from the other.
     """
-    ext_dir = root / "native" / "src" / cname
+    # *owner*: the manifest in hand -- under a replay *root*'s is the
+    # replay's, which may not place the module's directory yet (gh-2459).
+    ext_dir = INC.src_path(root, cname, owner)
     found: set[str] = set()
     for ctx in comp_ctxs:
         comp = ctx.get("frag_id", ctx["component"])
@@ -2051,7 +2094,7 @@ def render_module_ext_c(
     if functions is None:
         functions = C.module_functions(cfg, module)
     if extra_files is None:
-        extra_files = _module_extra_files(root, mp.cname, comp_ctxs)
+        extra_files = _module_extra_files(root, mp.cname, comp_ctxs, cfg)
     comp_ctxs = _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
     return R.render_module_ext_aggregator(
         module,
@@ -2503,7 +2546,7 @@ def _regenerate_module_now(
     # when migrating from a pre-split layout.  Only functions whose names
     # appear in the freshly rendered template survive (no cross-contamination).
     functions = C.module_functions(cfg, module)
-    ext_dir = root / "native" / "src" / cname
+    ext_dir = INC.src_path(root, cname, cfg)
     ext_c_path = ext_dir / f"{cname}_ext.c"
 
     # Load migration source once: existing monolith bodies (used as fallback
@@ -2591,7 +2634,7 @@ def _regenerate_module_now(
             )
         _write(frag_path, frag, "update" if frag_path.exists() else "create")
 
-    extra_files = _module_extra_files(root, cname, comp_ctxs)
+    extra_files = _module_extra_files(root, cname, comp_ctxs, cfg)
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
     _write(
@@ -2797,7 +2840,7 @@ def _regenerate_module_now(
             # Append the collocated object's extra sources: a legacy
             # _methods.c (migration) plus every module-level function .c.
             extra_srcs = []
-            methods_c = root / "native" / "src" / obj / f"{obj}_methods.c"
+            methods_c = INC.src_path(root, obj, cfg) / f"{obj}_methods.c"
             if methods_c.exists():
                 extra_srcs.append(f"{obj}_methods.c")
             extra_srcs.extend(fn_srcs)
@@ -2841,7 +2884,7 @@ def _regenerate_module_now(
     cmake_ctx = {
         **cmake_ctx,
         "module_targets_block": R.module_targets_block(
-            cname, bool(_fns), _taken, _module_dep_libs
+            cname, bool(_fns), _taken, _module_dep_libs, owner=root
         ),
     }
     if _fns and _skipped:
@@ -2863,7 +2906,7 @@ def _regenerate_module_now(
             f"{_lines} to let jm own the target instead (gh-1034)."
         )
     _write(
-        root / "native" / "src" / cname / "CMakeLists.txt",
+        INC.src_path(root, cname, cfg) / "CMakeLists.txt",
         R.with_extra_cmake(
             collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
             cname,
@@ -2886,8 +2929,9 @@ def _regenerate_module_now(
         root,
         pkg,
         cname,
-        component_core_libs(root, cname),
+        component_core_libs(root, cname, cfg),
         sentinel=MODULES_SENTINEL,
+        owner=cfg,
     )
 
     # Subpackage __init__.py — merge new exports into existing file so that
@@ -3079,7 +3123,26 @@ def run(
     # member in the module's `objects` list (its gh-1985 load order)
     # instead of appending it. Refused before anything is written.
     before: str = "",
+    # gh-2470: `jm object --set-state-status-error` rows -- which exception
+    # each status `<obj>_set_state` returns raises.
+    set_state_status_errors: "list[dict] | None" = None,
 ) -> None:
+    if set_state_status_errors:
+        # gh-2470: asked BEFORE anything renders, by the check `load` makes
+        # of a hand-written manifest. `load` runs only after `_init.run` has
+        # rendered the binding, and a row the renderer cannot emit (a
+        # `{slot}` set_state has no scope for) crashed it with a raw
+        # ValueError instead of this refusal.
+        _ss_why = C._set_state_status_errors_errors(
+            {
+                object_name: {
+                    "serializable": "true" if serializable else "",
+                    C.SET_STATE_STATUS_ERRORS: set_state_status_errors,
+                }
+            }
+        )
+        if _ss_why:
+            raise _report.Refusal(_ss_why[0])
     if before and (
         why := C.before_why_not(
             C.load(root) if (root / C.FILENAME).exists() else {},
@@ -3180,6 +3243,7 @@ def run(
             mutable=mutable,
             step_delegates=step_delegates,
             serializable=serializable,
+            set_state_status_errors=set_state_status_errors,
             streamable=streamable,
             async_stream=async_stream,
             stream_block_default=stream_block_default,
@@ -3263,6 +3327,12 @@ def run(
         vars_ = [] if _has_opaque else [("gain", "double", "0.0")]
     else:
         vars_ = list(state_vars)
+    # gh-2427: the manifest as it will read once this object joins its
+    # module. In the nested layout an object's header, and every native file
+    # mirroring it, sit under the module's path (`_incpath.core_dir`), and
+    # the manifest records the membership only after the files below are
+    # written -- so where they go is asked of this owner, not of the disk.
+    layout_owner = C.with_module_member(cfg, module, object_name)
     ctx = _make_object_ctx(
         object_name,
         module,
@@ -3288,7 +3358,7 @@ def run(
         ],
         block_sizes=C.project_bench_block_sizes(cfg),
         create_fn=create_fn,
-        owner=cfg,
+        owner=layout_owner,
         # gh-1761: no `str_hints` here. This ctx renders the module object's
         # create-only files, never its binding fragment: that is
         # `_regenerate_module`'s, which reads the hint back from the
@@ -3307,6 +3377,7 @@ def run(
             no_state=no_state,
             serializable=serializable,
             csym=ctx["csym"],
+            set_state_status_errors=set_state_status_errors,
         )
     )
     # gh-1509: the C triplet the binding calls, declared in the sacred
@@ -3361,6 +3432,7 @@ def run(
             lends=_borrow.lends_from(
                 _methods_now, C.properties(cfg, ctx["component"]), vars_
             ),
+            properties=C.properties(cfg, ctx["component"]),
         )
     )
 
@@ -3465,7 +3537,7 @@ def run(
             # the object is not in the manifest yet, which is the gh-790 trap
             # the standalone path in `_init.run` already reads around.
             for h in _param_headers_at_create(cfg, object_name, init_params)
-            if (INC.inc_dir(root) / h).exists()
+            if INC.resolve(root, h).exists()
         ]
     )
 
@@ -3497,7 +3569,13 @@ def run(
     # C library files (OBJECT lib only — no standalone Python module).
     # Object creation is create-only (the verb errors on a duplicate name),
     # so the sacred files are written fresh — never spliced.
-    core_h_path = INC.core_h(root, comp)
+    # gh-2459: only into a directory jm can show is its own -- under nested
+    # `native/src/<package>/` overlaps names authors use (third_party, ext).
+    # (The object that shares its module's directory finds the module's
+    # own files there, written a command ago.)
+    if comp != C.collocated_object(layout_owner, module):
+        INC.refuse_occupied(root, layout_owner, comp)
+    core_h_path = INC.core_h(root, comp, layout_owner)
     _write(
         core_h_path,
         r(R.COMPONENT_CORE_H),
@@ -3518,13 +3596,13 @@ def run(
     # no build. This path wrote it unconditionally, which is how a module
     # object ended up with an INTERFACE library AND a source file.
     if not header_only:
-        core_c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        core_c_path = INC.src_path(root, comp, layout_owner) / f"{comp}_core.c"
         _write(
             core_c_path,
             r(R.COMPONENT_CORE_C),
             "update" if core_c_path.exists() else "create",
         )
-    obj_cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
+    obj_cmake_path = INC.src_path(root, comp, layout_owner) / "CMakeLists.txt"
     _write(
         obj_cmake_path, R.with_extra_cmake(r(R.CMAKE_LISTS_OBJECT_CORE), comp)
     )
@@ -3534,22 +3612,22 @@ def run(
     _copy_external_cmake_blocks(root, comp, obj_cmake_path)
     # gh-806: via the one renderer that stamps the scaffold check count.
     _write(
-        root / "native" / "tests" / f"test_{comp}_core.c",
+        INC.native_path(root, "test", comp, layout_owner),
         R.render_component_test_c(ctx),
     )
     # gh-934: the shared assertion harness, written once per project like
     # jm_bench.h beside the benchmarks. Create-only -- `apply` never rewrites
     # it, so a project may extend it.
-    jm_test_h = root / "native" / "tests" / "jm_test.h"
+    jm_test_h = root / INC.harness_rel(INC.TESTS_DIR)
     if not jm_test_h.exists():
         # Rendered: its #include of clib_common.h is spelled by the layout.
         _write(jm_test_h, r(R.JM_TEST_H))
 
     _write(
-        root / "native" / "benchmarks" / f"bench_{comp}_core.c",
+        INC.native_path(root, "bench", comp, layout_owner),
         r(R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C),
     )
-    jm_bench_h = root / "native" / "benchmarks" / "jm_bench.h"
+    jm_bench_h = root / INC.harness_rel(INC.BENCH_DIR)
     if not jm_bench_h.exists():
         _write(jm_bench_h, R.JM_BENCH_H)
 
@@ -3600,6 +3678,9 @@ def run(
 
     # Update config before regenerating module (so module_objects is up-to-date)
     C.add_to_module(cfg, module, comp, before=before)
+    # gh-2459: placed where the nested layout puts it, in an empty
+    # directory (checked above): on record, so `apply` knows it is jm's.
+    C.record_created(root, cfg, module, comp)
     C.add_component(
         cfg,
         comp,
@@ -3624,6 +3705,7 @@ def run(
         mutable_=mutable,
         step_delegates_=step_delegates,
         serializable_=serializable,
+        set_state_status_errors_=set_state_status_errors,
         streamable_=streamable,
         async_stream_=async_stream,
         stream_block_default_=stream_block_default,
@@ -3659,7 +3741,7 @@ def run(
     _pg_h = _procglobal.render_header(cfg, comp, process_global)
     if _pg_h:
         _write(
-            INC.path(root, _procglobal.header_name(comp)),
+            INC.path(root, _procglobal.header_name(comp, layout_owner)),
             _pg_h,
         )
     # gh-541/gh-544: persist the destructor contract BEFORE the aggregate
@@ -3699,6 +3781,7 @@ def run(
         pkg,
         comp,
         _dep_core_libs(depends_on) + ([] if header_only else [f"{comp}_core"]),
+        owner=cfg,
     )
 
     # Umbrella header

@@ -271,7 +271,7 @@ def homes(cfg: dict, cname: str, fn_name: str) -> "tuple[str, str, str]":
     >>> homes({"project": {"name": "p", "schema": "8"}}, "m", "calc")
     ('native/src/m/calc.c', 'native/src/m/m_core.c', 'native/inc/p/m/m_core.h')
     """
-    src = f"native/src/{cname}"
+    src = INC.src_dir(cname, cfg)
     return (
         f"{src}/{fn_name}.c",
         f"{src}/{cname}_core.c",
@@ -481,7 +481,7 @@ def run(
 
     fn_rel, core_rel, _ = homes(cfg, cname, fn_name)
     fn_c = root / fn_rel
-    core_h = INC.core_h(root, cname)
+    core_h = INC.core_h(root, cname, cfg)
 
     core_c = root / core_rel
     # gh-247: a module may opt to keep all its free functions in one TU

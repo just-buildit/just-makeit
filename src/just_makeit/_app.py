@@ -1286,7 +1286,7 @@ def _cmake_app_block(cfg: dict, root: "Path | None" = None) -> str:
             else ""
         )
         parts.append(
-            f"add_executable({tgt} native/src/app/{name}.c)\n"
+            f"add_executable({tgt} {INC.APP_DIR}/{name}.c)\n"
             f"{output_name_line}"
             f"target_link_libraries({tgt} PRIVATE "
             f"{_link_target(cfg, entry)})\n"
@@ -1453,6 +1453,8 @@ def _build_fn_ctx(
         "package": pkg,
         "version": C.project_version(cfg),
         "module": module,
+        # gh-2427: the module core's header, where the layout puts it.
+        "core_include": INC.core_include(C.module_paths(module).cname, cfg),
         "function": function,
         "argparse_state_args": _argparse_block(fn_flags),
         "arg_parse_block": arg_parse_block,
@@ -1780,6 +1782,8 @@ def _build_ctx(
         "component": component,
         "Component": Component,
         **CSYM.slots(cfg, component),
+        # gh-2427: the component's header, where the layout puts it.
+        "core_include": INC.core_include(component, cfg),
         "argparse_state_args": _argparse_block(argparse_flags),
         "py_io_loop": py_io_loop,
         "arg_parse_block": arg_parse_block,
@@ -1920,7 +1924,7 @@ def _app_file(root: Path, cfg: dict, entry: dict) -> Path:
     """The one file *entry*'s app is: ``native/src/app/<name>.c``, its
     package's ``cli.py``, or ``<name>.py`` beside the manifest."""
     if entry["target"] == "c":
-        return root / "native" / "src" / "app" / f"{entry['name']}.c"
+        return INC.app_path(root) / f"{entry['name']}.c"
     if entry["target"] == "console":
         return _console_module(root, cfg, entry)[0]
     return root / f"{entry['name']}.py"
@@ -2174,7 +2178,7 @@ def remove(root: Path, cfg: dict, entry: dict) -> "list[Path]":
         _rm(path)
     rest = {**cfg, "app": [e for e in C.apps(cfg) if e is not entry]}
     if entry["target"] == "c":
-        app_dir = root / "native" / "src" / "app"
+        app_dir = INC.app_path(root)
         if app_dir.is_dir() and not any(app_dir.iterdir()):
             _rm(app_dir)
         cmake = root / "CMakeLists.txt"
@@ -2263,7 +2267,7 @@ def _run_c(
         )
         print(
             f"  note: CMakeLists.txt not found — add this manually:\n"
-            f"    add_executable({tgt} native/src/app/{name}.c){out_name}\n"
+            f"    add_executable({tgt} {INC.APP_DIR}/{name}.c){out_name}\n"
             f"    target_link_libraries({tgt} PRIVATE "
             f"{_link_target(cfg, entry)})"
         )

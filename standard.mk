@@ -150,6 +150,20 @@ CLEAN_CMD      ?=
 # command (a `define` block for anything multi-line). The rules are stamped out
 # below, so adding a tool is one entry plus one variable, in the repo Makefile,
 # with the hook config dispatching inward to the target that results.
+#
+# ruff never touches a vendored file. When LINT_ruff or LINT_ruff-format is
+# set, the end of this file appends $(STD_RUFF_EXCLUDE) to it: the `.py` and
+# `.pyi` entries of VENDORED_FILES as a `--config 'extend-exclude=[...]'`,
+# plus `--force-exclude` so a path named on the command line is excluded
+# too. A vendored file is held verbatim by standard-check, so a local ruff
+# pass over one is a guaranteed drift failure; each adopter kept its own
+# exclude list for this, and the lists drifted (a file added here reached
+# none of them). The CLI value ADDS to a pyproject `extend-exclude` rather
+# than replacing it, and `ruff format` has no `--extend-exclude` flag, which
+# is why it is spelled through `--config`. A multi-line `define` LINT_ruff
+# places $(STD_RUFF_EXCLUDE) itself; nothing is appended to a command that
+# already names it. Other formatters (shfmt, mdformat...) still need the
+# vendored files excluded by hand.
 LINT_TOOLS   ?=
 # Which of those to run, in order, for `format`. Separate from LINT_TOOLS
 # because a checker that cannot fix anything has no business in `format`.
@@ -236,10 +250,64 @@ STD_TARGETS += all help setup clean test test-fast lint format install-deps
 
 all: $(ALL_DEPS) ## Default goal
 
+# A test run leaves the working tree as it found it. just-bashit's `make
+# test` deleted the package.json both of its bats submodules track, on every
+# run, for nine months (just-bashit#111): a cleanup line globbed
+# bats-*/*.json. Nothing noticed, because no gate looked at the tree after a
+# run. So `test` and `test-fast` compare `git status` before and after.
+#
+#   - BEFORE AND AFTER, not "must be empty", so a tree with edits in it can
+#     still run its tests; only what the RUN changed fails it.
+#   - --ignore-submodules=none looks inside submodules, where that damage was.
+#   - `-c safe.directory='*'`: a CI container runs as root on a checkout the
+#     runner's user owns, and git refuses that repo outright (actions/checkout
+#     trusts it only in a config it removes after its own step). The command
+#     line is a protected scope, so this is honoured, and git hands it to the
+#     submodule processes too. It only lets this read-only `status` run.
+#   - The suite runs in a sub-make so the after-diff runs even when the suite
+#     FAILS: a red run that also dirtied the tree reports both.
+#   - Not a git checkout (an sdist, a tarball): said, and the suite still
+#     runs. There is no tree to compare, which is not the same as a clean one.
+#   - `+` on the guard line: make runs a line under -n only when it sees
+#     $(MAKE) in it, and $(call ...) hides it. Without `+`, `make -n test`
+#     printed the guard and never the suite, so a reader of the plan (an
+#     adopter's test that the recipe passes the right variables) went blind.
+#     Under -n the guard only reads `git status`; the sub-make prints.
+#   - Both snapshots keep git's stderr. A warning git prints every time (an
+#     unreadable ~/.config/git/ignore under a container's foreign HOME) is
+#     then on both sides and cancels; one kept on only the after side failed
+#     a run that changed nothing.
+_STD_TREE_STATUS = git -c safe.directory='*' status --porcelain \
+                   --ignore-submodules=none
+# $(1): the private target holding the suite. $(2): the public one, to name.
+_std_tree_guard = \
+	b=$$($(_STD_TMP)); a=$$($(_STD_TMP)); trap 'rm -f "$$b" "$$a"' EXIT; \
+	if ! $(_STD_TREE_STATUS) >"$$b" 2>&1; then \
+	    echo "$(2): not a git checkout, so the tree check is OFF this run"; \
+	    $(MAKE) --no-print-directory $(1); exit $$?; \
+	fi; \
+	rc=0; $(MAKE) --no-print-directory $(1) || rc=$$?; \
+	$(_STD_TREE_STATUS) >"$$a" 2>&1; \
+	if ! cmp -s "$$b" "$$a"; then \
+	    echo "ERROR: make $(2) changed the working tree:"; \
+	    diff "$$b" "$$a" | sed -n 's/^< /  before: /p; s/^> /  after:  /p'; \
+	    echo "  A test run must leave the tree as it found it. Write"; \
+	    echo "  scratch files to a temp dir or an ignored path, and never"; \
+	    echo "  delete or rewrite a tracked file."; \
+	    rc=1; \
+	fi; \
+	exit $$rc
+
 test: ## Run the default test suite
-	$(TEST_CMD)
+	+@$(call _std_tree_guard,.std-test,test)
 
 test-fast: ## Run tests, stopping at the first failure
+	+@$(call _std_tree_guard,.std-test-fast,test-fast)
+
+.PHONY: .std-test .std-test-fast
+.std-test:
+	$(TEST_CMD)
+.std-test-fast:
 	$(TEST_FAST_CMD)
 
 # `lint` is the gate — CI runs exactly this and nothing else. The three
@@ -840,37 +908,67 @@ endif
 #
 # Fails closed at each step: a PR that is not open, is a draft, targets
 # another base or has an unresolved review thread; a head that moved or
-# carries a merge commit; a pick that conflicts; a pick whose patch-id or
-# message differs from its source; TRAIN_GATE failing on the combined tree;
-# and close-keywords-check on the train's own title and body. Without PUSH=1
-# it is a dry run that leaves no branch behind. With PUSH=1 it pushes, opens
-# the train PR and closes each constituent with a link to it. It never
-# merges: `gh pr merge <train> --rebase --match-head-commit <sha>` stays the
-# gate. The script's docstring is the full contract.
+# carries a merge commit; a commit authored or committed by a placeholder
+# identity (an email domain with no dot, as in `t <t@t>`); a pick that
+# conflicts; a pick whose patch-id or message differs from its source;
+# TRAIN_GATE failing on the combined tree; and close-keywords-check on the
+# train's own title and body. Without PUSH=1 it is a dry run that leaves no
+# branch behind. With PUSH=1 it pushes, opens the train PR and closes each
+# constituent with a link to it, retrying a close GitHub fails. If one still
+# fails it prints PUBLISHED (not REFUSED), what is open and the `gh pr close`
+# that finishes it, and the script exits 3 (make shows `Error 3`; `make`
+# itself exits 2); do not re-run it. It never merges: `gh pr merge <train>
+# --rebase --match-head-commit <sha>` stays the gate. The script's docstring
+# is the full contract.
+#
+# `make train RECUT=<train#>` re-cuts a train that went red: it reads the
+# constituents and their heads from that train's table, refuses any head
+# that moved unless MOVED names the PR (its new head was reviewed), and
+# composes as above. With PUSH=1, once the gate passes, it closes the old
+# train and reopens each constituent, restoring a force-pushed branch
+# around the reopen with leases that pin exact shas; GitHub refuses to
+# reopen a PR whose branch was force-pushed while it was closed. If the
+# restore fails it prints the command that puts the branch back and the
+# same re-cut as a dry run; add PUSH=1 once its `#n moved:` line ends at
+# the reviewed head.
 #
 #   PRS           the PR numbers, in the order their commits should land
+#   RECUT         instead of PRS: the train PR to re-cut
+#   MOVED         with RECUT: constituents whose moved head was reviewed
 #   PUSH=1        publish (otherwise a dry run)
-#   TRAIN_GATE    what must pass on the combined tree (default: make lint)
+#   TRAIN_GATE    what must pass on the combined tree (default: make lint,
+#                 after make pyext where the repo has an in-place extension)
 #   TRAIN_BASE    the branch the PRs target (default: main)
 #   TRAIN_BRANCH  the train's branch (default: train/<n>-<n>...)
 #   TRAIN_TITLE   the train PR's title (default: train: #<n>, #<n>)
 #
 # Always on, like close-keywords-check: it needs only python3, git and gh,
 # which every repo here already has.
-TRAIN_GATE   ?= make lint
+#
+# Where `pyext` exists, the gate rebuilds the extension first. The train runs
+# in the checkout it switched, whose extension was built from whatever that
+# checkout last held, and a lint that imports it (docstring coverage, runtime
+# docs) then judges the old code: a PR that changes a header docstring is
+# refused on a tree CI passes (doppler#2749). Derived from STD_TARGETS, so it
+# follows the same HAS_C + HAS_PYTHON overlap that defines pyext.
+TRAIN_GATE   ?= $(if $(filter pyext,$(STD_TARGETS)),make pyext && )make lint
 TRAIN_BASE   ?= main
 TRAIN_BRANCH ?=
 TRAIN_TITLE  ?=
 STD_TARGETS    += train
 VENDORED_FILES += scripts/train.py
 
-train: ## PRS="<n> <n>..." [PUSH=1] — land ready PRs as ONE PR, so CI runs once (never merges)
-	@test -n '$(strip $(PRS))' || { \
-	    echo 'usage: make train PRS="<n> <n> ..." [PUSH=1]'; exit 2; }
+train: ## PRS="<n> <n>..."|RECUT=<n> [PUSH=1] — land ready PRs as ONE PR, so CI runs once (never merges)
+	@test -n '$(strip $(PRS)$(RECUT))' || { \
+	    echo 'usage: make train PRS="<n> <n> ..." [PUSH=1]'; \
+	    echo '       make train RECUT=<train> [MOVED="<n> ..."] [PUSH=1]'; \
+	    exit 2; }
 	@python3 scripts/train.py --base '$(TRAIN_BASE)' \
 	    --gate '$(TRAIN_GATE)' \
 	    $(if $(strip $(TRAIN_BRANCH)),--branch '$(TRAIN_BRANCH)') \
 	    $(if $(strip $(TRAIN_TITLE)),--title '$(TRAIN_TITLE)') \
+	    $(if $(strip $(RECUT)),--recut '$(strip $(RECUT))') \
+	    $(if $(strip $(MOVED)),--moved '$(strip $(MOVED))') \
 	    $(if $(filter 1,$(PUSH)),--push) $(PRS)
 
 # ── HAS_RELEASE ──────────────────────────────────────────────────────────────
@@ -2010,8 +2108,10 @@ standard-check: ## Verify every vendored file matches canonical
 	        echo "  Vendored files are verbatim. Per-repo variation is"; \
 	        echo "  configuration in the Makefile; change canonical, not this."; \
 	        echo "  Did not edit it? Then one of this repo's formatters rewrote"; \
-	        echo "  it (ruff, shfmt, mdformat, clang-format...). Exclude it from"; \
-	        echo "  that tool, then \`make standard-update\` to restore it (#83)."; \
+	        echo "  it. ruff skips every vendored .py on its own (see"; \
+	        echo "  STD_RUFF_EXCLUDE); any other (shfmt, mdformat,"; \
+	        echo "  clang-format...) must exclude it. Then"; \
+	        echo "  \`make standard-update\` restores it (#83)."; \
 	        fail=1; continue; \
 	    fi; \
 	    rm -f "$$tmp"; \
@@ -2583,6 +2683,26 @@ help: ## Show this message
 # May only ADD targets. Redefining a standard one makes it the fork this file
 # exists to prevent — and make would warn about the override anyway.
 -include local.mk
+
+# ── ruff skips the vendored files ────────────────────────────────────────────
+# Documented at LINT_TOOLS. Here, after every `VENDORED_FILES +=` and after
+# local.mk, so a LINT_ruff set with `:=` still sees the whole list.
+# STD_RUFF_EXCLUDE is recursive for the same reason: VENDORED_FILES
+# accumulates down this file. ONE derivation, from the list standard-check
+# walks, so what ruff skips and what the drift gate holds cannot disagree.
+_std_empty :=
+_std_space := $(_std_empty) $(_std_empty)
+_std_comma := ,
+_std_ruff_vendored = $(sort $(filter %.py %.pyi,$(VENDORED_FILES)))
+STD_RUFF_EXCLUDE = --force-exclude$(if $(_std_ruff_vendored), --config \
+    'extend-exclude=[$(subst $(_std_space),$(_std_comma),$(strip \
+    $(patsubst %,"%",$(_std_ruff_vendored))))]')
+
+# Appended only where the command is set, and not where it already names
+# STD_RUFF_EXCLUDE (a multi-line `define` that placed it itself).
+_std_ruff_append = $(if $(value $(1)),$(if $(findstring \
+    STD_RUFF_EXCLUDE,$(value $(1))),,$(eval $(1) += $$(STD_RUFF_EXCLUDE))))
+$(foreach _v,LINT_ruff LINT_ruff-format,$(call _std_ruff_append,$(_v)))
 
 # Repo-local targets are named in LOCAL_TARGETS (in the Makefile or local.mk),
 # which puts them in `.PHONY` and in `help` — and so under the same gates as

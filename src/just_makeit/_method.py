@@ -1133,7 +1133,7 @@ def already_provides(
     # matter who actually defines the symbol. The header is the fallback for
     # the one built-in that has no `_core.c` body at all: `step`, a `static
     # inline` in the header.
-    src = Path("native") / "src" / component / f"{component}_core.c"
+    src = Path(INC.src_rel(component, f"{component}_core.c", root))
     # gh-1583: the header's place depends on the project's layout.
     inc = Path(INC.core_rel(component, root))
     for rel, what in ((src, "defines"), (inc, "declares")):
@@ -2450,6 +2450,8 @@ def run(
             # declarations -- the divergence this issue is a catalogue of.
             "status_fn": status_fn,
             "status_errors": status_errors or [],
+            # gh-2470: a returned status is the other thing a row can match.
+            "status_return": status_return,
         },
         # gh-1426 C: the message slots resolve against THIS object's
         # params and properties, so the refusal moved to just after
@@ -2536,7 +2538,7 @@ def run(
     # file: an absent `_core.c` is also what a half-written tree looks like,
     # and the manifest is what every other face asks.
     _hdr_only = C.is_header_only(C.load(root), object_name)
-    core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
+    core_c = INC.src_path(root, object_name, cfg) / f"{object_name}_core.c"
     if manual_stub or codec:
         # manual_stub (gh-428): the C binding already exists, hand-written,
         # inside the user's already-sacred _ext_<obj>_extra.c fragment -- jm
@@ -2550,12 +2552,8 @@ def run(
         # Varargs methods live in a sacred per-method file compiled into the
         # Python extension DSO (not the pure-C OBJECT lib) so they can use
         # Python.h.  No _core.c or _core.h changes needed.
-        binding_c = (
-            root
-            / "native"
-            / "src"
-            / object_name
-            / C.varargs_core_c(object_name, method_name)
+        binding_c = INC.src_path(root, object_name, cfg) / C.varargs_core_c(
+            object_name, method_name
         )
         _write_varargs_core_c(binding_c, object_name, method_name, csym=csym)
     else:
@@ -2747,7 +2745,7 @@ def run(
         _vo_fn = C.method_c_symbol(
             CSYM.stem(cfg, object_name), {"name": method_name, "fn": fn}
         )
-        _core_h_check = INC.core_h(root, object_name)
+        _core_h_check = INC.core_h(root, object_name, cfg)
         if _core_h_check.exists():
             _h_text = _core_h_check.read_text(encoding="utf-8")
             import re as _re
@@ -2957,7 +2955,7 @@ def run(
         # Surgically add the new method's declaration to the per-object
         # _core.h (needed for the module ext.c's #include) — no re-render,
         # no body splice.
-        core_h_ = INC.core_h(root, object_name)
+        core_h_ = INC.core_h(root, object_name, cfg)
         _rec_advice = record_type_advice(
             core_h_,
             record_dtype,
@@ -3013,9 +3011,10 @@ def run(
         # Surgically inject the new method's declaration into _core.h (sacred
         # struct + inline step() untouched); regenerate the glue (_ext.c, the
         # stub, and the component CMakeLists) from the manifest.
-        core_h = INC.core_h(root, object_name)
-        ext_c = root / "native" / "src" / object_name / f"{object_name}_ext.c"
-        obj_cmake = root / "native" / "src" / object_name / "CMakeLists.txt"
+        core_h = INC.core_h(root, object_name, cfg)
+        obj_src = INC.src_path(root, object_name, cfg)
+        ext_c = obj_src / f"{object_name}_ext.c"
+        obj_cmake = obj_src / "CMakeLists.txt"
         no_step = C.is_no_step(cfg, object_name)
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
         # gh-1319: `record_dtype` names a type jm does not own. Say so HERE
@@ -3044,9 +3043,7 @@ def run(
         # for gh-137's reason: its tree is scratch, so the bench there is
         # jm's own scaffold, and re-rendering it is how a bench `apply`
         # materialises times the methods the manifest declares.
-        bench_c = (
-            root / "native" / "benchmarks" / f"bench_{object_name}_core.c"
-        )
+        bench_c = INC.native_path(root, "bench", object_name, cfg)
         if from_apply and bench_c.exists():
             _textio.write_text(bench_c, r(bench_c_tmpl))
             print(f"  update  {bench_c}")

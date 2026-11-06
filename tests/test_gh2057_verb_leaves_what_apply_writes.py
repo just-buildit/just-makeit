@@ -537,6 +537,11 @@ CASES: "dict[str, dict[str, Case]]" = {
         "opaque-no-reset": _case("object", "a", "--opaque-state",
                                  "--no-step", "--no-reset", only=BASE),
         "serializable": _case("object", "a", "--serializable", only=BASE),
+        # gh-2470: the set_state's status table.
+        "serializable-status": _case(
+            "object", "a", "--serializable", "--set-state-status-error",
+            "A_NOMEM:MemoryError", "--set-state-status-error",
+            "A_BAD:ValueError:bad blob", only=BASE),
         "delegates": _case("object", "a", "--step-delegates-to-steps",
                            only=BASE),
         "variable-output": _case("object", "a", "--variable-output",
@@ -649,6 +654,12 @@ CASES: "dict[str, dict[str, Case]]" = {
             "--return-type", "float", "--borrow", "--param", "n:size_t",
             "--status-fn", "o_m2_status", "--status-error",
             "O_EOF:EOFError:done", only=BASE),
+        # gh-2470: the same rows, matched against a returned status.
+        "status-return-rows": _case(
+            "method", "o", "m2", "{M}", "--return-type", "int",
+            "--param", "n:int", "--status-return", "--status-error",
+            "O_NOMEM:MemoryError", "--status-error", "O_BAD:ValueError:{n}",
+            only=BASE),
         "releases": _case("method", "o", "consume", "{M}", "--param",
                           "k:size_t", "--return-type", "void",
                           "--releases", "wait", needs=("o", "pair")),
@@ -1393,9 +1404,7 @@ def _flags_cased(cmd: str) -> "set[str]":
 
 
 #: (command, flag) -> why no case passes it. May only shrink.
-UNCOVERED_FLAGS: "dict[tuple[str, str], str]" = {
-    ("adopt", "--help"): "prints the usage and exits; it writes nothing.",
-}
+UNCOVERED_FLAGS: "dict[tuple[str, str], str]" = {}
 
 
 def test_every_flag_has_a_case():

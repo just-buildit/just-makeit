@@ -17,8 +17,16 @@ project already split via `split-objects` (objects out, modules inline)
 just gets its modules moved and the `modules/*.toml` glob added.
 
 Fragments load sorted by path, so the manifest's component order can change;
-the root CMakeLists wiring and the umbrella header's includes are re-sorted
-to it (`_init.settle_aggregate_order`, gh-1985). No other file is touched.
+the root CMakeLists wiring is spliced as `apply` writes it in the new order,
+and the umbrella header's includes are re-sorted to it
+(`_init.settle_aggregate_order`, gh-1985, gh-2434). No other file is touched.
+The project's own sections -- `[[enum]]`, `[codec]`, `[[app]]`, `[[group]]`,
+`[template]` -- stay in the manifest, where `save` keeps them.
+
+Every comment survives (gh-2437): the manifest is cut with
+`_config.split_manifest`, so a moved table takes its own comments -- the
+ones inside it and the run directly above its header -- and the manifest
+keeps every other byte.
 """
 
 from . import _textio
@@ -26,6 +34,17 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+
+#: Printed once after a migration that moved anything (gh-2440). A project
+#: script that parsed ``just-makeit.toml`` with ``tomllib`` read every table
+#: from that one file; after the move it finds none and, unless it checks,
+#: passes on nothing. `split-objects` prints it too.
+READER_NOTE = (
+    "Note: tables now live in the files `include` names. A script that\n"
+    "parses just-makeit.toml directly sees none of them; read the merged\n"
+    "manifest with just_makeit.load_manifest(root) or\n"
+    "`just-makeit manifest --json` instead."
+)
 
 
 def run(root: Path) -> None:
@@ -41,10 +60,10 @@ def run(root: Path) -> None:
     manifest = C.load_manifest(root)
     existing_globs = list(manifest.get("include", []))
 
-    # Inline sections still living in the central manifest.
-    components = [
-        k for k in manifest if k not in ("project", "module", "include")
-    ]
+    # Inline components still living in the central manifest. The project's
+    # own sections (`[[enum]]`, `[codec]`, `[[app]]`, ...) stay there, where
+    # `save` keeps them (gh-2434).
+    components = C.components(manifest)
     modules = dict(manifest.get("module", {}))
 
     if not components and not modules:
@@ -57,6 +76,14 @@ def run(root: Path) -> None:
     print("just-makeit: migrating to the per-component fragment layout")
     print()
 
+    # gh-2437: the manifest is CUT, not rebuilt -- each moved table leaves
+    # with its comments, and the root file keeps every other byte. Rebuilt
+    # from plain dicts with `_dump`, every comment in it was deleted.
+    # `module` moves wholesale.
+    manifest_text, obj_texts, mod_texts = C.split_manifest(
+        cfg_path.read_text(encoding="utf-8"), components, bool(modules)
+    )
+
     # The fragments this run writes, keyed by the glob that reaches them.
     created: dict[str, list[Path]] = {}
     if components:
@@ -64,17 +91,17 @@ def run(root: Path) -> None:
         objects_dir.mkdir(exist_ok=True)
         for comp in components:
             frag = objects_dir / f"{comp}.toml"
-            _textio.write_text(frag, C._dump({comp: manifest[comp]}))
+            _textio.write_text(frag, obj_texts[comp])
             created.setdefault("objects/*.toml", []).append(frag)
             print(f"  create  {frag}")
 
     if modules:
         (root / "modules").mkdir(exist_ok=True)
-        for mod, data in modules.items():
+        for mod in modules:
             # gh-2306: where `save` writes a new module, so a migrated
             # project names its fragments as a split one does.
             frag = C.module_fragment(root, mod)
-            _textio.write_text(frag, C._dump({"module": {mod: data}}))
+            _textio.write_text(frag, mod_texts[mod])
             created.setdefault("modules/*.toml", []).append(frag)
             print(f"  create  {frag}")
 
@@ -89,22 +116,11 @@ def run(root: Path) -> None:
         if any(frag not in covered for frag in frags):
             globs.append(glob)
 
-    # Subtractive, for the reason in `_split_objects` (gh-763): an additive
-    # list here has to stay in step with `components`' exclusion list above,
-    # and nothing enforces that. `module` is relocated wholesale into
-    # modules/, so it is named explicitly rather than left to the derivation.
-    # `include` is not carried over either: it is merged above and written
-    # once, below (gh-2263). Carried over, it was written twice -- the old
-    # list and the merged one -- and the manifest no longer parsed.
-    _relocated = (
-        set(components) | ({"module"} if modules else set()) | {"include"}
-    )
-    keep = {k: v for k, v in manifest.items() if k not in _relocated}
-    manifest_text = C._dump(keep)
+    # Extended in place when it exists, written once either way (gh-2263:
+    # carried over beside the merged list, it was written twice and the
+    # manifest no longer parsed).
     if globs:
-        manifest_text = (
-            f"include = {C._toml_string_array(globs)}\n\n" + manifest_text
-        )
+        manifest_text = C.set_include(manifest_text, globs)
     _textio.write_text(cfg_path, manifest_text)
     print(f"  update  {cfg_path}  (include = {C._toml_string_array(globs)})")
     # gh-1985: fragments load sorted by path, so the manifest's order -- the
@@ -120,3 +136,5 @@ def run(root: Path) -> None:
         f"Done!  Moved {len(components)} object(s) and {len(modules)} "
         f"module(s) into fragments."
     )
+    print()
+    print(READER_NOTE)

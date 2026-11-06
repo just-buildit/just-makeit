@@ -656,7 +656,7 @@ def ext_c(root: Path, component: str) -> Path:
     One spelling for both modes: the standalone layout, which `bind` writes
     unconditionally (see :func:`_build_ctx`).
     """
-    return root / "native" / "src" / component / f"{component}_ext.c"
+    return INC.src_path(root, component) / f"{component}_ext.c"
 
 
 def _layout(root: Path, component: str, pkg: str) -> "INC.Owner":
@@ -761,7 +761,7 @@ def run(root: Path, component: str, *, write: bool = True) -> str:
             + (f" (symbols `{want}_*`)." if want != component else ".")
         )
 
-    core_c = root / "native" / "src" / component / f"{component}_core.c"
+    core_c = INC.src_path(root, component) / f"{component}_core.c"
     defaults = parse_reset_defaults(core_c)
     # The header's create() Doxygen (filtered of scaffold boilerplate) enriches
     # the class docstring on bind, matching every other regeneration path --

@@ -342,7 +342,7 @@ def _file_scope(mask: str) -> str:
     and preprocessor line blanked too: what is left is file scope, where a
     header declares its functions and types. An ``extern "C" { ... }``
     block IS file scope -- every jm header wraps its declarations in one --
-    so its braces are transparent.
+    so its braces are transparent. The result is as long as *mask*.
 
     >>> _file_scope('extern " " {\\nint f(void);\\nint g(void) { h(); }\\n}')
     'extern " "  \\nint f(void);\\nint g(void)         \\n '
@@ -354,7 +354,9 @@ def _file_scope(mask: str) -> str:
     seen = ""
     for line in mask.splitlines(keepends=True):
         if not any(stack) and line.lstrip().startswith("#"):
-            out.append("\n")
+            # Blanked, not dropped: the view keeps *mask*'s length, so an
+            # offset found in one indexes the other (gh-2465).
+            out.append(re.sub(r"[^\n]", " ", line))
             continue
         buf = []
         for ch in line:
@@ -441,7 +443,7 @@ def _echoed(cfg: dict) -> "dict[str, set[str]]":
     from . import _config as C
 
     return {
-        _composer.bridge_h(mod): set(_composer.seam_fns(cfg, mod))
+        _composer.bridge_h(mod, cfg): set(_composer.seam_fns(cfg, mod))
         for mod in C.modules(cfg)
         if C.is_composer_module(cfg, mod)
     }
@@ -555,9 +557,9 @@ def _line_of(text: str, name: str) -> int:
 
     mask = _code_mask(text)
     word = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
-    # Count lines in the string that matched: `_file_scope` keeps every line
-    # but shortens a preprocessor one to "\n", so its offsets are not the
-    # mask's.
+    # `_file_scope` keeps the mask's length (gh-2465), so either string's
+    # offset counts the same lines; it is tried first because a file-scope
+    # occurrence is the declaration.
     for where in (_file_scope(mask), mask):
         m = word.search(where)
         if m:
@@ -1265,9 +1267,8 @@ def stray_prefixes(root: Path, cfg: dict) -> "dict[str, str]":
 
     want = prefix(cfg)
     out = {}
-    hroot = INC.header_root(root, cfg)
     for comp in C.components(cfg):
-        h = hroot / comp / f"{comp}_core.h"
+        h = INC.core_h(root, comp, cfg)
         if not h.is_file():
             continue
         m = _GUARD_LINE.search(h.read_text(encoding="utf-8", errors="replace"))

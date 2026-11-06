@@ -188,14 +188,14 @@ def run(
     )
     create_params = vctx["create_params"]
 
-    core_h = INC.core_h(root, object_name)
+    core_h = INC.core_h(root, object_name, cfg)
     proto = f"{csym}_state_t *{create_fn}({create_params});"
     if _inject_decls_into_core_h(
         core_h, object_name, [proto], family=C.core_family(cfg, object_name)
     ):
         print(f"  update  {core_h}")
 
-    core_c = root / "native" / "src" / object_name / f"{object_name}_core.c"
+    core_c = INC.src_path(root, object_name, cfg) / f"{object_name}_core.c"
     if core_c.exists():
         core_text = core_c.read_text(encoding="utf-8")
         # Idempotent: _append_to_core_c blindly appends, so only add the stub

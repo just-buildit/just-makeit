@@ -46,10 +46,14 @@ def _project(tmp_path: Path, table: str) -> Path:
         toml.read_text(encoding="utf-8") + "\n[module.hw]\n" + table,
         encoding="utf-8",
     )
-    (root / "native" / "src" / "hw").mkdir(parents=True)
-    (root / "native" / "src" / "hw" / "CMakeLists.txt").write_text(
-        "# hand-written\n", encoding="utf-8"
-    )
+    # The hand-written directory exists only while the module opts out: a
+    # module jm generates gets no author's CMakeLists to overwrite (gh-2459:
+    # jm refuses to write into a directory it cannot show is its own).
+    if "no_generate =" in table:
+        (root / "native" / "src" / "hw").mkdir(parents=True)
+        (root / "native" / "src" / "hw" / "CMakeLists.txt").write_text(
+            "# hand-written\n", encoding="utf-8"
+        )
     _quiet(apply_run, root)
     return root
 

@@ -195,3 +195,36 @@ def test_an_undocumented_view_method_is_reported(tmp_path):
     assert out.returncode == 0, out.stderr
     assert "CellRx.tick (view method)" in out.stdout
     assert "rx.tick (method)" in out.stdout, "the parent's own gap too"
+
+
+def test_a_documented_view_method_is_not_reported(tmp_path):
+    """gh-2406: the report looks a view's method up where its stub does.
+
+    A view's members resolve under the PARENT's stem since gh-2406, which
+    retired the re-key of the parent's blocks under the synthetic id. A
+    report still asking under the synthetic stem would miss every block
+    and list a method the header documents.
+    """
+    proj = _project(tmp_path)
+    r = run_cli(
+        "method",
+        "rx",
+        "tick",
+        "--arg-type",
+        "void",
+        "--return-type",
+        "void",
+        cwd=proj,
+    )
+    assert r.returncode == 0, r.stderr
+    header = proj / INC_ROOT / "rx" / "rx_core.h"
+    text = header.read_text(encoding="utf-8")
+    assert " * @brief tick.\n" in text
+    header.write_text(
+        text.replace(" * @brief tick.\n", " * @brief Advance one tick.\n", 1),
+        encoding="utf-8",
+    )
+    out = run_cli("status", "--docs", cwd=proj)
+    assert out.returncode == 0, out.stderr
+    assert "rx.tick" not in out.stdout, "the parent is the control"
+    assert "CellRx.tick" not in out.stdout

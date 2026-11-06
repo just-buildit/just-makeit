@@ -61,6 +61,8 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from . import _incpath as INC
+
 #: The shared string-enum → index lookup, as C.
 #:
 #: Order **is** the C int — the ``[[enum]]`` SSOT contract, which is why that
@@ -372,13 +374,8 @@ def fragment_publication(
     # every table; the sacred fragment that will be compiled is the real
     # project's, as for the `_core.h` Doxygen -- and under `status`, the
     # user's rather than its scratch copy's.
-    frag = (
-        Path(_object._FRAGMENT_ROOT_OVERRIDE or _real_root(Path(root)))
-        / "native"
-        / "src"
-        / cname
-        / f"{cname}_ext_{obj}.c"
-    )
+    real = Path(_object._FRAGMENT_ROOT_OVERRIDE or _real_root(Path(root)))
+    frag = INC.src_path(real, cname) / f"{cname}_ext_{obj}.c"
     if not frag.is_file():
         return entries
 

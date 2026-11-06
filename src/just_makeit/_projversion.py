@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from . import _config as C
+from . import _incpath as INC
 from . import _textio
 
 if sys.version_info >= (3, 11):
@@ -209,7 +210,7 @@ def _slots(cfg: dict) -> "list[_Slot]":
         ),
         _Slot("Doxyfile", "PROJECT_NUMBER", _regex_span(_DOXY_RE)),
         _Slot(
-            f"native/src/{pkg}_lib.c",
+            INC.lib_c_rel(pkg),
             f"{pkg}_version()",
             _regex_span(_lib_c_re(pkg)),
         ),

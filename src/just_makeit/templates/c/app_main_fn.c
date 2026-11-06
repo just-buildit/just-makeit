@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "/*<<inc_prefix>>*//*<<module>>*///*<<module>>*/_core.h"
+#include "/*<<core_include>>*/"
 /*<<helpers>>*/
 int
 main(int argc, char *argv[])

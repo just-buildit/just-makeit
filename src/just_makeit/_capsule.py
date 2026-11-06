@@ -829,11 +829,11 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
     out_pkg = C.module_package_resolved(cfg, module)
 
     _write(
-        root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
+        INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_ext.c",
         render_ext(cfg, module),
     )
     _write(
-        root / "native" / "src" / mp.cname / "CMakeLists.txt",
+        INC.src_path(root, mp.cname, cfg) / "CMakeLists.txt",
         render_cmake(cfg, module),
     )
     _write(
@@ -847,4 +847,6 @@ def materialize(cfg: dict, root: Path, module: str) -> None:
     # (gh-1985) -- this was one of three private copies that put it on top.
     from ._libwiring import MODULES_SENTINEL, splice_cmake_component
 
-    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)
+    splice_cmake_component(
+        root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL, owner=cfg
+    )

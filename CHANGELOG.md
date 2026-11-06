@@ -1,5 +1,387 @@
 ## [Unreleased]
 
+## [0.120.1] — 2026-11-05
+
+### Fixed
+
+- **`jm status` compares against one read of the project** (gh-2488). It
+    copied the tree, replayed the manifest on the copy, then compared each
+    file with the LIVE file read again afterwards, so anything written in
+    between -- a `.pytest_cache` entry, a `.ruff_cache` blob, an author's
+    notes -- was reported STALE, "`jm apply` will rewrite", although apply
+    never touches it, and `--check` failed. Now every comparison is against
+    the copy as it was read: a file the replay leaves unchanged is
+    unchanged, whatever is written meanwhile. A file jm's replay does
+    change whose live copy is rewritten while status runs is listed under
+    CHANGED WHILE STATUS RAN (`changed_during_run` in `--json`), never as
+    STALE, and fails `--check` unless allowed: status could not compare it,
+    and re-running on a quiet tree settles it.
+
+## [0.120.0] — 2026-11-05
+
+### Added
+
+- **Under `[project] layout = "nested"` a component's C follows its module
+    too** (gh-2459). gh-2427 put a module object's header, test and bench at
+    `<module package>/<object>/`, but its `_core.c`, binding and CMakeLists
+    stayed in `native/src/<object>/`, so the C tree still read two ways. Now
+    the source directory is `native/src/<module package>/<object>/` (a
+    module's own core, functions and binding at
+    `native/src/<module package>/<cname>/`). The root `CMakeLists.txt` wires
+    that path, and the CMake targets keep their names. A standalone
+    component, a `c_deps` directory and a `no_generate` module's
+    hand-written one stay where they are. Switching layout, or changing a
+    module's `package`, moves the C file by file, your own files beside the
+    core included, and `jm status` names each pending move under
+    `SUPERSEDED`. `jm remove` takes only a component's own files when
+    another component's directory sits below its own.
+- **Where a native file was is jm's record, never read off the tree**
+    (gh-2459, gh-2463). `jm apply` now records what it placed --
+    `[project] applied_layout` and, under `nested`, each module's
+    `applied_package` -- and every layout or package move is computed from
+    that record. jm used to infer a former place from CMake files and the
+    sacred core's first include, which could take a vendored directory in
+    jm's shapes for a component's, or strand a module's headers after a
+    `package` change with only a raw symbol collision to show for it. A flat
+    project carries no record and its manifest is unchanged; a file jm has
+    no record of placing is named by `jm status` (`ADVICE`) and by the
+    collision it causes, and never moved.
+- **jm writes, and moves, only what it can show is its own** (gh-2459).
+    Before moving out of the place its record names, `jm apply`
+    (and `jm upgrade`) replays the recorded manifest and requires the
+    component's
+    CMakeLists there to be jm's render, byte for byte; a stale or
+    hand-edited record is refused, naming both places. A component's new
+    place must be empty or hold only what jm renders there, and a sacred
+    `_core.c` / `_core.h` already there is always someone else's: a vendored
+    directory where a new component would go is refused and left alone,
+    whatever its files are named, and `jm object` / `jm module` refuse
+    directories that already hold files. This changes the flat layout too: a
+    generated module whose directory already holds a hand-written
+    `native/src/<module>/CMakeLists.txt` used to have it overwritten and is
+    now refused -- declare `no_generate = "true"` to keep the directory
+    yours. And a CMakeLists rendered by an older jm fails the check on a
+    layout switch or `package` change: restore it, run `jm apply` once on
+    this version, then change it. A project last applied by jm 0.119 or
+    older should run `jm apply` once before changing a layout or a module's
+    `package`; `apply --only` refuses while files wait to move.
+- **Under `nested`, jm records the members it placed in each module**
+    (gh-2459): `[module.X] applied_objects`, beside `applied_package`,
+    written by `jm apply`; between applies, `jm module` begins a new
+    module's record and `jm object` adds the member it creates to a record
+    that exists, and neither writes anything else. A
+    member not on it -- declared since by a fragment -- has never been
+    placed by jm, so a directory already at its place, even one holding a
+    `<name>_core.c`, is checked and refused rather than written into.
+    `jm remove` takes the member off it. A module recorded before the key
+    existed has its members shown from the tree (their CMakeLists must be
+    jm's render) and recorded on the next `apply`.
+- **After upgrading jm on a nested project, run `jm apply` first** when
+    files need to move (gh-2459): until it has, every other mutating
+    command refuses with "files are waiting to move: run `jm apply` first"
+    and leaves the tree as it was; `jm upgrade` still runs.
+
+## [0.119.0] — 2026-11-04
+
+### Added
+
+- **A returned status and a rejected state blob can name their exception**
+    (gh-2470). A method with `status_return = true` raised
+    `ValueError("<name> failed (rc=N)")` for every non-zero status, and a
+    `serializable` object's generated `set_state` raised
+    `ValueError("set_state rejected the blob")` for every refusal, so an
+    out-of-memory code reached Python as bad input. The `status_errors` table
+    a borrow (gh-1418) and a `check_return` function (gh-1614) already carry
+    is now accepted on an object or view method with `status_return = true`
+    (`jm method --status-return --status-error DP_ERR_MEMORY:MemoryError`),
+    on a `kind = "handle"` method whose `int` return is a status, and on the
+    `exit` finalizer's `__exit__`, which raises what the finalizer raises. A
+    serializable `set_state` takes the same rows as `set_state_status_errors`,
+    on the object or on a handle module
+    (`--set-state-status-error STATUS:ExcName[:message]` on `jm object`).
+    Every face renders
+    through one switch (`_borrow.status_switch_c`) and one validator
+    (`_borrow.rows_why_not`). A status with no row keeps today's exception,
+    a project with no table renders byte for byte as before, and the `.pyi`
+    and runtime `Raises` sections list each declared class. `jm script`
+    replays both keys.
+
+### Changed
+
+- **Every C source directory jm writes or reads is asked of one function**
+    (gh-2459, part 1 of 2). A component's `native/src/<name>/` was spelled
+    by hand at about a hundred places across 37 modules, the root wiring's
+    `add_subdirectory(native/src/<name>)` at four more, and the `make`
+    backend's rule template at three. They now all go through
+    `_incpath.src_dir` / `src_path` / `src_rel`, the root wiring through
+    `subdir_line` / `SUBDIR_RE`, and the template through a `<<src_dir>>`
+    slot. A test refuses a `native/src/<name>` spelled anywhere else. Nothing
+    a project gets changes: whole scaffolds and every bundled example, in
+    every layout, are byte-identical to the release before. Part 2 makes
+    the C follow a nested module.
+
+## [0.118.1] — 2026-11-04
+
+### Fixed
+
+- **A manifest reorder your C definition does not share is refused, not
+    swapped silently** (gh-2465). Swapping two same-typed `[[x.state]]`,
+    `[[x.init_params]]`, method `params` or module function `params`
+    entries made `apply` rewrite the prototype in `_core.h` (or, for an
+    `inline` function, the binding's call) while the definition kept the
+    old order. C compiled it, `status --check` exited 0, and every caller
+    following the header passed the two values swapped. `apply` now
+    refuses before writing anything, naming the definition's `file:line`
+    and both orders; `status` reports the same finding as `ORDER`, which
+    gates and is never suppressed, including on a tree an older jm already
+    applied. jm never edits the definition: reorder its parameters and the
+    call sites, or restore the manifest's order. A header `@code` example
+    passing the parameter names in another order is an advisory `EXAMPLE`.
+    `docs/configuration.md` "Editing TOML by hand" now lists where order
+    matters in `just-makeit.toml`.
+
+## [0.118.0] — 2026-11-04
+
+### Added
+
+- **`[project] layout = "nested"` puts a component's header under its
+    module's path, and every mirror of it follows** (gh-2427). An object of
+    `[module."rx.ss.burst"]` kept its header at `native/inc/<pkg>/fir/`
+    whatever module it belonged to, so the C tree and the Python package
+    disagreed. Under `nested` it is `native/inc/<pkg>/rx/ss/burst/fir/`, the
+    module's path read from the one answer to where its Python lives
+    (`_config.module_package_resolved`, so a declared `package` wins), and
+    the C test, benchmark, every generated `#include` (umbrella, binding,
+    tests, benches, a `depends_on` object's include of its dependency, the
+    bridge and process-global headers) and the CMake include directories
+    follow it through `_incpath.core_dir`. Switching an existing project
+    either way is the key and `jm apply` (or `jm upgrade`): the headers move
+    with your edits, a header of yours beside the core comes along, and each
+    `#include` that resolves to a moved header is respelled; changing a
+    module's `package` under `nested` is the same move, and `apply` reports
+    each as a rename, not a new file. `jm remove` takes only the removed
+    component's own files when another component's directory sits below
+    its own. `flat` and
+    `mirrored` render byte-identically to before. `jm remove module` now also
+    removes a function-bearing module's own C test and benchmark, which it
+    left behind including the header it had just deleted.
+
+## [0.117.0] — 2026-11-03
+
+### Added
+
+- **`just_makeit.is_versioned(path, root)` is public** (gh-2455). It says
+    whether `jm status` compares a project file against jm's current
+    render, so that a difference is reported `OUTDATED`. A gate on
+    `jm status --check` passes on an empty `OUTDATED` list, which cannot
+    tell "every compared file is current" from "jm stopped comparing this
+    one"; asking per committed file tells them apart without importing the
+    private `_createonly`. It is that function re-exported, not a copy, and
+    a `str` root now works as well as a `Path`. A root holding no
+    `just-makeit.toml` raises `FileNotFoundError`, as `load_manifest` does,
+    rather than being answered from an empty manifest.
+
+## [0.116.0] — 2026-11-03
+
+### Added
+
+- **`just_makeit.components(cfg)` and `just_makeit.Refusal` are public**
+    (gh-2452). `components` lists a manifest's component names -- every
+    top-level table but the reserved sections and `include` -- so a
+    script reading a `load_manifest` result no longer imports the
+    private `_config.components` or spells its own copy of the reserved
+    set, which is how gh-2434 filed `[[enum]]` and `[codec]` under
+    `objects/`. `Refusal` is the `ValueError` `load_manifest` raises for
+    a manifest jm refuses; catch it by name to read every problem from
+    `.errors`. Both are the private objects re-exported, not copies, and
+    `load_manifest`'s docstring now cites only public names.
+
+## [0.115.0] — 2026-11-03
+
+### Added
+
+- **`just_makeit.load_manifest(root)` and `just-makeit manifest --json`
+    read the merged manifest** (gh-2440). Under the fragment layout every
+    `[<obj>]` and `[module.X]` table lives in a file `include` names, so a
+    script parsing `just-makeit.toml` with `tomllib` found no modules and
+    could pass on nothing; the only reader that merges the fragments was the
+    private `_config.load`. `load_manifest` is now the public, documented
+    form of that same reader -- the manifest `jm apply` renders, templates
+    and `init_groups` expanded -- returning a dict the caller may change,
+    and raising `FileNotFoundError` for a directory with no manifest and
+    `ValueError` for one jm refuses. `just-makeit manifest --json` prints
+    the same dict for tools that are not Python. `migrate-to-fragments` and
+    `split-objects` end with a note pointing such scripts at both.
+
+### Fixed
+
+- **A view documents itself on both faces, not its parent or a synthetic
+    name** (gh-2406, gh-2408). A view's `.pyi` was rendered from a copy of
+    its parent's manifest table, while its binding reads several keys from
+    the view. A setter's Raises in the stub named
+    `<stem>__view_<v>_set_<prop>`, a function no header declares, where the
+    runtime names the parent's setter it calls. The stub's class Raises
+    quoted the parent's `create_error_message` and listed the parent's
+    warnings, and it advertised the parent's `stream()`, which a view does
+    not have. The runtime class docstring had no Raises or Warns at all, and
+    a view's `__enter__` / `__exit__` named the parent's class. Both faces
+    now read the view's own create error, warnings and class name, and the
+    stub spells the C stem the binding calls.
+
+- **`derived = ["nx"]` names a 1-D array init-param's length** (gh-2409).
+    gh-1097 made `derived` a list for a 2-D array's extents, and only the
+    2-D path read the list. On a 1-D array, an object's or a view's,
+    `jm apply` crashed with an `AttributeError` because the prototype said
+    `size_t ['nx']`. A one-name list now means what the bare string means.
+    A list naming more extents than the array has is refused, naming the
+    param. `jm script` used to write such a param as `derived:['nx']` and
+    now writes `derived:nx`.
+
+- **A manifest refusal is an exception a library caller can catch, naming
+    every problem** (gh-2440). Several of `load`'s checks (templates,
+    families, platforms, `why` keys, str hints, `retain`, ...) and a few in
+    `apply` and `upgrade` printed each error to stderr and raised
+    `SystemExit(1)`, so `just_makeit.load_manifest` on a bad manifest wrote
+    to the caller's stderr and exited. They now raise `Refusal` carrying
+    every deduplicated error (`.errors`), and nothing is printed until the
+    CLI reports it: still one `error:` line per problem, still exit 1.
+    `jm status` keeps its explanation when the internal replay refuses.
+
+## [0.114.2] — 2026-11-01
+
+### Fixed
+
+- **`jm migrate-to-fragments` and `jm split-objects` keep every comment**
+    (gh-2437). Both rebuilt each file they wrote from its values, so every
+    comment in the manifest was deleted: all of doppler's, the ones on
+    `[project]` keys included, and none reached `modules/*.toml`. Now the
+    manifest is cut, not rebuilt. Each moved table takes its own comments
+    to its fragment, byte for byte: the ones inside it, on its sub-tables
+    and table-array rows, and the run of comment lines directly above its
+    header. The root file is the original minus the moved tables, every
+    other comment and blank line intact. A new `include` goes after the
+    file's opening comment block, and an existing one is extended in place.
+
+## [0.114.1] — 2026-11-01
+
+### Fixed
+
+- **`jm migrate-to-fragments` leaves a project `apply` would not change**
+    (gh-2434). Dry-run on doppler, it found three bugs. `--help` ran the
+    migration: five commands never read their arguments (`app` and `perf`
+    scaffolded on any of them). Every command but a build one now answers
+    `--help` / `-h` with its usage and runs nothing, and one that takes no
+    argument refuses one with exit 2. `[[enum]]` and `[codec]` were filed
+    as `objects/enum.toml` and `objects/codec.toml`, and the next command
+    moved them back. Every reserved section now stays in the manifest. And
+    `status --check` then reported two files stale. The root
+    `CMakeLists.txt` wiring for a core several components share followed
+    the old order, and a package's `__init__.py` lost the names another
+    module's `reexports` put in `__all__` once a package sibling was merged
+    after it (doppler's `wfm`, 23 names). Both now come out as `apply`
+    writes them, whatever the order.
+
+## [0.114.0] — 2026-11-01
+
+### Added
+
+- **`[project] layout = "mirrored"` puts each component's C test and C
+    benchmark in a directory of its own** (gh-2423). jm wrote every
+    `test_<c>_core.c`, `test_<c>_symbols.c` and `bench_<c>_core.c` flat in
+    `native/tests/` and `native/benchmarks/`, found only by file-name prefix,
+    while the header beside them lived at `native/inc/<pkg>/<c>/`. With the
+    key, they go to `native/tests/<c>/` and `native/benchmarks/<c>/`: the
+    directory the component's header has, asked of one primitive
+    (`_incpath.native_rel`) by every writer, the build templates, `remove`,
+    `status`'s hollow-target scan, the ownership rules and `upgrade`. The
+    harness headers stay at the tree roots and the C test's include path
+    gains `native/tests`. Setting the key on an existing project and running
+    `jm apply` moves the files with your edits (moving them yourself first
+    works the same), respells any build-file path to a moved one, and
+    removing the key moves them back; an unknown value is refused. `flat`
+    stays the default and renders byte-identically to before.
+
+### Fixed
+
+- **Switching `[project] layout` keeps your own CMake targets building**
+    (gh-2429). `jm apply` respelled a moved C test's path in the root
+    `CMakeLists.txt` and a hand-owned component one, but not in a
+    component's `<c>_extra.cmake` hook, so `status --check` was clean and
+    cmake configure failed. And a target of yours whose source it respelled
+    lost the directory the source had left, so a header beside it
+    (`jm_test.h`, or your own) was no longer found. The hook is now
+    respelled in both directions, and each such target gets one
+    `target_include_directories` line naming the directory its source left,
+    as jm's own test target does. Before the move, `jm status` lists each
+    pending move once, under `SUPERSEDED`, naming `jm apply` as the command
+    and counting it (`N to move`), rather than also as a file `apply` would
+    create with advice to run `upgrade`.
+
+## [0.113.0] — 2026-11-01
+
+### Added
+
+- **An `init_param` can name a composer: `object = "<composer>"`** (gh-2354).
+    gh-2346 let a composer module publish a `_capsule` and a consumer method
+    param take it; the constructor path, the `object =` sugar over the capsule
+    path, still refused a composer as "not a valid target", so an object could
+    not take a composer at construction. It resolves now, as a handle does
+    (gh-1227), every slot read from the module's own declarations: the C type
+    is the backing's `<stem>_state_t *` (moved by a `c_prefix`), the capsule
+    is the one the module publishes, the header is the backing's core header,
+    and the class is the composer type. A composer that publishes no capsule
+    is refused with the line that fixes it. The consumer needs no `retain`:
+    a constructor's borrowed pointer already holds the Python owner. The
+    generated `.pyi` imports the class from the file that holds it
+    (`from .playlist.playlist import Mix`), not from the composer's package,
+    which has no `__init__.py` re-exporting it.
+
+### Changed
+
+- The CI that `jm ci` generates pins `actions/setup-python` at v7.1.0, the version jm's own workflows now use. (dependabot actions group)
+
+### Fixed
+
+- **`init_post_parse` reaches the fragment of an object in a module**
+    (gh-1971). The key is the manifest's way to write a dynamic default (a C
+    snippet injected after `PyArg_ParseTupleAndKeywords`) and was accepted
+    and then ignored for any object with per-object `<mod>_ext_<obj>.c`
+    fragments, with no diagnostic. Two places dropped it: the fragment's
+    context never passed it on, and the replay's temp manifest, which the
+    module render reads, had no way to persist it (the gh-1172 shape).
+    `jm adopt` made this dangerous: a fragment carrying the snippet by hand
+    showed as a `differs` unit, and `--accept` deleted the default the
+    manifest line was written to carry. `status --check` could not see it,
+    since it renders through the same path. A standalone object rendered by
+    delete-and-`apply` also loses the key; that path is not changed here
+    (tracked in gh-2401).
+
+- **A composer's second `__init__` no longer leaks its previous state**
+    (gh-2356). The generated `__init__` set the state pointer to NULL before
+    building a new one, so calling it again on a live composer dropped the
+    old state without freeing it, and a re-init that then failed left the
+    composer with a NULL state. It now follows the contract a handle has:
+    the new state is built first, so a re-init that fails changes nothing;
+    then the old state is released, with new calls refused and a running
+    GIL-free call waited for, and only if it is still live (`close()` frees
+    without clearing the pointer, so a closed composer's is not freed again).
+    A composer whose state was lent as a capsule refuses a second `__init__`
+    with a `RuntimeError`, since a borrower holds the pointer and there is
+    one slot. The refusal is sticky once the state has been lent, and it is checked
+    again after the arguments are converted (which can run Python that lends
+    it). **Behaviour change:** a composer that has published a capsule can
+    never be re-initialised.
+
+- A composer's typed settings (`obj.setting = value`) and its delegated serializers (`[[module.X.serializers]]`) check that the composer is still open after their argument is converted: an `__index__`, `__float__` or `__complex__` that calls `close()` now raises `RuntimeError("composer already closed")` instead of calling the backing library on a freed state. This is the composer kind of gh-2380. (gh-2380)
+
+- A handle module's array methods (`kind = "handle"`, the array-in and array-in plus `out=` shapes) and its writable properties check that the handle is still open after their argument is converted: an `__array__` or `__float__` that calls `close()` now raises `RuntimeError("<Type> is closed")` instead of calling the backing library on a freed handle. This is the handle kind of gh-2380, after the object kind. (gh-2380)
+
+- An object's `step()` / `steps()`, its generated state and array-state setters (`set_<state>`), its writable properties (`obj.prop = value`) and its `<method>_max_out(n)` check that the object is still alive after their argument is converted, as the array methods already did: an `__index__`, `__float__`, `__complex__` or `__array__` that calls `destroy()` now raises `RuntimeError` instead of handing the kernel a NULL state. This completes the object kind of gh-2273; the handle, composer and capsule kinds follow under gh-2380. (gh-2380)
+
+- A method parameter bound to an `[[enum]]` that also carries a manifest `doc` documents its choices under that text, wrapped, with no blank line between them, on both the `.pyi` and the runtime `__doc__`, as an init parameter and a parameter with no `doc` already did. gh-2379 emitted the choice sentence as one unwrapped line (131 columns for a ten-choice enum) after a blank line. A gate now renders every enum-parameter shape with and without a `doc` and refuses a choice line past the stub width or set off by a blank line. (gh-2399)
+
+- pytest is capped below 9.2 wherever jm resolves it beside pytest-benchmark. pytest 9.2.0 dropped `Node._nodeid`, which pytest-benchmark 5.3.0 still reads, so every benchmark died at setup (`'Function' object has no attribute '_nodeid'`), in jm's own CI and in a generated project's. The pin is in jm's Makefile test runners and dev group, in the `pip install` line of the Makefile and the CI that `jm new` / `jm ci` generate, in the install hint `jm bench` prints, and in the `full_workflow` example. Each carries the condition for lifting it: a pytest-benchmark release that supports pytest 9.2. (gh-2411)
+
 ## [0.112.0] — 2026-10-27
 
 ### Added

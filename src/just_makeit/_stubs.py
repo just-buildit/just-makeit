@@ -61,7 +61,6 @@ from ._docstring import (
     docstring_body,
     class_import_line,
     merge_doc_blocks,
-    struct_members_key,
     method_doc,
     name_summary,
     ctor_demo_label,
@@ -1500,75 +1499,10 @@ def _obj_stream_pyi(cfg: dict, obj: str) -> str:
     )["pyi_stream_methods"]
 
 
-def _view_doc_blocks(cfg: dict, obj: str, synth: str) -> dict:
-    """The parent's header blocks, re-keyed under a view's synthetic name.
-
-    gh-685. A view shares its parent's ``_core.c`` and calls the same C
-    functions, so ``ddc_execute_ctrl``'s Doxygen documents
-    ``MatchedDDC.execute_ctrl`` exactly as it documents ``DDC.execute_ctrl``.
-    The stub builder keys its lookups on the component it is rendering, which
-    for a view is a synthetic id, so without this every inherited member missed
-    and fell back to its name-based stub.
-
-    Only the parent's ``<stem>_`` prefix is rewritten; anything else (a
-    module-level name, a view's own ``create_fn``) is left alone for the
-    caller to merge.
-
-    gh-1667: both ends of the re-key are C STEMS, from `_csym` -- the
-    parent's blocks are keyed by the names its header declares
-    (``dp_ddc_execute`` under ``c_prefix = "dp"``), and `_obj_stub` looks
-    the view up under ``CSYM.stem(cfg, synth)``. Spelling either end from
-    the raw name matched nothing under a prefix, and every inherited member
-    fell back to its name stub.
-
-    >>> from just_makeit._docstring import struct_members_key as smk
-    >>> cfg = {"project": {"c_prefix": "dp"},
-    ...        "ddc": {"_doc_blocks": {"dp_ddc_execute": "B",
-    ...                                smk(): {"dp_ddc_state_t": {}}}}}
-    >>> out = _view_doc_blocks(cfg, "ddc", "ddc__view_m")
-    >>> sorted(k for k in out if k != smk()), sorted(out[smk()])
-    (['dp_ddc__view_m_execute'], ['dp_ddc__view_m_state_t'])
-    """
-    blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
-    pre = f"{CSYM.stem(cfg, obj)}_"
-    to = f"{CSYM.stem(cfg, synth)}_"
-    out = {
-        f"{to}{k[len(pre) :]}": v
-        for k, v in blocks.items()
-        if k.startswith(pre)
-    }
-    # gh-761: the `_max_out` arity set rides this map under a reserved key, so
-    # the prefix filter above drops it — and its entries are full C names
-    # (`ddcr_execute_max_out`) that the view looks up under its synthetic id.
-    # Re-key both. Without this a view of a state-only parent renders the
-    # count-bearing stub while its parent renders the correct one, which is
-    # the same stub/binding disagreement one level down.
-    state_only = blocks.get(max_out_arity_key())
-    if state_only:
-        out[max_out_arity_key()] = frozenset(
-            f"{to}{n[len(pre) :]}" if n.startswith(pre) else n
-            for n in state_only
-        )
-    # gh-1400: the per-struct field map rides a reserved key too, and ITS
-    # keys are struct names (`ddc_state_t`), which the prefix filter above
-    # cannot see. A view's field-backed property looked up
-    # `<synth>_state_t`, missed, and fell back to the name stub -- while the
-    # binding, which renders a view under the PARENT's name, derived the
-    # field's `/**<` comment fine. So the two faces of one member disagreed:
-    # doppler's CellAsyncDsssReceiver.cn0_dbhz_est reads "Cached from the
-    # winning acquisition hit." at runtime and "Cn0 dbhz est." in the stub.
-    structs = blocks.get(struct_members_key())
-    if structs:
-        out[struct_members_key()] = {
-            (f"{to}{s[len(pre) :]}" if s.startswith(pre) else s): fields
-            for s, fields in structs.items()
-        }
-    return out
-
-
 def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
-    # gh-1591: every C name this stub reads a doc block by derives here.
-    csym = CSYM.stem(cfg, obj)
+    # gh-1591: every C name this stub reads a doc block by derives here --
+    # the parent's stem for a view (gh-2406), which is what its binding calls.
+    csym = stub_stem(cfg, obj)
     Component = C.resolved_class_name(cfg, obj)
     state_vars = C.state_vars(cfg, obj)
     arg_type = C.arg_type(cfg, obj)
@@ -2041,13 +1975,13 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # the parent's dtype in its Examples.
         #
         # The `<component>_<name>` fallback keeps every other project
-        # byte-identical: an inherited view member resolves under the re-keyed
-        # synthetic name exactly as it did (gh-685), and a method whose `fn`
+        # byte-identical: an inherited view member resolves under its
+        # parent's stem (gh-685, gh-2406), and a method whose `fn`
         # carries no Doxygen falls back to where it used to look rather than
         # silently losing its documentation.
-        _blk = doc_blocks.get(
-            C.method_c_symbol(CSYM.stem(cfg, obj), m)
-        ) or doc_blocks.get(f"{csym}_{m_name}")
+        _blk = doc_blocks.get(C.method_c_symbol(csym, m)) or doc_blocks.get(
+            f"{csym}_{m_name}"
+        )
         # ...and the scaffold sentinel is judged against the member NAME, not
         # the symbol. jm writes its skeleton brief from the Python name
         # (`@brief block.`) while `parse_doxygen_block` recognises a scaffold
@@ -2409,7 +2343,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # fallback applies only when the header knows nothing about the
             # bound name at all (a first scaffold), never to overrule a
             # declaration that exists.
-            _mo_sym = f"{C.method_c_symbol(CSYM.stem(cfg, obj), m)}_max_out"
+            _mo_sym = f"{C.method_c_symbol(csym, m)}_max_out"
             _mo_fallback = f"{csym}_{m_name}_max_out"
             _mo_arity = (doc_blocks or {}).get(
                 max_out_arity_key()
@@ -2451,14 +2385,22 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     if C.is_serializable(cfg, obj):
         # gh-647: same prose as the standalone path and the runtime method
         # table, from the one definition in _gluedoc.
-        _glue = glue_methods(Component)
+        # gh-2470: the declared set_state rows, as the standalone path
+        # documents them (`serializable_triplet_parts`), prose included.
+        from ._context._methods import set_state_raises_doc
+
+        _ss_rows = C.set_state_status_errors(cfg, obj)
+        _glue = glue_methods(Component, status_table=bool(_ss_rows))
+        _ss_raises = set_state_raises_doc(_ss_rows)
         for _n, _sig in (
             ("state_bytes", "self) -> int"),
             ("get_state", "self) -> bytes"),
             ("set_state", "self, blob: bytes) -> None"),
         ):
             lines += ["", f"    def {_n}({_sig}:"]
-            lines += _glue[_n].pyi_doc()
+            lines += _glue[_n].pyi_doc(
+                raises=(_ss_raises or None) if _n == "set_state" else None
+            )
 
     # gh-1997: the methods the author wrote in the object's `_extra.c`, after
     # the generated ones as their rows are -- through the one member emitter
@@ -2485,7 +2427,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     # gh-684: the module-aggregated stub derives accessors too, from the
     # same blocks the standalone path uses.
     _acc_pyi = Ctx.state_accessor_stubs(
-        _acc_scalars, _acc_arrays, CSYM.stem(cfg, obj), doc_blocks
+        _acc_scalars, _acc_arrays, csym, doc_blocks
     )
     if _acc_pyi:
         lines += _acc_pyi.rstrip("\n").lstrip("\n").split("\n")
@@ -3146,28 +3088,12 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
         if m["name"] not in excl_m and m["name"] not in own_method_names
     ] + own_methods
     # gh-685: a view's methods call the PARENT's C functions, so the
-    # parent's header blocks are theirs. _obj_stub looks blocks up as
-    # `<component>_<member>` and the component here is a synthetic
-    # name, so every lookup missed and every inherited method fell
-    # back to the name-based stub -- while the identical method on the
-    # parent, from the identical block, derived fully.
-    #
-    # Alias rather than replace: a view with its own `create_fn` has a
-    # block under that real name, looked up directly.
-    _parent_blocks = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
-    _view_blocks = _view_doc_blocks(cfg, obj, synth)
-    overlay["_doc_blocks"] = merge_doc_blocks(_view_blocks, _parent_blocks)
-    # gh-761: the reserved `_max_out` arity key is a *set*, not a
-    # block, so the parent-wins merge above would drop the
-    # synthetic-id entries `_view_doc_blocks` just re-keyed. Union
-    # both spellings instead: the view looks itself up under `synth`,
-    # while a view with its own `create_fn` still resolves the real
-    # name.
-    _arity = frozenset(
-        _view_blocks.get(max_out_arity_key()) or ()
-    ) | frozenset(_parent_blocks.get(max_out_arity_key()) or ())
-    if _arity:
-        overlay["_doc_blocks"][max_out_arity_key()] = _arity
+    # parent's header blocks are theirs. They were re-keyed under the
+    # synthetic id for `_obj_stub` to look up, along with the gh-761
+    # `_max_out` arity set and the gh-1400 struct map, each a re-key of its
+    # own; since gh-2406 the stub looks a view up under its parent's stem
+    # (`stub_stem`), so the parent's blocks answer as they stand.
+    overlay["_doc_blocks"] = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
     # gh-648: the view's own `doc=` owns its class docstring. Every
     # other overlay key was set and this one was not, so a view whose
     # class-level semantics genuinely differ from its parent's --
@@ -3207,7 +3133,7 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
     # the summary its own.
     #
     # Setting `create_fn` above is what exposed this. Before it, the
-    # lookup resolved `<synth>_create`, which `_view_doc_blocks`
+    # lookup resolved `<synth>_create`, which the (since removed) re-key
     # aliases to the parent's block -- so a view inherited the
     # parent's `@param`s *and* (wrongly) its summary. Fixing the
     # summary took the parameters with it: doppler measured 22
@@ -3218,7 +3144,56 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
         view["create_fn"],
         C.object_create_name(cfg, obj),
     )
+    # gh-2406 / gh-2408: the overlay is a copy of the PARENT's table, so
+    # every key the view's binding (`_object._make_view_ctx`) reads from the
+    # view rather than the parent must be set here too, or the stub describes
+    # the parent while the runtime describes the view. Four were not:
+    #
+    # - `create_error` / `create_error_message`: the binding raises the
+    #   view's (gh-580, inherited from the parent per key when undeclared),
+    #   and the stub's Raises quoted the parent's message (gh-2408).
+    # - `warnings`: a view carries its OWN, never the parent's (gh-509), and
+    #   the stub's Warns listed the parent's.
+    # - `streamable` / `async_stream`: a view's binding renders no stream,
+    #   and the stub advertised `stream()` / `__iter__` it does not have.
+    #
+    # Each reads through the resolver the binding calls, so the two cannot
+    # resolve inheritance differently.
+    overlay["create_error"] = C.view_create_error(cfg, obj, view)
+    overlay["create_error_message"] = C.view_create_error_message(
+        cfg, obj, view
+    )
+    overlay["warnings"] = C.view_warnings(view)
+    overlay.pop("streamable", None)
+    overlay.pop("async_stream", None)
+    # gh-2406: and the C stem. The binding renders a view under its PARENT's
+    # stem (gh-1591): it calls `<parent>_set_rate`, not a function named for
+    # the synthetic id, which no header declares. A stub that derived its
+    # stem from `synth` named that nonexistent function in every text that
+    # spells a C symbol -- a property setter's Raises first. `stub_stem`
+    # reads this back.
+    overlay["_csym"] = CSYM.stem(cfg, obj)
     return synth, {**cfg, synth: overlay}
+
+
+def stub_stem(cfg: dict, comp: str) -> str:
+    """The C stem the binding of *comp* calls, for a stub to spell.
+
+    *comp* is a component, or the synthetic id `view_overlay` renders a view
+    as. A view's binding calls its PARENT's functions (gh-1591), so its stem
+    is the parent's, carried on the overlay; a component's is
+    `_csym.stem`'s.
+
+    >>> cfg = {"project": {"c_prefix": "dp"}, "rc": {}}
+    >>> stub_stem(cfg, "rc")
+    'dp_rc'
+    >>> synth, cfg_v = view_overlay(
+    ...     cfg, "rc", {"class_name": "MRC", "create_fn": "dp_rc_m"}
+    ... )
+    >>> synth, stub_stem(cfg_v, synth)
+    ('rc__view_mrc', 'dp_rc')
+    """
+    return cfg.get(comp, {}).get("_csym") or CSYM.stem(cfg, comp)
 
 
 def make_module_pyi(cfg: dict, module: str, root=None) -> str:
@@ -3346,8 +3321,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         # gh-504: each view is a second class over the same core. Render it via
         # the same _obj_stub, driven by an overlay cfg key that swaps in the
         # view's class_name / init_params / (filtered) properties. The synthetic
-        # key never reaches output — a .pyi carries no C symbols — so this reuses
-        # _obj_stub unchanged.
+        # key must never reach output: a .pyi DOES spell C symbols (a setter's
+        # Raises names the function), which is why the overlay carries the
+        # parent's stem (gh-2406).
         for view in C.views(cfg, obj):
             # gh-504: one definition of a view's surface, in
             # `view_overlay`; this renders what it returns.

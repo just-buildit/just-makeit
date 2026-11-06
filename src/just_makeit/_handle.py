@@ -31,6 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple, TYPE_CHECKING
 
+from . import _borrow
 from . import _capsule
 from . import _coerce
 from . import _inflight
@@ -46,6 +47,7 @@ from . import _procglobal
 from . import _incpath as INC
 from ._stubs import positional_only
 from ._context import _diagnostics
+from ._context._methods import set_state_check_c
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
 from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
@@ -840,6 +842,17 @@ def _check_error_decl(m: dict, name: str, returns: "str | None") -> None:
     from ._report import Refusal
 
     declared = [k for k in ("error", "status_return") if m.get(k)]
+    rows = _borrow.status_rows(m)
+    if rows and not declared:
+        # gh-2470: the rows map a STATUS; with neither key the return is a
+        # value and nothing would read them -- accepted, they would be
+        # recorded and dropped, the gh-1418 shape.
+        raise Refusal(
+            f"handle method '{name}': `status_errors` maps the status the C"
+            " call returns, and this method returns no status. Declare"
+            " `status_return = true` (or `error`) over an integer"
+            " `returns`, or drop `status_errors`."
+        )
     if not declared:
         return
     keys = " and ".join(f"`{k}`" for k in declared)
@@ -883,6 +896,12 @@ def _check_error_decl(m: dict, name: str, returns: "str | None") -> None:
             " `error` if it is a count, or move the check into a separate"
             " status method."
         )
+    # gh-2470: the rows' own rules, from the one validator every table face
+    # shares. No message slots: a handle method's args are parsed into
+    # shape-specific locals, so none is offered rather than one guessed.
+    why = _borrow.rows_why_not(rows, f"handle method '{name}'", {})
+    if why:
+        raise Refusal(why)
 
 
 def _bytes_len_locals(args: list) -> "frozenset[str]":
@@ -1011,6 +1030,41 @@ def arg_scopes(
     return scopes
 
 
+#: A handle ``set_state``'s one-line doc, on both faces (gh-403).
+SET_STATE_SUMMARY = "Restore mutable state from a get_state() blob."
+
+
+def set_state_doc(rows: "list[dict]", runtime: bool = False) -> list[str]:
+    """A handle ``set_state``'s numpy doc under a status table (gh-2470).
+
+    Only with *rows*: without them both faces keep the one-line summary,
+    byte for byte. The ``Raises`` entries are the object face's
+    (`_context._methods.set_state_raises_doc`), so the two faces of one
+    ``set_state`` document the same classes. *runtime* picks the ``__doc__``
+    renderer over the ``.pyi`` one, which share their sections.
+
+    Examples
+    --------
+    >>> rows = [{"status": "E_NOMEM", "error": "MemoryError"}]
+    >>> any("MemoryError" in ln for ln in set_state_doc(rows, runtime=True))
+    True
+    """
+    from ._context._methods import set_state_raises_doc
+    from ._docstring import render_numpy_doc, render_runtime_doc
+
+    render = render_runtime_doc if runtime else render_numpy_doc
+    return render(
+        None,
+        "set_state",
+        [("blob", "bytes")],
+        "None",
+        override=SET_STATE_SUMMARY,
+        authored_doc=SET_STATE_SUMMARY,
+        param_fallback="A get_state() blob from this type.",
+        raises=set_state_raises_doc(rows),
+    )
+
+
 def _status_call_c(
     m: dict, call: str, gil_open: str, gil_close: str, release: str
 ) -> str:
@@ -1030,10 +1084,13 @@ def _status_call_c(
     the message was read at all.
     """
     _cat, _msg = _diagnostics.handle_declared_raise(m)
+    # gh-2470: a declared row raises first; the rest fall out of the switch
+    # into the method's own raise. Named for `fn`, as that raise is.
+    _rows = _borrow.status_switch_c(_borrow.status_rows(m), m["fn"], {})
     return f"""    {m["returns"]} _rc;
 {gil_open}    _rc = {call};
 {gil_close}{release}    if (_rc != 0) {{
-{_diagnostics._rc_raise_c(_cat, _msg)}    }}
+{_rows}{_diagnostics._rc_raise_c(_cat, _msg)}    }}
     Py_RETURN_NONE;"""
 
 
@@ -2174,6 +2231,11 @@ static PyObject *
     state_methods = ""
     if C.is_serializable(cfg, module):
         backing = C.handle_backing(cfg, module)
+        # gh-2470: the object face's emitter, and its rows.
+        set_state_check = set_state_check_c(
+            f"{backing}_set_state(self->h, PyBytes_AS_STRING(arg))",
+            C.set_state_status_errors(cfg, module),
+        )
         guard = (
             f"    if (self->closed) {{\n"
             f"        PyErr_SetString(PyExc_RuntimeError,"
@@ -2209,11 +2271,7 @@ static PyObject *
         PyErr_SetString(PyExc_ValueError, "state blob size mismatch");
         return NULL;
     }}
-    if ({backing}_set_state(self->h, PyBytes_AS_STRING(arg)) != 0) {{
-        PyErr_SetString(PyExc_ValueError, "set_state rejected the blob");
-        return NULL;
-    }}
-    Py_RETURN_NONE;
+{set_state_check}    Py_RETURN_NONE;
 }}
 """
         method_rows.append(
@@ -2224,10 +2282,16 @@ static PyObject *
             f'    {{"get_state", (PyCFunction){tname}_get_state, METH_NOARGS,'
             ' "Serialize the handle\'s mutable state to bytes."},'
         )
+        _ss_rows = C.set_state_status_errors(cfg, module)
         method_rows.append(
             f'    {{"set_state", (PyCFunction){tname}_set_state,'
             f" {SET_STATE_FLAGS},"
-            ' "Restore mutable state from a get_state() blob."},'
+            + (
+                f"\n     {_build_ml_doc(set_state_doc(_ss_rows, runtime=True))}"
+                if _ss_rows
+                else f' "{SET_STATE_SUMMARY}"'
+            )
+            + "},"
         )
     method_table = "\n".join(method_rows)
 
@@ -2948,9 +3012,12 @@ def render_pyi(
             f"{positional_only('blob: bytes', SET_STATE_FLAGS, 'self')})"
             " -> None:"
         )
-        lines.append(
-            '        """Restore mutable state from a get_state() blob."""'
-        )
+        _ss_rows = C.set_state_status_errors(cfg, module)
+        if _ss_rows:
+            # gh-2470: the declared rows, as the binding raises them.
+            lines += set_state_doc(_ss_rows)
+        else:
+            lines.append(f'        """{SET_STATE_SUMMARY}"""')
 
     # RAII surface.
     lines.append("    def close(self) -> None:")
@@ -3005,7 +3072,7 @@ def _backing_doc_blocks(
     header_rel = C.handle_header(cfg, module)
     if not header_rel or project_root is None:
         return {}
-    hp = INC.inc_dir(Path(project_root)) / header_rel
+    hp = INC.resolve(Path(project_root), header_rel)
     if not hp.exists():
         return {}
     from ._docstring import extract_doc_blocks
@@ -3035,14 +3102,14 @@ def materialize(
     doc_blocks = _backing_doc_blocks(cfg, module, project_root or root)
 
     _write(
-        root / "native" / "src" / mp.cname / f"{mp.cname}_ext.c",
+        INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_ext.c",
         # gh-1113: the SAME blocks the `.pyi` below is rendered from. They
         # were computed here and handed to one face only, so the header's
         # prose reached the stub and stopped.
         render_ext(cfg, module, doc_blocks),
     )
     _write(
-        root / "native" / "src" / mp.cname / "CMakeLists.txt",
+        INC.src_path(root, mp.cname, cfg) / "CMakeLists.txt",
         render_cmake(cfg, module),
     )
     _write(
@@ -3054,4 +3121,6 @@ def materialize(
     # _module.run's own writer, as _capsule.materialize does (gh-1985).
     from ._libwiring import MODULES_SENTINEL, splice_cmake_component
 
-    splice_cmake_component(root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL)
+    splice_cmake_component(
+        root, pkg, mp.cname, [], sentinel=MODULES_SENTINEL, owner=cfg
+    )

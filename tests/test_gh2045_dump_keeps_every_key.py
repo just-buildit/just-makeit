@@ -239,17 +239,22 @@ PLACES = {
     ),
 }  # fmt: skip
 
-#: A second least row, for keys `C.load` takes only beside their siblings:
+#: More least rows, for keys `C.load` takes only beside their siblings:
 #: a macro family is `core_macro`, `core_args` and `core_header` together, on
-#: a header-only object (gh-1310).
+#: a header-only object (gh-1310); `set_state_status_errors` refines a
+#: `serializable` set_state, on an object or a handle (gh-2470).
 SIBLINGS = {
-    "object": {
-        **_OBJECT,
-        "header_only": "true",
-        "core_macro": "O_CORE",
-        "core_args": ["n"],
-        "core_header": "p/o/o_family.h",
-    },
+    "object": [
+        {
+            **_OBJECT,
+            "header_only": "true",
+            "core_macro": "O_CORE",
+            "core_args": ["n"],
+            "core_header": "p/o/o_family.h",
+        },
+        {**_OBJECT, "serializable": "true"},
+    ],
+    "handle module": [{**_HANDLE, "serializable": "true"}],
 }
 
 #: Vocabularies `_keys` registers and walks nowhere, so no manifest place
@@ -302,6 +307,8 @@ EXAMPLES = {
     "float": 2.5,
     "array": ["linux"],
     "rows": [{"name": "a", "n": 1}],
+    # gh-2470: a status table's row, which `C.load` validates.
+    "status rows": [{"status": "E_X", "error": "ValueError"}],
     "table": {"k": "v", "on": True},
 }
 
@@ -442,7 +449,7 @@ def test_load_dump_load_in_both_layouts(
     kind: str, tmp_path: Path, capsys
 ) -> None:
     minimal, place = PLACES[kind]
-    rows = [minimal] + ([SIBLINGS[kind]] if kind in SIBLINGS else [])
+    rows = [minimal] + SIBLINGS.get(kind, [])
     bad, untested, n = [], [], 0
     for key in sorted(_keys.KIND_KEYS[kind]):
         loaded = 0
@@ -466,6 +473,14 @@ def test_load_dump_load_in_both_layouts(
                 bad.append(f"central: {key} = <{label}>")
             _migrate.run(src)
             assert (src / "just-makeit.toml").read_text().startswith("include")
+            # gh-2437: migrating CUTS the manifest, so it changes no value
+            # -- not even `_dump`'s heredoc newline. The fragment layout's
+            # `_dump` is a new fragment's writer: drop them and save.
+            if C.load(src) != before:
+                bad.append(f"migrated: {key} = <{label}>")
+            for frag in [*src.glob("objects/*.toml"), *src.glob("modules/*")]:
+                frag.unlink()
+            C.save(src, before)
             if C.load(src) != want:
                 bad.append(f"fragments: {key} = <{label}>")
         if not loaded:

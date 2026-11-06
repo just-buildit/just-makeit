@@ -332,9 +332,16 @@ def superseded_advice(root: Path, old: str, new: str) -> str:
             f" Merge anything you added to {old} into {new}, then delete"
             f" {old}."
         )
+    # gh-2429: a native layout move is one `apply` makes (the build names
+    # the new place), so naming `upgrade` sent the reader to the wrong
+    # command.
+    command = (
+        "apply" if (old, new) in _createonly.relocating(root) else "upgrade"
+    )
     return (
         f"{old} is now called {new}; jm will not create {new} beside it."
-        " Run `just-makeit upgrade` to rename it -- your edits come along."
+        f" Run `just-makeit {command}` to rename it -- your edits come"
+        " along."
     )
 
 
@@ -405,6 +412,9 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "step_delegates": C.step_delegates(cfg, comp),
         "opaque_state": C.is_opaque_state(cfg, comp),
         "serializable": C.is_serializable(cfg, comp),
+        # gh-2470: manifest-and-flag, and the replay names each key -- an
+        # unnamed one is silently absent from the scratch manifest.
+        "set_state_status_errors": C.set_state_status_errors(cfg, comp),
         "streamable": C.is_streamable(cfg, comp),
         "async_stream": C.is_async_stream(cfg, comp),
         "stream_block_default": (
@@ -601,9 +611,404 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 " every C symbol jm derives, and the C you wrote has to"
                 " follow: run `jm upgrade`, which respells it"
             )
+    # gh-2459 (gh-2463): a collision with a component's own C found where
+    # jm has no record of putting it -- moved by hand, or by a jm older than
+    # the record -- says so, rather than naming each symbol twice.
+    if clash:
+        clash = misplaced_advice(project_root, cfg) or clash
     errors += clash
     if errors:
         C._refuse(errors)
+
+
+def _cmake_is_jms(real: str, rendered: str, comp: str, cfg: dict) -> bool:
+    """Whether *real* is the CMakeLists jm renders as *rendered* for *comp*:
+    byte for byte, or -- where `apply` reconciles the file (gh-271) -- that
+    render with only the riders jm itself keeps put back. A hand-owned file
+    (gh-275) is not shown to be jm's by this (gh-2459)."""
+    if real == rendered:
+        return True
+    if comp not in _reconciled_cmake_dirs(cfg) or _is_hand_owned_object_cmake(
+        real, comp, rendered=rendered
+    ):
+        return False
+    include_dirs = list(C.component_extra_include_dirs(cfg, comp))
+    return _reconciled_object_core_cmake(
+        real, rendered, comp, include_dirs
+    ) == (real)
+
+
+def _refuse_unverified_moves(
+    root: Path, cfg: dict, only: "str | None"
+) -> None:
+    """Refuse a move jm cannot show is out of its own directory (gh-2459).
+
+    A former place is computed from jm's record of what it last applied
+    (`_incpath.applied`); before anything moves out of one, the record is
+    checked against the tree. The component's CMakeLists at the recorded
+    place must be the one jm renders there for it (:func:`_cmake_is_jms`,
+    against a replay of the recorded manifest, and of the current one) --
+    a vendored directory, or another project's copy, is not, and neither is
+    a place a hand-edited or stale record names. Then the author's files
+    beside the verified core move with it.
+
+    Also refused here: ``--only`` with a move pending -- moving is a
+    whole-project step, recorded by a full `apply`. `jm upgrade`, which
+    makes the same moves, asks this too.
+    """
+    by_name = INC.relocations_by_name(root)
+    pending = {
+        n: [p for p in pairs if (root / p[0]).is_file()]
+        for n, pairs in by_name.items()
+    }
+    pending = {n: v for n, v in pending.items() if v}
+    if only is not None and pending:
+        C._refuse(
+            [
+                f"`--only {only}` cannot run while files are waiting to move"
+                f" ({', '.join(sorted(pending))}): moving is a whole-project"
+                " step, recorded by a full apply. Run `jm apply` (gh-2459)"
+            ]
+        )
+    errors: "list[str]" = []
+    unplaced = INC.unplaced(cfg)
+    hand = {
+        C.module_paths(m).cname
+        for m in C.modules(cfg)
+        if C.is_no_generate_module(cfg, m)
+    }
+    applied_cfg = INC.applied(cfg)
+    # Every component whose source directory the record puts elsewhere, and
+    # whose recorded directory holds anything: jm moves out of it only when
+    # it can show the files there are its own.
+    suspect = [
+        n
+        for n in INC.native_names(cfg)
+        if n not in unplaced
+        and n not in hand
+        and INC.src_dir(n, applied_cfg) != INC.src_dir(n, cfg)
+        and (d := INC.src_path(root, n, applied_cfg)).is_dir()
+        and any(f.is_file() for f in d.iterdir())
+    ]
+    if suspect and C.build_system(cfg) == "cmake":
+        renders: "dict[str, list[str]]" = {n: [] for n in suspect}
+        # What jm renders for each at its recorded place, under the recorded
+        # manifest -- and under the current one, whose CMakeLists text a
+        # project placed by a jm older than the record carries (0.119 nested
+        # its headers and tests, not its C).
+        for owner in (applied_cfg, cfg):
+            with tempfile.TemporaryDirectory(prefix="jm-placed-") as tmp:
+                t2 = Path(tmp) / C.project_name(cfg)
+                replay_project(owner, t2, root, prefix_checks=False)
+                for name in suspect:
+                    rel = INC.src_rel(name, "CMakeLists.txt", owner)
+                    if (t2 / rel).is_file():
+                        renders[name].append(
+                            (t2 / rel).read_text(encoding="utf-8")
+                        )
+        recorded = INC.APPLIED_LAYOUT in (cfg.get("project") or {})
+        for name in suspect:
+            rel = INC.src_rel(name, "CMakeLists.txt", applied_cfg)
+            real = root / rel
+            text = real.read_text(encoding="utf-8") if real.is_file() else ""
+            if any(
+                _cmake_is_jms(text, r, name, applied_cfg)
+                for r in renders[name]
+            ):
+                continue
+            where = (
+                f"jm's record says it last placed `{name}` at"
+                f" {INC.src_dir(name, applied_cfg)}/"
+                if recorded
+                else f"jm has no record of placing `{name}` (the project was"
+                " last applied by a jm before the record), so it reads"
+                f" {INC.src_dir(name, applied_cfg)}/ as its last place"
+            )
+            fix = (
+                "The record may be stale: correct or delete `[project]"
+                " applied_layout` / `[module.X] applied_package`, or move"
+                " the files yourself. If it is only out of date, restore the"
+                " layout or package it records, run `jm apply`, then change"
+                " it again"
+                if recorded and _placement_changed(applied_cfg, cfg, name)
+                # No record, or one the layout and package still match: the
+                # CMakeLists differs from the render through some other
+                # edit (a `depends_on`, say), which is what to undo.
+                else "Undo the manifest edits made since the last apply, run"
+                " `jm apply` once on this version, then redo them; or move"
+                " the files yourself"
+            )
+            errors.append(
+                f"{where}, and the manifest puts it at"
+                f" {INC.src_dir(name, cfg)}/ -- but {rel} is not the"
+                " CMakeLists jm renders there, so jm cannot show those files"
+                f" are its own and moves none of them. {fix} (gh-2459)"
+            )
+    if errors:
+        C._refuse(errors)
+
+
+def _placement_changed(applied_cfg: dict, cfg: dict, name: str) -> bool:
+    """Whether *name*'s layout or module ``package`` differs between the
+    recorded manifest *applied_cfg* and *cfg* (gh-2459): the edit a move
+    refusal tells the author to restore, when it is the one made."""
+    if INC.layout(applied_cfg) != INC.layout(cfg):
+        return True
+    module = C.component_module(cfg, name) or next(
+        (m for m in C.modules(cfg) if C.module_paths(m).cname == name), None
+    )
+    return module is not None and C.module_package_resolved(
+        applied_cfg, module
+    ) != C.module_package_resolved(cfg, module)
+
+
+def _kind_cnames(cfg: dict) -> "set[str]":
+    """The cnames of the ``kind`` modules (handle, capsule, composer): their
+    ``<cname>_core.h`` is their backing's, the author's by design."""
+    return {
+        C.module_paths(m).cname
+        for m in C.modules(cfg)
+        if (cfg.get("module", {}).get(m) or {}).get("kind")
+    }
+
+
+def _never_placed(
+    root: Path, cfg: dict, name: str, kinds: "set[str]"
+) -> "bool | None":
+    """Whether jm has never put *name* where *cfg* puts it (gh-2459).
+
+    Where that is its module's package -- its source directory is not the
+    flat ``native/src/<name>`` -- jm's record decides, which nothing in the
+    tree can fool (`_incpath.placed`): a member is placed when its module's
+    ``applied_objects`` names it. ``None`` when the module's record predates
+    that key: unknown, so :func:`_refuse_unowned_new_places` asks the tree
+    to show it -- the CMakeLists there must be jm's render.
+
+    At the flat place (every component in the flat and mirrored layouts, a
+    standalone one under nested) there is no record to read, and it is the
+    tree: the file jm writes there first and keeps -- the sacred
+    ``<name>_core.c`` (a header-only component's ``<name>_core.h``; a kind
+    module's binding, which owns no core) -- is absent, and the root
+    ``CMakeLists.txt`` does not wire that directory in jm's own blocks. A
+    component whose core was deleted to be rendered again (`jm
+    regenerate`, a deleted directory) is still wired there: that is jm's
+    place, put back. Read only to decide what is asked before writing;
+    nothing is moved on it. The `make` backend has no wiring to read, and
+    is never asked."""
+    if not INC.at_flat_place(name, cfg):
+        known = INC.placed(cfg, name)
+        return None if known is None else not known
+    if C.build_system(cfg) != "cmake":
+        return False
+    if name in kinds:
+        first = INC.src_path(root, name, cfg) / f"{name}_ext.c"
+    elif name in C.components(cfg) and C.is_header_only(cfg, name):
+        first = INC.core_h(root, name, cfg)
+    else:
+        first = INC.src_path(root, name, cfg) / f"{name}_core.c"
+    if first.is_file():
+        return False
+    top = root / "CMakeLists.txt"
+    if not top.is_file():
+        return True
+    line = INC.subdir_line(name, cfg).rstrip("\n")
+    # jm's own wiring is the run under its sentinels; the same line the
+    # author appends elsewhere (wiring a vendored directory) is theirs.
+    text = top.read_text(encoding="utf-8")
+    for sentinel in (_COMPONENTS_ANCHOR, _MODULES_ANCHOR):
+        at = text.find(sentinel)
+        if at < 0:
+            continue
+        start = text.index("\n", at) + 1
+        end = text.find("\n# ──", start)
+        run = text[start : end if end >= 0 else len(text)]
+        if re.search(rf"^[ \t]*{re.escape(line)}[ \t]*$", run, re.M):
+            return False
+    return True
+
+
+def _new_places(
+    root: Path, cfg: dict
+) -> "dict[str, tuple[list[tuple[str, bytes]], bool]]":
+    """What already sits at each component's NEW place, before anything
+    moves (gh-2459): per component with a move pending, or one jm has never
+    put where the manifest puts it (:func:`_never_placed`), the files
+    directly in its source and header directories -- project-relative path
+    and bytes -- and whether its placement is unknown and must be shown
+    (:func:`_never_placed` returning ``None``)."""
+    by_name = INC.relocations_by_name(root)
+    # Per component, the directories its waiting moves land in.
+    landing: "dict[str, set[Path]]" = {}
+    for n, pairs in by_name.items():
+        for o, dest in pairs:
+            if (root / o).is_file():
+                landing.setdefault(n, set()).add((root / dest).parent)
+    hand = {
+        C.module_paths(m).cname
+        for m in C.modules(cfg)
+        if C.is_no_generate_module(cfg, m)
+    }
+    kinds = _kind_cnames(cfg)
+    out: "dict[str, list[tuple[str, bytes]]]" = {}
+    for name in INC.native_names(cfg):
+        if name in hand:
+            continue
+        # A component with moves waiting is new where they land (a switch
+        # can move its tests alone, and a project placed before the record
+        # already has its headers here); one jm never put here is new in
+        # both its directories.
+        own = {
+            INC.src_path(root, name, cfg),
+            INC.path(root, INC.core_dir(name, cfg), cfg),
+        }
+        if name in landing:
+            dirs = sorted(own & landing[name])
+        else:
+            never = _never_placed(root, cfg, name, kinds)
+            if never is False:
+                continue
+            dirs = sorted(own)
+        files: "list[tuple[str, bytes]]" = []
+        for d in dirs:
+            if d.is_dir():
+                files += [
+                    (f.relative_to(root).as_posix(), f.read_bytes())
+                    for f in sorted(d.iterdir())
+                    if f.is_file()
+                ]
+        out[name] = (files, name not in landing and never is None)
+    return out
+
+
+def _refuse_unowned_new_places(
+    root: Path,
+    temp_root: "Path | None",
+    cfg: dict,
+    new: "dict[str, tuple[list[tuple[str, bytes]], bool]]",
+) -> None:
+    """Refuse to write a component into a new place that already held files
+    jm cannot show are its own (gh-2459).
+
+    A new source directory (:func:`_new_places`) must have been empty, or
+    every file in it one jm's replay renders there for the component, byte
+    for byte. A sacred ``<name>_core.c`` / ``<name>_core.h`` already sitting
+    at a new place is always someone else's: jm writes it once, when it
+    creates the component, and never into a directory that has one. Nothing
+    is matched by name or pattern: a vendored ``native/src/third_party/fir``
+    -- whatever its CMakeLists says -- is not what jm renders, so it is
+    never written into. In a header directory jm writes only the headers it
+    names, never building the directory, so there the sacred core header and
+    each header jm renders are asked, and an author's other headers are
+    left as they are (a kind module's core header is its backing's).
+
+    With *temp_root* None (before the render), only the sacred cores are
+    asked: they need no render to be someone else's.
+
+    A member whose module's record predates ``applied_objects`` (placement
+    unknown, :func:`_never_placed`) is shown to be jm's by its CMakeLists
+    instead -- jm's render there (:func:`_cmake_is_jms`) -- and is recorded
+    by this apply; anything else is refused with what to do.
+    """
+    from . import _extrahook
+
+    kinds = _kind_cnames(cfg)
+    errors: "list[str]" = []
+    for name, (files, unknown) in new.items():
+        rel = INC.src_rel(name, "CMakeLists.txt", cfg)
+        # Unknown placement with a CMakeLists there: it must be jm's
+        # render. With none, nothing of jm's is there to show, and the
+        # place is asked as a new one, below.
+        if unknown and (root / rel).is_file():
+            if temp_root is None:
+                continue
+            real, mine = root / rel, temp_root / rel
+            if (
+                real.is_file()
+                and mine.is_file()
+                and _cmake_is_jms(
+                    real.read_text(encoding="utf-8"),
+                    mine.read_text(encoding="utf-8"),
+                    name,
+                    cfg,
+                )
+            ):
+                continue
+            errors.append(
+                f"jm has no record of placing `{name}` in"
+                f" {INC.src_dir(name, cfg)}/ (the project, or its module, was"
+                " last applied before jm recorded what it placed), and"
+                f" {rel} is not the CMakeLists jm renders there, so it cannot"
+                " show the directory is its own. If it is jm's, restore the"
+                " layout and package you last applied, run `jm apply` once"
+                " on this version, then change them again; if it is not,"
+                " move it, or choose another name or module package"
+                " (gh-2459)"
+            )
+            continue
+        headers = INC.rel(INC.core_dir(name, cfg), cfg) + "/"
+        sacred = {
+            INC.src_rel(name, f"{name}_core.c", cfg),
+            INC.core_rel(name, cfg),
+        }
+        bad = []
+        for rel, data in files:
+            # jm's own contract with the author: the hooks it includes by
+            # name and never writes (`_extrahook.KEPT_SUFFIXES`) may be
+            # staged before the component exists.
+            if rel.endswith(_extrahook.KEPT_SUFFIXES):
+                continue
+            if temp_root is None:
+                # Before the render: only a sacred core is asked.
+                if rel in sacred and name not in kinds:
+                    bad.append(rel)
+                continue
+            mine = temp_root / rel
+            # In a header directory jm writes only the headers it names; a
+            # header of the author's beside them (a foreign type's, or one
+            # a move from an ancestor directory left where its include finds
+            # it) is never written over and never built, so only a sacred
+            # core header, or one jm renders there, is asked of it.
+            # A kind module's directories hold the author's backing beside
+            # jm's binding by design: only what jm renders there is asked.
+            if name in kinds and not mine.is_file():
+                continue
+            if (
+                rel.startswith(headers)
+                and not mine.is_file()
+                and rel not in sacred
+            ):
+                continue
+            if (
+                (rel in sacred and name not in kinds)
+                or not mine.is_file()
+                or mine.read_bytes() != data
+            ):
+                bad.append(rel)
+        if bad:
+            errors.append(
+                f"`{name}` goes in {INC.src_dir(name, cfg)}/ and {headers},"
+                f" which already hold {', '.join(bad)} -- files jm does not"
+                " render there for it, so it cannot show they are its own"
+                " and writes nothing into them. Move them, or choose another"
+                " name or module package (gh-2459)"
+            )
+    if errors:
+        # A component jm finds elsewhere -- moved by hand, or by a jm older
+        # than the record -- is named as that, which is what to fix.
+        C._refuse(misplaced_advice(root, cfg) or errors)
+
+
+def misplaced_advice(root: Path, cfg: dict) -> "list[str]":
+    """One sentence per file at a place jm has no record of putting it
+    (`_incpath.misplaced`): where it is, where the manifest puts it, what
+    to do. Empty when there is none."""
+    return [
+        f"{found} belongs to `{name}`, but jm has no record of placing it"
+        f" there, and the manifest puts it at {want}: move it there, with"
+        " the files beside it, or declare the layout or package it was"
+        " placed under (gh-2459)"
+        for name, found, want in INC.misplaced(root, cfg)
+    ]
 
 
 def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
@@ -691,6 +1096,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
         # `0.1.0` and disagree with an in-sync project, and `apply` materialised
         # a missing copy at `0.1.0`. The stamp below only reached the manifest.
         version=C.project_version(cfg),
+        # gh-2423: and the native layout, for the same reason: a replay that
+        # renders the tests flat makes a mirrored project's "missing".
+        layout=(cfg.get("project") or {}).get("layout"),
     )
     # Stamp the real project's version so generated files (pyproject, .pyi)
     # carry it rather than the `new` default.
@@ -773,8 +1181,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # otherwise the temp render drops the #include and apply reports the real
     # project's correctly-wired _ext.c as drift.
     for cname in [C.module_paths(m).cname for m in mods] + list(standalone):
-        src_dir = project_root / "native" / "src" / cname
-        dst_dir = temp_root / "native" / "src" / cname
+        src_dir = INC.src_path(project_root, cname, cfg)
+        dst_dir = INC.src_path(temp_root, cname, cfg)
         if src_dir.is_dir():
             dst_dir.mkdir(parents=True, exist_ok=True)
             for extra in src_dir.glob("*_extra.c"):
@@ -1304,7 +1712,7 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
         impl_body = _resolve_impl(sec, octx, root, f"object {comp}")
         if impl_body is None:
             continue
-        h_path = INC.core_h(root, comp)
+        h_path = INC.core_h(root, comp, cfg)
         if not h_path.exists():
             continue
         original = h_path.read_text(encoding="utf-8")
@@ -1386,7 +1794,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
         csym = CSYM.stem(cfg, comp)
         void_decl = re.compile(rf"\bvoid(\s+){csym}_destroy\b")
 
-        h_path = INC.core_h(root, comp)
+        h_path = INC.core_h(root, comp, cfg)
         if h_path.exists():
             text = h_path.read_text(encoding="utf-8")
             new = void_decl.sub(rf"int\g<1>{csym}_destroy", text)
@@ -1394,7 +1802,7 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
                 _textio.write_text(h_path, new)
                 patched.append(h_path)
 
-        c_path = root / "native" / "src" / comp / f"{comp}_core.c"
+        c_path = INC.src_path(root, comp, cfg) / f"{comp}_core.c"
         if not c_path.exists():
             continue
         text = c_path.read_text(encoding="utf-8")
@@ -1444,9 +1852,7 @@ def _owned_fragments(root: Path, cfg: dict) -> set:
                 continue
             ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
             for fid in ids:
-                out.add(
-                    Path("native") / "src" / cname / f"{cname}_ext_{fid}.c"
-                )
+                out.add(Path(INC.src_rel(cname, f"{cname}_ext_{fid}.c", cfg)))
     return out
 
 
@@ -1634,6 +2040,184 @@ def reconcile_backend_makefile(
         f"  update  {root / 'Makefile'} (build = {C.build_system(cfg)}; "
         "was the other backend's)"
     )
+
+
+def _relocate_native(root: Path) -> "list[Path]":
+    """Move each generated native test, bench and header to *root*'s layout.
+
+    gh-2423. The layout's moves are `_createonly` renames
+    (:func:`_incpath.relocations`), and `upgrade` makes every rename; `apply`
+    makes these too, because unlike a renamed config file the build names
+    the new path -- holding one back would leave a CMakeLists naming a
+    source that is not there. Through the same mover as `upgrade`, so a
+    file present in both places is left for the author to merge, with the
+    same advice.
+
+    Then every remaining reference in a build file jm does not rewrite --
+    the root ``CMakeLists.txt``, a hand-owned component one (gh-275), the
+    ``<d>_extra.cmake`` hook beside each (gh-1351, gh-2429), the ``make``
+    backend's create-only ``Makefile`` -- to an old place whose file is now
+    at the new one is respelled, so a target the author registered by hand
+    follows the file it builds. Whole path tokens only, so
+    ``.../test_fir_core.c`` never matches inside a longer name. In a CMake
+    file the target that builds a moved source is also given the directory
+    the source left (:func:`_include_left_dirs`), as jm's own test target
+    is given ``native/tests``.
+
+    gh-2427: a header moved into or out of the nested layout takes every
+    ``#include`` (and manifest string) naming it along, through the one
+    respeller of a header move, `_upgrade.respell_includes` -- the sacred
+    ``_core.c`` includes its own header, so without it a switched project
+    does not compile. Only a spelling that resolves to a moved header is
+    touched.
+
+    Returns the files respelled, for the run's change report.
+    """
+    from . import _upgrade
+
+    moves = INC.relocations(root)
+    pending = [(o, n) for o, n in moves if (root / o).is_file()]
+    _upgrade._rename_superseded(root, pending)
+    landed = [
+        (o, n)
+        for o, n in moves
+        if (root / n).is_file() and not (root / o).exists()
+    ]
+    # Switching back to flat empties the mirrored directories, and a move out
+    # of the nested layout the module's directories above them: an empty one
+    # is jm's leftover, and a tree's own root is never removed.
+    tops = {root / t for t in INC.HARNESS} | {INC.header_root(root)}
+    for old, _new in landed:
+        d = (root / old).parent
+        while d not in tops and root in d.parents:
+            if not d.is_dir() or any(d.iterdir()):
+                break
+            d.rmdir()
+            d = d.parent
+    respelled: "list[Path]" = []
+    if not landed:
+        return respelled
+    # The headers THIS run moved: the respell walks every C file of the
+    # project (18.7 s on doppler's tree, measured 2026-11-04), so it is paid
+    # once, by the run that moves, not by every `apply` of a settled tree.
+    inc_head = INC.INC_DIR + "/"
+    headers = {
+        o[len(inc_head) :]: n[len(inc_head) :]
+        for o, n in landed
+        if o.startswith(inc_head) and (o, n) in pending
+    }
+    if headers:
+        respelled += [
+            root / rel for rel in _upgrade.respell_includes(root, headers)
+        ]
+    landed = [(o, n) for o, n in landed if not o.startswith(inc_head)]
+    if not landed:
+        return respelled
+    # gh-2429: each component CMakeLists' `<d>_extra.cmake` too, asked of
+    # the one reader of "the hook beside it" -- the file jm includes and
+    # never writes is where an author's own targets for the directory live.
+    build_files = [
+        root / "CMakeLists.txt",
+        root / "Makefile",
+        *_libwiring.with_hooks(INC.src_cmakelists(root, C.load(root))),
+    ]
+    for path in build_files:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        new = text
+        for old, moved in landed:
+            new = re.sub(
+                rf"(?<![\w./-]){re.escape(old)}(?![\w./-])", moved, new
+            )
+            new = re.sub(
+                rf"(?<=\$\{{CMAKE_SOURCE_DIR\}}/){re.escape(old)}"
+                rf"(?![\w./-])",
+                moved,
+                new,
+            )
+        if path.name != "Makefile":
+            new = _include_left_dirs(root, new, landed)
+        if new != text:
+            _textio.write_text(path, new)
+            respelled.append(path)
+    return respelled
+
+
+#: The CMake commands that give a target a source file: the declaration
+#: names the target first, as `target_sources` does.
+_SOURCE_COMMANDS = ("add_executable", "add_library", "target_sources")
+
+
+def _include_left_dirs(
+    root: Path, text: str, landed: "list[tuple[str, str]]"
+) -> str:
+    """*text*, a hand-written CMake file, with each target that builds a
+    moved native file given the directory that file left (gh-2429).
+
+    A C file finds a quoted ``#include "x.h"`` beside itself before it
+    looks on the include path, so a test moved from ``native/tests/`` to
+    ``native/tests/fir/`` loses every header it shared that directory with
+    -- jm's ``jm_test.h``, and the author's own. jm's generated target is
+    given ``native/tests`` for that reason (`_incpath.native_slots`); a
+    target the author wrote, whose source path the respell just changed, is
+    given the same, so the build stays green with no step of theirs. The
+    edit is one ``target_include_directories`` line after the command that
+    names the source, the same class of edit as the path respell itself.
+
+    Both directions from *landed*: switching back to flat gives a target
+    the mirrored directory it left only while that directory still exists
+    -- an emptied one is removed, and an include of nothing is noise. A
+    target already including the directory is left alone, so a second run
+    adds nothing.
+
+    Parameters
+    ----------
+    root : Path
+        The project root.
+    text : str
+        The CMake file's text, already respelled.
+    landed : list of (str, str)
+        ``(old, new)`` for each native file now at *new*.
+
+    Returns
+    -------
+    str
+        *text* with the include lines added.
+    """
+    from . import _rootcmake
+
+    spans = _rootcmake.call_spans(text)
+    included: "dict[str, set[str]]" = {}
+    for call, _s, _e in spans:
+        if call.name == "target_include_directories" and call.args:
+            included.setdefault(call.args[0], set()).update(
+                a.rstrip("/") for a in call.args[1:]
+            )
+    inserts: "dict[int, list[str]]" = {}
+    for old, new in landed:
+        left = Path(old).parent.as_posix()
+        if not (root / left).is_dir():
+            continue
+        want = f"${{CMAKE_SOURCE_DIR}}/{left}"
+        for call, _s, end in spans:
+            if call.name not in _SOURCE_COMMANDS or not call.args:
+                continue
+            if not any(a == new or a.endswith(f"/{new}") for a in call.args):
+                continue
+            target = call.args[0]
+            have = included.setdefault(target, set())
+            if want in have or left in have:
+                continue
+            have.add(want)
+            cmd = "target_include_directories("
+            line = f"{cmd}{target} PRIVATE {want})"
+            if len(line) > 79:
+                line = f"{cmd}{target}\n{' ' * len(cmd)}PRIVATE {want})"
+            inserts.setdefault(end, []).append(f"\n{line}")
+    for end in sorted(inserts, reverse=True):
+        text = text[:end] + "".join(inserts[end]) + text[end:]
+    return text
 
 
 def _sync_missing(
@@ -1923,14 +2507,18 @@ def _splice_cmake_components(
     real = real_path.read_text(encoding="utf-8")
     temp = temp_path.read_text(encoding="utf-8")
 
-    # The regex captures the native-dir token, which for a nested module is its
-    # cname (dsp_filters), not the dotted id — so classify against cnames.
+    # The regex captures the native-dir path, whose last part for a nested
+    # module is its cname (dsp_filters), not the dotted id -- so classify
+    # against cnames. gh-2459: in the nested layout the path is the module's
+    # package path too; its last part is still the name.
     module_names = C.module_cnames(cfg)
     component_blocks: list[str] = []
     module_blocks: list[str] = []
-    for m in _SUBDIR_BLOCK.finditer(temp):
+    for m in _libwiring.jm_blocks(temp, cfg):
         (
-            module_blocks if m.group(1) in module_names else component_blocks
+            module_blocks
+            if INC.subdir_name(m.group(1)) in module_names
+            else component_blocks
         ).append(m.group(0))
 
     # c_deps: pure add_subdirectory, no Python scaffolding.
@@ -1939,7 +2527,7 @@ def _splice_cmake_components(
     seen_blocks = {b.split("\n")[0] for b in component_blocks}
     dep_blocks: list[str] = []
     for dep in C.c_deps(cfg):
-        line = f"add_subdirectory(native/src/{dep})\n"
+        line = INC.c_dep_line(dep)
         if line.rstrip("\n") not in seen_blocks:
             dep_blocks.append(line)
     component_blocks = dep_blocks + component_blocks
@@ -1948,13 +2536,11 @@ def _splice_cmake_components(
     seen_mod_blocks = {b.split("\n")[0] for b in module_blocks}
     for mod in C.modules(cfg):
         if C.is_no_generate_module(cfg, mod):
-            line = (
-                f"add_subdirectory(native/src/{C.module_paths(mod).cname})\n"
-            )
+            line = INC.subdir_line(C.module_paths(mod).cname, cfg)
             if line.rstrip("\n") not in seen_mod_blocks:
                 module_blocks.append(line)
 
-    new_real = _SUBDIR_BLOCK.sub("", real)
+    new_real = _libwiring.strip_jm_blocks(real, cfg)
 
     def _insert(text: str, sentinel: str, content: str) -> str:
         if not content or sentinel not in text:
@@ -2304,10 +2890,17 @@ def _warn_dropped_cmake(real: Path, original: str, rendered: str) -> None:
     if not dropped:
         return
     d = real.parent.name
+    # The file's own directory: under `nested` it sits below its module's
+    # package, so it is read off the path, not rebuilt from its name.
+    src = real.parent.as_posix()
+    for parent in real.parents:
+        if (parent / "just-makeit.toml").is_file():
+            src = real.parent.relative_to(parent).as_posix()
+            break
     _report.warn(
-        f"native/src/{d}/CMakeLists.txt is regenerated, and it carries "
+        f"{src}/CMakeLists.txt is regenerated, and it carries "
         f"{', '.join(f'{n}()' for n in dropped)} that jm does not write -- "
-        f"`jm apply` drops it. Move it into native/src/{d}/{d}_extra.cmake, "
+        f"`jm apply` drops it. Move it into {src}/{d}_extra.cmake, "
         "which the generated file includes and jm never touches (gh-1351)."
     )
 
@@ -2452,10 +3045,9 @@ def _refuse_cmake_that_would_lose(
     """
     reconciled = _reconciled_cmake_dirs(cfg)
     lost: "list[tuple[str, list[str]]]" = []
-    src = temp_root / "native" / "src"
-    for temp in sorted(src.glob("*/CMakeLists.txt")) if src.is_dir() else []:
+    for temp in INC.src_cmakelists(temp_root, cfg):
         d = temp.parent.name
-        rel = f"native/src/{d}/CMakeLists.txt"
+        rel = temp.relative_to(temp_root).as_posix()
         real = root / rel
         if not real.is_file() or _status_allowed(cfg, rel):
             continue
@@ -2471,7 +3063,7 @@ def _refuse_cmake_that_would_lose(
             if lib not in kept
         ]
         if gone:
-            lost.append((d, gone))
+            lost.append((rel, gone))
     if not lost:
         return
     from ._render import extra_cmake_name
@@ -2480,10 +3072,11 @@ def _refuse_cmake_that_would_lose(
         "`jm apply` would erase an OBJECT library it does not write, so it"
         " wrote\nnothing:"
     ]
-    for d, gone in lost:
+    for rel, gone in lost:
+        d = rel.rsplit("/", 2)[-2]
         lines.append(
-            f"  native/src/{d}/CMakeLists.txt: {', '.join(gone)}"
-            f" -> native/src/{d}/{extra_cmake_name(d)}"
+            f"  {rel}: {', '.join(gone)}"
+            f" -> {rel.rsplit('/', 1)[0]}/{extra_cmake_name(d)}"
         )
     lines.append(
         "Each CMakeLists.txt here is regenerated from the manifest, and a"
@@ -2635,7 +3228,7 @@ def missing_family_headers(root: Path, cfg: dict) -> "list[tuple[str, str]]":
     out = []
     for comp in C.components(cfg):
         fam = C.core_family(cfg, comp)
-        if fam and not (INC.inc_dir(root) / fam.header).is_file():
+        if fam and not INC.resolve(root, fam.header).is_file():
             out.append((comp, fam.header))
     return out
 
@@ -2656,13 +3249,13 @@ def _add_cmake_block_for(
     """
     real = real_path.read_text(encoding="utf-8")
     # Guard: block already wired in.
-    if f"add_subdirectory(native/src/{comp})" in real:
+    if INC.subdir_line(comp, cfg).rstrip("\n") in real:
         return False
 
     temp = temp_path.read_text(encoding="utf-8")
     block: str | None = None
     for m in _SUBDIR_BLOCK.finditer(temp):
-        if m.group(1) == comp:
+        if INC.subdir_name(m.group(1)) == comp:
             block = m.group(0)
             break
     if block is None:
@@ -2808,8 +3401,8 @@ def _sync_aggregates(
             mp = C.module_paths(mod)
             out_pkg = C.module_package_resolved(cfg, mod)
             glue = [
-                f"native/src/{mp.cname}/{mp.cname}_ext.c",
-                f"native/src/{mp.cname}/CMakeLists.txt",
+                INC.src_rel(mp.cname, f"{mp.cname}_ext.c", cfg),
+                INC.src_rel(mp.cname, "CMakeLists.txt", cfg),
                 f"src/{pkg}/{out_pkg}/{mp.leaf}.pyi",
             ]
             # gh-287: a composer with the optional c-face CLI also regenerates
@@ -2819,7 +3412,7 @@ def _sync_aggregates(
             if C.is_composer_module(cfg, mod) and _composer.composer_cli(
                 cfg, mod
             ).get("enabled"):
-                glue.append(f"native/src/{mp.cname}/{mp.cname}_cli.c")
+                glue.append(INC.src_rel(mp.cname, f"{mp.cname}_cli.c", cfg))
             # gh-998: and its published straight-C seams. Gated on the same
             # predicate `materialize` writes the file under — a list here that
             # disagreed with what was written into the temp tree is precisely
@@ -2828,7 +3421,7 @@ def _sync_aggregates(
             if C.is_composer_module(cfg, mod) and _composer.render_bridge_h(
                 cfg, mod
             ):
-                glue.append(INC.rel(_composer.bridge_h(mod), root))
+                glue.append(INC.rel(_composer.bridge_h(mod, cfg), root))
             for rel in glue:
                 if _overwrite_if_changed(
                     root / rel,
@@ -2871,8 +3464,8 @@ def _sync_aggregates(
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.
         for rel in (
-            f"native/src/{mp.cname}/{mp.cname}_ext.c",
-            f"native/src/{mp.cname}/CMakeLists.txt",
+            INC.src_rel(mp.cname, f"{mp.cname}_ext.c", cfg),
+            INC.src_rel(mp.cname, "CMakeLists.txt", cfg),
             f"src/{pkg}/{out_pkg}/{mp.leaf}.pyi",
         ):
             if _overwrite_if_changed(
@@ -2888,7 +3481,7 @@ def _sync_aggregates(
         # also create-only. The module header accumulates function
         # declarations: inject any the manifest implies that are missing,
         # splice-free.
-        rel = INC.core_rel(mp.cname, root)
+        rel = INC.core_rel(mp.cname, cfg)
         if _refresh_core_h_decls(root / rel, temp_root / rel, mp.cname):
             if root / rel not in updated:
                 updated.append(root / rel)
@@ -2898,7 +3491,7 @@ def _sync_aggregates(
         from ._init import _inject_includes_into_core_h
 
         for obj in C.module_objects(cfg, mod):
-            obj_h = INC.core_h(root, obj)
+            obj_h = INC.core_h(root, obj, cfg)
             if _inject_includes_into_core_h(
                 obj_h,
                 obj,
@@ -2919,14 +3512,12 @@ def _sync_aggregates(
             # gh-1840: and, like every peer, never a file `status_allow`
             # names (gh-441) -- this one alone was rewritten anyway, so an
             # author keeping their module object's CMakeLists lost it.
-            _obj_cml = f"native/src/{obj}/CMakeLists.txt"
+            _obj_cml = INC.src_rel(obj, "CMakeLists.txt", cfg)
             if obj != C.collocated_object(cfg, mod) and not (
                 honor_status_allow and _status_allowed(cfg, _obj_cml)
             ):
-                obj_cmake = root / "native" / "src" / obj / "CMakeLists.txt"
-                temp_cmake = (
-                    temp_root / "native" / "src" / obj / "CMakeLists.txt"
-                )
+                obj_cmake = root / _obj_cml
+                temp_cmake = temp_root / _obj_cml
                 if _reconcile_object_core_cmake(
                     obj_cmake,
                     temp_cmake,
@@ -3024,7 +3615,7 @@ def _sync_aggregates(
             for _rel, _render in (
                 (f"src/{pkg}/{comp}.pyi", _R.render_component_pyi),
                 (
-                    f"native/src/{comp}/{comp}_ext.c",
+                    INC.src_rel(comp, f"{comp}_ext.c", cfg),
                     lambda c: _R.render(_R.COMPONENT_EXT_C, c),
                 ),
             ):
@@ -3039,14 +3630,14 @@ def _sync_aggregates(
         # per-source properties, `if(VAR)` blocks — so it goes through the
         # same reconcile as a module object's (gh-1301), not a blind
         # overwrite.
-        _cml = f"native/src/{comp}/CMakeLists.txt"
+        _cml = INC.src_rel(comp, "CMakeLists.txt", cfg)
         if not (honor_status_allow and _status_allowed(cfg, _cml)):
             if _reconcile_object_core_cmake(
                 root / _cml, temp_root / _cml, comp, []
             ):
                 updated.append(root / _cml)
         for rel in (
-            f"native/src/{comp}/{comp}_ext.c",
+            INC.src_rel(comp, f"{comp}_ext.c", cfg),
             f"src/{pkg}/{comp}.pyi",
         ):
             if _overwrite_if_changed(
@@ -3065,7 +3656,7 @@ def _sync_aggregates(
         # `jm regenerate` for a structural change. _core.c is fully sacred:
         # never in any merge loop, created once by _sync_missing.
         if _refresh_component_core_h(root, temp_root, cfg, comp):
-            updated.append(root / INC.core_rel(comp, root))
+            updated.append(root / INC.core_rel(comp, cfg))
 
     # gh-627: a module object's header needs the accessor prototype for a
     # manifest-declared property, or the freshly spliced binding calls an
@@ -3086,7 +3677,7 @@ def _sync_aggregates(
             continue
         if comp not in cfg:
             continue
-        core_h = INC.core_h(root, comp)
+        core_h = INC.core_h(root, comp, cfg)
         if not core_h.exists():
             continue
         # gh-1310: a macro-family member takes the FULL reconcile a standalone
@@ -3192,7 +3783,7 @@ def _reconcile_procglobal_headers(
         elif only_mod is not None:
             if comp not in C.module_objects(cfg, only_mod):
                 continue
-        rel = INC.rel(_procglobal.header_name(comp), root)
+        rel = INC.rel(_procglobal.header_name(comp, cfg), root)
         if not (temp_root / rel).is_file():
             continue
         if _overwrite_if_changed(
@@ -3225,7 +3816,7 @@ def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
     in the temp header is not swept along. `variable_output` methods declare a
     sibling `_max_out`, and it is as undeclared as its method.
     """
-    temp_h = INC.core_h(temp_root, comp)
+    temp_h = INC.core_h(temp_root, comp, cfg)
     if not temp_h.exists():
         return []
     from ._init import _core_h_decl_lines
@@ -3308,7 +3899,7 @@ def _refresh_component_core_h(
     property fix. Extending it to module objects is a migration in its own
     right. Returns True when the file changed.
     """
-    rel = INC.core_rel(comp, root)
+    rel = INC.core_rel(comp, cfg)
     changed = _refresh_core_h_decls(
         root / rel, temp_root / rel, comp, C.core_family(cfg, comp)
     )
@@ -3409,7 +4000,7 @@ def component_core_sources(root: Path, comp: str) -> "list[str]":
     header as well as the source"* -- and gh-1294 did not carry it across. It
     is one list now so a third reader cannot get it wrong either.
     """
-    d = root / "native" / "src" / comp
+    d = INC.src_path(root, comp)
     out = [
         p.read_text(encoding="utf-8")
         for p in sorted(d.glob("*.c"))
@@ -3486,9 +4077,9 @@ def _splice_missing_core_definitions(
     comps += [o for m in mods for o in C.module_objects(cfg, m)]
 
     for comp in comps:
-        real_dir = root / "native" / "src" / comp
+        real_dir = INC.src_path(root, comp, cfg)
         core_c = real_dir / f"{comp}_core.c"
-        temp_c = temp_root / "native" / "src" / comp / f"{comp}_core.c"
+        temp_c = INC.src_path(temp_root, comp, cfg) / f"{comp}_core.c"
         if not core_c.exists() or not temp_c.exists():
             continue
         temp_text = temp_c.read_text(encoding="utf-8")
@@ -3512,14 +4103,14 @@ def _splice_missing_core_definitions(
         )
         if _extra:
             _report.warn(
-                f"native/src/{comp}/{comp}_core.c does not define "
+                f"{INC.src_rel(comp, f'{comp}_core.c', cfg)} does not define "
                 f"{', '.join(f'{n}()' for n in missing)}, which the manifest "
                 "declares and the binding calls — the extension will not "
                 f"link. {comp}_core also compiles "
                 f"{', '.join(_extra)}, so the body may live somewhere jm "
                 "cannot enumerate and appending it could define the symbol "
                 "twice -- write it yourself, or say where by putting it in "
-                f"native/src/{comp}/.",
+                f"{INC.src_dir(comp, cfg)}/.",
                 gates=True,
             )
             continue
@@ -3558,7 +4149,7 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
 
     updated: list[Path] = []
     for comp in C.components(cfg):
-        cmake_path = root / "native" / "src" / comp / "CMakeLists.txt"
+        cmake_path = INC.src_path(root, comp, cfg) / "CMakeLists.txt"
         if not cmake_path.exists():
             continue
         text = cmake_path.read_text(encoding="utf-8")
@@ -3573,16 +4164,7 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
         # route. Seed it here when absent.
         if "JM_MATH_LIBRARY" not in text:
             text = R.LIBM_PREAMBLE + "\n" + text
-        bench_block = (
-            f"\nadd_executable(bench_{comp}_core\n"
-            f"    ${{CMAKE_SOURCE_DIR}}/native/benchmarks/"
-            f"bench_{comp}_core.c)\n"
-            f"target_link_libraries(bench_{comp}_core"
-            f" PRIVATE {comp}_core " + R.LIBM_REF + ")\n"
-            f"target_include_directories(bench_{comp}_core\n"
-            f"    PRIVATE {INC.CMAKE_INC}\n"
-            f"            ${{CMAKE_SOURCE_DIR}}/native/benchmarks)\n"
-        )
+        bench_block = R.bench_target(comp, f" {comp}_core {R.LIBM_REF}", root)
         _textio.write_text(cmake_path, text.rstrip() + bench_block)
         updated.append(cmake_path)
     return updated
@@ -3601,9 +4183,8 @@ def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
         ("reset_impl", "reset_impl_file"),
         ("destroy_impl", "destroy_impl_file"),
     ]
-    for key, value in fragment.items():
-        if key in ("project", "module", "include"):
-            continue
+    for key in C.components(fragment):
+        value = fragment[key]
         if not isinstance(value, dict):
             continue
         for ik, ifk in _impl_pairs:
@@ -3682,10 +4263,9 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
 
     # Collect module-routing directives and validate before side-effects.
     module_directives: list[tuple[str, str]] = []
-    for key, value in fragment.items():
-        if key in ("project", "module", "include") or not isinstance(
-            value, dict
-        ):
+    for key in C.components(fragment):
+        value = fragment[key]
+        if not isinstance(value, dict):
             continue
         mod_name = value.get("module")
         if isinstance(mod_name, str) and mod_name:
@@ -3777,7 +4357,7 @@ def _dangling_object_fragments(root: Path, cfg: dict) -> list[str]:
     for comp in C.components(cfg):
         if comp in module_owned:
             continue
-        cml = root / "native" / "src" / comp / "CMakeLists.txt"
+        cml = INC.src_path(root, comp, cfg) / "CMakeLists.txt"
         if not cml.exists():
             continue
         text = cml.read_text(encoding="utf-8")
@@ -3795,6 +4375,7 @@ def run(
     *,
     honor_status_allow: bool = True,
     replay_out: Path | None = None,
+    refuse_order: bool = True,
 ) -> None:
     """Reconcile *root* against its manifest.
 
@@ -3803,6 +4384,11 @@ def run(
     there before anything in *root* is touched, and survives this call. Only
     `status` uses it, to compare create-only files that `apply` itself will
     never rewrite; passing it does not change what `apply` does.
+
+    ``refuse_order`` -- gh-2465. False only from `status`, whose scratch
+    apply must not refuse a definition whose parameter order the manifest
+    does not share: `status` reports that itself, as ``ORDER``, beside
+    everything else it finds, from the same `_ctorsig.order_drift`.
     """
     # gh-823: apply is the command where these findings are actionable, so
     # it is the one that counts them and says how many matter. Reset here
@@ -3838,6 +4424,7 @@ def run(
         only,
         honor_status_allow=honor_status_allow,
         replay_out=replay_out,
+        refuse_order=refuse_order,
     )
 
 
@@ -3847,6 +4434,7 @@ def _apply_manifest(
     *,
     honor_status_allow: bool,
     replay_out: "Path | None",
+    refuse_order: bool,
 ) -> None:
     """The body of :func:`run`, once any fragment is composed.
 
@@ -3893,6 +4481,9 @@ def _apply_manifest(
     # schema-8 `[app]` table is refused (naming `jm upgrade`) before the
     # first write, not after the last.
     C.apps(cfg)
+    # gh-2423: and an unknown `[project] layout`, which every native path
+    # below asks.
+    INC.layout(cfg)
     # gh-1600: an additional library the tree cannot build is refused before
     # anything is written -- a missing core is a CMake configure error, and a
     # core also in lib<pkg> puts its objects in a consumer's link twice.
@@ -3909,7 +4500,7 @@ def _apply_manifest(
             f" writes no PyInit_ there: it keeps its OWN copy of {_comp}'s"
             f" process-global state while every other module shares one."
             f" Add the adopt to its hand-written binding —"
-            f" {INC.rel(_procglobal.header_name(_comp), root)} shows it, with the"
+            f" {INC.rel(_procglobal.header_name(_comp, cfg), root)} shows it, with the"
             f" owner, attribute and capsule names as #defines.",
             gates=False,
         )
@@ -3954,13 +4545,14 @@ def _apply_manifest(
         if dangling:
             lines = [
                 f"error: object '{o}' is defined but not listed in any "
-                f"[module.X].objects, and native/src/{o}/ already holds a "
+                f"[module.X].objects, and {INC.src_dir(o, cfg)}/ already"
+                " holds a "
                 f"module-style core lib.\n"
                 f"  Promoting it to a standalone module would overwrite those "
                 f"files. Resolve by either:\n"
                 f"    - add '{o}' back to a module's objects list, or\n"
                 f"    - remove the objects/{o}.toml fragment (and its "
-                f"native/src/{o}/ dir) if the object is gone."
+                f"{INC.src_dir(o, cfg)}/ dir) if the object is gone."
                 for o in dangling
             ]
             print("\n".join(lines), file=sys.stderr)
@@ -3995,6 +4587,34 @@ def _apply_manifest(
     # the bytes each file ends with rather than by who wrote to it.
     _before = _tree_digests(root)
 
+    # gh-2423: a native test or bench still where another `[project]
+    # layout` puts it moves to where this one does, before anything is
+    # materialised -- so no scaffold lands beside the author's copy, and the
+    # CMake reconciled below names a file that is there. A move, not a
+    # re-render: the bytes are theirs. gh-2427: and a header, before the
+    # replay, which reads the real tree's headers (their docs, the author's
+    # bodies) from where this layout puts them. Every refusal above has been
+    # asked; the command's `_undo` record covers a later one (gh-1867).
+    # gh-2459: jm moves out of, or writes into, a directory only where it
+    # can show the files there are its own -- asked before the first move.
+    _refuse_unverified_moves(root, cfg, only)
+    _new_place_files = _new_places(root, cfg)
+    # A sacred core already at a new place needs no render to be foreign:
+    # refused before anything moves next to it.
+    _refuse_unowned_new_places(root, None, cfg, _new_place_files)
+    _moves = [(o, n) for o, n in INC.relocations(root) if (root / o).is_file()]
+    relocated = _relocate_native(root)
+    # A moved file is the same file at a new path: it carries its "before"
+    # digest along, so the report says what changed in it, not `create`
+    # (gh-2427; a rename prints its own `renamed` line).
+    for _old, _new in _moves:
+        if (root / _new).is_file() and not (root / _old).exists():
+            _before.setdefault(_new, _before.get(_old))
+            _before.pop(_old, None)
+    if any(p.name.endswith(".toml") for p in relocated):
+        # A manifest string named a moved header and was respelled.
+        cfg = C.load(root)
+
     from . import _object as _obj_mod
 
     with tempfile.TemporaryDirectory(prefix="jm-apply-") as tmp:
@@ -4005,8 +4625,23 @@ def _apply_manifest(
             # The replay's scopes and why each is there: `replay_project`.
             replay_project(cfg, temp_root, root)
         except (ValueError, FileNotFoundError) as e:
-            print(f"error: {e}", file=sys.stderr)
+            from ._report import error_report
+
+            print(error_report(e), file=sys.stderr)
             sys.exit(1)
+        # gh-2459: a component's new place held nothing jm cannot show is
+        # its own -- asked of the render just made, before the first write.
+        _refuse_unowned_new_places(root, temp_root, cfg, _new_place_files)
+        # gh-2465: a declaration rendered into an order the author's
+        # definition does not have, with the same types, compiles and swaps
+        # the arguments of every caller who follows the header. Asked of the
+        # replay just made, before the first write into the tree.
+        if refuse_order:
+            from . import _ctorsig
+
+            _reorders = _ctorsig.order_drift(root, temp_root, cfg)
+            if _reorders:
+                C._refuse([d.describe() for d in _reorders])
         # gh-493: reformat the throwaway scaffold to the project's house style
         # *before* it is compared against the real tree, so a c_style project's
         # on-disk (formatted) *_ext.c glue matches the freshly rendered glue
@@ -4102,7 +4737,9 @@ def _apply_manifest(
             # Same shape as the replay's handler above: the message is
             # already written for a reader, so print it and stop rather than
             # decorating a stack trace with it.
-            print(f"error: {e}", file=sys.stderr)
+            from ._report import error_report
+
+            print(error_report(e), file=sys.stderr)
             sys.exit(1)
 
         # gh-183: record the generating jm version (monotonic; surgical
@@ -4114,6 +4751,16 @@ def _apply_manifest(
             print(
                 f"  stamp   {C.FILENAME}  [project] jm_version = {_stamped}\n"
             )
+
+        # gh-2459: and what this run placed, from which the next run computes
+        # every former place -- after the moves (`_relocate_native`) and the
+        # renders have landed and the last refusal has passed, and only for
+        # a full apply: `--only` places one component, not the project.
+        # Never in `status`'s scratch run (`replay_out`): the record is jm's
+        # state, not a definition the author's manifest is missing.
+        if only is None and replay_out is None:
+            for _note in C.record_applied(root, cfg):
+                print(f"  record  {_note}")
 
         # gh-1294: a declared method with no body in `_core.c`. INSIDE the
         # `with`, because the stub text is the temp tree's and that tree is a
@@ -4255,7 +4902,7 @@ def _apply_manifest(
             _report.warn(
                 f"{obj}.{name} default mismatch: "
                 f"manifest={m_dflt!r} header={h_dflt!r} "
-                f"({INC.core_rel(obj, root)}) — one of these is stale",
+                f"({INC.core_rel(obj, cfg)}) — one of these is stale",
                 gates=True,
                 stream=sys.stdout,
                 indent="  ",
@@ -4268,7 +4915,7 @@ def _apply_manifest(
 
     for obj in C.components(cfg):
         if _linkcheck.write(root, cfg, obj):
-            updated.append(_linkcheck.symbols_file(root, obj))
+            updated.append(_linkcheck.symbols_file(root, obj, cfg))
 
     # gh-1404: the element contract between a writer and a reader. Beside
     # the link-check table above and for the same reason -- the scaffolded
@@ -4308,6 +4955,7 @@ def _apply_manifest(
         [
             *created,
             *impl_patched,
+            *relocated,
             *updated,
             *bench_updated,
             *frag_doc_updated,

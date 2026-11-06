@@ -42,6 +42,9 @@ _REPRESENTATIVE: dict[str, object] = {
     # -- shared ------------------------------------------------------------
     "backing": "ring",
     "package": "pkg",
+    # gh-2459: jm's record of the package `apply` last placed it under.
+    "applied_package": "pkg",
+    "applied_objects": ["ring"],
     "header": "p/ring.h",
     "depends_on": ["other"],
     "extra_link_libs": ["m"],
@@ -55,6 +58,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "functions": [{"name": "f", "return_type": "int"}],
     "functions_in_core": "true",
     "serializable": "true",
+    # gh-2470: valid only beside `serializable`, which every face here sets.
+    "set_state_status_errors": [{"status": "E_X", "error": "MemoryError"}],
     "optional_backend": "true",
     "platforms": ["linux", "macos"],
     "init_params": [{"name": "n", "type": "int"}],

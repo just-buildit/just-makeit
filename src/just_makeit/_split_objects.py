@@ -36,7 +36,8 @@ def run(root: Path) -> None:
         )
         return
 
-    components = [k for k in manifest if k not in ("project", "module")]
+    # gh-2434: components only; the project's own sections stay put.
+    components = C.components(manifest)
     if not components:
         print("No object sections in the manifest — nothing to split.")
         return
@@ -50,31 +51,24 @@ def run(root: Path) -> None:
     objects_dir = root / "objects"
     objects_dir.mkdir(exist_ok=True)
 
+    # gh-2437: cut, not rebuilt, as in `migrate-to-fragments` -- each object
+    # leaves with its comments and the manifest keeps every other byte.
+    #
+    # What stays is still subtractive (gh-763): the root file is the
+    # document minus what was moved, so a section nobody thought about
+    # survives by default instead of vanishing by default -- now with its
+    # comments, too.
+    manifest_text, obj_texts, _ = C.split_manifest(
+        cfg_path.read_text(encoding="utf-8"), components, False
+    )
     for comp in components:
         frag_path = objects_dir / f"{comp}.toml"
-        frag_text = C._dump({comp: manifest[comp]})
-        _textio.write_text(frag_path, frag_text)
+        _textio.write_text(frag_path, obj_texts[comp])
         print(f"  create  {frag_path}")
 
-    # The manifest keeps whatever was NOT relocated, gains the include glob.
-    #
-    # Subtractive on purpose (gh-763). Written as an additive list of names to
-    # re-add, correctness depended on this list and `components`' exclusion
-    # list agreeing — two lists in different functions that have to be edited
-    # together, with nothing checking that they were. A top-level key added to
-    # one and forgotten in the other does not error; it is written to a
-    # fragment and then also dropped from root, or kept in root and never
-    # moved. Deriving `keep` from what was actually relocated makes the
-    # invariant local: a section nobody thought about survives by default
-    # instead of vanishing by default.
-    keep = {k: v for k, v in manifest.items() if k not in components}
-
-    manifest_text = C._dump(keep)
-    manifest_text = (
-        f"include = {C._toml_string_array(['objects/*.toml'])}\n\n"
-        + manifest_text
+    _textio.write_text(
+        cfg_path, C.set_include(manifest_text, ["objects/*.toml"])
     )
-    _textio.write_text(cfg_path, manifest_text)
     print(f'  update  {cfg_path}  (include = ["objects/*.toml"])')
     # gh-1985: as in `migrate-to-fragments` -- the fragments load sorted, so
     # the order `apply` lists components in changed with the layout.
@@ -85,3 +79,8 @@ def run(root: Path) -> None:
 
     print()
     print(f"Done!  {len(components)} object section(s) moved to objects/.")
+    # gh-2440: the same move out of the root, so the same reader note.
+    from ._migrate import READER_NOTE
+
+    print()
+    print(READER_NOTE)

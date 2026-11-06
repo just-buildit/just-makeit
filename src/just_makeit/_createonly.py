@@ -54,6 +54,7 @@ The classification is a declared judgement — it is about intent, so it must be
 from __future__ import annotations
 
 import functools
+import os
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -131,6 +132,17 @@ class Rule(NamedTuple):
         return self.kind == JM
 
 
+def _native_glob(kind: str) -> str:
+    """The rule pattern for every generated native file of *kind*, in both
+    layouts (gh-2423): directly in its tree, or below it at any depth.
+
+    >>> _native_glob("bench")
+    'native/benchmarks/**bench_*_core.c'
+    """
+    tree, name = INC.NATIVE_FILES[kind]
+    return f"{tree}/**{name.format('*')}"
+
+
 # First match wins, so the specific entries precede the general ones.
 RULES: tuple[Rule, ...] = (
     # ── jm's content: a difference means the project is on an older jm ──
@@ -191,13 +203,13 @@ RULES: tuple[Rule, ...] = (
     Rule("inc:clib_common.h", JM, "jm's shared C preamble."),
     Rule("inc:pyex_common.h", JM, "jm's CPython glue preamble."),
     Rule(
-        "native/tests/jm_test.h",
+        INC.harness_rel(INC.TESTS_DIR),
         JM,
         "jm's assertion harness (gh-934). Create-only so a project may extend"
         " it — which is the reason to *report* rather than rewrite, not a"
         " reason to treat the harness as the author's.",
     ),
-    Rule("native/benchmarks/jm_bench.h", JM, "jm's timing harness."),
+    Rule(INC.harness_rel(INC.BENCH_DIR), JM, "jm's timing harness."),
     # ── `apply` writes here, but only into managed blocks ────────────────
     Rule(
         "CMakeLists.txt",
@@ -215,19 +227,21 @@ RULES: tuple[Rule, ...] = (
     Rule("README.md", AUTHOR, "the author's prose."),
     Rule("docs/**", AUTHOR, "the author's prose."),
     Rule(
-        "inc:*/*_core.h",
+        "inc:**/*_core.h",
         AUTHOR,
         "sacred: the author's struct and inline step() body.",
     ),
-    Rule("native/src/*/*_core.c", AUTHOR, "sacred: the author's algorithm."),
-    Rule("native/src/*_lib.c", AUTHOR, "a stub the author fills in."),
     Rule(
-        "native/tests/test_*_core.c",
+        f"{INC.SRC_DIR}/*/*_core.c", AUTHOR, "sacred: the author's algorithm."
+    ),
+    Rule(f"{INC.SRC_DIR}/*_lib.c", AUTHOR, "a stub the author fills in."),
+    Rule(
+        _native_glob("test"),
         AUTHOR,
         "the author's C tests; the scaffold is a seed (gh-806 counts its"
         " checks precisely because it is expected to grow).",
     ),
-    Rule("native/benchmarks/bench_*_core.c", AUTHOR, "the author's C bench."),
+    Rule(_native_glob("bench"), AUTHOR, "the author's C bench."),
     # gh-1404: ABOVE the author's-tests rule below, because that rule's
     # `*.py` matches this file too and first-match-wins -- the invariants would
     # otherwise be classified as the author's and never refreshed, which is
@@ -279,7 +293,7 @@ RULES: tuple[Rule, ...] = (
         " including whatever the package re-exports, alone. gh-959.",
     ),
     Rule(
-        "native/src/*/*_ext_*.c",
+        f"{INC.SRC_DIR}/*/*_ext_*.c",
         PARTIAL,
         "a module's per-object binding fragment — sacred, but `_docsync`"
         " refreshes its runtime __doc__ on every apply. gh-959.",
@@ -306,31 +320,31 @@ RULES: tuple[Rule, ...] = (
     # gh-1659: these two were classified only by that glob crossing `/`,
     # which is why neither had a rule of its own.
     Rule(
-        "inc:*/*_bridge.h",
+        "inc:**/*_bridge.h",
         RECONCILED,
         "a composer module's seam prototypes (gh-998): jm's, reconciled from"
         " the replay like the module's `_ext.c`.",
     ),
     Rule(
-        "inc:*/*_procglobal.h",
+        "inc:**/*_procglobal.h",
         RECONCILED,
         "the `process_global` contract header (gh-1117), reconciled from the"
         " replay (gh-1140).",
     ),
     Rule(
-        "native/src/*/CMakeLists.txt",
+        f"{INC.SRC_DIR}/*/CMakeLists.txt",
         RECONCILED,
         "regenerated per component from the manifest.",
     ),
-    Rule("native/src/*/*_ext.c", RECONCILED, "generated CPython glue."),
+    Rule(f"{INC.SRC_DIR}/*/*_ext.c", RECONCILED, "generated CPython glue."),
     Rule(
-        "native/tests/test_*_symbols.c",
+        _native_glob("symbols"),
         DERIVED,
         "the link-check table `apply` derives from the binding and header as"
         " they stand in the tree -- which is what compiles (gh-1361).",
     ),
     Rule(
-        "native/src/app/*",
+        f"{INC.APP_DIR}/*",
         RECONCILED,
         "`jm app`'s executable. Classified from the measurement, against the"
         " first guess: `[[app]]` is in the manifest, so a replay re-runs the"
@@ -363,14 +377,20 @@ RENAMED: "tuple[tuple[str, str], ...]" = (
 
 
 def _renames(root: Path) -> "list[tuple[str, str]]":
-    """`RENAMED` with the project's name filled in for *root*."""
+    """`RENAMED` with the project's name filled in for *root*, then every
+    generated native file's move from the other layout's place to the one
+    *root*'s ``[project] layout`` declares (gh-2423,
+    :func:`_incpath.relocations`) -- a rename by another name: `apply` must
+    not create the file beside the author's copy, and the copy moves."""
+    from . import _config as C
+
     pkg = ""
     out: "list[tuple[str, str]]" = []
+    if (root / C.FILENAME).is_file():
+        out += INC.relocations(root)
     for old, new in RENAMED:
         if "{" in old + new:
             if not pkg:
-                from . import _config as C
-
                 if not (root / C.FILENAME).is_file():
                     continue
                 pkg = C.project_name(C.load(root))
@@ -396,6 +416,22 @@ def superseded(root: Path) -> "list[tuple[str, str]]":
     return [
         (old, new) for old, new in _renames(root) if (root / old).is_file()
     ]
+
+
+def relocating(root: Path) -> "list[tuple[str, str]]":
+    """The :func:`superseded` pairs `apply` moves itself: the native
+    layout's (gh-2423, :func:`_incpath.relocations`), whose new place the
+    build already names. Every other rename waits for `upgrade` (gh-1472).
+
+    gh-2429: `status` lists one of these once, as the move it is, not also
+    as a file `apply` will create, and names `apply` as the command.
+    """
+    from . import _config as C
+
+    if not (root / C.FILENAME).is_file():
+        return []
+    moves = set(INC.relocations(root))
+    return [pair for pair in superseded(root) if pair in moves]
 
 
 @functools.lru_cache(maxsize=None)
@@ -425,13 +461,17 @@ def _compile(pattern: str, pkg: str) -> "re.Pattern[str]":
 def _name(rel_posix: str, owner: "INC.Owner") -> str:
     """The name *rel_posix* is matched by: a header below the ``-I`` root by
     its layout-free ``inc:`` name, so ``native/inc/p.h`` and
-    ``native/inc/p/p.h`` are both ``inc:p.h``; anything else by its path.
+    ``native/inc/p/p.h`` are both ``inc:p.h``; a file in a component's
+    source directory by the name it has in the flat layout
+    (:func:`_incpath.src_layout_free`, gh-2459); anything else by its path.
 
     Only below the ``-I`` root: :func:`_incpath.layout_free` also names an
     INSTALLED copy ``inc:``, and a copy under ``install/include/`` is not a
     file `apply` writes."""
     if rel_posix.startswith(INC.INC_DIR + "/"):
         return INC.layout_free(rel_posix, owner)
+    if rel_posix.startswith(INC.SRC_DIR + "/"):
+        return INC.src_layout_free(rel_posix, owner)
     return rel_posix
 
 
@@ -466,9 +506,106 @@ def classify(rel_posix: str, owner: "INC.Owner") -> Rule | None:
     return None
 
 
-def is_versioned(rel_posix: str, owner: "INC.Owner") -> bool:
-    """True when a difference from jm's current render means *outdated*."""
-    rule = classify(rel_posix, owner)
+def is_versioned(
+    path: str, root: "INC.Owner | str | os.PathLike[str]"
+) -> bool:
+    """Whether jm compares *path* against its current render.
+
+    Public as ``just_makeit.is_versioned`` (gh-2455). ``jm status``
+    reports a file OUTDATED when it is versioned and its bytes differ
+    from what jm renders today. A file that is not versioned is never
+    reported, however far it has drifted: either its render is only
+    starting content (the author's ``<comp>_core.c``), or jm writes
+    all or part of it on every ``jm apply``, and ``jm status`` sees its
+    drift another way.
+
+    That makes an empty OUTDATED list ambiguous to a gate built on
+    ``jm status --check``: it reads the same whether every compared file
+    is current or jm has stopped comparing one. Asking this function,
+    per committed file, whether jm still compares it tells the two
+    apart -- a release that reclassified a vendored header would turn
+    that question red instead of leaving the gate green for good.
+
+    The answer comes from the same classification ``jm status`` uses, so
+    it cannot disagree with what ``status`` reports. It depends only on
+    *path* and the project's manifest: *path* need not exist, and its
+    contents are never read.
+
+    Parameters
+    ----------
+    path : str
+        The file, relative to the project root, with ``/`` separators
+        on every platform: ``"native/tests/jm_test.h"``.
+    root : str or os.PathLike
+        The project root: the directory holding ``just-makeit.toml``.
+        The manifest decides the header layout and the package name,
+        which the umbrella header and every header under ``native/inc``
+        are matched by.
+
+    Returns
+    -------
+    bool
+        True when a difference between *path* and jm's current render
+        of it means ``jm status`` reports it OUTDATED. False for a file
+        whose differences are the author's own work, for one jm
+        writes all or part of on every ``jm apply``, and for one jm
+        does not write.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *root* holds no ``just-makeit.toml``. A root that is not the
+        project -- the wrong working directory, a typo -- would
+        otherwise be answered from an empty manifest, and a gate handed
+        it would get a confident answer about no project at all.
+
+    See Also
+    --------
+    ``just_makeit.load_manifest`` reads the manifest this consults.
+
+    Examples
+    --------
+    In a project, the test harness jm vendors is compared, and the
+    author's algorithm is not:
+
+    >>> import pathlib, shutil, tempfile
+    >>> from just_makeit import is_versioned
+    >>> root = pathlib.Path(tempfile.mkdtemp())
+    >>> _ = (root / "just-makeit.toml").write_text(
+    ...     '[project]\\nname = "demo"\\nversion = "0.1.0"\\n'
+    ... )
+    >>> is_versioned("native/tests/jm_test.h", root)
+    True
+    >>> is_versioned("native/src/gain/gain_core.c", root)
+    False
+    >>> is_versioned("native/tests/jm_test.h", str(root))
+    True
+
+    A directory that is not a project is refused, not answered:
+
+    >>> is_versioned("native/tests/jm_test.h", root / "native")
+    ... # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+    ...
+    FileNotFoundError: no just-makeit.toml in ...
+    >>> shutil.rmtree(root)
+    """
+    # A str root is a path, as everywhere else in the public API; inside
+    # jm a str owner is refused as a bare package name (gh-1583), so it
+    # is made a Path here rather than passed through. A manifest dict is
+    # jm's own owner form and is passed as is.
+    if isinstance(root, (str, os.PathLike)):
+        from . import _config as C
+
+        root = Path(root)
+        # `_incpath.manifest` searches upward and reads no manifest as an
+        # empty one, which is right for jm probing a path and wrong for a
+        # caller who named a project root (`load_manifest` refuses it the
+        # same way). `outdated`'s root is `status`'s, which has already
+        # refused a root with no manifest.
+        if not (root / C.FILENAME).is_file():
+            raise FileNotFoundError(f"no {C.FILENAME} in {root}")
+    rule = classify(path, root)
     return rule is not None and rule.versioned
 
 

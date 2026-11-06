@@ -44,6 +44,7 @@ from just_makeit import _status  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
+from just_makeit._report import Refusal  # noqa: E402
 
 _HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
@@ -332,10 +333,9 @@ def test_apply_refuses_a_missing_family_header_before_writing(tmp_path):
 )
 def test_a_bad_family_is_refused_at_load(tmp_path, edit, says):
     root = _project(tmp_path, template=TEMPLATE.replace(*edit), family=None)
-    err = io.StringIO()
-    with contextlib.redirect_stderr(err), pytest.raises(SystemExit):
+    with pytest.raises(Refusal) as refused:
         C.load(root)
-    assert says in err.getvalue()
+    assert says in refused.value.report()
 
 
 def test_the_temp_manifest_round_trips_the_family(tmp_path):

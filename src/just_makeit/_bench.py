@@ -26,6 +26,7 @@ Workflow
 from __future__ import annotations
 
 from . import _pins
+from . import _incpath as INC
 from . import _textio
 
 import contextlib
@@ -165,8 +166,12 @@ def _find_bench_binary(build_dir: Path, comp: str) -> Path | None:
         build_dir / f"{stem}.exe",
         build_dir / "Release" / stem,
         build_dir / "Release" / f"{stem}.exe",
-        build_dir / "native" / "src" / comp / stem,
-        build_dir / "native" / "src" / comp / f"{stem}.exe",
+        # The build tree mirrors the source tree; the build directory sits
+        # inside the project, so it names the project too. A build directory
+        # outside it names no manifest, so this is the flat place, and the
+        # scan below finds a nested one.
+        build_dir / INC.src_dir(comp, build_dir) / stem,
+        build_dir / INC.src_dir(comp, build_dir) / f"{stem}.exe",
     ]
     for p in candidates:
         if p.is_file():

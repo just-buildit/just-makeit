@@ -90,6 +90,7 @@ from . import _stubs
 from . import _textio
 from . import _incpath as INC
 from ._apply import _SKIP_DIRS
+from ._report import Refusal
 
 # Directories/files never copied into the scratch tree (build artefacts,
 # VCS, caches) — not manifest-owned, and copying them only slows status.
@@ -127,6 +128,27 @@ def _COPY_IGNORE(directory: str, names: list) -> set:
         if _apply.is_build_tree(here / n)
         or _apply.is_nested_checkout(here / n)
     }
+
+
+def _changed_since(live: Path, read: "bytes | None") -> bool:
+    """Whether *live* no longer holds what status read from it.
+
+    *read* is the file's bytes in status's one snapshot of the project, or
+    ``None`` when the file was absent then. True when the file has been
+    created, deleted or rewritten since: anything status concludes about it
+    from *read* is then about a file that no longer exists (gh-2488).
+
+    >>> import tempfile
+    >>> f = Path(tempfile.mkdtemp()) / "x"
+    >>> _changed_since(f, None)
+    False
+    >>> _ = f.write_bytes(b"a")
+    >>> [_changed_since(f, r) for r in (b"a", b"b", None)]
+    [False, True, True]
+    """
+    if not live.is_file():
+        return read is not None
+    return read is None or live.read_bytes() != read
 
 
 def _walk_managed(base: Path) -> list[Path]:
@@ -236,9 +258,7 @@ def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
                 continue
             frag_ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
             for frag_id in frag_ids:
-                rel = (
-                    Path("native") / "src" / cname / f"{cname}_ext_{frag_id}.c"
-                )
+                rel = Path(INC.src_rel(cname, f"{cname}_ext_{frag_id}.c", cfg))
                 if (root / rel).is_file():
                     out.add(rel.as_posix())
     return out
@@ -568,14 +588,35 @@ def run(
     ok_count = 0
     # gh-1641: files that differ from jm's render only in CRLF versus LF.
     eol_entries: list[str] = []
+    # gh-2488: (path, allowed) for a file the replay changed whose live
+    # copy was written while status ran -- not drift, not current: unknown.
+    racing_entries: list[tuple[str, bool]] = []
+    superseded_pairs: "list[tuple[str, str]]" = []
+    relocating_pairs: "set[tuple[str, str]]" = set()
     with tempfile.TemporaryDirectory(prefix="jm-status-") as tmp:
         # gh-764: `root.name` is "" for a relative root — `jm status` run as
         # `_status.run(Path("."))` collapsed the scratch path onto the temp
         # directory itself and died in `copytree` with FileExistsError.
         # Resolve for the *name* only; `root` itself stays as the caller gave
         # it, so reported paths are unchanged.
-        scratch = Path(tmp) / (root.resolve().name or "project")
-        shutil.copytree(root, scratch, ignore=_COPY_IGNORE)
+        _name = root.resolve().name or "project"
+        # Each tree under a parent of its own, so no project name can be
+        # another tree's path: with `scratch` at `<tmp>/<name>`, a project
+        # directory named `jm-snapshot` was the snapshot's parent and the
+        # copy died with FileExistsError (gh-2488 review).
+        scratch = Path(tmp) / "scratch" / _name
+        # gh-2488: ONE read of the live tree, and every comparison below is
+        # against it. `snap` is that read, kept untouched; `scratch` is a
+        # copy of it for the replay to change. Comparing the replay with the
+        # live tree re-read afterwards reported whatever was written in
+        # between -- a `.pytest_cache` entry, a hand-written note -- as
+        # STALE, a file `jm apply` would rewrite, although apply never
+        # touches it. The second copy reads only the private temp tree, so
+        # nothing can move under it, and `_COPY_IGNORE` has already kept the
+        # caches and build trees out of both.
+        snap = Path(tmp) / "snapshot" / _name
+        shutil.copytree(root, snap, ignore=_COPY_IGNORE)
+        shutil.copytree(snap, scratch, symlinks=True)
         # gh-767: drop the glue `apply` renders but never writes back, so the
         # replay below materializes jm's current output for it and the
         # comparison can see it at all. Scratch only — the real tree is never
@@ -617,12 +658,12 @@ def run(
         # both sides carry whatever the project already had, however many
         # versions behind that is. The replay tree is the only place jm's
         # *current* render of those files exists.
-        replay_root = Path(tmp) / "jm-replay"
+        replay_root = Path(tmp) / "replay"
         # gh-2344: the fragments deleted above are what decides what the
         # aggregator publishes, so the replay reads the user's.
         from . import _object as _obj
 
-        _obj._FRAGMENT_ROOT_OVERRIDE = root
+        _obj._FRAGMENT_ROOT_OVERRIDE = snap
         try:
             with (
                 contextlib.redirect_stdout(_replay_out),
@@ -632,15 +673,21 @@ def run(
                     scratch,
                     honor_status_allow=False,
                     replay_out=replay_root,
+                    # gh-2465: reported below as ORDER, not refused.
+                    refuse_order=False,
                 )
-        except SystemExit as _exc:
+        except (SystemExit, Refusal) as _exc:
             # stderr first: that is where apply puts `error:`. stdout is the
             # fallback for the few exits that print there, and is not shown
             # otherwise — it is the progress log this block exists to hide.
+            # gh-2440: a refusal raised rather than printed carries its own
+            # `error:` lines.
             _why = (
                 _replay_err.getvalue().strip()
                 or _replay_out.getvalue().strip()
             )
+            if isinstance(_exc, Refusal):
+                _why = "\n".join(filter(None, [_why, _exc.report()]))
             print(
                 "error: the internal `apply` replay refused this manifest, "
                 "so no status report can be produced.\n"
@@ -657,9 +704,8 @@ def run(
                 "shows the same failure with its full output.",
                 file=sys.stderr,
             )
-            raise SystemExit(
-                _exc.code if isinstance(_exc.code, int) else 1
-            ) from None
+            _code = getattr(_exc, "code", 1)
+            raise SystemExit(_code if isinstance(_code, int) else 1) from None
         finally:
             _obj._FRAGMENT_ROOT_OVERRIDE = None
 
@@ -671,16 +717,18 @@ def run(
         from . import _linkcheck
 
         for _comp in C.components(cfg):
-            _srcs = _linkcheck.binding_sources(root, cfg, _comp)
+            _srcs = _linkcheck.binding_sources(snap, cfg, _comp)
             if any(
-                s.relative_to(root).as_posix() in unreconciled for s in _srcs
+                s.relative_to(snap).as_posix() in unreconciled for s in _srcs
             ):
-                _linkcheck.write(scratch, cfg, _comp, binding_root=root)
+                _linkcheck.write(scratch, cfg, _comp, binding_root=snap)
 
         # gh-949: computed inside the temp directory's lifetime, against the
-        # *real* root rather than the scratch copy. For a versioned file the
-        # two are identical (that is the whole point — `apply` never touched
-        # it), so this is the same answer with the honest operand.
+        # project as it was read rather than the scratch copy. For a
+        # versioned file the two are identical (that is the whole point —
+        # `apply` never touched it), so this is the same answer with the
+        # honest operand. gh-2488: that read is `snap`, not the live root
+        # read again now, so every finding here describes the same tree.
         # `status_allow`/`--allow` suppress it like any other deviation: a
         # project that has deliberately taken its Makefile over says so once
         # and stops hearing about it. Suppressible because adopting jm's
@@ -696,15 +744,21 @@ def run(
         _cur_mf = replay_root / "Makefile"
         _other = _new_mod.other_backend(cfg)
         if _cur_mf.is_file() and _new_mod.is_other_backend_makefile(
-            root,
+            snap,
             _cur_mf.read_text(encoding="utf-8").replace("\r\n", "\n"),
             _other,
-            lambda: _apply_mod._other_backend_makefile(cfg, root),
+            lambda: _apply_mod._other_backend_makefile(cfg, snap),
         ):
             _backend = _other
+        # gh-2465: the author's definitions against the declarations the
+        # replay renders -- the same call `apply` refuses on, asked of the
+        # same render, inside the temp tree's lifetime.
+        from . import _ctorsig
+
+        _order_drift = _ctorsig.order_drift(snap, replay_root, cfg)
         outdated_entries = [
             (p, _is_allowed(p, allow_patterns))
-            for p in _createonly.outdated(root, replay_root)
+            for p in _createonly.outdated(snap, replay_root)
             if not (_backend and p == "Makefile")
         ]
         backend_entries = (
@@ -722,17 +776,17 @@ def run(
         packaging_entries = [
             (v, _is_allowed(v.path, allow_patterns))
             for v in _adopt.packaging_survey(
-                root, replay_root, C.project_name(cfg)
+                snap, replay_root, C.project_name(cfg)
             )
             if v.state == "behind"
         ]
         # gh-975: the other half of what the replay knows about a create-only
         # file — not "is it behind" but "can jm still write into it". Same
-        # operands as `outdated` above and for the same reason: the real root,
-        # inside the temp tree's lifetime.
+        # operands as `outdated` above and for the same reason: the project
+        # as read (`snap`), inside the temp tree's lifetime.
         unanchored_entries = [
             (p, a, _is_allowed(p, allow_patterns))
-            for (p, a) in _createonly.missing_anchors(root, replay_root)
+            for (p, a) in _createonly.missing_anchors(snap, replay_root)
         ]
         # gh-1626: the cores `apply` leaves unwired, asked of the scratch
         # copy it has just run on -- so the UNWIRED advice below is decided
@@ -775,18 +829,41 @@ def run(
             p.relative_to(scratch).as_posix()
             for p in C.manifest_files(scratch)
         }
+        # gh-2429: a native layout move `apply` makes renders its file at
+        # the new place, absent from the tree until the move. It is that
+        # move, listed once under SUPERSEDED -- not also a file `apply`
+        # will create. Still counted: `apply` changes the tree.
+        _moving = {n for _o, n in _createonly.relocating(snap)}
+        # gh-2488: and the SUPERSEDED report below asks the same snapshot,
+        # so its "`jm apply` makes these moves" agrees with `moved` here.
+        superseded_pairs = _createonly.superseded(snap)
+        relocating_pairs = set(_createonly.relocating(snap))
         for rel in _walk_managed(scratch):
-            real = root / rel
+            real = snap / rel
             after = (scratch / rel).read_bytes()
             rel_posix = rel.as_posix()
             # gh-830: every managed path, so an allow entry that
             # matches none of them can be named below.
             managed_paths.append(rel_posix)
             dropped: frozenset = frozenset()
-            if not real.exists():
-                state, diff = "missing", ""
+            before = real.read_bytes() if real.is_file() else None
+            # gh-2488: a file the replay changed is a finding about the
+            # live project only while the live file is still what was read.
+            # One written since -- by the build, an editor, a test run --
+            # cannot be classified from this run's read, in either
+            # direction, so it is named as that and gates: `--check` must
+            # not pass over an owned file it could not compare. A file the
+            # replay did NOT change is never re-read at all: it matched in
+            # the snapshot, whatever has been written to the tree since.
+            if before != after and _changed_since(root / rel, before):
+                racing_entries.append(
+                    (rel_posix, _is_allowed(rel_posix, allow_patterns))
+                )
+                continue
+            if before is None:
+                state = "moved" if rel_posix in _moving else "missing"
+                diff = ""
             else:
-                before = real.read_bytes()
                 # gh-785: asked before the equality shortcut below, and
                 # before anything classifies the file. An unparseable `.pyi`
                 # is the one finding here that `jm apply` does not fix but
@@ -1041,6 +1118,14 @@ def run(
         o.rel: _is_allowed(o.rel, allow_patterns) for o in _orphans
     }
     _silent = _hollow.silent_benches(root, cfg)
+    # gh-2494: a bench target `jm bench` never runs. Gates like an orphan,
+    # beside which it is computed for the same JSON-parity reason. Its
+    # stand-down is the orphans' -- both read `_hollow._build_files` -- so
+    # `_orphans_unchecked` already says when neither scan ran.
+    _unrun = _hollow.unrun_benches(root, cfg) or []
+    _unrun_allowed = {
+        u.key: _is_allowed(u.key, allow_patterns) for u in _unrun
+    }
     # gh-984: components whose OBJECT library reaches no combined C library,
     # and wiring lines naming a core that is gone. Computed here, above the
     # JSON return, for the reason `_wide` and `_orphans` are: a gate that
@@ -1127,6 +1212,10 @@ def run(
         # carried one for weeks with CI green. `status_allow` remains the
         # escape hatch for a file a project keeps unbuilt on purpose.
         + sum(1 for o in _orphans if not _orphan_allowed[o.rel])
+        # gh-2494: and an unrun benchmark, on the same argument: a target
+        # that builds every time and that `jm bench` never runs is a green
+        # `make bench` over rows that are silently missing.
+        + sum(1 for u in _unrun if not _unrun_allowed[u.key])
         # gh-785: gates, and never suppressed by `status_allow` — the same
         # rule as the gh-426 dropped symbol it sits beside, for the same
         # reason. This is content loss, and it is the *last* moment anything
@@ -1164,6 +1253,15 @@ def run(
         # quietly resolves; and while the two disagree, `jm regenerate` writes
         # a create() that does not compile. A project cannot mean that.
         + len(_ctor_drift)
+        # gh-2465: gates, never suppressed, for gh-1076's reasons -- and one
+        # more: this one compiles, so nothing else will ever say it.
+        + len(_order_drift)
+        # gh-2488: gates unless allowed. A file jm owns that it could not
+        # compare is not a pass: passing would certify a file this run
+        # never read, and the drift it may hold is the drift `--check`
+        # exists to catch. Not STALE either -- nothing says `apply` would
+        # change it. Re-running on a quiet tree settles it.
+        + sum(1 for _p, al in racing_entries if not al)
     )
 
     if as_json:
@@ -1270,6 +1368,18 @@ def run(
                     # no way to tell — the same silence the gate exists to
                     # break, one layer out.
                     "unbuilt_scanned": not _orphans_unchecked,
+                    # gh-2494: the defining build file, the target, and the
+                    # `status_allow` key that exempts it. Covered by
+                    # `unbuilt_scanned`: both scans read the same files.
+                    "unrun_benches": [
+                        {
+                            "path": u.rel,
+                            "target": u.target,
+                            "key": u.key,
+                            "allowed": _unrun_allowed[u.key],
+                        }
+                        for u in _unrun
+                    ],
                     # gh-1076: both sides, so a CI consumer can say which
                     # one moved without re-deriving jm's type renderer.
                     "ctor_signature_drift": [
@@ -1281,6 +1391,17 @@ def run(
                         }
                         for d in _ctor_drift
                     ],
+                    # gh-2465: both orders, and where the definition is.
+                    "param_order_drift": [
+                        {
+                            "function": d.fn,
+                            "path": d.rel,
+                            "line": d.line,
+                            "definition": d.defined,
+                            "manifest": d.rendered,
+                        }
+                        for d in _order_drift
+                    ],
                     # gh-1502: advisory, like `silent_benchmarks` below.
                     "create_example_drift": [
                         {
@@ -1289,6 +1410,16 @@ def run(
                             "line": e.line,
                             "passed": e.passed,
                             "declared": e.declared,
+                            # gh-2465: the two name lists, when the count
+                            # agrees and the order does not; else null.
+                            "order": (
+                                {
+                                    "passed": e.order[0],
+                                    "declared": e.order[1],
+                                }
+                                if e.order is not None
+                                else None
+                            ),
                         }
                         for e in _example_drift
                     ],
@@ -1320,6 +1451,11 @@ def run(
                     # gh-1641: a CRLF checkout of a current file. Never
                     # counted, and never `allowed`: there is nothing to allow.
                     "line_endings": list(eol_entries),
+                    # gh-2488: replay-changed files written while status
+                    # ran; counted unless allowed. Re-run.
+                    "changed_during_run": [
+                        {"path": p, "allowed": a} for (p, a) in racing_entries
+                    ],
                     # gh-1459/gh-1471: root-template fixes the project's
                     # root CMakeLists.txt lacks. Reported, never counted, on
                     # `outdated`'s reasoning: the file is the author's.
@@ -1655,10 +1791,16 @@ def run(
             f"CMakeLists.txt:{core}"
             for core in _libwiring.declared_cores(root)
         }
+        # gh-2494: an unrun benchmark's `<build file>:<target>` key is a
+        # finding key too, and the same false "stale" would follow. Matched
+        # through `_is_allowed`, as the finding itself is, so a glob that
+        # suppresses an unrun target is not also called stale.
+        _unrun_keys = [u.key for u in _unrun]
         _unmatched = [
             pat
             for pat in _manifest_allow
             if pat not in _wiring_keys
+            and not any(_is_allowed(k, [pat]) for k in _unrun_keys)
             and not any(_is_allowed(f, [pat]) for f in managed_paths)
         ]
         if _unmatched:
@@ -1731,6 +1873,25 @@ def run(
             " your own edits\n"
             "  to it are here too. Diff before replacing; see"
             " docs/upgrading.md. Not counted."
+        )
+        print()
+
+    # gh-2488: printed under --check too: it can fail the gate, and the
+    # paths are what tells a CI reader which tool was writing.
+    if racing_entries:
+        print(
+            f"CHANGED WHILE STATUS RAN ({len(racing_entries)}) — written"
+            " after status read the project:"
+        )
+        for p, al in racing_entries:
+            print(f"  ? {p}" + ("  (allowed — not counted)" if al else ""))
+        print(
+            "  jm's replay would change these, but each was rewritten"
+            " before status could\n"
+            "  compare it, so this run cannot say whether it drifted."
+            " Re-run `jm status`\n"
+            "  once nothing is writing to the project. Not STALE; counted"
+            " unless allowed."
         )
         print()
 
@@ -1874,7 +2035,7 @@ def run(
         for u in _unwired:
             tag = " [status_allow]" if _wiring_allowed[u.core] else ""
             print(
-                f"  ⊘ {u.core} (native/src/{u.component}) — missing from "
+                f"  ⊘ {u.core} ({INC.src_dir(u.component, cfg)}) — missing from "
                 f"{', '.join(u.targets)}{tag}"
             )
         # gh-1626: the advice is per core, from the replay -- what apply
@@ -2060,6 +2221,27 @@ def run(
         )
         print()
 
+    # gh-2465: printed under --check too, for gh-1076's reason above.
+    if _order_drift:
+        print(
+            f"ORDER ({len(_order_drift)}) — a definition takes the manifest's"
+            " parameters in another order:"
+        )
+        for d in _order_drift:
+            print(f"  ! {d.rel}:{d.line}")
+            print(f"      definition: {d.fn}({d.defined})")
+            print(f"      manifest:   {d.fn}({d.rendered})")
+        print(
+            "  The same types, so C compiles every call and a caller following"
+            " the header\n"
+            "  passes those arguments swapped. `jm apply` refuses until they"
+            " agree: reorder\n"
+            "  the definition's parameters (and every call site), or restore"
+            " the manifest's\n"
+            "  order. Not suppressible. See gh-2465."
+        )
+        print()
+
     # gh-1033: the stand-down, printed in the UNBUILT block's own place so a
     # reader meets it where they would have met the finding. `_orphans` is
     # empty here by construction, so without this the section is simply
@@ -2104,6 +2286,25 @@ def run(
         )
         print()
 
+    # gh-2494: beside UNBUILT, the same failure from a third side -- the
+    # source is compiled and the target builds; nothing runs it.
+    if _unrun:
+        print(
+            f"UNRUN ({len(_unrun)}) — bench target(s) `jm bench` never runs:"
+        )
+        for u in _unrun:
+            tag = " [status_allow]" if _unrun_allowed[u.key] else ""
+            print(f"  {'~' if _unrun_allowed[u.key] else '!'} {u.key}{tag}")
+        print(
+            "  `jm bench` runs only bench_<s>_core for each benchmark it"
+            " knows of, so these\n"
+            "  build every time and their rows never reach a report. Rename"
+            " one onto that\n"
+            "  shape, or allow `<build file>:<target>` if something else"
+            " runs it. See gh-2494."
+        )
+        print()
+
     # gh-1448 review, edge 3: a fragment whose header says jm regenerates it,
     # for an object that no longer declares `fragment = "generated"`. Apply
     # leaves it alone, so the header is false -- the "Hand-patches are
@@ -2131,9 +2332,16 @@ def run(
     if _example_drift:
         print(
             f"EXAMPLE ({len(_example_drift)}) — a header's @code example"
-            " calls create() with the wrong number of arguments:"
+            " calls create() with the wrong arguments:"
         )
         for e in _example_drift:
+            if e.order is not None:
+                # gh-2465: the right names, in another order.
+                print(
+                    f"  ~ {e.rel}:{e.line}  {e.call}({e.order[0]}),"
+                    f" declared ({e.order[1]})"
+                )
+                continue
             print(
                 f"  ~ {e.rel}:{e.line}  {e.call}() given {e.passed},"
                 f" declared {e.declared}"
@@ -2173,16 +2381,57 @@ def run(
         )
         print()
 
+    # gh-2459: jm's record of what it placed, not yet written -- a project
+    # last applied by a jm before the record. Its own words, and no gate:
+    # the record is jm's state, not a definition the manifest lacks.
+    if INC.unrecorded(cfg):
+        print(
+            "RECORD — jm has not yet recorded where it placed this"
+            " project's files\n  ([project] applied_layout, [module.X]"
+            " applied_package); the next `jm apply`\n  records them. Not"
+            " drift; `--check` does not fail on it."
+        )
+        print()
+
+    # gh-2459: a component found at neither its place nor the place jm
+    # recorded putting it. Advice: jm moves only from its own record.
+    _misplaced = INC.misplaced(root, cfg)
+    if _misplaced:
+        print(
+            f"ADVICE ({len(_misplaced)}) — file(s) at a place jm has no"
+            " record of putting them:"
+        )
+        for _name, _found, _want in _misplaced:
+            print(f"  ? {_found}  ({_name}: the manifest puts it at {_want})")
+        print(
+            "  jm moves a file only from where it recorded placing it"
+            " ([project] applied_layout,\n  [module.X] applied_package)."
+            " Move these yourself, or declare the layout or\n  package they"
+            " were placed under. Not drift; `--check` does not fail on it."
+        )
+        print()
+
     # gh-1472: a file jm has renamed, still under its old name. `apply` holds
     # the new one back rather than create a default beside it, so this is
     # the one place a reader learns the rename is waiting.
-    _superseded = _createonly.superseded(root)
+    # gh-2488: both asked of the snapshot the drift above was read from.
+    _superseded = superseded_pairs
     if _superseded:
         print(f"SUPERSEDED ({len(_superseded)}) — file(s) jm has renamed:")
         for _old, _new in _superseded:
             print(f"  → {_old}  ({_new})")
             print(f"    {_apply.superseded_advice(root, _old, _new)}")
-        print("  Not drift.")
+        # gh-2429: a move `apply` makes is drift (counted as `moved`);
+        # only the renames left for `upgrade` are not.
+        _moves = relocating_pairs
+        if set(_superseded) <= _moves:
+            print("  `jm apply` makes these moves.")
+        elif _moves:
+            print(
+                "  `jm apply` makes the native moves; the rest are not drift."
+            )
+        else:
+            print("  Not drift.")
         print()
 
     # gh-785: printed on both paths and under --check. The strongest case
@@ -2219,7 +2468,7 @@ def run(
         for obj, name, m_dflt, h_dflt in drift_entries:
             print(
                 f"  ! {obj}.{name}: manifest={m_dflt!r} header={h_dflt!r} "
-                f"({INC.core_rel(obj, root)})"
+                f"({INC.core_rel(obj, cfg)})"
             )
         print(
             "  One of these is stale — jm can't tell which; update the "
@@ -2428,6 +2677,7 @@ def run(
 
     n_missing = sum(1 for e in drift if e[1] == "missing")
     n_stale = sum(1 for e in drift if e[1] == "stale")
+    n_moved = sum(1 for e in drift if e[1] == "moved")
 
     # gh-823: a drifted constructor is no longer merely *qualified* in the
     # "OK" line — it leaves that branch entirely. jm detected this condition,
@@ -2456,6 +2706,7 @@ def run(
         # is the precise sentence this issue is about; the exit code alone
         # would be right and unread.
         and not any(not _orphan_allowed[o.rel] for o in _orphans)
+        and not any(not _unrun_allowed[u.key] for u in _unrun)
         and not unparseable_entries
         # gh-975: and for the same reason again. "OK — up to date" over a
         # project whose module has no add_subdirectory() is the exact sentence
@@ -2475,6 +2726,9 @@ def run(
         # disagrees with is the sentence that issue is about — the exit code
         # alone would be right and unread.
         and not _ctor_drift
+        and not _order_drift
+        # gh-2488: "up to date" over a file this run could not compare.
+        and not any(not al for _p, al in racing_entries)
     ):
         suffix = f" ({len(allowed)} allowed)" if allowed else ""
         # gh-767: "up to date" must not be said over files the generator no
@@ -2498,6 +2752,8 @@ def run(
         # same as in sync. A silent benchmark qualifies the line too: the
         # project is in sync and one of its bench targets measures nothing.
         _orph = f"; {len(_orphans)} unbuilt (allowed)" if _orphans else ""
+        # gh-2494: the same qualification for an allowed unrun benchmark.
+        _orph += f"; {len(_unrun)} unrun (allowed)" if _unrun else ""
         # gh-1033: and the case where there is no count to give because
         # nothing was counted. gh-767's rule reaches this too — "up to date"
         # must not be said over a check that did not run, and here the reader
@@ -2588,6 +2844,7 @@ def run(
         print(
             f"summary: {ok_count} OK, {n_missing} missing, "
             f"{n_stale} stale"
+            + (f", {n_moved} to move" if n_moved else "")
             + (
                 f", {len(unreconciled_entries)} unreconciled"
                 if unreconciled_entries
@@ -2636,12 +2893,29 @@ def run(
                 if any(not _orphan_allowed[o.rel] for o in _orphans)
                 else ""
             )
+            + (
+                f", {sum(1 for u in _unrun if not _unrun_allowed[u.key])}"
+                " unrun (!)"
+                if any(not _unrun_allowed[u.key] for u in _unrun)
+                else ""
+            )
             # gh-1033: on this line too, and without a count — there is
             # nothing to count. Not marked `(!)`: a stand-down does not fail
             # the gate (no `jm apply` clears a wildcard), but a reader
             # skimming this line must not read the absent "unbuilt" term as
             # zero unbuilt sources.
             + (f", {len(_ctor_drift)} ctor-drift (!)" if _ctor_drift else "")
+            + (
+                f", {len(_order_drift)} param-order (!)"
+                if _order_drift
+                else ""
+            )
+            + (
+                f", {sum(1 for _p, al in racing_entries if not al)}"
+                " changed-during-run (!)"
+                if any(not al for _p, al in racing_entries)
+                else ""
+            )
             + (", unbuilt not checked" if _orphans_unchecked else "")
             + (f", {len(_silent)} silent bench" if _silent else "")
             + (
