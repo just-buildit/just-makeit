@@ -2708,16 +2708,29 @@ def _uses_literal(cfg: dict, module: str) -> bool:
     property that decodes through the ``[[enum]]`` SSOT — both annotate as
     ``Literal[...]``."""
     enum_reg = C.enums(cfg)
-    for obj in C.module_objects(cfg, module):
+    objects = C.module_objects(cfg, module)
+    for obj in objects:
         for param in C.init_params(cfg, obj):
             if param[1].startswith("string_enum:"):
                 return True
         props = list(C.properties(cfg, obj))
         for v in C.views(cfg, obj):
-            props += C.view_properties(v)
+            # gh-2516: a view naming another module is asked there.
+            if C.view_module(cfg, obj, v) == module:
+                props += C.view_properties(v)
         for prop in props:
             if prop.get("enum") in enum_reg:
                 return True
+    # gh-2516: a view registered here over another module's object, through
+    # the overlay its class renders from.
+    for parent, view in C.module_views(cfg, module):
+        if parent in objects:
+            continue
+        synth, vcfg = view_overlay(cfg, parent, view)
+        if any(
+            p[1].startswith("string_enum:") for p in C.init_params(vcfg, synth)
+        ) or any(p.get("enum") in enum_reg for p in C.properties(vcfg, synth)):
+            return True
     return False
 
 
@@ -3253,6 +3266,15 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     """
     pkg = C.project_name(cfg)
     objects = C.module_objects(cfg, module)
+    # gh-2516: the views registered here over ANOTHER module's object, each
+    # as the overlay it renders from. They are this stub's classes as much
+    # as its own objects' views are, so every import they need is asked of
+    # their overlay below. Empty unless a view names this module.
+    _foreign = [
+        view_overlay(cfg, parent, view)
+        for parent, view in C.module_views(cfg, module)
+        if parent not in objects
+    ]
     # The .pyi sits beside the .so at src/<pkg>/<pypath>/<leaf>.pyi — or, when
     # the module declares a gh-523 `package`, inside that package instead.
     mp = C.module_paths(module)
@@ -3279,8 +3301,8 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     needs_sequence = any(
         "Sequence["
         in _codec.codec_py_union(_codec_tbl[m["codec"]], seq="Sequence")
-        for o in objects
-        for m in C.methods(cfg, o)
+        for o, ocfg in [(o, cfg) for o in objects] + _foreign
+        for m in C.methods(ocfg, o)
         if _codec.is_codec_method(m) and m.get("codec") in _codec_tbl
     )
     parts: list[str] = [
@@ -3288,7 +3310,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     ]
     # Every object class is @final (a Py_TPFLAGS_DEFAULT extension type cannot
     # be subclassed), so `final` is imported whenever the module has objects.
-    needs_final = bool(objects)
+    needs_final = bool(objects or _foreign)
     # gh-1443: `Any` is decided from the rendered body, so the line cannot be
     # written until the body exists. The slot keeps it in its historical
     # position -- first import, above `Sequence` -- so no existing stub churns.
@@ -3302,7 +3324,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # the module has no header / hand-written function comments.
     fn_doc_blocks = _module_fn_blocks(root, module)
 
-    if objects:
+    if objects or _foreign:
         parts.append("")
     # gh-646: a single-record method annotates its return with the record's own
     # class, so every such class is declared here, above the object classes
@@ -3316,13 +3338,22 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             # return a record the parent never does; leaving it out would emit
             # a `-> ToneMetrics` annotation with no ToneMetrics declared.
             for m in C.methods(cfg, obj)
-            + [n for v in C.views(cfg, obj) for n in C.view_methods(v)]
-        ],
+            + [
+                n
+                for v in C.views(cfg, obj)
+                if C.view_module(cfg, obj, v) == module
+                for n in C.view_methods(v)
+            ]
+        ]
+        # gh-2516: a view over another module's object returns what its
+        # overlay's methods do, the parent's and its own.
+        + [m for synth, vcfg in _foreign for m in C.methods(vcfg, synth)],
         # gh-1300: merged, not spread -- a spread keeps only the last
         # object's per-struct field docs, and the records above belong to
         # every object.
         merge_doc_blocks(
-            *(cfg.get(obj, {}).get("_doc_blocks", {}) for obj in objects)
+            *(cfg.get(obj, {}).get("_doc_blocks", {}) for obj in objects),
+            *(vcfg[synth].get("_doc_blocks", {}) for synth, vcfg in _foreign),
         ),
     )
     if _rec_block:
@@ -3359,11 +3390,19 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         # Raises names the function), which is why the overlay carries the
         # parent's stem (gh-2406).
         for view in C.views(cfg, obj):
+            # gh-2516: a view naming another module is that module's class.
+            if C.view_module(cfg, obj, view) != module:
+                continue
             # gh-504: one definition of a view's surface, in
             # `view_overlay`; this renders what it returns.
             synth, cfg_v = view_overlay(cfg, obj, view)
             parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
             parts.append("")
+    # gh-2516: then the views other modules' objects register here, after
+    # every own class, in the order the aggregator registers them.
+    for synth, cfg_v in _foreign:
+        parts.append(_obj_stub(cfg_v, synth, pkg=pkg, module=module))
+        parts.append("")
 
     for fn in functions:
         parts.append(

@@ -1390,17 +1390,18 @@ struct. `jm script` names the rows in a NOTE, since no flag spells them.
 
 ### `[[<component>.views]]` entries
 
-| TOML field                             | CLI flag                                                      | Status      |
-| -------------------------------------- | ------------------------------------------------------------- | ----------- |
-| `class_name`, `create_fn`              | `jm view <obj> <Class> --module <mod> --create-fn <fn>`       | ✅ (0.31)   |
-| `doc = "..."`                          | `jm view --doc "text"`                                        | ✅ (0.31)   |
-| `init_params = [{name, type, ...}]`    | `jm view --init-param name:type[:default]` (repeatable)       | ✅ (0.31)   |
-| `exclude_properties = ["..."]`         | `jm view --exclude-property name` (repeatable)                | ✅ (0.31)   |
-| `exclude_methods = ["..."]`            | `jm view --exclude-method name` (repeatable)                  | ✅ (0.31)   |
-| `properties = [{...}]`                 | `jm property <obj> <prop> --view <Class>`                     | ✅ (0.32)   |
-| `methods = [{...}]`                    | `jm method <obj> <meth> --view <Class>`                       | ✅ (0.32)   |
-| `warnings = [{...}]`                   | `jm warning <obj> --view <Class>`                             | ✅ (0.33)   |
-| `create_error`, `create_error_message` | `jm error <obj> --view <Class> --category EXC --message TEXT` | ✅ (gh-580) |
+| TOML field                             | CLI flag                                                      | Status       |
+| -------------------------------------- | ------------------------------------------------------------- | ------------ |
+| `class_name`, `create_fn`              | `jm view <obj> <Class> --module <mod> --create-fn <fn>`       | ✅ (0.31)    |
+| `module`                               | `jm view --module <mod>` naming another object module         | ✅ (gh-2516) |
+| `doc = "..."`                          | `jm view --doc "text"`                                        | ✅ (0.31)    |
+| `init_params = [{name, type, ...}]`    | `jm view --init-param name:type[:default]` (repeatable)       | ✅ (0.31)    |
+| `exclude_properties = ["..."]`         | `jm view --exclude-property name` (repeatable)                | ✅ (0.31)    |
+| `exclude_methods = ["..."]`            | `jm view --exclude-method name` (repeatable)                  | ✅ (0.31)    |
+| `properties = [{...}]`                 | `jm property <obj> <prop> --view <Class>`                     | ✅ (0.32)    |
+| `methods = [{...}]`                    | `jm method <obj> <meth> --view <Class>`                       | ✅ (0.32)    |
+| `warnings = [{...}]`                   | `jm warning <obj> --view <Class>`                             | ✅ (0.33)    |
+| `create_error`, `create_error_message` | `jm error <obj> --view <Class> --category EXC --message TEXT` | ✅ (gh-580)  |
 
 ### `[<component>]` lifecycle impl bodies
 
@@ -1991,10 +1992,13 @@ One entry per `just-makeit view` call — a **second Python class over the same
 generated C core** (gh-504). The view shares `<pkg>_<comp>_state_t` and the
 object's `_core.c`; only its constructor and its Python surface differ. Views
 are a module-object feature, so the object must belong to a `[module.<name>]`.
+A view's class may live in another object module (`module`, gh-2516): that
+module registers, stubs and re-exports it, and links the object's core.
 
 | Key                                    | Type             | Notes                                                                                                                                                                        |
 | -------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `class_name`                           | string           | Python class name for the view. Required; unique across every class the module exposes.                                                                                      |
+| `class_name`                           | string           | Python class name for the view. Required; unique across every class the view's module exposes, and among the object's views.                                                 |
+| `module`                               | string           | The object module the view's class lives in (gh-2516). Absent, the object's own. Written only when it differs.                                                               |
 | `create_fn`                            | string           | C constructor the view's `__init__` calls. Required; must differ from `<pkg>_<comp>_create`. Scaffolded as a stub in the shared `_core.c`.                                   |
 | `doc`                                  | string           | Docstring for the view class.                                                                                                                                                |
 | `init_params`                          | array            | The view's own constructor params, same shape as `[[<object>.init_params]]`. Omit to inherit the parent's constructor shape.                                                 |
