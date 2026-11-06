@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from _jmrun import run_cli
+from _jmrun import run_cli, script_round_trip
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -329,3 +329,106 @@ class TestErrorMessagePerView:
         )  # fmt: skip
         assert r.returncode != 0
         assert "declares none" in r.stderr
+
+
+#: Each way a method declares a refusal, with the flags that make it a valid
+#: method. Written out here, not read from `_diagnostics.method_raises`: a
+#: key dropped from that predicate must fail a case, not shrink the list.
+RAISING_SHAPES = {
+    "error_on_empty": (
+        'arg_type = "float[]"\nreturn_type = "float"\n'
+        "variable_output = true\nerror_on_empty = true\n"
+    ),
+    "error_sentinel": (
+        'arg_type = "float[]"\nreturn_type = "float"\n'
+        'variable_output = true\nerror_sentinel = "SIZE_MAX"\n'
+    ),
+    "error_negative": 'return_type = "int"\nerror_negative = true\n',
+    "status_return": 'return_type = "int"\nstatus_return = true\n',
+}
+
+
+@pytest.fixture(scope="module")
+def raising(tmp_path_factory) -> Path:
+    """A parent with one method per refusal shape, and a view of it.
+
+    The parent's rows are written into the manifest by hand, not through
+    `jm method`: that command asks the same predicate of the parent, so a
+    key dropped from it would fail this fixture rather than the view's
+    check this file gates.
+    """
+    base = tmp_path_factory.mktemp("gh2498raise")
+    _ok("new", "pp", cwd=base)
+    root = base / "pp"
+    _ok("module", "m", cwd=root)
+    _ok("object", "rc", "--module", "m", cwd=root)
+    _ok(
+        "view", "rc", "Corr", "--module", "m",
+        "--create-fn", "pp_rc_create_corr",
+        cwd=root,
+    )  # fmt: skip
+    frag = root / "objects" / "rc.toml"
+    text = frag.read_text(encoding="utf-8")
+    at = text.index("[[rc.views]]")
+    rows = "".join(
+        f'[[rc.methods]]\nname = "{key}"\n{shape}'
+        f'error_message = "{PARENT_MSG}"\n\n'
+        for key, shape in RAISING_SHAPES.items()
+    )
+    frag.write_text(text[:at] + rows + text[at:], encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize("key", sorted(RAISING_SHAPES))
+def test_every_refusal_shape_takes_a_view_message(raising, key):
+    r = run_cli(
+        "method", "rc", key, "--module", "m", "--view", "Corr",
+        "--error-message", VIEW_MSG,
+        cwd=raising,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+class TestScriptReplaysTheDoc:
+    """`jm script` carries a method's `doc`, the parent's and a view's.
+
+    Dropped, a parent method replayed with the header's or jm's text, and a
+    view's doc-only override replayed as a line that states nothing.
+    """
+
+    def test_round_trip_keeps_every_method_doc(self, tmp_path):
+        _ok("new", "pp", cwd=tmp_path)
+        root = tmp_path / "pp"
+        _ok("module", "m", cwd=root)
+        _ok("object", "rc", "--module", "m", cwd=root)
+        _ok(
+            "method", "rc", "run", "--module", "m",
+            "--doc", "PARENTDOC run.",
+            cwd=root,
+        )  # fmt: skip
+        _ok(
+            "view", "rc", "Corr", "--module", "m",
+            "--create-fn", "pp_rc_create_corr",
+            cwd=root,
+        )  # fmt: skip
+        for member in ("run", "reset"):
+            _ok(
+                "method", "rc", member, "--module", "m", "--view", "Corr",
+                "--doc", f"VIEWDOC {member}.",
+                cwd=root,
+            )  # fmt: skip
+        original, replayed = script_round_trip(root, tmp_path / "replay")
+
+        def docs(cfg: dict) -> dict:
+            view = C._find_view(cfg, "rc", "Corr")
+            return {
+                "parent": [
+                    (m["name"], m.get("doc")) for m in C.methods(cfg, "rc")
+                ],
+                "view": [
+                    (m["name"], m.get("doc")) for m in C.view_methods(view)
+                ],
+            }
+
+        assert docs(original)["parent"] == [("run", "PARENTDOC run.")]
+        assert docs(replayed) == docs(original)
