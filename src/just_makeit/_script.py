@@ -1204,7 +1204,11 @@ def run(root: Path) -> None:
                 out.append(
                     _render_cmd(
                         ["just-makeit", "method", comp, m["name"]],
-                        _method_flags(m, mod) + [_flag("--view", cls)],
+                        _method_flags(m, mod)
+                        # gh-2498: a view's override of a member is its doc
+                        # (or message), so a line without it states nothing.
+                        + ([_flag("--doc", m["doc"])] if m.get("doc") else [])
+                        + [_flag("--view", cls)],
                     )
                 )
             for p in C.view_properties(v):

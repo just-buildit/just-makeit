@@ -101,6 +101,14 @@ class DoxyBlock:
         rest. Quarantined here rather than discarded (gh-641): holding them
         keeps them out of the rendered prose today, and leaves gh-652 a
         rendering-only change when they gain numpy sections.
+    verbatim : list of str
+        An authored docstring that IS the whole text, as
+        `authored_doc_lines` lays it out (gh-2498). Non-empty only on a
+        block `verbatim_block` built, which a view puts over its parent's
+        header block for a member whose ``doc`` it overrides. Both
+        renderers return it as written: no section from any other field,
+        no generated ``Parameters`` / ``Returns`` / ``Raises``, and no
+        synthesized example after it.
     """
 
     brief: str = ""
@@ -110,6 +118,7 @@ class DoxyBlock:
     examples: list[str] = field(default_factory=list)
     param_dirs: dict[str, str] = field(default_factory=dict)
     tags: list[tuple[str, str]] = field(default_factory=list)
+    verbatim: list[str] = field(default_factory=list)
 
     def param_desc(self, name: str) -> str | None:
         """Return the description for parameter *name*, or ``None``.
@@ -2299,6 +2308,37 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     )
 
 
+def verbatim_block(text: str) -> DoxyBlock:
+    r"""A block whose docstring is exactly *text*, whatever the member.
+
+    gh-2498. A view over a shared core may document a member its own way --
+    ``Corr.execute`` describing the 1-D frame its parent ``Corr2D`` does not
+    -- and that text REPLACES the member's docstring on both faces. The
+    member's header block is the parent's, so merging the view's ``doc`` into
+    it (what a manifest ``doc`` on the parent does, gh-1493) kept the
+    parent's prose, sections and ``Examples`` under the view's.
+
+    Expressed as a block rather than as a flag on each renderer because every
+    face of every member already looks its doc up by C name in one map:
+    a declared method, a built-in such as ``reset``, a generated
+    ``<m>_max_out`` accessor. Putting this block at that name is the one
+    move that reaches all of them, and :func:`render_numpy_doc` /
+    :func:`render_runtime_doc` are the two places that honour it.
+
+    ``brief`` is the first line, for a reader that asks only "is anything
+    authored here"; ``examples`` stays empty, because the view's own
+    ``Examples``, if it wrote one, is already in *text*.
+
+    Examples
+    --------
+    >>> b = verbatim_block("One.\n\nProse.")
+    >>> b.brief, b.verbatim[-1]
+    ('One.', 'Prose.')
+    """
+    lines = authored_doc_lines(text)
+    return DoxyBlock(brief=lines[0] if lines else "", verbatim=lines)
+
+
 def _ends_in_doctest(lines: "Sequence[str]") -> bool:
     """Whether *lines* end inside a doctest: no blank line after the last
     ``>>>`` prompt, so its example runs to the end of the text.
@@ -2895,6 +2935,8 @@ def render_numpy_doc(
         Complete docstring lines, opening and closing ``\"\"\"`` included.
     """
     pad = " " * indent
+    if block is not None and block.verbatim:
+        return authored_docstring(block.verbatim, indent)  # gh-2498
     if (
         block is None
         and not override
@@ -3414,6 +3456,8 @@ def render_runtime_doc(
     ['Filter a block.', '', 'Parameters', '----------', 'x : ndarray', \
 '    Input.', '', 'Returns', '-------', 'ndarray', '    Filtered output.']
     """
+    if block is not None and block.verbatim:
+        return list(block.verbatim)  # gh-2498: the stub face's text
     lines, examples = _numpy_sections(
         block,
         name,
@@ -3752,6 +3796,15 @@ def _row_docstring(
         from ._handle import _factory_doc_lines
 
         return "\n".join(_factory_doc_lines(cfg, owner, row))
+    if owner_kind == "object" and table == ("views", "methods"):
+        from ._config import is_view_override
+
+        # gh-2498: a view's override of a member its parent has IS the
+        # member's whole docstring (`verbatim_block`); a method the view
+        # adds is rendered like any other, sections and all.
+        if is_view_override(cfg, owner, row):
+            return str(row.get("doc") or "")
+        return None
     if owner_kind == "object" and table == ("methods",):
         from . import _codec
         from ._config import codecs

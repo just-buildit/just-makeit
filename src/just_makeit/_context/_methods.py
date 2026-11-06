@@ -2834,7 +2834,11 @@ def make_methods_ctx(
         # `gain`. Same shape as the gh-657 report, where help() advertised
         # `ptr(n=1)` against a kwlist that bound `count`.
         _doc_names = [n for n, _ in _doc_params]
-        _has_header_examples = bool(_block and _block.examples)
+        # gh-2498: a verbatim block is the whole docstring, so jm's demo is
+        # not appended under it either.
+        _has_header_examples = bool(
+            _block and (_block.examples or _block.verbatim)
+        )
 
         def _demo(lines: list[str]) -> list[str]:
             """The synthesized doctest, dropped when the header wrote one.

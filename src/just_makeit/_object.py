@@ -1371,6 +1371,9 @@ def _make_view_ctx(
     return_type_ = C.return_type(cfg, obj)
     excluded = C.view_exclude_properties(view)
     excluded_methods = C.view_exclude_methods(view)
+    # gh-2498: a member whose doc the view overrides is documented by the
+    # view's text alone -- the stub's `view_overlay` reads the same map.
+    doc_blocks = S.view_doc_blocks(cfg, obj, view, doc_blocks)
     ctx = _make_object_ctx(
         obj,
         module,
@@ -1405,7 +1408,7 @@ def _make_view_ctx(
     # same name (e.g. a different doc), a new name ADDS. So a view is not just a
     # subset of the parent (the doppler Acquisition/BurstAcquisition case: burst
     # adds `reps`, overrides `doppler_bins`'s doc).
-    own_methods = C.view_methods(view)
+    own_methods = C.resolved_view_methods(cfg, obj, view)  # gh-2498
     own_method_names = {m["name"] for m in own_methods}
     merged_methods = [
         m
