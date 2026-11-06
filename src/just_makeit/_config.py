@@ -36,7 +36,6 @@ import sys as _sys
 from ._keys import FUNCTION_KEYS as _FUNCTION_KEYS
 from ._keys import COMPOSER_OWNED_PTR_KEYS as _COMPOSER_OWNED_PTR_KEYS
 from ._keys import INIT_PARAM_FIELDS as _INIT_PARAM_FIELDS
-from ._keys import METHOD_SIGNATURE_KEYS as _METHOD_SIGNATURE_KEYS
 from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
 from ._keys import PROPERTY_KEYS as _PROPERTY_KEYS
 from ._keys import STATE_KEYS as _STATE_KEYS
@@ -7024,27 +7023,6 @@ def view_signature_override_members(
         for m in view_methods(view)
         if m["name"] in parents and m.get("fn")
     ]
-
-
-def view_method_signature_differs(parent: dict, entry: dict) -> "list[str]":
-    """Signature keys on which a view's method entry differs from its parent's.
-
-    Empty means the two describe the same call, so the view entry can only be
-    changing the doc — the gh-504 override that has always worked.
-
-    **An absent key INHERITS.** A view entry naming only ``doc`` therefore
-    differs in nothing, which is what keeps a doc-only override working when
-    the caller does not restate the signature. Reading absence as "declared
-    the default" instead would make every such override look like a signature
-    change, and is the trap gh-1011's fix has to avoid rather than repeat: the
-    CLI defaults (``arg_type='void'``, ``return_type='float _Complex'``) are
-    values, not intent.
-    """
-    return sorted(
-        key
-        for key in _METHOD_SIGNATURE_KEYS
-        if key in entry and entry[key] != parent.get(key)
-    )
 
 
 def view_warnings(view: dict) -> list[dict]:

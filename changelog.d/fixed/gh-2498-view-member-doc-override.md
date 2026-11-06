@@ -12,4 +12,6 @@
     `__doc__` alike, the signature and C declaration stay the parent's,
     and `error_message` (binding text, not the C call) may differ per
     view. Anything that changes the C call is still refused without
-    `--fn`.
+    `--fn`. `jm script` now replays a method's `doc` (`--doc`), the
+    parent's and a view's: it was dropped, so a replayed project lost
+    every manifest method docstring.
