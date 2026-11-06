@@ -82,11 +82,17 @@ class TestMergeModuleInit:
         ][0]
         assert import_line == "from .dsp import Nco, Lo, Mixer  # noqa: E402"
 
-    def test_empty_exports_list_returns_unchanged(self):
+    def test_empty_exports_list_drops_the_stale_import(self):
+        # gh-2516: a module whose last export is gone must not keep importing
+        # it -- `from .dsp import Nco` with no Nco is an ImportError (the
+        # gh-329 prune, in the case where nothing survives it).
         src = 'from .dsp import Nco\n__all__ = ["Nco"]\n'
         out = _merge_module_init(src, "dsp", [])
-        # No new names — nothing should change (or at minimum the import stays).
-        assert "Nco" in out
+        assert out == "__all__ = []\n"
+
+    def test_empty_exports_without_an_import_is_unchanged(self):
+        src = "__all__ = []\n"
+        assert _merge_module_init(src, "dsp", []) == src
 
 
 # ---------------------------------------------------------------------------

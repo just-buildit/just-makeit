@@ -436,6 +436,37 @@ class TestEveryReaderFindsIt:
         status = run_cli("status", "--check", cwd=root)
         assert status.returncode == 0, status.stdout + status.stderr
 
+    def test_the_stub_declares_the_enum_the_view_publishes(
+        self, tmp_path: Path
+    ) -> None:
+        """A view's fragment publishes the `[[enum]]` its surface decodes
+        (gh-2344), and in a module of no objects of its own that is the
+        only source: the stub must declare what the extension adds."""
+        root = tmp_path / "p"
+        new_run("p", root, modules=["m", "x"])
+        cfg = C.load(root)
+        cfg["enum"] = [{"name": "eng_state", "values": ["idle", "run"]}]
+        C.save(root, cfg)
+        object_run(root, "a", "m", state_vars=[("mode", "int", "0")])
+        r = run_cli(
+            "property",
+            "a",
+            "mode",
+            "--type",
+            "int",
+            "--enum",
+            "eng_state",
+            cwd=root,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        view_run(root, "a", "V", "x", "p_a_make")
+        agg = (root / "native/src/x/x_ext.c").read_text(encoding="utf-8")
+        assert 'PyModule_AddObject(m, "ENG_STATE"' in agg
+        pyi = (root / "src/p/x/x.pyi").read_text(encoding="utf-8")
+        assert "ENG_STATE: tuple[str, ...]" in pyi, pyi
+        status = run_cli("status", "--check", cwd=root)
+        assert status.returncode == 0, status.stdout + status.stderr
+
     def test_removing_the_parent_leaves_no_view_behind(
         self, tmp_path: Path
     ) -> None:
@@ -513,6 +544,9 @@ class TestTheBuildRuns:
         root = _project(tmp_path / "scr")
         tests = root / "src/scr/acquire/tests"
         tests.mkdir(parents=True, exist_ok=True)
+        # A package, as jm's own generated tests directories are, so pytest
+        # imports it under `scr.acquire.tests` from the `src/` rootdir.
+        (tests / "__init__.py").write_text("", encoding="utf-8")
         (tests / "test_gh2516_views.py").write_text(
             _PRODUCT_TEST, encoding="utf-8"
         )
