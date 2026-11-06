@@ -6829,8 +6829,135 @@ def view_properties(view: dict) -> list[dict]:
 def view_methods(view: dict) -> list[dict]:
     """A view's OWN methods (gh-504): ADD a new method (scaffolds a shared C
     stub), OVERRIDE a parent method's doc, or — since gh-1012 — override a
-    parent method's SIGNATURE under the same Python name. [] if none."""
+    parent method's SIGNATURE under the same Python name. [] if none.
+
+    These are the entries as written. What the view's class carries is
+    `resolved_view_methods`; a reader rendering the class reads that."""
     return list(view.get("methods", []))
+
+
+#: The keys a view method entry may carry and still be an OVERRIDE of a
+#: member its parent already has, rather than a new method (gh-2498). The
+#: doc and the refusal's message are binding text: neither changes the C
+#: call, so neither needs a C function of the view's own.
+VIEW_OVERRIDE_KEYS = frozenset({"name", "doc", "error_message"})
+
+
+def view_member_doc_keys(cfg: dict, component: str) -> "dict[str, str]":
+    """``{member: C name its doc is keyed on}`` a view may override.
+
+    gh-2498. Every member of the parent's class a view's doc-only entry can
+    name: each declared method, the built-ins whose doc the header supplies
+    (``reset``, ``step``, ``steps``, the ``get_`` / ``set_`` accessors) and
+    each generated ``<method>_max_out`` sizing accessor. The value is the C
+    name both faces look the member's header block up by, so a view's text
+    put there reaches every renderer of that member.
+
+    ``destroy`` is a built-in but not here: its doc is jm's glue, which reads
+    no header block, so an override of it could only be ignored.
+
+    Examples
+    --------
+    >>> cfg = {"project": {"name": "p"},
+    ...        "o": {"methods": [{"name": "run", "arg_type": "float[]",
+    ...                            "variable_output": True}]}}
+    >>> keys = view_member_doc_keys(cfg, "o")
+    >>> keys["run"], keys["run_max_out"], keys["reset"]
+    ('o_run', 'o_run_max_out', 'o_reset')
+    """
+    from . import _csym
+    from . import _outbuf
+    from ._builtins import absorbable_members
+
+    stem = _csym.stem(cfg, component)
+    keys = {
+        name: f"{stem}_{name}"
+        for name in absorbable_members(cfg, component) - {"destroy"}
+    }
+    for m in methods(cfg, component):
+        sym = method_c_symbol(stem, m)
+        keys[m["name"]] = sym
+        # The predicate both `.pyi` generators and the binding emit the
+        # accessor on; a batch method's `out=` has none (gh-2259).
+        if not m.get("batch") and _outbuf.enabled(
+            variable_output=bool(m.get("variable_output")),
+            multi_output=bool(m.get("multi_output")),
+            has_arg=m.get("arg_type", "void") != "void",
+            params=list(m.get("params", []) or m.get("extra_args", [])),
+        ):
+            keys[f"{m['name']}_max_out"] = f"{sym}_max_out"
+    return keys
+
+
+def is_view_override(cfg: dict, component: str, entry: dict) -> bool:
+    """Whether a view method *entry* overrides a member rather than adds one.
+
+    gh-2498. True when the entry calls no C function of its own (no ``fn``)
+    and either names a declared parent method -- the gh-504 doc override,
+    whether written as ``name`` + ``doc`` or as a full copy of the parent's
+    entry -- or carries only `VIEW_OVERRIDE_KEYS` and names a generated
+    member (`view_member_doc_keys`). Before this, the second kind was read
+    as a NEW method: ``reset`` with a ``doc`` became ``reset() -> complex``
+    and `apply` rewrote the header's ``<stem>_reset`` declaration to match.
+
+    Examples
+    --------
+    >>> cfg = {"project": {"name": "p"}, "o": {"methods": [{"name": "run"}]}}
+    >>> is_view_override(cfg, "o", {"name": "run", "doc": "D."})
+    True
+    >>> is_view_override(cfg, "o", {"name": "reset", "doc": "D."})
+    True
+    >>> is_view_override(cfg, "o", {"name": "reset", "arg_type": "int"})
+    False
+    >>> is_view_override(cfg, "o", {"name": "run", "fn": "o_run_1d"})
+    False
+    """
+    if entry.get("fn"):
+        return False
+    name = entry.get("name")
+    if name in {m["name"] for m in methods(cfg, component)}:
+        return True
+    return set(entry) <= VIEW_OVERRIDE_KEYS and name in view_member_doc_keys(
+        cfg, component
+    )
+
+
+def resolved_view_methods(cfg: dict, component: str, view: dict) -> list[dict]:
+    """The method entries a view's class renders from its OWN declarations.
+
+    gh-2498. `view_methods` is what the view wrote; this is what it means:
+
+    - an override of a declared parent method is the PARENT's entry with
+      the view's keys over it, so ``name`` + ``doc`` keeps the parent's
+      signature and C call, and ``error_message`` changes only the message;
+    - an override of a generated member (``reset``, ``<m>_max_out``) is no
+      method entry at all. Its doc reaches the class through the member's
+      header block (`_stubs.view_doc_blocks`), and the member itself stays
+      the built-in's;
+    - anything else (an added method, a ``fn`` signature override) is as
+      written.
+
+    Both faces read this -- the binding (`_object._make_view_ctx`) and the
+    stub (`_stubs.view_overlay`) -- so neither can take an override for a
+    new method while the other does not.
+
+    Examples
+    --------
+    >>> cfg = {"project": {"name": "p"},
+    ...        "o": {"methods": [{"name": "run", "arg_type": "int"}]}}
+    >>> view = {"methods": [{"name": "run", "doc": "D."},
+    ...                     {"name": "reset", "doc": "R."}]}
+    >>> resolved_view_methods(cfg, "o", view)
+    [{'name': 'run', 'arg_type': 'int', 'doc': 'D.'}]
+    """
+    parents = {m["name"]: m for m in methods(cfg, component)}
+    out: list[dict] = []
+    for m in view_methods(view):
+        if not is_view_override(cfg, component, m):
+            out.append(m)
+        elif m["name"] in parents:
+            out.append({**parents[m["name"]], **m})
+    return out
 
 
 def method_c_symbol(stem: str, entry: dict) -> str:

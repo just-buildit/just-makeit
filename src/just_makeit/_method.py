@@ -1635,6 +1635,85 @@ def _module_record_regs(
     return out
 
 
+def _run_view_override(
+    root: Path,
+    object_name: str,
+    method_name: str,
+    module: "str | None",
+    view: str,
+    doc: str,
+    error_message: str,
+) -> bool:
+    """Record a view's override of a member its parent has (gh-2498).
+
+    Returns False when *method_name* is not such a member -- an added
+    method, or a view or object that does not exist -- so `run` carries on
+    and reports it the way it always has.
+
+    The entry written is what the caller stated and nothing more: ``name``
+    with ``doc`` and/or ``error_message``. The parent's signature is NOT
+    copied into it (gh-504 copied it), because `_config.
+    resolved_view_methods` reads the parent's entry under it every time,
+    so a later change to the parent's signature reaches the view too, and
+    a ``jm method --view`` and a hand-written ``[[<obj>.views.methods]]``
+    are the same entry.
+
+    ``error_message`` replaces the parent's only where the parent raises
+    one: it is the text of a refusal, and a member with no refusal (a
+    built-in, or a method declaring none) would carry it inert.
+    """
+    if not (root / C.FILENAME).exists():
+        return False
+    cfg = C.load(root)
+    module = C.resolve_module(cfg, object_name, module)
+    view_entry = C._find_view(cfg, object_name, view) if module else None
+    entry = {"name": method_name}
+    if doc:
+        entry["doc"] = doc
+    if error_message:
+        entry["error_message"] = error_message
+    if view_entry is None or not C.is_view_override(cfg, object_name, entry):
+        return False
+    if method_name in C.view_exclude_methods(view_entry):
+        return False  # `run` refuses the contradiction, by name
+    target = f"'{method_name}' on view '{view}'"
+    if method_name in {m["name"] for m in C.view_methods(view_entry)}:
+        raise _report.Refusal(f"view '{view}' already overrides {target}.")
+    if len(entry) == 1:
+        raise _report.Refusal(
+            f"{target} states nothing to override. A view's entry for a "
+            "member its parent has takes a doc and/or an error_message."
+        )
+    parent = next(
+        (m for m in C.methods(cfg, object_name) if m["name"] == method_name),
+        {},
+    )
+    if error_message and not (
+        parent.get("error_negative")
+        or parent.get("status_return")
+        or parent.get("error_on_empty")
+        or parent.get("error_sentinel")
+    ):
+        raise _report.Refusal(
+            f"{target}: error_message is the text of a refusal, and "
+            f"'{object_name}.{method_name}' declares none (error_negative, "
+            "status_return, error_on_empty or error_sentinel), so the "
+            "message could never be raised."
+        )
+    C.add_view_method(cfg, object_name, view, entry)
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+    _regenerate_module(root, cfg, module, C.project_name(cfg))
+    print()
+    what = " and ".join(k for k in entry if k != "name")
+    shares = C.view_member_doc_keys(cfg, object_name)[method_name]
+    print(
+        f"Done!  View '{view}' overrides the {what} of '{method_name}'"
+        f" (shares the parent's {shares})."
+    )
+    return True
+
+
 @_linkcheck.after
 def run(
     root: Path,
@@ -1704,6 +1783,19 @@ def run(
     # rather than a list of them kept here that a new key would miss.
     _args = dict(locals())
     C.require_name(method_name, "method")  # gh-625
+    # gh-2498: an entry stating nothing but a doc or a refusal's message is
+    # an OVERRIDE of a member the parent has, never a new method -- decided
+    # before any check below reads this command's defaults as a signature.
+    if (
+        view
+        and not fn
+        and declared is not None
+        and declared <= C.VIEW_OVERRIDE_KEYS
+        and _run_view_override(
+            root, object_name, method_name, module, view, doc, error_message
+        )
+    ):
+        return
     # gh-2261: a batch method reads a fixed set of keys (`_keys.
     # BATCH_METHOD_KEYS`); any other is refused here, first and before
     # anything is written, for `jm method` and `apply` alike. The carried
@@ -2203,7 +2295,8 @@ def run(
                     status_return=status_return,
                     error_negative=error_negative,
                     error=error,
-                    error_message=error_message,
+                    # gh-2498: the message is binding text, not the C
+                    # call, so a view may say it its own way.
                     codec=codec,
                     sink_fn=sink_fn,
                 )
@@ -2224,6 +2317,8 @@ def run(
                     sys.exit(1)
                 entry = dict(parent)
                 entry["doc"] = doc
+                if error_message:
+                    entry["error_message"] = error_message
                 C.add_view_method(cfg, object_name, view, entry)
                 C.save(root, cfg)
                 print(f"  update  {cfg_path}")

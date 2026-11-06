@@ -1386,6 +1386,44 @@ the symbol the parent already binds.
 Properties and warnings have no second kind: reusing a parent's name overrides
 how it reads, as in the `depth` example above.
 
+**What a doc-only override replaces** (gh-2498):
+
+- **The whole docstring, on both faces.** The view's `doc` is the member's
+    `.pyi` docstring and its runtime `__doc__`, as written. Nothing from the
+    parent's header block is appended: no prose, `Parameters`, `Returns`,
+    `Raises` or `Examples`. Write the sections the view needs into the `doc`
+    itself, including its own `Examples`.
+- **Any member the parent has, not only a declared method.** The built-ins
+    `reset`, `step`, `steps` and the `get_` / `set_` accessors, and each
+    `<method>_max_out` sizing accessor, take a doc-only override too. The
+    member stays the parent's: `reset` keeps `-> None`, and the header's
+    `<pkg>_<obj>_reset()` declaration is left alone. (`destroy` is jm's glue
+    and reads no header block, so it has no doc to override.)
+- **`error_message`, per view.** It is the text of a refusal, not the C call,
+    so a view may word it its own way for a shared method that raises one:
+
+```sh
+# `scan` declares --error-on-empty on the parent
+just-makeit method acc scan --module bank --view SeededAcc \
+    --error-message "seeded scan found nothing"
+```
+
+```toml
+[[acc.views.methods]]       # under the SeededAcc [[acc.views]] table
+name = "reset"
+doc = """Reset the seeded state.
+
+Examples
+--------
+>>> SeededAcc().reset()
+"""
+```
+
+An existing view fragment is sacred: `apply` refreshes a changed docstring in
+it, but never re-renders a wrapper body, so a new `error_message` reaches the
+binding of a fragment written from then on. `jm status` reports the stale one,
+as it does a changed `error_message` on the parent.
+
 ______________________________________________________________________
 
 **Limitation:** a view cannot yet sit over a parent whose init-params use

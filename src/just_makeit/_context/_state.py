@@ -3443,6 +3443,8 @@ def make_state_ctx(
     def _rt(fn: str, canned: str) -> str:
         """The runtime doc for one accessor -- header brief when authored."""
         blk = accessor_block(csym, fn, doc_blocks)
+        if blk and blk.verbatim:  # gh-2498: a view's whole docstring
+            return _build_ml_doc(render_runtime_doc(blk, fn, [], "None"))
         if blk and blk.brief:
             return _build_ml_doc([blk.brief])
         return _build_ml_doc([accessor_canned(fn, canned, doc_blocks, csym)])
