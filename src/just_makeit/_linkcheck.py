@@ -194,12 +194,18 @@ def binding_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":
 
     mod = C.module_of(cfg, comp)
     if mod:
-        cname = C.module_paths(mod).cname
-        d = INC.src_path(root, cname, cfg)
+
+        def _frag(module: str, frag_id: str) -> Path:
+            cname = C.module_paths(module).cname
+            return INC.src_path(root, cname, cfg) / f"{cname}_ext_{frag_id}.c"
+
         # gh-504: a view's fragment calls the parent's core too. Its id has
-        # one owner, `_view_frag_id`, as `_status` and `_apply` read it.
-        frags = [comp] + [_view_frag_id(v) for v in C.views(cfg, comp)]
-        return [d / f"{cname}_ext_{f}.c" for f in frags]
+        # one owner, `_view_frag_id`, as `_status` and `_apply` read it;
+        # gh-2516: and it lives in the module that registers the view.
+        return [_frag(mod, comp)] + [
+            _frag(C.view_module(cfg, comp, v), _view_frag_id(v))
+            for v in C.views(cfg, comp)
+        ]
     return [INC.src_path(root, comp, cfg) / f"{comp}_ext.c"]
 
 

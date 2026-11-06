@@ -309,7 +309,10 @@ Commands:
                                 same generated C core (module objects only).
                                 Shares <obj>_state_t and _core.c; differs only in
                                 its constructor and property surface.
-    --module name               Module the object lives in (required).
+    --module name               Module the view's class lives in (required):
+                                the object's own, or another object module,
+                                whose extension then links the object's core
+                                (gh-2516).
     --create-fn fn              C constructor the view's __init__ calls, e.g.
                                 acq_create_burst (required; must differ from
                                 <obj>_create). Scaffolded as a stub in the core.

@@ -951,6 +951,17 @@ def _merge_module_init(
     from .dsp import Ema, Iad, Nco  # noqa: E402
     __all__ = ["Ema", "Iad", "Nco"]
     <BLANKLINE>
+
+    A module left with no export loses its import line, back to the fresh
+    scaffold's shape (gh-2516):
+
+    >>> src = ('del _os\\n\\nfrom .dsp import Nco  # noqa: E402\\n\\n'
+    ...        '__all__ = ["Nco"]\\n')
+    >>> print(_merge_module_init(src, 'dsp', []))
+    del _os
+    <BLANKLINE>
+    __all__ = []
+    <BLANKLINE>
     """
     import_pat = _import_re(module)
 
@@ -1010,10 +1021,18 @@ def _merge_module_init(
                 reexport_names.append(n)
 
     all_names = merged + [n for n in reexport_names if n not in seen]
-    if not all_names:
+    if not all_names and not m:
         return _modplatforms.guard_init(existing, platforms or {})
 
     result = existing
+    if m and not merged:
+        # gh-2516: the module's last export is gone -- its last object
+        # removed, or the last view another module registered here. The
+        # line is jm's own (the one statement this merge always owned), and
+        # left in place it imports a name the extension no longer has:
+        # gh-329's ImportError, in the one case the prune above cannot
+        # express, since an import line of no names is a SyntaxError.
+        result = result[: m.start()] + result[m.end() :].lstrip("\n")
 
     # 1. Upsert the module's own import line.
     if merged:
@@ -1282,6 +1301,23 @@ def _view_frag_id(view: dict) -> str:
     the module by the view generator.
     """
     return view["class_name"].lower()
+
+
+def module_fragments(cfg: dict, module: str) -> "list[tuple[str, str]]":
+    """Every ``(object, frag_id)`` whose fragment *module*'s aggregator
+    includes: its objects', then the views it registers (gh-2516).
+
+    The fragment is ``<cname>_ext_<frag_id>.c`` in *module*'s source
+    directory. *object* is the fragment's owner in the manifest -- the
+    object itself, or a view's parent, whose ``fragment`` key governs the
+    view's fragment too (gh-1448). A view over another module's object is
+    listed under the module that registers it, never its parent's
+    (`_config.view_module`); every reader that enumerates fragments asks
+    this, so none can look for a view's file in the wrong directory.
+    """
+    return [(o, o) for o in C.module_objects(cfg, module)] + [
+        (parent, _view_frag_id(v)) for parent, v in C.module_views(cfg, module)
+    ]
 
 
 def fragment_destroy_ctx(
@@ -1649,7 +1685,11 @@ def build_component_ctxs(
         # A deep copy keeps the real cfg (and its transient _doc_blocks stash)
         # untouched.
         cfg = copy.deepcopy(cfg)
-        for _obj in C.module_objects(cfg, module):
+        # gh-2516: and every other module's object a view here is over,
+        # whose docs that view's render reads.
+        for _obj in C.module_objects(cfg, module) + C.view_parents(
+            cfg, module
+        ):
             _od = cfg.get(_obj)
             if not isinstance(_od, dict):
                 continue
@@ -1857,13 +1897,31 @@ def build_component_ctxs(
         # PyTypeObject over the same core. Collected and appended AFTER every
         # real object so the zip(object_names, comp_ctxs) pairing downstream
         # (which walks module_objects, excluding views) stays aligned.
+        # gh-2516: only the views this module registers; one that names
+        # another module is rendered there, below.
         for view in C.views(cfg, obj):
+            if C.view_module(cfg, obj, view) != module:
+                continue
             _vctx = _make_view_ctx(
                 root, cfg, module, pkg, obj, view, _doc_blocks
             )
             # A view has no manifest table: its PARENT's key governs it.
             _vctx["fragment_kind"] = C.fragment_kind(cfg, obj)
             view_ctxs.append(_vctx)
+    # gh-2516: views over another module's object that register their class
+    # here. Rendered exactly as a home view is, from the parent's header
+    # docs, with this module's slots (`module_tp`, the fragment's name).
+    _parents = C.view_parents(cfg, module)
+    for parent, view in C.module_views(cfg, module):
+        if parent not in _parents:
+            continue
+        _pblocks = (
+            {} if force_fallback else _load_doc_blocks(root, parent, cfg)
+        )
+        cfg.setdefault(parent, {})["_doc_blocks"] = _pblocks
+        _vctx = _make_view_ctx(root, cfg, module, pkg, parent, view, _pblocks)
+        _vctx["fragment_kind"] = C.fragment_kind(cfg, parent)
+        view_ctxs.append(_vctx)
     comp_ctxs.extend(view_ctxs)
     return comp_ctxs
 
@@ -1949,8 +2007,19 @@ def _regenerate_module(
         _prev = _DEFERRED_REGEN.get((str(root), module))
         _drop = (_prev[3] | drop_members) if _prev else drop_members
         _DEFERRED_REGEN[(str(root), module)] = (root, module, pkg, _drop)
-        return
-    _regenerate_module_now(root, cfg, module, pkg, drop_members)
+    else:
+        _regenerate_module_now(root, cfg, module, pkg, drop_members)
+    # gh-2516: a view in another module shares this module's object's
+    # surface, so its module's binding, stub and link line change with it.
+    # Empty unless a view names a module, so nothing else is re-rendered.
+    # One level, not a closure: a host's own objects did not change.
+    for host in C.view_host_modules(cfg, module):
+        if _DEFERRED_REGEN is not None:
+            _DEFERRED_REGEN.setdefault(
+                (str(root), host), (root, host, pkg, frozenset())
+            )
+        else:
+            _regenerate_module_now(root, cfg, host, pkg)
 
 
 def _write_module_test_and_bench(
@@ -2707,8 +2776,15 @@ def _regenerate_module_now(
     # its own extra_link_libs — same direct-link rationale as gh-160.
     # gh-280: flatten each member's link=true closure so the .so pulls in every
     # transitively-composed core, not just the directly-declared ones.
+    # gh-2516: a view registered here over another module's object calls
+    # that object's core by name, so the core -- and, through the same walk
+    # every member gets below, everything it links -- reaches this .so too.
+    _view_parents = C.view_parents(cfg, module)
+    libs_parts += [
+        f"{p}_core" for p in _view_parents if f"{p}_core" not in libs_parts
+    ]
     _seen = set(libs_parts) | set(extra_libs)
-    for _obj in object_names:
+    for _obj in object_names + _view_parents:
         for _lib in C.component_extra_link_libs(
             cfg, _obj
         ) + C.transitive_dep_cores(
@@ -3052,6 +3128,11 @@ def _regenerate_module_now(
     for _obj in C.module_objects(cfg, module):
         _linkcheck.write(root, cfg, _obj)
         _invariants.sync(root, cfg, _obj, pkg)
+    # gh-2516: a parent's link-check table reads every fragment calling its
+    # core, and this module's views over another module's object are among
+    # them -- written just now, after the parent's module wrote its table.
+    for _obj in C.view_parents(cfg, module):
+        _linkcheck.write(root, cfg, _obj)
 
 
 def run(

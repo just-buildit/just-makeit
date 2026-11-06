@@ -1197,7 +1197,9 @@ def run(root: Path) -> None:
             out.append(
                 _render_cmd(
                     ["just-makeit", "view", comp, v["class_name"]],
-                    _view_flags(v, mod),
+                    # gh-2516: `--module` names where the view's class
+                    # lives, which is the parent's module unless it says.
+                    _view_flags(v, C.view_module(cfg, comp, v) or mod),
                 )
             )
             # gh-504: the view's OWN added/overriding members, after its

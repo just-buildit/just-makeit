@@ -1281,13 +1281,44 @@ required and must differ from the parent's own constructor
 (`<pkg>_<obj>_create`, or the `--create-fn` the object declared) — a view
 exists precisely to build from a different constructor.
 
+### A view in another module
+
+`--module` names the module the view's **class** lives in. Usually that is the
+object's own module; it may be any other object module (gh-2516). The object
+is found by name, since an object belongs to exactly one module:
+
+```sh
+# corr lives in `spectral`; Acquisition is imported from `acquire`
+just-makeit view corr Acquisition --module acquire \
+    --create-fn scr_corr_create_search
+```
+
+The manifest records `module = "acquire"` on the view entry (and nothing when
+the view stays home). The C core does not move: the `create_fn` stub is still
+scaffolded into `corr`'s sacred core, and no core is generated for the view.
+What moves is the Python class: its fragment is `acquire_ext_acquisition.c`,
+included by `acquire`'s aggregator; its `__module__` is `<pkg>.acquire`; the
+`acquire` stub declares it and `acquire/__init__.py` re-exports it; and the
+`acquire` extension links `corr_core` together with everything `corr` links
+(its `depends_on` cores and `extra_link_libs`). That core now reaches two
+extension modules, so a `process_global` core adopts its state across them
+as it would for any other (gh-1117).
+
+A change to the object regenerates the view's module too. The class name must
+be unique in the view's module, and among the object's views. Removing the
+object removes its views' fragments wherever they live; removing a module that
+holds another module's view is refused until that `[[<obj>.views]]` entry is
+deleted or moved. `jm method|property|warning|error --view` still name the
+**object's** module in their own `--module`, since they change the object's
+manifest table.
+
 **Arguments**
 
 | Argument                           | Description                                                                                                                                                                                                          |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `object`                           | Object the view sits over (must already exist in `just-makeit.toml`).                                                                                                                                                |
-| `ViewClassName`                    | Python class name for the view. Must be unique across every class the module exposes — each object's class name and every existing view.                                                                             |
-| `--module name`                    | Module the object belongs to. Required.                                                                                                                                                                              |
+| `ViewClassName`                    | Python class name for the view. Must be unique across every class the view's module exposes — each object's class name and every existing view — and among the object's views.                                       |
+| `--module name`                    | Module the view's class lives in. Required. The object's own module, or another object module (gh-2516; see [A view in another module](#a-view-in-another-module)).                                                  |
 | `--create-fn fn`                   | C constructor the view's `__init__` calls (e.g. `acc_create_seeded`). Required; must differ from the parent's own constructor (`<pkg>_<obj>_create`, or its `--create-fn`). Scaffolded as a stub in the shared core. |
 | `--init-param name:type[:default]` | The view's own constructor parameter. Repeatable; same syntax as `jm object --init-param`. Omit entirely to inherit the parent's constructor shape.                                                                  |
 | `--exclude-property name`          | Parent property to omit from the view's Python surface. Repeatable; must name an existing property of the parent.                                                                                                    |

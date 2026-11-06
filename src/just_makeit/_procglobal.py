@@ -111,7 +111,11 @@ def module_cores(cfg: dict) -> "dict[str, tuple[str, ...]]":
         if C.module_kind(cfg, mod):
             cores = C.dep_link_libs(data.get("depends_on", []))
         else:
-            cores = _for_components(C.module_objects(cfg, mod))
+            # gh-2516: a view registered here over another module's object
+            # links that object's core into this `.so` as well.
+            cores = _for_components(
+                C.module_objects(cfg, mod) + C.view_parents(cfg, mod)
+            )
         out[mod] = tuple(cores)
     return out
 
