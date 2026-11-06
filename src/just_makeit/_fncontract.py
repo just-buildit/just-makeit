@@ -52,7 +52,7 @@ from . import _render as R
 from . import _stubs
 from . import _textio
 from . import _types as T
-from ._docstring import class_import_path
+from ._docstring import STUB_TARGET_WIDTH, class_import_path
 
 #: Function flags that change the Python call's shape or its result, so a
 #: contract written for the plain form would not describe this wrapper.
@@ -141,6 +141,42 @@ def _result(fn: dict) -> "str | None":
     return None
 
 
+#: The column the generated test is held to, jm's one Python target.
+_WIDTH = STUB_TARGET_WIDTH
+
+#: The indent of the ``result = ...`` line inside the test's ``try``.
+_CALL_INDENT = " " * 12
+
+
+def _call(name: str, args: "list[str]") -> str:
+    """The wrapper call, laid out the way ``ruff format`` leaves it.
+
+    One line when ``result = <call>`` fits at the call's indent. Otherwise
+    one argument per line with a trailing comma: the magic trailing comma
+    makes ruff keep that layout at ANY ``line-length``, so the file is a
+    fixed point of the project's formatter whether the project is 79 or 88
+    wide, and ``ruff check``'s E501 has no line to report (gh-2513, where
+    doppler's ruff rewrote six of these files and drift then saw jm's file
+    edited).
+
+    Examples
+    --------
+    >>> _call("f", ["n=1"])
+    'module.f(n=1)'
+    >>> print(_call("gauss_hermite", ["z=" + "a" * 40, "p=" + "b" * 40]))
+    module.gauss_hermite(
+                    z=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+                    p=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+                )
+    """
+    one = f"module.{name}({', '.join(args)})"
+    if not args or len(f"{_CALL_INDENT}result = {one}") <= _WIDTH:
+        return one
+    inner = _CALL_INDENT + "    "
+    rows = "".join(f"{inner}{a},\n" for a in args)
+    return f"module.{name}(\n{rows}{_CALL_INDENT})"
+
+
 def _skip_reason(fn: dict) -> "str | None":
     """Why *fn* gets a skipped test rather than a contract call, or None."""
     for flag in _SHAPE_FLAGS:
@@ -178,7 +214,7 @@ def case(fn: dict) -> "tuple[str, bool]":
     uses_np = any(
         T.is_array_param_type(p["type"]) for p in fn.get("params", [])
     )
-    call = f"module.{name}({', '.join(args)})"
+    call = _call(name, args)
     # A two-line check is written at the method body's indent; it now sits
     # one level deeper, in the try's else.
     check = str(_result(fn)).replace("\n        ", "\n            ")
