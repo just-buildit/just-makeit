@@ -3362,20 +3362,44 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # Read the same way the aggregator reads its objects' entries (first
     # object to name an enum wins, and only what its fragment defines), so
     # the stub declares exactly what the extension adds.
+    from ._object import _view_frag_id
+
     _enum_pub = _enumc.module_publication(
-        _enumc.fragment_publication(
-            root,
-            C.module_paths(module).cname,
-            obj,
-            enum_publication(
+        [
+            _enumc.fragment_publication(
+                root,
+                C.module_paths(module).cname,
                 obj,
-                C.resolved_class_name(cfg, obj),
-                C.methods(cfg, obj),
-                C.properties(cfg, obj),
-                C.enums(cfg),
-            ),
-        )
-        for obj in objects
+                enum_publication(
+                    obj,
+                    C.resolved_class_name(cfg, obj),
+                    C.methods(cfg, obj),
+                    C.properties(cfg, obj),
+                    C.enums(cfg),
+                ),
+            )
+            for obj in objects
+        ]
+        # gh-2516: and every view this module registers, after the objects,
+        # as the aggregator walks them: a view's fragment publishes the enums
+        # its surface uses too, which for a view over another module's
+        # object are this module's only source of them.
+        + [
+            _enumc.fragment_publication(
+                root,
+                C.module_paths(module).cname,
+                _view_frag_id(view),
+                enum_publication(
+                    synth,
+                    view["class_name"],
+                    C.methods(vcfg, synth),
+                    C.properties(vcfg, synth),
+                    C.enums(cfg),
+                ),
+            )
+            for parent, view in C.module_views(cfg, module)
+            for synth, vcfg in [view_overlay(cfg, parent, view)]
+        ]
     )
     if _enum_pub:
         parts.append(_enumc.publish_pyi(_enum_pub).rstrip("\n"))
