@@ -207,19 +207,20 @@ def test_make_backend_refuses_pytest_arguments(tmp_path, spy):
 
 
 def test_functions_only_module_passes_jm_test(tmp_path, spy):
-    """gh-1950: pytest's "no tests collected" (exit 5) is a pass.
+    """gh-1950 and gh-2127: a project of only module functions passes `jm test`.
 
-    The issue's repro: `jm test` on a project of only module functions exits
-    1 with ``collected 0 items``. The C tests pass and the Python suite has
-    nothing to collect, which is the same verdict ``run_generated_pytest``
-    gives this shape.
+    The issue's repro (gh-1950) exited 1 with ``collected 0 items``. Since
+    gh-2127 the module gets a contract test that calls each wrapper, so the
+    suite collects it and it passes. The empty-suite exit 5 is still a pass
+    for a project with no tests at all, and is covered where that happens.
     """
     proj = _functions_only_module(tmp_path)
 
     r = run_cli("test", cwd=proj)
 
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "collected no tests" in r.stdout
+    assert "collected no tests" not in r.stdout
+    assert "passed" in r.stdout
 
 
 def test_no_subprocess_jm_starts_carries_a_timeout(tmp_path, spy):
