@@ -238,17 +238,20 @@ def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
 
     A view's fragment id is its lowercased ``class_name``, not the parent
     component it shares (gh-504). That derivation has one owner,
-    ``_object._view_frag_id``, and this calls it rather than repeating
+    ``_object._view_frag_id``, and this calls it (through
+    ``_object.module_fragments``) rather than repeating
     ``.lower()`` — the two would drift, and this function existing to enumerate
     fragments while a *different* rule decided their names is how the gap
     opened.
     """
-    from ._object import _view_frag_id
+    from ._object import module_fragments
 
     out: set[str] = set()
     for mod in C.modules(cfg):
         cname = C.module_paths(mod).cname
-        for obj in C.module_objects(cfg, mod):
+        # gh-2516: the fragments this module's aggregator includes, a view
+        # over another module's object among them.
+        for obj, frag_id in module_fragments(cfg, mod):
             # gh-1448: `fragment = "generated"` makes this object's
             # fragments jm's content, and `_sync_missing` now renders them
             # whole. Leaving them here would say `apply` will not rewrite
@@ -256,11 +259,9 @@ def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
             # is the entire point of declaring it.
             if C.fragment_kind(cfg, obj) == C.FRAGMENT_GENERATED:
                 continue
-            frag_ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
-            for frag_id in frag_ids:
-                rel = Path(INC.src_rel(cname, f"{cname}_ext_{frag_id}.c", cfg))
-                if (root / rel).is_file():
-                    out.add(rel.as_posix())
+            rel = Path(INC.src_rel(cname, f"{cname}_ext_{frag_id}.c", cfg))
+            if (root / rel).is_file():
+                out.add(rel.as_posix())
     return out
 
 

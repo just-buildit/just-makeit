@@ -435,6 +435,18 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
 
     print(f"just-makeit: removing object '{obj}'")
     print()
+    # gh-2516: the modules registering one of its views elsewhere, read
+    # while the manifest still holds them -- each loses a class below.
+    hosts = C.view_host_modules(cfg, module) if module else []
+    if module:
+        # The binding fragments that call into its core: its own and every
+        # view's, wherever the view registers (gh-2516). Left behind, a
+        # fragment its aggregator no longer includes is dead code that
+        # `status` never reports.
+        from ._linkcheck import binding_sources
+
+        for frag in binding_sources(root, cfg, obj):
+            _rm(frag)
     _remove_object_files(root, cfg, pkg, obj, module)
 
     # Drop the TOML section and module membership.
@@ -452,6 +464,8 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     # objects that remain.
     if module:
         _regenerate_module(root, cfg, module, pkg)
+    for host in hosts:
+        _regenerate_module(root, cfg, host, pkg)
     print()
     print(f"Done!  Object '{obj}' removed.")
 
@@ -507,6 +521,26 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
             (module, f["name"]) for f in C.module_functions(cfg, module)
         },
     )
+    # gh-2516: a view another module's object registers HERE names this
+    # module in its parent's manifest table. Removing the module would leave
+    # that entry naming nothing, which `apply` refuses; the route is the
+    # view's own edit, so refuse before anything is written.
+    _guests = [
+        f"{v['class_name']} (a view of '{p}')"
+        for p, v in C.module_views(cfg, module)
+        if p not in objects
+    ]
+    if _guests:
+        print(
+            f"error: module '{module}' registers {', '.join(_guests)}. "
+            "Delete those [[<obj>.views]] entries, or point their `module` "
+            "elsewhere, first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # And the modules registering a view of one of its objects: each loses
+    # that class once the object is gone.
+    hosts = C.view_host_modules(cfg, module)
     detail = f" and its objects ({', '.join(objects)})" if objects else ""
 
     def _obj_implemented(obj: str) -> bool:
@@ -534,7 +568,13 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     print()
 
     # Each object owns its own native/inc, native/src, and build wiring.
+    from ._linkcheck import binding_sources
+
     for obj in objects:
+        # gh-2516: a view registered in another module has its fragment
+        # there, which the module directory's removal does not reach.
+        for frag in binding_sources(root, cfg, obj):
+            _rm(frag)
         _remove_object_files(root, cfg, pkg, obj, module)
         cfg.pop(obj, None)
 
@@ -571,6 +611,8 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
     _prune_parent_packages(root, pkg, cfg, mp)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
+    for host in hosts:
+        _regenerate_module(root, cfg, host, pkg)
     print()
     print(f"Done!  Module '{module}' removed.")
 

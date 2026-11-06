@@ -10,6 +10,14 @@ This generator persists a ``[[<obj>.views]]`` entry, scaffolds a stub for the
 view's ``create_fn`` into the sacred core so the module still compiles out of
 the box (the user fills in the alternate constructor's body), and regenerates
 the module glue. Views are a module-object feature only.
+
+The view's class may live in another object module than its parent's
+(gh-2516): ``--module`` names where the class lives, recorded as the entry's
+``module`` key when it differs from the parent's. That module's aggregator
+includes the view's fragment, its stub declares the class, its
+``__init__.py`` re-exports it and its extension links the parent's core;
+the C core, and the ``create_fn`` stub, stay the parent's.
+``_config.view_module`` is the one answer to where a view lives.
 """
 
 from __future__ import annotations
@@ -62,26 +70,56 @@ def run(
     cfg = C.load(root)
 
     # Views are a module-object feature (v1): the multi-type module machinery
-    # registers the extra class; a standalone object's single-type .so does not.
+    # registers the extra class; a standalone object's single-type .so does
+    # not. The parent is found by name -- an object belongs to at most one
+    # module -- and `--module` names where the VIEW's class lives (gh-2516):
+    # the parent's module, or another object module. Every invocation
+    # written before gh-2516 named the parent's, so it means what it always
+    # did.
     if not module:
         _fail("'view' requires --module (views are a module-object feature).")
-    mod_objs = C.module_objects(cfg, module)
-    if object_name not in mod_objs:
+    parent_module = C.module_of(cfg, object_name)
+    if not parent_module:
         _fail(f"object '{object_name}' not found in module '{module}'.")
+    if module not in C.modules(cfg):
+        _fail(
+            f"module '{module}' not found (the view's class lives in a "
+            f"declared module). Known: {sorted(C.modules(cfg))}"
+        )
+    if module != parent_module and (
+        C.module_kind(cfg, module) or C.is_no_generate_module(cfg, module)
+    ):
+        _fail(
+            f"module '{module}' is a `kind` or `no_generate` module; a view "
+            "registers its class in an object module's generated aggregator."
+        )
+    mod_objs = C.module_objects(cfg, module)
 
-    # The view's class name must be unique among every class the module already
-    # exposes (each object's class_name and every existing view) — they collide
-    # on the PyModule_AddObject key and the generated C symbols otherwise.
+    # The view's class name must be unique among every class the module
+    # already exposes (each object's class_name and every view it registers,
+    # its own objects' and other modules' alike, gh-2516) -- they collide on
+    # the PyModule_AddObject key and the generated C symbols otherwise.
     taken: set[str] = set()
     for o in mod_objs:
         taken.add(C.resolved_class_name(cfg, o))
-        for v in C.views(cfg, o):
-            taken.add(v["class_name"])
+    for _parent, v in C.module_views(cfg, module):
+        taken.add(v["class_name"])
     if class_name in taken:
         _fail(
             f"class name '{class_name}' is already used in module "
             f"'{module}'. Pick a distinct name."
         )
+    # gh-2516: and among the parent's own views, wherever they live. A
+    # fragment is tied back to its view by the lowercased class name among
+    # the parent's views (`_view_frag_id`), so two of one parent's views in
+    # different modules must not share it.
+    for v in C.views(cfg, object_name):
+        if v["class_name"].lower() == class_name.lower():
+            _fail(
+                f"'{object_name}' already has a view '{v['class_name']}' "
+                f"(in module '{C.view_module(cfg, object_name, v)}'). Pick "
+                "a distinct name."
+            )
 
     if not create_fn:
         _fail("--create-fn is required (the view's C constructor).")
@@ -153,7 +191,12 @@ def run(
     # init_params (falling back to the parent's), exactly as the parent's
     # <comp>_create() signature is; the body is an IMPLEMENT stub the user
     # fills in with the alternate construction.
-    view_entry: dict = {"class_name": class_name, "create_fn": create_fn}
+    view_entry: dict = {"class_name": class_name}
+    # gh-2516: recorded only when the class lives away from its parent, so a
+    # same-module view's manifest entry is exactly what it always was.
+    if module != parent_module:
+        view_entry["module"] = module
+    view_entry["create_fn"] = create_fn
     if doc:
         view_entry["doc"] = doc
     if ip_dicts:
@@ -219,4 +262,6 @@ def run(
     C.save(root, cfg)
     print(f"  update  {cfg_path}")
 
-    _regenerate_module(root, cfg, module, pkg)
+    # The parent's module: it regenerates every module registering one of
+    # its objects' views, this one included (gh-2516).
+    _regenerate_module(root, cfg, parent_module, pkg)

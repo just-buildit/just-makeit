@@ -6789,6 +6789,109 @@ def add_view(cfg: dict, component: str, view: dict) -> dict:
     return cfg
 
 
+def view_module(cfg: dict, component: str, view: dict) -> str:
+    """The module whose extension registers *view*'s class (gh-2516).
+
+    The view's own ``module`` key when it names one, else its parent's
+    module -- which is where every view lived before the key existed, and
+    where one without it still lives. The ONE answer to "which aggregator
+    includes this view's fragment, which stub declares it, which
+    ``__init__.py`` re-exports it and which extension links its parent's
+    core"; every writer and reader asks it rather than assuming the
+    parent's.
+
+    The C core never moves: a view in another module still constructs the
+    parent's ``<stem>_state_t`` through a ``create_fn`` scaffolded into the
+    parent's sacred ``_core.c``. Only the Python class's home changes.
+
+    >>> cfg = {"module": {"spectral": {"objects": ["corr"]},
+    ...                   "acquire": {"objects": []}}}
+    >>> view_module(cfg, "corr", {"class_name": "Peek"})
+    'spectral'
+    >>> view_module(cfg, "corr", {"class_name": "Acq", "module": "acquire"})
+    'acquire'
+    """
+    return view.get("module") or module_of(cfg, component)
+
+
+def module_views(cfg: dict, module: str) -> "list[tuple[str, dict]]":
+    """Every ``(parent, view)`` whose class *module* registers (gh-2516).
+
+    The module's own objects' views come first, object by object in
+    manifest order -- exactly the order a module has always listed them,
+    so a project with no cross-module view renders byte-identically. Then
+    the views other modules' objects place here, module by module.
+
+    >>> cfg = {"module": {"spectral": {"objects": ["corr"]},
+    ...                   "acquire": {"objects": ["mix"]}},
+    ...        "corr": {"views": [{"class_name": "Peek"},
+    ...                           {"class_name": "Acq",
+    ...                            "module": "acquire"}]},
+    ...        "mix": {"views": [{"class_name": "Tap"}]}}
+    >>> [(p, v["class_name"]) for p, v in module_views(cfg, "acquire")]
+    [('mix', 'Tap'), ('corr', 'Acq')]
+    >>> [(p, v["class_name"]) for p, v in module_views(cfg, "spectral")]
+    [('corr', 'Peek')]
+    """
+    own = module_objects(cfg, module)
+    pairs = [(o, v) for o in own for v in views(cfg, o)]
+    pairs += [
+        (o, v)
+        for m in modules(cfg)
+        if m != module
+        for o in module_objects(cfg, m)
+        for v in views(cfg, o)
+    ]
+    return [(o, v) for o, v in pairs if view_module(cfg, o, v) == module]
+
+
+def view_parents(cfg: dict, module: str) -> "list[str]":
+    """Objects of OTHER modules that a view registered in *module* is over.
+
+    Each one's core library, and everything that core links, must reach
+    this module's extension, since the view's wrappers call its C
+    functions by name (gh-2516). Empty for a module with no cross-module
+    view, so the link line of every existing project is unchanged. In
+    first-seen order, each parent once however many of its views live
+    here.
+
+    >>> cfg = {"module": {"spectral": {"objects": ["corr"]},
+    ...                   "acquire": {"objects": []}},
+    ...        "corr": {"views": [{"class_name": "A", "module": "acquire"},
+    ...                           {"class_name": "B", "module": "acquire"}]}}
+    >>> view_parents(cfg, "acquire"), view_parents(cfg, "spectral")
+    (['corr'], [])
+    """
+    own = set(module_objects(cfg, module))
+    out: list[str] = []
+    for parent, _view in module_views(cfg, module):
+        if parent not in own and parent not in out:
+            out.append(parent)
+    return out
+
+
+def view_host_modules(cfg: dict, module: str) -> "list[str]":
+    """Other modules registering a view over one of *module*'s objects.
+
+    A view shares its parent's surface, so a change to the parent changes
+    the view's binding too: regenerating *module* must regenerate these
+    (gh-2516). Empty when every view stays home.
+
+    >>> cfg = {"module": {"spectral": {"objects": ["corr"]},
+    ...                   "acquire": {"objects": []}},
+    ...        "corr": {"views": [{"class_name": "A", "module": "acquire"}]}}
+    >>> view_host_modules(cfg, "spectral"), view_host_modules(cfg, "acquire")
+    (['acquire'], [])
+    """
+    out: list[str] = []
+    for obj in module_objects(cfg, module):
+        for v in views(cfg, obj):
+            m = view_module(cfg, obj, v)
+            if m != module and m not in out:
+                out.append(m)
+    return out
+
+
 def view_init_params(cfg: dict, component: str, view: dict) -> list[tuple]:
     """10-tuple init_params for a view: its own if declared, else parent's.
 
@@ -9011,7 +9114,7 @@ _KEY_ORDER: "dict[str, tuple[str, ...]]" = {
     "<obj>.records.fields": _FIELD_ORDER,
     "<obj>.extra_methods": ("name", "fn", "flags", "args", "returns", "doc"),
     "<obj>.views": (
-        "class_name", "create_fn", "doc", "init_params",
+        "class_name", "module", "create_fn", "doc", "init_params",
         "exclude_properties", "exclude_methods", "create_error",
         "create_error_message", "warnings", "methods", "properties",
     ),

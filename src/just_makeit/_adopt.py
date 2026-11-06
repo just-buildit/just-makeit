@@ -186,8 +186,8 @@ def survey(root: Path, cfg: dict, *, only_mod: str | None = None) -> list:
 
     A view has no manifest table of its own, so its fragment is governed by
     the key on its PARENT and is reported against that object. That
-    grouping is not invented here: `_status` already builds
-    ``[obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]``.
+    grouping is not invented here: `_status` already reads it from
+    ``_object.module_fragments``.
     """
     pkg = C.project_name(cfg)
     out: list[Verdict] = []
@@ -442,23 +442,23 @@ def stale_tokens(root: Path, cfg: dict) -> list:
     Reads files and compares against the manifest -- no render -- so
     `status` can ask it on every run.
     """
-    from ._object import _view_frag_id
+    from ._object import module_fragments
 
     out: list = []
     for mod in C.modules(cfg):
         if C.is_no_generate_module(cfg, mod):
             continue
         cname = C.module_paths(mod).cname
-        for obj in C.module_objects(cfg, mod):
+        # gh-2516: a view in another module is that module's fragment.
+        for obj, fid in module_fragments(cfg, mod):
             if C.fragment_kind(cfg, obj) == C.FRAGMENT_GENERATED:
                 continue
-            for fid in [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]:
-                name = f"{cname}_ext_{fid}.c"
-                f = INC.src_path(root, cname, cfg) / name
-                if f.is_file() and R.is_owned_render(
-                    f.read_text(encoding="utf-8"), name
-                ):
-                    out.append(f.relative_to(root).as_posix())
+            name = f"{cname}_ext_{fid}.c"
+            f = INC.src_path(root, cname, cfg) / name
+            if f.is_file() and R.is_owned_render(
+                f.read_text(encoding="utf-8"), name
+            ):
+                out.append(f.relative_to(root).as_posix())
     return out
 
 

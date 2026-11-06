@@ -1481,7 +1481,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 temp_root,
                 comp,
                 v["class_name"],
-                mod,
+                # gh-2516: the module the view's class lives in, which is
+                # what `jm view --module` names.
+                C.view_module(cfg, comp, v),
                 v["create_fn"],
                 init_params=[dict(p) for p in v.get("init_params", [])],
                 exclude_properties=list(v.get("exclude_properties", [])),
@@ -1840,19 +1842,19 @@ def _owned_fragments(root: Path, cfg: dict) -> set:
     table, so the key on its PARENT governs its fragment too; the id list
     is the one `_status` already builds (gh-1448).
     """
-    from ._object import _view_frag_id
+    from ._object import module_fragments
 
     out: set = set()
     for mod in C.modules(cfg):
         if C.is_no_generate_module(cfg, mod):
             continue
         cname = C.module_paths(mod).cname
-        for obj in C.module_objects(cfg, mod):
+        # gh-2516: through the one enumeration, so a view registered in
+        # another module is found in that module's directory.
+        for obj, fid in module_fragments(cfg, mod):
             if C.fragment_kind(cfg, obj) != C.FRAGMENT_GENERATED:
                 continue
-            ids = [obj] + [_view_frag_id(v) for v in C.views(cfg, obj)]
-            for fid in ids:
-                out.add(Path(INC.src_rel(cname, f"{cname}_ext_{fid}.c", cfg)))
+            out.add(Path(INC.src_rel(cname, f"{cname}_ext_{fid}.c", cfg)))
     return out
 
 
