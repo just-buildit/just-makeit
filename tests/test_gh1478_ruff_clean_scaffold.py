@@ -27,6 +27,7 @@ import pytest
 
 import _downstream_gates as G
 from _jmrun import run_cli
+from just_makeit._docstring import STUB_TARGET_WIDTH
 
 #: Each shape: the CLI calls after ``jm new p``, one command per string. A
 #: first call spelled ``new ...`` replaces the default ``new p``.
@@ -113,6 +114,25 @@ SHAPES: "dict[str, list[str]]" = {
         "app --target console --object gen --name tool",
         "app --target pep723 --object gen --name tool_script",
     ],
+    # gh-2513: the functions contract test (gh-2127) at doppler's shapes: a
+    # call too long for one line (two array params), a check_return status,
+    # and skip reasons. Function names stay short: the package re-export is
+    # single-line by contract (`_object._fmt_from_import`), which gh-2514
+    # tracks; the long names are the parameters'.
+    "functions_contract": [
+        "module util",
+        "function gauss --module util"
+        " --param abscissae_out_buffer:double[]"
+        " --param weights_out_buffer:double[] --return-type int"
+        " --check-return",
+        "function interp --module util"
+        " --param fractional_sample_position:double"
+        " --param number_of_neighbouring_taps:int --return-type double",
+        "function describe --module util"
+        " --param waveform_identifier_handle:int"
+        " --return-type 'const char *'",
+        "function fill --module util --out-type float64[n] --param n:int",
+    ],
     "app_console_generator": [
         "object s --arg-type void --return-type float",
         "app --target console --object s --name gen",
@@ -149,4 +169,36 @@ def test_a_fresh_scaffold_is_ruff_clean(tmp_path: Path, shape: str) -> None:
     assert not reformat, (
         f"ruff format would rewrite a fresh {shape} scaffold:\n"
         + G._ruff(proj, "format", "--diff")
+    )
+
+
+#: jm's own column target (`_docstring.STUB_TARGET_WIDTH`). A downstream
+#: that sets ``line-length`` to it and selects E501 -- doppler does -- must
+#: find jm's files clean too; ruff's defaults (88, E501 off) hid the
+#: functions contract test's long calls from the check above (gh-2513).
+_JM_WIDTH = ("--line-length", str(STUB_TARGET_WIDTH))
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_a_fresh_scaffold_is_clean_at_jms_width(
+    tmp_path: Path, shape: str
+) -> None:
+    proj = _scaffold(tmp_path, SHAPES[shape])
+    check = G._ruff(
+        proj,
+        "check",
+        "--select",
+        "E501",
+        *_JM_WIDTH,
+        "--output-format=concise",
+    )
+    assert not G._RUFF.findall(check), (
+        f"E501 at {STUB_TARGET_WIDTH} on a fresh {shape} scaffold:\n{check}"
+    )
+    reformat = G._REFORMAT.findall(
+        G._ruff(proj, "format", "--check", *_JM_WIDTH)
+    )
+    assert not reformat, (
+        f"ruff format at {STUB_TARGET_WIDTH} would rewrite a fresh {shape}"
+        " scaffold:\n" + G._ruff(proj, "format", "--diff", *_JM_WIDTH)
     )
