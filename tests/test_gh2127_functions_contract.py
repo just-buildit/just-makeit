@@ -116,6 +116,28 @@ class TestTolerantCall:
     def test_the_right_return_type_passes(self) -> None:
         assert self._outcome(lambda n, x: 1.0) == "pass"
 
+    def test_check_return_none_passes_and_a_status_int_fails(self) -> None:
+        """Run against a stand-in: None (what the binding returns) passes,
+        the raw status int (what the old check wanted) fails."""
+        import types
+        import unittest
+
+        fn = dict(_SCALE, return_type="int", check_return=True)
+        text, _ = F.case(fn)
+
+        def outcome(value) -> str:
+            mod = types.SimpleNamespace(fft_scale=lambda n, x: value)
+            ns: dict = {"unittest": unittest, "module": mod}
+            exec(  # noqa: S102 -- the generated text, run on a stub module
+                "class T(unittest.TestCase):\n" + text, ns
+            )
+            res = unittest.TestResult()
+            unittest.defaultTestLoader.loadTestsFromTestCase(ns["T"]).run(res)
+            return "fail" if res.failures or res.errors else "pass"
+
+        assert outcome(None) == "pass"
+        assert outcome(0) == "fail"
+
     def test_the_text_names_the_refusals(self) -> None:
         text, _ = F.case(_SCALE)
         assert "except (ValueError, RuntimeError, OverflowError)" in text
@@ -168,6 +190,24 @@ class TestCaseText:
         fn = {"name": "fft_global_setup", "params": [], "return_type": "void"}
         text, _ = F.case(fn)
         assert "self.assertIsNone(result)" in text
+
+    def test_check_return_expects_none_as_the_stub_declares(self) -> None:
+        """``check_return`` makes the int status "succeeds or raises": the
+        binding returns None and the ``.pyi`` says ``-> None``. The contract
+        reads that same annotation, so it asserts None, not int (doppler's
+        ``gauss_hermite`` failed on 0.121.0 when it read the C type)."""
+        from just_makeit._stubs import fn_py_surface
+
+        fn = {
+            "name": "solve",
+            "params": [{"name": "n", "type": "int"}],
+            "return_type": "int",
+            "check_return": True,
+        }
+        assert fn_py_surface(fn)[0] == "None"
+        text, _ = F.case(fn)
+        assert "self.assertIsNone(result)" in text
+        assert "assertIsInstance(result, int)" not in text
 
     def test_int_return_rejects_bool(self) -> None:
         """A bool is an int in Python. Without the exclusion a binding that
@@ -360,6 +400,30 @@ class TestTheBuildRuns:
         ran = run_cli("test", cwd=root)
         assert ran.returncode == 0, ran.stdout + ran.stderr
         assert "1 passed" in ran.stdout + ran.stderr
+
+    def test_a_check_return_function_builds_and_its_contract_passes(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``check_return`` function whose stub kernel succeeds: the real
+        binding returns None, and the contract test must PASS, not skip and
+        not fail on an int check."""
+        root = tmp_path / "dsp"
+        new_run("dsp", root, modules=["fft"], c_prefix=None)
+        function_run(
+            root,
+            "fft_plan",
+            "fft",
+            params=[("n", "int")],
+            return_type="int",
+            check_return=True,
+        )
+        _no_repair(root)
+        built = run_cli("build", cwd=root)
+        assert built.returncode == 0, built.stdout + built.stderr
+        ran = run_cli("test", cwd=root)
+        output = ran.stdout + ran.stderr
+        assert ran.returncode == 0, output
+        assert "test_fft_plan_contract PASSED" in output
 
     def test_a_mixed_module_builds_and_its_contract_test_passes(
         self, tmp_path: Path

@@ -49,6 +49,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _render as R
+from . import _stubs
 from . import _textio
 from . import _types as T
 from ._docstring import class_import_path
@@ -98,30 +99,45 @@ def _arg(p: dict) -> "str | None":
     return meta["py_one"]
 
 
-def _result(rt: str) -> "str | None":
-    """The assertion that the wrapper's result has the declared return type,
+def _result(fn: dict) -> "str | None":
+    """The assertion that *fn*'s wrapper result has its Python return type,
     or None for a return the contract cannot check yet.
+
+    The expected type is the ``.pyi`` stub's return annotation, read from
+    :func:`_stubs.fn_py_surface`, the one place jm decides what a function
+    returns to Python. Reading the raw C ``return_type`` here was a second
+    reading of that decision, and it drifted: ``check_return = true`` turns
+    an ``int`` status into "succeeds or raises", which the stub declares as
+    ``None`` and the binding returns as ``None``, while this test asserted
+    ``int`` and failed on a correct binding (doppler's ``gauss_hermite``,
+    gh-2510).
 
     ``int`` excludes ``bool`` because the binding returns a Python bool for a
     ``bool`` return and an int for every other integer, and an int check that
     accepted a bool would pass a wrong-typed binding.
+
+    Examples
+    --------
+    >>> print(_result({"name": "f", "return_type": "int"}))
+    self.assertIsInstance(result, int)
+            self.assertNotIsInstance(result, bool)
+    >>> _result({"name": "f", "return_type": "int", "check_return": True})
+    'self.assertIsNone(result)'
+    >>> _result({"name": "f", "return_type": "const char *"}) is None
+    True
     """
-    if rt == "void":
+    ann = _stubs.fn_py_surface(fn)[0]
+    if ann == "None":
         return "self.assertIsNone(result)"
-    if rt == "bool":
+    if ann == "bool":
         return "self.assertIsInstance(result, bool)"
-    meta = T._CTYPE_META.get(rt)
-    if meta is None:
-        return None
-    kind = meta["kind"]
-    if kind == "int":
+    if ann == "int":
         return (
             "self.assertIsInstance(result, int)\n"
             "        self.assertNotIsInstance(result, bool)"
         )
-    if kind in ("float", "complex"):
-        pytype = "float" if kind == "float" else "complex"
-        return f"self.assertIsInstance(result, {pytype})"
+    if ann in ("float", "complex"):
+        return f"self.assertIsInstance(result, {ann})"
     return None
 
 
@@ -136,7 +152,7 @@ def _skip_reason(fn: dict) -> "str | None":
                 f"parameter {p['name']!r} of type {p['type']!r} has no "
                 "contract argument yet"
             )
-    if _result(fn.get("return_type", "void")) is None:
+    if _result(fn) is None:
         return (
             f"return type {fn.get('return_type')!r} has no contract check yet"
         )
@@ -165,9 +181,7 @@ def case(fn: dict) -> "tuple[str, bool]":
     call = f"module.{name}({', '.join(args)})"
     # A two-line check is written at the method body's indent; it now sits
     # one level deeper, in the try's else.
-    check = str(_result(fn.get("return_type", "void"))).replace(
-        "\n        ", "\n            "
-    )
+    check = str(_result(fn)).replace("\n        ", "\n            ")
     return (
         f"    def test_{name}_contract(self):\n"
         "        try:\n"
