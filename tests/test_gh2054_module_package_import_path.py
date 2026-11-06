@@ -141,6 +141,11 @@ def tree(tmp_path_factory):
         _ok(root, "property", "o", "_capsule", "--type", "capsule",
             "--capsule", "p.o", *_M)  # fmt: skip
         _ok(root, "object", "user")
+        # gh-2127: a functions-only module, whose contract test imports its
+        # own package. The one place that joiner runs with a functions-only
+        # module on the tree.
+        _ok(root, "module", "fx")
+        _ok(root, "function", "fx_run", "--module", "fx")
 
         def _declare(cfg: dict) -> None:
             # An authored class doc is what renders the runtime class block.
