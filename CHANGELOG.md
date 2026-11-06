@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+## [0.121.1] — 2026-11-06
+
+### Fixed
+
+- **A `check_return` function's contract test expects `None`** (gh-2510).
+    gh-2127's generated test asserted the C `return_type` (`int`). A
+    `check_return` binding instead raises on a nonzero status and returns
+    `None`, as its `.pyi` declares, so a correct binding failed its own test.
+    The test now reads its expected type from the same place the stub
+    does, so the two cannot disagree.
+
 ## [0.121.0] — 2026-11-06
 
 ### Added
