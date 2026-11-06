@@ -1,5 +1,67 @@
 ## [Unreleased]
 
+## [0.121.0] — 2026-11-06
+
+### Added
+
+- **A module with functions gets a Python contract test, so a broken wrapper
+    fails `jm test`** (gh-2127). Such a module built an extension and generated
+    no Python test that called it, so a wrapper with the wrong return type or a
+    parameter the binding did not parse passed `jm build` and `jm test` both. Its
+    `tests/test_<module>_functions.py` now calls each wrapper with arguments
+    derived from its declared parameters and asserts the call succeeds and the
+    result has the declared return type. It asserts no values: the bodies are the
+    author's stubs, and their documented cases are the header's `@code` examples.
+    An out array is passed as a writable buffer, which is what the binding fills.
+    A function whose shape the contract cannot call yet is a named skip, not a
+    silent pass: an out scalar, a string parameter or return, an array return, an
+    enum-typed parameter, and a result shaped by `result_fields`, `out_type`,
+    `variable_output`, `why`, `max_results_param` or `out_size` (tracked in #2160).
+    The file follows the module's functions: adding a function rewrites it, and
+    removing the last one removes it. A module with objects gets it too (#2156). A
+    file the author has taken over (the ownership token deleted) is never written
+    or removed again.
+    An existing project with a module that declares functions gains
+    `tests/test_<module>_functions.py` on its next `jm apply`. That is why the
+    `stale_project` example's upgrade golden moved.
+    On upgrade the bodies are real kernels, not stubs, and are called with
+    synthetic arguments (a scalar `1`, a 4-element zero buffer for an array). A
+    kernel that refuses them by raising `ValueError`, `RuntimeError` or
+    `OverflowError` makes that test a visible skip naming the kernel's message;
+    a `TypeError` (the binding did not parse a declared parameter) and a wrong
+    return type still fail. A kernel that mishandles the arguments in some other
+    way is yours to settle: take the file over by deleting its ownership token.
+
+### Fixed
+
+- **A file that includes `jm_bench.h` or `jm_test.h` and calls nothing
+    builds under `-Wall -Wextra -Werror`** (gh-2497). `jm_bench.h` defined
+    `jm_bench_write_json`, `jm_dcmp` and `jm_quantile` as plain `static`,
+    so a second benchmark source sharing one binary failed
+    `-Wunused-function`; doppler hit it splitting a bench's rows across two
+    files. They are `static inline` now, like the rest of the header, and
+    `jm_test.h`'s `jm_checks` / `jm_fails` counters are marked maybe-unused
+    for the same reason. Every header a scaffolded project carries is now
+    compiled alone, under gcc and clang, by the test suite.
+
+- **A view's `doc` for a member its parent has is that member's whole
+    docstring, and the member stays the parent's** (gh-2498). A
+    `[[<obj>.views.methods]]` entry naming a shared method rendered the
+    view's `doc` followed by the parent header's prose, Parameters,
+    Returns, Raises and a second Examples section; naming a built-in such
+    as `reset` or a generated `<method>_max_out` accessor declared a NEW
+    method, so `reset` became `reset() -> complex` and `jm apply` rewrote
+    the header's `<stem>_reset()` declaration; and a view's own
+    `error_message` was refused. Now an entry carrying only `name` with
+    `doc` and/or `error_message` is an override of the parent's member:
+    the view's text replaces the docstring on the `.pyi` and the runtime
+    `__doc__` alike, the signature and C declaration stay the parent's,
+    and `error_message` (binding text, not the C call) may differ per
+    view. Anything that changes the C call is still refused without
+    `--fn`. `jm script` now replays a method's `doc` (`--doc`), the
+    parent's and a view's: it was dropped, so a replayed project lost
+    every manifest method docstring.
+
 ## [0.120.2] — 2026-11-06
 
 ### Fixed
