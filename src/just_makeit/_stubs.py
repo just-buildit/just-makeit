@@ -3404,6 +3404,18 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             if x
         )
         parts.insert(_typing_slot, f"from typing import {typing_imports}")
+    # gh-2513: a module with objects gets its import/body separator above;
+    # a functions-only module did not, so its imports ran straight into the
+    # first `def`, and `ruff format` inserted the blank line ruff wants. The
+    # separator is placed here, once the import block is final, and only
+    # when there are imports to separate, so an import-free stub keeps its
+    # bytes.
+    if not objects:
+        n = 1
+        while n < len(parts) and parts[n].startswith(("import ", "from ")):
+            n += 1
+        if 1 < n < len(parts) and parts[n] != "":
+            parts.insert(n, "")
     # gh-2212: positional-only where each class's row takes no keywords,
     # told by the fragment that class renders to -- through the one
     # function the standalone stub (`_render.render_component_pyi`) asks.
