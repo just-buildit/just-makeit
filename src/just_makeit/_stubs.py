@@ -3031,6 +3031,36 @@ def mark_positional_only(
     return raw.decode("utf-8")
 
 
+def view_doc_blocks(
+    cfg: dict, obj: str, view: dict, doc_blocks: "dict | None"
+) -> dict:
+    """*obj*'s header blocks as *view* documents them (gh-2498).
+
+    A view's members call the parent's C functions, so the parent's blocks
+    are theirs (gh-685) -- except where the view overrides a member's
+    ``doc``. There the view's text is the WHOLE docstring: a
+    `_docstring.verbatim_block` at the member's C name, which both renderers
+    return as written, with nothing of the parent's header appended. Keyed
+    by `_config.view_member_doc_keys`, so a declared method, a built-in such
+    as ``reset`` and a generated ``<m>_max_out`` accessor are reached the
+    same way.
+
+    The binding (`_object._make_view_ctx`) and this module's stub
+    (`view_overlay`) both call it, so the two faces cannot be given
+    different text. The parent's map is copied, never changed: the parent's
+    class renders from it too.
+    """
+    from ._docstring import verbatim_block
+
+    out = dict(doc_blocks or {})
+    keys = C.view_member_doc_keys(cfg, obj)
+    for m in C.view_methods(view):
+        key = keys.get(m.get("name", ""))
+        if key and m.get("doc") and C.is_view_override(cfg, obj, m):
+            out[key] = verbatim_block(str(m["doc"]))
+    return out
+
+
 def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
     """The synthetic component a view is rendered as: ``(name, cfg)``.
 
@@ -3080,7 +3110,9 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
     # binding renders none (`_object._make_view_ctx`), because each row's
     # function is written against the parent's struct.
     overlay.pop("extra_methods", None)
-    own_methods = C.view_methods(view)
+    # gh-2498: what the view's entries MEAN -- a doc-only `reset` is the
+    # built-in's doc, not a new method -- read the one way the binding does.
+    own_methods = C.resolved_view_methods(cfg, obj, view)
     own_method_names = {m["name"] for m in own_methods}
     overlay["methods"] = [
         m
@@ -3093,7 +3125,9 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
     # `_max_out` arity set and the gh-1400 struct map, each a re-key of its
     # own; since gh-2406 the stub looks a view up under its parent's stem
     # (`stub_stem`), so the parent's blocks answer as they stand.
-    overlay["_doc_blocks"] = cfg.get(obj, {}).get("_doc_blocks", {}) or {}
+    overlay["_doc_blocks"] = view_doc_blocks(
+        cfg, obj, view, cfg.get(obj, {}).get("_doc_blocks", {}) or {}
+    )
     # gh-648: the view's own `doc=` owns its class docstring. Every
     # other overlay key was set and this one was not, so a view whose
     # class-level semantics genuinely differ from its parent's --

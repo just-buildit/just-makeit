@@ -179,7 +179,14 @@ def _is_authored(blk) -> bool:
     author writes something.
     """
     return bool(
-        blk and (blk.body or blk.params or blk.returns or blk.examples)
+        blk
+        and (
+            blk.body
+            or blk.params
+            or blk.returns
+            or blk.examples
+            or blk.verbatim  # gh-2498
+        )
     )
 
 
@@ -219,7 +226,8 @@ def _demo_unless_authored(blk, lines: list[str]) -> list[str]:
     replaces the placeholder demo rather than sitting above it, so one
     docstring never shows two different ways to construct the object.
     """
-    return [] if (blk and blk.examples) else lines
+    # gh-2498: a verbatim block is the whole docstring, demo included.
+    return [] if (blk and (blk.examples or blk.verbatim)) else lines
 
 
 def _header_example(

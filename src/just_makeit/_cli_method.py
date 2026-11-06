@@ -25,7 +25,9 @@ def run(args: list[str]) -> None:
     #: The only flags a doc-only view override needs. Anything else means
     #: the caller stated a signature, so it gets compared. Kept narrow on
     #: purpose: a flag missing here causes a refusal, never a silent ignore.
-    _DOC_ONLY_FLAGS = frozenset({"--view", "--module", "--doc"})
+    _DOC_ONLY_FLAGS = frozenset(
+        {"--view", "--module", "--doc", "--error-message"}  # gh-2498
+    )
 
     object_name = args[0]
     method_name = args[1]
