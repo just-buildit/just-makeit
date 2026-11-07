@@ -132,6 +132,15 @@ SHAPES: "dict[str, list[str]]" = {
         " --param waveform_identifier_handle:int"
         " --return-type 'const char *'",
         "function fill --module util --out-type float64[n] --param n:int",
+        # A parameter with no contract argument skips the test, and its
+        # reason must fit too: a mid-length one goes alone inside the
+        # parentheses, a long one wraps into concatenated pieces (doppler's
+        # three E501s on 0.121.2).
+        "function hexs --module util --param hex:'const char *'"
+        " --return-type int",
+        "function hexl --module util"
+        " --param waveform_identifier_text_handle:'const char *'"
+        " --return-type int",
     ],
     "app_console_generator": [
         "object s --arg-type void --return-type float",
