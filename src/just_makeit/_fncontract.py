@@ -195,6 +195,59 @@ def _skip_reason(fn: dict) -> "str | None":
     return None
 
 
+def _str_literal(text: str) -> str:
+    """*text* as a double-quoted Python literal, ruff format's own quoting.
+
+    ``repr`` picks single quotes unless the text holds one, and ruff format
+    rewrites a single-quoted literal, so the file would not be a fixed point.
+
+    >>> print(_str_literal('say "hi"'))
+    "say \\"hi\\""
+    """
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _skip_decorator(reason: str) -> str:
+    """The ``@unittest.skip`` line(s) for *reason*, at most ``_WIDTH`` wide.
+
+    ruff format cannot break a string literal, so a long reason is written
+    the way ruff leaves it: one line when the decorator fits at the method's
+    indent; else the literal alone inside the parentheses; else implicit
+    concatenation, one word-wrapped piece per line, which ruff keeps split
+    because joined it would not fit (gh-2513: doppler's E501 on three skip
+    reasons at 79 columns).
+
+    Examples
+    --------
+    >>> print(_skip_decorator("short"))
+    @unittest.skip("short")
+    >>> print(_skip_decorator("w " * 40))
+    @unittest.skip(
+            "w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w "
+            "w w w w w w "
+        )
+    """
+    one = f"@unittest.skip({_str_literal(reason)})"
+    if len(f"    {one}") <= _WIDTH:
+        return one
+    inner = " " * 8
+    if len(f"{inner}{_str_literal(reason)}") <= _WIDTH:
+        return f"@unittest.skip(\n{inner}{_str_literal(reason)}\n    )"
+    # Each piece keeps its trailing space, so the pieces concatenate back
+    # to *reason* exactly; 2 columns go to the quotes.
+    room = _WIDTH - len(inner) - 2
+    pieces, cur = [], ""
+    for word in re.findall(r"\S+\s*", reason):
+        if cur and len(_str_literal(cur + word)) - 2 > room:
+            pieces.append(cur)
+            cur = ""
+        cur += word
+    pieces.append(cur)
+    rows = "".join(f"{inner}{_str_literal(x)}\n" for x in pieces)
+    return f"@unittest.skip(\n{rows}    )"
+
+
 def case(fn: dict) -> "tuple[str, bool]":
     """The test method for one wrapper, and whether it uses numpy.
 
@@ -206,7 +259,7 @@ def case(fn: dict) -> "tuple[str, bool]":
     reason = _skip_reason(fn)
     if reason is not None:
         return (
-            f"    @unittest.skip({reason!r})\n"
+            f"    {_skip_decorator(reason)}\n"
             f"    def test_{name}_contract(self):\n"
             "        pass\n"
         ), False
