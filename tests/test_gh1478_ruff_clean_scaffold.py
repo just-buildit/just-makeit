@@ -132,6 +132,11 @@ SHAPES: "dict[str, list[str]]" = {
         " --param waveform_identifier_handle:int"
         " --return-type 'const char *'",
         "function fill --module util --out-type float64[n] --param n:int",
+        # A complex scalar argument is `_types` `py_one`, which must be
+        # spelled as ruff format leaves it, `(1 + 0j)` (doppler's
+        # square_clip on 0.122.2).
+        "function cclip --module util --param y:'double _Complex'"
+        " --param lin:double --return-type double",
         # A parameter with no contract argument skips the test, and its
         # reason must fit too: a mid-length one goes alone inside the
         # parentheses, a long one wraps into concatenated pieces (doppler's
