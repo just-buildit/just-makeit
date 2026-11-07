@@ -2580,7 +2580,6 @@ def run(
         _c_fn,
         builtin_method_names(
             C.state_vars(cfg, object_name),
-            no_state=C.is_no_state(cfg, object_name),
             no_step=C.is_no_step(cfg, object_name),
             no_reset=C.is_no_reset(cfg, object_name),
         ),
