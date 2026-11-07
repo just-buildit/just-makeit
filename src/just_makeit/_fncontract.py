@@ -44,6 +44,7 @@ False
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -96,7 +97,22 @@ def _arg(p: dict) -> "str | None":
     meta = T._CTYPE_META.get(t)
     if meta is None or meta["kind"] not in ("int", "float", "complex"):
         return None
-    return meta["py_one"]
+    return _source(meta["py_one"])
+
+
+def _source(value: str) -> str:
+    """*value*, a Python repr, as source ``ruff format`` leaves alone.
+
+    ``py_one`` is what Python PRINTS, so a generated doctest can expect it
+    (``(1+0j)`` for a complex). As an argument ruff rewrites that to
+    ``(1 + 0j)``, and ``jm apply`` would write it back (doppler's
+    square_clip, gh-2513). ``ast.unparse`` is Python's own source spelling,
+    so this derives it rather than declaring "one" a second time.
+
+    >>> _source("(1+0j)"), _source("1.0"), _source("True")
+    ('1 + 0j', '1.0', 'True')
+    """
+    return ast.unparse(ast.parse(value, mode="eval"))
 
 
 def _result(fn: dict) -> "str | None":
