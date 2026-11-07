@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+## [0.122.4] — 2026-11-07
+
+### Fixed
+
+- **A view's `doc` on a method it adds is the whole docstring** (gh-2528).
+    A view method declared with `fn` (or on the derived symbol) took its
+    `doc` as the summary line only; the C function's header block -- shared
+    with every other class binding that function -- still supplied the
+    prose, Parameters, Returns and Examples. Now every view method's `doc`
+    is its whole docstring on the `.pyi` and the runtime `__doc__`, as an
+    override's already was (gh-2498); a view without one keeps the header's
+    text, and a `doc` on a member sharing its C function with another member
+    of the same view is refused.
+
+- **A view's `doc` override of `reset` on a `no_state` object is an
+    override, not a new method** (gh-2529). jm's member derivation dropped
+    `reset` under `no_state` while the binding still binds it, so the view
+    entry rendered `reset() -> complex` with the parent's Example, `apply`
+    rewrote the header's `<stem>_reset` declaration, and the view's fragment
+    failed to compile (`void value not ignored`). `reset` is now a member
+    exactly when the binding emits it -- unless `no_reset` -- so the view
+    keeps `reset() -> None` with its own doc on both faces.
+
 ## [0.122.3] — 2026-11-07
 
 ### Fixed
