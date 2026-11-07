@@ -1362,7 +1362,10 @@ def class_diagnostics(
         _create_raises_doc(
             C.create_error(cfg, obj), C.create_error_message(cfg, obj)
         ),
-        _warns_doc(C.warnings(cfg, obj)),
+        # gh-2534: the class's own properties, so a condition one of them
+        # reads is documented by its Python name. `cfg` is the view overlay
+        # for a view, so this is the surface the view binds.
+        _warns_doc(C.warnings(cfg, obj), C.properties(cfg, obj)),
     )
 
 

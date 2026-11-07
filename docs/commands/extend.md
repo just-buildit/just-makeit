@@ -1503,6 +1503,14 @@ regenerated into `_ext.c` — you write no C. `--condition` names a bool-ish
 field on the object's state struct (emitted as `self->handle-><field>`), so it
 must already exist as state (add it with `just-makeit add` if needed).
 
+`--condition` may instead be a whole C expression, used verbatim, like a
+property's `--expr` (gh-601) — for an object whose state is a handle onto
+another, e.g. `self->handle->engine->underpowered`. The class docstring's
+`Warns` entry names the condition; for an expression, it names the property
+on the same class whose `expr` is that expression (compared ignoring
+whitespace and enclosing parentheses), so a caller reads `underpowered`
+rather than C (gh-2534). With no such property the expression is shown.
+
 **Arguments**
 
 | Argument            | Description                                                                                                                                                                                             |

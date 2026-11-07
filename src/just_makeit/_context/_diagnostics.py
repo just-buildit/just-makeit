@@ -1200,7 +1200,126 @@ def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":
     ]
 
 
-def warns_doc(warnings: "list[dict]") -> "list[tuple[str, str]]":
+# Characters that lex into a multi-character C operator with a neighbour of
+# their own kind (`--`, `->`, `&&`, `<=`, ...). A space between two of them
+# separates tokens, so `_c_squash` keeps it; anywhere else whitespace between
+# tokens carries no meaning.
+_OP_CHARS = frozenset("+-&|<>=!*/%^~.:")
+
+
+def _c_squash(text: str) -> str:
+    """*text* with every whitespace run that cannot separate tokens removed.
+
+    A run between two word characters (``unsigned int``) or two operator
+    characters (``a - -b`` is not ``a--b``) is kept as one space; every other
+    run is dropped, so ``self->handle -> x`` and ``self->handle->x`` compare
+    equal while two spellings that lex differently do not.
+
+    Examples
+    --------
+    >>> _c_squash("  self->handle -> engine->x ")
+    'self->handle->engine->x'
+    >>> _c_squash("a - -b") == _c_squash("a--b")
+    False
+    >>> _c_squash("( a  &&  b )")
+    '(a&&b)'
+    """
+    parts = text.split()
+    out = parts[0] if parts else ""
+    for part in parts[1:]:
+        a, b = out[-1], part[0]
+        word = (a.isalnum() or a == "_") and (b.isalnum() or b == "_")
+        ops = a in _OP_CHARS and b in _OP_CHARS
+        out += (" " if word or ops else "") + part
+    return out
+
+
+def _strip_outer_parens(text: str) -> str:
+    """*text* without the parentheses that wrap all of it, at any depth.
+
+    A pair is stripped only when the opening ``(`` at the start is closed by
+    the ``)`` at the end: ``(a) || (b)`` starts and ends with a parenthesis,
+    but those two do not match each other, so it is returned as it is. Text
+    holding a quote is left alone, since a parenthesis inside a string or
+    character literal does not nest.
+
+    Examples
+    --------
+    >>> _strip_outer_parens("((self->handle->x))")
+    'self->handle->x'
+    >>> _strip_outer_parens("(a) || (b)")
+    '(a) || (b)'
+    >>> _strip_outer_parens("(a || b)")
+    'a || b'
+    """
+    while (
+        text.startswith("(")
+        and text.endswith(")")
+        and "'" not in text
+        and '"' not in text
+    ):
+        depth = 0
+        for i, ch in enumerate(text):
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if depth == 0 and i < len(text) - 1:
+                return text
+        text = text[1:-1].strip()
+    return text
+
+
+def _c_key(expr: str) -> str:
+    """The form two C expressions are compared in: `_c_squash` and
+    `_strip_outer_parens`, and nothing looser."""
+    return _strip_outer_parens(_c_squash(expr))
+
+
+def condition_doc_name(condition: str, properties: "list[dict]") -> str:
+    """What a warning's docstring calls its *condition* (gh-2534).
+
+    A bare identifier names a state field and is shown as it is, which is
+    what every docstring rendered before gh-601. An expression is C: shown
+    verbatim, a Python caller reads ``self->handle->search->underpowered``
+    in a docstring that has no such thing. When a property declared on the
+    same class reads that exact value -- its ``expr`` equal to the condition
+    after `_c_key`, so parenthesised or re-spaced but not otherwise
+    rewritten -- the docstring names the property, the one name a caller
+    can read it by. No new manifest key says so: the property already
+    declares which Python name reads that C value. The first such property
+    in the class's order wins. With none, the expression is shown as before.
+
+    Parameters
+    ----------
+    condition : str
+        The warning's declared ``condition``.
+    properties : list of dict
+        The properties of the class the warning is on, as the class binds
+        them -- for a view, `_stubs.view_overlay`'s merge, so an excluded
+        parent property is not a candidate and an inherited one is.
+
+    Examples
+    --------
+    >>> props = [{"name": "underpowered",
+    ...           "expr": "(self->handle->search->underpowered)"}]
+    >>> condition_doc_name("self->handle->search->underpowered", props)
+    'underpowered'
+    >>> condition_doc_name("self->handle->other", props)
+    'self->handle->other'
+    >>> condition_doc_name("underpowered", [])
+    'underpowered'
+    """
+    if _IDENT.match(condition):
+        return condition
+    key = _c_key(condition)
+    for prop in properties:
+        expr = prop.get("expr") or ""
+        if expr and _c_key(expr) == key:
+            return prop["name"]
+    return condition
+
+
+def warns_doc(
+    warnings: "list[dict]", properties: "list[dict] | None" = None
+) -> "list[tuple[str, str]]":
     """The ``warns=`` argument for a component's class docstring (gh-805 §F).
 
     Built from the same ``[[<obj>.warnings]]`` entries `make_warnings_ctx`
@@ -1218,6 +1337,9 @@ def warns_doc(warnings: "list[dict]") -> "list[tuple[str, str]]":
     warnings : list of dict
         Entries with ``condition``, ``category`` and ``message``, as
         `_config.warnings` returns them.
+    properties : list of dict, optional
+        The class's properties; an expression condition one of them reads is
+        named by that property (`condition_doc_name`, gh-2534).
 
     Examples
     --------
@@ -1235,7 +1357,9 @@ def warns_doc(warnings: "list[dict]") -> "list[tuple[str, str]]":
     for w in warnings:
         category = w.get("category", "UserWarning")
         message = w.get("message", "")
-        condition = w.get("condition", "")
+        condition = condition_doc_name(
+            w.get("condition", ""), properties or []
+        )
         out.append(
             (
                 category,
