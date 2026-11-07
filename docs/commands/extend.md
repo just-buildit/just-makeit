@@ -1455,6 +1455,15 @@ it, but never re-renders a wrapper body, so a new `error_message` reaches the
 binding of a fragment written from then on. `jm status` reports the stale one,
 as it does a changed `error_message` on the parent.
 
+**A method the view adds follows the same rule** (gh-2528). Its `doc` is its
+whole docstring on both faces, whether it binds its own C function with `--fn`
+or the derived `<pkg>_<obj>_<name>`: nothing of that function's header block
+is appended. The block is shared with every other class binding the function,
+so two views adding `push` on one `fn` each document their own Python face,
+and a view whose entry has no `doc` keeps the header-derived docstring. A
+`doc` on a member that shares its C function with another member of the same
+view is refused, since the text could not be that member's alone.
+
 ______________________________________________________________________
 
 **Limitation:** a view cannot yet sit over a parent whose init-params use
