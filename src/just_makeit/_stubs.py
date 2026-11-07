@@ -3047,30 +3047,74 @@ def mark_positional_only(
 def view_doc_blocks(
     cfg: dict, obj: str, view: dict, doc_blocks: "dict | None"
 ) -> dict:
-    """*obj*'s header blocks as *view* documents them (gh-2498).
+    """*obj*'s header blocks as *view* documents them (gh-2498, gh-2528).
 
     A view's members call the parent's C functions, so the parent's blocks
-    are theirs (gh-685) -- except where the view overrides a member's
-    ``doc``. There the view's text is the WHOLE docstring: a
+    are theirs (gh-685) -- except where the view writes a method's ``doc``.
+    There the view's text is the WHOLE docstring: a
     `_docstring.verbatim_block` at the member's C name, which both renderers
-    return as written, with nothing of the parent's header appended. Keyed
-    by `_config.view_member_doc_keys`, so a declared method, a built-in such
-    as ``reset`` and a generated ``<m>_max_out`` accessor are reached the
-    same way.
+    return as written, with nothing of the header appended. One rule for
+    every kind of view method entry, each keyed at the C name its member's
+    doc is looked up by:
+
+    - an override of a parent member (gh-2498): `_config.view_member_doc_keys`,
+      so a declared method, a built-in such as ``reset`` and a generated
+      ``<m>_max_out`` accessor are reached the same way;
+    - a method the view adds, or re-binds with ``fn`` (gh-2528): the C
+      function it binds, `_config.method_c_symbol`. That function's header
+      block is shared -- with the parent, and with every other view binding
+      the same ``fn`` -- which is exactly why the view's text must not be
+      merged into it. Before, only the summary line was the view's.
+
+    The map returned is the VIEW's: a copy of the parent's, never changed in
+    place. The parent's class renders from the original, and a second view
+    binding the same ``fn`` builds its own copy, so neither sees this view's
+    text; an entry with no ``doc`` keeps the header's docstring.
+
+    Refused: a ``doc`` keyed at a C name another member of this view's class
+    also looks its docstring up by, since the text could then not be the one
+    member's alone.
 
     The binding (`_object._make_view_ctx`) and this module's stub
     (`view_overlay`) both call it, so the two faces cannot be given
-    different text. The parent's map is copied, never changed: the parent's
-    class renders from it too.
+    different text.
     """
+    from . import _csym
     from ._docstring import verbatim_block
+    from ._report import Refusal
 
     out = dict(doc_blocks or {})
     keys = C.view_member_doc_keys(cfg, obj)
-    for m in C.view_methods(view):
-        key = keys.get(m.get("name", ""))
-        if key and m.get("doc") and C.is_view_override(cfg, obj, m):
-            out[key] = verbatim_block(str(m["doc"]))
+    stem = _csym.stem(cfg, obj)
+    own = C.view_methods(view)
+    gone = C.view_exclude_methods(view) | {m.get("name") for m in own}
+    # {C name: the members of the view's class that look their doc up
+    # there} -- the parent's members the view keeps, then its own entries.
+    bound: "dict[str, set[str]]" = {}
+    for name, key in keys.items():
+        if name not in gone and name.removesuffix("_max_out") not in gone:
+            bound.setdefault(key, set()).add(name)
+    placed: "list[tuple[str, dict]]" = []
+    for m in own:
+        if C.is_view_override(cfg, obj, m):
+            key = keys.get(m.get("name", ""))
+        else:
+            key = C.method_c_symbol(stem, m)
+        if key:
+            bound.setdefault(key, set()).add(m["name"])
+            if m.get("doc"):
+                placed.append((key, m))
+    for key, m in placed:
+        others = sorted(bound[key] - {m["name"]})
+        if others:
+            raise Refusal(
+                f"view '{view.get('class_name')}' of '{obj}': the doc of "
+                f"'{m['name']}' cannot be its own docstring, because "
+                f"{', '.join(others)} also look theirs up at C function "
+                f"'{key}'. Bind the members to distinct C functions, or "
+                "drop the doc."
+            )
+        out[key] = verbatim_block(str(m["doc"]))
     return out
 
 
