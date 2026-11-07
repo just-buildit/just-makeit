@@ -293,7 +293,10 @@ def render(import_path: str, leaf: str, functions: list[dict]) -> str:
     *import_path* is the dotted path the module's package imports from
     (``dsp.fft``); *leaf* is the module's own name, which names the class.
     The test imports the module, not its functions, so a skipped wrapper
-    leaves no unused import behind.
+    leaves no unused import behind. When EVERY wrapper is skipped nothing
+    calls ``module`` at all, so the import is left out too: ruff's F401
+    would delete it, and the next ``apply`` would write it back
+    (doppler's ccsds, filter and wfm on 0.122.1).
     """
     cases = []
     uses_np = False
@@ -301,10 +304,13 @@ def render(import_path: str, leaf: str, functions: list[dict]) -> str:
         text, np_used = case(fn)
         cases.append(text)
         uses_np = uses_np or np_used
+    calls = any(_skip_reason(fn) is None for fn in functions)
     head = "import unittest\n\n"
     if uses_np:
         head += "import numpy as np\n\n"
-    head += f"import {import_path} as module\n\n\n"
+    if calls:
+        head += f"import {import_path} as module\n\n"
+    head += "\n"
     body = (
         f"class Test{_class_name(leaf)}Functions(unittest.TestCase):\n"
         f'    """Contract smoke test for the module-level functions (gh-2127).\n'

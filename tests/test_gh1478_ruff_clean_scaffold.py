@@ -142,6 +142,16 @@ SHAPES: "dict[str, list[str]]" = {
         " --param waveform_identifier_text_handle:'const char *'"
         " --return-type int",
     ],
+    # Every wrapper skipped (an out_type shape, a parameter with no contract
+    # argument): nothing calls the module, so the test must not import it,
+    # or ruff's F401 fails and `--fix` fights the next `apply` (doppler's
+    # ccsds, filter and wfm on 0.122.1).
+    "functions_contract_all_skipped": [
+        "module bits",
+        "function asm --module bits --out-type float64[n] --param n:int",
+        "function hexs --module bits --param hex:'const char *'"
+        " --return-type int",
+    ],
     "app_console_generator": [
         "object s --arg-type void --return-type float",
         "app --target console --object s --name gen",

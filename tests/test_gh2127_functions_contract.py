@@ -275,10 +275,22 @@ class TestRenderedModule:
         src = F.render(
             "dsp.fft",
             "fft",
-            [dict(_SCALE, variable_output=True, out_type="float")],
+            [_SCALE, dict(_SCALE, variable_output=True, out_type="float")],
         )
         assert "import dsp.fft as module" in src
         assert "from dsp.fft import" not in src
+
+    def test_an_all_skipped_module_is_not_imported(self) -> None:
+        """When every wrapper is skipped nothing calls ``module``, so the
+        import would be F401; ruff's fix and the next ``apply`` would then
+        fight over it (doppler on 0.122.1)."""
+        src = F.render(
+            "dsp.fft",
+            "fft",
+            [dict(_SCALE, variable_output=True, out_type="float")],
+        )
+        assert "dsp.fft" not in src
+        assert "import unittest\n\n\nclass TestFft" in src
 
 
 class TestWhatIsWritten:
