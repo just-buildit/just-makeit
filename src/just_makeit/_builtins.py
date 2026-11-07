@@ -9,11 +9,12 @@ one C symbol into a create-only ``_core.c``, two ``PyMethodDef`` rows, two
 
 There are exactly seven shapes of built-in, and the set is *derived* per
 component rather than listed as reserved words, because six of the seven are
-conditional: ``--no-step`` removes ``step``/``steps``, ``--no-reset`` and
-``--no-state`` remove ``reset``, and ``get_``/``set_`` exist only for the
-scalar state fields the object actually declares. A hardcoded list would call
-``step`` a collision on an object that has no ``step``, and would miss
-``get_gain`` entirely.
+conditional: ``--no-step`` removes ``step``/``steps``, ``--no-reset``
+removes ``reset``, and ``get_``/``set_`` exist only for the scalar state
+fields the object actually declares. A hardcoded list would call ``step`` a
+collision on an object that has no ``step``, and would miss ``get_gain``
+entirely. ``--no-state`` removes nothing: a stateless object's binding still
+emits ``reset()`` over ``<stem>_reset`` (gh-2529).
 
 The consumers ask three different questions of the same derivation, and the
 distinctions between them are all load-bearing:
@@ -97,7 +98,6 @@ _DECL_SLOT = {"reset": "builtin_reset_decl", "steps": "steps_c_decl"}
 def builtin_method_names(
     state_vars: "list[tuple[str, str, str]]",
     *,
-    no_state: bool = False,
     no_step: bool = False,
     no_reset: bool = False,
 ) -> "frozenset[str]":
@@ -111,9 +111,13 @@ def builtin_method_names(
         ones grow accessors — an array field is exposed as a memoryview, not
         as ``get_``/``set_`` — which mirrors ``make_state_ctx``'s own
         ``scalar_vars`` filter.
-    no_state, no_step, no_reset
+    no_step, no_reset
         The object's suppression flags. Each removes the members its own
-        generator would otherwise emit.
+        generator would otherwise emit. ``no_state`` is deliberately not
+        one: the binding emits ``reset()`` under it too, and only
+        ``no_reset`` removes it (gh-542). Reading ``no_state`` here made a
+        stateless object's ``reset`` no member, so a view's doc override of
+        it was taken for a NEW method (gh-2529).
 
     Returns
     -------
@@ -137,7 +141,7 @@ def builtin_method_names(
     ['create', 'destroy']
     """
     names = {"create", "destroy"}
-    if not (no_state or no_reset):
+    if not no_reset:
         names.add("reset")
     if not no_step:
         names |= {"step", "steps"}
@@ -352,7 +356,6 @@ def absorbable_members(cfg, component: str) -> "frozenset[str]":
     names = set(
         builtin_method_names(
             C.state_vars(cfg, component),
-            no_state=C.is_no_state(cfg, component),
             no_step=C.is_no_step(cfg, component),
             no_reset=C.is_no_reset(cfg, component),
         )
@@ -388,7 +391,6 @@ def builtin_owned_members(root, cfg, component: str) -> "frozenset[str]":
         return frozenset()
     builtins = builtin_method_names(
         C.state_vars(cfg, component),
-        no_state=C.is_no_state(cfg, component),
         no_step=C.is_no_step(cfg, component),
         no_reset=C.is_no_reset(cfg, component),
     )

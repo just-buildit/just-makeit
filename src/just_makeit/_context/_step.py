@@ -475,7 +475,7 @@ def make_step_ctx(
             # gh-1478: with no step() there is nothing to stream, and a
             # benchmark that built `obj` and never touched it was an `F841`.
             # Construction is the one operation every object has (reset()
-            # is not: `no_state`/`no_reset` drop it), so that is what is
+            # is not: `no_reset` drops it), so that is what is
             # timed. The slots nest; `render` substitutes to a fixed point.
             "bm_step_py": (
                 "\n\ndef test_bench_create(benchmark):\n"
