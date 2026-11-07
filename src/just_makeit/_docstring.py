@@ -3799,10 +3799,11 @@ def _row_docstring(
     if owner_kind == "object" and table == ("views", "methods"):
         from ._config import is_view_override
 
-        # gh-2498: a view's override of a member its parent has IS the
-        # member's whole docstring (`verbatim_block`); a method the view
-        # adds is rendered like any other, sections and all.
-        if is_view_override(cfg, owner, row):
+        # gh-2498 / gh-2528: a view method's `doc` IS the member's whole
+        # docstring (`_stubs.view_doc_blocks` places a `verbatim_block`),
+        # whether it overrides a parent member or adds one. An added
+        # method with no `doc` is rendered like any other, sections and all.
+        if row.get("doc") or is_view_override(cfg, owner, row):
             return str(row.get("doc") or "")
         return None
     if owner_kind == "object" and table == ("methods",):
