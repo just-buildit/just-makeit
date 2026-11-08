@@ -1846,7 +1846,7 @@ One entry per `just-makeit method` call.
 | `no_count`        | bool                    | drop the void-input `count`; `max_out(state)` sizes it (gh-2233)                                                                  |
 | `out_cols`        | string or int           | width of a matrix result: `(count / out_cols, out_cols)` (gh-2115)                                                                |
 | `count_type`      | string                  | C type of a variable_output count (default `size_t`; gh-2012)                                                                     |
-| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012)                                                                                |
+| `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012); also an `out=` method's count (gh-2559)                                       |
 | `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)                                                                          |
 | `status_return`   | bool                    | integer return is a status: ValueError on non-0 (gh-432, gh-2250); a `status_errors` row names another class per status (gh-2470) |
 | `batch`           | bool                    | `--batch`                                                                                                                         |
