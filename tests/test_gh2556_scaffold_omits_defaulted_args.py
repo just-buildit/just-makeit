@@ -76,6 +76,19 @@ _FIR = (
 )
 
 
+#: A module function with a required `x`, a defaulted `k` (gh-240) and a
+#: `cap` defaulted to a C constant Python has no spelling of (gh-1488).
+_FN = (
+    "[module.m]\nobjects = []\n"
+    '\n[[module.m.functions]]\nname = "scale"\nreturn_type = "double"\n'
+    '\n[[module.m.functions.params]]\nname = "x"\ntype = "double"\n'
+    '\n[[module.m.functions.params]]\nname = "k"\ntype = "double"\n'
+    'default = "2.0"\n'
+    '\n[[module.m.functions.params]]\nname = "cap"\ntype = "double"\n'
+    'default = "INFINITY"\n'
+)
+
+
 @pytest.fixture(scope="module")
 def project(tmp_path_factory: pytest.TempPathFactory) -> Path:
     tmp = tmp_path_factory.mktemp("gh2556")
@@ -89,6 +102,7 @@ def project(tmp_path_factory: pytest.TempPathFactory) -> Path:
     (root / "modules" / "filt.toml").write_text(
         '[module.filt]\nobjects = ["fir"]\n', encoding="utf-8"
     )
+    (root / "modules" / "m.toml").write_text(_FN, encoding="utf-8")
     out = run_cli("apply", cwd=root)
     assert out.returncode == 0, out.stdout + out.stderr
     # gh-2557: the app face, a C tool and a console script over `corr`.
@@ -99,6 +113,21 @@ def project(tmp_path_factory: pytest.TempPathFactory) -> Path:
             target,
             "--object",
             "corr",
+            "--name",
+            name,
+            cwd=root,
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
+    # gh-2560: the same pair over a module function.
+    for target, name in (("c", "fnc"), ("console", "fnp")):
+        out = run_cli(
+            "app",
+            "--target",
+            target,
+            "--module",
+            "m",
+            "--function",
+            "scale",
             "--name",
             name,
             cwd=root,
@@ -251,3 +280,46 @@ def test_the_console_app_runs_without_the_defaulted_flags(
     )
     assert run.returncode == 0, run.stderr.decode()
     assert run.stdout == bytes(4)
+
+
+# -- gh-2560: a function app -----------------------------------------------
+#
+# Its flags came from a builder of their own: Python required every
+# parameter, while C started each at zero, enforced none and ignored a
+# declared default. Both now go through the one flag model.
+
+
+def test_the_function_c_app_agrees_with_its_python_face(
+    project: Path,
+) -> None:
+    c = (project / "native/src/app/fnc.c").read_text(encoding="utf-8")
+    assert "double k = 2.0;" in c
+    assert "if (!x_given) {" in c
+    assert "k_given" not in c
+    assert "double cap = INFINITY;" in c
+    assert "#include <math.h>" in c
+    py = (project / "src/rp/m/cli.py").read_text(encoding="utf-8")
+    ast.parse(py)
+    assert re.search(r'"--x",\n\s+type=float,\n\s+required=True', py)
+    assert re.search(r'"--k",\n\s+type=float,\n\s+default=2.0', py)
+    # `cap` is passed only when given, so the binding's INFINITY applies.
+    assert "args.cap" not in py
+    assert '"cap",' in py
+
+
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_the_function_apps_require_x_and_default_k(project: Path) -> None:
+    _built(project)
+    exe = project / "build" / "fnc"
+    bare = subprocess.run([str(exe)], capture_output=True, text=True)
+    assert bare.returncode == 2, bare.stdout + bare.stderr
+    assert "--x is required" in bare.stderr
+    ok = subprocess.run([str(exe), "--x", "3"], capture_output=True)
+    assert ok.returncode == 0, ok.stderr
+    py = [sys.executable, "-m", "rp.m.cli"]
+    bare = subprocess.run(py, capture_output=True, cwd=project / "src")
+    assert bare.returncode == 2, bare.stderr
+    ok = subprocess.run(
+        [*py, "--x", "3"], capture_output=True, cwd=project / "src"
+    )
+    assert ok.returncode == 0, ok.stderr

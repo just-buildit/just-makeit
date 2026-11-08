@@ -233,7 +233,7 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     # Python: imports from the module subpackage, required args, prints result.
     assert "from .mathx import addn" in cli
     assert "required=True" in cli
-    assert "print(addn(args.a, args.b))" in cli
+    assert "result = addn(args.a, args.b)\n    print(result)" in cli
     # CMake links the module core; manifest records the function source.
     cmake = (proj / "CMakeLists.txt").read_text()
     assert "add_executable(addtool" in cmake and "mathx_core" in cmake
