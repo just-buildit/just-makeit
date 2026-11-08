@@ -4540,6 +4540,13 @@ def _apply_manifest(
     _dropped_status = discarded_setter_status(root, cfg)
     if _dropped_status:
         C._refuse(_dropped_status)
+    # gh-2538: and a getter declared in the other shape from the one its
+    # binding calls (a property moved to or from `getter_status`).
+    from ._property import getter_shape_mismatch
+
+    _getter_shape = getter_shape_mismatch(root, cfg)
+    if _getter_shape:
+        C._refuse(_getter_shape)
 
     # gh-327: refuse to silently promote a former module object — whose
     # fragment was left behind after `objects = [...]` dropped it — into a
