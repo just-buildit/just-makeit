@@ -359,6 +359,13 @@ jobs:
   artifact-smoke:
     name: Artifact smoke (pre-publish)
     needs: [resolve, build]
+    # artifact.yml's `plan` job asks for `actions: read` (make ci-runner
+    # counts this repo's queued jobs), and a callee can ask for no more
+    # than its caller grants; the rest is the repo's restricted default.
+    permissions:
+      contents: read
+      packages: read
+      actions: read
     uses: ./.github/workflows/artifact.yml
     with:
       wheel-artifact: dist
