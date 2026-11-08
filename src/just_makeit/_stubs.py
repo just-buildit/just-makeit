@@ -1598,38 +1598,31 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
 
     # Constructor arg string for doctest. init_params drive create() when
     # present (the #69 contract — even when scalar state vars also exist, which
-    # are then hidden/bridged), so the example must use them; a string_enum
-    # default renders as its quoted string, not the enum index.
+    # are then hidden/bridged), so the example must use them.
     scalar_vars = [
         (n, ct, dflt)
         for n, ct, dflt in state_vars
         if not _ARRAY_RE.match(ct.strip())
     ]
 
-    def _ctor_literal(ct: str, dflt: str, required: bool = False) -> str:
-        if ct.startswith("string_enum:"):
-            return f'"{dflt}"' if dflt else "..."
-        # gh-273: a required scalar with no default has no value jm can seed —
-        # a validating constructor would reject the type's zero. Render `...`
-        # (for any type, including floats whose zero literal is `.0`) so
-        # _build_class_docstring suppresses the construction doctest rather than
-        # emitting one that raises under `pytest --doctest-glob='*.pyi'`.
-        if required and not dflt:
-            return "..."
-        lit = _py_default_stub(ct, dflt)
-        # A non-required no-default scalar keeps the historic zero seed.
-        return lit if lit != "" else _py_default_stub(ct, "0")
-
-    def _ctor_arg(p) -> str:
-        n, ct, dflt = p[0], p[1], p[2]
-        return f"{n}={_ctor_literal(ct, dflt, required=len(p) > 8 and bool(p[8]))}"
-
     py_create_args = (
-        # keyword args: order-independent against the binding's parse order, and
-        # self-documenting (string_enums show their chosen string). gh-610:
-        # the state-vars-only shape gets the same treatment for the same
-        # reason — a positional example rots silently on any reorder.
-        ", ".join(_ctor_arg(p) for p in ip)
+        # keyword args: order-independent against the binding's parse order.
+        # gh-610: the state-vars-only shape gets the same treatment for the
+        # same reason — a positional example rots silently on any reorder.
+        # gh-2556: from the one builder every generated construction reads
+        # -- required params only, defaulted ones left to the binding. This
+        # was a peer that restated every default and ignored `example_value`.
+        Ctx._build_no_state_init_ctx(
+            obj,
+            Component,
+            list(ip),
+            C.array_args(cfg, obj),
+            create_fn=C.object_create_fn(cfg, obj),
+            csym=csym,
+            seed_defaults=(
+                None if no_state else {n: d for n, _, d in state_vars}
+            ),
+        )["py_create_args"]
         if ip
         # gh-1488: a header-constant field is omitted, so the binding's
         # own default runs -- the peer of `_context/_state.py`'s call.

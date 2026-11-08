@@ -697,6 +697,10 @@ class TestInitParamsWithState:
         `_types.param_fmt` emits `z` for a parameter seeded `NULL` now, so
         `None` round-trips to the null pointer and the placeholder can be
         the thing the manifest actually says.
+
+        gh-2556 went the rest of the way: a defaulted parameter is not
+        restated at all, so the binding's own `NULL` is what runs. The
+        declared default seeds the C call, which cannot omit it.
         """
         ctx = self._ctx(
             [("fd", "int", "-1")],
@@ -704,10 +708,9 @@ class TestInitParamsWithState:
         )
         # py_create_args feeds into the generated pytest test_create():
         #     obj = Reader(<py_create_args>)
-        # Must be a valid Python expression that the binding accepts.
-        assert "NULL" not in ctx["py_create_args"]
-        assert "None" in ctx["py_create_args"]
+        assert "filepath" not in ctx["py_create_args"]
         assert '""' not in ctx["py_create_args"]
+        assert "NULL" in ctx["c_create_args"]
 
 
 class TestResolveReturnType:

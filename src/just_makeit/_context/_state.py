@@ -268,6 +268,7 @@ def _build_no_state_init_ctx(
     *,
     csym: str,
     create_why: bool = False,
+    seed_defaults: "dict[str, str] | None" = None,
 ) -> dict[str, str]:
     """Build the init-parse context keys for a --no-state object.
 
@@ -311,6 +312,9 @@ def _build_no_state_init_ctx(
     and stubs it beside create() and the tree builds untouched.
     """
     _create = CSYM.create_name(csym, create_fn)
+    # gh-122: `{init-param name: the default of the state var it shares a
+    # name with}` -- a seed for a parameter that has no default of its own.
+    _seeds: dict[str, str] = dict(seed_defaults or {})
     # ── Classify params ───────────────────────────────────────────────────
 
     arr_ip: list[tuple[str, str, int, str]] = []
@@ -710,6 +714,15 @@ def _build_no_state_init_ctx(
         p[0]: p[14] for p in params if len(p) > 14 and p[14]
     }
 
+    _scalar_raw: dict[str, str] = {n: dr for n, _, __, dr, ___ in scalar_ip}
+
+    def _py_seed(ct: str, value: str) -> str:
+        """The Python seed for a required scalar: *value*, or the type's zero
+        when there is none or Python cannot spell it (gh-266, gh-1488)."""
+        if not value or T.is_c_only_default(ct, value):
+            value = _CTYPE_META[ct]["zero"]
+        return _py_default(ct, value)
+
     sig_parts: list[str] = []
     doc_parts: list[str] = []
     call_parts: list[str] = []
@@ -905,9 +918,14 @@ def _build_no_state_init_ctx(
             # gh-1105: the C smoke test and bench construct with the same
             # value the Python tests do, so a constructor that refuses the
             # type's zero is exercised identically on both faces.
+            # gh-2556: a `default_raw` is the binding's default, so it is the
+            # C seed too; the type's zero built a different object (0 dB-Hz
+            # where the default is NaN).
             c_create_parts_ordered.append(
                 _example_values.get(pname, "")
                 or dflt_s
+                or _scalar_raw[pname]
+                or _seeds.get(pname, "")
                 or _CTYPE_META[ct_s]["zero"]
             )
 
@@ -1724,7 +1742,7 @@ def _build_no_state_init_ctx(
             _ex = _example_values.get(name, "")
             py_create_parts.append(
                 f"{name}="
-                + (_ex or _py_default(ct, dflt or _CTYPE_META[ct]["zero"]))
+                + (_ex or _py_seed(ct, dflt or _seeds.get(name, "")))
             )
         elif kind == "path":
             # gh-515: jm cannot invent a valid filesystem path, so emit the
@@ -1741,12 +1759,22 @@ def _build_no_state_init_ctx(
             # gh-790: a handle from another module. jm cannot conjure one, so
             # the same `...` sentinel and the same unseedable treatment.
             py_create_parts.append(f"{name}=...")
+    # gh-2556: a parameter with a default -- `default` or `default_raw` --
+    # is LEFT OUT, so the binding applies its own. Restating it was a second
+    # spelling of one value that went wrong whenever Python has none: a
+    # `default_raw` rendered as `...` (Ellipsis) or the type's zero instead
+    # of the NaN / SIZE_MAX the binding uses. An `example_value` (gh-1105) is
+    # still passed: it is the author asking for that value, not a
+    # restatement. A scalar that declares no default at all keeps its seed
+    # (gh-122), as a required one does.
     for kind, name in optional_entries:
-        if kind == "str_enum":
-            py_create_parts.append(f'{name}="{_str_enum_by_name[name][1]}"')
-        elif kind == "scalar":
-            ct, dflt, _dr = _opt_scalar_meta[name]
-            py_create_parts.append(f"{name}={_py_default(ct, dflt)}")
+        if name in _example_values:
+            py_create_parts.append(f"{name}={_example_values[name]}")
+        elif kind == "scalar" and not any(_opt_scalar_meta[name][1:]):
+            ct = _opt_scalar_meta[name][0]
+            py_create_parts.append(
+                f"{name}={_py_seed(ct, _seeds.get(name, ''))}"
+            )
     py_create_args = ", ".join(py_create_parts)
 
     c_create_args = ", ".join(c_create_parts_ordered)
@@ -3902,6 +3930,11 @@ def make_state_ctx(
     # setters, and reset tests stay intact — only the user-facing ctor and
     # the bench/create boilerplate are swapped.
     if init_params:
+        # gh-122: an init-param sharing a name with a state var is seeded
+        # from that var's default when it has none of its own. gh-2556 folded
+        # the rebuild that did this here -- a third builder of the same call,
+        # which dropped every kind it did not list and restated each default
+        # -- into the one builder, as its `seed_defaults`.
         _init_ctx = _build_no_state_init_ctx(
             component,
             Component,
@@ -3911,78 +3944,8 @@ def make_state_ctx(
             create_fn=create_fn,
             csym=csym,
             create_why=create_why,
+            seed_defaults={n: d for n, _, d in state_vars},
         )
-        # gh-122: _build_no_state_init_ctx generates empty create-arg strings
-        # when an init_param has no explicit default. Fall back to the matching
-        # state-var default (common pattern: init_param and state_var share a
-        # name).  Only rebuilds the args when any param is missing a default.
-        _sv_dflt = {n: d for n, _, d in state_vars}
-        _ip_missing = any(
-            not (p[2] if len(p) > 2 else "")
-            for p in init_params
-            if p[1] in _CTYPE_META
-        )
-        if _ip_missing:
-            _ip_c, _ip_py = [], []
-            for p in init_params:
-                n, ct = p[0], p[1]
-                if ct == "path":
-                    # gh-515: a path contributes one create() arg, and the
-                    # rebuild must keep the arity — NULL for C, the `...`
-                    # sentinel for Python (the ctor is unseedable anyway).
-                    _ip_c.append("NULL")
-                    _ip_py.append(f"{n}=...")
-                    continue
-                if ct == "bytes":
-                    # gh-565: a bytes blob contributes TWO create() args
-                    # (const void *, size_t) — keep the arity with "NULL, 0";
-                    # the ctor is unseedable, so Python gets the `...` sentinel.
-                    _ip_c.append("NULL, 0")
-                    _ip_py.append(f"{n}=...")
-                    continue
-                if ct not in _CTYPE_META:
-                    continue
-                raw_dflt = p[2] if len(p) > 2 else ""
-                # gh-1105: the THIRD site that builds the constructor seed —
-                # this rebuild fires whenever any init-param lacks a default,
-                # which is exactly the case `example_value` exists for, so
-                # omitting it here left the other two sites correct and the
-                # generated construction still `create(0, 0)`.
-                _ex = p[14] if len(p) > 14 else ""
-                dflt = (
-                    raw_dflt or _sv_dflt.get(n, "") or _CTYPE_META[ct]["zero"]
-                )
-                _ip_c.append(_ex or dflt)
-                # gh-1488: a state default borrowed from a header constant
-                # seeds the C call as written; Python cannot spell it, and
-                # this parameter is required, so it takes the type's zero --
-                # the seed it would have had with no state default at all.
-                _py_dflt = (
-                    _CTYPE_META[ct]["zero"]
-                    if T.is_c_only_default(ct, dflt)
-                    else dflt
-                )
-                # gh-610: keyword construction, immune to a kwlist reorder.
-                _ip_py.append(f"{n}={_ex or _py_default(ct, _py_dflt)}")
-            _aa_c = ["NULL, 0" for _ in array_args]
-            _aa_py = [
-                f"{aname}=np.zeros(1, dtype="
-                f"{_NP_PY_TYPE.get(_CTYPE_TO_DTYPE.get(dt, 'float32'), 'np.float32')})"
-                for aname, dt in array_args
-            ]
-            # gh-2552: the seed for the trailing `why`, as the first build.
-            _c_args = ", ".join(
-                _aa_c + _ip_c + (["NULL"] if create_why else [])
-            )
-            _py_args = ", ".join(_aa_py + _ip_py)
-            _init_ctx["c_create_args"] = _c_args
-            _init_ctx["py_create_args"] = _py_args
-            # gh-1742: the create() call these args were built for, even when
-            # there are none -- a TODO comment declared `obj` only inside the
-            # comment, and the bench's destroy / method calls still used it.
-            _init_ctx["bench_create_stmt"] = (
-                f"    {csym}_state_t *obj = {_create}({_c_args});"
-            )
         _CTOR_OVERRIDE_KEYS = (
             "create_params",
             "create_param_docs",
