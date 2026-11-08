@@ -1762,8 +1762,10 @@ It is manifest-only: it changes the sacred `create()` prototype, so add the
 key and run `just-makeit apply`. A fresh scaffold's header, `_core.c` stub,
 binding, C test and bench all carry the parameter. On an existing object the
 standalone header is updated in place and your `_core.c` definition is yours to
-change; a module object's header is not rewritten, and `jm status` reports the
-mismatch as `CTOR` until it agrees.
+change. A module object's header and binding fragment are yours too, so
+`apply` rewrites neither: `jm status` reports the header's `create()` as
+`CTOR` until you add the parameter, and re-running `just-makeit error` for the
+object re-renders its fragment's constructor.
 
 ______________________________________________________________________
 
