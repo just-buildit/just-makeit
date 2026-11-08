@@ -413,10 +413,11 @@ def array_rank(param, what: str = "") -> "int | tuple[int, ...] | None":
 
     One list is a value too (gh-2537): ``rank = [1, 2]`` on a ``T[][]``
     param, returned as `ROW_OR_MATRIX`. A constructor reads a 1-D array as
-    one row of the 2-D one it declares (`array_extents_c`); every face's
-    guard accepts either rank and names both when it refuses. Any other
-    list, or the list on a type that is not ``T[][]``, is refused here, so
-    no builder meets a rank it has no reading for.
+    one row of the 2-D one it declares (`array_extents_c`), and its guard
+    accepts either rank and names both when it refuses. Any other list, or
+    the list on a type that is not ``T[][]``, is refused here, so no builder
+    meets a rank it has no reading for; `shape_key_errors` refuses it on a
+    method's or a function's param, which has no row reading (gh-1908).
 
     Parameters
     ----------
@@ -1075,6 +1076,9 @@ def shape_key_errors(cfg: dict) -> "list[str]":
       builder agree on what a valid value is.
     - either key on a parameter that is not an array. Only an array's
       acquisition reads them.
+    - ``rank = [1, 2]`` on a method's or a module function's param: the
+      list is a constructor's, whose ``T[][]`` passes two extents a 1-D
+      array can fill as one row (gh-2537); a method's passes a flat length.
     - on a constructor's ``T[][]`` array, a ``rank`` other than 2 (the type
       already fixes it, and jm guards it) or ``[1, 2]`` (a 1-D array as one
       row, gh-2537), and an ``elements_per_sample``
@@ -1125,6 +1129,18 @@ def shape_key_errors(cfg: dict) -> "list[str]":
             )
             continue
         if not where.endswith("init_params]]"):
+            # gh-2537: the list is a constructor's -- the one place a 1-D
+            # array has a reading as a row, because only there does a
+            # `T[][]` pass two extents. A method's or a function's `T[][]`
+            # passes a flat length, and gh-1908 would refuse it outright.
+            if rank == ROW_OR_MATRIX:
+                errors.append(
+                    f"{where} {name}: rank = {list(ROW_OR_MATRIX)!r} is "
+                    f"read only on a constructor's T[][] (an init param), "
+                    f"where a 1-D array is one row; a method's or a "
+                    f"function's T[][] passes a flat length (gh-1908). "
+                    f"Declare rank = 1 or rank = 2, or drop the key"
+                )
             continue
         if array_param_ndim(ptype) == 2:
             # gh-2537: `ROW_OR_MATRIX` is the one other rank it can hold.

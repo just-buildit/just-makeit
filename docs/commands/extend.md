@@ -221,8 +221,9 @@ a 1-D array as well, read as **one row**: `create()` gets `1` and the
 array's length as its two extents, exactly as for the same data reshaped to
 `(1, n)`, so its signature does not change; any other rank is refused with
 `ValueError: name must be a 1-D or 2-D array`. The stub says so under the
-parameter. On a method's `T[][]` param, which passes its flat length, the
-same list is a guard that accepts either rank (gh-2537):
+parameter. The list is an init param's only: a method's or a module
+function's `T[][]` passes a flat length, with no row to read, so `load`
+refuses it there (gh-2537, gh-1908):
 
 ```toml
 [[cor.init_params]]
@@ -234,7 +235,8 @@ rank = [1, 2]   # Cor(np.ones(8)) is a (1, 8) reference
 
 Both are TOML-only. `load` refuses either one on a param that is not an
 array, a value that is not an integer of at least 1, a list other than
-`[1, 2]` or one on a type that is not `T[][]`, and, on an init param, a
+`[1, 2]`, that list on a type that is not `T[][]` or on a param that is not
+an init param, and, on an init param, a
 `rank` a `T[][]` contradicts or an `elements_per_sample` above 1 where
 there is no single length to divide (a `T[][]`, or a dtype-dispatch array).
 

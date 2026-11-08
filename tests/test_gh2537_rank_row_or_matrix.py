@@ -12,8 +12,9 @@ Now ``rank = [1, 2]`` is the one list ``rank`` may be, and only on a
 ``T[][]``, read by the one reader (``_coerce.array_rank``). A constructor
 reads a 1-D array as ONE row -- ``dim0 = 1``, ``dim1`` its length -- and a
 2-D one as before; any other rank is refused naming both. The C signature
-does not change. A method's ``T[][]`` param, which passes its flat length,
-takes the same guard. The ``.pyi`` says what a 1-D input means.
+does not change. The ``.pyi`` says what a 1-D input means. The list is an
+init param's only: a method's or a module function's ``T[][]`` passes a flat
+length, with no row to read (gh-1908), so the list is refused there.
 
 Proven three ways:
 
@@ -22,8 +23,8 @@ Proven three ways:
   and the optional-dispatch path, with refcounts unchanged by a refusal;
 * **the render and the doc**: the guard is the one emitter's, and the stub
   names the 1-D reading;
-* **the refusals and the round trip**: every other list, and the list on a
-  1-D type, stops the load; the key survives ``save``/``load``, ``apply``
+* **the refusals and the round trip**: every other list, the list on a 1-D
+  type, and the list on a method or module-function param stop the load; the key survives ``save``/``load``, ``apply``
   and ``jm script``.
 
 GATE: a ``rank = [1, 2]`` array is read as a row or a matrix, never refused
@@ -90,8 +91,7 @@ def _apply_fragment(base: Path, fragment: str) -> Path:
 #: `w` is unguarded and FIRST, so `ref`'s guard bails out with `w_arr` held:
 #: the refcount test fails unless the guard releases it. `cor` is the
 #: required path; `opt` the optional-dispatch path, whose guard runs with
-#: `w_arr` held too. `m`'s `x` is a method's `T[][]`, which takes the same
-#: guard over its flat length.
+#: `w_arr` held too.
 _FRAGMENT = """\
 [module.k]
 objects = ["cor", "opt"]
@@ -122,13 +122,6 @@ name = "ref"
 type = "float _Complex[][]"
 derived = ["ny", "nx"]
 rank = [1, 2]
-
-[[cor.methods]]
-name = "m"
-arg_type = "void"
-return_type = "int"
-params = [{name = "x", type = "float[][]", rank = [1, 2]}]
-impl = "(void)state; return (int)x_len;"
 
 [opt]
 arg_type = "float"
@@ -258,19 +251,6 @@ def test_a_1d_array_is_one_row_and_a_2d_one_is_unchanged(built, ctor, name):
     ], got
 
 
-def test_a_methods_t2d_param_takes_the_same_guard(built):
-    got = _outcome(
-        built,
-        "o = Cor(W, np.ones(4, np.complex64))\n"
-        "print(o.m(np.ones(4, np.float32)), o.m(np.ones((2, 3), np.float32)))\n"
-        "try:\n"
-        "    o.m(np.ones((2, 2, 2), np.float32))\n"
-        "except ValueError as e:\n"
-        "    print(e)\n",
-    )
-    assert got.splitlines() == ["4 6", "x must be a 1-D or 2-D array"], got
-
-
 @pytest.mark.parametrize("ctor", ["Cor", "Opt"])
 def test_a_refusal_releases_every_array_it_held(built, ctor):
     """`w` is held when the second array's guard bails out."""
@@ -314,9 +294,7 @@ def test_the_stub_says_what_a_1d_array_means(built):
 
 def test_a_plain_t2d_array_keeps_its_2d_guard_and_no_note(tmp_path):
     """`rank = 2`, or none, is the type's own rank: no 1-D reading."""
-    frag = _FRAGMENT.replace("rank = [1, 2]\n", "").replace(
-        ", rank = [1, 2]}", "}"
-    )
+    frag = _FRAGMENT.replace("rank = [1, 2]\n", "")
     dest = _apply_fragment(tmp_path, frag)
     ext = (dest / "native/src/k/k_ext_cor.c").read_text("utf-8")
     assert "if (PyArray_NDIM(ref_arr) != 2) {" in ext
@@ -336,7 +314,7 @@ def _project(tmp_path: Path) -> Path:
 
 
 def _write_row(root: Path, table: str, row: dict) -> None:
-    """Put *row* on `o`'s init-params, or on a method's params."""
+    """Put *row* on `o`'s init-params, a method's params or a function's."""
     cfg = C.load(root)
     cfg["o"] = {
         "arg_type": "float",
@@ -346,6 +324,12 @@ def _write_row(root: Path, table: str, row: dict) -> None:
     }
     if table == "init_params":
         cfg["o"]["init_params"] = [row]
+    elif table == "function":
+        cfg.setdefault("module", {})["f"] = {
+            "functions": [
+                {"name": "fn", "return_type": "int", "params": [row]}
+            ]
+        }
     else:
         cfg["o"]["methods"] = [
             {
@@ -379,7 +363,7 @@ _REFUSED = {
 
 
 @pytest.mark.parametrize("case", sorted(_REFUSED))
-@pytest.mark.parametrize("table", ["init_params", "method"])
+@pytest.mark.parametrize("table", ["init_params", "method", "function"])
 def test_a_list_with_no_reading_is_refused(tmp_path, case, table):
     root = _project(tmp_path)
     row, says = _REFUSED[case]
@@ -388,6 +372,35 @@ def test_a_list_with_no_reading_is_refused(tmp_path, case, table):
     errors = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
     assert r.returncode != 0 and len(errors) == 1, r.stderr
     assert says in errors[0], errors[0]
+
+
+@pytest.mark.parametrize("table", ["method", "function"])
+def test_the_list_is_refused_on_a_method_or_function_param(tmp_path, table):
+    """Only a constructor's `T[][]` passes two extents a row can fill.
+
+    A method's or a function's `T[][]` passes one flat length, so there is
+    no row reading, and gh-1908 would refuse the type there outright.
+    """
+    root = _project(tmp_path)
+    _write_row(root, table, {"name": "g", "type": "float[][]", "rank": [1, 2]})
+    r = run_cli("apply", cwd=root)
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert r.returncode != 0 and len(errors) == 1, r.stderr
+    assert "read only on a constructor's T[][]" in errors[0], errors[0]
+    assert "gh-1908" in errors[0], errors[0]
+
+
+@pytest.mark.parametrize("table", ["method", "function"])
+@pytest.mark.parametrize("rank", [1, 2])
+def test_an_int_rank_on_a_method_or_function_t2d_still_loads(
+    tmp_path, table, rank
+):
+    """The refusal is the list's alone: `rank = 1` / `2` load as before."""
+    root = _project(tmp_path)
+    row = {"name": "g", "type": "float[][]", "rank": rank}
+    _write_row(root, table, dict(row))
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stderr
 
 
 def test_rank_1_on_a_t2d_names_the_list_that_holds(tmp_path):
@@ -403,17 +416,11 @@ def test_rank_1_on_a_t2d_names_the_list_that_holds(tmp_path):
 # -- the round trip ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("table", ["init_params", "method"])
-def test_the_list_survives_save_load_and_script(tmp_path, table):
+def test_the_list_survives_save_load_and_script(tmp_path):
     root = _project(tmp_path)
     row = {"name": "g", "type": "float[][]", "rank": [1, 2]}
-    _write_row(root, table, dict(row))
-    cfg = _quiet(C.load, root)
-    got = (
-        cfg["o"]["init_params"][0]
-        if table == "init_params"
-        else cfg["o"]["methods"][0]["params"][0]
-    )
+    _write_row(root, "init_params", dict(row))
+    got = _quiet(C.load, root)["o"]["init_params"][0]
     assert got["rank"] == [1, 2], got
     r = run_cli("script", cwd=root)
     assert r.returncode == 0, r.stderr
