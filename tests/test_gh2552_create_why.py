@@ -125,6 +125,8 @@ def _project(root: Path) -> Path:
     assert text.count("objects = []") == 1, text
     mod.write_text(text.replace("objects = []", 'objects = ["acc"]'), "utf-8")
     _ok("apply", cwd=proj)
+    # The C app is a fourth face that calls the constructor.
+    _ok("app", "--object", "cor", "--name", "corapp", cwd=proj)
     return proj
 
 
@@ -235,10 +237,13 @@ def test_script_names_the_manifest_only_key(scaffold: Path) -> None:
 # -- refused at apply ----------------------------------------------------------
 
 
-def _refusal(tmp_path: Path, toml: str) -> str:
+def _refusal(tmp_path: Path, toml: str, root_toml: str = "") -> str:
     _ok("new", "rq", "--object", "seed", cwd=tmp_path)
     proj = tmp_path / "rq"
     (proj / "objects" / "cor.toml").write_text(toml, encoding="utf-8")
+    if root_toml:
+        with open(proj / "just-makeit.toml", "a", encoding="utf-8") as f:
+            f.write(root_toml)
     r = run_cli("apply", cwd=proj)
     assert r.returncode != 0, r.stdout + r.stderr
     return r.stdout + r.stderr
@@ -282,6 +287,57 @@ def test_a_non_bool_create_why_is_refused(tmp_path) -> None:
 def test_an_init_param_named_why_is_refused(tmp_path) -> None:
     out = _refusal(tmp_path, COR_TOML.replace('name = "mode"', 'name = "why"'))
     assert "an init param named `why`" in out, out
+
+
+def test_a_grouped_init_param_named_why_is_refused(tmp_path) -> None:
+    """A ``[[group]]`` field expands into an init param like any written
+    out, so the check runs on the expanded list."""
+    toml = COR_TOML + '\n[[cor.init_groups]]\ngroup = "knobs"\n'
+    group = (
+        '\n[[group]]\nname = "knobs"\n\n[[group.fields]]\n'
+        'name = "why"\ntype = "int"\ndefault = "0"\n'
+    )
+    out = _refusal(tmp_path, toml, group)
+    assert "an init param named `why`" in out, out
+    # At LOAD, not only once `apply`'s replay has written the expanded
+    # params out: `jm script` reads the manifest and replays nothing.
+    r = run_cli("script", cwd=tmp_path / "rq")
+    assert r.returncode != 0, r.stdout
+    assert "an init param named `why`" in r.stdout + r.stderr, r.stderr
+
+
+def test_removing_the_translation_a_view_raises_through_is_refused(
+    scaffold: Path, tmp_path
+) -> None:
+    """``AccBurst`` declares create_why and inherits ``acc``'s
+    create_error; removing that would strand it. Refused, naming the view,
+    with nothing written."""
+    proj = tmp_path / "rs"
+    shutil.copytree(scaffold, proj)
+    frag = proj / "objects" / "acc.toml"
+    before = frag.read_text("utf-8")
+    r = run_cli("remove", "error", "acc", "--object", "acc", "--force",
+                cwd=proj)  # fmt: skip
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "'AccBurst'" in r.stdout + r.stderr, r.stdout + r.stderr
+    assert frag.read_text("utf-8") == before
+
+
+def test_removing_the_objects_own_translation_is_refused(
+    scaffold: Path, tmp_path
+) -> None:
+    """``cor``'s own create_why raises through it too. Dropping the switch
+    would change the sacred create() behind the author's ``_core.c``, so
+    the remove is refused, naming it, with nothing written."""
+    proj = tmp_path / "rs"
+    shutil.copytree(scaffold, proj)
+    frag = proj / "objects" / "cor.toml"
+    before = frag.read_text("utf-8")
+    r = run_cli("remove", "error", "cor", "--object", "cor", "--force",
+                cwd=proj)  # fmt: skip
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "'cor' declares create_why" in r.stdout + r.stderr, r.stderr
+    assert frag.read_text("utf-8") == before
 
 
 # -- one emitter, both faces ---------------------------------------------------
@@ -386,6 +442,29 @@ except TypeError:
 out["docs"] = {c.__name__: c.__doc__ for c in (Cor, Acc, AccBurst)}
 print(json.dumps(out))
 """
+
+
+def _app(built: Path, *args: str) -> "subprocess.CompletedProcess[str]":
+    (exe,) = [
+        p
+        for p in (built / "build").rglob("corapp*")
+        if p.is_file() and p.suffix in ("", ".exe")
+    ]
+    return subprocess.run(
+        [str(exe), *args], input="", capture_output=True, text=True
+    )
+
+
+@pytest.mark.parametrize(
+    "mode, said",
+    [("1", SAID["rs_cor_create"]), ("2", "rs_cor_create() failed")],
+)
+def test_the_c_app_prints_the_sentence(built: Path, mode, said) -> None:
+    """The generated C app reports the constructor's sentence, and its own
+    message when there is none."""
+    r = _app(built, "--mode", mode)
+    assert r.returncode == 1, (r.stdout, r.stderr)
+    assert r.stderr.strip() == f"error: {said}", r.stderr
 
 
 @pytest.fixture(scope="module")
