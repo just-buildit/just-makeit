@@ -1498,12 +1498,6 @@ def _make_view_ctx(
             enums=C.enums(cfg),
         )
     )
-    # gh-2538: the rows the getset units were rendered from, for
-    # `_restyled_property_units` to re-render one under another backing.
-    ctx[PROPERTY_ROWS_KEY] = (
-        merged_props,
-        frozenset(n for n, _, _ in state_vars),
-    )
     ctx.update(
         Ctx.make_properties_ctx(
             ctx["component"],
@@ -1784,11 +1778,6 @@ def build_component_ctxs(
                 C.properties(cfg, obj),
                 enums=C.enums(cfg),
             )
-        )
-        # gh-2538: see the view path above.
-        ctx[PROPERTY_ROWS_KEY] = (
-            C.properties(cfg, obj),
-            frozenset(n for n, _, _ in state_vars),
         )
         ctx.update(
             Ctx.make_properties_ctx(
@@ -2234,10 +2223,6 @@ def jm_owned_functions(
     - gh-2055: every record dtype builder (`_record.dtype_builders`). It is
       the declared columns, so a kept one describes the old element while
       the element contract asserts the new one.
-    - gh-2538: a property's getter or setter wrapper whose body is jm's own
-      render of that property under ANOTHER scalar backing
-      (`_restyled_property_units`). Kept, a property moved from ``expr`` to
-      ``getter_status`` went on reading the expression and never raised.
 
     A teardown that parks is taken from the render only where the text it
     lands in declares `PARK_FIELD`. *into* is the fresh render for a verb,
@@ -2285,11 +2270,7 @@ def jm_owned_functions(
     # gh-2272: the same for a teardown that waits on the in-flight count.
     if _declares_inflight(rendered) and not _declares_inflight(into):
         teardown = ()
-    return (
-        teardown
-        + _record.dtype_builders(rendered)
-        + _restyled_property_units(cfg, ctx, rendered, kept)
-    )
+    return teardown + _record.dtype_builders(rendered)
 
 
 #: One struct member declaration, its name captured. Read on comment-masked
@@ -2522,141 +2503,6 @@ def _declares_inflight(text: str) -> bool:
         )
         is not None
     )
-
-
-#: gh-2538: the ctx key `build_component_ctxs` stores a fragment's property
-#: rows under, with the state field names they were rendered against. Not a
-#: template slot: `_restyled_property_units` reads it to render the rows
-#: again under another backing.
-PROPERTY_ROWS_KEY = "_jm_property_rows"
-
-#: The keys that choose HOW a scalar property is read and written. Every
-#: other key (name, type, enum, writable, doc) is the property itself.
-_PROPERTY_BACKING_KEYS = (
-    "field",
-    "expr",
-    "getter_status",
-    "error",
-    "error_message",
-)
-
-#: Stands in for an ``expr`` the old render read, which the manifest no
-#: longer holds: any token run matches it (`_matches_render`).
-_EXPR_SENTINEL = "JM_EXPR_SENTINEL"
-
-#: The exception class a raise names. A message is a string, which
-#: `_docsync._norm_unit` already masks; the class is an identifier.
-_PYEXC_RE = re.compile(r"\bPyExc_\w+")
-
-
-def _matches_render(kept: str, candidate: str) -> bool:
-    """Whether normalised unit *kept* is normalised render *candidate*.
-
-    Token streams (`_docsync._norm_unit`), with every ``PyExc_<name>``
-    folded to one, so the class a raise named does not matter; and an
-    ``expr`` render's `_EXPR_SENTINEL` matching any non-empty token run, so
-    the expression the property used to read does not either.
-
-    >>> _matches_render("a ( x + 1 ) ;", "a ( JM_EXPR_SENTINEL ) ;")
-    True
-    >>> _matches_render("a ( ) ;", "a ( JM_EXPR_SENTINEL ) ;")
-    False
-    >>> _matches_render("PyExc_KeyError", "PyExc_ValueError")
-    True
-    """
-    kept = _PYEXC_RE.sub("PyExc_E", kept)
-    candidate = _PYEXC_RE.sub("PyExc_E", candidate)
-    if _EXPR_SENTINEL not in candidate:
-        return kept == candidate
-    pre, _, post = candidate.partition(f" {_EXPR_SENTINEL} ")
-    return (
-        len(kept) > len(pre) + len(post) + 2
-        and kept.startswith(pre + " ")
-        and kept.endswith(" " + post)
-    )
-
-
-def _restyled_property_units(
-    cfg: dict, ctx: dict, rendered: str, kept: "dict[str, str]"
-) -> "tuple[str, ...]":
-    """The getter / setter wrappers in *kept* that jm rendered for another
-    backing of the same property, and so are jm's to re-render (gh-2538).
-
-    A module fragment keeps each wrapper body it finds (gh-770), and a
-    property's wrapper is pure marshalling of its manifest row. When the
-    row changes how the value is read -- ``field``, ``expr``, a plain C
-    getter, a ``getter_status`` one, or how a setter reports (``error``) --
-    the kept body goes on doing the old thing: a property moved to
-    ``getter_status`` kept reading its expression and never raised, with
-    the header, the stub and the ``.pyi`` all saying it would.
-
-    So a stale wrapper is re-rendered when it is, token for token
-    (`_docsync._norm_unit`), jm's render of the same row under one of those
-    backings: the exception class and message, and an ``expr``'s text, may
-    be anything, since the manifest no longer says what they were. Anything
-    else is the author's and is kept; `_docsync.property_status_breaks`
-    then refuses the one kind that would silently drop a status the
-    manifest declares.
-
-    Compared only for a wrapper that differs from *rendered* at all, which
-    on an up-to-date fragment is none, as `_relent_teardown` does.
-    """
-    from ._docsync import _norm_unit
-
-    rows, state_names = ctx.get(PROPERTY_ROWS_KEY, ((), frozenset()))
-    now = _extract_c_function_bodies(rendered)
-    comp, Comp = ctx["component"], ctx["Component"]
-    out: list[str] = []
-    for row in rows:
-        units = [
-            f"{Comp}_getprop_{row['name']}",
-            f"{Comp}_setprop_{row['name']}",
-        ]
-        stale = [
-            n
-            for n in units
-            if n in kept
-            and n in now
-            and _norm_unit(kept[n]) != _norm_unit(now[n])
-        ]
-        if not stale:
-            continue
-        base = {
-            k: v for k, v in row.items() if k not in _PROPERTY_BACKING_KEYS
-        }
-        candidates = []
-        for backing in (
-            {},
-            {"getter_status": True},
-            {"field": True},
-            {"expr": _EXPR_SENTINEL},
-            {"error": "ValueError"},
-        ):
-            try:
-                rendered_row = Ctx.make_properties_ctx(
-                    comp,
-                    Comp,
-                    [{**base, **backing}],
-                    state_names,
-                    enums=C.enums(cfg),
-                    codecs=C.codecs(cfg),
-                    csym=ctx["csym"],
-                )["getset_def"]
-            except ValueError:
-                # A backing this row cannot have (a field named for a state
-                # field, a status on a writable property): never jm's.
-                continue
-            candidates.append(_extract_c_function_bodies(rendered_row))
-        out += [
-            n
-            for n in stale
-            if any(
-                n in c
-                and _matches_render(_norm_unit(kept[n]), _norm_unit(c[n]))
-                for c in candidates
-            )
-        ]
-    return tuple(out)
 
 
 def _relent_teardown(

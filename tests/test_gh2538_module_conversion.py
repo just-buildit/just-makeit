@@ -1,21 +1,26 @@
-"""gh-2538: changing a property's backing reaches a module object's fragment.
+"""gh-2538: a property moved to ``getter_status`` on a module object.
 
 A module object's binding fragment is sacred (gh-770): `apply` keeps every
-wrapper body it finds. A property's getter and setter wrappers are pure
-marshalling of the manifest row, so a row moved from ``expr`` (or
-``field``, or a plain C getter) to ``getter_status`` kept the old body:
-the read went on returning the expression and never raised, while the
-header, the stub and the ``.pyi`` all said it would -- and
-``status --check`` passed. doppler's ``eta`` is exactly that move, on two
-module objects.
+wrapper body it finds. A property moved from ``expr`` or ``field`` to
+``getter_status`` -- doppler's ``eta``, on two module objects -- kept its
+old wrapper: the read went on returning the expression and never raised,
+while the header, the stub and the ``.pyi`` said it would, and
+``status --check`` passed.
 
-Now `apply` re-renders a wrapper that is jm's own render of another
-backing of the same row (`_object._restyled_property_units`), refreshes
-the runtime doc whose only change is its ``Raises`` section, and refuses a
-hand-written wrapper that would drop a status the manifest declares
-(`_docsync.property_status_breaks`); ``status --check`` counts both.
+jm cannot tell its own old render from an author's edit by reading the
+text (an earlier cut of this fix tried, and reverted author edits), so it
+does not rewrite the wrapper. It refuses: `apply` names each wrapper that
+ignores a status the manifest declares and the fix -- delete the wrapper
+and its ``PyGetSetDef`` row, re-run `apply` -- and ``status --check``
+counts it (`_docsync.property_status_breaks`). An author's getter left in
+the other prototype shape is refused too (`_property.getter_shape_mismatch`).
 
-Built and run: whether a read raises is a fact about the extension.
+And nothing an author wrote moves: the regressions below are the three
+edits that earlier cut overwrote, each required to survive `apply` byte
+for byte.
+
+Built and run where it matters: whether a read raises is a fact about the
+extension.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ import pytest
 from _jmrun import run_cli
 
 MSG = "a is search-only"
+FIX = "delete each wrapper and its row in the PyGetSetDef table"
 
 
 def _ok(*args: str, cwd: Path) -> str:
@@ -43,47 +49,6 @@ def _replace_once(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
     assert text.count(old) == 1, (path, old)
     path.write_text(text.replace(old, new), encoding="utf-8")
-
-
-def _status_stub(fn: str, ctype: str) -> str:
-    return (
-        f"{fn}(const rc_acc_state_t *state, {ctype} *out)\n{{\n"
-        "    (void)state; (void)out;\n"
-        "    return 0; /* placeholder */\n}"
-    )
-
-
-def _plain_stub(fn: str) -> str:
-    return (
-        f"{fn}(const rc_acc_state_t *state)\n{{\n"
-        "    (void)state;\n"
-        "    return 0; /* placeholder */\n}"
-    )
-
-
-#: Each property's row before and after, as manifest lines. ``mode`` is the
-#: configuration: 0 a search flavor, anything else a map one.
-BEFORE = {
-    "a": 'type = "int"\nexpr = "self->handle->mode"\n',
-    "b": 'type = "double"\nfield = true\n',
-    "c": 'type = "double"\n',
-    # A class other than the default, so recognising jm's old render does
-    # not depend on which exception it raised.
-    "d": 'type = "int"\ngetter_status = true\nerror = "KeyError"\n',
-    "e": 'type = "int"\n',
-    "f": 'type = "int"\nexpr = "self->handle->mode"\n',
-}
-AFTER = {
-    "a": (
-        'type = "int"\ngetter_status = true\n'
-        f'error = "AttributeError"\nerror_message = "{MSG}"\n'
-    ),
-    "b": 'type = "double"\ngetter_status = true\n',
-    "c": 'type = "double"\ngetter_status = true\nerror = "AttributeError"\n',
-    "d": 'type = "int"\nexpr = "self->handle->mode + 40"\n',
-    "e": 'type = "int"\nexpr = "self->handle->mode + 7"\n',
-    "f": 'type = "int"\n',
-}
 
 
 def _rows(rows: dict) -> str:
@@ -103,11 +68,45 @@ def _module_project(root: Path, name: str) -> Path:
     return proj
 
 
+def _drop_member(ext: Path, comp: str, name: str) -> None:
+    """Delete property *name*'s getter wrapper and its PyGetSetDef row --
+    the fix the refusal names."""
+    text = ext.read_text("utf-8")
+    start = text.index(f"static PyObject *\n{comp}_getprop_{name}(")
+    text = text[:start] + text[text.index("\n}\n", start) + 3 :]
+    row = text.index(f'    {{ "{name}", (getter){comp}_getprop_{name},')
+    text = text[:row] + text[text.index("\n", row) + 1 :]
+    ext.write_text(text, "utf-8")
+
+
+def _status_stub(fn: str, ctype: str) -> str:
+    return (
+        f"{fn}(const rc_acc_state_t *state, {ctype} *out)\n{{\n"
+        "    (void)state; (void)out;\n"
+        "    return 0; /* placeholder */\n}"
+    )
+
+
+# ── doppler's path, end to end ───────────────────────────────────────────────
+
+BEFORE = {
+    "a": 'type = "int"\nexpr = "self->handle->mode"\n',
+    "b": 'type = "double"\nfield = true\n',
+}
+AFTER = {
+    "a": (
+        'type = "int"\ngetter_status = true\n'
+        f'error = "AttributeError"\nerror_message = "{MSG}"\n'
+    ),
+    "b": 'type = "double"\ngetter_status = true\n',
+}
+
+
 @pytest.fixture(scope="module")
-def converted(tmp_path_factory) -> "tuple[Path, str, str]":
-    """Every backing move on a module object, applied over a fragment the
-    first `apply` wrote: the status `--check` gave between the two applies,
-    and what the second `apply` printed."""
+def doppler_path(tmp_path_factory) -> dict:
+    """``expr`` and ``field`` properties on a module object, moved to
+    getter_status: what `status --check` and `apply` say, then the named
+    fix applied, then the project built."""
     if not shutil.which("cmake"):
         pytest.skip("cmake not found")
     proj = _module_project(tmp_path_factory.mktemp("gh2538conv"), "rc")
@@ -116,31 +115,19 @@ def converted(tmp_path_factory) -> "tuple[Path, str, str]":
     frag.write_text(base + _rows(BEFORE), "utf-8")
     _ok("apply", cwd=proj)
     frag.write_text(base + _rows(AFTER), "utf-8")
-    # `c` had a plain C getter: its declaration and definition are the
-    # author's to move to the status shape (`apply` refuses until they do;
-    # `test_a_getter_left_in_the_old_shape_is_refused`).
+    ext = proj / "native" / "src" / "dsp" / "dsp_ext_acc.c"
+    out: dict = {"proj": proj, "ext_before": ext.read_text("utf-8")}
+    out["status"] = run_cli("status", "--check", cwd=proj)
+    out["refused"] = run_cli("apply", cwd=proj)
+    out["ext_after_refusal"] = ext.read_text("utf-8")
+    if out["refused"].returncode == 0:
+        return out  # asserted by test_apply_refuses_naming_the_fix
+    for name in "ab":
+        _drop_member(ext, "Acc", name)
+    out["fixed"] = run_cli("apply", cwd=proj)
+    if out["fixed"].returncode != 0:
+        return out  # asserted by test_the_named_fix_applies
     core = proj / "native" / "src" / "acc" / "acc_core.c"
-    _replace_once(
-        proj / "native" / "inc" / "rc" / "acc" / "acc_core.h",
-        "double rc_acc_get_c(const rc_acc_state_t *state);",
-        "int rc_acc_get_c(const rc_acc_state_t *state, double *out);",
-    )
-    _replace_once(
-        core,
-        "double\nrc_acc_get_c(const rc_acc_state_t *state)\n{\n"
-        "    (void)state;\n    return 0.0; /* placeholder */\n}",
-        "int\nrc_acc_get_c(const rc_acc_state_t *state, double *out)\n{\n"
-        "    if (state->mode != 0)\n        return 6;\n"
-        "    *out = 1.25;\n    return 0;\n}",
-    )
-    between = run_cli("status", "--check", cwd=proj)
-    r = run_cli("apply", cwd=proj)
-    applied = r.stdout + r.stderr
-    if r.returncode != 0:
-        # Asserted by `test_apply_names_each_rewritten_wrapper`, so a
-        # refusal here reads as that test failing, not as a setup error.
-        return proj, between.stdout + between.stderr, applied
-
     for fn, ctype, fail, value in (
         ("rc_acc_get_a", "int", 5, "11"),
         ("rc_acc_get_b", "double", 8, "2.5"),
@@ -152,14 +139,7 @@ def converted(tmp_path_factory) -> "tuple[Path, str, str]":
             f"    if (state->mode != 0)\n        return {fail};\n"
             f"    *out = {value};\n    return 0;\n}}",
         )
-    _replace_once(
-        core,
-        _plain_stub("rc_acc_get_f"),
-        "rc_acc_get_f(const rc_acc_state_t *state)\n{\n"
-        "    return state->mode + 3;\n}",
-    )
-    r = run_cli("status", "--check", cwd=proj)
-    assert r.returncode == 0, r.stdout + r.stderr
+    out["clean"] = run_cli("status", "--check", cwd=proj)
     for cmd in (
         ["cmake", "-S", ".", "-B", "build",
          f"-DPython3_EXECUTABLE={sys.executable}"],
@@ -167,17 +147,37 @@ def converted(tmp_path_factory) -> "tuple[Path, str, str]":
     ):  # fmt: skip
         r = subprocess.run(cmd, cwd=proj, capture_output=True, text=True)
         if r.returncode != 0:
-            # Asserted by `test_the_converted_project_builds`.
-            (proj / "build.log").write_text(r.stdout + r.stderr, "utf-8")
-            break
-    return proj, between.stdout + between.stderr, applied
+            out["build"] = r.stdout + r.stderr
+            return out
+    out["build"] = ""
+    return out
 
 
-def test_the_converted_project_builds(converted):
-    """A wrapper left calling the old getter shape fails here, on jm's
-    call, rather than in the tests that read through it."""
-    log = converted[0] / "build.log"
-    assert not log.exists(), log.read_text("utf-8")
+def test_status_check_counts_the_wrapper_before_apply(doppler_path):
+    r = doppler_path["status"]
+    assert r.returncode != 0, r.stdout + r.stderr
+    for n in "ab":
+        assert f"Acc_getprop_{n} does not test rc_acc_get_{n}()'s return" in (
+            r.stdout
+        ), r.stdout
+
+
+def test_apply_refuses_naming_the_fix(doppler_path):
+    r = doppler_path["refused"]
+    assert r.returncode == 1, r.stdout + r.stderr
+    for n in "ab":
+        assert f"Acc_getprop_{n} does not test rc_acc_get_{n}()'s" in r.stderr
+    assert FIX in r.stderr, r.stderr
+    assert doppler_path["ext_after_refusal"] == doppler_path["ext_before"]
+
+
+def test_the_named_fix_applies(doppler_path):
+    r = doppler_path.get("fixed")
+    assert r is not None and r.returncode == 0, r and r.stdout + r.stderr
+    assert doppler_path["clean"].returncode == 0, (
+        doppler_path["clean"].stdout + doppler_path["clean"].stderr
+    )
+    assert doppler_path["build"] == "", doppler_path["build"]
 
 
 _PROBE = """
@@ -193,22 +193,18 @@ def read(obj, name):
         return [type(e).__name__, str(e)]
 
 
-out = {}
-for mode in (0, 1):
-    o = Acc(mode)
-    out[str(mode)] = {n: read(o, n) for n in "abcdef"}
-out["docs"] = {n: getattr(Acc, n).__doc__ for n in "abcdef"}
+out = {str(m): {n: read(Acc(m), n) for n in "ab"} for m in (0, 1)}
+out["docs"] = {n: getattr(Acc, n).__doc__ for n in "ab"}
 print(json.dumps(out))
 """
 
 
 @pytest.fixture(scope="module")
-def probe(converted) -> dict:
-    assert (converted[0] / "build").is_dir(), "the second apply refused"
-    assert not (converted[0] / "build.log").exists(), "the build failed"
+def probe(doppler_path) -> dict:
+    assert doppler_path.get("build") == "", "the fixed project did not build"
     r = subprocess.run(
         [sys.executable, "-c", _PROBE],
-        cwd=converted[0],
+        cwd=doppler_path["proj"],
         capture_output=True,
         text=True,
     )
@@ -216,52 +212,48 @@ def probe(converted) -> dict:
     return json.loads(r.stdout)
 
 
-def test_status_check_counts_the_stale_wrappers_before_apply(converted):
-    _, between, _ = converted
-    assert "PROPERTY STATUS" in between, between
-    for n in "abcdef":
-        assert f"Acc_getprop_{n} is jm's render of another backing" in (
-            between
-        ), between
+def test_after_the_fix_the_read_raises(probe):
+    assert probe["0"] == {"a": ["ok", 11], "b": ["ok", 2.5]}
+    assert probe["1"]["a"] == ["AttributeError", f"{MSG} (rc=5)"]
+    assert probe["1"]["b"] == ["ValueError", "rc_acc_get_b failed (rc=8)"]
 
 
-def test_apply_names_each_rewritten_wrapper(converted):
-    _, _, applied = converted
-    assert "error:" not in applied, applied
-    for n in "abcdef":
-        assert f"Acc_getprop_{n} (backing changed)" in applied, applied
+def test_after_the_fix_the_runtime_doc_has_raises(probe):
+    """The row was rendered fresh with the wrapper, doc slot included."""
+    for n in "ab":
+        assert "Raises\n------\n" in probe["docs"][n], probe["docs"][n]
 
 
-@pytest.mark.parametrize(
-    "name, raised",
-    [
-        ("a", ["AttributeError", f"{MSG} (rc=5)"]),
-        ("b", ["ValueError", "rc_acc_get_b failed (rc=8)"]),
-        ("c", ["AttributeError", "rc_acc_get_c failed (rc=6)"]),
-    ],
-)
-def test_a_wrapper_moved_to_getter_status_raises(probe, name, raised):
-    """expr, field and plain getters, each moved to getter_status."""
-    assert probe["0"][name][0] == "ok"
-    assert probe["1"][name] == raised
+# ── the only finding gates `--check` ─────────────────────────────────────────
 
 
-def test_the_values_follow_the_new_backing(probe):
-    """The read returns what the NEW row says: the status getter's value,
-    the new expression, the plain getter's return."""
-    assert [probe["0"][n][1] for n in "abc"] == [11, 2.5, 1.25]
-    assert probe["0"]["d"] == ["ok", 40] and probe["1"]["d"] == ["ok", 41]
-    assert probe["0"]["e"] == ["ok", 7] and probe["1"]["e"] == ["ok", 8]
-    assert probe["0"]["f"] == ["ok", 3] and probe["1"]["f"] == ["ok", 4]
+def test_status_check_exits_nonzero_on_the_property_finding_alone(tmp_path):
+    """An up-to-date project whose one deviation is a wrapper that ignores
+    a declared status: `--check`'s exit code is that finding's alone."""
+    proj = _module_project(tmp_path, "rx")
+    frag = proj / "objects" / "acc.toml"
+    frag.write_text(
+        frag.read_text("utf-8")
+        + _rows({"s": 'type = "int"\ngetter_status = true\n'}),
+        "utf-8",
+    )
+    _ok("apply", cwd=proj)
+    clean = run_cli("status", "--check", cwd=proj)
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    # The call stays (so nothing else about the fragment moves: the
+    # link-check test names the same symbols), but as a bare statement
+    # whose status is thrown away.
+    _replace_once(
+        proj / "native" / "src" / "dsp" / "dsp_ext_acc.c",
+        "    int _rc = rx_acc_get_s(self->handle, &_got);\n",
+        "    rx_acc_get_s(self->handle, &_got);\n    int _rc = 0;\n",
+    )
+    r = run_cli("status", "--check", cwd=proj)
+    assert "PROPERTY STATUS (1)" in r.stdout, r.stdout
+    assert r.returncode == 1, r.stdout + r.stderr
 
 
-def test_the_runtime_doc_follows_the_raise(probe):
-    """The Raises section arrives with the status and leaves without it."""
-    docs = probe["docs"]
-    for n in "abc":
-        assert "Raises\n------\n" in docs[n], docs[n]
-    for n in "def":
-        assert "Raises" not in docs[n], docs[n]
+# ── an author's getter left in the other prototype shape ─────────────────────
 
 
 @pytest.mark.parametrize(
@@ -306,43 +298,68 @@ def test_a_getter_left_in_the_old_shape_is_refused(
     assert r.returncode != 0, r.stdout + r.stderr
 
 
-def test_a_setter_moved_to_error_is_rerendered(tmp_path):
-    """The setter half of the class: a writable property that gains
-    `error` (gh-2182) gets jm's status-testing setter in place of the bare
-    call jm wrote before, and loses it again when `error` goes."""
-    proj = _module_project(tmp_path, "rs")
+def test_a_plain_getter_wrapper_is_refused_once_the_c_moves(tmp_path):
+    """plain -> getter_status with the author's C moved to the status
+    shape: the kept wrapper still calls the getter in the one-argument
+    value shape, so `apply` refuses it rather than leave a build that
+    fails on jm's call."""
+    proj = _module_project(tmp_path, "rp")
     frag = proj / "objects" / "acc.toml"
     base = frag.read_text("utf-8")
-    plain = 'type = "double"\nwritable = true\n'
-    frag.write_text(base + _rows({"h": plain}), "utf-8")
+    frag.write_text(base + _rows({"c": 'type = "double"\n'}), "utf-8")
+    _ok("apply", cwd=proj)
+    frag.write_text(
+        base + _rows({"c": 'type = "double"\ngetter_status = true\n'}),
+        "utf-8",
+    )
+    _replace_once(
+        proj / "native" / "inc" / "rp" / "acc" / "acc_core.h",
+        "double rp_acc_get_c(const rp_acc_state_t *state);",
+        "int rp_acc_get_c(const rp_acc_state_t *state, double *out);",
+    )
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "Acc_getprop_c does not test rp_acc_get_c()'s return" in r.stderr
+
+
+# ── what the author wrote survives apply ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "row, old, new",
+    [
+        (
+            'type = "int"\nexpr = "self->handle->mode"\n',
+            "return PyLong_FromLong((long)(self->handle->mode));",
+            "return PyLong_FromLong((long)(self->handle->mode"
+            " + my_side_effect(self)));",
+        ),
+        (
+            'type = "double"\nwritable = true\nerror = "ValueError"\n',
+            'PyErr_Format(PyExc_ValueError, "%s (rc=%lld)",',
+            'PyErr_Format(PyExc_OverflowError, "%s (rc=%lld)",',
+        ),
+        (
+            'type = "double"\n',
+            '"P.\\n"',
+            '"P.\\n"\n     "\\n"\n     "Raises\\n"\n     "------\\n"\n'
+            '     "OSError\\n"\n     "    When the device is gone.\\n"',
+        ),
+    ],
+    ids=["expr-getter", "setter-exception-class", "appended-raises-doc"],
+)
+def test_an_author_edit_survives_apply(tmp_path, row, old, new):
+    """With no manifest change, `apply` keeps a module fragment's wrapper
+    and doc slot byte for byte, however much they look like jm's."""
+    proj = _module_project(tmp_path, "ra")
+    frag = proj / "objects" / "acc.toml"
+    frag.write_text(frag.read_text("utf-8") + _rows({"p": row}), "utf-8")
     _ok("apply", cwd=proj)
     ext = proj / "native" / "src" / "dsp" / "dsp_ext_acc.c"
-    frag.write_text(
-        base + _rows({"h": plain + 'error = "ValueError"\n'}), "utf-8"
-    )
-    out = _ok("apply", cwd=proj)
-    assert "Acc_setprop_h (backing changed)" in out, out
-    assert "int _rc = rs_acc_set_h(self->handle, v);" in ext.read_text()
-    frag.write_text(base + _rows({"h": plain}), "utf-8")
+    _replace_once(ext, old, new)
+    edited = ext.read_text("utf-8")
     _ok("apply", cwd=proj)
-    assert "    rs_acc_set_h(self->handle, v);\n" in ext.read_text()
-
-
-def test_a_view_fragment_follows_its_parent_row(tmp_path):
-    """A view's fragment renders the parent's properties too, from its own
-    rows (`_make_view_ctx`), so its wrapper moves with the row."""
-    proj = _module_project(tmp_path, "rv")
-    _ok("view", "acc", "Alt", "--module", "dsp", "--create-fn",
-        "rv_acc_create_alt", cwd=proj)  # fmt: skip
-    frag = proj / "objects" / "acc.toml"
-    base = frag.read_text("utf-8")
-    frag.write_text(base + _rows({"a": BEFORE["a"]}), "utf-8")
-    _ok("apply", cwd=proj)
-    frag.write_text(base + _rows({"a": AFTER["a"]}), "utf-8")
-    out = _ok("apply", cwd=proj)
-    assert "Alt_getprop_a (backing changed)" in out, out
-    view = proj / "native" / "src" / "dsp" / "dsp_ext_alt.c"
-    assert "int _rc = rv_acc_get_a(self->handle, &_got);" in view.read_text()
+    assert ext.read_text("utf-8") == edited
 
 
 # ── a wrapper the author wrote ────────────────────────────────────────────────
@@ -384,30 +401,5 @@ def test_apply_refuses_a_hand_written_wrapper_that_drops_the_status(
     r = run_cli("apply", cwd=hand_written)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "Acc_getprop_g does not test rh_acc_get_g()'s return" in r.stderr
-    assert "delete the wrapper and its row in the PyGetSetDef table" in (
-        r.stderr
-    )
+    assert FIX in r.stderr, r.stderr
     assert ext.read_text("utf-8") == before
-
-
-def test_status_check_counts_it(hand_written):
-    r = run_cli("status", "--check", cwd=hand_written)
-    assert r.returncode != 0, r.stdout + r.stderr
-    assert "Acc_getprop_g does not test rh_acc_get_g()'s return" in r.stdout
-
-
-def test_the_named_fix_works(hand_written):
-    """Deleting the wrapper and its row, as the refusal says, lets `apply`
-    put jm's back."""
-    ext = hand_written / "native" / "src" / "dsp" / "dsp_ext_acc.c"
-    text = ext.read_text("utf-8")
-    start = text.index("static PyObject *\nAcc_getprop_g(")
-    end = text.index("}\n", start) + 2
-    text = text[:start] + text[end:]
-    row = text.index('    { "g", (getter)Acc_getprop_g,')
-    text = text[:row] + text[text.index("\n", row) + 1 :]
-    ext.write_text(text, "utf-8")
-    _ok("apply", cwd=hand_written)
-    assert "int _rc = rh_acc_get_g(self->handle, &_got);" in ext.read_text(
-        "utf-8"
-    )
