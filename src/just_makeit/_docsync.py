@@ -1200,7 +1200,8 @@ _ARRAY_ARG_HINT_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_HINT_FN}\s*\(")
 #: VALUE tested, so a fragment testing some other value (``y == 0``) is not
 #: taken for the declared sentinel: `_refusal_values`. The exact-fill test
 #: every ``variable_output`` wrapper carries, ``(size_t)n_out == _cap``,
-#: is not one. Whitespace anywhere, for a fragment formatted in the
+#: is not one: its cast puts it outside ``if (<count> ==``. Whitespace
+#: anywhere, for a fragment formatted in the
 #: project's own style.
 _REFUSAL_VALUE_RE = re.compile(
     r"\b_rc\s*<\s*0\b"
@@ -1240,8 +1241,7 @@ def _refusal_values(code: str) -> "set[str]":
             if i != len(v) - 1:
                 break  # `(size_t)-1`: the first paren closes early
             v = v[1:-1]
-        if v != "_cap":
-            out.add(v)
+        out.add(v)
     return out
 
 
