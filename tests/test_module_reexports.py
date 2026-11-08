@@ -76,8 +76,8 @@ def test_apply_folds_reexports(tmp_path):
     assert text.index('"Mix"') < text.index('"api_create"')
 
 
-# ── (b) idempotent; single-line canonical (matches existing glue) ────────────
-def test_reexports_idempotent_and_single_line(tmp_path):
+# ── (b) idempotent; wrapped past 79 columns, as ruff writes it (gh-2514) ─────
+def test_reexports_idempotent_and_wrapped_when_long(tmp_path):
     dest = tmp_path / "dsp"
     _scaffold(dest)
     _declare_reexports(dest, NAMES)
@@ -86,10 +86,10 @@ def test_reexports_idempotent_and_single_line(tmp_path):
     first = init.read_text(encoding="utf-8")
     _silent(apply_run, dest)
     assert init.read_text(encoding="utf-8") == first  # idempotent
-    # Single-line canonical, like jm's other __init__.py imports — a long
-    # import is NOT pre-wrapped (no churn vs the rest of the package).
-    assert "from .fn_api import " + ", ".join(sorted(NAMES)) in first
-    assert "\n    api_create," not in first  # not parenthesised multi-line
+    # gh-2514: one line would be 86 columns, so it is ruff's wrapped form,
+    # one name per line with a magic trailing comma.
+    wrapped = "".join(f"    {n},\n" for n in sorted(NAMES))
+    assert f"from .fn_api import (  # noqa: E402\n{wrapped})\n" in first
 
 
 # ── (c) user content below the glue survives ─────────────────────────────────
@@ -130,11 +130,17 @@ def test_merge_adds_reexports_short_single_line():
     assert '__all__ = ["Mix", "a", "b"]' in out
 
 
-def test_fmt_from_import_is_single_line():
-    line = _fmt_from_import("fn_api", NAMES + ["api_set_x", "api_get_y"])
-    assert "\n" not in line  # single-line canonical, even when long
-    assert line.startswith("from .fn_api import api_create, ")
-    assert line.endswith("  # noqa: E402")
+def test_fmt_from_import_wraps_past_79_columns():
+    # gh-2514: one line while it fits, ruff's wrapped form past it.
+    assert _fmt_from_import("fn_api", ["a", "b"]) == (
+        "from .fn_api import a, b  # noqa: E402"
+    )
+    names = NAMES + ["api_set_x", "api_get_y"]
+    assert _fmt_from_import("fn_api", names) == (
+        "from .fn_api import (  # noqa: E402\n"
+        + "".join(f"    {n},\n" for n in names)
+        + ")"
+    )
 
 
 def test_merge_reexports_merges_existing_line():
@@ -157,11 +163,12 @@ def test_no_reexports_is_unchanged_behaviour():
     assert "fn_api" not in out
 
 
-def test_fmt_all_is_single_line():
+def test_fmt_all_wraps_past_79_columns():
     assert _fmt_all(["A", "B"]) == '__all__ = ["A", "B"]'
-    long = _fmt_all([f"name_{i:02d}" for i in range(12)])
-    assert "\n" not in long  # single-line canonical, even when long
-    assert long.startswith('__all__ = ["name_00", ')
+    names = [f"name_{i:02d}" for i in range(12)]
+    assert _fmt_all(names) == (
+        "__all__ = [\n" + "".join(f'    "{n}",\n' for n in names) + "]"
+    )
 
 
 # ── gh-329: stale reexports are pruned (apply) and caught (status) ───────────
