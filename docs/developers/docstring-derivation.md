@@ -56,7 +56,11 @@ struct — its `record_dtype`, or a `single` record's return type. The struct
 may be declared in the sacred header or in any project header it includes
 (gh-724), but a same-named field of some other struct is never consulted:
 where the owning struct is silent, the member gets the name-based stub, not a
-stranger's sentence. A property that forwards a sub-object's value is
+stranger's sentence. Those field docs reach a `single` record's class as
+its `Attributes`, and a `record_dtype` method's `Returns` entry as one
+`name : type` line per column, below the header's `@return` if it has one
+(gh-2539) -- the stub annotates that result `NDArray[Any]`, so the
+docstring is where its columns are named. A property that forwards a sub-object's value is
 documented with the manifest `doc =` or an `@brief` on its getter.
 Enumerators are looked up by name, since C makes them unique. Running
 Doxygen itself is a separate pipeline (see

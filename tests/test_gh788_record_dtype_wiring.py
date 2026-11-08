@@ -218,9 +218,10 @@ class TestThePythonFaces:
     def test_the_runtime_doc_documents_the_columns(self, tmp_path):
         """The point of the migration. A hand-written module carries its
         field docs in a header comment, a PyMethodDef literal and a .pyi with
-        nothing linking the three; here one source feeds every face."""
+        nothing linking the three; here one source feeds every face. The
+        columns are in the Returns entry, as on the stub (gh-2539)."""
         ext = _ext(_project(tmp_path))
-        assert "Fields" in ext
+        assert "with fields:" in ext
         assert "Sequence number." in ext
 
     def test_the_runtime_doc_shows_the_field_names(self, tmp_path):
