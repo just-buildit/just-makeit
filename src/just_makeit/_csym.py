@@ -301,6 +301,92 @@ def _container_roles(p: dict) -> "tuple[str, ...]":
     return tuple(roles)
 
 
+def property_c_names(stem_: str, p: dict) -> "tuple[str, ...]":
+    """The C functions property *p*'s binding calls, which jm declares (or
+    the author does, under names jm chose) in the component's header.
+
+    A plain or ``json`` property's getter, and a writable one's setter; a
+    buffer view's status function under ``getter_status`` (gh-2543); a
+    container's accessors (:func:`container_accessors`). A ``field`` /
+    ``expr`` / ``capsule`` property, and a buffer view without a status,
+    call none. Unlike :func:`property_accessors` this is what the binding
+    really calls, so a name here and a method's symbol cannot both exist.
+
+    >>> property_c_names("c_cor", {"name": "eta", "writable": True})
+    ('c_cor_get_eta', 'c_cor_set_eta')
+    >>> property_c_names("c_cor", {"name": "last", "buf_field": "corr",
+    ...                            "getter_status": True})
+    ('c_cor_last_status',)
+    >>> property_c_names("c_cor", {"name": "x", "field": True})
+    ()
+    """
+    from . import _types as T
+
+    name = str(p["name"])
+    if T.is_container_type(str(p.get("type", ""))):
+        names = container_accessors(stem_, p)
+        return tuple(
+            names[r] for r in _container_roles(p) if r != "entry_type"
+        )
+    if p.get("buf_field"):
+        return (
+            (property_status(stem_, name),) if p.get("getter_status") else ()
+        )
+    if p.get("field") or p.get("expr") or p.get("capsule"):
+        return ()
+    out = [property_getter(stem_, name)]
+    if p.get("writable"):
+        out.append(property_setter(stem_, name))
+    return tuple(out)
+
+
+def member_clashes(
+    cfg: dict,
+    comp: str,
+    *,
+    properties: "list[dict] | None" = None,
+    methods: "list[dict] | None" = None,
+) -> "list[str]":
+    """Each method of *comp* whose C symbol a property of it also derives.
+
+    gh-2543. A property's accessors (:func:`property_c_names`) and a
+    method's symbol (`_config.method_c_symbol`) are derived from different
+    names, so ``eta`` and a method ``get_eta`` -- or a buffer view ``last``
+    and a method ``last_status`` -- land on one C function. Whichever came
+    second rewrote the other's prototype, and the build failed on
+    "conflicting types". Refused instead, naming both members; asked by
+    `jm property` and `jm method` with the entry being added (*properties*
+    / *methods* replace the manifest's), and so by `apply`'s replay too.
+
+    A property named for a state field calls that field's accessor, which
+    a method may claim by design (gh-994), so it is not asked.
+    """
+    from . import _config as C
+
+    st = stem(cfg, comp)
+    state = {n for n, _, _ in C.state_vars(cfg, comp)}
+    props = C.properties(cfg, comp) if properties is None else properties
+    meths = C.methods(cfg, comp) if methods is None else methods
+    owner = {}
+    for p in props:
+        if p.get("name") and p["name"] not in state:
+            for fn in property_c_names(st, p):
+                owner.setdefault(fn, p["name"])
+    out = []
+    for m in meths:
+        if not m.get("name"):
+            continue
+        sym = C.method_c_symbol(st, m)
+        if sym in owner:
+            out.append(
+                f"{comp}.{m['name']}() (a method) and {comp}.{owner[sym]}"
+                f" (a property) both derive the C function `{sym}`, so one"
+                f" would replace the other's declaration. Rename one of"
+                f" them (or give the method another C name with fn)."
+            )
+    return out
+
+
 def property_accessors(cfg: dict) -> "dict[str, str]":
     """``{accessor: component stem}`` for every C name *cfg*'s properties
     derive, under the stem *cfg* derives: each property's getter
