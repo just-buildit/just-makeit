@@ -2834,6 +2834,10 @@ def make_methods_ctx(
         # `gain`. Same shape as the gh-657 report, where help() advertised
         # `ptr(n=1)` against a kwlist that bound `count`.
         _doc_names = [n for n, _ in _doc_params]
+        # gh-2539: a structured result's columns, in its Returns entry on
+        # every face -- this runtime doc, the stub below, and the
+        # module-aggregated stub (`_stubs._obj_stub`) -- from one answer.
+        _ret_fields = _record.returns_fields(m, doc_blocks, records)
         # gh-2498: a verbatim block is the whole docstring, so jm's demo is
         # not appended under it either.
         _has_header_examples = bool(
@@ -2883,6 +2887,7 @@ def make_methods_ctx(
                 _brief or default_summary,
                 raises=_raises_doc,
                 none_when=empty_is_none_doc(m),
+                ret_fields=_ret_fields,
                 param_defaults=_gluedoc.binding_param_docs(
                     _count_kw,
                     batch=batch,
@@ -4316,20 +4321,6 @@ def make_methods_ctx(
                 if _stub_enable_out:
                     _vo_sig_arg += ", out=None"
                 _vo_call_example = f"obj.{name}(4)"
-            # gh-788: a numpydoc-shaped block naming each column of the
-            # structured result and its Python type. Only the documented
-            # fields get prose; an undocumented one still gets its name and
-            # type, because that much is derived rather than invented.
-            _vo_field_doc_lines: list[str] = []
-            if record_dtype:
-                _vo_flds = _record.fields(m, doc_blocks, records)
-                _vo_field_doc_lines = ["", "Fields", "------"]
-                for _vf in _vo_flds:
-                    _vo_field_doc_lines.append(
-                        f"{_vf.name} : {_pyi_scalar(_vf.ctype)}"
-                    )
-                    if _vf.doc:
-                        _vo_field_doc_lines.append(f"    {_vf.doc}")
             _vo_doc_lines = [
                 f"{name}({_vo_sig_arg}) -> {_ret_hint_vo}",
                 "",
@@ -4364,15 +4355,10 @@ def make_methods_ctx(
                         else ""
                     )
                 ),
-                # gh-788: the columns, documented on the SAME face as the
-                # signature. This is the point of the migration — a
-                # hand-written module carries its field docs in a header
-                # comment, a PyMethodDef literal and a .pyi with nothing
-                # linking the three, and they drift. Here `_record.fields`
-                # resolves each doc from the manifest or, failing that, the
-                # sacred header's own `///<` member doc (gh-671), so one
-                # source feeds every face.
-                *_vo_field_doc_lines,
+                # gh-788: the columns are documented on the same face as the
+                # signature -- in the Returns entry `_runtime_doc` renders
+                # from `_ret_fields`, the one answer the stubs read too
+                # (gh-2539). They were a `Fields` section here alone.
                 *_demo(
                     [
                         "",
@@ -5388,6 +5374,7 @@ def make_methods_ctx(
                     skeleton_fallback=True,
                     raises=_raises_doc,
                     none_when=empty_is_none_doc(m),
+                    ret_fields=_ret_fields,
                     param_defaults=_gluedoc.binding_param_docs(
                         _count_kw,
                         batch=batch,
