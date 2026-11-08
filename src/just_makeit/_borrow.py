@@ -121,6 +121,7 @@ from . import _csym as CSYM
 from ._context._diagnostics import (
     DOUBLE_REPR,
     format_raise_c,
+    method_why,
     placeholders,
     reason_raise_c,
     status_row_message,
@@ -727,10 +728,13 @@ def status_dispatch_c(
     if not rows or not status_fn(m):
         return out
     name = str(m.get("name", "<method>"))
+    # gh-2574: under `why` a row picks the class and the kernel's sentence,
+    # when it wrote one, the text -- `status_cases_c`'s rule everywhere.
     return out + status_switch_c(
         rows,
         name,
         message_slots(m, csym, properties),
+        method_why(m),
         subject=f"{status_fn(m)}({state_expr}, {count_param(m)})",
     )
 

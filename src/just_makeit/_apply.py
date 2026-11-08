@@ -1368,6 +1368,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # prototype to the wrong shape.
             fn=m.get("fn", ""),
             error_negative=bool(m.get("error_negative")),
+            # gh-2574: named here like every key, or the replay declares
+            # the kernel without its trailing `const char **why`.
+            why=m.get("why") is True,
             error=m.get("error", ""),
             error_message=m.get("error_message", ""),
             doc=m.get("doc", ""),

@@ -761,6 +761,9 @@ def run(
         from . import _ctorsig
 
         _order_drift = _ctorsig.order_drift(snap, replay_root, cfg)
+        # gh-2574: a method's `why` the header lacks, against the same
+        # render -- `apply` only adds declarations to a sacred header.
+        _why_drift = _ctorsig.why_drift(snap, replay_root, cfg)
         outdated_entries = [
             (p, _is_allowed(p, allow_patterns))
             for p in _createonly.outdated(snap, replay_root)
@@ -1276,6 +1279,9 @@ def run(
         # gh-2465: gates, never suppressed, for gh-1076's reasons -- and one
         # more: this one compiles, so nothing else will ever say it.
         + len(_order_drift)
+        # gh-2574: gates, never suppressed, for gh-1076's reasons: while
+        # they disagree the binding does not compile against the header.
+        + len(_why_drift)
         # gh-2488: gates unless allowed. A file jm owns that it could not
         # compare is not a pass: passing would certify a file this run
         # never read, and the drift it may hold is the drift `--check`
@@ -1426,6 +1432,17 @@ def run(
                             "manifest": d.rendered,
                         }
                         for d in _order_drift
+                    ],
+                    # gh-2574: both sides of a method's `why`.
+                    "method_why_drift": [
+                        {
+                            "component": d.component,
+                            "function": d.fn,
+                            "path": d.rel,
+                            "header": d.declared,
+                            "manifest": d.rendered,
+                        }
+                        for d in _why_drift
                     ],
                     # gh-1502: advisory, like `silent_benchmarks` below.
                     "create_example_drift": [
@@ -2247,6 +2264,27 @@ def run(
         )
         print()
 
+    # gh-2574: printed under --check too, for gh-1076's reason above.
+    if _why_drift:
+        print(
+            f"WHY ({len(_why_drift)}) — a method's trailing `const char"
+            " **why` differs between\n  the header and the manifest:"
+        )
+        for d in _why_drift:
+            print(f"  ! {d.rel}")
+            print(f"      header:   {d.fn}({d.declared})")
+            print(f"      manifest: {d.fn}({d.rendered})")
+        print(
+            "  `apply` adds a declaration to this header and never rewrites"
+            " one, so the\n"
+            "  binding passes what the manifest says and the header does not"
+            " take it.\n"
+            "  Edit the declaration and its _core.c definition to match, or"
+            " drop `why`.\n"
+            "  Not suppressible. See gh-2574."
+        )
+        print()
+
     # gh-2465: printed under --check too, for gh-1076's reason above.
     if _order_drift:
         print(
@@ -2774,6 +2812,7 @@ def run(
         # alone would be right and unread.
         and not _ctor_drift
         and not _order_drift
+        and not _why_drift
         # gh-2488: "up to date" over a file this run could not compare.
         and not any(not al for _p, al in racing_entries)
     ):
@@ -2963,6 +3002,7 @@ def run(
                 if _order_drift
                 else ""
             )
+            + (f", {len(_why_drift)} why-drift (!)" if _why_drift else "")
             + (
                 f", {sum(1 for _p, al in racing_entries if not al)}"
                 " changed-during-run (!)"

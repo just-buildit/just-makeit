@@ -1084,13 +1084,21 @@ def _status_call_c(
     the message was read at all.
     """
     _cat, _msg = _diagnostics.handle_declared_raise(m)
+    # gh-2407: under `why` the C function takes a trailing
+    # `const char **why` -- `append_why`, the object face's rule -- and the
+    # row or the method's raise reads the sentence it wrote. Declared ahead
+    # of the released block, so the sentence is read with the GIL held.
+    why = _diagnostics.method_why(m)
+    decl = f"    {_diagnostics.WHY_DECL}\n" if why else ""
+    if why:
+        call = _diagnostics.append_why(call, m["fn"], _diagnostics.WHY_C_ARG)
     # gh-2470: a declared row raises first; the rest fall out of the switch
     # into the method's own raise. Named for `fn`, as that raise is.
-    _rows = _borrow.status_switch_c(_borrow.status_rows(m), m["fn"], {})
+    _rows = _borrow.status_switch_c(_borrow.status_rows(m), m["fn"], {}, why)
     return f"""    {m["returns"]} _rc;
-{gil_open}    _rc = {call};
+{decl}{gil_open}    _rc = {call};
 {gil_close}{release}    if (_rc != 0) {{
-{_rows}{_diagnostics._rc_raise_c(_cat, _msg)}    }}
+{_rows}{_diagnostics._rc_raise_c(_cat, _msg, why=why)}    }}
     Py_RETURN_NONE;"""
 
 

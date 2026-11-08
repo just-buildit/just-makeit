@@ -83,6 +83,7 @@ timing every declared method it can.
 | `--manual-stub`               | This method's C binding is already **hand-written** in a sacred `_ext_<obj>_extra.c` fragment. jm declares nothing for it and only preserves its `.pyi` placeholder verbatim across regeneration (gh-428). Persists as `manual_stub = "true"`. Its method-table row comes from an [`[[<obj>.extra_methods]]`](../configuration.md#componentextra_methods-entries) row of the same name, whose stub replaces the placeholder (gh-1997).                                                                                                                                                                                                                                                                                                                                                           |
 | `--error EXC`                 | Exception a declared failure raises (`--error-negative`, `--status-return`, `--error-on-empty`, `--error-sentinel`; default `ValueError`); one of jm's [error categories](#just-makeit-error). Persists as `error = "…"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--error-message TEXT`        | Text for that exception; jm appends `(rc=%d)` where there is a code to append (`--error-negative`, `--status-return`), and not for a zero count or a sentinel. Persists as `error_message = "…"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `--why`                       | The C function takes a trailing `const char **why`, after every other parameter: a declared refusal raises the sentence it writes there, and `--error-message` when it writes none. Needs a refusal to raise. See [A method can name its refusal](#a-method-can-name-its-refusal-why) (gh-2574). Persists as `why = true`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `--record-dtype STRUCT`       | With `--variable-output` or `--borrow`: return **one** numpy structured array whose dtype is that C struct's own layout, one row per record. Its columns come from `[[<obj>.records]]` when the struct is declared there (`just-makeit record`), and from `--result-field` when it is not — restating them beside a declared record is refused, because a restatement drifts (gh-1407). The dtype is built at runtime by the generated C from `offsetof`/`sizeof` — jm never sees the struct, so it cannot guess C's padding (gh-788). Contrast `--single`, which returns one record; see [Record shapes](#record-shapes) below.                                                                                                                                                                 |
 | `--consumed-fn NAME`          | With `--result-field` (a list of records) and an `--arg-type` input: the C function saying how much of its input the kernel's last call took, `size_t NAME(const <pkg>_<comp>_state_t *state)`. A kernel whose output cannot be bounded before the call stops when its `result` buffer is full; the binding then offers it the rest of the input, call after call, and returns every record in one list (gh-2204). See [Record shapes](#record-shapes). Persists as `consumed_fn = "…"`.                                                                                                                                                                                                                                                                                                         |
 | `--borrow`                    | Return a zero-copy numpy **view** of memory the C state already owns. The kernel returns a pointer (`<T> *<pkg>_comp_wait(<pkg>_comp_state_t *, size_t n)`) instead of filling a buffer, and the view pins the object so its memory outlives any reference to it. Returning `NULL` raises — `--error` / `--error-message` choose which exception. The view is **read-only** unless `--borrow-writeable`, and it is a **usage contract**: valid until the author's own release call, after which it reads whatever the producer has written since. See [Array memory ownership](../memory-ownership.md). Persists as `borrow = "true"`.                                                                                                                                                           |
@@ -500,6 +501,62 @@ The return must be `size_t` -- a signed one refuses with `--error-negative`
 instead -- and a result that replaces the return (`--status-return`,
 `--out-type`, `--multi-output`, `--single`, `--borrow`) refuses the sentinel,
 which it would never compare.
+
+#### A method can name its refusal (`--why`)
+
+One `--error-message` reads the same for every reason a kernel refuses.
+`--why` (`why = true`, gh-2574) is [`jm function --why`](#just-makeit-function)'s
+contract on a method: the kernel takes a trailing `const char **why`, after
+every other parameter -- the `out` buffer and `max_out` included -- and a
+declared refusal raises its exception with the sentence the kernel wrote.
+
+```sh
+just-makeit method correlator set_decim --param decim:uint32_t \
+    --return-type int --status-return --why \
+    --error-message "set_decim: invalid arguments"
+```
+
+```c
+int
+<pkg>_correlator_set_decim (<pkg>_correlator_state_t *state,
+                            uint32_t decim, const char **why)
+{
+  if (decim == 0 || decim > state->n)
+    {
+      if (why)
+        *why = "set_decim: decim must be in 1..n";
+      return DP_ERR_INVALID;
+    }
+  /* ... */
+}
+```
+
+```text
+>>> c.set_decim(0)
+ValueError: set_decim: decim must be in 1..n
+```
+
+- Every way a method refuses carries it: `--status-return` (a
+    `--status-error` row picks the class, the sentence the text),
+    `--error-negative`, a count's `--error-on-empty` / `--error-sentinel` /
+    signed `--error-negative` on both call paths, the `--out-param` count, a
+    `--borrow`'s NULL, and the `exit` finalizer `__exit__` calls.
+- The binding passes the address of a local initialised to `NULL`. A
+    refusal that writes nothing keeps today's message, the `(rc=N)` included;
+    a sentence is raised as written. Under `--nogil` it is read after the GIL
+    is back. It is a static string: jm never frees it.
+- The parameter is C only: no Python signature or `.pyi` names it, and the
+    `Raises` section says the message is the C call's reason.
+- An object's method, a module object's, a view's and a
+    [`kind = "handle"`](../object-of-objects.md) method's (`why = true` on
+    `[[module.X.methods]]`, gh-2407) all take it. It is refused on a method
+    that declares no refusal, for a value that is not `true` / `false`, and
+    beside a parameter named `why` (a view's inherited ones included).
+
+The header, the `_core.c` stub, the binding and the bench all carry the
+parameter. On an existing method your `_core.c` definition is yours to change;
+a module object's header only gains declarations on `apply`, so `jm status`
+reports `WHY` until its prototype takes the parameter too.
 
 #### Naming the synthesized count
 
