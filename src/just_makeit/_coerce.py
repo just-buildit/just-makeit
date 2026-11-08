@@ -381,7 +381,22 @@ def _param_name(param) -> str:
     return str(param[0])
 
 
-def array_rank(param, what: str = "") -> "int | None":
+def _param_type(param) -> str:
+    """*param*'s declared type: a manifest row's ``type``, a tuple's slot 1."""
+    if isinstance(param, dict):
+        return str(param.get("type", ""))
+    return str(param[1]) if len(param) > 1 else ""
+
+
+#: The one list `rank` may be (gh-2537): a ``T[][]`` that also takes a 1-D
+#: array, read as ONE row -- ``dim0 = 1``, ``dim1`` its length. The two
+#: extents ``create()`` is handed are the same either way, so the C contract
+#: does not change. No other list has a reading: a 1-D type has one extent
+#: to pass, and a 3-D array has three for a call that takes two.
+ROW_OR_MATRIX = (1, 2)
+
+
+def array_rank(param, what: str = "") -> "int | tuple[int, ...] | None":
     """A param's ``rank``, validated: an int of at least 1, or ``None``.
 
     The one reading of the key (gh-805 §C, gh-2004). Every builder that
@@ -396,6 +411,13 @@ def array_rank(param, what: str = "") -> "int | None":
     ``int()``-ed where its sibling ``elements_per_sample`` refuses a string,
     and ``"x"`` died on that ``int()`` inside the renderer.
 
+    One list is a value too (gh-2537): ``rank = [1, 2]`` on a ``T[][]``
+    param, returned as `ROW_OR_MATRIX`. A constructor reads a 1-D array as
+    one row of the 2-D one it declares (`array_extents_c`); every face's
+    guard accepts either rank and names both when it refuses. Any other
+    list, or the list on a type that is not ``T[][]``, is refused here, so
+    no builder meets a rank it has no reading for.
+
     Parameters
     ----------
     param : dict or tuple
@@ -406,13 +428,15 @@ def array_rank(param, what: str = "") -> "int | None":
 
     Returns
     -------
-    int or None
-        The required rank, ``None`` when undeclared.
+    int, tuple of int, or None
+        The required rank, `ROW_OR_MATRIX` when either is accepted, ``None``
+        when undeclared.
 
     Raises
     ------
     Refusal
-        When the value is not an integer of at least 1.
+        When the value is neither an integer of at least 1 nor the one list
+        a ``T[][]`` may declare.
 
     Examples
     --------
@@ -422,10 +446,16 @@ def array_rank(param, what: str = "") -> "int | None":
     1
     >>> array_rank(("h", "float[]", "") + ("",) * 14 + (2,))
     2
+    >>> array_rank({"name": "h", "type": "float[][]", "rank": [1, 2]})
+    (1, 2)
     >>> array_rank({"name": "h", "rank": 0}, "f")
     Traceback (most recent call last):
     ...
     just_makeit._report.Refusal: f: param 'h' declares rank = 0; it must be an integer of at least 1.
+    >>> array_rank({"name": "h", "type": "float[]", "rank": [1, 2]}, "f")
+    Traceback (most recent call last):
+    ...
+    just_makeit._report.Refusal: f: param 'h' declares rank = [1, 2] on a 'float[]'; a list of ranks is read only on a T[][] array, whose 1-D input is one row.
     """
     raw = _shape_key(param, "rank")
     if raw is None:
@@ -435,16 +465,44 @@ def array_rank(param, what: str = "") -> "int | None":
     from ._report import Refusal
 
     where = f"{what}: " if what else ""
+    name = _param_name(param)
+    if isinstance(raw, (list, tuple)):
+        ptype = _param_type(param)
+        if not ptype.endswith("[][]"):
+            raise Refusal(
+                f"{where}param {name!r} declares rank = {list(raw)!r} on a "
+                f"{ptype!r}; a list of ranks is read only on a T[][] array, "
+                f"whose 1-D input is one row."
+            )
+        if tuple(raw) == ROW_OR_MATRIX and all(type(r) is int for r in raw):
+            return ROW_OR_MATRIX
+        raise Refusal(
+            f"{where}param {name!r} declares rank = {list(raw)!r}; the one "
+            f"list of ranks is {list(ROW_OR_MATRIX)!r} -- a 1-D array read "
+            f"as one row of the {ptype!r}."
+        )
     raise Refusal(
-        f"{where}param {_param_name(param)!r} declares rank = {raw!r}; it "
+        f"{where}param {name!r} declares rank = {raw!r}; it "
         f"must be an integer of at least 1."
     )
+
+
+def rank_words(rank: "int | tuple[int, ...]") -> str:
+    """How a message names the accepted *rank*: ``1-D`` or ``1-D or 2-D``.
+
+    Examples
+    --------
+    >>> rank_words(1), rank_words((1, 2))
+    ('1-D', '1-D or 2-D')
+    """
+    ranks = rank if isinstance(rank, tuple) else (rank,)
+    return " or ".join(f"{r}-D" for r in ranks)
 
 
 def array_rank_guard(
     pname: str,
     arr_var: str,
-    rank: int,
+    rank: "int | tuple[int, ...]",
     decrefs: str = "",
     fail: str = "return NULL;",
     indent: str = "    ",
@@ -469,8 +527,9 @@ def array_rank_guard(
         Parameter name, for the message the caller sees.
     arr_var : str
         The ``PyArrayObject *`` local to test.
-    rank : int
-        Required ``PyArray_NDIM``.
+    rank : int or tuple of int
+        Required ``PyArray_NDIM``, or every one accepted (`ROW_OR_MATRIX`,
+        gh-2537); the message names them all.
     decrefs : str
         Cleanup for arrays already acquired on this path, emitted before the
         bailout. The guard runs after *arr_var* is acquired, so it releases
@@ -502,15 +561,88 @@ def array_rank_guard(
                                 "h must be a 1-D array");
                 Py_DECREF(w_arr); Py_DECREF(h_arr); return -1;
             }
+
+    Either of two ranks (gh-2537):
+
+    >>> print(array_rank_guard("r", "r_arr", (1, 2)), end="")
+        if (PyArray_NDIM(r_arr) != 1 && PyArray_NDIM(r_arr) != 2) {
+            PyErr_SetString(PyExc_ValueError,
+                            "r must be a 1-D or 2-D array");
+            Py_DECREF(r_arr); return NULL;
+        }
     """
     i = indent
     release = f"{decrefs} " if decrefs else ""
+    ranks = rank if isinstance(rank, tuple) else (rank,)
+    test = " && ".join(f"PyArray_NDIM({arr_var}) != {r}" for r in ranks)
     return (
-        f"{i}if (PyArray_NDIM({arr_var}) != {rank}) {{\n"
+        f"{i}if ({test}) {{\n"
         f"{i}    PyErr_SetString(PyExc_ValueError,\n"
-        f'{i}                    "{pname} must be a {rank}-D array");\n'
+        f'{i}                    "{pname} must be a {rank_words(rank)}'
+        f' array");\n'
         f"{i}    {release}Py_DECREF({arr_var}); {fail}\n"
         f"{i}}}\n"
+    )
+
+
+def rank_doc(rank: "int | tuple[int, ...] | None") -> str:
+    """The sentence a parameter's doc carries for *rank*, or ``""``.
+
+    gh-2537: a constructor's ``rank = [1, 2]`` array reads a 1-D input as
+    one row -- behaviour the ``NDArray`` annotation cannot say, so both
+    doc faces append this to the parameter's description, after the
+    author's own text, as an enum's choices are.
+
+    Examples
+    --------
+    >>> rank_doc((1, 2))
+    'A 1-D array is read as one row, shape (1, n).'
+    >>> rank_doc(2), rank_doc(None)
+    ('', '')
+    """
+    if rank != ROW_OR_MATRIX:
+        return ""
+    return "A 1-D array is read as one row, shape (1, n)."
+
+
+def array_extents_c(
+    pname: str,
+    arr_var: str,
+    rank: "int | tuple[int, ...] | None",
+    indent: str = "    ",
+) -> str:
+    """The ``<pname>_dim0`` / ``<pname>_dim1`` locals of a ``T[][]`` array.
+
+    The two extents a constructor's 2-D array passes ``create()``. Under
+    ``rank = [1, 2]`` (gh-2537) a 1-D array is ONE row: ``dim0`` is 1 and
+    ``dim1`` its length -- what ``create()`` is handed for the same data
+    reshaped to ``(1, n)``, so it cannot tell the two apart and its
+    signature does not change. Emitted after the rank guard, which has
+    already refused every other rank.
+
+    Examples
+    --------
+    >>> print(array_extents_c("h", "h_arr", None), end="")
+        size_t h_dim0 = (size_t)PyArray_DIM(h_arr, 0);
+        size_t h_dim1 = (size_t)PyArray_DIM(h_arr, 1);
+    >>> print(array_extents_c("h", "h_arr", (1, 2)), end="")
+        size_t h_dim0 =
+            PyArray_NDIM(h_arr) == 1 ? 1 : (size_t)PyArray_DIM(h_arr, 0);
+        size_t h_dim1 =
+            (size_t)PyArray_DIM(h_arr, PyArray_NDIM(h_arr) - 1);
+    """
+    i = indent
+    if rank != ROW_OR_MATRIX:
+        return (
+            f"{i}size_t {pname}_dim0 = (size_t)PyArray_DIM({arr_var}, 0);\n"
+            f"{i}size_t {pname}_dim1 = (size_t)PyArray_DIM({arr_var}, 1);\n"
+        )
+    return (
+        f"{i}size_t {pname}_dim0 =\n"
+        f"{i}    PyArray_NDIM({arr_var}) == 1 ? 1 :"
+        f" (size_t)PyArray_DIM({arr_var}, 0);\n"
+        f"{i}size_t {pname}_dim1 =\n"
+        f"{i}    (size_t)PyArray_DIM({arr_var}, PyArray_NDIM({arr_var}) - 1);\n"
     )
 
 
@@ -944,7 +1076,8 @@ def shape_key_errors(cfg: dict) -> "list[str]":
     - either key on a parameter that is not an array. Only an array's
       acquisition reads them.
     - on a constructor's ``T[][]`` array, a ``rank`` other than 2 (the type
-      already fixes it, and jm guards it), and an ``elements_per_sample``
+      already fixes it, and jm guards it) or ``[1, 2]`` (a 1-D array as one
+      row, gh-2537), and an ``elements_per_sample``
       other than 1: a 2-D array passes ``create()`` its two extents, not a
       length, so there is nothing to divide.
     - an ``elements_per_sample`` other than 1 on a constructor's
@@ -994,11 +1127,13 @@ def shape_key_errors(cfg: dict) -> "list[str]":
         if not where.endswith("init_params]]"):
             continue
         if array_param_ndim(ptype) == 2:
-            if rank not in (None, 2):
+            # gh-2537: `ROW_OR_MATRIX` is the one other rank it can hold.
+            if rank not in (None, 2, ROW_OR_MATRIX):
                 errors.append(
                     f"{where} {name}: rank = {rank} can never hold on a "
                     f"{ptype!r}, which is always 2-D -- jm already refuses "
-                    f"any other rank; drop the key"
+                    f"any other rank; drop the key, or declare rank = "
+                    f"{list(ROW_OR_MATRIX)!r} to take a 1-D array as one row"
                 )
             if eps != 1:
                 errors.append(
