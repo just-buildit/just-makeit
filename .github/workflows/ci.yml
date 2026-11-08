@@ -193,8 +193,11 @@ jobs:
     # 40, not 30 (gh-2125): over 33 PR runs every macOS leg's median was
     # 20-21 min, each version had 3-7 runs past 25, and 30 cancelled
     # #2096's 3.12 leg at 85% -- runner variance at the edge, which read as
-    # a red `CI passed` with no failing test.
-    timeout-minutes: 40
+    # a red `CI passed` with no failing test. 55, not 40 (2026-11-08): on
+    # main the macOS legs had grown to 33-38 min, and the train carrying
+    # gh-2552/2543/2559 cancelled macOS 3.10 with every test passed
+    # (38:51 of suite). Cutting macOS time is gh-2567.
+    timeout-minutes: 55
     # gh-1796: a Linux leg runs in the pinned CI toolchain image, so its
     # compilers, cmake and every apt package are the snapshot the pin names,
     # not whatever a live mirror serves this minute. An empty image -- a
