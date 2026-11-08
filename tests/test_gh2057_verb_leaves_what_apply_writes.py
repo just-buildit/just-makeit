@@ -783,6 +783,12 @@ CASES: "dict[str, dict[str, Case]]" = {
                           "--writable", "--error", "ValueError",
                           "--error-message", "lvl2 out of range", "{M}",
                           only=BASE),
+        # gh-2538: a getter that can fail -- an `int` prototype and stub
+        # writing through `*out`, and a binding that tests the status.
+        "status_getter": _case("property", "o", "lvl3", "--type", "double",
+                               "--getter-status", "--error",
+                               "AttributeError", "--error-message",
+                               "lvl3 is unavailable", "{M}", only=BASE),
         "field": _case("property", "o", "x", "--type", "double",
                        "--field", "{M}", needs=("o", "members")),
         "expr": _case("property", "o", "twice", "--type", "double",

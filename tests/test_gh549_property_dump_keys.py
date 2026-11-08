@@ -126,6 +126,16 @@ class TestEveryKeyRoundTrips:
         "error_message": "alpha must lie in (0, 1]",
     }
 
+    # gh-2538: a getter that can fail. Its own shape: `getter_status` is
+    # refused beside `writable` and `field`.
+    STATUS_GETTER_PROP = {
+        "name": "eta",
+        "type": "double",
+        "getter_status": True,
+        "error": "AttributeError",
+        "error_message": "eta is search-only",
+    }
+
     # gh-2347: a json property's stub annotation. Its own shape: py_type is
     # refused on every other kind.
     JSON_PROP = {
@@ -143,6 +153,7 @@ class TestEveryKeyRoundTrips:
         "capsule": CAPSULE_PROP,
         "scalar": SCALAR_PROP,
         "refusing": REFUSING_PROP,
+        "status_getter": STATUS_GETTER_PROP,
         "json": JSON_PROP,
     }
 

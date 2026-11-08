@@ -758,10 +758,75 @@ def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
     >>> property_declared_raise({"name": "alpha", "writable": True,
     ...                          "error": "ValueError"}, "acc_set_alpha")
     ('ValueError', 'acc_set_alpha failed')
+
+    Under ``getter_status`` (gh-2538) the pair is the GETTER's, read by
+    `property_getter_raise`; `validate_property_error` refuses it on a
+    writable property, so the two never meet.
     """
     if not p.get("error"):
         return None
     return _raise_pair(p, setter)
+
+
+def property_getter_raise(p: dict, getter: str) -> "tuple[str, str] | None":
+    """What a failing getter raises, for ``getter_status = true`` (gh-2538).
+
+    A read-only property whose value does not exist in every configuration
+    of its object -- doppler's search-only ``eta`` on a map-flavoured
+    correlator -- had no way to say so: the C getter returned the value, so
+    the absent case read as ``NaN`` or ``0``, which looks like a
+    measurement. ``getter_status`` makes the getter return an ``int``
+    status and write the value through an out-pointer; a non-zero status
+    raises this pair instead of returning a value.
+
+    The trigger is ``getter_status`` alone, as ``status_return`` is a
+    method's: ``error`` and ``error_message`` only name and word the
+    exception, through the shared `_raise_pair`, so an undeclared ``error``
+    raises ``ValueError`` and the derived message names *getter*, the C
+    function a reader of the traceback can grep for.
+
+    `validate_property_error` refuses ``getter_status`` wherever there is no
+    C getter call to test, so a pair here is always one the binding raises.
+
+    Examples
+    --------
+    >>> property_getter_raise({"name": "eta"}, "cor_get_eta") is None
+    True
+    >>> property_getter_raise({"name": "eta", "getter_status": True},
+    ...                       "cor_get_eta")
+    ('ValueError', 'cor_get_eta failed')
+    >>> property_getter_raise({"name": "eta", "getter_status": True,
+    ...                        "error": "AttributeError",
+    ...                        "error_message": "eta is search-only"},
+    ...                       "cor_get_eta")
+    ('AttributeError', 'eta is search-only')
+    """
+    if not p.get("getter_status"):
+        return None
+    return _raise_pair(p, getter)
+
+
+def getter_prototype(p: dict, getter: str, csym: str, ctype: str) -> str:
+    """The C prototype of plain property *p*'s getter, without its ``;``.
+
+    One answer for every writer of the declaration -- the ``_core.h`` a new
+    scaffold renders (`make_properties_ctx`) and the prototype `jm property`
+    and `apply` inject (`_property.plain_accessor_decls`) -- so the
+    declaration and the binding that calls it cannot disagree. Without
+    ``getter_status`` the getter returns the value; with it (gh-2538) it
+    returns an ``int`` status and writes the value through *out*.
+
+    Examples
+    --------
+    >>> getter_prototype({"name": "eta"}, "cor_get_eta", "cor", "double")
+    'double cor_get_eta(const cor_state_t *state)'
+    >>> getter_prototype({"name": "eta", "getter_status": True},
+    ...                  "cor_get_eta", "cor", "double")
+    'int cor_get_eta(const cor_state_t *state, double *out)'
+    """
+    if p.get("getter_status"):
+        return f"int {getter}(const {csym}_state_t *state, {ctype} *out)"
+    return f"{ctype} {getter}(const {csym}_state_t *state)"
 
 
 def setter_return_type(p: dict) -> str:
@@ -784,7 +849,9 @@ def setter_return_type(p: dict) -> str:
     return "int" if property_declared_raise(p, "") else "void"
 
 
-def property_raises_doc(p: dict, setter: str) -> "list[tuple[str, str]]":
+def property_raises_doc(
+    p: dict, setter: str, getter: str = ""
+) -> "list[tuple[str, str]]":
     """The ``raises=`` argument for a refusing property's two doc faces.
 
     `raises_doc`'s reading for a property, built from the same pair
@@ -792,6 +859,19 @@ def property_raises_doc(p: dict, setter: str) -> "list[tuple[str, str]]":
     the class the setter raises. The sentence says *assignment* because a
     property's docstring documents the getter too, and only the setter
     raises.
+
+    Under ``getter_status`` (gh-2538) it is the READ that raises, from the
+    pair `property_getter_raise` hands the getter's binding, and the
+    sentence says so, naming *getter*:
+
+    >>> cat, desc = property_raises_doc(
+    ...     {"name": "eta", "getter_status": True, "error": "AttributeError",
+    ...      "error_message": "eta is search-only"}, "cor_set_eta",
+    ...     "cor_get_eta")[0]
+    >>> cat
+    'AttributeError'
+    >>> desc.startswith("On read, if ``cor_get_eta`` returns non-zero")
+    True
 
     Examples
     --------
@@ -805,6 +885,17 @@ def property_raises_doc(p: dict, setter: str) -> "list[tuple[str, str]]":
     >>> desc.startswith("On assignment, if ``acc_set_alpha`` refuses")
     True
     """
+    got = property_getter_raise(p, getter)
+    if got is not None:
+        category, message = got
+        return [
+            (
+                category,
+                f"On read, if ``{getter}`` returns non-zero instead of "
+                f"writing a value. The exception message is ``{message}``, "
+                f"with the return code appended.",
+            )
+        ]
     pair = property_declared_raise(p, setter)
     if pair is None:
         return []

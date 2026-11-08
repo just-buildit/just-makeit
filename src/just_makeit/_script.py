@@ -817,6 +817,10 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
         parts.append(_flag("--error", p["error"]))
     if p.get("error_message"):
         parts.append(_flag("--error-message", p["error_message"]))
+    # gh-2538: a getter that can fail. Dropped, the replay declares a getter
+    # returning the value, which the author's status getter does not match.
+    if p.get("getter_status"):
+        parts.append(_bool_flag("--getter-status"))
 
     if p.get("buf_field"):
         parts.append(_flag("--buf-field", p["buf_field"]))

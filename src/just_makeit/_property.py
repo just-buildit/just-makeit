@@ -26,7 +26,11 @@ from . import _glue
 from . import _linkcheck
 from . import _types as T
 from . import _incpath as INC
-from ._context._diagnostics import setter_return_type
+from ._context._diagnostics import (
+    getter_prototype,
+    property_getter_raise,
+    setter_return_type,
+)
 from ._context._methods import (
     validate_container_property,
     validate_json_property,
@@ -116,6 +120,7 @@ def plain_accessor_decls(
     *,
     csym: str,
     setter_type: str = "void",
+    getter_status: bool = False,
 ) -> list[str]:
     """Prototypes for a plain getter/setter-backed property.
 
@@ -142,6 +147,15 @@ def plain_accessor_decls(
 
     >>> plain_accessor_decls("rd", "meta", "json", False, csym="rd")
     ['char *rd_get_meta(const rd_state_t *state);']
+
+    *getter_status* is the entry's ``getter_status`` (gh-2538): the getter
+    returns an ``int`` status and writes the value through ``out``, the
+    prototype `_context._diagnostics.getter_prototype` answers for every
+    writer:
+
+    >>> plain_accessor_decls("cor", "eta", "double", False, csym="cor",
+    ...                      getter_status=True)
+    ['int cor_get_eta(const cor_state_t *state, double *out);']
     """
     disp = ctype
     if T.is_json_type(ctype):
@@ -150,9 +164,13 @@ def plain_accessor_decls(
             f"{T.JSON_GETTER_CTYPE}{CSYM.property_getter(csym, prop_name)}"
             f"(const {csym}_state_t *state);"
         ]
-    decls = [
-        f"{disp} {CSYM.property_getter(csym, prop_name)}(const {csym}_state_t *state);"
-    ]
+    getter = getter_prototype(
+        {"getter_status": getter_status},
+        CSYM.property_getter(csym, prop_name),
+        csym,
+        disp,
+    )
+    decls = [f"{getter};"]
     if writable:
         decls.append(
             f"{setter_type} {CSYM.property_setter(csym, prop_name)}"
@@ -292,6 +310,7 @@ def run(
     error: str = "",
     error_message: str = "",
     py_type: str = "",
+    getter_status: bool = False,
 ) -> None:
     # gh-625: `jm object` and `jm function` rejected this and these two did
     # not, so `jm property thing level:double` — the shape muscle memory
@@ -391,6 +410,7 @@ def run(
                 "entry_fn": entry_fn,
                 "error": error,
                 "error_message": error_message,
+                "getter_status": getter_status,  # gh-2538
             },
         )
     except ValueError as exc:
@@ -401,16 +421,22 @@ def run(
     # gh-1591: the stem every derived accessor name below starts with.
     csym = CSYM.stem(cfg, object_name)
 
-    # gh-2182: a refusing setter needs a C setter call to test. Refused here,
-    # before the manifest is written, by the check every render runs.
+    # gh-2182: a refusing setter needs a C setter call to test, and gh-2538 a
+    # failing getter a C getter call. Refused here, before the manifest is
+    # written, by the check every render runs.
     validate_property_error(
         object_name,
         {
             "name": prop_name,
+            "type": ctype,
             "writable": writable,
             "field": field,
+            "expr": expr,
+            "buf_field": buf_field,
+            "capsule": capsule,
             "error": error,
             "error_message": error_message,
+            "getter_status": getter_status,
         },
         frozenset(n for n, _, _ in C.state_vars(cfg, object_name)),
         csym=csym,
@@ -538,6 +564,8 @@ def run(
         prop_entry["error"] = error  # gh-2182
     if error_message:
         prop_entry["error_message"] = error_message
+    if getter_status:
+        prop_entry["getter_status"] = True  # gh-2538
     if buf_field:
         prop_entry["buf_field"] = buf_field
         prop_entry["len_field"] = len_field
@@ -648,6 +676,7 @@ def run(
             writable,
             csym=csym,
             setter_type=setter_return_type(prop_entry),
+            getter_status=getter_status,  # gh-2538
         )
         scaffold_accessor_bodies(root, object_name, decls)  # first; see above
         if _inject_decls_into_core_h(
@@ -719,7 +748,19 @@ def run(
             f" {_body_file}"
             f"  [{rw}]"
         )
-    if error:
+    getter_raise = property_getter_raise(
+        prop_entry, CSYM.property_getter(csym, prop_name)
+    )
+    if getter_raise is not None:
+        # gh-2538: the binding tests the getter's status and reads the value
+        # from the out-pointer, so the definition must take both.
+        print(
+            f"       {CSYM.property_getter(csym, prop_name)}() returns int"
+            f" and writes the value to *out:\n"
+            f"       non-zero means there is none, and the read raises"
+            f" {getter_raise[0]}."
+        )
+    elif error:
         # gh-2182: the binding tests the setter's return, so it must be an
         # int -- jm declares it so where it declares the setter at all, and
         # an author-declared one (an `expr` property's) must say so too.
