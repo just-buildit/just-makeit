@@ -428,6 +428,10 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         # gh-509: replay the object-level C constructor override so the
         # regenerated tp_init calls it, not the default <comp>_create.
         "create_fn": C.object_create_fn(cfg, comp),
+        # gh-2552: manifest-only. The scaffold's create() takes the trailing
+        # `const char **why` from its first render, so a fresh checkout's
+        # header, stub and binding agree; `_error.run` below writes the key.
+        "create_why": C.object_create_why(cfg, comp),
         # gh-225: pass the RAW depends_on (preserving `{name, link}` tables) so
         # the replayed scaffold re-persists the link flag and the consuming
         # target's link line is regenerated; render paths flatten to names.
@@ -1474,6 +1478,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 C.create_error_message(cfg, comp),
                 module=mod,
                 view="",  # the object's own; a view's rides `_view.run`
+                # gh-2552: written with the create_error it needs, so the
+                # scratch manifest never holds one without the other.
+                why=C.object_create_why(cfg, comp),
             )
         # gh-504: same reasoning — a declared view (a second class over this
         # object's core) must rebuild from the manifest alone, or a fresh
@@ -1499,6 +1506,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 # verbatim copy can carry that third state.
                 create_error=v.get("create_error"),
                 create_error_message=v.get("create_error_message"),
+                create_why=C.view_create_why(v),  # gh-2552
                 from_apply=True,
             )
             # gh-504: the view's OWN added/overriding members, materialized

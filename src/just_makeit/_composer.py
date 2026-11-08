@@ -49,7 +49,13 @@ from ._context._parse import (
     scalar_parse_c,
     scalar_raw_locals,
 )
-from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
+from ._context._diagnostics import (
+    WHY_C_ARG,
+    WHY_C_PARAM,
+    WHY_DECL,
+    WHY_LOCAL,
+    reason_raise_c,
+)
 from ._docstring import (
     ClassParam,
     DoxyBlock,
@@ -582,7 +588,7 @@ def _owned_ptr_prototypes(cfg: dict, module: str) -> "list[_Seam]":
                 "parse_fn",
                 p.parse_fn,
                 f"{t} *{p.parse_fn}(const char *"
-                + (", const char **why" if p.parse_why else "")
+                + (f", {WHY_C_PARAM}" if p.parse_why else "")
                 + ");",
                 # gh-1735: the sentence a refusal leaves in *why is raised.
                 "parse, naming a refusal in *why" if p.parse_why else "parse",
@@ -717,7 +723,7 @@ def _owned_ptr_attach_c(cfg: dict, struct: str, f: dict) -> str:
         f'                "{n}: {p.parse_fn} refused the text");\n'
     )
     why = WHY_LOCAL if p.parse_why else ""
-    call = _owned_ptr_parse_call(p, "_jm_s", f"&{WHY_LOCAL}")
+    call = _owned_ptr_parse_call(p, "_jm_s", WHY_C_ARG)
     parse = (
         (f"        {WHY_DECL}\n" if why else "")
         + f"        _jm_new = {call};\n"
@@ -1838,7 +1844,7 @@ def _factory_refusal_c(
     object). With *why* the call gains a trailing ``&_why`` and the raise
     carries it; without, the text is what the factory always emitted.
     """
-    tail = f", &{WHY_LOCAL}" if why else ""
+    tail = f", {WHY_C_ARG}" if why else ""
     return (
         (f"    {WHY_DECL}\n" if why else "")
         + f"    {sym}_state_t *st = {fn}({arg}{tail});\n"
@@ -3873,7 +3879,7 @@ def render_composer_type(cfg: dict, module: str) -> str:
     _cw = create_why(cfg, module)
     ctor_why_decl = f"    {WHY_DECL}\n" if _cw else ""
     ctor_create = _create_call(
-        cfg, module, "segs, n, repeat, continuous", f"&{WHY_LOCAL}"
+        cfg, module, "segs, n, repeat, continuous", WHY_C_ARG
     )
     ctor_raise = reason_raise_c(
         f'PyErr_SetString(PyExc_ValueError, "{create_fn} failed");\n',
@@ -6912,14 +6918,14 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_why = any(op.parse_why for _n, op in _owned_ptrs(cfg, module))
     rec_create_why = create_why(cfg, module)
     rec_why = src_why or rec_create_why
-    src_why_param = ", const char **why" if src_why else ""
-    why_param = ", const char **why" if rec_why else ""
+    src_why_param = f", {WHY_C_PARAM}" if src_why else ""
+    why_param = f", {WHY_C_PARAM}" if rec_why else ""
     why_arg = ", why" if src_why else ""
     rec_create = _create_call(
         cfg, module, "segs, n, repeat, continuous", "why"
     )
     why_decl = f"\n    {WHY_DECL}" if rec_why else ""
-    why_ref = f", &{WHY_LOCAL}" if rec_why else ""
+    why_ref = f", {WHY_C_ARG}" if rec_why else ""
     why_pass = f", {WHY_LOCAL}" if rec_why else ""
     wrap_param = ", const char *why" if rec_why else ""
     wrap_raise = reason_raise_c(
@@ -7288,7 +7294,7 @@ def render_cli(cfg: dict, module: str) -> str:
             )
             # gh-1735: under `parse_why` the refusal prints the host's
             # sentence, the CLI's form of the reason Python raises.
-            call = _owned_ptr_parse_call(op, n, f"&{WHY_LOCAL}")
+            call = _owned_ptr_parse_call(op, n, WHY_C_ARG)
             if op.parse_why:
                 assign.append(f"""    if ({n}) {{
         {WHY_DECL}

@@ -1662,10 +1662,10 @@ just-makeit error biquad \
 
 Also declarative: the choice is stored as `create_error` /
 `create_error_message` in `just-makeit.toml` and regenerated into the `_ext.c`
-failure path. There is **one** failure channel — a NULL from `create()` cannot
-say *why* it failed — so this applies to every `create()` failure, a genuine
-allocation failure included. Choose a category that reads sensibly for the most
-likely cause.
+failure path. A NULL from `create()` is **one** failure channel, so this applies
+to every `create()` failure, a genuine allocation failure included. Choose a
+category that reads sensibly for the most likely cause — or let the
+constructor say why, below.
 
 **Arguments**
 
@@ -1710,6 +1710,60 @@ translation keeps tracking the parent rather than being frozen into a copy.
 Note the contrast with [`just-makeit warning`](#just-makeit-warning), where a
 view does **not** inherit: a warning describes a condition the view may not
 have, while an error describes the same object refusing to construct.
+
+### The constructor can name its refusal (`create_why`)
+
+A constructor that refuses for many reasons reads the same for every one of
+them under a single `create_error_message`. `create_why = true` (gh-2552) is
+[`--why`](#just-makeit-function)'s contract on `create()`: the C constructor
+takes a trailing `const char **why`, after every init param, and a refusal
+raises `create_error` with the sentence it wrote there.
+
+```toml
+[corr]
+create_error = "ValueError"
+create_error_message = "Correlator: invalid configuration"
+create_why = true
+```
+
+```c
+corr_state_t *
+corr_create (size_t ny, int framing, const char **why)
+{
+  if (framing == CORR_BURST && ny > 1)
+    {
+      if (why)
+        *why = "Correlator: framing='burst' takes a 1-D ref";
+      return NULL;
+    }
+  /* ... */
+}
+```
+
+```text
+>>> Corr(ny=2, framing="burst")
+ValueError: Correlator: framing='burst' takes a 1-D ref
+```
+
+- The binding passes the address of a local initialised to `NULL`. A refusal
+    that writes nothing — an allocation failure — keeps
+    `create_error_message`.
+- The sentence is a static string: jm never frees it.
+- The parameter is C only: it is in no Python signature and no `.pyi`, and the
+    class docstring's `Raises` says the message is the constructor's reason.
+- It is refused without a `create_error` in force, which is what raises the
+    sentence — as `--why` is refused without `--check-return` — and beside an
+    init param named `why`, which jm appends itself.
+- A view declares its own in `[[<obj>.views]]`: its `create_fn` is a different
+    C function, so the parent's `create_why` says nothing about it. The view's
+    `create_error` is still inherited.
+
+It is manifest-only: it changes the sacred `create()` prototype, so add the
+key and run `just-makeit apply`. A fresh scaffold's header, `_core.c` stub,
+binding, C test and bench all carry the parameter. On an existing object the
+standalone header is updated in place and your `_core.c` definition is yours to
+change; a module object's header is not rewritten, and `jm status` reports the
+mismatch as `CTOR` until it agrees.
 
 ______________________________________________________________________
 

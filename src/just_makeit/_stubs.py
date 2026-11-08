@@ -1370,7 +1370,10 @@ def class_diagnostics(
     """
     return (
         _create_raises_doc(
-            C.create_error(cfg, obj), C.create_error_message(cfg, obj)
+            C.create_error(cfg, obj),
+            C.create_error_message(cfg, obj),
+            # gh-2552: the text is the constructor's own when it gives one.
+            why=C.object_create_why(cfg, obj),
         ),
         # gh-2534: the class's own properties, so a condition one of them
         # reads is documented by its Python name. `cfg` is the view overlay
@@ -3274,6 +3277,11 @@ def view_overlay(cfg: dict, obj: str, view: dict) -> "tuple[str, dict]":
         cfg, obj, view
     )
     overlay["warnings"] = C.view_warnings(view)
+    # gh-2552: and `create_why`, which is the view's own and never the
+    # parent's -- the binding passes `_why` to the view's create_fn only.
+    overlay.pop("create_why", None)
+    if C.view_create_why(view):
+        overlay["create_why"] = True
     overlay.pop("streamable", None)
     overlay.pop("async_stream", None)
     # gh-2406: and the C stem. The binding renders a view under its PARENT's

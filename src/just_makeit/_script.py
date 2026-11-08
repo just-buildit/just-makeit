@@ -475,6 +475,19 @@ def _record_flags(entry: dict) -> list[str]:
     return parts
 
 
+def _create_why_note(where: str) -> str:
+    """The NOTE for a ``create_why = true`` no verb can spell (gh-2552).
+
+    >>> print(_create_why_note("[cor]"), end="")
+    # NOTE: [cor] create_why = true has no CLI flag — re-add it to
+    # just-makeit.toml and run `just-makeit apply`.
+    """
+    return (
+        f"# NOTE: {where} create_why = true has no CLI flag — re-add it to\n"
+        "# just-makeit.toml and run `just-makeit apply`.\n"
+    )
+
+
 def _status_error_spec(row: dict) -> str:
     """``STATUS:ExcName[:message]`` for one ``status_errors`` row.
 
@@ -1225,6 +1238,8 @@ def run(root: Path) -> None:
                         _property_flags(p, mod) + [_flag("--view", cls)],
                     )
                 )
+            if C.view_create_why(v):
+                out.append(_create_why_note(f"[[{comp}.views]] {cls!r}"))
             # gh-509: the view's OWN warnings, reusing the object-warning
             # flag builder plus --view (mirrors the members above).
             for w in C.view_warnings(v):
@@ -1381,6 +1396,10 @@ def run(root: Path) -> None:
         flags.append(_flag("--category", cat))
         flags.append(_flag("--message", C.create_error_message(cfg, comp)))
         err_lines.append(_render_cmd(["just-makeit", "error", comp], flags))
+        # gh-2552: manifest-only -- it changes the sacred create()
+        # signature, which `apply` reconciles and a verb does not.
+        if C.object_create_why(cfg, comp):
+            err_lines.append(_create_why_note(f"[{comp}]"))
     if err_lines:
         lines += err_lines
         lines.append("\n")

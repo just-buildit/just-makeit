@@ -968,6 +968,9 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
     print()
     cfg[obj].pop("create_error", None)
     cfg[obj].pop("create_error_message", None)
+    # gh-2552: the switch is read only through the translation, and a
+    # manifest holding it alone is refused at load.
+    cfg[obj].pop("create_why", None)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 

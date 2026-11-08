@@ -132,6 +132,9 @@ def component_ctx(
             opaque_state=C.is_opaque_state(cfg, object_name),
             no_ctor_names=C.no_ctor_names(cfg, object_name),
             create_fn=C.object_create_fn(cfg, object_name),
+            # gh-2552: and the constructor's trailing `const char **why`,
+            # for the same reason -- it is in the header's create().
+            create_why=C.object_create_why(cfg, object_name),
             # gh-542: the glue render is exactly the pass that used to
             # silently reinstate a hand-removed reset() binding.
             no_reset=C.is_no_reset(cfg, object_name),
@@ -251,6 +254,7 @@ def component_ctx(
             C.create_error_message(cfg, object_name),
             create_fn=C.object_create_fn(cfg, object_name),
             csym=ctx["csym"],
+            why=C.object_create_why(cfg, object_name),  # gh-2552
         )
     )
     # gh-541/gh-544: the declared destructor contract. Regenerated from the

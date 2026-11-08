@@ -1613,8 +1613,15 @@ def _build_ctx(
     create_name = C.object_create_name(cfg, component)
     csym = CSYM.stem(cfg, component)
 
+    # gh-2552: a constructor declared `create_why` takes a trailing
+    # `const char **why`. The app passes NULL -- "no reason wanted" in that
+    # contract -- and reports a refusal by its existing message.
+    _why = ["NULL"] if C.object_create_why(cfg, component) else []
+
     def _create_call(parsed: bool) -> str:
-        a = _ctor_c_args(all_flags, parsed)
+        a = ", ".join(
+            [x for x in (_ctor_c_args(all_flags, parsed),) if x] + _why
+        )
         return f"{create_name}({a})" if a else f"{create_name}()"
 
     shape = _app_shape(cfg, component)
