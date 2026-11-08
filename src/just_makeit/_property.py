@@ -126,7 +126,9 @@ def getter_shape_mismatch(root: Path, cfg: dict) -> "list[str]":
 
     Refused before anything is written, naming the property and the
     prototype to write: the declaration and the definition are the
-    author's to change. Not the setter's ``void`` -> ``int`` move:
+    author's to change. Without ``getter_status`` only jm's status shape (an
+    ``int`` and a trailing pointer) is a finding: any other signature is the
+    author's, kept as written (gh-627). Not the setter's ``void`` -> ``int`` move:
     `discarded_setter_status` documents that `apply` writes the ``int``
     there as the way a property adopts ``error`` (gh-2302). Read through `_init.existing_decl`, the one by-name
     prototype lookup; an absent declaration is not a finding (`apply`
@@ -166,8 +168,17 @@ def getter_shape_mismatch(root: Path, cfg: dict) -> "list[str]":
             if pat is None:
                 continue
             params = pat.search(text).group(0).split(fn, 1)[1]
-            takes_out = "," in params
-            if takes_out == bool(p.get("getter_status")):
+            if p.get("getter_status"):
+                # The status call passes two arguments; one is too few.
+                wrong = "," not in params
+            else:
+                # Only jm's OTHER shape -- an int, then `T *out` -- is a
+                # status getter left behind. Any other signature is the
+                # author's own (gh-627 keeps it as written).
+                wrong = bool(
+                    re.search(r",[^,]*\*\s*\w*\s*\)\s*;\s*$", params)
+                ) and re.search(r"\bint$", declared_return(text, fn) or "")
+            if not wrong:
                 continue
             want = getter_prototype(p, fn, stem, str(p["type"]))
             out.append(
