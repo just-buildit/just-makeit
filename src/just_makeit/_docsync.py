@@ -3114,8 +3114,17 @@ def property_status_breaks(existing: str, reference: str) -> "list[str]":
         fn = m.group(1)
         # Used: assigned, tested, returned or passed on -- anything but a
         # bare statement. A getter's call must also pass a second argument
-        # (the out-pointer): one-argument is the value shape.
-        args = r"\((?:[^;()]|\([^;()]*\))*," if "_getprop_" in name else r"\("
+        # (the out-pointer): one-argument is the value shape. Not a buffer
+        # view's status function (gh-2543), which takes the state alone --
+        # read off the reference call, which is the shape jm renders.
+        two_args = re.search(
+            rf"{re.escape(fn)}\s*\((?:[^;()]|\([^;()]*\))*,", _code_mask(body)
+        )
+        args = (
+            r"\((?:[^;()]|\([^;()]*\))*,"
+            if "_getprop_" in name and two_args
+            else r"\("
+        )
         used = re.search(
             rf"(?:[=(!,?:]|\breturn|&&|\|\|)\s*{re.escape(fn)}\s*{args}",
             _code_mask(have[name]),

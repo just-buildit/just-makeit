@@ -283,7 +283,8 @@ def fresh(tmp_path) -> Path:
         (
             "p",
             ["--getter-status", "--writable"],
-            "a writable property's error is its setter's",
+            # gh-2543: accepted with --getter-error, which names the read's.
+            "so getter_status needs getter_error",
         ),
         ("p", ["--getter-status", "--field"], "field reads the struct member"),
         (

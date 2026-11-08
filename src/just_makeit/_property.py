@@ -263,6 +263,28 @@ def plain_accessor_decls(
     return decls
 
 
+def buffer_status_decls(p: dict, *, csym: str) -> list[str]:
+    """The prototype a buffer-view property's ``getter_status`` adds.
+
+    gh-2543. A ``buf_field`` property's binding views the buffer member
+    directly, so it has no getter; under ``getter_status`` it first calls
+    ``int <stem>_<prop>_status(const <stem>_state_t *state)`` and raises on
+    a non-zero return. Shared by :func:`run` and ``_apply``, as
+    :func:`plain_accessor_decls` is, through the one prototype
+    (`_context._diagnostics.getter_prototype`) the rendered header uses.
+
+    >>> buffer_status_decls({"name": "c", "buf_field": "corr",
+    ...                      "getter_status": True}, csym="dp_cor")
+    ['int dp_cor_c_status(const dp_cor_state_t *state);']
+    >>> buffer_status_decls({"name": "c", "buf_field": "corr"}, csym="dp_cor")
+    []
+    """
+    if not (p.get("buf_field") and p.get("getter_status")):
+        return []
+    fn = CSYM.status_reader(csym, p)
+    return [f"{getter_prototype(p, fn, csym, str(p.get('type', '')))};"]
+
+
 _PROTO_RE = re.compile(
     r"^(?P<ret>.*?\S)\s*\b(?P<name>[A-Za-z_]\w*)\((?P<params>.*)\);$"
 )
@@ -395,6 +417,8 @@ def run(
     error_message: str = "",
     py_type: str = "",
     getter_status: bool = False,
+    getter_error: str = "",
+    getter_error_message: str = "",
 ) -> None:
     # gh-625: `jm object` and `jm function` rejected this and these two did
     # not, so `jm property thing level:double` — the shape muscle memory
@@ -495,6 +519,8 @@ def run(
                 "error": error,
                 "error_message": error_message,
                 "getter_status": getter_status,  # gh-2538
+                "getter_error": getter_error,  # gh-2543
+                "getter_error_message": getter_error_message,
             },
         )
     except ValueError as exc:
@@ -521,6 +547,8 @@ def run(
             "error": error,
             "error_message": error_message,
             "getter_status": getter_status,
+            "getter_error": getter_error,  # gh-2543
+            "getter_error_message": getter_error_message,
         },
         frozenset(n for n, _, _ in C.state_vars(cfg, object_name)),
         csym=csym,
@@ -650,6 +678,10 @@ def run(
         prop_entry["error_message"] = error_message
     if getter_status:
         prop_entry["getter_status"] = True  # gh-2538
+    if getter_error:
+        prop_entry["getter_error"] = getter_error  # gh-2543
+    if getter_error_message:
+        prop_entry["getter_error_message"] = getter_error_message
     if buf_field:
         prop_entry["buf_field"] = buf_field
         prop_entry["len_field"] = len_field
@@ -752,6 +784,15 @@ def run(
         disp = ctype
         if _inject_struct_field(core_h, object_name, f"{disp} {prop_name};"):
             print(f"  update  {core_h}")
+    elif buf_field and getter_status:
+        # gh-2543: the view reads the buffer member itself; what the author
+        # implements is the status function the binding calls first.
+        decls = buffer_status_decls(prop_entry, csym=csym)
+        scaffold_accessor_bodies(root, object_name, decls)  # first; see above
+        if _inject_decls_into_core_h(
+            core_h, object_name, decls, family=C.core_family(cfg, object_name)
+        ):
+            print(f"  update  {core_h}")
     elif not buf_field and not expr and not capsule:
         decls = plain_accessor_decls(
             object_name,
@@ -826,25 +867,41 @@ def run(
             f"Done!  Struct field '{prop_name}' added to"
             f" {csym}_state_t; getter/setter auto-implemented.  [{rw}]"
         )
+    elif buf_field:
+        # gh-2543: a view has no getter to implement -- the binding reads
+        # the member -- so naming one sent the author to write dead code.
+        # A status function, when declared, is named below.
+        print(
+            f"Done!  View over {csym}_state_t.{buf_field}"
+            f" ({len_field} elements).  [{rw}]"
+        )
     else:
         print(
             f"Done!  Implement {CSYM.property_getter(csym, prop_name)}() in"
             f" {_body_file}"
             f"  [{rw}]"
         )
-    getter_raise = property_getter_raise(
-        prop_entry, CSYM.property_getter(csym, prop_name)
-    )
-    if getter_raise is not None:
+    status_fn = CSYM.status_reader(csym, prop_entry)
+    getter_raise = property_getter_raise(prop_entry, status_fn)
+    if getter_raise is not None and buf_field:
+        # gh-2543: the binding calls the status function before it builds
+        # the view; it writes nothing.
+        print(
+            f"       Implement {status_fn}() in {_body_file}: it returns"
+            f" non-zero when\n"
+            f"       there is no view, and the read raises"
+            f" {getter_raise[0]}."
+        )
+    elif getter_raise is not None:
         # gh-2538: the binding tests the getter's status and reads the value
         # from the out-pointer, so the definition must take both.
         print(
-            f"       {CSYM.property_getter(csym, prop_name)}() returns int"
+            f"       {status_fn}() returns int"
             f" and writes the value to *out:\n"
             f"       non-zero means there is none, and the read raises"
             f" {getter_raise[0]}."
         )
-    elif error:
+    if error and writable:
         # gh-2182: the binding tests the setter's return, so it must be an
         # int -- jm declares it so where it declares the setter at all, and
         # an author-declared one (an `expr` property's) must say so too.

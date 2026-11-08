@@ -136,6 +136,18 @@ class TestEveryKeyRoundTrips:
         "error_message": "eta is search-only",
     }
 
+    # gh-2543: a writable property whose getter can fail. Its own shape:
+    # `getter_error` is refused on a read-only property.
+    WRITABLE_STATUS_GETTER_PROP = {
+        "name": "keep",
+        "type": "int",
+        "writable": True,
+        "getter_status": True,
+        "getter_error": "AttributeError",
+        "getter_error_message": "keep is continuous-only",
+        "error": "ValueError",
+    }
+
     # gh-2347: a json property's stub annotation. Its own shape: py_type is
     # refused on every other kind.
     JSON_PROP = {
@@ -154,6 +166,7 @@ class TestEveryKeyRoundTrips:
         "scalar": SCALAR_PROP,
         "refusing": REFUSING_PROP,
         "status_getter": STATUS_GETTER_PROP,
+        "writable_status_getter": WRITABLE_STATUS_GETTER_PROP,
         "json": JSON_PROP,
     }
 

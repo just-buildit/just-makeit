@@ -231,6 +231,34 @@ def property_setter(stem_: str, prop: str) -> str:
     return f"{stem_}_set_{prop}"
 
 
+def property_status(stem_: str, prop: str) -> str:
+    """The derived status function of buffer-view property *prop*
+    (``buf_field``) declaring ``getter_status``: ``<stem>_<prop>_status``
+    (gh-2543). The binding calls it before it builds the view; a non-zero
+    return raises the property's ``error``.
+
+    >>> property_status("dp_cor", "last_corr")
+    'dp_cor_last_corr_status'
+    """
+    return f"{stem_}_{prop}_status"
+
+
+def status_reader(stem_: str, p: dict) -> str:
+    """The C function whose ``int`` return a ``getter_status`` property's
+    read tests: a buffer view's :func:`property_status` (gh-2543), every
+    other shape's :func:`property_getter` (gh-2538). The one answer for the
+    binding, the declaration, the stub and the derived message.
+
+    >>> status_reader("dp_cor", {"name": "eta"})
+    'dp_cor_get_eta'
+    >>> status_reader("dp_cor", {"name": "last_corr", "buf_field": "corr"})
+    'dp_cor_last_corr_status'
+    """
+    if p.get("buf_field"):
+        return property_status(stem_, str(p["name"]))
+    return property_getter(stem_, str(p["name"]))
+
+
 def container_accessors(stem_: str, p: dict) -> "dict[str, str]":
     """The C names container property *p*'s binding calls (gh-543), on the
     component whose stem is *stem_*: each key *p* declares, else the ONE
@@ -312,6 +340,8 @@ def property_accessors(cfg: dict) -> "dict[str, str]":
             if not (isinstance(prop, dict) and prop.get("name")):
                 continue
             out[property_getter(st, str(prop["name"]))] = st
+            if prop.get("buf_field") and prop.get("getter_status"):
+                out[property_status(st, str(prop["name"]))] = st  # gh-2543
             if T.is_container_type(str(prop.get("type", ""))):
                 names = container_accessors(st, prop)
                 for role in _container_roles(prop):

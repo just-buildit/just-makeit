@@ -5804,8 +5804,14 @@ def validate_property_error(
     out-pointer, and a non-zero status raises ``error`` (default
     ``ValueError``) with ``error_message`` -- so ``error`` is accepted on a
     read-only property exactly when ``getter_status`` says what raises it.
-    It needs a C getter call to test, so `_refuse_getter_status` refuses
-    every shape without one.
+    It needs a C call to test, so `_refuse_getter_status` refuses every
+    shape without one.
+
+    gh-2543: on a WRITABLE property ``error`` stays the setter's, and the
+    getter's failure is named by ``getter_error`` / ``getter_error_message``
+    -- required there under ``getter_status``, refused on a read-only
+    property (``error`` already names it), and refused without
+    ``getter_status`` (the getter cannot fail).
 
     The exception name is checked against `_config.ERROR_CATEGORIES`, the
     list a method's ``error`` is checked against, because ``PyExc_<name>``
@@ -5822,18 +5828,36 @@ def validate_property_error(
     """
     category = p.get("error") or ""
     getter_status = bool(p.get("getter_status"))
-    if not category and not p.get("error_message") and not getter_status:
+    getter_keys = [k for k in _GETTER_ERROR_KEYS if p.get(k)]
+    if (
+        not category
+        and not p.get("error_message")
+        and not getter_status
+        and not getter_keys
+    ):
         return
     where = f"{component}.{p['name']}"
     setter = CSYM.property_setter(csym, p["name"])
-    if category and category not in C.ERROR_CATEGORIES:
+    for key in ("error", "getter_error"):
+        named = p.get(key) or ""
+        if named and named not in C.ERROR_CATEGORIES:
+            raise Refusal(
+                f"{where}: {key} {named!r} is not a known exception "
+                f"category. Choose one of: "
+                f"{', '.join(sorted(C.ERROR_CATEGORIES))}."
+            )
+    if getter_keys and not getter_status:
         raise Refusal(
-            f"{where}: error {category!r} is not a known exception category. "
-            f"Choose one of: {', '.join(sorted(C.ERROR_CATEGORIES))}."
+            f"{where}: {getter_keys[0]} names what a failing getter raises, "
+            f"and without getter_status the getter cannot fail. Add "
+            f"getter_status = true, or drop {getter_keys[0]}."
         )
     if getter_status:
         _refuse_getter_status(where, p, state_var_names, csym=csym)
-        return
+        if not p.get("writable"):
+            return  # `error` is the getter's (gh-2538)
+        if not category and not p.get("error_message"):
+            return  # a writable property whose setter cannot refuse
     if not category:
         raise Refusal(
             f"{where}: error_message is the text a refused assignment raises "
@@ -5863,13 +5887,17 @@ def validate_property_error(
 
 #: gh-2538: the backings that read a property's value with no C getter call,
 #: so there is no status for ``getter_status`` to test -- each key, and how
-#: it reads the value instead.
+#: it reads the value instead. Not ``buf_field``: a buffer view's status is
+#: its own function, called before the view is built (gh-2543).
 _NO_GETTER_CALL = (
     ("field", "reads the struct member directly"),
     ("expr", "evaluates its C expression inline"),
-    ("buf_field", "views the buffer member directly"),
     ("capsule", "publishes a pointer it already holds"),
 )
+
+#: gh-2543: the pair naming a WRITABLE property's getter failure, whose
+#: ``error`` / ``error_message`` are the setter's (gh-2182).
+_GETTER_ERROR_KEYS = ("getter_error", "getter_error_message")
 
 
 def _refuse_getter_status(
@@ -5886,25 +5914,39 @@ def _refuse_getter_status(
     ``<stem>_get_<name>(self->handle, &value)``, tested like a refusing
     setter. Every other shape is refused here, naming the way out:
 
-    - a writable property: its ``error`` is the setter's (gh-2182), and one
-      pair cannot name both failures;
-    - ``field`` / ``expr`` / ``buf_field`` / ``capsule``: the value is read
-      with no C call at all;
+    - a writable property without ``getter_error``: its ``error`` is the
+      setter's (gh-2182), so the getter's failure needs its own name
+      (gh-2543); and a read-only one WITH ``getter_error*``, which
+      ``error`` already names;
+    - ``field`` / ``expr`` / ``capsule``: the value is read with no C call
+      at all;
     - a container (``list`` / ``tuple`` / ``dict``): it reads through
       count / key / value accessors, not one getter;
     - a property named for a state field: its getter is that field's
       accessor, which jm declares returning the value.
+
+    A buffer view (``buf_field``) is accepted (gh-2543): the binding calls
+    ``int <stem>_<prop>_status(const <stem>_state_t *)`` before it builds
+    the view, and ``valid_field`` still decides ``None`` on a zero.
 
     A ``json`` property never reaches here: `validate_json_property`
     refuses the key first, because its getter already reports failure by
     returning ``NULL``.
     """
     getter = CSYM.property_getter(csym, p["name"])
-    if p.get("writable"):
+    getter_keys = [k for k in _GETTER_ERROR_KEYS if p.get(k)]
+    if p.get("writable") and not p.get("getter_error"):
         raise Refusal(
-            f"{where}: getter_status makes error the getter's, and a "
-            f"writable property's error is its setter's (gh-2182), so one "
-            f"pair cannot name both. Drop writable, or drop getter_status."
+            f"{where}: on a writable property error is the setter's "
+            f"(gh-2182), so getter_status needs getter_error to name what "
+            f"a failing read raises (e.g. getter_error = "
+            f'"AttributeError"), with getter_error_message for its text.'
+        )
+    if getter_keys and not p.get("writable"):
+        raise Refusal(
+            f"{where}: on a read-only property error already names what a "
+            f"failing read raises, so {getter_keys[0]} is redundant. Use "
+            f"error / error_message instead."
         )
     for key, how in _NO_GETTER_CALL:
         if p.get(key):
@@ -5919,7 +5961,7 @@ def _refuse_getter_status(
             f"and a container property reads through count / key / value "
             f"accessors. Drop getter_status."
         )
-    if p["name"] in state_var_names:
+    if p["name"] in state_var_names and not p.get("buf_field"):
         raise Refusal(
             f"{where}: the getter this property calls, {getter}, is the "
             f"accessor of the state field '{p['name']}', which jm declares "
@@ -6036,7 +6078,7 @@ def validate_json_property(component: str, p: dict) -> None:
             f"returning NULL, which raises, so getter_status has nothing to "
             f"add. Drop getter_status."
         )
-    if p.get("error") or p.get("error_message"):
+    if any(p.get(k) for k in ("error", "error_message", *_GETTER_ERROR_KEYS)):
         raise Refusal(
             f"{where}: a json property has no setter, so `error` has nothing "
             f"to test. A NULL from the getter already raises."
@@ -6294,6 +6336,29 @@ def _container_pyi(p: dict, cdc: dict | None = None) -> str:
     return f"tuple[{elem}, ...]"
 
 
+def _status_raise_c(call: str, raise_pair: "tuple[str, str]") -> str:
+    """A getter body's status test: call *call*, raise on a non-zero int.
+
+    The one emitter for a ``getter_status`` read -- a scalar getter writing
+    through ``&_got`` (gh-2538) and a buffer view's status function
+    (gh-2543) -- through `_rc_raise_c`, the raise a refusing setter and a
+    ``status_return`` method use. ``return NULL;`` because a getter slot
+    returns a ``PyObject *``.
+
+    >>> c = _status_raise_c("o_c_status(self->handle)", ("ValueError", "x"))
+    >>> c.splitlines()[:2]
+    ['    int _rc = o_c_status(self->handle);', '    if (_rc != 0) {']
+    >>> "PyExc_ValueError" in c and c.endswith("    }\\n")
+    True
+    """
+    return (
+        f"    int _rc = {call};\n"
+        f"    if (_rc != 0) {{\n"
+        + _rc_raise_c(*raise_pair, fail="return NULL;")
+        + "    }\n"
+    )
+
+
 def make_properties_ctx(
     component: str,
     Component: str,
@@ -6330,6 +6395,11 @@ def make_properties_ctx(
     out-pointer; the binding raises ``error`` (default ``ValueError``) with
     ``error_message`` on a non-zero status, and the prototype and both doc
     faces say so.
+
+    gh-2543: on a writable property the read raises ``getter_error`` /
+    ``getter_error_message`` instead (``error`` stays the setter's), and a
+    buffer view (``buf_field``) declaring ``getter_status`` calls
+    ``int <stem>_<prop>_status(const state *)`` before it builds the view.
     """
     _EMPTY: dict[str, str] = {
         "getset_def": "",
@@ -6389,9 +6459,12 @@ def make_properties_ctx(
         setter_fn = CSYM.property_setter(csym, pname)
         setter_raise = property_declared_raise(p, setter_fn)
         # gh-2538: what a failing getter raises, or None; read by the scalar
-        # getter's binding, its prototype and both doc faces.
+        # getter's binding, its prototype and both doc faces. gh-2543: the
+        # C call it tests is `status_fn` -- the getter, or a buffer view's
+        # status function.
         getter_fn = CSYM.property_getter(csym, pname)
-        getter_raise = property_getter_raise(p, getter_fn)
+        status_fn = CSYM.status_reader(csym, p)
+        getter_raise = property_getter_raise(p, status_fn)
 
         # gh-519: an `enum`-decorated property stores the SSOT int in C but
         # presents the value as its string on the Python side.
@@ -6507,6 +6580,25 @@ def make_properties_ctx(
                 if valid_field
                 else ""
             )
+            # gh-2543: a view that does not exist in this configuration
+            # raises before `valid_field` is read, so `None` keeps meaning
+            # "not yet" and never "not here".
+            _status_check = ""
+            if getter_raise is not None:
+                _status_check = _status_raise_c(
+                    f"{status_fn}(self->handle)", getter_raise
+                )
+                decl_lines.append(
+                    f"/**\n"
+                    f" * @brief Whether {pname} has a view to build.\n"
+                    f" * @param state  Must be non-NULL.\n"
+                    f" * @return 0 when it does; non-zero when it does not,"
+                    f"\n"
+                    f" *         which Python raises as"
+                    f" {getter_raise[0]}.\n"
+                    f" */\n"
+                    f"{getter_prototype(p, status_fn, csym, disp)};"
+                )
             # gh-1312: one emitter for "borrow a pointer, pin self", shared
             # with an array state's get_<name>_view(). This site used to
             # ignore PyArray_SetBaseObject's return and Py_INCREF *after* it
@@ -6525,6 +6617,7 @@ def make_properties_ctx(
                 f" void *Py_UNUSED(closure))\n"
                 f"{{\n"
                 f"{guard}"
+                f"{_status_check}"
                 f"{_valid_check}"
                 + _borrow_view_c(
                     f"self->handle->{buf_field}",
@@ -6584,12 +6677,10 @@ def make_properties_ctx(
             # `long _v` from the value it is handed.
             _status_body = ""
             if getter_raise is not None:
-                _status_body = (
-                    f"    {disp} _got = {meta['zero']};\n"
-                    f"    int _rc = {getter_fn}(self->handle, &_got);\n"
-                    f"    if (_rc != 0) {{\n"
-                    + _rc_raise_c(*getter_raise, fail="return NULL;")
-                    + "    }\n"
+                _status_body = f"    {disp} _got = {meta['zero']};\n" + (
+                    _status_raise_c(
+                        f"{getter_fn}(self->handle, &_got)", getter_raise
+                    )
                 )
                 _call = "_got"
             # gh-519: the enum form binds the call into its own local before
@@ -6743,7 +6834,7 @@ def make_properties_ctx(
         # so the runtime text is the stub's text without its indent. A
         # property declaring no `error` keeps its one-line summary.
         # gh-2538: or a getter that can fail documents what a read raises.
-        _raises = property_raises_doc(p, setter_fn, getter_fn)
+        _raises = property_raises_doc(p, setter_fn, status_fn)
         _rt_doc = (
             render_runtime_doc(
                 None,

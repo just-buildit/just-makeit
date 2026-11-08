@@ -344,10 +344,15 @@ Commands:
     --error EXC                 With --writable: the setter's C function returns
                                 int, and a non-zero return refuses the value and
                                 raises EXC (e.g. ValueError). Not with --field.
-    --getter-status             Read-only scalar only: the getter returns int and
-                                writes the value to *out; a non-zero return
-                                raises --error (default ValueError) on read.
+    --getter-status             The read can fail: a scalar's getter returns int
+                                and writes the value to *out; a --buf-field
+                                view calls int <stem>_<name>_status(state)
+                                first. Non-zero raises --error (default
+                                ValueError) on read.
     --error-message text        Text for that exception (rc appended).
+    --getter-error EXC          With --getter-status and --writable: what a
+                                failing read raises (--error is the setter's).
+    --getter-error-message text Text for that exception (rc appended).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
                                 instead of the object itself (a view can add a
@@ -1184,6 +1189,8 @@ def _main() -> None:
         error_message = ""
         py_type = ""  # gh-2347
         getter_status = False  # gh-2538
+        getter_error = ""  # gh-2543
+        getter_error_message = ""
 
         remaining = args[3:]
         i = 0
@@ -1259,6 +1266,9 @@ def _main() -> None:
                 # gh-2182: the exception a refused assignment raises.
                 "--error",
                 "--error-message",
+                # gh-2543: a writable property's getter failure.
+                "--getter-error",
+                "--getter-error-message",
                 # gh-2347: a json property's stub annotation.
                 "--py-type",
             ):
@@ -1291,6 +1301,10 @@ def _main() -> None:
                     error = val  # gh-2182
                 elif tok == "--error-message":
                     error_message = val
+                elif tok == "--getter-error":
+                    getter_error = val  # gh-2543
+                elif tok == "--getter-error-message":
+                    getter_error_message = val
                 elif tok == "--py-type":
                     py_type = val  # gh-2347
                 else:
@@ -1347,6 +1361,8 @@ def _main() -> None:
             error_message=error_message,
             py_type=py_type,
             getter_status=getter_status,
+            getter_error=getter_error,
+            getter_error_message=getter_error_message,
         )
 
     elif cmd == "warning":
