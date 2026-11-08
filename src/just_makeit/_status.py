@@ -1409,6 +1409,7 @@ def run(
                     "ctor_signature_drift": [
                         {
                             "component": d.component,
+                            "function": d.fn or f"{d.csym}_create",
                             "path": d.rel,
                             "header": d.declared,
                             "manifest": d.rendered,
@@ -2228,13 +2229,15 @@ def run(
     # way to learn WHICH side to move).
     if _ctor_drift:
         print(
-            f"CTOR ({len(_ctor_drift)}) — create() differs between the "
+            f"CTOR ({len(_ctor_drift)}) — a constructor differs between the "
             "header and the manifest:"
         )
         for d in _ctor_drift:
             print(f"  ! {d.rel}")
-            print(f"      header:   {d.csym}_create({d.declared})")
-            print(f"      manifest: {d.csym}_create({d.rendered})")
+            # gh-2552: the constructor compared -- a `create_fn`, a view's.
+            fn = d.fn or f"{d.csym}_create"
+            print(f"      header:   {fn}({d.declared})")
+            print(f"      manifest: {fn}({d.rendered})")
         print(
             "  jm injects that declaration, so this is jm checking what it"
             " wrote. It cannot\n"

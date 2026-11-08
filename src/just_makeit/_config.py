@@ -46,7 +46,7 @@ except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, NamedTuple
+from typing import Callable, Iterator, NamedTuple
 
 from . import _types as _T
 from . import _incpath as INC
@@ -495,18 +495,31 @@ def _why_key_errors(cfg: dict) -> "list[str]":
         entry = cfg.get(comp)
         if not isinstance(entry, dict):
             continue
-        rows = [(f"[{comp}]", entry, create_error(cfg, comp))]
+        # The params each constructor really takes: a view with none of its
+        # own takes its parent's (`view_init_params`), so asking the view's
+        # table alone missed a parent param named `why`.
+        rows = [
+            (
+                f"[{comp}]",
+                entry,
+                create_error(cfg, comp),
+                lambda c=comp: [p[0] for p in init_params(cfg, c)],
+            )
+        ]
         rows += [
             (
                 f"[[{comp}.views]] {v.get('class_name', '?')!r}",
                 v,
                 view_create_error(cfg, comp, v),
+                lambda c=comp, v=v: [
+                    p[0] for p in view_init_params(cfg, c, v)
+                ],
             )
             for v in views(cfg, comp)
             if isinstance(v, dict)
         ]
-        for where, table, category in rows:
-            errors += _create_why_errors(where, table, category)
+        for where, table, category, params in rows:
+            errors += _create_why_errors(where, table, category, params)
     for mid, mod in (cfg.get("module") or {}).items():
         if not isinstance(mod, dict):
             continue
@@ -557,14 +570,21 @@ def _why_key_errors(cfg: dict) -> "list[str]":
     return errors
 
 
-def _create_why_errors(where: str, table: dict, category: str) -> "list[str]":
+def _create_why_errors(
+    where: str,
+    table: dict,
+    category: str,
+    params: "Callable[[], list[str]]" = lambda: [],
+) -> "list[str]":
     """Why *table*'s ``create_why`` cannot be generated, or ``[]`` (gh-2552).
 
     *where* names the table in the message, *category* is the
-    ``create_error`` in force for it. Three refusals, each the gh-1706 one
-    for a module function's ``why``: a value that is not a bool (gh-1722),
-    no exception to raise the sentence as, and an init param named ``why``
-    -- jm appends that parameter itself.
+    ``create_error`` in force for it, and *params* gives the names of the
+    init params the constructor takes -- a view's inherited ones included
+    -- called only when they are asked about. Three refusals, each the
+    gh-1706 one for a module function's ``why``: a value that is not a
+    bool (gh-1722), no exception to raise the sentence as, and an init
+    param named ``why`` -- jm appends that parameter itself.
 
     Examples
     --------
@@ -572,6 +592,10 @@ def _create_why_errors(where: str, table: dict, category: str) -> "list[str]":
     "[g] create_why = 'f' must be t"
     >>> _create_why_errors("[g]", {"create_why": True}, "ValueError")
     []
+    >>> _create_why_errors(
+    ...     "[g]", {"create_why": True}, "ValueError", lambda: ["why"]
+    ... )[0][:31]
+    '[g] declares create_why = true '
     >>> _create_why_errors("[g]", {}, "")
     []
     """
@@ -581,8 +605,8 @@ def _create_why_errors(where: str, table: dict, category: str) -> "list[str]":
     if not isinstance(value, bool):
         return [
             f"{where} create_why = {value!r} must be true or false: it "
-            "marks the constructor as taking a trailing `const char **why`. "
-            "Name the function in create_fn."
+            "says whether the constructor takes a trailing "
+            "`const char **why`. Write `create_why = true`, or drop the key."
         ]
     if not value:
         return []
@@ -594,10 +618,7 @@ def _create_why_errors(where: str, table: dict, category: str) -> "list[str]":
             "reports MemoryError. Declare one (`jm error`), or drop "
             "create_why."
         ]
-    if any(
-        isinstance(p, dict) and p.get("name") == "why"
-        for p in table.get("init_params") or []
-    ):
+    if "why" in params():
         return [
             f"{where} declares create_why = true and an init param named "
             "`why`; jm appends `const char **why` itself. Rename the "

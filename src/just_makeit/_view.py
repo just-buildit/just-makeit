@@ -41,6 +41,28 @@ def _fail(msg: str) -> None:
     sys.exit(1)
 
 
+def create_params_of(cfg: dict, object_name: str, view: dict) -> str:
+    """The C parameter list of *view*'s ``create_fn``, from the manifest.
+
+    The one rendering of it: `run` injects it into the sacred header and
+    stubs it in ``_core.c``, and `_ctorsig.drift` compares the header's
+    declaration against it, as it does an object's ``create()`` (gh-1076).
+    A view's own ``create_why`` (gh-2552) is the trailing parameter.
+    """
+    vctx = Ctx.make_state_ctx(
+        object_name,
+        view["class_name"],
+        C.state_vars(cfg, object_name),
+        init_params=C.view_init_params(cfg, object_name, view),
+        create_fn=view["create_fn"],
+        create_why=C.view_create_why(view),
+        csym=CSYM.stem(cfg, object_name),
+        # gh-1882: the parent's reset(); only `create_params` is read here.
+        reset_impl=bool(Ctx.declared_reset_impl(cfg, object_name)),
+    )
+    return vctx["create_params"]
+
+
 def run(
     root: Path,
     object_name: str,
@@ -220,22 +242,9 @@ def run(
     if create_why:
         view_entry["create_why"] = True
 
-    state_vars = C.state_vars(cfg, object_name)
-    view_ip = C.view_init_params(cfg, object_name, view_entry)
     # gh-1591: the view constructs the PARENT's state, named by its stem.
     csym = CSYM.stem(cfg, object_name)
-    vctx = Ctx.make_state_ctx(
-        object_name,
-        class_name,
-        state_vars,
-        init_params=view_ip,
-        create_fn=create_fn,
-        create_why=create_why,  # gh-2552: the header's prototype and stub
-        csym=csym,
-        # gh-1882: the parent's reset(); only `create_params` is read here.
-        reset_impl=bool(Ctx.declared_reset_impl(cfg, object_name)),
-    )
-    create_params = vctx["create_params"]
+    create_params = create_params_of(cfg, object_name, view_entry)
 
     core_h = INC.core_h(root, object_name, cfg)
     proto = f"{csym}_state_t *{create_fn}({create_params});"
