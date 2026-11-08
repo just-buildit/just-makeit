@@ -1409,7 +1409,7 @@ def run(
                     "ctor_signature_drift": [
                         {
                             "component": d.component,
-                            "function": d.fn or f"{d.csym}_create",
+                            "function": d.fn,
                             "path": d.rel,
                             "header": d.declared,
                             "manifest": d.rendered,
@@ -2235,9 +2235,8 @@ def run(
         for d in _ctor_drift:
             print(f"  ! {d.rel}")
             # gh-2552: the constructor compared -- a `create_fn`, a view's.
-            fn = d.fn or f"{d.csym}_create"
-            print(f"      header:   {fn}({d.declared})")
-            print(f"      manifest: {fn}({d.rendered})")
+            print(f"      header:   {d.fn}({d.declared})")
+            print(f"      manifest: {d.fn}({d.rendered})")
         print(
             "  jm injects that declaration, so this is jm checking what it"
             " wrote. It cannot\n"
