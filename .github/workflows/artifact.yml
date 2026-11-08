@@ -35,10 +35,82 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      JB_RUNNER_READ_TOKEN:
+        description: >
+          Read-only org runner token for `make ci-runner`; absent, every leg
+          stays on its hosted runner.
+        required: false
 
 jobs:
+  # just-buildit.github.io#203: the `smoke` legs, planned. MATRIX is the
+  # declaration (`quick` is ci.yml's per-PR leg; outside a workflow_call the
+  # input is null, which reads as the full matrix); `make ci-test-legs`
+  # expands it (no TRIM, so every leg), and `make ci-runner` gives each leg
+  # a `runs_on`: the org's self-hosted macOS runner while one is idle and
+  # this repo opted in (JB_SELF_HOSTED_MACOS), its hosted label otherwise.
+  plan:
+    name: Plan smoke legs
+    if: >
+      inputs.wheel-artifact != '' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      matrix: ${{ steps.runners.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # The smoke legs, in include form, and which runner each gets. ONE
+      # step and no planner run before it: this workflow is also reached by
+      # workflow_call and workflow_run, where self-hosted-check allows only
+      # a plain checkout ahead of `make ci-runner` (an earlier step could
+      # bring in a fork's Makefile). `quick` is ci.yml's per-PR leg; outside
+      # a workflow_call the input is null, which reads as the full matrix.
+      #
+      # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has
+      # no 3.9 build ("The version '3.9' with architecture 'x64' was not
+      # found for Ubuntu 26.04"): the v0.109.0 release failed before publish
+      # on this one leg. `requires-python = ">=3.9"` still promises 3.9, so
+      # its Linux leg stays, on the newest image that ships it (its
+      # `runs_on`). Every other leg follows its `os`. Every os runs every
+      # Python: tests/test_own_ci_matrix.py holds the grid complete.
+      - name: Which runner each smoke leg gets
+        id: runners
+        env:
+          LEGS: >-
+            ${{ inputs.quick
+            && '{"include": [{"os": "ubuntu-latest", "python-version": "3.12"}]}'
+            || '{"include": [
+            {"os": "ubuntu-latest", "python-version": "3.9", "runs_on": "ubuntu-24.04"},
+            {"os": "ubuntu-latest", "python-version": "3.10"},
+            {"os": "ubuntu-latest", "python-version": "3.11"},
+            {"os": "ubuntu-latest", "python-version": "3.12"},
+            {"os": "ubuntu-latest", "python-version": "3.13"},
+            {"os": "ubuntu-latest", "python-version": "3.14"},
+            {"os": "ubuntu-latest", "python-version": "3.15"},
+            {"os": "macos-latest", "python-version": "3.9"},
+            {"os": "macos-latest", "python-version": "3.10"},
+            {"os": "macos-latest", "python-version": "3.11"},
+            {"os": "macos-latest", "python-version": "3.12"},
+            {"os": "macos-latest", "python-version": "3.13"},
+            {"os": "macos-latest", "python-version": "3.14"},
+            {"os": "macos-latest", "python-version": "3.15"}
+            ]}' }}
+          JB_SELF_HOSTED_MACOS: ${{ vars.JB_SELF_HOSTED_MACOS }}
+          JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          printf 'matrix=%s\n' "$LEGS" \
+            | make -s ci-runner CI_RUNNER_WORKFLOW=.github/workflows/artifact.yml \
+            >> "$GITHUB_OUTPUT"
+
   smoke:
     name: Smoke test (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: plan
     # `github.event_name` inside a reusable workflow is the CALLER's event
     # (a tag push, here), not `workflow_call` -- so the wheel input is what
     # identifies the pre-publish invocation. Without this the job silently
@@ -47,21 +119,13 @@ jobs:
       inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
-    # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has no
-    # 3.9 build ("The version '3.9' with architecture 'x64' was not found for
-    # Ubuntu 26.04"): the v0.109.0 release failed before publish on this one
-    # leg. `requires-python = ">=3.9"` still promises 3.9, so its Linux leg
-    # stays, on the newest image that ships it. Every other leg follows
-    # ubuntu-latest.
-    runs-on: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9') && 'ubuntu-24.04' || matrix.os }}
+    # Each leg's runner, from the `plan` job (gh-1632's `quick` and the 3.9
+    # leg's image are declared there).
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        # gh-1632: `quick` is ci.yml's per-PR leg. Outside a workflow_call
-        # the input is null, which reads as the full matrix.
-        os: ${{ fromJSON(inputs.quick && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
-        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - name: Set up Python

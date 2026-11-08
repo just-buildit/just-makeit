@@ -359,10 +359,20 @@ jobs:
   artifact-smoke:
     name: Artifact smoke (pre-publish)
     needs: [resolve, build]
+    # artifact.yml's `plan` job asks for `actions: read` (make ci-runner
+    # counts this repo's queued jobs), and a callee can ask for no more
+    # than its caller grants; the rest is the repo's restricted default.
+    permissions:
+      contents: read
+      packages: read
+      actions: read
     uses: ./.github/workflows/artifact.yml
     with:
       wheel-artifact: dist
       version: ${{ needs.resolve.outputs.tag }}
+    # Read-only: lets `make ci-runner` count the org's idle runners.
+    secrets:
+      JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
 
   publish:
     needs: [resolve, smoke, artifact-smoke]
