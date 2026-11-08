@@ -322,15 +322,19 @@ def _build_no_state_init_ctx(
     _ranks = {param[0]: _coerce.array_rank(param) for param in params}
     _eps = {param[0]: _coerce.elements_per_sample(param) for param in params}
 
-    def _rank_guard(aname: str, cleanup: str, indent: str = "    ") -> str:
+    def _rank_guard(
+        aname: str, cleanup: str, indent: str = "    ", implied: int = 0
+    ) -> str:
         """gh-2004: *aname*'s rank guard, or "" when it declares no rank.
 
         *cleanup* releases what this path already holds besides the array
         itself, which the guard releases. It fails with ``return -1;``:
         this is a ``tp_init``, where a ``return NULL`` compiles and reports
-        success.
+        success. *implied* is the rank the type fixes when ``rank`` is
+        undeclared -- 2 for a ``T[][]``, guarded either way; gh-2537 made a
+        declared ``rank = [1, 2]`` the one value that widens it.
         """
-        rank = _ranks.get(aname)
+        rank = _ranks.get(aname) or implied
         if not rank:
             return ""
         return _coerce.array_rank_guard(
@@ -1311,16 +1315,12 @@ def _build_no_state_init_ctx(
                 f"    PyArrayObject *{aname}_arr ="
                 f"\n        {_coerce.array_arg(f'{aname}_obj', anpy, 'NPY_ARRAY_C_CONTIGUOUS', aname, _hints.get(aname, ''))};\n"
                 f"    if (!{aname}_arr) {{{cleanup} return -1; }}\n"
-                f"    if (PyArray_NDIM({aname}_arr) != 2) {{\n"
-                f"        PyErr_SetString(PyExc_ValueError,\n"
-                f'                        "{aname} must be a 2-D array");\n'
-                f"        {cleanup} Py_DECREF({aname}_arr);"
-                f" return -1;\n"
-                f"    }}\n"
-                f"    size_t {aname}_dim0 ="
-                f" (size_t)PyArray_DIM({aname}_arr, 0);\n"
-                f"    size_t {aname}_dim1 ="
-                f" (size_t)PyArray_DIM({aname}_arr, 1);\n"
+                # gh-2537: the type's own 2-D guard, or the 1-or-2 a
+                # `rank = [1, 2]` declares, through the one emitter.
+                + _rank_guard(aname, cleanup, implied=2)
+                + _coerce.array_extents_c(
+                    aname, f"{aname}_arr", _ranks.get(aname)
+                )
             )
             allocated.append(aname)
         else:
@@ -1375,18 +1375,15 @@ def _build_no_state_init_ctx(
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
                 f"        if (!{oname}_arr) {{ return -1; }}\n"
-                f"        if (PyArray_NDIM({oname}_arr) != 2) {{\n"
-                f"            PyErr_SetString(PyExc_ValueError,\n"
-                f'                            "{oname} must be a 2-D array");\n'
-                f"            Py_DECREF({oname}_arr); return -1;\n"
-                f"        }}\n"
-                f"        size_t {oname}_dim0 ="
-                f" (size_t)PyArray_DIM({oname}_arr, 0);\n"
-                f"        size_t {oname}_dim1 ="
-                f" (size_t)PyArray_DIM({oname}_arr, 1);\n"
+                # gh-2537: the 1-D optional path's guard, releasing every
+                # array already held, with the type's implied rank 2.
+                + _rank_guard(oname, _opt_cleanup, " " * 8, implied=2)
+                + _coerce.array_extents_c(
+                    oname, f"{oname}_arr", _ranks.get(oname), " " * 8
+                )
                 # gh-1827: the argument list its scaffolded prototype is
                 # built from, so the call and the declaration are one list.
-                f"        self->handle ="
+                + f"        self->handle ="
                 f" {oalt_fn}({alt_ctors[oalt_fn][3]});\n"
                 f"        Py_DECREF({oname}_arr);\n"
                 f"    }} else {{\n"

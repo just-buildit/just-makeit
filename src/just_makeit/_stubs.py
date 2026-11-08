@@ -1047,7 +1047,11 @@ def _build_class_docstring(
     enum_choices = enum_choices or {}
 
     def _pdesc(
-        name: str, manifest_doc: str, required: bool, ctype: str = ""
+        name: str,
+        manifest_doc: str,
+        required: bool,
+        ctype: str = "",
+        rank_note: str = "",
     ) -> str:
         stub = (
             f"{name} constructor parameter (required)."
@@ -1068,6 +1072,9 @@ def _build_class_docstring(
             desc = "\n".join(filter(None, [authored, enum_param_desc(names)]))
         else:
             desc = authored or hdr or stub
+        # gh-2537: what a `rank = [1, 2]` array does with a 1-D input, after
+        # whichever text described it -- the annotation cannot say it.
+        desc = "\n".join(filter(None, [desc, rank_note]))
         # gh-901: an enum's per-choice `///<` docs, as a definition list under
         # the parameter they belong to. numpydoc has no `Choices` section, and
         # a parameter's description is free prose — so this is where a reader
@@ -1097,6 +1104,9 @@ def _build_class_docstring(
             optional = rest[3] if len(rest) >= 4 else False
             required = rest[5] if len(rest) >= 6 else False
             manifest_doc = rest[6] if len(rest) >= 7 else ""
+            rank_note = _coerce.rank_doc(
+                _coerce.array_rank((name, ctype, dflt, *rest))
+            )
             py_t = _py(ctype)
             if optional:
                 py_t = f"{py_t} or None"
@@ -1107,7 +1117,7 @@ def _build_class_docstring(
                 params.append(
                     ClassParam(
                         f"{name} : {py_t}",
-                        (_pdesc(name, manifest_doc, True, ctype),),
+                        (_pdesc(name, manifest_doc, True, ctype, rank_note),),
                     )
                 )
                 continue
@@ -1123,7 +1133,7 @@ def _build_class_docstring(
                 ClassParam(
                     f"{name} : {py_t}"
                     + (f", default {py_d}" if dflt.strip() else ""),
-                    (_pdesc(name, manifest_doc, False, ctype),),
+                    (_pdesc(name, manifest_doc, False, ctype, rank_note),),
                 )
             )
     elif state_vars and not no_state:
