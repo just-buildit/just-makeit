@@ -714,6 +714,8 @@ def render_pyi(cfg: dict, module: str) -> str:
     documents carries its ``doc`` as its docstring (gh-1499, `_fn_doc_lines`);
     the rest keep a ``...`` body, so an undocumented module is unchanged.
     """
+    from ._stubs import _NUMPY_IMPORT_LINES, import_head
+
     backing = C.capsule_backing(cfg, module)
     init_params = C.module_init_params(cfg, module)
 
@@ -728,11 +730,10 @@ def render_pyi(cfg: dict, module: str) -> str:
         # gh-1499: `[module.X] doc`, the module's docstring; `render_ext`
         # puts the same text in `m_doc`.
         *module_docstring_lines(cfg, module),
-        "from typing import Any",
-        "",
-        "import numpy as np",
-        "import numpy.typing as npt",
-        "from numpy.typing import NDArray",
+        # gh-2571: the one layout every stub writer's imports take.
+        *import_head(
+            std=["from typing import Any"], third=_NUMPY_IMPORT_LINES
+        ),
         "",
     ]
 
@@ -805,10 +806,7 @@ def render_pyi(cfg: dict, module: str) -> str:
     from ._pyfmt import reflow_pyi
     from ._stubs import prune_stub_imports
 
-    return reflow_pyi(
-        "\n".join(prune_stub_imports(lines)),
-        first_party=C.project_name(cfg),
-    )
+    return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
 # ── materialization (driven by jm apply's _replay) ───────────────────────────

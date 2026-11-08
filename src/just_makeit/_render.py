@@ -626,27 +626,49 @@ def render_scaffold_py(template: str, ctx: dict) -> str:
     then never names it: ruff's ``F401`` on a fresh scaffold. Whether the
     file needs each is asked of the rendered text, the way the stubs decide
     ``os``/``Any``/numpy, rather than of a list of the shapes that happen to
-    use arrays today. The imports are then put in isort order by
-    :func:`_pyfmt.sort_imports` (gh-2571), and the blank lines the snippets
-    met with laid out by :func:`_pyfmt.py_blank_lines`.
+    use arrays today. The blank lines the snippets met with are then laid
+    out by :func:`_pyfmt.py_blank_lines`.
+
+    gh-2571: the templates write their imports in isort's sections, one
+    blank line apart. A dropped import that was the only one in its section
+    takes one of the blank lines around it too, or the two sections it sat
+    between would meet two blank lines apart, which ruff's ``I001`` reports.
 
     >>> render_scaffold_py("import numpy as np\\nx = 1\\n", {})
     'x = 1\\n'
     >>> render_scaffold_py("import numpy as np\\nx = np.ones(1)\\n", {})
     'import numpy as np\\nx = np.ones(1)\\n'
+    >>> src = "import unittest\\n\\nimport numpy as np\\n\\nfrom p import G\\n"
+    >>> print(render_scaffold_py(src + "G()\\n", {}), end="")
+    import unittest
+    <BLANKLINE>
+    from p import G
+    G()
     """
-    from ._pyfmt import py_blank_lines, sort_imports
+    from ._pyfmt import py_blank_lines
 
     text = render(template, ctx)
     for line, name in (
         ("import numpy as np", "np"),
         ("import pytest", "pytest"),
     ):
-        without = text.replace(f"{line}\n", "", 1)
+        lines = text.split("\n")
+        if line not in lines:
+            continue
+        at = lines.index(line)
+        del lines[at]
+        # The section it leaves empty: a blank (or the top of the file)
+        # above it, and a blank below.
+        if (
+            (at == 0 or not lines[at - 1])
+            and at < len(lines)
+            and not lines[at]
+        ):
+            del lines[at]
+        without = "\n".join(lines)
         if not re.search(rf"\b{name}\.", without):
             text = without
-    first_party = str(ctx.get("package", "")).split(".")[0]
-    return py_blank_lines(sort_imports(text, first_party))
+    return py_blank_lines(text)
 
 
 def render(template: str, ctx: dict) -> str:
@@ -771,9 +793,11 @@ def render_component_pyi(ctx: dict) -> str:
     # The empty constructor also rendered `(self, )`, which ruff rewrites.
     from ._stubs import (
         _uses_any,
+        import_head,
         mark_positional_only,
         method_table_flags,
         numpy_imports,
+        party_of,
     )
 
     params = ctx.get("init_params_pyi", "")
@@ -785,19 +809,38 @@ def render_component_pyi(ctx: dict) -> str:
         COMPONENT_PYI,
         {
             **ctx,
-            "pyi_os_import": "",
-            "pyi_any_typing": "",
-            "pyi_numpy_imports": "",
+            "pyi_import_head": "",
         },
+    )
+    # gh-2571: the head in isort's sections, through the one layout every
+    # stub writer's imports take. The typing names come from the slots the
+    # context builders fill (`, Callable, Iterator`; `, Literal`).
+    typing_names = [
+        n.strip()
+        for n in (
+            ("Any," if _uses_any(probe) else "")
+            + "final"
+            + ctx.get("pyi_stream_typing", "")
+            + ctx.get("pyi_property_typing", "")
+        ).split(",")
+        if n.strip()
+    ]
+    objects = party_of(
+        [ln for ln in ctx.get("pyi_object_imports", "").split("\n") if ln],
+        str(ctx.get("package", "")),
     )
     ctx = {
         **ctx,
-        "pyi_os_import": (
-            "\nimport os" if _coerce.PATH_PY_TYPE in probe else ""
-        ),
-        "pyi_any_typing": "Any, " if _uses_any(probe) else "",
-        "pyi_numpy_imports": "".join(
-            f"\n{line}" for line in numpy_imports(probe)
+        "pyi_import_head": "\n".join(
+            import_head(
+                std=[
+                    f"from typing import {', '.join(typing_names)}",
+                    "import os" if _coerce.PATH_PY_TYPE in probe else "",
+                ],
+                third=[*numpy_imports(probe), *objects["third"]],
+                first=objects["first"],
+                local=objects["local"],
+            )
         ),
     }
     # gh-2212: a member whose row takes no keywords is positional-only in
@@ -808,7 +851,7 @@ def render_component_pyi(ctx: dict) -> str:
         render(COMPONENT_PYI, ctx),
         {ctx["Component"]: method_table_flags(render(COMPONENT_EXT_C, ctx))},
     )
-    return reflow_pyi(stub, first_party=str(ctx.get("package", "")))
+    return reflow_pyi(stub)
 
 
 #: An assertion **statement** in the rendered C test. Anchored to the start of

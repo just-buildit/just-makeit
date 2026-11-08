@@ -162,6 +162,27 @@ SHAPES: "dict[str, list[str]]" = {
         "function hexs --module bits --param hex:'const char *'"
         " --return-type int",
     ],
+    # gh-2571: re-exports sorted naturally (`w2` before `w10`, `S2` before
+    # `S10`), objects added in the order that sorts them wrong, a view in
+    # the module, and both test faces' heads -- under ruff with `I`.
+    "natural_order": [
+        "module st",
+        *(
+            f"object {o} --module st --arg-type float --return-type float"
+            for o in ("s10", "s2", "s1", "s11", "s3", "s4", "s5")
+        ),
+        "view s2 SV --module st --create-fn s2_create_view",
+        "object w10 --arg-type float --return-type float",
+        "object w2 --arg-type float --return-type float",
+    ],
+    "natural_order_pytest": [
+        "new p --pytest --pytest-benchmark",
+        "object w10 --arg-type float --return-type float",
+        "object w2 --no-step --state k:int:1",
+        "module m",
+        "object s10 --module m --arg-type void --return-type float",
+        "object s2 --module m --arg-type float[] --return-type float[]",
+    ],
     "app_console_generator": [
         "object s --arg-type void --return-type float",
         "app --target console --object s --name gen",

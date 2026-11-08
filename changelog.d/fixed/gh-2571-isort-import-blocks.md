@@ -4,9 +4,9 @@
     `from <pkg> import X` in one block, the benchmark glued `time` to numpy,
     both `.pyi` stubs glued `from typing` to numpy, and a package's
     re-exports kept the order the objects were added in. Every test,
-    benchmark and stub now lists its imports in isort's sections (stdlib,
-    third-party, the project's package, relative), one blank line apart,
-    with the names in each `from` import sorted. In a package
-    `__init__.py` jm sorts only its own relative re-exports, and leaves the
-    author's imports as written. An existing project's files move to that
-    order on its next `jm apply`.
+    benchmark and stub now writes its imports in isort's sections, one
+    blank line apart, with the names in each `from` import sorted, and jm's
+    re-export lines in an `__init__.py` are sorted naturally (`w2` before
+    `w10`). Only jm's own re-export lines move; the author's lines in an
+    `__init__.py` stay exactly as written. An existing project's files
+    move to that order on its next `jm apply`.

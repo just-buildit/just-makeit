@@ -2841,6 +2841,88 @@ def positional_only(params: str, flags: str, lead: str = "") -> str:
     return ", ".join(p for p in (lead, params) if p)
 
 
+def _from_names_sorted(stmt: str) -> str:
+    """*stmt* with the names of a ``from x import ...`` in isort order."""
+    if not stmt.startswith("from "):
+        return stmt
+    from ._pyfmt import member_key
+
+    head, _, names = stmt.partition(" import ")
+    ordered = sorted((n.strip() for n in names.split(",")), key=member_key)
+    return f"{head} import {', '.join(ordered)}"
+
+
+def _import_key(stmt: str) -> tuple:
+    """Within one section: every ``import x`` first, then ``from x``, each
+    by module, naturally ordered."""
+    from ._pyfmt import natural_key
+
+    return (stmt.startswith("from "), natural_key(stmt.split()[1]), stmt)
+
+
+def import_head(
+    std: "Sequence[str]" = (),
+    third: "Sequence[str]" = (),
+    first: "Sequence[str]" = (),
+    local: "Sequence[str]" = (),
+    *,
+    future: "Sequence[str]" = (),
+) -> "list[str]":
+    """A stub's import lines, laid out in isort's sections (gh-2571).
+
+    ruff's isort rule (``I001``) wants ``__future__``, the standard library,
+    third-party, first-party (the project's own package) and relative
+    imports as separate blocks one blank line apart, each sorted -- every
+    ``import x`` before every ``from x``, by module -- with the names in each
+    ``from`` sorted too. Each stub writer used to place its lines by hand,
+    and several glued ``from typing`` to ``import numpy``. The caller says
+    which section each line is in; this lays them out. An empty line or
+    section is dropped, so a caller can pass a line it may not need.
+
+    >>> import_head(
+    ...     std=["from typing import final, Any", "import os"],
+    ...     third=["from numpy.typing import NDArray", "import numpy as np"],
+    ...     first=["from p.m import Fir"],
+    ... )  # doctest: +NORMALIZE_WHITESPACE
+    ['import os', 'from typing import Any, final', '',
+     'import numpy as np', 'from numpy.typing import NDArray', '',
+     'from p.m import Fir']
+    """
+    out: "list[str]" = []
+    for section in (future, std, third, first, local):
+        stmts = {_from_names_sorted(s) for s in section if s}
+        if not stmts:
+            continue
+        if out:
+            out.append("")
+        out.extend(sorted(stmts, key=_import_key))
+    return out
+
+
+def party_of(imports: "Sequence[str]", pkg: str) -> "dict[str, list[str]]":
+    """*imports* split into the ``import_head`` sections they belong in.
+
+    Each is an import of a Python class jm resolved for a declaration (an
+    ``object`` reference): relative, from the project's own package *pkg*,
+    or from another package.
+
+    >>> party_of(["from .a import A", "from p.m import B", "from q import C"],
+    ...          "p")  # doctest: +NORMALIZE_WHITESPACE
+    {'third': ['from q import C'], 'first': ['from p.m import B'],
+     'local': ['from .a import A']}
+    """
+    out: "dict[str, list[str]]" = {"third": [], "first": [], "local": []}
+    for imp in imports:
+        mod = imp.split()[1]
+        if mod.startswith("."):
+            out["local"].append(imp)
+        elif mod.split(".")[0] == pkg:
+            out["first"].append(imp)
+        else:
+            out["third"].append(imp)
+    return out
+
+
 def prune_stub_imports(lines: "list[str]") -> "list[str]":
     """*lines* without the numpy imports and ``Any`` the stub never names.
 
@@ -3375,13 +3457,10 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # Every object class is @final (a Py_TPFLAGS_DEFAULT extension type cannot
     # be subclassed), so `final` is imported whenever the module has objects.
     needs_final = bool(objects or _foreign)
-    # gh-1443: `Any` is decided from the rendered body, so the line cannot be
-    # written until the body exists. The slot keeps it in its historical
-    # position -- first import, above `Sequence` -- so no existing stub churns.
-    _typing_slot = len(parts)
-    if needs_sequence:
-        parts.append("from collections.abc import Sequence")
-    _os_slot = len(parts)
+    # gh-1443: `Any` is decided from the rendered body, so the import head
+    # cannot be written until the body exists; it goes here, laid out by
+    # `import_head` (gh-2571).
+    _head_slot = len(parts)
     functions = C.module_functions(cfg, module)
     # gh-384: header Doxygen for free functions, stashed transiently on cfg by
     # build_component_ctxs() (mirrors the per-object _doc_blocks). Empty when
@@ -3511,26 +3590,30 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # rendered body is what gets asked. A list of surfaces that can carry a
     # path is a list that goes stale, and it did — a method parameter was the
     # third surface and had no arm.
-    parts[_os_slot:_os_slot] = numpy_imports("\n".join(parts[_os_slot:]))
-    if _uses_os("\n".join(parts[_os_slot:])):
-        parts.insert(_os_slot, "import os")
-    # After `os`, so the body this reads is final. Inserting lower down does
-    # not disturb the line just placed.
-    needs_any = _uses_any("\n".join(parts[_typing_slot:]))
-    if needs_literal or needs_any or needs_stream or needs_final:
-        typing_imports = ", ".join(
-            x
-            for x in [
-                "Any" if needs_any else "",
-                "AsyncIterator" if needs_async else "",
-                "Callable" if needs_stream else "",
-                "final" if needs_final else "",
-                "Iterator" if needs_stream else "",
-                "Literal" if needs_literal else "",
-            ]
-            if x
+    body = "\n".join(parts[_head_slot:])
+    needs_any = _uses_any(body)
+    typing_names = [
+        name
+        for name, needed in (
+            ("Any", needs_any),
+            ("AsyncIterator", needs_async),
+            ("Callable", needs_stream),
+            ("final", needs_final),
+            ("Iterator", needs_stream),
+            ("Literal", needs_literal),
         )
-        parts.insert(_typing_slot, f"from typing import {typing_imports}")
+        if needed
+    ]
+    parts[_head_slot:_head_slot] = import_head(
+        std=[
+            f"from typing import {', '.join(typing_names)}"
+            if typing_names
+            else "",
+            "from collections.abc import Sequence" if needs_sequence else "",
+            "import os" if _uses_os(body) else "",
+        ],
+        third=numpy_imports(body),
+    )
     # gh-2513: a module with objects gets its import/body separator above;
     # a functions-only module did not, so its imports ran straight into the
     # first `def`, and `ruff format` inserted the blank line ruff wants. The
@@ -3577,10 +3660,4 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             owner=cfg,
         )["module_methods_def"]
     )
-    return (
-        reflow_pyi(
-            mark_positional_only("\n".join(parts), _flags),
-            first_party=pkg,
-        )
-        + "\n"
-    )
+    return reflow_pyi(mark_positional_only("\n".join(parts), _flags)) + "\n"

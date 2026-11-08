@@ -11,6 +11,7 @@ from . import _textio
 import re
 import sys
 from pathlib import Path
+from typing import Iterable
 
 from . import _borrow
 from . import _config as C
@@ -1316,20 +1317,21 @@ def ensure_dll_preamble(text: str) -> str:
     # did. Returning early on "preamble present" left exactly that line
     # unannotated. The pattern requires the line to END at the imported name,
     # so an already-annotated line does not match and this is idempotent.
-    text = _PKG_IMPORT_RE.sub(lambda m: m.group(0) + "  # noqa: E402", text)
-    # gh-2571: and the re-exports in isort order, which appending each new
-    # object's line after the last one did not keep. Only the runs of
-    # relative imports, which are jm's; the author's code is left as written.
-    from ._pyfmt import sort_imports
-
-    return sort_imports(text, relative_only=True)
+    return _PKG_IMPORT_RE.sub(lambda m: m.group(0) + "  # noqa: E402", text)
 
 
-def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
+def _splice_init_py(
+    init_py: Path,
+    component: str,
+    Component: str,
+    owned: "Iterable[str]" = (),
+) -> None:
     """Add `from .component import Component` and update __all__ in-place.
 
-    Only appends — never removes or reorders — so user edits are preserved.
-    No-op if the import is already present.
+    Never removes, and never reorders the author's lines, so user edits are
+    preserved. No-op if the import is already present. jm's own re-export
+    lines -- *component*'s and those of the standalone objects in *owned*
+    -- are then put in isort order (gh-2571).
     """
     text = init_py.read_text(encoding="utf-8")
     import_line = f"from .{component} import {Component}\n"
@@ -1370,6 +1372,9 @@ def _splice_init_py(init_py: Path, component: str, Component: str) -> None:
     # rendered here. Ensuring it on the splice is what makes the two ways of
     # arriving at this file agree.
     text = ensure_dll_preamble(text)
+    from ._object import sort_reexports
+
+    text = sort_reexports(text, {component, *owned})
 
     _textio.write_text(init_py, text)
     print(f"  update  {init_py}")
@@ -1995,7 +2000,12 @@ def run(
     if not init_py.exists():
         _write(init_py, r(init_py_tmpl))
     else:
-        _splice_init_py(init_py, comp, ctx["Component"])
+        _splice_init_py(
+            init_py,
+            comp,
+            ctx["Component"],
+            [c for c in C.components(cfg) if not C.module_of(cfg, c)],
+        )
 
     _write(root / "src" / pkg / f"{comp}.pyi", R.render_component_pyi(ctx))
     _write(root / "src" / pkg / "tests" / "__init__.py", R.TESTS_INIT_PY)

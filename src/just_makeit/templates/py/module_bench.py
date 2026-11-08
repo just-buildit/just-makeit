@@ -5,6 +5,7 @@ Or via make:     make bench
 """
 
 import time
+
 import numpy as np
 
 from <<package>>.<<module>> import <<Component>>

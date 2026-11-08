@@ -2893,6 +2893,8 @@ def render_pyi(
     documents that method, and a single-field getter's ``@brief`` documents its
     property. An empty/absent map reproduces the pre-enrichment stub exactly
     (gh-374)."""
+    # Where the import head goes, laid out once the body is known (gh-2571).
+    _HEAD = "\0import head"
     doc_blocks = doc_blocks or {}
     tname = C.handle_type_name(cfg, module)
     C.handle_backing(cfg, module)
@@ -2908,13 +2910,9 @@ def render_pyi(
         # gh-1499: `[module.X] doc`, the module's docstring, as a plain
         # module renders it; `render_ext` puts the same text in `m_doc`.
         *module_docstring_lines(cfg, module),
-        "from __future__ import annotations",
-        "",
-        "from typing import Any, final",
-        "",
-        "import numpy as np",
-        "import numpy.typing as npt",
-        "from numpy.typing import NDArray",
+        # gh-2571: the import head, laid out by `_stubs.import_head` once
+        # the body below says whether it needs `os`.
+        _HEAD,
         "",
         # A handle type is Py_TPFLAGS_DEFAULT (never BASETYPE), so it cannot be
         # subclassed at runtime; @final tells the type checker so — and clears
@@ -3044,8 +3042,19 @@ def render_pyi(
     # A handle carries paths on four surfaces (create-arg, method, factory,
     # alt-ctor), so decide from the rendered text rather than re-deriving which
     # ones have one — a new path surface then cannot forget to declare itself.
-    if any(_coerce.PATH_PY_TYPE in ln for ln in lines):
-        lines.insert(lines.index("import numpy as np"), "import os")
+    from ._stubs import _NUMPY_IMPORT_LINES, import_head
+
+    at = lines.index(_HEAD)
+    lines[at : at + 1] = import_head(
+        future=["from __future__ import annotations"],
+        std=[
+            "from typing import Any, final",
+            "import os"
+            if any(_coerce.PATH_PY_TYPE in ln for ln in lines)
+            else "",
+        ],
+        third=_NUMPY_IMPORT_LINES,
+    )
 
     # gh-747: the same door every other `.pyi` producer goes through. Without
     # it a long signature stays long — doppler's `sample_clock.pyi:69` was a
@@ -3053,10 +3062,7 @@ def render_pyi(
     from ._pyfmt import reflow_pyi
     from ._stubs import prune_stub_imports
 
-    return reflow_pyi(
-        "\n".join(prune_stub_imports(lines)),
-        first_party=C.project_name(cfg),
-    )
+    return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
 # ── materialization (driven by jm apply's _replay; mirrors _capsule) ──────────
