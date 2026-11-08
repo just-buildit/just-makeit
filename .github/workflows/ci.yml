@@ -73,10 +73,13 @@ jobs:
       needs.changes.outputs.tested == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       image: ${{ steps.pin.outputs.image }}
-      matrix: ${{ steps.legs.outputs.matrix }}
-      examples: ${{ steps.legs.outputs.examples }}
+      matrix: ${{ steps.runners.outputs.matrix }}
+      examples: ${{ steps.runners.outputs.examples }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -178,22 +181,30 @@ jobs:
             "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14",
             "3.15"],
             "exclude": [{"os": "macos-latest", "python-version": "3.9"}]}
+        run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
+
+      # just-buildit.github.io#203: `make ci-runner` gives every leg a
+      # `runs_on`, the org's self-hosted macOS runner while one is idle and
+      # this repo opted in (the variable JB_SELF_HOSTED_MACOS), the hosted
+      # label otherwise -- always for a fork-driven run, and whenever a
+      # token below is absent. A step of its own, so the read-only token
+      # reaches ci-runner and nothing else; printf cannot fail, so the pipe
+      # needs no pipefail.
+      - name: Which runner each leg gets
+        id: runners
+        env:
+          LEGS: ${{ steps.legs.outputs.matrix }}
           # The `examples` legs, planned here so one `make ci-runner` call
           # shares the self-hosted runners out over both jobs, test first.
           EXAMPLES: >-
             {"include": [{"os": "ubuntu-latest"}, {"os": "macos-latest"},
             {"os": "ubuntu-24.04-arm"}]}
-          # just-buildit.github.io#203: `make ci-runner` gives every leg a
-          # `runs_on`, the org's self-hosted macOS runner while one is idle
-          # and this repo opted in (the variable JB_SELF_HOSTED_MACOS), the
-          # hosted label otherwise -- always for a fork's pull request, and
-          # whenever the read-only token below is absent. Through a
-          # variable, not a pipe: the default shell has no pipefail.
           JB_SELF_HOSTED_MACOS: ${{ vars.JB_SELF_HOSTED_MACOS }}
           JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
+          # This repo's jobs already queued for the Mac (`actions: read`).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          legs=$(make -s ci-test-legs)
-          printf '%s\nexamples=%s\n' "$legs" "$EXAMPLES" \
+          printf 'matrix=%s\nexamples=%s\n' "$LEGS" "$EXAMPLES" \
             | make -s ci-runner >> "$GITHUB_OUTPUT"
 
   test:

@@ -57,11 +57,14 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      matrix: ${{ steps.legs.outputs.matrix }}
+      matrix: ${{ steps.runners.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Which smoke legs, on which runners
+      - name: Which smoke legs
         id: legs
         env:
           EVENT: ${{ github.event_name }}
@@ -76,12 +79,18 @@ jobs:
             ${{ inputs.quick
             && '{"os": ["ubuntu-latest"], "python-version": ["3.12"]}'
             || '{"os": ["ubuntu-latest", "macos-latest"], "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"], "include": [{"os": "ubuntu-latest", "python-version": "3.9", "runs_on": "ubuntu-24.04"}]}' }}
+        run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
+      # A step of its own, so the read-only token reaches ci-runner alone.
+      - name: Which runner each smoke leg gets
+        id: runners
+        env:
+          LEGS: ${{ steps.legs.outputs.matrix }}
           JB_SELF_HOSTED_MACOS: ${{ vars.JB_SELF_HOSTED_MACOS }}
           JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
-        # Through a variable, not a pipe: the default shell has no pipefail.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          legs=$(make -s ci-test-legs)
-          printf '%s\n' "$legs" | make -s ci-runner >> "$GITHUB_OUTPUT"
+          printf 'matrix=%s\n' "$LEGS" \
+            | make -s ci-runner >> "$GITHUB_OUTPUT"
 
   smoke:
     name: Smoke test (${{ matrix.os }}, py${{ matrix.python-version }})
