@@ -531,8 +531,13 @@ def _make_object_ctx(
     owner: "INC.Owner" = None,
     str_hints: "dict[str, str] | None" = None,
     reset_impl: bool = False,
+    create_why: bool = False,
 ) -> dict:
     """Build the render ctx for an object (or a view — gh-504).
+
+    *create_why* is the constructor's trailing ``const char **why``
+    (gh-2552): the object's `_config.object_create_why`, or a view's own
+    `_config.view_create_why`.
 
     *str_hints* is `_config.state_str_hints` for the object: each array
     state field's ``set_<name>`` appends its hint to the refusal of a
@@ -585,6 +590,7 @@ def _make_object_ctx(
             header_only=header_only,
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
+            create_why=create_why,  # gh-2552
             no_reset=no_reset,
             # gh-644: reset() was the one built-in whose runtime __doc__ never
             # consulted the header on this path either -- step/steps derived,
@@ -1430,6 +1436,9 @@ def _make_view_ctx(
         init_params=C.view_init_params(cfg, obj, view),
         class_name=view["class_name"],
         create_fn=view["create_fn"],
+        # gh-2552: the view's OWN switch -- its create_fn is its own C
+        # function, so the parent's create_why says nothing about it.
+        create_why=C.view_create_why(view),
         opaque_fields=C.opaque_fields(cfg, obj),
         opaque_state=C.is_opaque_state(cfg, obj),
         no_ctor_names=C.no_ctor_names(cfg, obj),
@@ -1533,6 +1542,7 @@ def _make_view_ctx(
             C.view_create_error_message(cfg, obj, view),
             create_fn=view["create_fn"],
             csym=ctx["csym"],
+            why=C.view_create_why(view),  # gh-2552
         )
     )
     # gh-541: a view is a second Python type over the SAME core, so it shares
@@ -1738,6 +1748,7 @@ def build_component_ctxs(
             doc_blocks=_doc_blocks,
             block_sizes=C.project_bench_block_sizes(cfg),
             create_fn=C.object_create_fn(cfg, obj),
+            create_why=C.object_create_why(cfg, obj),  # gh-2552
             owner=cfg,
             str_hints=C.state_str_hints(cfg, obj),  # gh-1761
             init_post_parse_impl=C.init_post_parse(cfg, obj),  # gh-1971
@@ -1807,6 +1818,7 @@ def build_component_ctxs(
                 C.create_error_message(cfg, obj),
                 create_fn=C.object_create_fn(cfg, obj),
                 csym=ctx["csym"],
+                why=C.object_create_why(cfg, obj),  # gh-2552
             )
         )
         # gh-541/gh-544: a module object's declared destructor contract,
@@ -3178,6 +3190,11 @@ def run(
     extra_include_dirs: list[str] = (),
     max_out: int = 0,
     create_fn: str | None = None,
+    # gh-2552: the constructor's trailing `const char **why`. Manifest-only,
+    # so only `jm apply`'s replay passes it, for the scaffold's render; the
+    # key itself is written by `_error.run`, beside the create_error it
+    # needs.
+    create_why: bool = False,
     destroy: "dict | None" = None,
     # gh-1172: the authored class docstring. Manifest-only -- there is no
     # `jm object --doc` -- so the ONLY caller that passes it is `jm apply`'s
@@ -3346,6 +3363,7 @@ def run(
             extra_link_libs=list(extra_link_libs),
             extra_include_dirs=list(extra_include_dirs),
             create_fn=create_fn,
+            create_why=create_why,
             destroy=destroy,
             doc=doc,
             _hint=_hint and not variable_output,
@@ -3442,6 +3460,7 @@ def run(
         ],
         block_sizes=C.project_bench_block_sizes(cfg),
         create_fn=create_fn,
+        create_why=create_why,  # gh-2552
         owner=layout_owner,
         # gh-1761: no `str_hints` here. This ctx renders the module object's
         # create-only files, never its binding fragment: that is

@@ -80,6 +80,10 @@ OBJECT_KEYS = frozenset(
         "create_fn",
         "create_error",
         "create_error_message",
+        # gh-2552: the constructor takes a trailing `const char **why` and a
+        # refusal raises the sentence -- the composer's `create_why` below,
+        # on an object. A view states its own, as its `create_fn` is its own.
+        "create_why",
         "init_post_parse",
         "depends_on",
         "extra_link_libs",

@@ -53,6 +53,7 @@ def run(
     doc: str = "",
     create_error: str | None = None,
     create_error_message: str | None = None,
+    create_why: bool = False,
     from_apply: bool = False,
 ) -> None:
     # gh-625's audit: a view's class name is not just a Python identifier —
@@ -214,6 +215,10 @@ def run(
         view_entry["create_error"] = create_error
     if create_error_message is not None:
         view_entry["create_error_message"] = create_error_message
+    # gh-2552: the view's create_fn takes a trailing `const char **why`.
+    # Manifest-only, like the pair above; the view's own, never inherited.
+    if create_why:
+        view_entry["create_why"] = True
 
     state_vars = C.state_vars(cfg, object_name)
     view_ip = C.view_init_params(cfg, object_name, view_entry)
@@ -225,6 +230,7 @@ def run(
         state_vars,
         init_params=view_ip,
         create_fn=create_fn,
+        create_why=create_why,  # gh-2552: the header's prototype and stub
         csym=csym,
         # gh-1882: the parent's reset(); only `create_params` is read here.
         reset_impl=bool(Ctx.declared_reset_impl(cfg, object_name)),

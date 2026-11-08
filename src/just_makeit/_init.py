@@ -1416,6 +1416,7 @@ def run(
     extra_link_libs: list[str] = (),
     extra_include_dirs: list[str] = (),
     create_fn: str | None = None,
+    create_why: bool = False,  # gh-2552: see `_object.run`
     destroy: "dict | None" = None,
     # gh-1172: manifest-only (no `jm object --doc`), forwarded by
     # `_object.run` so `jm apply`'s replay re-persists it. The peer save in
@@ -1556,6 +1557,7 @@ def run(
             opaque_fields=opaque_fields,
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
+            create_why=create_why,  # gh-2552
             no_reset=no_reset,
             opaque_state=opaque_state,
             header_only=header_only,
