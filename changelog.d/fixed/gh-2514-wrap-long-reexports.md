@@ -1,5 +1,5 @@
 - **A long re-export in an `__init__.py` is wrapped at 79 columns**
-    (gh-2514). jm wrote a module's `from .<leaf> import ...  # noqa: E402`
+    (gh-2514). jm wrote a module's `from .<leaf> import ...` line
     and its `__all__` on one line whatever their length, so a module
     re-exporting `gauss_hermite_quadrature` and three more names got lines
     of 130 columns: E501 at 79, a `ruff format` rewrite even at ruff's 88,
