@@ -22,8 +22,11 @@ state struct, and the generated suite is then built and run.
 
 from __future__ import annotations
 
+import ast
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -88,6 +91,19 @@ def project(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     out = run_cli("apply", cwd=root)
     assert out.returncode == 0, out.stdout + out.stderr
+    # gh-2557: the app face, a C tool and a console script over `corr`.
+    for target, name in (("c", "capc"), ("console", "capp")):
+        out = run_cli(
+            "app",
+            "--target",
+            target,
+            "--object",
+            "corr",
+            "--name",
+            name,
+            cwd=root,
+        )
+        assert out.returncode == 0, out.stdout + out.stderr
     return root
 
 
@@ -163,3 +179,75 @@ def test_the_generated_suite_passes(project: Path) -> None:
     summary = re.findall(r"^=+ (.*?) =+$", _ANSI.sub("", out.stdout), re.M)
     assert summary and "passed" in summary[-1], out.stdout
     assert "failed" not in summary[-1], out.stdout
+
+
+# -- gh-2557: the app face -------------------------------------------------
+#
+# `jm app` read a constructor flag's default from `default` alone, so a
+# required or `default_raw` param rendered `size_t size = ;` in the C tool
+# (no build) and `noise_hi=None` in the console script (a `TypeError` on
+# any run that did not pass the flag).
+
+
+def test_the_c_app_starts_each_flag_at_the_bindings_default(
+    project: Path,
+) -> None:
+    text = (project / "native/src/app/capc.c").read_text(encoding="utf-8")
+    assert "size_t noise_hi = (unsigned long long)-1ULL;" in text
+    assert "double cn0_dbhz = NAN;" in text
+    # The required one has no default: the run is refused without it.
+    assert "if (!size_given) {" in text
+    assert not re.search(r"= ;", text), text
+
+
+def test_the_console_app_never_passes_an_unset_default(
+    project: Path,
+) -> None:
+    text = (project / "src/rp/cli.py").read_text(encoding="utf-8")
+    ast.parse(text)
+    for name in _RAW:
+        assert f"{name}=args.{name}" not in text, text
+    assert re.search(r'"--size",\n\s+type=int,\n\s+required=True', text)
+
+
+def _built(project: Path) -> Path:
+    out = run_cli("test", cwd=project)
+    assert out.returncode == 0, out.stdout + out.stderr
+    exe = project / "build" / "capc"
+    assert exe.is_file(), sorted(p.name for p in exe.parent.iterdir())
+    return exe
+
+
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_the_c_app_requires_its_required_flag_and_runs(
+    project: Path, tmp_path: Path
+) -> None:
+    exe = _built(project)
+    sample = tmp_path / "x.f32"
+    sample.write_bytes(bytes(4))
+    bare = subprocess.run(
+        [str(exe), "-i", str(sample)], capture_output=True, text=True
+    )
+    assert bare.returncode == 2, bare.stderr
+    assert "--size is required" in bare.stderr
+    run = subprocess.run(
+        [str(exe), "--size", "4", "-i", str(sample)], capture_output=True
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == bytes(4)
+
+
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_the_console_app_runs_without_the_defaulted_flags(
+    project: Path, tmp_path: Path
+) -> None:
+    _built(project)
+    sample = tmp_path / "x.f32"
+    sample.write_bytes(bytes(4))
+    run = subprocess.run(
+        [sys.executable, "-m", "rp.cli", "--size", "4", "-i", str(sample)],
+        capture_output=True,
+        cwd=project / "src",
+    )
+    assert run.returncode == 0, run.stderr.decode()
+    assert run.stdout == bytes(4)
