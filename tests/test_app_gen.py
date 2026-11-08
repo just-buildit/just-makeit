@@ -558,7 +558,9 @@ def test_object_app_links_depends_on_cores(tmp_path: Path):
         ln for ln in cmake.splitlines() if "target_link_libraries(tool" in ln
     )
     assert "eng_core" in line and "lo_core" in line
-    assert "PLATFORM_ID:Windows" in line and ">:m>" in line  # conditional libm
+    # libm by the one reference every link line uses -- never a bare `m`,
+    # which a target named `m` shadows (gh-1305, gh-2556).
+    assert "${JM_MATH_LIBRARY}" in line and ":m>" not in line
 
 
 def test_module_object_console_scoped_to_module(tmp_path: Path):
