@@ -6883,7 +6883,10 @@ def make_properties_ctx(
             )
             py_t = _container_pyi(p, _pcdc)
         elif buf_field:
-            py_t = _pyi_ndarray(ctype)
+            # gh-2543: a `valid_field` view reads `None` while the flag is
+            # clear (`Py_RETURN_NONE` above), so the stub says so, in the
+            # `X | None` spelling `optional_ann` gives a method's return.
+            py_t = _pyi_ndarray(ctype) + (" | None" if valid_field else "")
         else:
             py_t = _pyi_scalar(ctype)
         # gh-744: a property's docstring is a bare summary, so it never went

@@ -278,6 +278,49 @@ def test_both_doc_faces_name_the_exception(built, probe, obj, stub, cls):
     assert _stub_doc(built, stub, cls, "last") == last
 
 
+def _stub_ann(proj: Path, stub: str, cls: str, member: str) -> str:
+    tree = ast.parse((proj / "src" / "rs" / stub).read_text("utf-8"))
+    (klass,) = [
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls
+    ]
+    (getter,) = [
+        n
+        for n in klass.body
+        if isinstance(n, ast.FunctionDef)
+        and n.name == member
+        and any(
+            isinstance(d, ast.Name) and d.id == "property"
+            for d in n.decorator_list
+        )
+    ]
+    return ast.unparse(getter.returns)
+
+
+@pytest.mark.parametrize(
+    "stub, cls", [("cor.pyi", "Cor"), ("dsp/dsp.pyi", "Acc")]
+)
+def test_a_valid_field_view_is_annotated_optional(built, probe, stub, cls):
+    """`valid_field` makes the read `None` while the flag is clear (asserted
+    above at runtime), so the stub must say `| None` -- standalone and in a
+    module alike."""
+    assert _stub_ann(built, stub, cls, "last") == "NDArray[np.float64] | None"
+
+
+def test_a_view_without_valid_field_is_not_optional() -> None:
+    """No `valid_field`, no `None`: the annotation stays the bare array."""
+    from just_makeit._context import make_properties_ctx
+
+    def ann(**extra: str) -> str:
+        p = {"name": "v", "type": "double[]", "buf_field": "b", **extra}
+        pyi = make_properties_ctx("o", "O", [p], csym="rf_o")[
+            "property_stubs_pyi"
+        ]
+        return pyi.split("def v(self) -> ", 1)[1].split(":\n", 1)[0]
+
+    assert ann() == "NDArray[np.float64]"
+    assert ann(valid_field="ok") == "NDArray[np.float64] | None"
+
+
 @pytest.mark.parametrize("obj", OBJS)
 def test_the_header_declares_both(built, obj) -> None:
     h = (built / "native" / "inc" / "rs" / obj / f"{obj}_core.h").read_text()
