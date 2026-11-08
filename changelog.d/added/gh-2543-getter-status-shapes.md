@@ -18,3 +18,7 @@
     `jm script`, standalone and in a module. `jm property --buf-field` no
     longer tells the author to implement a getter the view never calls.
     `getter_status` on a container property stays refused.
+- **A buffer view with `valid_field` is annotated `NDArray[...] | None`**
+    (gh-2543). Its read returns `None` while the flag is clear, and the
+    `.pyi` said `NDArray[...]` alone, so a type checker accepted code that
+    fails on the `None`. A view without `valid_field` is unchanged.
