@@ -35,10 +35,57 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      JB_RUNNER_READ_TOKEN:
+        description: >
+          Read-only org runner token for `make ci-runner`; absent, every leg
+          stays on its hosted runner.
+        required: false
 
 jobs:
+  # just-buildit.github.io#203: the `smoke` legs, planned. MATRIX is the
+  # declaration (`quick` is ci.yml's per-PR leg; outside a workflow_call the
+  # input is null, which reads as the full matrix); `make ci-test-legs`
+  # expands it (no TRIM, so every leg), and `make ci-runner` gives each leg
+  # a `runs_on`: the org's self-hosted macOS runner while one is idle and
+  # this repo opted in (JB_SELF_HOSTED_MACOS), its hosted label otherwise.
+  plan:
+    name: Plan smoke legs
+    if: >
+      inputs.wheel-artifact != '' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.legs.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Which smoke legs, on which runners
+        id: legs
+        env:
+          EVENT: ${{ github.event_name }}
+          TRIM: ""
+          # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python
+          # has no 3.9 build ("The version '3.9' with architecture 'x64' was
+          # not found for Ubuntu 26.04"): the v0.109.0 release failed before
+          # publish on this one leg. `requires-python = ">=3.9"` still
+          # promises 3.9, so its Linux leg stays, on the newest image that
+          # ships it (its `runs_on`). Every other leg follows its `os`.
+          MATRIX: >-
+            ${{ inputs.quick
+            && '{"os": ["ubuntu-latest"], "python-version": ["3.12"]}'
+            || '{"os": ["ubuntu-latest", "macos-latest"], "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"], "include": [{"os": "ubuntu-latest", "python-version": "3.9", "runs_on": "ubuntu-24.04"}]}' }}
+          JB_SELF_HOSTED_MACOS: ${{ vars.JB_SELF_HOSTED_MACOS }}
+          JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
+        # Through a variable, not a pipe: the default shell has no pipefail.
+        run: |
+          legs=$(make -s ci-test-legs)
+          printf '%s\n' "$legs" | make -s ci-runner >> "$GITHUB_OUTPUT"
+
   smoke:
     name: Smoke test (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: plan
     # `github.event_name` inside a reusable workflow is the CALLER's event
     # (a tag push, here), not `workflow_call` -- so the wheel input is what
     # identifies the pre-publish invocation. Without this the job silently
@@ -47,21 +94,13 @@ jobs:
       inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
-    # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has no
-    # 3.9 build ("The version '3.9' with architecture 'x64' was not found for
-    # Ubuntu 26.04"): the v0.109.0 release failed before publish on this one
-    # leg. `requires-python = ">=3.9"` still promises 3.9, so its Linux leg
-    # stays, on the newest image that ships it. Every other leg follows
-    # ubuntu-latest.
-    runs-on: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9') && 'ubuntu-24.04' || matrix.os }}
+    # Each leg's runner, from the `plan` job (gh-1632's `quick` and the 3.9
+    # leg's image are declared there).
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        # gh-1632: `quick` is ci.yml's per-PR leg. Outside a workflow_call
-        # the input is null, which reads as the full matrix.
-        os: ${{ fromJSON(inputs.quick && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
-        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]') }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - name: Set up Python

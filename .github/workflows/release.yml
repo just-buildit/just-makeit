@@ -363,6 +363,9 @@ jobs:
     with:
       wheel-artifact: dist
       version: ${{ needs.resolve.outputs.tag }}
+    # Read-only: lets `make ci-runner` count the org's idle runners.
+    secrets:
+      JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
 
   publish:
     needs: [resolve, smoke, artifact-smoke]

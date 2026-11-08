@@ -53,18 +53,21 @@ from _pyfloor import python_floor
 ROOT = Path(__file__).parent.parent
 CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 PLANNER = ROOT / "scripts" / "ci-test-legs.py"
+RUNNER = ROOT / "scripts" / "ci-runner.py"
 ARTIFACT_YML = ROOT / ".github" / "workflows" / "artifact.yml"
 PYPROJECT = ROOT / "pyproject.toml"
 
 
-def _load_planner():
-    spec = importlib.util.spec_from_file_location("ci_test_legs", PLANNER)
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-LEGS = _load_planner()
+LEGS = _load("ci_test_legs", PLANNER)
+#: The org standard's runner picker, vendored (just-buildit.github.io#203).
+PICK = _load("ci_runner", RUNNER)
 
 #: Every run that owes the whole matrix: a push its PR did not test
 #: (``changes.yml`` writes ``tested=false``, or nothing when it exits before
@@ -260,17 +263,20 @@ def _classifiers() -> "set[str]":
 def _artifact_pys() -> "dict[str, list[str]]":
     """Each artifact.yml job's FULL `python-version` list, by job.
 
-    The list sits in a `fromJSON(inputs.quick && '[...]' || '[...]')`
-    expression; the full one is the branch after `||`. ci.yml calls the
-    workflow `quick` on a PR, and `release.yml` calls it full before it
-    publishes, so the full list is what the wheel PyPI gets was tried on.
+    The list sits in an `inputs.quick && '...' || '...'` expression; the
+    full one is the branch after `||`. ci.yml calls the workflow `quick` on
+    a PR, and `release.yml` calls it full before it publishes, so the full
+    list is what the wheel PyPI gets was tried on. `smoke`'s is in the
+    `plan` job's MATRIX, which its runners are picked from.
     """
     jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
-    out = {}
+    full = _artifact_matrix(False)["python-version"]
+    out = {"smoke": [str(v) for v in full]}
     for name, job in jobs.items():
-        expr = ((job.get("strategy") or {}).get("matrix") or {}).get(
-            "python-version"
-        )
+        matrix = (job.get("strategy") or {}).get("matrix")
+        if not isinstance(matrix, dict):
+            continue
+        expr = matrix.get("python-version")
         if expr is None:
             continue
         m = re.search(r"\|\|\s*'(\[[^']*\])'", str(expr))
@@ -280,7 +286,7 @@ def _artifact_pys() -> "dict[str, list[str]]":
                 f"{expr!r}"
             )
         out[name] = [str(v) for v in json.loads(m.group(1))]
-    if not out:
+    if len(out) < 2:
         raise AssertionError(f"no python-version matrix in {ARTIFACT_YML}")
     return out
 
@@ -447,7 +453,12 @@ class TestTheWorkflowRunsWhatThePlannerSays:
         assert jobs["toolchain"]["outputs"]["matrix"] == (
             "${{ steps.legs.outputs.matrix }}"
         )
-        assert step["run"] == 'make -s ci-test-legs >> "$GITHUB_OUTPUT"'
+        assert step["run"].split()[:4] == [
+            "legs=$(make",
+            "-s",
+            "ci-test-legs)",
+            "printf",
+        ]
         assert step["env"]["EVENT"] == "${{ github.event_name }}"
         assert step["env"]["TESTED"] == "${{ needs.changes.outputs.tested }}"
 
@@ -544,3 +555,230 @@ class TestTheParsersAreArmed:
         monkeypatch.setenv("TESTED", "true")
         LEGS.main()
         assert capsys.readouterr().out == "matrix=\n"
+
+
+# ---------------------------------------------------------------------------
+# just-buildit.github.io#203: which runner each macOS leg gets.
+
+
+def _artifact_plan_step() -> dict:
+    jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
+    steps = [s for s in jobs["plan"]["steps"] if s.get("id") == "legs"]
+    assert len(steps) == 1, "artifact.yml's plan job has no `legs` step"
+    return steps[0]
+
+
+def _artifact_matrix(quick: bool) -> dict:
+    """artifact.yml's smoke MATRIX for one value of the `quick` input."""
+    expr = str(_artifact_plan_step()["env"]["MATRIX"])
+    m = re.fullmatch(
+        r"\$\{\{\s*inputs\.quick\s*&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\}\}",
+        expr.strip(),
+    )
+    assert m, f"artifact.yml's MATRIX is not quick && '..' || '..': {expr!r}"
+    return json.loads(m.group(1) if quick else m.group(2))
+
+
+def _plan(
+    step: dict,
+    event: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    fetch=None,
+    **env: str,
+) -> "dict[str, list[dict]]":
+    """What a `legs` step hands GitHub: `make ci-test-legs`, then, with any
+    other lines the step prints, `make ci-runner` -- both in-process."""
+    for name, value in (step.get("env") or {}).items():
+        if not str(value).startswith("${{"):
+            monkeypatch.setenv(name, str(value))
+    monkeypatch.setenv("EVENT", event)
+    monkeypatch.setenv("TESTED", "")
+    assert LEGS.main() == 0
+    lines = [capsys.readouterr().out.strip()]
+    extra = (step.get("env") or {}).get("EXAMPLES")
+    if extra:
+        lines.append(f"examples={extra}")
+    out, _ = PICK.pick(
+        lines,
+        ("runs_on", "os"),
+        {
+            "GITHUB_EVENT_NAME": event,
+            "GITHUB_REPOSITORY": "just-buildit/just-makeit",
+            **env,
+        },
+        fetch,
+    )
+    plan = {}
+    for line in out:
+        name, _, value = line.partition("=")
+        plan[name] = json.loads(value)["include"]
+    return plan
+
+
+MAC = ["self-hosted", "macOS", "ARM64"]
+
+
+def _one_idle_mac(path: str) -> dict:
+    """The org runner API with one idle self-hosted Mac, for `pick`."""
+    if "/runner-groups?" in path:
+        return {
+            "runner_groups": [
+                {
+                    "id": 1,
+                    "visibility": "all",
+                    "allows_public_repositories": True,
+                }
+            ]
+        }
+    return {
+        "runners": [
+            {
+                "status": "online",
+                "busy": False,
+                "runner_group_id": 1,
+                "labels": [{"name": x} for x in MAC],
+            }
+        ]
+    }
+
+
+class TestEachMacosLegsRunner:
+    """Every macOS leg that can use the org's own Mac asks `make ci-runner`
+    for its runner; the rest are named, with their reason."""
+
+    #: Jobs that stay on a stock hosted runner on purpose: they test
+    #: installing onto one, which a prepared VM would not.
+    STOCK = {"install-deps-smoke", "consumer-smoke"}
+
+    def _macos_jobs(self) -> "dict[tuple[str, str], dict]":
+        out = {}
+        for path in (CI_YML, ARTIFACT_YML):
+            text = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for name, job in text["jobs"].items():
+                if (
+                    "macos" in json.dumps(job.get("strategy") or {})
+                    or ("macos" in str(job.get("runs-on")))
+                    or name in ("test", "examples", "smoke")
+                ):
+                    out[(path.name, name)] = job
+        return out
+
+    def test_the_jobs_read_runs_on_from_ci_runner(self) -> None:
+        jobs = self._macos_jobs()
+        routed = {k for k, j in jobs.items() if k[1] not in self.STOCK}
+        assert routed == {
+            ("ci.yml", "test"),
+            ("ci.yml", "examples"),
+            ("artifact.yml", "smoke"),
+        }, sorted(routed)
+        for key in routed:
+            assert jobs[key]["runs-on"] == "${{ matrix.runs_on }}", key
+        assert {k[1] for k in jobs} >= self.STOCK
+
+    def test_the_steps_pass_the_opt_in_and_the_token(self) -> None:
+        for step in (_legs_step(), _artifact_plan_step()):
+            env = step["env"]
+            assert env["JB_SELF_HOSTED_MACOS"] == (
+                "${{ vars.JB_SELF_HOSTED_MACOS }}"
+            )
+            assert env["JB_RUNNER_READ_TOKEN"] == (
+                "${{ secrets.JB_RUNNER_READ_TOKEN }}"
+            )
+            assert "make -s ci-runner" in step["run"]
+        # One call shares the Macs out over both jobs, the test legs first.
+        run = _legs_step()["run"]
+        assert run.index('"$legs"') < run.index('"$EXAMPLES"'), run
+
+    def test_release_hands_artifact_the_token(self) -> None:
+        rel = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "release.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert rel["jobs"]["artifact-smoke"]["secrets"] == {
+            "JB_RUNNER_READ_TOKEN": "${{ secrets.JB_RUNNER_READ_TOKEN }}"
+        }
+
+    @pytest.mark.parametrize("event", ["pull_request", "push", "schedule"])
+    def test_without_a_token_every_leg_stays_hosted(
+        self,
+        event: str,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """The default until the owner opts in, and any repo or fork PR
+        without the secret: each leg's runner is its own `os`."""
+        plan = _plan(
+            _legs_step(),
+            event,
+            monkeypatch,
+            capsys,
+            JB_SELF_HOSTED_MACOS="true",
+        )
+        assert set(plan) == {"matrix", "examples"}
+        legs = plan["matrix"] + plan["examples"]
+        assert legs and all(x["runs_on"] == x["os"] for x in legs)
+        assert plan["matrix"] == [
+            dict(x, runs_on=x["os"]) for x in _owed(event, "")
+        ]
+
+    def test_an_idle_mac_goes_to_a_test_leg_first(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        plan = _plan(
+            _legs_step(),
+            "push",
+            monkeypatch,
+            capsys,
+            _one_idle_mac,
+            JB_SELF_HOSTED_MACOS="true",
+            JB_RUNNER_READ_TOKEN="t",
+        )
+        got = [
+            (job, x["os"], x["runs_on"])
+            for job in ("matrix", "examples")
+            for x in plan[job]
+            if x["runs_on"] == MAC
+        ]
+        assert len(got) == 1 and got[0][:2] == ("matrix", "macos-latest")
+        assert all(
+            x["runs_on"] == "macos-latest"
+            for x in plan["examples"]
+            if x["os"] == "macos-latest"
+        )
+
+    @pytest.mark.parametrize("quick", [True, False])
+    def test_the_smoke_plan_is_the_matrix_it_replaced(
+        self,
+        quick: bool,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Same legs as the static matrix it replaced: quick is one Linux
+        leg; full is both OSes on every Python, the Linux 3.9 leg on
+        ubuntu-24.04 (setup-python has no 3.9 for Ubuntu 26.04)."""
+        step = dict(_artifact_plan_step())
+        step["env"] = dict(
+            step["env"], MATRIX=json.dumps(_artifact_matrix(quick))
+        )
+        legs = _plan(step, "push", monkeypatch, capsys)["matrix"]
+        got = {(x["os"], x["python-version"], x["runs_on"]) for x in legs}
+        full = _artifact_matrix(False)
+        pys, oses = full["python-version"], full["os"]
+        want = (
+            {("ubuntu-latest", "3.12", "ubuntu-latest")}
+            if quick
+            else {
+                (
+                    os_,
+                    py,
+                    "ubuntu-24.04"
+                    if (os_, py) == ("ubuntu-latest", "3.9")
+                    else os_,
+                )
+                for os_ in oses
+                for py in pys
+            }
+        )
+        assert got == want and len(legs) == len(want)
