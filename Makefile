@@ -342,7 +342,8 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_gh1376_presets_build.py \
                     tests/test_gh1443_gate_a.py \
                     tests/test_gh1489_token_survives_ruff.py \
-                    tests/test_gh1478_ruff_clean_scaffold.py
+                    tests/test_gh1478_ruff_clean_scaffold.py \
+                    tests/test_gh2557_unset_flags_ruff_clean.py
 
 EXAMPLES_IGNORE = $(addprefix --ignore=,$(PROJECT_ENV_TESTS))
 
