@@ -64,27 +64,42 @@ jobs:
       matrix: ${{ steps.runners.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Which smoke legs
-        id: legs
-        env:
-          EVENT: ${{ github.event_name }}
-          TRIM: ""
-          # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python
-          # has no 3.9 build ("The version '3.9' with architecture 'x64' was
-          # not found for Ubuntu 26.04"): the v0.109.0 release failed before
-          # publish on this one leg. `requires-python = ">=3.9"` still
-          # promises 3.9, so its Linux leg stays, on the newest image that
-          # ships it (its `runs_on`). Every other leg follows its `os`.
-          MATRIX: >-
-            ${{ inputs.quick
-            && '{"os": ["ubuntu-latest"], "python-version": ["3.12"]}'
-            || '{"os": ["ubuntu-latest", "macos-latest"], "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"], "include": [{"os": "ubuntu-latest", "python-version": "3.9", "runs_on": "ubuntu-24.04"}]}' }}
-        run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
-      # A step of its own, so the read-only token reaches ci-runner alone.
+      # The smoke legs, in include form, and which runner each gets. ONE
+      # step and no planner run before it: this workflow is also reached by
+      # workflow_call and workflow_run, where self-hosted-check allows only
+      # a plain checkout ahead of `make ci-runner` (an earlier step could
+      # bring in a fork's Makefile). `quick` is ci.yml's per-PR leg; outside
+      # a workflow_call the input is null, which reads as the full matrix.
+      #
+      # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has
+      # no 3.9 build ("The version '3.9' with architecture 'x64' was not
+      # found for Ubuntu 26.04"): the v0.109.0 release failed before publish
+      # on this one leg. `requires-python = ">=3.9"` still promises 3.9, so
+      # its Linux leg stays, on the newest image that ships it (its
+      # `runs_on`). Every other leg follows its `os`. Every os runs every
+      # Python: tests/test_own_ci_matrix.py holds the grid complete.
       - name: Which runner each smoke leg gets
         id: runners
         env:
-          LEGS: ${{ steps.legs.outputs.matrix }}
+          LEGS: >-
+            ${{ inputs.quick
+            && '{"include": [{"os": "ubuntu-latest", "python-version": "3.12"}]}'
+            || '{"include": [
+            {"os": "ubuntu-latest", "python-version": "3.9", "runs_on": "ubuntu-24.04"},
+            {"os": "ubuntu-latest", "python-version": "3.10"},
+            {"os": "ubuntu-latest", "python-version": "3.11"},
+            {"os": "ubuntu-latest", "python-version": "3.12"},
+            {"os": "ubuntu-latest", "python-version": "3.13"},
+            {"os": "ubuntu-latest", "python-version": "3.14"},
+            {"os": "ubuntu-latest", "python-version": "3.15"},
+            {"os": "macos-latest", "python-version": "3.9"},
+            {"os": "macos-latest", "python-version": "3.10"},
+            {"os": "macos-latest", "python-version": "3.11"},
+            {"os": "macos-latest", "python-version": "3.12"},
+            {"os": "macos-latest", "python-version": "3.13"},
+            {"os": "macos-latest", "python-version": "3.14"},
+            {"os": "macos-latest", "python-version": "3.15"}
+            ]}' }}
           JB_SELF_HOSTED_MACOS: ${{ vars.JB_SELF_HOSTED_MACOS }}
           JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}

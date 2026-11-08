@@ -270,7 +270,7 @@ def _artifact_pys() -> "dict[str, list[str]]":
     `plan` job's MATRIX, which its runners are picked from.
     """
     jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
-    full = _artifact_matrix(False)["python-version"]
+    full = _artifact_pythons(_artifact_matrix(False))
     out = {"smoke": [str(v) for v in full]}
     for name, job in jobs.items():
         matrix = (job.get("strategy") or {}).get("matrix")
@@ -575,19 +575,25 @@ def _artifact_plan(sid: str) -> dict:
     return _step(jobs["plan"], sid, "artifact.yml's plan job")
 
 
-def _artifact_plan_step() -> dict:
-    return _artifact_plan("legs")
-
-
 def _artifact_matrix(quick: bool) -> dict:
-    """artifact.yml's smoke MATRIX for one value of the `quick` input."""
-    expr = str(_artifact_plan_step()["env"]["MATRIX"])
+    """artifact.yml's smoke legs, in include form, for one value of the
+    `quick` input: the `runners` step's LEGS, `quick && '..' || '..'`."""
+    expr = str(_artifact_plan("runners")["env"]["LEGS"])
     m = re.fullmatch(
         r"\$\{\{\s*inputs\.quick\s*&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\}\}",
         expr.strip(),
     )
-    assert m, f"artifact.yml's MATRIX is not quick && '..' || '..': {expr!r}"
+    assert m, f"artifact.yml's LEGS is not quick && '..' || '..': {expr!r}"
     return json.loads(m.group(1) if quick else m.group(2))
+
+
+def _artifact_pythons(matrix: dict) -> "list[str]":
+    """The Pythons an include-form smoke matrix runs, first-seen order."""
+    out: "list[str]" = []
+    for leg in matrix["include"]:
+        if leg["python-version"] not in out:
+            out.append(leg["python-version"])
+    return out
 
 
 def _plan(
@@ -717,10 +723,18 @@ class TestEachMacosLegsRunner:
         """The planner steps never see a token; each planning job reads
         only what it needs."""
         art = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))
-        for step in (_legs_step(), _artifact_plan_step()):
-            env = " ".join(str(v) for v in (step.get("env") or {}).values())
-            assert "secrets." not in env and "github.token" not in env
-            assert "ci-runner" not in step["run"]
+        step = _legs_step()
+        env = " ".join(str(v) for v in (step.get("env") or {}).values())
+        assert "secrets." not in env and "github.token" not in env
+        assert "ci-runner" not in step["run"]
+        # artifact.yml is reached by workflow_call and workflow_run, where
+        # canonical's self-hosted-check allows only a plain checkout before
+        # `make ci-runner`: so no planner step there at all.
+        plan = art["jobs"]["plan"]["steps"]
+        assert [x.get("uses", x.get("id")) for x in plan] == [
+            plan[0]["uses"],
+            "runners",
+        ] and plan[0]["uses"].startswith("actions/checkout@")
         for job in (_jobs()["toolchain"], art["jobs"]["plan"]):
             assert job["permissions"] == {
                 "contents": "read",
@@ -790,35 +804,35 @@ class TestEachMacosLegsRunner:
 
     @pytest.mark.parametrize("quick", [True, False])
     def test_the_smoke_plan_is_the_matrix_it_replaced(
-        self,
-        quick: bool,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture,
+        self, quick: bool
     ) -> None:
         """Same legs as the static matrix it replaced: quick is one Linux
-        leg; full is both OSes on every Python, the Linux 3.9 leg on
+        leg; full is every os on every Python (a complete grid, so a
+        promotion cannot reach one os only), the Linux 3.9 leg on
         ubuntu-24.04 (setup-python has no 3.9 for Ubuntu 26.04)."""
-        step = dict(_artifact_plan_step())
-        step["env"] = dict(
-            step["env"], MATRIX=json.dumps(_artifact_matrix(quick))
+        m = _artifact_matrix(quick)
+        out, _ = PICK.pick(
+            ["matrix=" + json.dumps(m)],
+            ("runs_on", "os"),
+            {"GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "o/r"},
         )
-        legs = _plan(step, "push", monkeypatch, capsys)["matrix"]
-        got = {(x["os"], x["python-version"], x["runs_on"]) for x in legs}
-        full = _artifact_matrix(False)
-        pys, oses = full["python-version"], full["os"]
-        want = (
-            {("ubuntu-latest", "3.12", "ubuntu-latest")}
-            if quick
-            else {
-                (
-                    os_,
-                    py,
-                    "ubuntu-24.04"
-                    if (os_, py) == ("ubuntu-latest", "3.9")
-                    else os_,
-                )
-                for os_ in oses
-                for py in pys
-            }
-        )
-        assert got == want and len(legs) == len(want)
+        legs = json.loads(out[0].partition("=")[2])["include"]
+        got = [(x["os"], x["python-version"], x["runs_on"]) for x in legs]
+        if quick:
+            assert got == [("ubuntu-latest", "3.12", "ubuntu-latest")]
+            return
+        oses = sorted({x["os"] for x in legs})
+        pys = _artifact_pythons(m)
+        assert oses == ["macos-latest", "ubuntu-latest"]
+        want = {
+            (
+                os_,
+                py,
+                "ubuntu-24.04"
+                if (os_, py) == ("ubuntu-latest", "3.9")
+                else os_,
+            )
+            for os_ in oses
+            for py in pys
+        }
+        assert set(got) == want and len(got) == len(want)
