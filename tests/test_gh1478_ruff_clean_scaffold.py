@@ -120,22 +120,23 @@ SHAPES: "dict[str, list[str]]" = {
     ],
     # gh-2513: the functions contract test (gh-2127) at doppler's shapes: a
     # call too long for one line (two array params), a check_return status,
-    # and skip reasons. Function names stay short: the package re-export is
-    # single-line by contract (`_object._fmt_from_import`), which gh-2514
-    # tracks; the long names are the parameters'.
+    # and skip reasons. gh-2514: and long function names, whose module
+    # re-export and `__all__` are past 79 columns on one line, so jm writes
+    # them wrapped.
     "functions_contract": [
         "module util",
-        "function gauss --module util"
+        "function gauss_hermite_quadrature --module util"
         " --param abscissae_out_buffer:double[]"
         " --param weights_out_buffer:double[] --return-type int"
         " --check-return",
-        "function interp --module util"
+        "function interpolate_between_samples --module util"
         " --param fractional_sample_position:double"
         " --param number_of_neighbouring_taps:int --return-type double",
-        "function describe --module util"
+        "function render_waveform_description --module util"
         " --param waveform_identifier_handle:int"
         " --return-type 'const char *'",
-        "function fill --module util --out-type float64[n] --param n:int",
+        "function fill_coefficients_for_window --module util"
+        " --out-type float64[n] --param n:int",
         # A complex scalar argument: `_types` `py_one` is the repr `(1+0j)`,
         # which a doctest expects; as source ruff format respaces it, so
         # `_fncontract._source` writes `1 + 0j` (doppler's square_clip on
@@ -183,6 +184,40 @@ SHAPES: "dict[str, list[str]]" = {
         "object s10 --module m --arg-type void --return-type float",
         "object s2 --module m --arg-type float[] --return-type float[]",
     ],
+    # gh-2514: re-exports past 79 columns on one line, written wrapped: a
+    # module of many objects (the wrapped names in natural order, `Stage2`
+    # before `Stage10`), long standalone names in the package, and a module
+    # of long function names that `test_a_platform_guarded_reexport_*`
+    # below puts under a platform guard.
+    "wrapped_reexports": [
+        "module stages",
+        *(
+            f"object stage{n} --module stages --arg-type float"
+            " --return-type float"
+            for n in (10, 2, 1, 11, 3, 4, 5)
+        ),
+        # 81 columns on one line, so wrapped, beside 79, so not: one run of
+        # the two forms, in natural order. A third name takes the package
+        # `__all__` to 81.
+        *(
+            f"object {o} --arg-type float --return-type float"
+            for o in (
+                "long_standalone_component_10",
+                "long_standalone_component_2",
+                "shorter_one",
+            )
+        ),
+        "module guarded",
+        *(
+            f"function {f} --module guarded --param x:double"
+            " --return-type double"
+            for f in (
+                "render_waveform_description",
+                "fill_coefficients_for_window",
+                "interpolate_between_samples",
+            )
+        ),
+    ],
     "app_console_generator": [
         "object s --arg-type void --return-type float",
         "app --target console --object s --name gen",
@@ -210,7 +245,10 @@ def _scaffold(tmp_path: Path, calls: "list[str]") -> Path:
 
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 def test_a_fresh_scaffold_is_ruff_clean(tmp_path: Path, shape: str) -> None:
-    proj = _scaffold(tmp_path, SHAPES[shape])
+    _assert_ruff_clean(_scaffold(tmp_path, SHAPES[shape]), shape)
+
+
+def _assert_ruff_clean(proj: Path, shape: str) -> None:
     py = sorted(proj.rglob("*.py")) + sorted(proj.rglob("*.pyi"))
     # A scan that finds nothing to scan proves nothing: every shape writes
     # at least a test, a benchmark and a stub.
@@ -242,12 +280,17 @@ _JM_WIDTH = ("--line-length", str(STUB_TARGET_WIDTH))
 def test_a_fresh_scaffold_is_clean_at_jms_width(
     tmp_path: Path, shape: str
 ) -> None:
-    proj = _scaffold(tmp_path, SHAPES[shape])
+    _assert_clean_at_jms_width(_scaffold(tmp_path, SHAPES[shape]), shape)
+
+
+def _assert_clean_at_jms_width(proj: Path, shape: str) -> None:
+    # gh-2514: isort too, at jm's width -- it wraps a long import there
+    # that it leaves alone at its default 88.
     check = G._ruff(
         proj,
         "check",
         "--select",
-        "E501",
+        "E501,I",
         *_JM_WIDTH,
         "--output-format=concise",
     )
@@ -261,3 +304,30 @@ def test_a_fresh_scaffold_is_clean_at_jms_width(
         f"ruff format at {STUB_TARGET_WIDTH} would rewrite a fresh {shape}"
         " scaffold:\n" + G._ruff(proj, "format", "--diff", *_JM_WIDTH)
     )
+
+
+def test_a_platform_guarded_reexport_is_ruff_clean(tmp_path: Path) -> None:
+    """gh-2514: a platform guard (gh-1463) indents a module's re-export and
+    its ``__all__ +=`` inside an ``if``; wrapped, every line is indented and
+    the width counts the indent. ``platforms`` is a manifest key with no
+    CLI flag, so the shape is declared in the fragment and applied."""
+    proj = _scaffold(tmp_path, SHAPES["wrapped_reexports"])
+    frag = proj / "modules" / "guarded.toml"
+    text = frag.read_text(encoding="utf-8")
+    frag.write_text(
+        text.replace(
+            "[module.guarded]\n",
+            '[module.guarded]\nplatforms = ["linux", "macos"]\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    init = (proj / "src" / "p" / "guarded" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    # Armed: the guard is there and the import inside it is wrapped.
+    assert "    from .guarded import (  # noqa: E402\n" in init, init
+    _assert_ruff_clean(proj, "platform_guarded")
+    _assert_clean_at_jms_width(proj, "platform_guarded")

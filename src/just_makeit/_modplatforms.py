@@ -214,22 +214,24 @@ def _block_re(leaf: str) -> "re.Pattern[str]":
 
 
 def _block(leaf: str, names: "list[str]", chosen: "tuple[str, ...]") -> str:
-    from ._object import _fmt_from_import
+    from ._object import _fmt_all, _fmt_from_import
 
     # Double quotes, as a project's formatter would write them; a string it
     # rewrites is drift on every apply.
     platforms = ", ".join(f'"{PLATFORMS[p][1]}"' for p in chosen)
     if len(chosen) == 1:
         platforms += ","
-    quoted = ", ".join(f'"{n}"' for n in names)
+    # Both statements are rendered at the block's indent, so a long one is
+    # wrapped with every line indented and its width counts the indent
+    # (gh-2514); the block regex takes any indented line.
     return (
         f"{_marker(leaf)} -- built on {', '.join(chosen)} only (gh-1463)\n"
         f'if __import__("sys").platform in ({platforms}):\n'
-        f"    {_fmt_from_import(leaf, names)}\n"
+        f"{_fmt_from_import(leaf, names, '    ')}\n"
         # The blank line is the formatter's (ruff puts one after an import in
         # a nested block); writing it here makes `ruff format` a no-op.
         f"\n"
-        f"    __all__ += [{quoted}]\n"
+        f"{_fmt_all(names, '    ', '+=')}\n"
     )
 
 

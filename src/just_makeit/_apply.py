@@ -2622,22 +2622,24 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     """Splice every missing `from .X import Y` import from *temp_path* into
     *real_path*, preserving user content. Returns True if modified."""
     from ._init import _splice_init_py, ensure_dll_preamble
-    from ._object import sort_reexports
+    from ._object import _import_re, _parse_import_names
+    from ._object import sort_reexports, wrap_all
 
     temp_text = temp_path.read_text(encoding="utf-8")
-    imports = re.findall(
-        r"^from \.(\w+) import (\w+)", temp_text, re.MULTILINE
-    )
+    # Both sides read in either form: gh-2514 writes a long re-export
+    # wrapped, and a formatter may have wrapped one.
+    imports = [
+        (m.group(0).split()[1][1:], name)
+        for m in _import_re(None).finditer(temp_text)
+        for name in _parse_import_names(m.group(0))
+    ]
     # The replay's render holds exactly jm's lines: these are the only ones
     # the gh-2571 sort may move.
     owned = {comp for comp, _ in imports}
     changed = False
     for comp, Component in imports:
-        cur = real_path.read_text(encoding="utf-8")
-        if f"from .{comp} import {Component}" in cur:
-            continue
-        _splice_init_py(real_path, comp, Component, owned)
-        changed = True
+        # A no-op when the line is there already, in either form.
+        changed |= _splice_init_py(real_path, comp, Component, owned)
     # gh-1181: and UNCONDITIONALLY, not only when an import was added. Every
     # project built before this had its imports spliced in already, so gating
     # the preamble on a new one would leave exactly the projects that need it
@@ -2648,7 +2650,9 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     # gh-2571: and the re-exports in isort order, on every apply too, so a
     # project scaffolded before this loses ruff's I001 on its next apply.
     cur = real_path.read_text(encoding="utf-8")
-    fixed = sort_reexports(ensure_dll_preamble(cur), owned)
+    # gh-2514: and a plain `__all__` that grew past the column target,
+    # wrapped.
+    fixed = wrap_all(sort_reexports(ensure_dll_preamble(cur), owned))
     if fixed != cur:
         _textio.write_text(real_path, fixed)
         print(f"  update  {real_path}")

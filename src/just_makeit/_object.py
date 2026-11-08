@@ -29,7 +29,11 @@ from . import _borrow
 from . import _config as C
 from . import _csym as CSYM
 from . import _enumc
-from ._docstring import class_import_line, class_import_path
+from ._docstring import (
+    STUB_TARGET_WIDTH,
+    class_import_line,
+    class_import_path,
+)
 from . import _modplatforms
 from . import _procglobal
 from . import _context as Ctx
@@ -691,15 +695,17 @@ def _copy_external_cmake_blocks(
             return  # one source file is enough
 
 
-def _import_re(module: str) -> "re.Pattern[str]":
+def _import_re(module: "str | None") -> "re.Pattern[str]":
     """Match a ``from .<module> import ...`` line, single- or multi-line.
 
     The parenthesised alternative is tried first because its ``(`` would
     otherwise be captured as a "name" by the single-line branch (gh#5); its
     ``[^)]*`` spans newlines, so a formatter-wrapped block matches too.
+    *module* ``None`` matches a relative import from any submodule.
     """
+    mod = r"\w+" if module is None else re.escape(module)
     return re.compile(
-        rf"^from \.{re.escape(module)} import[ \t]*"
+        rf"^from \.{mod} import[ \t]*"
         r"(\([^)]*\)|[^\n]*)[^\n]*$",
         re.MULTILINE,
     )
@@ -720,17 +726,39 @@ def _parse_import_names(stmt: str) -> list[str]:
     return out
 
 
-#: A re-export line exactly as jm writes it (:func:`_fmt_from_import`, and
-#: :func:`_init.ensure_dll_preamble` for a standalone object's): relative,
-#: plain names, one line, ``# noqa: E402``. Nothing else in an
-#: ``__init__.py`` is jm's.
-_REEXPORT_LINE_RE = re.compile(
-    r"^from \.(\w+) import (\w+(?:, \w+)*)  # noqa: E402$"
+#: The marker every jm re-export carries: the imports follow the DLL
+#: preamble's statements, so each one is an E402.
+_NOQA = "  # noqa: E402"
+
+#: A re-export statement exactly as jm writes it (:func:`_fmt_from_import`,
+#: and :func:`_init.ensure_dll_preamble` for a standalone object's):
+#: relative, plain names, ``# noqa: E402``, at column 0. One line, or --
+#: when that line would pass the column target (gh-2514) -- ruff's
+#: parenthesised form, one name per line with a magic trailing comma. The
+#: marker sits after the ``(``, where jm and ``ruff check --select I --fix``
+#: write it, or after the ``)``, where ``ruff format`` moves it when it
+#: wraps a long line first; both are jm's, and both read back the same.
+#: Nothing else in an ``__init__.py`` is jm's.
+_REEXPORT_RE = re.compile(
+    r"^from \.(?P<mod>\w+) import "
+    r"(?:(?P<line>\w+(?:, \w+)*)  # noqa: E402"
+    r"|\((?P<open>  # noqa: E402)?\n"
+    r"(?P<body>(?:    \w+,\n)+)"
+    r"\)(?(open)|  # noqa: E402))$",
+    re.MULTILINE,
 )
 
 
+def _reexport_names(m: "re.Match[str]") -> list[str]:
+    """The names a :data:`_REEXPORT_RE` match imports, in written order."""
+    if m.group("line"):
+        return m.group("line").split(", ")
+    return [n.strip().rstrip(",") for n in m.group("body").splitlines()]
+
+
 def sort_reexports(text: str, owned: "Iterable[str]") -> str:
-    """*text* with jm's re-export lines in isort order (gh-2571).
+    """*text* with jm's re-export statements in isort order (gh-2571), each
+    written in its canonical form (gh-2514).
 
     ruff's isort rule (``I001``) wants a block of imports sorted by module
     and the names in each sorted by type (CONSTANTS, Classes, the rest),
@@ -739,13 +767,15 @@ def sort_reexports(text: str, owned: "Iterable[str]") -> str:
     its name after the last name, so a package re-exported in the order its
     objects were added.
 
-    Only jm's own lines move: the exact shape jm writes
-    (:data:`_REEXPORT_LINE_RE`), importing from a submodule in *owned* --
-    the ones jm re-exports from. An ``__init__.py`` is a merge target that
+    Only jm's own statements move: the exact shapes jm writes
+    (:data:`_REEXPORT_RE`), importing from a submodule in *owned* -- the
+    ones jm re-exports from. An ``__init__.py`` is a merge target that
     holds the author's code too (:func:`_pyfmt.generated_py_files`), and an
-    author's line can take jm's shape. Each run of consecutive jm lines is
-    sorted where it stands; an author line is never moved or rewritten.
-    Idempotent.
+    author's line can take jm's shape. Each run of consecutive jm
+    statements is sorted where it stands and re-emitted through
+    :func:`_fmt_from_import`, so a statement that grew past the column
+    target is wrapped and one a formatter wrapped reads back to jm's form;
+    an author line is never moved or rewritten. Idempotent.
 
     >>> src = ("from ._version import v  # noqa: E402\\n"
     ...        "from .w10 import W10  # noqa: E402\\n"
@@ -756,44 +786,84 @@ def sort_reexports(text: str, owned: "Iterable[str]") -> str:
     from .m import Stage2, Stage10, clamp  # noqa: E402
     from .w2 import W2  # noqa: E402
     from .w10 import W10  # noqa: E402
+
+    A statement ``ruff format`` wrapped, marker after the ``)``, comes back
+    in the form jm writes, which ruff's isort writes too:
+
+    >>> src = ("from .m import (\\n"
+    ...        "    render_waveform_description,\\n"
+    ...        "    gauss_hermite_quadrature,\\n"
+    ...        "    interpolate_between_samples,\\n"
+    ...        ")  # noqa: E402\\n")
+    >>> print(sort_reexports(src, {"m"}), end="")
+    from .m import (  # noqa: E402
+        gauss_hermite_quadrature,
+        interpolate_between_samples,
+        render_waveform_description,
+    )
     """
     from ._pyfmt import member_key, natural_key
 
     owned = set(owned)
 
-    def _ours(line: str) -> "re.Match[str] | None":
-        m = _REEXPORT_LINE_RE.match(line)
-        return m if m and m.group(1) in owned else None
+    def _ours(pos: int) -> "re.Match[str] | None":
+        m = _REEXPORT_RE.match(text, pos)
+        return m if m and m.group("mod") in owned else None
 
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        if not _ours(lines[i]):
-            i += 1
+    out: list[str] = []
+    pos = 0
+    while pos < len(text):
+        m = _ours(pos)
+        if not m:
+            eol = text.find("\n", pos)
+            eol = len(text) if eol < 0 else eol + 1
+            out.append(text[pos:eol])
+            pos = eol
             continue
-        j = i
         run = []
-        while j < len(lines) and (m := _ours(lines[j])):
-            run.append((m.group(1), m.group(2).split(", ")))
-            j += 1
+        while m:
+            run.append((m.group("mod"), _reexport_names(m)))
+            pos = m.end()
+            # The next statement must start on the very next line: a blank
+            # line or an author's line ends the run.
+            m = _ours(pos + 1) if text.startswith("\n", pos) else None
         run.sort(key=lambda r: natural_key(r[0]))
-        lines[i:j] = [
-            _fmt_from_import(mod, sorted(names, key=member_key))
-            for mod, names in run
-        ]
-        i = j
-    return "\n".join(lines)
+        out.append(
+            "\n".join(
+                _fmt_from_import(mod, sorted(names, key=member_key))
+                for mod, names in run
+            )
+        )
+    return "".join(out)
 
 
-def _fmt_from_import(module: str, names: list[str]) -> str:
-    """Render a ``from .<module> import ...`` line (single-line canonical).
+def _fmt_from_import(module: str, names: list[str], indent: str = "") -> str:
+    """Render a ``from .<module> import ...`` re-export, at *indent*.
 
-    jm's ``__init__.py`` glue is single-line by contract — a formatter may
-    wrap a long import, and :func:`_import_re` collapses it back on the next
-    pass (gh#5/#6). Reexport lines follow the same convention, so adding the
-    key never reflows a project's other modules.
+    One line while it fits the column target
+    (:data:`_docstring.STUB_TARGET_WIDTH`); past it (gh-2514), ruff's
+    parenthesised form: one name per line, a magic trailing comma, and the
+    ``# noqa: E402`` after the ``(``. That is what ``ruff check --select I
+    --fix`` writes, and both it and ``ruff format`` keep it at any line
+    length, so a project's formatter has nothing to change and jm nothing
+    to undo. Every line of a wrapped statement carries *indent* -- a
+    platform-guarded re-export sits inside an ``if`` (gh-1463) -- and the
+    width counts it. :data:`_REEXPORT_RE` reads both forms back.
+
+    >>> _fmt_from_import("m", ["A", "B"])
+    'from .m import A, B  # noqa: E402'
+    >>> print(_fmt_from_import("util", ["gauss_hermite_quadrature",
+    ...                                 "interpolate_between_samples"]))
+    from .util import (  # noqa: E402
+        gauss_hermite_quadrature,
+        interpolate_between_samples,
+    )
     """
-    return f"from .{module} import {', '.join(names)}  # noqa: E402"
+    line = f"{indent}from .{module} import {', '.join(names)}{_NOQA}"
+    if len(line) <= STUB_TARGET_WIDTH:
+        return line
+    body = "".join(f"{indent}    {n},\n" for n in names)
+    return f"{indent}from .{module} import ({_NOQA}\n{body}{indent})"
 
 
 def _parse_all_names(body: str) -> list[str]:
@@ -817,9 +887,64 @@ def _parse_all_names(body: str) -> list[str]:
     return out
 
 
-def _fmt_all(names: list[str]) -> str:
-    """Render an ``__all__`` assignment (single-line canonical)."""
-    return "__all__ = [" + ", ".join(f'"{n}"' for n in names) + "]"
+def _fmt_all(names: list[str], indent: str = "", op: str = "=") -> str:
+    """Render an ``__all__`` assignment (``__all__ <op> [...]``) at *indent*.
+
+    One line while it fits the column target; past it (gh-2514), one name
+    per line with a magic trailing comma -- ``ruff format``'s own form, which
+    it keeps at any line length. *op* ``+=`` is a platform guard's
+    (gh-1463).
+
+    >>> _fmt_all(["A", "B"])
+    '__all__ = ["A", "B"]'
+    >>> print(_fmt_all(["gauss_hermite_quadrature",
+    ...                 "interpolate_between_samples",
+    ...                 "render_waveform_description"], "    ", "+="))
+        __all__ += [
+            "gauss_hermite_quadrature",
+            "interpolate_between_samples",
+            "render_waveform_description",
+        ]
+    """
+    head = f"{indent}__all__ {op} ["
+    line = head + ", ".join(f'"{n}"' for n in names) + "]"
+    if len(line) <= STUB_TARGET_WIDTH or not names:
+        return line
+    body = "".join(f'{indent}    "{n}",\n' for n in names)
+    return f"{head}\n{body}{indent}]"
+
+
+#: An ``__all__`` of nothing but double-quoted names, on one line or
+#: wrapped -- the shape :func:`_fmt_all` writes, and so the only package
+#: ``__all__`` jm re-emits; one with a comment or another spelling is the
+#: author's to lay out.
+_PLAIN_ALL_RE = re.compile(
+    r'^__all__ = \[(\s*(?:"\w+"\s*,\s*)*(?:"\w+"\s*)?)\]$', re.MULTILINE
+)
+
+
+def wrap_all(text: str, add: "Iterable[str]" = ()) -> str:
+    """*text* with its package ``__all__`` in jm's form, plus *add*.
+
+    A package ``__init__.py`` is a merge target (gh-1181): ``jm object``
+    splices a standalone object's name into an ``__all__`` that may be the
+    author's. One in :data:`_PLAIN_ALL_RE`'s shape is re-emitted through
+    :func:`_fmt_all` with *add* appended, so it wraps when it passes the
+    column target (gh-2514); any other is left as written and *add* is the
+    caller's to splice. Returns *text* unchanged when there is no plain
+    ``__all__``.
+
+    >>> wrap_all('__all__ = ["A"]\\n', ["B"])
+    '__all__ = ["A", "B"]\\n'
+    >>> wrap_all('__all__ = ["A"]  # mine\\n', ["B"])
+    '__all__ = ["A"]  # mine\\n'
+    """
+    m = _PLAIN_ALL_RE.search(text)
+    if not m:
+        return text
+    names = _parse_all_names(m.group(1))
+    names += [n for n in add if n not in names]
+    return text[: m.start()] + _fmt_all(names) + text[m.end() :]
 
 
 def package_siblings(cfg: dict, module: str) -> list[str]:
@@ -1010,8 +1135,9 @@ def _merge_module_init(
     __all__ = ["Nco"]
     <BLANKLINE>
 
-    A formatter may reflow a long import into a parenthesized multi-line
-    block; the merge collapses it back to a clean single line:
+    A formatter may reflow an import into a parenthesized multi-line block;
+    the merge writes it back in jm's form, which is one line while it fits
+    the column target and ruff's wrapped form past it (gh-2514):
 
     >>> src = ('from .dsp import (  # noqa: E402\\n'
     ...        '    Ema,\\n'

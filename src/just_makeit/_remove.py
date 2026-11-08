@@ -303,21 +303,37 @@ def _strip_pkg_init(root: Path, pkg: str, obj: str, Component: str) -> None:
     init = root / "src" / pkg / "__init__.py"
     if not init.exists():
         return
-    lines = init.read_text(encoding="utf-8").splitlines(keepends=True)
-    kept = [
-        ln
-        for ln in lines
-        if not ln.startswith(f"from .{obj} import {Component}")
-    ]
-    text = "".join(kept)
-    # Drop the name from __all__ = [...], handling both quote styles.
+    from ._object import (
+        _PLAIN_ALL_RE,
+        _fmt_all,
+        _import_re,
+        _parse_all_names,
+        _parse_import_names,
+    )
+
+    orig = init.read_text(encoding="utf-8")
+    text = orig
+    # The import statement in either form: gh-2514 writes a long one
+    # wrapped, and a formatter may have wrapped it. Dropping only its first
+    # line would orphan the rest.
+    m = _import_re(obj).search(text)
+    if m and Component in _parse_import_names(m.group(0)):
+        end = m.end() + (1 if text.startswith("\n", m.end()) else 0)
+        text = text[: m.start()] + text[end:]
+    # Drop the name from __all__ = [...]: jm's own shape is re-emitted, so a
+    # wrapped one stays well formed; any other has the token cut, handling
+    # both quote styles.
+    am = _PLAIN_ALL_RE.search(text)
+    if am:
+        kept = [n for n in _parse_all_names(am.group(1)) if n != Component]
+        text = text[: am.start()] + _fmt_all(kept) + text[am.end() :]
     for token in (f'"{Component}"', f"'{Component}'"):
         text = (
             text.replace(f"[{token}, ", "[")
             .replace(f", {token}]", "]")
             .replace(f"[{token}]", "[]")
         )
-    if text != "".join(lines):
+    if text != orig:
         _textio.write_text(init, text)
         print(f"  update  {init}")
 
