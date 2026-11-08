@@ -419,8 +419,10 @@ def _kernel_call_block(
     return _nogil_call("size_t", "n_out", call_expr, nogil, release=release)
 
 
-def _count_refusal_c(m: dict, name: str, release: str, pad: str) -> str:
-    """A ``variable_output`` count's declared refusal value (gh-2012).
+def _count_refusal_c(
+    m: dict, name: str, release: str, pad: str, *, count: str = "n_out"
+) -> str:
+    """A returned count's declared refusal value (gh-2012, gh-2559).
 
     The kernel's one return value is the count, so a refusal has to be a
     value no count can be. Two forms, each chosen by the C library's own
@@ -445,10 +447,18 @@ def _count_refusal_c(m: dict, name: str, release: str, pad: str) -> str:
     ``error_on_empty`` / ``none_on_empty`` still read zero, after the guard,
     independently of this.
 
+    gh-2559: the same sentinel on the second shape whose return is a count
+    -- a scalar ``size_t`` method that fills a caller's ``out=`` array param
+    (`_method.count_why_not`'s *writes_out*). Its count is the wrapper's
+    result local, named by *count*, and is returned to Python as an int
+    rather than sizing an array; its param cleanup has already run, so it
+    passes an empty *release*.
+
     Empty when the method declares neither, so its binding is unchanged.
     """
     body = len(pad) + 4
     lead = " " * body
+    held = f"{lead}{release}\n" if release else ""
     if m.get("error_negative"):
         return (
             f"{pad}if (_rc < 0) {{\n"
@@ -462,8 +472,8 @@ def _count_refusal_c(m: dict, name: str, release: str, pad: str) -> str:
         # Parenthesised: the sentinel is the author's C, and `== A | B`
         # would bind as `(n_out == A) | B`.
         return (
-            f"{pad}if (n_out == ({sentinel})) {{\n"
-            f"{lead}{release}\n"
+            f"{pad}if ({count} == ({sentinel})) {{\n"
+            f"{held}"
             + empty_raise_c(
                 *raise_pair_of(m, name), indent=body + 16, pad=body
             )
@@ -5193,7 +5203,13 @@ def make_methods_ctx(
                         release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"
-                    f"{_keep}"
+                    # gh-2559: a size_t count over an `out=` array param
+                    # refuses with its declared sentinel, as a
+                    # variable_output count does -- before the retain swap,
+                    # which keeps only what a call that did not refuse
+                    # was handed.
+                    + _count_refusal_c(m, name, "", "    ", count=_res)
+                    + f"{_keep}"
                     f"    return {ret_expr};\n"
                 )
             else:

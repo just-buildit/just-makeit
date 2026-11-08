@@ -64,6 +64,37 @@ SIGNED_INT_RETURNS = frozenset(
 )
 
 
+def _params_as_dicts(params) -> "list[dict]":
+    """*params* as manifest param tables, copied.
+
+    gh-432: `run` takes dict params (the apply replay's full-fidelity form,
+    preserving per-param keys like capsule/header/out) alongside the CLI's
+    ``(name, type[, default[, out]])`` tuples; this is the one reading of
+    both, so every use is uniform -- the gh-2559 refusal, which runs before
+    the normalisation, included.
+
+    Examples
+    --------
+    >>> _params_as_dicts([("x", "float[]", "", True)])
+    [{'name': 'x', 'type': 'float[]', 'out': True}]
+    >>> _params_as_dicts([("g", "double", "1")])
+    [{'name': 'g', 'type': 'double', 'default': '1'}]
+    """
+    out: "list[dict]" = []
+    for p in params or ():
+        if isinstance(p, dict):
+            out.append(dict(p))
+            continue
+        entry = {"name": p[0], "type": p[1]}
+        if len(p) > 2 and p[2]:
+            entry["default"] = p[2]
+        # gh-1491: the CLI's `--out-param` rides in a 4th slot.
+        if len(p) > 3 and p[3]:
+            entry["out"] = True
+        out.append(entry)
+    return out
+
+
 def count_why_not(
     method: str,
     *,
@@ -75,8 +106,11 @@ def count_why_not(
     varargs: bool = False,
     manual_stub: bool = False,
     codec: str = "",
+    writes_out: bool = False,
+    return_type: str = "",
+    result_shape: str = "",
 ) -> str:
-    """Why the keys that read a ``variable_output`` COUNT cannot take effect.
+    """Why the keys that read a returned COUNT cannot take effect.
 
     gh-2012. The kernel's one return value is the count, so a refusal has to
     be a value no count can be. Two declarations say which, by the C
@@ -95,6 +129,17 @@ def count_why_not(
     ``error_negative`` gate reads: the same question (can ``_rc < 0`` be
     true?) about the same C value.
 
+    gh-2559: a method's return is a count on a second shape -- a scalar
+    method that fills a caller's ``out=`` array param (*writes_out*) and
+    returns how many elements it wrote, which reaches Python as an int.
+    There ``error_sentinel`` is read too, by the same emitter, and held to
+    the same rules: the count is ``size_t`` (*return_type*, which on this
+    shape IS the count's type), a signed one refuses with
+    ``error_negative`` instead, and a binding that never reads the return
+    -- a *result_shape* such as ``--status-return``, or *varargs*,
+    *manual_stub*, *codec* -- refuses it. ``count_type`` stays the
+    ``variable_output`` key: here ``return_type`` already says it.
+
     Parameters
     ----------
     method : str
@@ -107,6 +152,14 @@ error_on_empty
         count: each renders its own binding, so a count key on one is
         silently inert. (``batch`` is the fourth, and refuses every key its
         binding does not read, these among them: `batch_why_not`.)
+    writes_out : bool, optional
+        The method takes an ``out = true`` array param (gh-2559).
+    return_type : str, optional
+        The kernel's return type, read only on the *writes_out* shape.
+    result_shape : str, optional
+        The flag of a result that replaces the plain return (``--single``,
+        ``--status-return``, ...), or ``""``: such a binding never returns
+        the kernel's value, so it has no count to compare.
 
     Returns
     -------
@@ -124,6 +177,14 @@ error_on_empty
     ''
     >>> why = count_why_not("m", variable_output=True, error_negative=True)
     >>> "count_type is size_t, which cannot be negative" in why
+    True
+    >>> count_why_not("m", variable_output=False, error_sentinel="SIZE_MAX",
+    ...               writes_out=True, return_type="size_t")
+    ''
+    >>> why = count_why_not("m", variable_output=False,
+    ...                     error_sentinel="SIZE_MAX", writes_out=True,
+    ...                     return_type="int64_t")
+    >>> "use --error-negative" in why
     True
     """
     ct = count_type or DEFAULT_COUNT_TYPE
@@ -144,13 +205,34 @@ error_on_empty
         # `error_negative` on a scalar method is the gh-805 key, gated by
         # the scalar checks in `run`; only the count's own keys are here.
         bad = [k for k in declared if k != "error_on_empty"]
+        if bad == ["error_sentinel"] and writes_out:
+            return _out_count_why_not(
+                who,
+                return_type,
+                result_shape
+                or (
+                    "--varargs"
+                    if varargs
+                    else "--manual-stub"
+                    if manual_stub
+                    else "a codec"
+                    if codec
+                    else ""
+                ),
+            )
         if bad:
             return (
                 f"{who}: {' and '.join(bad)} "
                 f"{'describes' if len(bad) == 1 else 'describe'} the count "
                 "a variable_output kernel returns, and this method returns "
-                "none. Add --variable-output, or drop "
-                f"{'it' if len(bad) == 1 else 'them'}."
+                "none. Add --variable-output"
+                + (
+                    " (error_sentinel also reads the size_t count a method "
+                    "returns beside an --out-param array)"
+                    if "error_sentinel" in bad
+                    else ""
+                )
+                + f", or drop {'it' if len(bad) == 1 else 'them'}."
             )
         return ""
     hides = (
@@ -199,6 +281,46 @@ error_on_empty
             f"{who}: count_type {ct} is signed, but nothing reads its sign: "
             "a negative count would reach the size_t length unread. Add "
             "--error-negative, or keep the default size_t count."
+        )
+    return ""
+
+
+def _out_count_why_not(who: str, return_type: str, shape: str) -> str:
+    """Why ``error_sentinel`` cannot read an ``out=`` method's count.
+
+    gh-2559. The `count_why_not` rules for a sentinel, asked of the second
+    shape whose return is a count: a scalar method filling a caller's
+    ``out=`` array. *return_type* is the count's C type there, so it is held
+    where ``count_type`` is held on a ``variable_output`` method -- an
+    unsigned ``size_t``, never a signed type -- and *shape* names a binding
+    that never compares the kernel's return, or is ``""``.
+
+    Examples
+    --------
+    >>> _out_count_why_not("method 'm'", "size_t", "")
+    ''
+    >>> "status" in _out_count_why_not("method 'm'", "size_t",
+    ...                                "--status-return")
+    True
+    """
+    if shape:
+        return (
+            f"{who}: error_sentinel reads the count the kernel returns, but "
+            f"{shape} renders a binding that never returns it. Drop one of "
+            "the two."
+        )
+    if return_type in SIGNED_INT_RETURNS:
+        return (
+            f"{who}: error_sentinel names a refusal value of an unsigned "
+            f"count, but the method returns {return_type}. A signed count "
+            "refuses with a negative value: use --error-negative instead."
+        )
+    if return_type != DEFAULT_COUNT_TYPE:
+        return (
+            f"{who}: error_sentinel reads the count an --out-param method "
+            f"returns, which is {DEFAULT_COUNT_TYPE}; this method returns "
+            f"{return_type!r}. Declare --return-type {DEFAULT_COUNT_TYPE}, "
+            "or drop it."
         )
     return ""
 
@@ -2003,6 +2125,29 @@ def run(
         varargs=varargs,
         manual_stub=manual_stub,
         codec=codec,
+        # gh-2559: the second shape whose return is a count -- a scalar
+        # method filling a caller's `out=` array -- and the results that
+        # replace that return, so a sentinel on one is read by nobody.
+        writes_out=any(
+            T.param_writable(p) and str(p.get("type", "")).endswith("[]")
+            for p in _params_as_dicts(params)
+        ),
+        return_type=return_type,
+        result_shape=next(
+            (
+                flag
+                for flag, on in (
+                    ("--borrow", borrow),
+                    ("--single", single),
+                    ("--result-field", result_fields),
+                    ("--status-return", status_return),
+                    ("--multi-output", multi_output),
+                    ("--out-type", out_type),
+                )
+                if on
+            ),
+            "",
+        ),
     )
     if _count_why:
         raise _report.Refusal(_count_why)
@@ -2492,25 +2637,8 @@ def run(
     )
     print()
 
-    params = params or []
     result_fields = result_fields or []
-    # gh-432: accept dict params (the apply replay's full-fidelity form,
-    # preserving per-param keys like capsule/header/out) alongside the CLI's
-    # (name, type[, default]) tuples; normalise to dicts once so every
-    # downstream use is uniform.
-    _norm_params: list[dict] = []
-    for _p in params:
-        if isinstance(_p, dict):
-            _norm_params.append(dict(_p))
-        else:
-            _entry = {"name": _p[0], "type": _p[1]}
-            if len(_p) > 2 and _p[2]:
-                _entry["default"] = _p[2]
-            # gh-1491: the CLI's `--out-param` rides in a 4th slot.
-            if len(_p) > 3 and _p[3]:
-                _entry["out"] = True
-            _norm_params.append(_entry)
-    params = _norm_params
+    params = _params_as_dicts(params)
 
     # gh-2202 / gh-2250 / gh-2313: a key only some shapes read, on a shape
     # that does not -- refused here, below the normalisation (the input side

@@ -1197,9 +1197,11 @@ _ARRAY_ARG_HINT_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_HINT_FN}\s*\(")
 #: ``_rc < 0``, or ``n_out ==`` an unsigned count's sentinel. The exact-fill
 #: test every such wrapper carries, ``(size_t)n_out == _cap``, is not one,
 #: so ``_cap`` is excluded as the right-hand side. Whitespace anywhere, for
-#: a fragment formatted in the project's own style.
+#: a fragment formatted in the project's own style. gh-2559: an ``out=``
+#: method's ``size_t`` count is the wrapper's result local
+#: (`_builtins.result_local`: ``y``, or ``_y``), tested ``== (<sentinel>)``.
 _REFUSAL_VALUE_RE = re.compile(
-    r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)"
+    r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)|(?<!\w)_?y\s*==\s*\("
 )
 
 #: A list-of-records result sized by its capacity function (gh-2184): a call
@@ -1350,8 +1352,9 @@ _FEATURE_MARKERS = {
         (_REFUSAL_VALUE_RE,),
         "the manifest declares a refusal value for the count "
         "(error_negative over a signed count_type, or error_sentinel) and "
-        "this fragment does not test it, so a refusal reaches the overflow "
-        "guard and raises RuntimeError instead of the declared error",
+        "this fragment does not test it, so a refusal is not the declared "
+        "error: a variable_output count reaches the overflow guard as "
+        "RuntimeError, and an out= method's count returns as an int",
     ),
     # gh-2184: not a manifest key -- the AUTHOR's `<c>_<m>_max_out`, declared
     # in the sacred header after the fragment was rendered. Named for its
