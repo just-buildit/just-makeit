@@ -1,5 +1,145 @@
 ## [Unreleased]
 
+## [0.124.0] — 2026-11-08
+
+### Added
+
+- **A writable property's read can fail, with its own exception**
+    (gh-2543). `getter_status = true` was refused on a writable property,
+    because its `error` / `error_message` already name the setter's refusal
+    (gh-2182). A second pair, `getter_error` / `getter_error_message`
+    (`jm property --getter-error EXC --getter-error-message TEXT`), now names
+    what a failing read raises: the getter is
+    `int <stem>_get_<prop>(const state *, T *out)` as on a read-only one,
+    the setter is unchanged, and the `.pyi` and `help()` document both
+    exceptions. It is required on a writable property under
+    `getter_status`, refused on a read-only one (where `error` already names
+    the read's), and refused without `getter_status`.
+
+- **A buffer view property's read can fail** (gh-2543). A `buf_field`
+    property declaring `getter_status` calls
+    `int <stem>_<prop>_status(const state *)` before it builds the view, and
+    a non-zero return raises `error` with `error_message`; on zero,
+    `valid_field` still decides `None` exactly as before. jm declares and
+    stubs the status function, through `jm property`, `jm apply` and
+    `jm script`, standalone and in a module. `jm property --buf-field` no
+    longer tells the author to implement a getter the view never calls.
+    `getter_status` on a container property stays refused.
+
+- **A property accessor and a method can no longer derive one C function**
+    (gh-2543). A property `eta` and a method `get_eta`, or a buffer view
+    `last` with `getter_status` and a method `last_status`, both named one
+    C function: whichever was added second rewrote the other's prototype,
+    exited 0, and the build failed on "conflicting types". `jm property`,
+    `jm method` and `jm apply` now refuse it, whichever comes second,
+    naming both members; a method's `--fn` gives it another C name. A
+    view's methods and properties are asked too, since a view binds its
+    object's core: `jm method --view` adding `get_eta` beside a property
+    `eta` is refused the same way.
+
+- **A writable buffer view is refused** (gh-2543). `buf_field` with
+    `writable` rendered a setter that did not compile (a scalar parse into
+    `T[] v`, and a call to a setter jm never declared). The view's array
+    is already writeable in place, so `jm property` and `jm apply` refuse
+    `writable` there.
+
+- **A buffer view with `valid_field` is annotated `NDArray[...] | None`**
+    (gh-2543). Its read returns `None` while the flag is clear, and the
+    `.pyi` said `NDArray[...]` alone, so a type checker accepted code that
+    fails on the `None`. A view without `valid_field` is unchanged.
+
+- **An object's or a view's constructor can name its refusal** (gh-2552).
+    `create_error` / `create_error_message` raised one message for every way
+    a `create()` could refuse. `create_why = true` on `[<obj>]` or on a
+    `[[<obj>.views]]` entry is gh-1706's `why` on the constructor: the C
+    `create()` (or `create_fn`) takes a trailing `const char **why` after
+    every init param, the binding passes the address of a local initialised
+    to `NULL`, and a refusal raises `create_error` with the sentence the
+    constructor wrote, or `create_error_message` when it wrote none. The
+    parameter is C only -- not in the Python signature or the `.pyi` -- and
+    the sacred header's prototype, the `_core.c` stub, a `header_only`
+    inline create, the C test and the bench all carry it; a generated C app
+    prints the sentence. A view states its
+    own (its `create_fn` is a different function) and still inherits the
+    parent's `create_error`. Refused at load: a `create_why` with no
+    `create_error` in force, one that is not `true`/`false`, and one beside
+    an init param named `why`, grouped, inherited by a view, or its own; `jm remove error` is refused
+    while a `create_why` raises through the translation. The `const char **why` parameter and the
+    `&_why` argument are now one constant each, shared by module functions,
+    composers, objects and views.
+    `jm status`'s `CTOR` check (gh-1076) now compares every view's
+    `create_fn` against the header too, and names the constructor it
+    compared: a drifted view prototype broke the build with `status --check`
+    exiting 0.
+
+- **A method filling an `out=` array can refuse with a sentinel in place of
+    its count** (gh-2559). A method whose kernel writes a caller's
+    `out = true` array param and returns the `size_t` count it wrote now
+    takes `error_sentinel` (`jm method --error-sentinel SIZE_MAX`), as a
+    `variable_output` count has since gh-2012: a return equal to it raises
+    `error` with `error_message`, `0` stays an ordinary "nothing yet", and
+    any other count returns as an `int` as before. Before, the key was
+    refused there ("this method returns none"), so a kernel refusing a
+    member its configuration does not serve handed Python
+    `18446744073709551615`. It is the same rule and the same emitter: the
+    count must be `size_t` (a signed return refuses with `--error-negative`
+    instead), a result that replaces the return (`--status-return`,
+    `--out-type`, `--multi-output`, `--single`, `--borrow`) refuses it, the
+    `.pyi` and the runtime docstring name the raise, a view may reword its
+    message, `jm apply` and `jm script` carry it, and a sacred module
+    fragment rendered before it was declared is reported.
+
+### Fixed
+
+- **A C app links C libraries only** (gh-2556). An app asked for libm as
+    `$<$<NOT:$<PLATFORM_ID:Windows>>:m>`. Under `jm module m` the bare name
+    `m` resolves to that module's Python extension target, the same shadow
+    gh-1305 fixed for tests and benchmarks: macOS refused the link
+    (`unsupported mach-o filetype`) and Linux silently linked the extension.
+    A function app over a dotted module (`dsp.filters`) linked
+    `dsp.filters_core`, which is not a target, so its build failed on the
+    core's header. An app now links libm through `${JM_MATH_LIBRARY}`, the
+    reference every other link line uses, and a module's core through its
+    cname (`dsp_filters_core`).
+
+- **A scaffolded test and benchmark construct with every defaulted argument
+    left out** (gh-2556). They spelled out every init param, restating each
+    default in Python, and a `default_raw` has no Python spelling: a
+    `size_t` one rendered as `noise_hi=...` (Ellipsis, so every generated
+    test failed with a `TypeError`) and a `NAN` one as `cn0_dbhz=.0`, a
+    different object from the default one. On an object with a state
+    struct a second builder of the same call restated them as the type's
+    zero, which passed while testing the wrong object. Now only a required
+    parameter is spelled (its `example_value` where given, gh-1105), plus
+    any defaulted one carrying an `example_value`; the rest are omitted so
+    the binding applies its own default, in the test, the benchmark and
+    the `.pyi` example alike. The C smoke test and benchmark, which cannot
+    omit an argument, pass the `default_raw` itself.
+
+- **`jm app` builds and runs for a required or `default_raw` init
+    param** (gh-2557). A constructor flag took its default from `default`
+    alone, so the C tool declared `size_t size = ;` (it did not compile) and
+    the console and PEP 723 scripts passed `noise_hi=None` to the
+    constructor whenever the flag was not given. Now a required param is a
+    flag the run must be given (`required=True` in Python; the C tool exits
+    2 with `--size is required`, as argparse does). A `default_raw` param
+    starts at that expression in C (with `<math.h>` in scope, as it is in
+    the binding). A param whose default Python cannot spell is left out of
+    the Python call unless the flag is given, so the binding applies its
+    own default.
+
+- **A function app's C tool and Python script agree on its flags**
+    (gh-2560). The C tool started every parameter at zero and enforced
+    none, so a run missing a parameter called the function with 0. It also
+    ignored a declared default (gh-240). The Python faces, meanwhile,
+    required every flag, even a defaulted one. Both now read the flag
+    model constructor flags use. A parameter without a default is required
+    on both faces: the C tool exits 2 with `--x is required`, as argparse
+    does. A defaulted one starts at its default on both. One defaulted to
+    a C constant (`INFINITY`) starts there in C, and the Python call passes
+    it only when given. The Python faces call the function as
+    `result = f(...)` then `print(result)`.
+
 ## [0.123.0] — 2026-11-08
 
 ### Added
