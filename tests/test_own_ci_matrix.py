@@ -451,14 +451,12 @@ class TestTheWorkflowRunsWhatThePlannerSays:
             "${{ fromJSON(needs.toolchain.outputs.matrix) }}"
         )
         assert jobs["toolchain"]["outputs"]["matrix"] == (
+            "${{ steps.runners.outputs.matrix }}"
+        )
+        assert step["run"] == 'make -s ci-test-legs >> "$GITHUB_OUTPUT"'
+        assert _runners_step()["env"]["LEGS"] == (
             "${{ steps.legs.outputs.matrix }}"
         )
-        assert step["run"].split()[:4] == [
-            "legs=$(make",
-            "-s",
-            "ci-test-legs)",
-            "printf",
-        ]
         assert step["env"]["EVENT"] == "${{ github.event_name }}"
         assert step["env"]["TESTED"] == "${{ needs.changes.outputs.tested }}"
 
@@ -561,11 +559,24 @@ class TestTheParsersAreArmed:
 # just-buildit.github.io#203: which runner each macOS leg gets.
 
 
-def _artifact_plan_step() -> dict:
-    jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
-    steps = [s for s in jobs["plan"]["steps"] if s.get("id") == "legs"]
-    assert len(steps) == 1, "artifact.yml's plan job has no `legs` step"
+def _step(job: dict, sid: str, where: str) -> dict:
+    steps = [s for s in job.get("steps") or [] if s.get("id") == sid]
+    assert len(steps) == 1, f"{where} has no single `{sid}` step"
     return steps[0]
+
+
+def _runners_step() -> dict:
+    """The toolchain job's `runners` step: `make ci-runner`."""
+    return _step(_jobs()["toolchain"], "runners", "ci.yml's toolchain job")
+
+
+def _artifact_plan(sid: str) -> dict:
+    jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
+    return _step(jobs["plan"], sid, "artifact.yml's plan job")
+
+
+def _artifact_plan_step() -> dict:
+    return _artifact_plan("legs")
 
 
 def _artifact_matrix(quick: bool) -> dict:
@@ -585,10 +596,12 @@ def _plan(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
     fetch=None,
+    runners: "dict | None" = None,
     **env: str,
 ) -> "dict[str, list[dict]]":
-    """What a `legs` step hands GitHub: `make ci-test-legs`, then, with any
-    other lines the step prints, `make ci-runner` -- both in-process."""
+    """What a `legs` step and its `runners` step hand GitHub: `make
+    ci-test-legs`, then, with EXAMPLES when the runners step declares it,
+    `make ci-runner` -- both in-process."""
     for name, value in (step.get("env") or {}).items():
         if not str(value).startswith("${{"):
             monkeypatch.setenv(name, str(value))
@@ -596,7 +609,7 @@ def _plan(
     monkeypatch.setenv("TESTED", "")
     assert LEGS.main() == 0
     lines = [capsys.readouterr().out.strip()]
-    extra = (step.get("env") or {}).get("EXAMPLES")
+    extra = ((runners or {}).get("env") or {}).get("EXAMPLES")
     if extra:
         lines.append(f"examples={extra}")
     out, _ = PICK.pick(
@@ -621,6 +634,8 @@ MAC = ["self-hosted", "macOS", "ARM64"]
 
 def _one_idle_mac(path: str) -> dict:
     """The org runner API with one idle self-hosted Mac, for `pick`."""
+    if "/actions/runs" in path:
+        return {"workflow_runs": []}
     if "/runner-groups?" in path:
         return {
             "runner_groups": [
@@ -677,7 +692,7 @@ class TestEachMacosLegsRunner:
         assert {k[1] for k in jobs} >= self.STOCK
 
     def test_the_steps_pass_the_opt_in_and_the_token(self) -> None:
-        for step in (_legs_step(), _artifact_plan_step()):
+        for step in (_runners_step(), _artifact_plan("runners")):
             env = step["env"]
             assert env["JB_SELF_HOSTED_MACOS"] == (
                 "${{ vars.JB_SELF_HOSTED_MACOS }}"
@@ -685,10 +700,25 @@ class TestEachMacosLegsRunner:
             assert env["JB_RUNNER_READ_TOKEN"] == (
                 "${{ secrets.JB_RUNNER_READ_TOKEN }}"
             )
+            assert env["GITHUB_TOKEN"] == "${{ github.token }}"
             assert "make -s ci-runner" in step["run"]
         # One call shares the Macs out over both jobs, the test legs first.
-        run = _legs_step()["run"]
-        assert run.index('"$legs"') < run.index('"$EXAMPLES"'), run
+        run = _runners_step()["run"]
+        assert run.index('"$LEGS"') < run.index('"$EXAMPLES"'), run
+
+    def test_the_token_reaches_ci_runner_alone(self) -> None:
+        """The planner steps never see a token; each planning job reads
+        only what it needs."""
+        art = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))
+        for step in (_legs_step(), _artifact_plan_step()):
+            env = " ".join(str(v) for v in (step.get("env") or {}).values())
+            assert "secrets." not in env and "github.token" not in env
+            assert "ci-runner" not in step["run"]
+        for job in (_jobs()["toolchain"], art["jobs"]["plan"]):
+            assert job["permissions"] == {
+                "contents": "read",
+                "actions": "read",
+            }
 
     def test_release_hands_artifact_the_token(self) -> None:
         rel = yaml.safe_load(
@@ -714,6 +744,7 @@ class TestEachMacosLegsRunner:
             event,
             monkeypatch,
             capsys,
+            runners=_runners_step(),
             JB_SELF_HOSTED_MACOS="true",
         )
         assert set(plan) == {"matrix", "examples"}
@@ -732,8 +763,10 @@ class TestEachMacosLegsRunner:
             monkeypatch,
             capsys,
             _one_idle_mac,
+            runners=_runners_step(),
             JB_SELF_HOSTED_MACOS="true",
             JB_RUNNER_READ_TOKEN="t",
+            GITHUB_TOKEN="g",
         )
         got = [
             (job, x["os"], x["runs_on"])
