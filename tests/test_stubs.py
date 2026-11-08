@@ -180,8 +180,9 @@ class TestClassStub:
             mutable=True,
         )
         pyi = _pyi(root, "dsp", "myproj")
-        # construction example: init_params as kwargs, enum default quoted
-        assert 'Eng(kind="tone", fs=1000000.0)' in pyi
+        # construction example: both init_params are defaulted, so the
+        # call leaves them to the binding (gh-2556)
+        assert ">>> obj = Eng()" in pyi
         # not the hidden state vars
         assert "Eng(0, 8)" not in pyi
         # custom-create ⇒ no reset-restores-defaults demo
