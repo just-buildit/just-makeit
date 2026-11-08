@@ -43,7 +43,8 @@ On every object (and view) method whose binding jm writes. The swap
 accepted the call: after the call, and after its declared refusal when it
 has one -- a ``status_return`` / ``error_negative`` code, a
 ``variable_output`` count's ``error_sentinel`` / signed refusal or its
-``error_on_empty``, a ``borrow``'s NULL. A failure jm raises after that
+``error_on_empty``, an ``out=`` method's ``size_t`` count's
+``error_sentinel`` (gh-2559), a ``borrow``'s NULL. A failure jm raises after that
 point (an allocation, an overrun guard) is not the kernel refusing, and the
 kernel may already hold the pointer, so the owner is kept. A ``batch``
 method takes no params, so it has nothing to retain.

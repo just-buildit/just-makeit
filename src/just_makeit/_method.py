@@ -699,6 +699,26 @@ def _max_out_count_param(
     return "", None
 
 
+def _refuse_note(error_sentinel: str, count_type: str) -> str:
+    """The ``IMPLEMENT`` note's clause saying how a count refuses.
+
+    gh-2012 / gh-2559: one wording for both shapes whose return is a count
+    -- a ``variable_output`` kernel and an ``out=`` method's ``size_t``.
+
+    >>> _refuse_note("SIZE_MAX", "size_t")
+    ', or SIZE_MAX to refuse'
+    >>> _refuse_note("", "int64_t")
+    ', or a negative error code'
+    >>> _refuse_note("", "size_t")
+    ''
+    """
+    if error_sentinel:
+        return f", or {error_sentinel} to refuse"
+    if count_type in SIGNED_INT_RETURNS:
+        return ", or a negative error code"
+    return ""
+
+
 def _methods_c_stub_variable(
     component: str,
     name: str,
@@ -744,13 +764,7 @@ def _methods_c_stub_variable(
     """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = _out_elem_disp(return_type, out_type)
-    _refuse = (
-        f", or {error_sentinel} to refuse"
-        if error_sentinel
-        else ", or a negative error code"
-        if count_type in SIGNED_INT_RETURNS
-        else ""
-    )
+    _refuse = _refuse_note(error_sentinel, count_type)
     has_arg = arg_type != "void"
     params = params or []
 
@@ -1070,8 +1084,14 @@ def _methods_c_stub_fixed(
     c_fn: str = "",
     *,
     csym: str,
+    error_sentinel: str = "",
 ) -> str:
-    """Generate a _core-level C stub for a fixed-output method."""
+    """Generate a _core-level C stub for a fixed-output method.
+
+    gh-2559: with *error_sentinel* the method returns the count it wrote
+    into its ``out=`` array, and its ``IMPLEMENT`` note says so, and how it
+    refuses, in `_refuse_note`'s words.
+    """
     c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
     ret_disp = return_type
     has_arg = arg_type != "void"
@@ -1168,8 +1188,14 @@ def _methods_c_stub_fixed(
 
     zero = _zero_return(return_type)
     ret_line = f"    {zero}" if zero else ""
+    _note = (
+        ": return the count written into out"
+        + _refuse_note(error_sentinel, return_type)
+        if error_sentinel
+        else ""
+    )
     lines = [
-        f"/* <<IMPLEMENT: {name} >> */",
+        f"/* <<IMPLEMENT: {name}{_note} >> */",
         f"{ret_disp}",
         f"{c_fn}({c_params})",
         "{",
@@ -2834,6 +2860,7 @@ def run(
                 record_dtype=record_dtype,
                 c_fn=fn,
                 csym=csym,
+                error_sentinel=error_sentinel,
             )
         if impl_body is not None:
             from . import _impl as I
