@@ -1,5 +1,9 @@
 """gh-1478: a fresh scaffold's Python is clean under ruff's defaults.
 
+And under isort (``I``) beside them (gh-2571): a downstream that selects it
+-- doppler does -- found every scaffolded test, benchmark, stub and package
+``__init__.py`` with its imports in one unsorted block.
+
 A downstream that runs ruff (most do, doppler does) got a diff on its first
 commit: ``E401``/``F401`` in the generated test, ``F841``/``E712`` in some
 shapes, and ``ruff format`` rewriting ``__init__.py``, the ``.pyi``, the
@@ -165,6 +169,11 @@ SHAPES: "dict[str, list[str]]" = {
 }
 
 
+#: ruff's defaults plus isort (gh-2571): selected on the command line
+#: because the generated `pyproject.toml` configures no rules of its own.
+_ISORT = ("--extend-select", "I")
+
+
 def _scaffold(tmp_path: Path, calls: "list[str]") -> Path:
     argvs = [shlex.split(c) for c in calls]
     if not argvs or argvs[0][0] != "new":
@@ -186,7 +195,11 @@ def test_a_fresh_scaffold_is_ruff_clean(tmp_path: Path, shape: str) -> None:
     # at least a test, a benchmark and a stub.
     assert any(p.name.startswith("test_") for p in py), py
     assert any(p.suffix == ".pyi" for p in py), py
-    check = G._ruff(proj, "check", "--output-format=concise")
+    # gh-2571: and isort (`I`), which ruff's defaults leave off and a
+    # downstream turns on -- doppler does. Every import block jm writes must
+    # already be in isort order, or `ruff check --fix` rewrites jm's file
+    # and `status --check` calls it STALE.
+    check = G._ruff(proj, "check", *_ISORT, "--output-format=concise")
     assert not G._RUFF.findall(check), (
         f"ruff check on a fresh {shape} scaffold:\n{check}"
     )

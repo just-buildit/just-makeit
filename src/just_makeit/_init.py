@@ -1316,7 +1316,13 @@ def ensure_dll_preamble(text: str) -> str:
     # did. Returning early on "preamble present" left exactly that line
     # unannotated. The pattern requires the line to END at the imported name,
     # so an already-annotated line does not match and this is idempotent.
-    return _PKG_IMPORT_RE.sub(lambda m: m.group(0) + "  # noqa: E402", text)
+    text = _PKG_IMPORT_RE.sub(lambda m: m.group(0) + "  # noqa: E402", text)
+    # gh-2571: and the re-exports in isort order, which appending each new
+    # object's line after the last one did not keep. Only the runs of
+    # relative imports, which are jm's; the author's code is left as written.
+    from ._pyfmt import sort_imports
+
+    return sort_imports(text, relative_only=True)
 
 
 def _splice_init_py(init_py: Path, component: str, Component: str) -> None:

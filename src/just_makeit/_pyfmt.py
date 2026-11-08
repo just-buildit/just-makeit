@@ -40,6 +40,7 @@ What is deliberately *not* touched
 
 from __future__ import annotations
 
+import ast
 import io
 import re
 import shutil
@@ -502,7 +503,205 @@ def _opens_toplevel_block(lines: "list[str]", i: int) -> bool:
     return False
 
 
-def reflow_pyi(text: str, width: int = STUB_TARGET_WIDTH) -> str:
+#: The standard-library modules jm's own emitters import, by top-level
+#: name. A FIXED set rather than ``sys.stdlib_module_names``: that does not
+#: exist on 3.9, and a render that depended on the interpreter would make
+#: ``status --check`` disagree between two machines. Every name here is
+#: held to the interpreter's own list by ``tests/test_gh2571_import_order``,
+#: and a stdlib import jm writes that is missing here sorts as third-party,
+#: which the gh-1478 gate (ruff with ``I`` selected) reports.
+_STDLIB = frozenset(
+    {
+        "argparse",
+        "asyncio",
+        "cmath",
+        "collections",
+        "contextlib",
+        "copy",
+        "dataclasses",
+        "enum",
+        "functools",
+        "io",
+        "itertools",
+        "json",
+        "math",
+        "os",
+        "pathlib",
+        "re",
+        "struct",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "time",
+        "typing",
+        "unittest",
+        "warnings",
+    }
+)
+
+#: isort's sections, in the order they are laid out.
+_FUTURE, _STD, _THIRD, _FIRST, _LOCAL = range(5)
+
+
+def import_section(module: str, level: int, first_party: str) -> int:
+    """The isort section an import of *module* belongs in.
+
+    ``__future__``, the standard library, third-party, first-party (the
+    project's own package, *first_party*) and local-folder (a relative
+    import, *level* > 0) -- ruff's default sections and their order.
+
+    >>> import_section("numpy.typing", 0, "p") == _THIRD
+    True
+    >>> import_section("p.m", 0, "p") == _FIRST
+    True
+    >>> import_section("g", 1, "p") == _LOCAL
+    True
+    """
+    if level:
+        return _LOCAL
+    root = module.split(".")[0]
+    if root == "__future__":
+        return _FUTURE
+    if root in _STDLIB:
+        return _STD
+    return _FIRST if first_party and root == first_party else _THIRD
+
+
+def member_key(name: str) -> "tuple[int, str, str]":
+    """Sort key for a name in ``from x import a, B, C`` -- isort's
+    order-by-type, ruff's default: CONSTANTS, then Classes, then the rest,
+    case-insensitively within each.
+
+    >>> sorted(["clamp", "FirView", "Fir", "Bq", "TAPS"], key=member_key)
+    ['TAPS', 'Bq', 'Fir', 'FirView', 'clamp']
+    """
+    if len(name) > 1 and name.isupper():
+        rank = 0
+    elif name[:1].isupper():
+        rank = 1
+    else:
+        rank = 2
+    return (rank, name.lower(), name)
+
+
+def _stmt_key(node: "ast.stmt") -> tuple:
+    """Order of two import statements within one section: every
+    ``import x`` before every ``from x import``, then by module name
+    (case-insensitive; a farther relative import first)."""
+    if isinstance(node, ast.Import):
+        a = node.names[0]
+        return (0, 0, a.name.lower(), a.name, a.asname or "")
+    assert isinstance(node, ast.ImportFrom)
+    mod = node.module or ""
+    return (1, -node.level, mod.lower(), mod, "")
+
+
+def sort_imports(
+    text: str, first_party: str = "", *, relative_only: bool = False
+) -> str:
+    """*text* with each top-level run of imports laid out the way isort is.
+
+    gh-2571. ruff's isort rule (``I001``) wants every block of imports split
+    into sections -- standard library, third-party, first-party, relative --
+    one blank line apart, each sorted, and the names in a ``from`` import
+    sorted too. jm's emitters wrote their imports in whatever order they
+    were assembled: numpy above pytest-or-not, ``from typing`` glued to
+    ``import numpy``, the test's ``from <pkg> import X`` in the same block
+    as numpy, a package's re-exports in the order the objects were added. A
+    project that selects ``I`` (doppler does) got a finding on every
+    scaffold. A post-pass for the reason this module gives: the import
+    blocks come from a dozen emitters, and one rule covers all of them,
+    including the next.
+
+    A *run* is the statements of the module body that are imports with
+    nothing but blank lines and comments between them -- what isort calls a
+    block. A comment inside a run moves with the import below it; the
+    comments above a run (a file's header) stay put. Indented imports (a
+    ``try:`` or a platform guard) are not touched. A ``from`` import is
+    re-spelled on one line only when its names are out of order; every
+    other statement keeps its own text, trailing comment included.
+
+    *first_party* is the project's package. *relative_only* sorts only a
+    run made entirely of relative imports: a package ``__init__.py`` is a
+    merge target holding the author's code beside jm's re-exports
+    (:func:`generated_py_files`), and jm reorders only its own lines.
+
+    Text that does not parse is returned as it was. Idempotent.
+
+    >>> src = "import pytest\\nimport numpy as np\\nfrom p import G\\nx = 1\\n"
+    >>> print(sort_imports(src, "p"), end="")
+    import numpy as np
+    import pytest
+    <BLANKLINE>
+    from p import G
+    x = 1
+    >>> print(sort_imports("from .m import Fir, Bq, clamp  # c\\n"), end="")
+    from .m import Bq, Fir, clamp  # c
+    >>> sort_imports(sort_imports(src, "p"), "p") == sort_imports(src, "p")
+    True
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text
+    lines = text.split("\n")
+    runs: "list[list[ast.stmt]]" = [[]]
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            runs[-1].append(node)
+        elif runs[-1]:
+            runs.append([])
+    # Bottom-up, so an earlier run's rows are not shifted by a later one.
+    for run in reversed([r for r in runs if r]):
+        if relative_only and not all(
+            isinstance(n, ast.ImportFrom) and n.level for n in run
+        ):
+            continue
+        start = run[0].lineno - 1
+        end = run[-1].end_lineno or run[-1].lineno
+        sections: "dict[int, list[tuple[tuple, list[str]]]]" = {}
+        prev_end = start
+        for node in run:
+            first = node.lineno - 1
+            last = node.end_lineno or node.lineno
+            # The comments between the previous statement and this one ride
+            # with this one; the blank lines there are re-laid below.
+            lead = [ln for ln in lines[prev_end:first] if ln.strip()]
+            body = lines[first:last]
+            if isinstance(node, ast.ImportFrom):
+                names = [a.name for a in node.names]
+                if names != sorted(names, key=member_key):
+                    tail = lines[last - 1][node.end_col_offset :]
+                    spelled = ", ".join(
+                        a.name + (f" as {a.asname}" if a.asname else "")
+                        for a in sorted(
+                            node.names, key=lambda a: member_key(a.name)
+                        )
+                    )
+                    mod = "." * node.level + (node.module or "")
+                    body = [f"from {mod} import {spelled}{tail}"]
+                section = import_section(
+                    node.module or "", node.level, first_party
+                )
+            else:
+                section = import_section(node.names[0].name, 0, first_party)
+            sections.setdefault(section, []).append(
+                (_stmt_key(node), lead + body)
+            )
+            prev_end = last
+        block: "list[str]" = []
+        for section in sorted(sections):
+            if block:
+                block.append("")
+            for _key, stmt in sorted(sections[section], key=lambda s: s[0]):
+                block.extend(stmt)
+        lines[start:end] = block
+    return "\n".join(lines)
+
+
+def reflow_pyi(
+    text: str, width: int = STUB_TARGET_WIDTH, *, first_party: str = ""
+) -> str:
     """Reflow every overlong signature and one-line docstring in a stub.
 
     Idempotent: a second pass finds nothing left over *width* to break, so
@@ -516,18 +715,22 @@ def reflow_pyi(text: str, width: int = STUB_TARGET_WIDTH) -> str:
         Complete ``.pyi`` source.
     width : int, optional
         Column target; defaults to the project-wide 79.
+    first_party : str, optional
+        The project's package, so :func:`sort_imports` can put an import
+        of the project's own classes in its own section (gh-2571).
 
     Returns
     -------
     str
-        The same source with overlong ``def``/``class`` headers broken across
-        lines, overlong one-line docstrings wrapped, and the blank lines
+        The same source with its imports in isort order
+        (:func:`sort_imports`), overlong ``def``/``class`` headers broken
+        across lines, overlong one-line docstrings wrapped, and the blank lines
         between members laid out by :func:`stub_blank_lines`. The interior
         of a multi-line docstring is returned untouched.
     """
     out: list[str] = []
     in_doc = ""
-    for line in text.split("\n"):
+    for line in sort_imports(text, first_party).split("\n"):
         if in_doc:
             out.append(line)
             if in_doc in line:
