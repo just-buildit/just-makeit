@@ -890,9 +890,9 @@ each such setter. Declare `error` on the property, or make the setter
 
 On a module object whose
 [fragment is sacred](../configuration.md#who-owns-a-modules-binding-fragment)
-(the default), a setter already in the fragment keeps its body, as any
-member's does: declare `error` when you add the property, or let jm own the
-fragment with `fragment = "generated"`, whose setters follow the manifest.
+(the default), a setter already in the fragment follows the manifest when
+it is jm's own render: see
+[Changing how an existing property is read](#changing-how-an-existing-property-is-read).
 
 ### A getter that can fail (`--getter-status`)
 
@@ -944,6 +944,32 @@ It needs a C getter call to test, so it is refused on a writable property
 `json` property (a `json` getter's `NULL` already raises), and on a property
 named for a state field (its getter is that field's accessor, which jm
 declares returning the value).
+
+### Changing how an existing property is read
+
+Moving a property between backings -- `field`, `--expr`, a computed getter,
+`--getter-status`, or a setter's `--error` -- is a manifest edit and a
+`jm apply`. Three things hold it to the manifest:
+
+- **Your C getter.** Moving to or from `getter_status` changes the getter's
+    signature, and its declaration and definition are yours. `jm apply`
+    refuses while the header declares it in the old shape, naming the
+    prototype to write:
+    `int <stem>_get_<prop>(const <stem>_state_t *state, T *out);` or
+    `T <stem>_get_<prop>(const <stem>_state_t *state);`. Coming from `field`
+    or `--expr` there is no getter yet, and jm declares and stubs it.
+- **The binding.** A standalone object's binding is rendered whole. A
+    module object's fragment is
+    [sacred](../configuration.md#who-owns-a-modules-binding-fragment), and
+    `jm apply` re-renders a getter or setter wrapper in it when the wrapper
+    is jm's own render of the property under another backing (`update ... Acc_getprop_eta (backing changed)`), together with the runtime docstring
+    whose `Raises` section moved. A wrapper you wrote is kept -- unless it
+    ignores a status the manifest now declares, which would never raise:
+    `jm apply` refuses, naming it. Delete the wrapper and its row in the
+    `PyGetSetDef` table and re-run `jm apply` to receive jm's, or make it
+    raise on a non-zero return.
+- **`jm status --check`** counts both before you apply: a wrapper `apply`
+    would re-render and one it would refuse (`PROPERTY STATUS`).
 
 ### Enum-valued properties (`--enum`)
 

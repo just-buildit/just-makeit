@@ -566,6 +566,10 @@ def run(
     # redirects that stderr away, so for a fragment nobody refreshes
     # the question was never put.
     record_entries: list[tuple[str, str, bool]] = []
+    # gh-2538: a property wrapper that ignores a status the manifest
+    # declares (`getter_status`, a setter's `error`): the conversion
+    # silently does nothing at runtime. Same shape, same allow hatch.
+    property_entries: list[tuple[str, str, bool]] = []
     # gh-848: why each unreconciled fragment differs, keyed by path.
     # Kept beside `entries` rather than widened into its tuple, which
     # several call sites unpack positionally.
@@ -1060,6 +1064,11 @@ def run(
         }
         _buf = io.StringIO()
         for _m in sorted(_mods):
+            # gh-2538: the one widening of the gate here, and a narrow one.
+            # A property wrapper that disagrees with its row's backing is a
+            # property documented to raise that never does (or reads what
+            # the row no longer says), not a body of unknown provenance.
+            _props: "list[tuple[str, str]]" = []
             try:
                 with (
                     contextlib.redirect_stdout(_buf),
@@ -1070,7 +1079,11 @@ def run(
                             p_.relative_to(root) if p_.is_absolute() else p_
                         ).as_posix()
                         for p_ in _docsync.refresh_module_fragment_docs(
-                            root, cfg, only_mod=_m, dry_run=True
+                            root,
+                            cfg,
+                            only_mod=_m,
+                            dry_run=True,
+                            property_findings=_props,
                         )
                     }
             except Exception:
@@ -1078,6 +1091,9 @@ def run(
                 # status down with it: the fragments then stay in the
                 # author-owned bucket, which is where they were before.
                 continue
+            property_entries += [
+                (_p, _d, _is_allowed(_p, allow_patterns)) for _p, _d in _props
+            ]
     entries = [e for e in entries if e[1] != "unreconciled"]
     drift = [e for e in entries if not e[2]]
     allowed = [e for e in entries if e[2]]
@@ -1205,6 +1221,9 @@ def run(
         # gh-1290: gating, on gh-823's test — the `.pyi` documents a
         # field the extension does not have.
         + sum(1 for e in record_entries if not e[2])
+        # gh-2538: gating on gh-823's test -- the property is documented to
+        # raise and the extension never does.
+        + sum(1 for e in property_entries if not e[2])
         + (_wide if _strict else 0)
         # gh-806: gates, unconditionally. The failure mode is a **green** CI
         # run — a scaffold that compiles, passes and is counted while the real
@@ -1347,6 +1366,10 @@ def run(
                     "kwargs_drift": [
                         {"path": p, "detail": d, "allowed": a}
                         for (p, d, a) in kwargs_entries
+                    ],
+                    "property_status_drift": [
+                        {"path": p, "detail": d, "allowed": a}
+                        for (p, d, a) in property_entries
                     ],
                     # gh-806: the file, why it is jm-shaped, and how much
                     # content is going unbuilt — the last of those is what
@@ -2646,6 +2669,26 @@ def run(
         )
         print()
 
+    if property_entries:
+        print(
+            f"PROPERTY STATUS ({len(property_entries)}) — a wrapper drops "
+            "a status the manifest declares:"
+        )
+        for path, detail, _allowed in property_entries:
+            print(f"  {'~' if _allowed else '!'} {path}")
+            print(f"      {detail}")
+            if _allowed:
+                print("      (allowed by status_allow — not counted)")
+        print(
+            "  `jm apply` re-renders a wrapper that is jm's own render of "
+            "another backing,\n"
+            "  and refuses one you wrote: delete it and its PyGetSetDef "
+            "row from the fragment\n"
+            "  and re-run `jm apply`, or make it raise on a non-zero "
+            "return."
+        )
+        print()
+
     if kwargs_entries:
         print(
             f"KWARGS ({len(kwargs_entries)}) — the constructor's keyword "
@@ -2702,6 +2745,7 @@ def run(
         # away from a stub that documents a field the extension has
         # no slot for.
         and not any(not e[2] for e in record_entries)
+        and not any(not e[2] for e in property_entries)  # gh-2538
         # gh-806: same treatment as the gating kwargs drift above. Saying
         # "OK — up to date" over a tree where a real test suite sits unbuilt
         # is the precise sentence this issue is about; the exit code alone
@@ -2873,6 +2917,12 @@ def run(
                 f", {sum(1 for e in record_entries if not e[2])} "
                 "record-drift (!)"
                 if any(not e[2] for e in record_entries)
+                else ""
+            )
+            + (
+                f", {sum(1 for e in property_entries if not e[2])} "
+                "property-status (!)"
+                if any(not e[2] for e in property_entries)
                 else ""
             )
             + (
