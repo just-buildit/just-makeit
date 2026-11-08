@@ -205,7 +205,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           printf 'matrix=%s\nexamples=%s\n' "$LEGS" "$EXAMPLES" \
-            | make -s ci-runner >> "$GITHUB_OUTPUT"
+            | make -s ci-runner CI_RUNNER_WORKFLOW=.github/workflows/ci.yml \
+            >> "$GITHUB_OUTPUT"
 
   test:
     # Named, so a leg's `runs_on` stays out of its check name.

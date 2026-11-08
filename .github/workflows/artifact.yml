@@ -90,7 +90,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           printf 'matrix=%s\n' "$LEGS" \
-            | make -s ci-runner >> "$GITHUB_OUTPUT"
+            | make -s ci-runner CI_RUNNER_WORKFLOW=.github/workflows/artifact.yml \
+            >> "$GITHUB_OUTPUT"
 
   smoke:
     name: Smoke test (${{ matrix.os }}, py${{ matrix.python-version }})

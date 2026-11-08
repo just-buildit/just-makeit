@@ -692,7 +692,14 @@ class TestEachMacosLegsRunner:
         assert {k[1] for k in jobs} >= self.STOCK
 
     def test_the_steps_pass_the_opt_in_and_the_token(self) -> None:
-        for step in (_runners_step(), _artifact_plan("runners")):
+        for step, own in (
+            (_runners_step(), CI_YML),
+            (_artifact_plan("runners"), ARTIFACT_YML),
+        ):
+            # A runner group restricted to selected workflows is matched
+            # against the file whose jobs the plan feeds: its own.
+            want = f"CI_RUNNER_WORKFLOW=.github/workflows/{own.name}"
+            assert want in step["run"], step["run"]
             env = step["env"]
             assert env["JB_SELF_HOSTED_MACOS"] == (
                 "${{ vars.JB_SELF_HOSTED_MACOS }}"
