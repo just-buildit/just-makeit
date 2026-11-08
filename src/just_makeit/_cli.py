@@ -344,6 +344,9 @@ Commands:
     --error EXC                 With --writable: the setter's C function returns
                                 int, and a non-zero return refuses the value and
                                 raises EXC (e.g. ValueError). Not with --field.
+    --getter-status             Read-only scalar only: the getter returns int and
+                                writes the value to *out; a non-zero return
+                                raises --error (default ValueError) on read.
     --error-message text        Text for that exception (rc appended).
     --doc "text"                Explicit docstring override.
     --view ClassName            Attach the property to a VIEW of the object
@@ -1180,6 +1183,7 @@ def _main() -> None:
         error = ""  # gh-2182
         error_message = ""
         py_type = ""  # gh-2347
+        getter_status = False  # gh-2538
 
         remaining = args[3:]
         i = 0
@@ -1220,6 +1224,9 @@ def _main() -> None:
                 i += 1
             elif tok == "--field":
                 field = True
+                i += 1
+            elif tok == "--getter-status":
+                getter_status = True  # gh-2538
                 i += 1
             elif tok == "--doc":
                 i += 1
@@ -1339,6 +1346,7 @@ def _main() -> None:
             error=error,
             error_message=error_message,
             py_type=py_type,
+            getter_status=getter_status,
         )
 
     elif cmd == "warning":
