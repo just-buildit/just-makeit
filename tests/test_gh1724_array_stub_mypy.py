@@ -74,7 +74,9 @@ _CALLS = [
     ("Opt()", False),
     ("Acc().steps(f32, out=f32)", False),
     ("Acc().set_h(f32)", False),
-    ("acc.buf = f32", False),
+    # A buffer view is read-only (gh-2543): the array it returns is
+    # writeable in place, and the setter jm used to render did not compile.
+    ("acc.buf = f32", True),
     ("Cblk().steps(f32, out=f32, gain=1.0)", False),
     ("Cacc().steps(f32, out=f32, gain=1.0)", False),
     ("Acc8().steps(u8, out=u8)", False),
