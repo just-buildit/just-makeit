@@ -5826,6 +5826,17 @@ def validate_property_error(
     Refusal
         Naming the property and what to change.
     """
+    if p.get("buf_field") and p.get("writable"):
+        # gh-2543: a buffer view has no setter. One was rendered anyway --
+        # a scalar parse into `T[] v` and a call to a `<stem>_set_<p>` jm
+        # never declared -- and did not compile. Refused first, so no later
+        # message (getter_error's) steers a view toward a setter.
+        raise Refusal(
+            f"{component}.{p['name']}: a buf_field property is a view of "
+            f"the buffer member, and the array it returns is already "
+            f"writeable in place; there is no setter to assign it. Drop "
+            f"writable."
+        )
     category = p.get("error") or ""
     getter_status = bool(p.get("getter_status"))
     getter_keys = [k for k in _GETTER_ERROR_KEYS if p.get(k)]
@@ -6918,9 +6929,10 @@ def make_properties_ctx(
             ),
         ]
         if writable:
-            # gh-1724: an array setter's value is an input array, spelled by
-            # the one helper; the getter keeps the returned ndarray's type.
-            set_t = T.array_param_annotation(ctype) if buf_field else py_t
+            # A buffer view is never writable (gh-2543 refuses it in
+            # `validate_property_error`), so the setter takes the getter's
+            # type.
+            set_t = py_t
             pyi_block += [
                 f"    @{pname}.setter",
                 f"    def {pname}(self, value: {set_t}) -> None: ...",
