@@ -29,7 +29,7 @@ class TestMergeModuleInit:
     def test_adds_new_export(self):
         src = 'from .dsp import Nco\n__all__ = ["Nco"]\n'
         out = _merge_module_init(src, "dsp", ["Nco", "Mixer"])
-        assert "from .dsp import Nco, Mixer" in out
+        assert "from .dsp import Mixer, Nco" in out
         assert '"Nco"' in out and '"Mixer"' in out
 
     def test_idempotent_no_duplicates(self):
@@ -75,12 +75,16 @@ class TestMergeModuleInit:
         assert '__all__ = ["Nco", "Mixer"]' in out
 
     def test_order_preserved_existing_first(self):
+        # `__all__` keeps the existing order and appends; the import line is
+        # in isort order (gh-2571), which ruff's `I` checks and `__all__`
+        # is not part of.
         src = 'from .dsp import Nco, Lo\n__all__ = ["Nco", "Lo"]\n'
         out = _merge_module_init(src, "dsp", ["Nco", "Lo", "Mixer"])
         import_line = [
             ln for ln in out.splitlines() if ln.startswith("from .dsp")
         ][0]
-        assert import_line == "from .dsp import Nco, Lo, Mixer  # noqa: E402"
+        assert import_line == "from .dsp import Lo, Mixer, Nco  # noqa: E402"
+        assert '__all__ = ["Nco", "Lo", "Mixer"]' in out
 
     def test_empty_exports_list_drops_the_stale_import(self):
         # gh-2516: a module whose last export is gone must not keep importing

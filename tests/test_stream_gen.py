@@ -100,7 +100,7 @@ class TestStreamCodegen:
             "--streamable",
         )
         pyi = (root / "src/proj/wave.pyi").read_text()
-        assert "from typing import final, Callable, Iterator" in pyi
+        assert "from typing import Callable, Iterator, final" in pyi
         assert "def stream(" in pyi
         assert "on_block: Callable[[NDArray[np.float32]], None] | None" in pyi
         assert "def __iter__(self) -> Iterator[NDArray[np.float32]]:" in pyi
