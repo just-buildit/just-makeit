@@ -1414,6 +1414,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # one not named here is silently absent from the replay.
             error=p.get("error", ""),
             error_message=p.get("error_message", ""),
+            # gh-2538: a getter that can fail.
+            getter_status=bool(p.get("getter_status")),
         )
 
     for comp in all_comps:
@@ -3878,6 +3880,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             str(p.get("writable", "")).lower() in ("true", "1", "yes"),
             csym=CSYM.stem(cfg, comp),
             setter_type=setter_return_type(p),  # gh-2182
+            getter_status=bool(p.get("getter_status")),  # gh-2538
         )
     return out
 

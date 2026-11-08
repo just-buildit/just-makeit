@@ -551,6 +551,10 @@ PROPERTY_KEYS = frozenset(
         # `error_message`, spelled as a method's pair.
         "error",
         "error_message",
+        # gh-2538: a read-only property's getter may fail -- it returns an
+        # int status and writes the value through an out-pointer, and a
+        # non-zero status raises `error` with `error_message` on read.
+        "getter_status",
     }
 )
 

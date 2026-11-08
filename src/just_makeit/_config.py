@@ -7313,6 +7313,10 @@ ERROR_CATEGORIES = frozenset(
         # rest.
         "EOFError",
         "KeyboardInterrupt",
+        # gh-2538: what a property raises when its value does not exist in
+        # the object's configuration -- the exception `getattr` with a
+        # default and `hasattr` already treat as "no such attribute".
+        "AttributeError",
     }
 )
 

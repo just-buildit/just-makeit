@@ -750,7 +750,7 @@ just-makeit property <object> <prop_name>
     [--module name]
     [--type TYPE]
     [--writable] [--field] [--enum NAME]
-    [--error EXC [--error-message TEXT]]
+    [--error EXC [--error-message TEXT]] [--getter-status]
     [--buf-field name [--len-field name] [--valid-field name]]
     [--expr "C expr"]
     [--value-type TYPE] [--count-fn FN] [--key-fn FN] [--value-fn FN]
@@ -795,7 +795,8 @@ directly into the state struct and auto-implements the getter as
 | `--valid-field name` | With `--buf-field`: a state member that, while zero, makes the property read `None`.                                                                                                                                                                                                                                                                                                                 |
 | `--expr "C expr"`    | Back the property with an inline C expression, emitted as written. Mutually exclusive with `--buf-field`.                                                                                                                                                                                                                                                                                            |
 | `--error EXC`        | With `--writable`: the C setter returns `int`, and a non-zero return refuses the value — the assignment raises `EXC` (a method's `--error` names, e.g. `ValueError`). Refused with `--field`, which has no C setter to ask. See [A setter that refuses a value](#a-setter-that-refuses-a-value-error). Persists as `error = "EXC"`.                                                                  |
-| `--error-message T`  | With `--error`: the exception's text, with `(rc=N)` appended. Default `"<stem>_set_<prop> failed"`. Persists as `error_message = "…"`.                                                                                                                                                                                                                                                               |
+| `--getter-status`    | Read-only computed property only: the C getter returns an `int` status and writes the value through `*out`, and a non-zero status raises `--error` (default `ValueError`) on read. See [A getter that can fail](#a-getter-that-can-fail-getter-status). Persists as `getter_status = true`.                                                                                                          |
+| `--error-message T`  | With `--error` or `--getter-status`: the exception's text, with `(rc=N)` appended. Default `"<stem>_set_<prop> failed"` (`"<stem>_get_<prop> failed"` under `--getter-status`). Persists as `error_message = "…"`.                                                                                                                                                                                   |
 | `--doc "text"`       | Python docstring for the getter (and setter, if `--writable`).                                                                                                                                                                                                                                                                                                                                       |
 | `--enum NAME`        | Present the property as a **string** from the named `[[enum]]` SSOT instead of the raw `int` (gh-519). See below.                                                                                                                                                                                                                                                                                    |
 | `--value-type TYPE`  | Element type of a `dict`/`list`/`tuple` property (gh-543). A C type means jm emits the conversion and your accessor stays pure C; `object` means `--value-fn` returns a `PyObject *` itself. See [Container properties](#container-properties-dict-list-and-tuple).                                                                                                                                  |
@@ -893,7 +894,8 @@ the binding. The `.pyi` and `help()` both document the exception in a
 `Raises` section.
 
 `--error` needs a C setter call whose return jm can test, so it is refused
-on a read-only property, with `--field` (the setter assigns the member
+on a read-only property (unless `--getter-status` makes it the
+[getter's](#a-getter-that-can-fail-getter-status)), with `--field` (the setter assigns the member
 directly: drop `--field` and declare the setter returning `int`), and on a
 property named for a state field (its setter is that field's accessor, which
 jm declares `void`). `--error-message` without `--error` is refused too.
@@ -910,6 +912,57 @@ On a module object whose
 (the default), a setter already in the fragment keeps its body, as any
 member's does: declare `error` when you add the property, or let jm own the
 fragment with `fragment = "generated"`, whose setters follow the manifest.
+
+### A getter that can fail (`--getter-status`)
+
+A computed property's binding returns whatever `<stem>_get_<prop>(state)`
+returns, so a value that does not exist in the object's current
+configuration -- a search-only statistic on an object configured to map --
+has to read as `NaN` or `0`, which looks like a measurement.
+`--getter-status` (manifest `getter_status = true`) gives the getter a
+status instead:
+
+```toml
+[[cor.properties]]
+name = "eta"
+type = "double"
+getter_status = true
+error = "AttributeError"
+error_message = "eta is search-only"
+```
+
+```c
+int <pkg>_cor_get_eta(const <pkg>_cor_state_t *state, double *out)
+{
+    if (state->flavor != COR_SEARCH)
+        return 1;           /* no value: the read raises */
+    *out = state->eta;
+    return 0;
+}
+```
+
+```python
+>>> cor.eta
+AttributeError: eta is search-only (rc=1)
+>>> hasattr(cor, "eta")
+False
+```
+
+**The getter returns `int`**: 0 means it wrote `*out`, anything else that
+there is no value, and the read raises `error` (default `ValueError`, as a
+method's `--status-return`) with `error_message`. jm declares the getter that
+way and stubs it, and the `.pyi` and `help()` document the exception in a
+`Raises` section. `AttributeError` is the natural choice for "this property
+does not apply here": `hasattr` and `getattr(obj, name, default)` read it
+as absence. It composes with `--enum`, whose out-of-range check reads the
+value the getter wrote.
+
+It needs a C getter call to test, so it is refused on a writable property
+(`error` there is the setter's), with `--field`, `--expr`, `--buf-field` or
+`--capsule` (each reads the value with no getter call), on a container or
+`json` property (a `json` getter's `NULL` already raises), and on a property
+named for a state field (its getter is that field's accessor, which jm
+declares returning the value).
 
 ### Enum-valued properties (`--enum`)
 
