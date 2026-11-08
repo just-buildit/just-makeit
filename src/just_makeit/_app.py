@@ -1359,8 +1359,13 @@ def _c_io_loop(
     return ""
 
 
-# libm only off-Windows — MinGW/MSVC link the math runtime implicitly (gh-187).
-_LIBM = "$<$<NOT:$<PLATFORM_ID:Windows>>:m>"
+# libm, by the one reference every generated link line uses: an absolute
+# path from `find_library`, empty where there is no libm (Windows). It was
+# `$<$<NOT:$<PLATFORM_ID:Windows>>:m>` here -- the bare name `m` inside a
+# generator expression, which a target named `m` (`jm module m`, the
+# extension) shadows exactly as gh-1305 measured: macOS refuses the MH_BUNDLE
+# at link, Linux links the module DSO (gh-2556's gate, on macOS).
+_LIBM = R.LIBM_REF
 
 
 def _app_object_link(cfg: dict, object_: str) -> str:
@@ -2049,7 +2054,9 @@ def _link_target(cfg: dict, entry: dict) -> str:
         mod, _fn = _find_fn(
             cfg, entry["function"], entry.get("module") or None
         )
-        return f"{mod}_core " + _LIBM
+        # The module's core target is named for its cname (`dsp_filters`),
+        # never the dotted id.
+        return f"{C.module_paths(mod).cname}_core " + _LIBM
     if entry.get("commands"):
         # Stub command bodies link the project's aggregate static lib so any
         # component/function symbol is reachable once the user fills them in.
