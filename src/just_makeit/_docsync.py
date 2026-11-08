@@ -613,47 +613,6 @@ def _is_reclaimable_glue(name: str, cur: str, der: str) -> bool:
     return name in _gluedoc.glue_method_names() and bool(der)
 
 
-#: A numpy ``Raises`` heading as `_norm` leaves it: title, then its rule.
-_NORM_RAISES = "Raises------"
-
-#: Any numpy section heading as `_norm` leaves it.
-_NORM_SECTION_RE = re.compile(r"[A-Za-z]-{3,}")
-
-
-def _differs_in_raises_only(ncur: str, nder: str) -> bool:
-    """Whether two normalised docs differ only in a trailing Raises section.
-
-    gh-2538. A ``Raises`` section in a binding's doc is jm's, derived from
-    the manifest (a property's ``getter_status`` or setter ``error``, a
-    method's declared failure), so a slot whose text BEFORE it is what jm
-    renders now, and whose Raises section is the last section on both sides,
-    holds jm's render of an earlier row: the reading of the doc changed
-    because the manifest's raise did. Without this, a property moved to
-    ``getter_status`` kept ``"Eta."`` at runtime while its ``.pyi``
-    documented the exception -- neither the scaffold form nor the derived
-    one, so it read as hand-written.
-
-    >>> _differs_in_raises_only("Eta.", "Eta.Raises------ValueErrorOnread")
-    True
-    >>> _differs_in_raises_only("Eta.Raises------KeyErrorx",
-    ...                         "Eta.Raises------ValueErrory")
-    True
-    >>> _differs_in_raises_only("Mine.", "Eta.Raises------ValueErrorx")
-    False
-    >>> _differs_in_raises_only("Eta.", "Eta.Raises------XExamples--------y")
-    False
-    """
-    if _NORM_RAISES not in ncur and _NORM_RAISES not in nder:
-        return False
-    heads = []
-    for text in (ncur, nder):
-        head, sep, tail = text.partition(_NORM_RAISES)
-        if sep and _NORM_SECTION_RE.search(tail):
-            return False  # a section follows Raises: not just the raise
-        heads.append(head)
-    return heads[0] == heads[1]
-
-
 def _refresh_slot(
     cur: str,
     der: str | None,
@@ -699,8 +658,6 @@ def _refresh_slot(
         return der  # jm's own output from some earlier release -> refresh
     if _is_reclaimable_glue(name, cur, der):
         return der  # jm-owned glue still holding jm's old one-liner
-    if _differs_in_raises_only(ncur, nder):
-        return der  # the manifest's raise moved; the rest is as jm wrote it
     if nfb is not None and nder != nfb:
         # gh-1288: the HEADER declares this doc, and the header is the
         # author's. `fb` is this same fragment rendered with the Doxygen
@@ -2859,11 +2816,10 @@ def refresh_module_fragment_docs(
     (`status`, which prints its own report) already redirects.
 
     *property_findings* (gh-2538), when a list, receives ``(path, detail)``
-    for each property wrapper that disagrees with its manifest row: one
-    `apply` re-renders (`_object._restyled_property_units`) and one it
-    refuses (`property_status_breaks`). `status` passes it on a dry run, so
-    `--check` counts both, where the stale body otherwise sat in its
-    author-owned bucket, uncounted.
+    for each property wrapper that ignores a status its manifest row
+    declares (`property_status_breaks`), which `apply` refuses. `status`
+    passes it on a dry run, so `--check` counts each, where the stale body
+    otherwise sat in its author-owned bucket, uncounted.
     """
     from . import _object as O
 
@@ -3047,24 +3003,12 @@ def refresh_module_fragment_docs(
                     if _n in _was and _n in _own:
                         if _norm_unit(_was[_n]) != _norm_unit(_own[_n]):
                             print(f"  update  {_rel}: record dtype {_n}")
-                # gh-2538: a property wrapper re-rendered because its row
-                # now reads (or writes) the value another way. Loud: the
-                # body that was there is the one the diff shows going.
-                for _n in _own:
-                    if _PROP_UNIT_RE.search(_n) and _n in _was:
-                        if _norm_unit(_was[_n]) != _norm_unit(_own[_n]):
-                            print(f"  update  {_rel}: {_n} (backing changed)")
-                            if property_findings is not None:
-                                property_findings.append(
-                                    (
-                                        Path(_rel).as_posix(),
-                                        f"{_n} is jm's render of another"
-                                        " backing; `jm apply` re-renders it",
-                                    )
-                                )
-            # gh-2538: what is left is the author's. One that drops a status
-            # the manifest declares -- a getter_status read, a setter's
-            # `error` -- would compile, pass, and never raise: refused.
+            # gh-2538: a kept property wrapper is the author's, so one that
+            # drops a status the manifest declares -- a getter_status read,
+            # a setter's `error` -- would compile, pass, and never raise.
+            # jm cannot tell its own old render from an edit by reading the
+            # text, so it does not rewrite the wrapper: it refuses, naming
+            # the delete-and-reapply that hands the unit back to jm.
             _breaks = property_status_breaks(updated, reference)
             if property_findings is not None:
                 property_findings += [
@@ -3116,13 +3060,14 @@ def property_status_breaks(existing: str, reference: str) -> "list[str]":
     gh-2538. In a fresh render a ``getter_status`` getter and a setter
     declaring ``error`` (gh-2182) both call their C function as
     ``int _rc = <fn>(...)`` and raise on a non-zero one. A sacred fragment
-    keeps a wrapper body it finds; `_object._restyled_property_units`
-    re-renders one that is jm's own render of another backing, so what
-    reaches here is the author's. One that does not use *fn*'s return at
-    all -- it reads a member, an expression, or calls *fn* as a bare
-    statement -- compiles, passes, and never raises: the conversion the
-    manifest declares silently does nothing. Each such wrapper is named
-    with the fix.
+    keeps every wrapper body it finds, jm's old render or the author's
+    alike -- the text cannot say which, so jm does not guess. One that
+    does not use *fn*'s return as a status -- it reads a member or an
+    expression, calls *fn* as a bare statement, or (a getter) calls it in
+    the one-argument value shape -- would compile against an old prototype
+    or fail on the new one, and in neither case raise: the conversion the
+    manifest declares silently does nothing. Each such wrapper is named, and
+    `apply` refuses with `PROPERTY_STATUS_FIX`.
 
     Read on comment- and string-masked code (`_code_mask`), so prose about
     the call is not the call. A wrapper the fragment does not have yet is
@@ -3142,6 +3087,18 @@ def property_status_breaks(existing: str, reference: str) -> "list[str]":
     >>> ok = ref.replace("int _rc = o_set_a", "int rc = 7; rc =  o_set_a")
     >>> property_status_breaks(ok, ref)
     []
+
+    A getter must pass the out-pointer too -- the value shape is a finding:
+
+    >>> get = ("static PyObject *\\nO_getprop_b(O *self, void *c)\\n"
+    ...        "{\\n    double _got = 0.0;\\n"
+    ...        "    int _rc = o_get_b(self->handle, &_got);\\n}\\n")
+    >>> old = get.replace("int _rc = o_get_b(self->handle, &_got);",
+    ...                   "return PyFloat_FromDouble(o_get_b(self->handle));")
+    >>> len(property_status_breaks(old, get))
+    1
+    >>> property_status_breaks(get, get)
+    []
     """
     from ._object import _extract_c_function_bodies
 
@@ -3156,10 +3113,11 @@ def property_status_breaks(existing: str, reference: str) -> "list[str]":
             continue
         fn = m.group(1)
         # Used: assigned, tested, returned or passed on -- anything but a
-        # bare statement. A one-argument call to a two-argument getter does
-        # not compile, so it needs no finding here.
+        # bare statement. A getter's call must also pass a second argument
+        # (the out-pointer): one-argument is the value shape.
+        args = r"\((?:[^;()]|\([^;()]*\))*," if "_getprop_" in name else r"\("
         used = re.search(
-            rf"(?:[=(!,?:]|\breturn|&&|\|\|)\s*{re.escape(fn)}\s*\(",
+            rf"(?:[=(!,?:]|\breturn|&&|\|\|)\s*{re.escape(fn)}\s*{args}",
             _code_mask(have[name]),
         )
         if used:
@@ -3173,13 +3131,14 @@ def property_status_breaks(existing: str, reference: str) -> "list[str]":
     return out
 
 
-#: The fix `apply` names when it refuses a `property_status_breaks` finding:
-#: by then jm has re-rendered every wrapper that was its own.
+#: The fix `apply` names when it refuses a `property_status_breaks` finding.
+#: A module fragment is sacred, so jm never rewrites a wrapper it finds; it
+#: renders one that is absent, row and wrapper together.
 PROPERTY_STATUS_FIX = (
-    "Each is not jm's render of any backing, so jm will not rewrite it:"
-    " delete the wrapper and its row in the PyGetSetDef table from the"
-    " fragment and re-run `jm apply` to receive jm's, or make it raise on"
-    " a non-zero return."
+    "The fragment is yours, so jm will not rewrite them: delete each"
+    " wrapper and its row in the PyGetSetDef table (a writable property's"
+    " getter and setter both), then re-run `jm apply` to receive jm's"
+    " render; or make the wrapper raise on a non-zero return."
 )
 
 

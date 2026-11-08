@@ -1065,9 +1065,9 @@ def run(
         _buf = io.StringIO()
         for _m in sorted(_mods):
             # gh-2538: the one widening of the gate here, and a narrow one.
-            # A property wrapper that disagrees with its row's backing is a
-            # property documented to raise that never does (or reads what
-            # the row no longer says), not a body of unknown provenance.
+            # A property wrapper that ignores a status its row declares is a
+            # property documented to raise that never does, whoever wrote
+            # it -- and `apply` refuses it, so `--check` must too.
             _props: "list[tuple[str, str]]" = []
             try:
                 with (
@@ -2680,12 +2680,12 @@ def run(
             if _allowed:
                 print("      (allowed by status_allow — not counted)")
         print(
-            "  `jm apply` re-renders a wrapper that is jm's own render of "
-            "another backing,\n"
-            "  and refuses one you wrote: delete it and its PyGetSetDef "
-            "row from the fragment\n"
-            "  and re-run `jm apply`, or make it raise on a non-zero "
-            "return."
+            "  `jm apply` refuses these: the fragment is yours, so jm will "
+            "not rewrite a\n"
+            "  wrapper in it. Delete each wrapper and its PyGetSetDef row "
+            "and re-run\n"
+            "  `jm apply` to receive jm's render, or make it raise on a "
+            "non-zero return."
         )
         print()
 
