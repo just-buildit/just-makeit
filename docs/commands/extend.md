@@ -1775,7 +1775,8 @@ binding, C test and bench all carry the parameter. On an existing object:
     until you add the parameter, and re-running `just-makeit error` for the
     object re-renders its fragment's constructor.
 - A view's `create_fn` is declared in the same header and checked the same
-    way: a prototype without the parameter is `CTOR` (`jm error <obj> --view   <Class> ...` re-renders the view's constructor).
+    way: a prototype without the parameter is `CTOR`, and re-running
+    `just-makeit error` with `--view` re-renders the view's constructor.
 
 ______________________________________________________________________
 
