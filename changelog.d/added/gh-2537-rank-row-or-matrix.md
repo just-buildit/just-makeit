@@ -7,6 +7,7 @@
     a 2-D one as before, and refuses any other rank with a `ValueError`
     naming both; the C signature does not change. It holds on the required
     and the optional-dispatch paths, whose rank refusal now also releases
-    every array the constructor already holds. On a method's `T[][]` param
-    the list is the same guard. The `.pyi` says what a 1-D input means; any
-    other list, or one on a 1-D type, is refused at load.
+    every array the constructor already holds. The `.pyi` says what a 1-D
+    input means. The list is an init param's only: any other list, the list
+    on a 1-D type, and the list on a method's or a module function's param
+    (whose `T[][]` passes a flat length, gh-1908) are refused at load.
