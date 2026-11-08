@@ -1325,35 +1325,51 @@ def _splice_init_py(
     component: str,
     Component: str,
     owned: "Iterable[str]" = (),
-) -> None:
+) -> bool:
     """Add `from .component import Component` and update __all__ in-place.
 
     Never removes, and never reorders the author's lines, so user edits are
-    preserved. No-op if the import is already present. jm's own re-export
-    lines -- *component*'s and those of the standalone objects in *owned*
-    -- are then put in isort order (gh-2571).
+    preserved. No-op if the import is already present, in either form
+    (gh-2514). jm's own re-export lines -- *component*'s and those of the
+    standalone objects in *owned* -- are then put in isort order (gh-2571).
+    Returns whether it wrote the file.
     """
+    from ._object import (
+        _PLAIN_ALL_RE,
+        _import_re,
+        _parse_import_names,
+        wrap_all,
+    )
+
     text = init_py.read_text(encoding="utf-8")
+    # Read in either form: gh-2514 writes a long re-export wrapped.
+    have = _import_re(component).search(text)
+    if have and Component in _parse_import_names(have.group(0)):
+        return False
     import_line = f"from .{component} import {Component}\n"
-    if import_line in text:
-        return
 
-    # Insert after the last `from .xxx import` line, or before __all__ if none.
-    lines = text.splitlines(keepends=True)
-    last_import_idx = -1
-    for i, line in enumerate(lines):
-        if re.match(r"^from \.\w+ import \w+", line):
-            last_import_idx = i
-    if last_import_idx >= 0:
-        lines.insert(last_import_idx + 1, import_line)
+    # Insert after the last relative import statement -- its last line, when
+    # it is wrapped -- or at the end if there is none.
+    last = None
+    for last in _import_re(None).finditer(text):
+        pass
+    if last is not None and text.startswith("\n", last.end()):
+        at = last.end() + 1
+        text = text[:at] + import_line + text[at:]
+    elif last is not None:  # the file ends on that statement
+        text = f"{text}\n{import_line}"
     else:
-        lines.append(import_line)
-    text = "".join(lines)
+        sep = "\n" if text and not text.endswith("\n") else ""
+        text = text + sep + import_line
 
-    # Append Component to __all__ = [...] (handles single- and multi-line).
-    # If __all__ is absent entirely, append it.
+    # Append Component to __all__. An `__all__` in jm's own shape is
+    # re-emitted, wrapped once it passes the column target (gh-2514); any
+    # other is the author's, spliced in place (single- or multi-line). If
+    # __all__ is absent entirely, append it.
     all_re = re.compile(r"(__all__\s*=\s*\[)(.*?)(\])", re.DOTALL)
-    if all_re.search(text):
+    if _PLAIN_ALL_RE.search(text):
+        text = wrap_all(text, [Component])
+    elif all_re.search(text):
 
         def _splice_all(m: re.Match) -> str:
             inner = m.group(2)
@@ -1378,6 +1394,7 @@ def _splice_init_py(
 
     _textio.write_text(init_py, text)
     print(f"  update  {init_py}")
+    return True
 
 
 def _real_root(root: Path) -> Path:
@@ -1998,7 +2015,10 @@ def run(
     # Python package — create __init__.py on first component; splice on subsequent ones
     init_py = root / "src" / pkg / "__init__.py"
     if not init_py.exists():
-        _write(init_py, r(init_py_tmpl))
+        from ._object import sort_reexports, wrap_all
+
+        # In jm's form from the first write: a long name wraps (gh-2514).
+        _write(init_py, wrap_all(sort_reexports(r(init_py_tmpl), {comp})))
     else:
         _splice_init_py(
             init_py,
