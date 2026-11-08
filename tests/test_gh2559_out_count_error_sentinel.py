@@ -383,3 +383,64 @@ def test_an_undeclared_method_is_unchanged(project):
     )  # fmt: skip
     ext = (project / "native/src/o/o_ext.c").read_text("utf-8")
     assert "y == (" not in ext, ext
+
+
+#: (id, the method's shape flags, the count local the wrapper declares).
+_SHAPES = {
+    "out-count": (
+        ["--arg-type", "void", "--return-type", "size_t",
+         "--out-param", "out:float[]"],
+        "size_t y = ",
+    ),
+    "variable-output": (
+        ["--arg-type", "float", "--return-type", "float",
+         "--variable-output"],
+        "size_t n_out = ",
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_a_fragment_testing_another_value_is_still_reported(tmp_path, shape):
+    """The marker reads the VALUE tested, per method: a sacred fragment
+    comparing its count with something else (``(size_t)0``) does not
+    satisfy a declared ``SIZE_MAX`` -- a spelling-only marker took it for
+    the sentinel and the report vanished (review of #2561)."""
+    flags, local = _SHAPES[shape]
+    _ok("new", "q", cwd=tmp_path)
+    proj = tmp_path / "q"
+    _ok("module", "m", cwd=proj)
+    _ok("object", "r", "--module", "m", cwd=proj)
+    _ok("method", "r", "surface", "--module", "m", *flags, cwd=proj)
+    frag = proj / "native/src/m/m_ext_r.c"
+    code = frag.read_text("utf-8")
+    at = code.index(local)
+    end = code.index("\n", at) + 1
+    decoy = f"    if ({local.split()[1]} == (size_t)0) {{ }}\n"
+    frag.write_text(code[:end] + decoy + code[end:], encoding="utf-8")
+    p = proj / "objects" / "r.toml"
+    body = p.read_text("utf-8")
+    assert body.count('name = "surface"\n') == 1, body
+    p.write_text(
+        body.replace(
+            'name = "surface"\n',
+            'name = "surface"\nerror_sentinel = "SIZE_MAX"\n',
+        ),
+        encoding="utf-8",
+    )
+    r = run_cli("apply", cwd=proj)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert decoy in frag.read_text("utf-8")
+    assert "declares a refusal value for the count" in out, out
+
+
+def test_the_stub_states_the_contract(project):
+    """The `_core.c` stub's IMPLEMENT note says what to return and how to
+    refuse, in the words a variable_output stub uses (`_refuse_note`)."""
+    _ok("method", "o", "surface", *SURFACE, cwd=project)
+    core = (project / "native/src/o/o_core.c").read_text("utf-8")
+    assert (
+        "/* <<IMPLEMENT: surface: return the count written into out, or "
+        "SIZE_MAX to refuse >> */" in core
+    ), core
