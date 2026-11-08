@@ -1,5 +1,6 @@
-import pytest
 import numpy as np
+import pytest
+
 from <<package>>.<<module>> import <<Component>>
 <<pytest_module_skip>>
 

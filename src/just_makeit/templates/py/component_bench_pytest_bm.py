@@ -3,8 +3,8 @@
 Run: pytest src/<<package>>/benchmarks/bench_<<component>>.py --benchmark-only
 """
 
-import pytest
 import numpy as np
+import pytest
 
 from <<package>> import <<Component>>
 

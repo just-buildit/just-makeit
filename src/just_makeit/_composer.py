@@ -5703,7 +5703,12 @@ def render_pyi(cfg: dict, module: str) -> str:
     Covers the source / segment / timeline / composer types, the factories,
     and — when enabled — the JSON faces. Docstrings include defaults and enum
     choices from the manifest (gh-375)."""
-    from ._stubs import positional_only
+    from ._stubs import (
+        _NUMPY_IMPORT_LINES,
+        import_head,
+        party_of,
+        positional_only,
+    )
 
     src = C.composer_source(cfg, module)
     seg = C.composer_segment(cfg, module)
@@ -5714,6 +5719,10 @@ def render_pyi(cfg: dict, module: str) -> str:
     cname = oo.get("composer_type_name", "Composer")
     # Annotated so ranged fields render `float | tuple[float, float]`.
     src_fields = _source_fields(cfg, module)
+    _owned = party_of(
+        [f["_py_import"] for f in src_fields if f.get("_py_import")],
+        C.project_name(cfg),
+    )
     seg_fields = _segment_fields(cfg, module)
     src_sig = _pyi_field_sig(src_fields)
     seg_scalar_sig = _pyi_field_sig(seg_fields)
@@ -5731,8 +5740,20 @@ def render_pyi(cfg: dict, module: str) -> str:
         # gh-1499: `[module.X] doc`, the module's docstring; `render_ext`
         # puts the same text in `m_doc`.
         *module_docstring_lines(cfg, module),
-        "from __future__ import annotations",
-        f"from typing import {typing_imports}",
+        # gh-2571: in isort's sections, through the one layout every stub
+        # writer's imports take; the class an owned-pointer field is bound
+        # from (gh-1711) is in the project's package or another one.
+        *import_head(
+            future=["from __future__ import annotations"],
+            std=[f"from typing import {typing_imports}"],
+            third=[
+                "from typing_extensions import disjoint_base",
+                *_NUMPY_IMPORT_LINES,
+                *_owned["third"],
+            ],
+            first=_owned["first"],
+            local=_owned["local"],
+        ),
         # gh-560: every composer type is a C type with its own instance layout,
         # so it is a *disjoint base* — it cannot be combined with another such
         # base by multiple inheritance. Unlike the handle and object kinds,
@@ -5740,12 +5761,6 @@ def render_pyi(cfg: dict, module: str) -> str:
         # 0.19.17), so `@final` would be a lie; `@disjoint_base` is the accurate
         # marker. It lives in typing_extensions, whose stubs mypy bundles — a
         # `.pyi` is never executed, so this adds no runtime dependency.
-        "from typing_extensions import disjoint_base",
-        "import numpy as np",
-        "import numpy.typing as npt",
-        "from numpy.typing import NDArray",
-        # gh-1711: the class an owned-pointer field is bound from.
-        *sorted({f["_py_import"] for f in src_fields if f.get("_py_import")}),
         "",
         "@disjoint_base",
         f"class {src_t}:",
@@ -5979,10 +5994,7 @@ def render_pyi(cfg: dict, module: str) -> str:
     # (`_render.render_component_pyi`, `_stubs.make_module_pyi`).
     from ._stubs import prune_stub_imports
 
-    return reflow_pyi(
-        "\n".join(prune_stub_imports(lines)),
-        first_party=C.project_name(cfg),
-    )
+    return reflow_pyi("\n".join(prune_stub_imports(lines)))
 
 
 def bridge_h(module: str, owner: "INC.Owner") -> str:

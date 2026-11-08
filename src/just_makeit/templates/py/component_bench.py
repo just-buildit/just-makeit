@@ -6,6 +6,7 @@ runs it: it is a timeit script, run standalone.
 """
 
 import time
+
 import numpy as np
 
 from <<package>> import <<Component>>

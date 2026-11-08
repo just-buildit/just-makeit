@@ -22,7 +22,7 @@ import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 from . import _color as Color
 from . import _borrow
@@ -720,6 +720,71 @@ def _parse_import_names(stmt: str) -> list[str]:
     return out
 
 
+#: A re-export line exactly as jm writes it (:func:`_fmt_from_import`, and
+#: :func:`_init.ensure_dll_preamble` for a standalone object's): relative,
+#: plain names, one line, ``# noqa: E402``. Nothing else in an
+#: ``__init__.py`` is jm's.
+_REEXPORT_LINE_RE = re.compile(
+    r"^from \.(\w+) import (\w+(?:, \w+)*)  # noqa: E402$"
+)
+
+
+def sort_reexports(text: str, owned: "Iterable[str]") -> str:
+    """*text* with jm's re-export lines in isort order (gh-2571).
+
+    ruff's isort rule (``I001``) wants a block of imports sorted by module
+    and the names in each sorted by type (CONSTANTS, Classes, the rest),
+    each naturally ordered -- ``w2`` before ``w10``, ``Stage2`` before
+    ``Stage10``. jm appended a new object's line after the last one and
+    its name after the last name, so a package re-exported in the order its
+    objects were added.
+
+    Only jm's own lines move: the exact shape jm writes
+    (:data:`_REEXPORT_LINE_RE`), importing from a submodule in *owned* --
+    the ones jm re-exports from. An ``__init__.py`` is a merge target that
+    holds the author's code too (:func:`_pyfmt.generated_py_files`), and an
+    author's line can take jm's shape. Each run of consecutive jm lines is
+    sorted where it stands; an author line is never moved or rewritten.
+    Idempotent.
+
+    >>> src = ("from ._version import v  # noqa: E402\\n"
+    ...        "from .w10 import W10  # noqa: E402\\n"
+    ...        "from .w2 import W2  # noqa: E402\\n"
+    ...        "from .m import clamp, Stage10, Stage2  # noqa: E402\\n")
+    >>> print(sort_reexports(src, {"w10", "w2", "m"}), end="")
+    from ._version import v  # noqa: E402
+    from .m import Stage2, Stage10, clamp  # noqa: E402
+    from .w2 import W2  # noqa: E402
+    from .w10 import W10  # noqa: E402
+    """
+    from ._pyfmt import member_key, natural_key
+
+    owned = set(owned)
+
+    def _ours(line: str) -> "re.Match[str] | None":
+        m = _REEXPORT_LINE_RE.match(line)
+        return m if m and m.group(1) in owned else None
+
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        if not _ours(lines[i]):
+            i += 1
+            continue
+        j = i
+        run = []
+        while j < len(lines) and (m := _ours(lines[j])):
+            run.append((m.group(1), m.group(2).split(", ")))
+            j += 1
+        run.sort(key=lambda r: natural_key(r[0]))
+        lines[i:j] = [
+            _fmt_from_import(mod, sorted(names, key=member_key))
+            for mod, names in run
+        ]
+        i = j
+    return "\n".join(lines)
+
+
 def _fmt_from_import(module: str, names: list[str]) -> str:
     """Render a ``from .<module> import ...`` line (single-line canonical).
 
@@ -970,13 +1035,16 @@ def _merge_module_init(
     <BLANKLINE>
     """
     import_pat = _import_re(module)
+    # gh-2571: the submodules whose re-export lines are jm's to sort -- this
+    # module's, its declared reexports and its package siblings'.
+    owned = {module, *(reexports or {}), *(siblings or [])}
 
     m = import_pat.search(existing)
     existing_names = _parse_import_names(m.group(0)) if m else []
 
     # Authoritative: the module's own import line holds exactly its current
-    # C-extension exports (laid out in isort order on the way out, gh-2571;
-    # this order is `__all__`'s). Keep surviving names in their order, drop
+    # C-extension exports (`__all__` order; the import line is put in isort
+    # order on the way out, gh-2571). Keep surviving names in order, drop
     # any the manifest no longer declares (gh-329: a removed object must not
     # linger as a stale `from .<module> import Old` → ImportError at runtime),
     # then append newly added names.
@@ -1029,7 +1097,9 @@ def _merge_module_init(
 
     all_names = merged + [n for n in reexport_names if n not in seen]
     if not all_names and not m:
-        return _modplatforms.guard_init(existing, platforms or {})
+        return _modplatforms.guard_init(
+            sort_reexports(existing, owned), platforms or {}
+        )
 
     result = existing
     if m and not merged:
@@ -1103,14 +1173,11 @@ def _merge_module_init(
         result = _ALL_RE.sub(lambda _: new_all, result, count=1)
     else:
         result = result.rstrip("\n") + f"\n{new_all}\n"
-    # gh-2571: jm's re-export lines in isort order -- the names within each
-    # and the lines among themselves -- so a project selecting ruff's `I`
-    # finds this file clean. Only runs of relative imports: the rest of the
-    # file is the author's.
-    from ._pyfmt import sort_imports
-
-    result = sort_imports(result, relative_only=True)
-    return _modplatforms.guard_init(result, platforms or {})
+    # gh-2571: the import lines in isort order. `__all__` keeps the order
+    # above, which ruff's `I` does not read.
+    return _modplatforms.guard_init(
+        sort_reexports(result, owned), platforms or {}
+    )
 
 
 _NORMALIZE_WS_RE = re.compile(r"\s+")
