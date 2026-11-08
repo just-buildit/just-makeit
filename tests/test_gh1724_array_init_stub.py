@@ -271,6 +271,56 @@ def build_project(root: Path) -> Path:
     return p
 
 
+def _mypy_assignments() -> "list[tuple[str, str, bool]]":
+    """``(class, attribute, refused)`` for each attribute assignment the
+    mypy face (``test_gh1724_array_stub_mypy.py``) checks.
+
+    Read as text, not imported: that module needs mypy, so it runs only on
+    the PROJECT_ENV_TESTS path, which ``make test`` skips. gh-2543 made a
+    fixture's property read-only and that file went red where nobody ran it.
+    """
+    src = (Path(__file__).parent / "test_gh1724_array_stub_mypy.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(src)
+    values = {
+        t.id: n.value
+        for n in tree.body
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+        for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+        if isinstance(t, ast.Name)
+    }
+    calls = ast.literal_eval(values["_CALLS"])
+    var_class = dict(
+        re.findall(
+            r"^(\w+) = (\w+)\(\)$", ast.literal_eval(values["_PRELUDE"]), re.M
+        )
+    )
+    out = []
+    for call, refused in calls:
+        m = re.fullmatch(r"(\w+)\.(\w+) = .+", call)
+        if m:
+            out.append((var_class[m[1]], m[2], refused))
+    return out
+
+
+def test_the_mypy_face_agrees_with_the_setters(project):
+    """Every assignment the mypy face expects to pass has a setter in the
+    stub -- checked here, inside ``make test``'s reach, so a fixture change
+    that drops one fails where it is made. And gh-1724's buffer view, which
+    is read-only since gh-2543, has none."""
+    pairs = _mypy_assignments()
+    assert pairs, "no attribute assignments read from the mypy face"
+    for cls, attr, refused in pairs:
+        stub = (project / "src" / "jmp" / f"{cls.lower()}.pyi").read_text(
+            encoding="utf-8"
+        )
+        if not refused:
+            assert f"@{attr}.setter" in stub, (cls, attr, "no setter")
+    acc = (project / "src" / "jmp" / "acc.pyi").read_text(encoding="utf-8")
+    assert "def buf(self)" in acc and "@buf.setter" not in acc
+
+
 def _project_stubs(project: Path) -> dict[str, str]:
     return {
         f.relative_to(project / "src").as_posix(): f.read_text("utf-8")
