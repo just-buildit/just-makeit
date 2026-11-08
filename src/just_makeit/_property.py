@@ -728,17 +728,17 @@ def run(
         ):
             if val:
                 prop_entry[key] = val
-    if view_entry is None:
-        # gh-2543: an accessor this property derives must not be a declared
-        # method's C function -- refused before the manifest is written.
-        _clash = CSYM.member_clashes(
-            cfg,
-            object_name,
-            properties=[*C.properties(cfg, object_name), prop_entry],
-        )
-        if _clash:
-            print("error: " + "\n".join(_clash), file=sys.stderr)
-            sys.exit(1)
+    # gh-2543: an accessor this property derives must not be a declared
+    # method's C function, the object's or a view's -- refused before the
+    # manifest is written.
+    _clash = CSYM.member_clashes(
+        cfg,
+        object_name,
+        add_property=(prop_entry, view or None),
+    )
+    if _clash:
+        print("error: " + "\n".join(_clash), file=sys.stderr)
+        sys.exit(1)
     if view_entry is not None:
         C.add_view_property(cfg, object_name, view, prop_entry)
     else:

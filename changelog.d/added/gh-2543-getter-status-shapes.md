@@ -24,7 +24,10 @@
     C function: whichever was added second rewrote the other's prototype,
     exited 0, and the build failed on "conflicting types". `jm property`,
     `jm method` and `jm apply` now refuse it, whichever comes second,
-    naming both members; a method's `--fn` gives it another C name.
+    naming both members; a method's `--fn` gives it another C name. A
+    view's methods and properties are asked too, since a view binds its
+    object's core: `jm method --view` adding `get_eta` beside a property
+    `eta` is refused the same way.
 - **A writable buffer view is refused** (gh-2543). `buf_field` with
     `writable` rendered a setter that did not compile (a scalar parse into
     `T[] v`, and a call to a setter jm never declared). The view's array
