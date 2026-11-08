@@ -935,6 +935,94 @@ def annotation(flds: list[RecordField]) -> str:
     return f"tuple[{types}]"
 
 
+def field_entries(flds: list[RecordField]) -> list[str]:
+    """One numpydoc ``name : type`` entry per field, its doc indented below.
+
+    The one spelling of a record's columns in a docstring. A ``single``
+    record's class lists them under ``Attributes`` (:func:`pyi_class`); a
+    ``record_dtype`` method lists them in its ``Returns`` entry
+    (:func:`returns_fields`, gh-2539). The type is what reading one field
+    yields, so both shapes name a column the same way.
+
+    Each doc is laid out as written (gh-2104); an undocumented field is its
+    name and type alone, because that much is derived rather than invented.
+
+    Examples
+    --------
+    >>> field_entries([RecordField("n", "uint64_t", "Count."),
+    ...                RecordField("v", "float", "")])
+    ['n : int', '    Count.', 'v : float']
+    """
+    from ._docstring import authored_doc_lines
+
+    out: list[str] = []
+    for f in flds:
+        out.append(f"{f.name} : {T.scalar_py_annotation(f.ctype)}")
+        out += [f"    {ln}" if ln else "" for ln in authored_doc_lines(f.doc)]
+    return out
+
+
+def returns_fields(
+    m: dict,
+    doc_blocks: dict | None = None,
+    records: "list[dict] | None" = None,
+) -> list[str]:
+    """The record columns a method's ``Returns`` entry lists, or ``[]``.
+
+    gh-2539. A ``record_dtype`` method returns ONE structured ndarray, which
+    every stub annotates ``NDArray[Any]``: numpy's typing has no spelling
+    for a structured dtype's columns. So the docstring is the only place
+    they can be stated, and it is where a ``single`` record already states
+    its own (:func:`pyi_class`). They used to reach the runtime ``__doc__``
+    alone, in a ``Fields`` section numpydoc does not know, while both
+    ``.pyi`` faces said ``Output.``.
+
+    Every method face hands this one answer to the renderer
+    (``_docstring.render_numpy_doc`` / ``render_runtime_doc``'s
+    *ret_fields*), so a stub and ``help()`` list the same columns, and a
+    module object lists what a standalone one does.
+
+    Parameters
+    ----------
+    m : dict
+        The method's manifest row.
+    doc_blocks : dict, optional
+        The component's parsed header docs, for a field the manifest leaves
+        undocumented (:func:`fields`).
+    records : list of dict, optional
+        The component's ``[[<obj>.records]]``; a ``record_dtype`` naming one
+        reads its columns from there (gh-1407).
+
+    Returns
+    -------
+    list of str
+        Unindented lines -- a lead sentence, a blank, then
+        :func:`field_entries` -- or ``[]`` for any other result shape.
+
+    Examples
+    --------
+    >>> m = {"variable_output": True, "record_dtype": "hit_t",
+    ...      "result_fields": [{"name": "i", "type": "uint64_t"}]}
+    >>> returns_fields(m)
+    ['One row per `hit_t` record, with fields:', '', 'i : int']
+    >>> returns_fields({"single": True,
+    ...                 "result_fields": [{"name": "i", "type": "int"}]})
+    []
+    """
+    if not is_record_array(
+        m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+    ):
+        return []
+    flds = fields(m, doc_blocks, records)
+    if not flds:
+        return []
+    return [
+        f"One row per `{m['record_dtype']}` record, with fields:",
+        "",
+        *field_entries(flds),
+    ]
+
+
 def pyi_class(name: str, doc: str, flds: list[RecordField]) -> str:
     """The ``.pyi`` class for one record type.
 
@@ -952,10 +1040,7 @@ def pyi_class(name: str, doc: str, flds: list[RecordField]) -> str:
     fdoc = {f.name: authored_doc_lines(f.doc) for f in flds}
     documented = [f for f in flds if fdoc[f.name]]
     if documented:
-        body += ["", "Attributes", "----------"]
-        for f in documented:
-            body.append(f"{f.name} : {T.scalar_py_annotation(f.ctype)}")
-            body += [f"    {ln}" if ln else "" for ln in fdoc[f.name]]
+        body += ["", "Attributes", "----------", *field_entries(documented)]
     # A one-line docstring stays on one line, quotes and all; ruff joins a
     # one-liner split across lines otherwise (gh-1478).
     lines = [

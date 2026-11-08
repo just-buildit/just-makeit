@@ -1441,11 +1441,13 @@ def _method_doc_lines(
     param_docs: "dict[str, str] | None" = None,
     authored_doc: str = "",
     none_when: str = "",
+    ret_fields: "list[str] | None" = None,
 ) -> list[str]:
     """Return indented `.pyi` docstring lines for an object method.
 
     *none_when* is `_context._diagnostics.empty_is_none_doc` for the method,
-    for the same reason as *raises* below (gh-2183).
+    for the same reason as *raises* below (gh-2183); *ret_fields* is
+    `_record.returns_fields`, for the same reason again (gh-2539).
 
     *skeleton_fallback* selects what an UNDOCUMENTED member falls back to.
     Every method caller now passes True -- object, module object and view
@@ -1476,6 +1478,7 @@ def _method_doc_lines(
         param_docs=param_docs,
         authored_doc=authored_doc,
         none_when=none_when,
+        ret_fields=ret_fields,
     )
 
 
@@ -2297,6 +2300,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             param_docs=authored_param_docs(m),
             raises=_raises_doc(m),
             none_when=_empty_is_none_doc(m),
+            ret_fields=_record.returns_fields(
+                m, doc_blocks, C.records(cfg, obj)
+            ),
             # gh-1292: the skeleton, as every other face of the same member
             # renders it -- the standalone stub and BOTH runtime docs. Without
             # it an undocumented method collapsed to its name here alone, so

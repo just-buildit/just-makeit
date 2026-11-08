@@ -2870,6 +2870,7 @@ def render_numpy_doc(
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
     none_when: str = "",
+    ret_fields: "list[str] | None" = None,
 ) -> list[str]:
     """Return `.pyi` numpy-docstring lines for one method or free function.
 
@@ -2928,6 +2929,11 @@ def render_numpy_doc(
         The sentence saying when an optional return is ``None``, appended
         to the ``Returns`` description -- `_diagnostics.empty_is_none_doc`
         for a method (gh-2183). Both faces take it, as they take *raises*.
+    ret_fields : list of str, optional
+        `_record.returns_fields`: the columns of a structured result, laid
+        out below the ``Returns`` description (gh-2539). Given, they replace
+        *return_fallback* -- a header ``@return`` still reads first. Both
+        faces take it, as they take *none_when*.
 
     Returns
     -------
@@ -2961,6 +2967,7 @@ def render_numpy_doc(
         return_fallback=return_fallback,
         raises=raises,
         none_when=none_when,
+        ret_fields=ret_fields,
     )
     # gh-652: a backslash in a plain triple-quoted string is an invalid escape
     # sequence — `\l` in `:math:`20\log_{10}(g)`` is the common case — and
@@ -3213,6 +3220,7 @@ def _numpy_sections(
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
     none_when: str = "",
+    ret_fields: "list[str] | None" = None,
 ) -> tuple[list[str], list[str]]:
     """Unindented numpy section lines, with ``Examples`` kept separate.
 
@@ -3334,7 +3342,10 @@ def _numpy_sections(
             out += [f"    {w}" for w in _wrap(desc, DESC_WIDTH)]
     if ret_ann != "None":
         out += ["", "Returns", "-------", ret_ann]
-        _ret_desc = ret or return_fallback
+        # gh-2539: a structured result's columns say what it is, so they
+        # stand in for the generic fallback; a header `@return` still
+        # leads, the columns below it.
+        _ret_desc = ret or ("" if ret_fields else return_fallback)
         if none_when:
             # gh-2183: WHEN the optional annotation above is None, after
             # what the value is. A description without a closing stop gets
@@ -3343,7 +3354,13 @@ def _numpy_sections(
             if _ret_desc and _ret_desc[-1] not in ".!?":
                 _ret_desc += "."
             _ret_desc = f"{_ret_desc} {none_when}".strip()
-        out += [f"    {w}" for w in _wrap(_ret_desc, DESC_WIDTH)]
+        if _ret_desc:
+            out += [f"    {w}" for w in _wrap(_ret_desc, DESC_WIDTH)]
+        if ret_fields:
+            # Laid out by `_record.returns_fields`, one entry per column,
+            # so they are indented rather than re-wrapped into a paragraph.
+            out += [""] if _ret_desc else []
+            out += [f"    {ln}" if ln else "" for ln in ret_fields]
         # gh-652: `@retval <v> <desc>` rows read as additional Returns entries.
         # A C function returning 0/-1 becomes a Python method that raises or
         # returns a value, and numpy has no other home for the per-value rows.
@@ -3395,6 +3412,7 @@ def render_runtime_doc(
     return_fallback: str = "Output.",
     raises: "list[tuple[str, str]] | None" = None,
     none_when: str = "",
+    ret_fields: "list[str] | None" = None,
 ) -> list[str]:
     """Return runtime ``__doc__`` lines for one method, class or property.
 
@@ -3443,6 +3461,9 @@ def render_runtime_doc(
     none_when : str, optional
         When an optional return is ``None``; see :func:`render_numpy_doc`.
         Must be the same sentence the stub face is given (gh-2183).
+    ret_fields : list of str, optional
+        A structured result's columns; see :func:`render_numpy_doc`. Must
+        be the same lines the stub face is given (gh-2539).
 
     Returns
     -------
@@ -3472,6 +3493,7 @@ def render_runtime_doc(
         return_fallback=return_fallback,
         raises=raises,
         none_when=none_when,
+        ret_fields=ret_fields,
     )
     if examples:  # @code ... @endcode -> runnable doctest
         lines += ["", "Examples", "--------", *(e.rstrip() for e in examples)]
