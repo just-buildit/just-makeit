@@ -60,6 +60,10 @@ def _raw_params(obj: str) -> str:
 #: `example_value`, and a defaulted one with an `example_value` too.
 _CORR = (
     '[corr]\narg_type = "float"\nreturn_type = "float"\nno_state = "true"\n'
+    # gh-2552: its constructor also takes a trailing `const char **why`,
+    # which every C call must still pass LAST, after the `default_raw` seeds.
+    'create_error = "ValueError"\ncreate_error_message = "corr refused"\n'
+    "create_why = true\n"
     '\n[[corr.init_params]]\nname = "size"\ntype = "size_t"\n'
     'required = true\nexample_value = "4"\n'
     '\n[[corr.init_params]]\nname = "taps"\ntype = "int"\n'
@@ -323,3 +327,26 @@ def test_the_function_apps_require_x_and_default_k(project: Path) -> None:
         [*py, "--x", "3"], capture_output=True, cwd=project / "src"
     )
     assert ok.returncode == 0, ok.stderr
+
+
+# -- with gh-2552's create_why ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["native/tests/test_corr_core.c", "native/benchmarks/bench_corr_core.c"],
+)
+def test_the_c_seed_passes_the_raw_defaults_then_why(
+    project: Path, path: str
+) -> None:
+    """The `default_raw` seeds and `create_why`'s NULL, in that order."""
+    text = (project / path).read_text(encoding="utf-8")
+    assert "_create(4, 3, (unsigned long long)-1ULL, NAN, NULL);" in text, text
+
+
+def test_the_c_app_passes_its_flags_then_why(project: Path) -> None:
+    text = (project / "native/src/app/capc.c").read_text(encoding="utf-8")
+    assert "double cn0_dbhz = NAN;" in text
+    assert re.search(
+        r"_create\(size, taps, noise_hi, cn0_dbhz, &\w+\);", text
+    ), text
