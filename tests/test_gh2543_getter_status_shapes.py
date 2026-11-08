@@ -511,6 +511,52 @@ def test_apply_refuses_a_clash(clashing, case) -> None:
     assert f"`c_cor_{meth}`" in r.stderr, r.stderr
 
 
+@pytest.fixture()
+def viewed(tmp_path) -> Path:
+    """A module object with a view: the view's methods bind the same core
+    and stem, so they share the object's C namespace (gh-504)."""
+    _ok("new", "m", "--no-c-prefix", "--object", "top", *_METHOD,
+        cwd=tmp_path)  # fmt: skip
+    proj = tmp_path / "m"
+    _ok("module", "dsp", cwd=proj)
+    _ok("object", "a", "--module", "dsp", "--state", "lvl:double:1",
+        *_METHOD, cwd=proj)  # fmt: skip
+    _ok("view", "a", "AView", "--module", "dsp", "--create-fn",
+        "a_create_v", cwd=proj)  # fmt: skip
+    return proj
+
+
+_VIEW_METHOD = ("method", "a", "get_eta", "--view", "AView", "--module",
+                "dsp", *_METHOD)  # fmt: skip
+_PROP = ("property", "a", "eta", "--type", "double")
+
+
+@pytest.mark.parametrize("first", ["view-method", "property"])
+def test_a_view_method_clash_is_refused_either_way(viewed, first) -> None:
+    second = _PROP if first == "view-method" else _VIEW_METHOD
+    _ok(*(_VIEW_METHOD if first == "view-method" else _PROP), cwd=viewed)
+    h = viewed / "native" / "inc" / "m" / "a" / "a_core.h"
+    before = h.read_text("utf-8")
+    r = run_cli(*second, cwd=viewed)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert (
+        "a's view AView.get_eta() (a method) and a.eta (a property)"
+        in r.stderr
+    ), r.stderr
+    assert "`a_get_eta`" in r.stderr, r.stderr
+    assert h.read_text("utf-8") == before
+
+
+def test_apply_refuses_a_view_method_clash(viewed) -> None:
+    """The property by manifest, beside a view method the CLI added."""
+    _ok(*_VIEW_METHOD, cwd=viewed)
+    with open(viewed / "objects" / "a.toml", "a", encoding="utf-8") as f:
+        f.write('\n[[a.properties]]\nname = "eta"\ntype = "double"\n')
+    r = run_cli("apply", cwd=viewed)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "a's view AView.get_eta() (a method)" in r.stderr, r.stderr
+
+
 def test_a_different_fn_is_no_clash(clashing) -> None:
     """`--fn` gives the method another C name: both stand."""
     _ok("property", "cor", "eta", "--type", "double", cwd=clashing)

@@ -344,19 +344,24 @@ def member_clashes(
     cfg: dict,
     comp: str,
     *,
-    properties: "list[dict] | None" = None,
-    methods: "list[dict] | None" = None,
+    add_property: "tuple[dict, str | None] | None" = None,
+    add_method: "tuple[dict, str | None] | None" = None,
 ) -> "list[str]":
     """Each method of *comp* whose C symbol a property of it also derives.
 
     gh-2543. A property's accessors (:func:`property_c_names`) and a
-    method's symbol (`_config.method_c_symbol`) are derived from different
-    names, so ``eta`` and a method ``get_eta`` -- or a buffer view ``last``
-    and a method ``last_status`` -- land on one C function. Whichever came
-    second rewrote the other's prototype, and the build failed on
-    "conflicting types". Refused instead, naming both members; asked by
-    `jm property` and `jm method` with the entry being added (*properties*
-    / *methods* replace the manifest's), and so by `apply`'s replay too.
+    method's symbol (`_config.method_c_symbol`: its ``fn``, else the
+    derived name) are derived from different names, so ``eta`` and a
+    method ``get_eta`` -- or a buffer view ``last`` and a method
+    ``last_status`` -- land on one C function. Whichever came second
+    rewrote the other's prototype, and the build failed on "conflicting
+    types". Refused instead, naming both members.
+
+    A view (gh-504) shares its object's core and stem, so its own methods
+    and properties are asked too. *add_property* / *add_method* is the
+    ``(entry, view class or None)`` a verb is about to write: `jm property`
+    and `jm method` ask before the manifest changes, and `apply` asks of
+    the manifest as it stands.
 
     A property named for a state field calls that field's accessor, which
     a method may claim by design (gh-994), so it is not asked.
@@ -365,25 +370,44 @@ def member_clashes(
 
     st = stem(cfg, comp)
     state = {n for n, _, _ in C.state_vars(cfg, comp)}
-    props = C.properties(cfg, comp) if properties is None else properties
-    meths = C.methods(cfg, comp) if methods is None else methods
-    owner = {}
-    for p in props:
+    views = C.views(cfg, comp)
+    props = [(p, None) for p in C.properties(cfg, comp)] + [
+        (p, v.get("class_name")) for v in views for p in C.view_properties(v)
+    ]
+    meths = [(m, None) for m in C.methods(cfg, comp)] + [
+        (m, v.get("class_name")) for v in views for m in C.view_methods(v)
+    ]
+    if add_property is not None:
+        props.append(add_property)
+    if add_method is not None:
+        meths.append(add_method)
+
+    def label(entry: dict, view: "str | None") -> str:
+        return (
+            f"{comp}.{entry['name']}"
+            if view is None
+            else f"{comp}'s view {view}.{entry['name']}"
+        )
+
+    owner: dict = {}
+    for p, view in props:
         if p.get("name") and p["name"] not in state:
             for fn in property_c_names(st, p):
-                owner.setdefault(fn, p["name"])
-    out = []
-    for m in meths:
+                owner.setdefault(fn, label(p, view))
+    out: list = []
+    for m, view in meths:
         if not m.get("name"):
             continue
         sym = C.method_c_symbol(st, m)
         if sym in owner:
-            out.append(
-                f"{comp}.{m['name']}() (a method) and {comp}.{owner[sym]}"
-                f" (a property) both derive the C function `{sym}`, so one"
+            msg = (
+                f"{label(m, view)}() (a method) and {owner[sym]} (a"
+                f" property) both derive the C function `{sym}`, so one"
                 f" would replace the other's declaration. Rename one of"
                 f" them (or give the method another C name with fn)."
             )
+            if msg not in out:
+                out.append(msg)
     return out
 
 
