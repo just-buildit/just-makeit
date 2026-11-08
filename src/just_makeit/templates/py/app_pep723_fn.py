@@ -23,7 +23,8 @@ def _make_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _make_parser().parse_args()
-    print(<<function>>(<<py_call_args>>))
+    result = <<function>>(<<py_call_args>>)
+    print(result)
 
 
 if __name__ == "__main__":
