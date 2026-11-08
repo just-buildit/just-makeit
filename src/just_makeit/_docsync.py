@@ -1192,17 +1192,58 @@ _ARRAY_ARG_RE = re.compile(
 #: and a fragment rendered before it lacks.
 _ARRAY_ARG_HINT_RE = re.compile(rf"\b{_coerce.ARRAY_ARG_HINT_FN}\s*\(")
 
-#: A ``variable_output`` count's declared refusal value (gh-2012), as
+#: A returned count's declared refusal value (gh-2012, gh-2559), as
 #: `_context/_methods._count_refusal_c` tests it: a signed count's
-#: ``_rc < 0``, or ``n_out ==`` an unsigned count's sentinel. The exact-fill
-#: test every such wrapper carries, ``(size_t)n_out == _cap``, is not one,
-#: so ``_cap`` is excluded as the right-hand side. Whitespace anywhere, for
-#: a fragment formatted in the project's own style. gh-2559: an ``out=``
-#: method's ``size_t`` count is the wrapper's result local
-#: (`_builtins.result_local`: ``y``, or ``_y``), tested ``== (<sentinel>)``.
+#: ``_rc < 0``, or ``if (<count> == <sentinel>)`` -- the count being
+#: ``n_out`` (a ``variable_output`` method) or the result local an ``out=``
+#: method returns (`_builtins.result_local`: ``y``, or ``_y``). Read as the
+#: VALUE tested, so a fragment testing some other value (``y == 0``) is not
+#: taken for the declared sentinel: `_refusal_values`. The exact-fill test
+#: every ``variable_output`` wrapper carries, ``(size_t)n_out == _cap``,
+#: is not one. Whitespace anywhere, for a fragment formatted in the
+#: project's own style.
 _REFUSAL_VALUE_RE = re.compile(
-    r"\b_rc\s*<\s*0\b|\bn_out\s*==\s*(?!\(?\s*_cap\b)|(?<!\w)_?y\s*==\s*\("
+    r"\b_rc\s*<\s*0\b"
+    r"|\bif\s*\(\s*(?:n_out|_?y)\s*==\s*(?P<v>[^{;]*?)\)\s*\{"
 )
+
+
+def _refusal_values(code: str) -> "set[str]":
+    """The refusal values *code* tests a returned count against (gh-2559).
+
+    ``<0`` for a signed count's ``_rc < 0``; otherwise the sentinel's C, its
+    whitespace and enclosing parentheses removed, so ``(SIZE_MAX)`` and
+    ``SIZE_MAX`` are one value and ``(size_t)-1`` keeps its cast.
+
+    >>> sorted(_refusal_values("if (y == (SIZE_MAX)) {"))
+    ['SIZE_MAX']
+    >>> sorted(_refusal_values("if (n_out == ( (size_t)-1 )) {"))
+    ['(size_t)-1']
+    >>> sorted(_refusal_values("if ((size_t)n_out == _cap) {"))
+    []
+    >>> sorted(_refusal_values("if (_rc < 0) {"))
+    ['<0']
+    """
+    out = set()
+    for m in _REFUSAL_VALUE_RE.finditer(code):
+        v = m.group("v")
+        if v is None:
+            out.add("<0")
+            continue
+        v = re.sub(r"\s+", "", v)
+        while v.startswith("(") and v.endswith(")"):
+            depth = 0
+            for i, ch in enumerate(v):
+                depth += {"(": 1, ")": -1}.get(ch, 0)
+                if depth == 0:
+                    break
+            if i != len(v) - 1:
+                break  # `(size_t)-1`: the first paren closes early
+            v = v[1:-1]
+        if v != "_cap":
+            out.add(v)
+    return out
+
 
 #: A list-of-records result sized by its capacity function (gh-2184): a call
 #: to a ``*_max_out`` and the ``PyList_New`` only that shape's wrapper
@@ -1348,8 +1389,10 @@ _FEATURE_MARKERS = {
     # gh-2012: a manifest declaration -- `error_negative` over a signed
     # `count_type`, or `error_sentinel` -- added to a variable_output method
     # after its sacred fragment was rendered. Named for its consequence.
+    # Read per VALUE by `_refusal_values` (labels ``refusal-value:<v>``),
+    # never by spelling, so it has none here: only this sentence.
     "refusal-value": _Feature(
-        (_REFUSAL_VALUE_RE,),
+        (),
         "the manifest declares a refusal value for the count "
         "(error_negative over a signed count_type, or error_sentinel) and "
         "this fragment does not test it, so a refusal is not the declared "
@@ -1449,6 +1492,7 @@ def _method_feature_symbols(text: str) -> dict:
             )
         }
         found |= {f"case:{m}" for m in _CASE_LABEL_RE.findall(code)}
+        found |= {f"refusal-value:{v}" for v in _refusal_values(code)}
         # gh-2184: a capacity-sized records buffer is bounded by jm's
         # output-size guard, which comes WITH the capacity and has no
         # existence without it. Read as its own marker, every fragment
@@ -1566,11 +1610,13 @@ def signature_drift_details(existing: str, reference: str) -> "dict[str, str]":
         # which is false of a jm-owned guard -- and sent doppler looking
         # for a `strict` key that no manifest in the report had.
         cases = sorted(m[5:] for m in missing if m.startswith("case:"))
-        whys = [
-            _FEATURE_MARKERS[m].why
-            for m in sorted(missing)
-            if not m.startswith("case:")
-        ]
+        whys = list(
+            dict.fromkeys(
+                _FEATURE_MARKERS[m.partition(":")[0]].why
+                for m in sorted(missing)
+                if not m.startswith("case:")
+            )
+        )
         if cases:
             whys.append(
                 f"the manifest declares {', '.join(cases)}, absent here"
