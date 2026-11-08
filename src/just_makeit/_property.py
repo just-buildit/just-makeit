@@ -728,6 +728,17 @@ def run(
         ):
             if val:
                 prop_entry[key] = val
+    if view_entry is None:
+        # gh-2543: an accessor this property derives must not be a declared
+        # method's C function -- refused before the manifest is written.
+        _clash = CSYM.member_clashes(
+            cfg,
+            object_name,
+            properties=[*C.properties(cfg, object_name), prop_entry],
+        )
+        if _clash:
+            print("error: " + "\n".join(_clash), file=sys.stderr)
+            sys.exit(1)
     if view_entry is not None:
         C.add_view_property(cfg, object_name, view, prop_entry)
     else:
@@ -887,10 +898,9 @@ def run(
         # gh-2543: the binding calls the status function before it builds
         # the view; it writes nothing.
         print(
-            f"       Implement {status_fn}() in {_body_file}: it returns"
-            f" non-zero when\n"
-            f"       there is no view, and the read raises"
-            f" {getter_raise[0]}."
+            f"       Implement {status_fn}()\n"
+            f"       in {_body_file}: non-zero means there is\n"
+            f"       no view, and the read raises {getter_raise[0]}."
         )
     elif getter_raise is not None:
         # gh-2538: the binding tests the getter's status and reads the value

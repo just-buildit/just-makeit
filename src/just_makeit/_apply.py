@@ -4542,6 +4542,16 @@ def _apply_manifest(
     # rewritten to `void` below, out of step with its definition.
     from ._property import discarded_setter_status
 
+    # gh-2543: first, because a method that took a property accessor's C
+    # name makes every check below read the method's prototype as the
+    # accessor's, and name the wrong cause.
+    _clashes = [
+        msg
+        for comp in C.components(cfg)
+        for msg in CSYM.member_clashes(cfg, comp)
+    ]
+    if _clashes:
+        C._refuse(_clashes)
     _dropped_status = discarded_setter_status(root, cfg)
     if _dropped_status:
         C._refuse(_dropped_status)

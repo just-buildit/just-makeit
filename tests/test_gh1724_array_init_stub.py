@@ -250,8 +250,9 @@ def build_project(root: Path) -> Path:
     for obj in ("fld", "mfld"):
         for name, *rest in _METHODS:
             _jm("method", obj, name, *rest, cwd=p)
+    # A buffer view is never writable (gh-2543), so it adds no setter face.
     _jm("property", "acc", "buf", "--type", "float", "--buf-field", "buf",
-        "--writable", cwd=p)  # fmt: skip
+        cwd=p)  # fmt: skip
     # A controllable state field re-renders `steps()` on its own path, for
     # the blockwise and the scalar shape alike; the CLI cannot declare one.
     for name, arg, ret in (
@@ -340,7 +341,6 @@ _FACES = {
     ("jmp/fld.pyi", "drain", "x"): ("float", False),
     ("jmp/acc.pyi", "steps", "x"): ("float", False),
     ("jmp/acc.pyi", "set_h", "value"): ("float", False),
-    ("jmp/acc.pyi", "buf", "value"): ("float", False),
     ("jmp/cblk.pyi", "steps", "x"): ("float[]", False),
     ("jmp/cblk.pyi", "steps", "out"): ("float[]", True),
     ("jmp/cacc.pyi", "steps", "x"): ("float", False),

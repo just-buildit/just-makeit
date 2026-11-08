@@ -423,6 +423,101 @@ def test_the_cli_refuses_before_writing(fresh, flags, needle) -> None:
     assert (fresh / "objects" / "o.toml").read_text("utf-8") == before
 
 
+def test_a_writable_buffer_view_is_refused(fresh) -> None:
+    """It had no setter: jm rendered `double[] v = ...` and a call to a
+    setter it never declared, which did not compile."""
+    before = (fresh / "objects" / "o.toml").read_text("utf-8")
+    r = run_cli("property", "o", "a", "--type", "double[]", "--buf-field",
+                "corr", "--writable", cwd=fresh)  # fmt: skip
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "a buf_field property is a view" in r.stderr, r.stderr
+    # Not steered toward getter_error, which only a scalar setter needs.
+    assert "getter_error" not in r.stderr, r.stderr
+    assert (fresh / "objects" / "o.toml").read_text("utf-8") == before
+
+
+def test_a_writable_buffer_view_row_is_refused_by_apply(fresh) -> None:
+    with open(fresh / "objects" / "o.toml", "a", encoding="utf-8") as f:
+        f.write(
+            '\n[[o.properties]]\nname = "a"\ntype = "double[]"\n'
+            'buf_field = "corr"\nwritable = true\n'
+        )
+    r = run_cli("apply", cwd=fresh)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "a buf_field property is a view" in r.stderr, r.stderr
+
+
+# -- a property accessor and a method cannot derive one C function ----------
+
+#: (method, property flags): the property's accessor IS the method's symbol.
+_CLASHES = {
+    "status-fn": (
+        "last_status",
+        ["last", "--type", "double[]", "--buf-field", "corr",
+         "--getter-status"],
+    ),
+    "getter": ("get_eta", ["eta", "--type", "double"]),
+    "setter": ("set_eta", ["eta", "--type", "double", "--writable"]),
+}  # fmt: skip
+
+
+@pytest.fixture()
+def clashing(tmp_path) -> Path:
+    _ok("new", "c", "--object", "cor", "--state", "corr:double[4]",
+        "--state", "ncorr:size_t:4", "--arg-type", "float",
+        "--return-type", "float", cwd=tmp_path)  # fmt: skip
+    return tmp_path / "c"
+
+
+_METHOD = ("--arg-type", "float", "--return-type", "float")
+
+
+@pytest.mark.parametrize("case", list(_CLASHES))
+@pytest.mark.parametrize("first", ["method", "property"])
+def test_the_cli_refuses_a_clash_either_way(clashing, case, first) -> None:
+    meth, prop = _CLASHES[case]
+    add_m = ("method", "cor", meth, *_METHOD)
+    add_p = ("property", "cor", *prop)
+    second = add_p if first == "method" else add_m
+    _ok(*(add_m if first == "method" else add_p), cwd=clashing)
+    h = clashing / "native" / "inc" / "c" / "cor" / "cor_core.h"
+    before = h.read_text("utf-8")
+    r = run_cli(*second, cwd=clashing)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"cor.{meth}() (a method) and cor.{prop[0]} (a property)" in (
+        r.stderr
+    ), r.stderr
+    assert f"`c_cor_{meth}`" in r.stderr, r.stderr
+    assert h.read_text("utf-8") == before
+
+
+@pytest.mark.parametrize("case", list(_CLASHES))
+def test_apply_refuses_a_clash(clashing, case) -> None:
+    """Both rows by manifest: `apply`'s replay reaches the same refusal."""
+    meth, prop = _CLASHES[case]
+    _ok("method", "cor", meth, *_METHOD, cwd=clashing)
+    row = f'\n[[cor.properties]]\nname = "{prop[0]}"\ntype = "{prop[2]}"\n'
+    for flag, key in (("--buf-field", "buf_field"),):
+        if flag in prop:
+            row += f'{key} = "{prop[prop.index(flag) + 1]}"\n'
+    for flag, key in (("--getter-status", "getter_status"),
+                      ("--writable", "writable")):  # fmt: skip
+        if flag in prop:
+            row += f"{key} = true\n"
+    with open(clashing / "objects" / "cor.toml", "a", encoding="utf-8") as f:
+        f.write(row)
+    r = run_cli("apply", cwd=clashing)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"`c_cor_{meth}`" in r.stderr, r.stderr
+
+
+def test_a_different_fn_is_no_clash(clashing) -> None:
+    """`--fn` gives the method another C name: both stand."""
+    _ok("property", "cor", "eta", "--type", "double", cwd=clashing)
+    _ok("method", "cor", "get_eta", *_METHOD, "--fn", "c_cor_eta_now",
+        cwd=clashing)  # fmt: skip
+
+
 def test_the_manifest_is_refused_too(fresh) -> None:
     """A hand-written row reaches the same check through `apply`."""
     with open(fresh / "objects" / "o.toml", "a", encoding="utf-8") as f:

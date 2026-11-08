@@ -46,7 +46,8 @@ PROPERTIES: "dict[str, list[str]]" = {
         "--valid-field",
         "v2",
     ],  # fmt: skip
-    "b3": ["--type", "float[]", "--buf-field", "buf3", "--writable"],
+    # A writable buffer view is refused (gh-2543): it had no setter.
+    "b3": ["--type", "float[]", "--buf-field", "buf3"],
     "e1": ["--type", "float[]", "--expr", "o_view(self->handle)"],
     "c1": [
         "--type",

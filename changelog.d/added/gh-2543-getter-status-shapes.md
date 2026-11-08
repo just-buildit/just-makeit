@@ -18,6 +18,18 @@
     `jm script`, standalone and in a module. `jm property --buf-field` no
     longer tells the author to implement a getter the view never calls.
     `getter_status` on a container property stays refused.
+- **A property accessor and a method can no longer derive one C function**
+    (gh-2543). A property `eta` and a method `get_eta`, or a buffer view
+    `last` with `getter_status` and a method `last_status`, both named one
+    C function: whichever was added second rewrote the other's prototype,
+    exited 0, and the build failed on "conflicting types". `jm property`,
+    `jm method` and `jm apply` now refuse it, whichever comes second,
+    naming both members; a method's `--fn` gives it another C name.
+- **A writable buffer view is refused** (gh-2543). `buf_field` with
+    `writable` rendered a setter that did not compile (a scalar parse into
+    `T[] v`, and a call to a setter jm never declared). The view's array
+    is already writeable in place, so `jm property` and `jm apply` refuse
+    `writable` there.
 - **A buffer view with `valid_field` is annotated `NDArray[...] | None`**
     (gh-2543). Its read returns `None` while the flag is clear, and the
     `.pyi` said `NDArray[...]` alone, so a type checker accepted code that

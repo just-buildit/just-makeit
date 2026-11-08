@@ -2378,6 +2378,23 @@ def run(
         )
         sys.exit(1)
 
+    # gh-2543: the C namespace beside that Python one. A property's
+    # accessor (`get_<p>`, `set_<p>`, a buffer view's `<p>_status`, a
+    # container's) is a C function of this object too; a method deriving
+    # the same symbol rewrote its prototype and the build failed.
+    if view_entry is None:
+        _clash = CSYM.member_clashes(
+            cfg,
+            object_name,
+            methods=[
+                *C.methods(cfg, object_name),
+                {"name": method_name, "fn": fn},
+            ],
+        )
+        if _clash:
+            print("error: " + "\n".join(_clash), file=sys.stderr)
+            sys.exit(1)
+
     # gh-1268: one extension module publishes one type object per public
     # name, so two records cannot claim one `record_name` with different
     # fields — `PyModule_AddObject` steals the reference it is given and the

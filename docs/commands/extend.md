@@ -958,8 +958,10 @@ method's `--status-return`) with `error_message`. jm declares the getter that
 way and stubs it, and the `.pyi` and `help()` document the exception in a
 `Raises` section. `AttributeError` is the natural choice for "this property
 does not apply here": `hasattr` and `getattr(obj, name, default)` read it
-as absence. It composes with `--enum`, whose out-of-range check reads the
-value the getter wrote.
+as absence. Any other class propagates out of `hasattr`, so use
+`AttributeError` (for `error`, or `getter_error` on a writable property)
+when `hasattr` should read `False`. It composes with `--enum`, whose
+out-of-range check reads the value the getter wrote.
 
 **On a writable property** `error` / `error_message` stay the setter's
 ([a setter that refuses](#a-setter-that-refuses-a-value-error)), so the
@@ -984,7 +986,8 @@ a status function jm declares and stubs,
 `int <stem>_<prop>_status(const <stem>_state_t *state)`; non-zero raises
 `error`, and on zero `--valid-field` still decides `None` exactly as
 before -- so `None` keeps meaning "not yet", and the exception means "not
-here":
+here". A buffer view is never writable: the array it returns is already
+writeable in place, and `--writable` with `--buf-field` is refused.
 
 ```c
 int <pkg>_cor_last_corr_status(const <pkg>_cor_state_t *state)
@@ -997,8 +1000,15 @@ It needs a C call to test, so it is refused with `--field`, `--expr` or
 `--capsule` (each reads the value with no call), on a container property
 (it reads through count / key / value accessors, not one getter; still
 open, gh-2543), on a `json` property (its getter's `NULL` already raises),
-and on a property named for a state field (its getter is that field's
-accessor, which jm declares returning the value).
+and on a scalar property named for a state field (its getter is that
+field's accessor, which jm declares returning the value). A buffer view
+named for a state field is accepted: its status function is its own.
+
+A property's accessors -- `<stem>_get_<p>`, `<stem>_set_<p>`, a buffer
+view's `<stem>_<p>_status`, a container's -- are C functions of the
+object, so a method deriving the same name (`get_eta` beside a property
+`eta`) is refused, whichever is added second, naming both. Rename one, or
+give the method another C name with `--fn`.
 
 ### Changing how an existing property is read
 
