@@ -72,12 +72,15 @@ class CtorDrift:
     declared: str  #: the parameter list as the header spells it
     rendered: str  #: the parameter list the manifest renders
     csym: str  #: the component's C symbol stem (gh-1591)
+    #: the constructor compared: `create()`, its ``create_fn``, or a view's
+    fn: str = ""
 
     def describe(self) -> str:
         """One warning, naming both sides and what to do about it."""
         return (
             f"{self.rel}\n"
-            f"  {self.csym}_create() takes different parameters in the"
+            f"  {self.fn or self.csym + '_create'}() takes different"
+            " parameters in the"
             " header than the\n"
             "  manifest renders. jm cannot tell which side is stale.\n"
             f"    header:   ({self.declared})\n"
@@ -249,7 +252,11 @@ def declared_params(root: Path, component: str, create_fn: str) -> str | None:
 
 
 def drift(root: Path, cfg: dict) -> list[CtorDrift]:
-    """Every component whose header and manifest disagree about `create()`.
+    """Every constructor whose header and manifest disagree.
+
+    An object's `create()` -- its ``create_fn`` when it declares one -- and
+    every view's ``create_fn`` (gh-2552: a view's prototype is injected into
+    the same sacred header, and drifted with no finding).
 
     Silent for a component jm cannot render (a manifest shape the context
     builders reject is a different finding, already reported elsewhere) and
@@ -257,6 +264,7 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
     `no_state` shapes legitimately have none.
     """
     from . import _glue
+    from ._view import create_params_of
 
     pkg = C.project_name(cfg) or ""
     out: list[CtorDrift] = []
@@ -273,21 +281,26 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
             continue
         # `create_name`, not `create_fn`: the context publishes an object's
         # override under that key and never sets `create_fn` (gh-1494).
-        create_fn = _csym.ctx_create_name(ctx)
-        declared = declared_params(root, comp, create_fn)
-        if declared is None:
-            continue
-        if declared == _norm(rendered):
-            continue
-        out.append(
-            CtorDrift(
-                component=comp,
-                rel=INC.core_rel(comp, cfg),
-                declared=declared,
-                rendered=_norm(rendered),
-                csym=_csym.stem(cfg, comp),
+        ctors = [(_csym.ctx_create_name(ctx), rendered)]
+        for v in C.views(cfg, comp):
+            try:
+                ctors.append((v["create_fn"], create_params_of(cfg, comp, v)))
+            except Exception:
+                continue  # as above: not this check's finding
+        for create_fn, params in ctors:
+            declared = declared_params(root, comp, create_fn)
+            if declared is None or declared == _norm(params):
+                continue
+            out.append(
+                CtorDrift(
+                    component=comp,
+                    rel=INC.core_rel(comp, cfg),
+                    declared=declared,
+                    rendered=_norm(params),
+                    csym=_csym.stem(cfg, comp),
+                    fn=create_fn,
+                )
             )
-        )
     return out
 
 
