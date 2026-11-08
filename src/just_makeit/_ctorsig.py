@@ -73,13 +73,13 @@ class CtorDrift:
     rendered: str  #: the parameter list the manifest renders
     csym: str  #: the component's C symbol stem (gh-1591)
     #: the constructor compared: `create()`, its ``create_fn``, or a view's
-    fn: str = ""
+    fn: str
 
     def describe(self) -> str:
         """One warning, naming both sides and what to do about it."""
         return (
             f"{self.rel}\n"
-            f"  {self.fn or self.csym + '_create'}() takes different"
+            f"  {self.fn}() takes different"
             " parameters in the"
             " header than the\n"
             "  manifest renders. jm cannot tell which side is stale.\n"
