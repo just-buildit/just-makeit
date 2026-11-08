@@ -280,12 +280,6 @@ def load(root: Path) -> dict:
     cycles = object_ref_cycles(cfg)
     if cycles:
         raise Refusal("\n".join(cycles))
-    # gh-1722: a `why` key is a switch, and a function NAME is the natural
-    # wrong guess -- accepted as truthy, it rendered a two-argument call to
-    # a one-argument reader and failed at C compile, far from this line.
-    why_errors = _why_key_errors(cfg)
-    if why_errors:
-        _refuse(why_errors)
     # gh-2259: a generating source's delegated generator methods, asked
     # only of a manifest with a composer to ask about.
     if any(is_composer_module(cfg, m) for m in modules(cfg)):
@@ -295,6 +289,14 @@ def load(root: Path) -> dict:
         if delegated_errors:
             _refuse(delegated_errors)
     _expand_init_groups(cfg)
+    # gh-1722: a `why` key is a switch, and a function NAME is the natural
+    # wrong guess -- accepted as truthy, it rendered a two-argument call to
+    # a one-argument reader and failed at C compile, far from this line.
+    # After the group expansion (gh-2552), so an init param a group names
+    # `why` meets the same refusal as one written out.
+    why_errors = _why_key_errors(cfg)
+    if why_errors:
+        _refuse(why_errors)
     # gh-1756: a `str_hint` that would be accepted and never shown. After the
     # group expansion, so the init params it makes are checked too.
     from ._coerce import str_hint_errors

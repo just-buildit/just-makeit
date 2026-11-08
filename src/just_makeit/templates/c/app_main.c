@@ -35,7 +35,7 @@ main(int argc, char *argv[])
     /* --- create ---------------------------------------------------------- */
 /*<<app_create_line>>*/
     if (!state) {
-        fprintf(stderr, "error: /*<<create_name>>*/() failed\n");
+/*<<app_create_fail>>*/
 /*<<cleanup_tail_deep>>*/
         return 1;
     }

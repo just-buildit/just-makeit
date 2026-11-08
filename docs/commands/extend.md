@@ -1753,7 +1753,11 @@ ValueError: Correlator: framing='burst' takes a 1-D ref
     class docstring's `Raises` says the message is the constructor's reason.
 - It is refused without a `create_error` in force, which is what raises the
     sentence — as `--why` is refused without `--check-return` — and beside an
-    init param named `why`, which jm appends itself.
+    init param named `why` (written out or from an `init_groups` group), which
+    jm appends itself. So `just-makeit remove error` is refused while a
+    `create_why` raises through the translation, naming each one.
+- A generated C [app](app.md#just-makeit-app) prints the sentence too:
+    `error: <sentence>`, or `error: <create>() failed` when there is none.
 - A view declares its own in `[[<obj>.views]]`: its `create_fn` is a different
     C function, so the parent's `create_why` says nothing about it. The view's
     `create_error` is still inherited.

@@ -956,6 +956,24 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-2552: a `create_why` -- the object's own, or a view's that
+    # declares no create_error of its own -- raises through THIS
+    # translation, and is refused at load without it. Dropping the switch
+    # here instead would change the sacred create() signature behind the
+    # author's `_core.c`, so the remove is refused, naming each, before
+    # anything is written: `_refuse_what_an_app_names`'s shape for an app.
+    stranded = ([f"'{obj}'"] if C.object_create_why(cfg, obj) else []) + [
+        f"view '{v['class_name']}'"
+        for v in C.views(cfg, obj)
+        if C.view_create_why(v) and not v.get("create_error")
+    ]
+    if stranded:
+        raise Refusal(
+            f"{', '.join(stranded)} declare{'s' if len(stranded) == 1 else ''}"
+            f" create_why, raised as '{obj}''s create_error. Drop create_why"
+            " from the manifest and run `jm apply` first (a view may instead"
+            f" declare its own: `jm error {obj} --view <Class> ...`)."
+        )
     if not _confirm(
         f"Remove the {category} create() translation on '{obj}'? "
         f"Failures will report MemoryError again.",
@@ -968,9 +986,6 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
     print()
     cfg[obj].pop("create_error", None)
     cfg[obj].pop("create_error_message", None)
-    # gh-2552: the switch is read only through the translation, and a
-    # manifest holding it alone is refused at load.
-    cfg[obj].pop("create_why", None)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 
