@@ -335,15 +335,7 @@ def _ctor_flags(cfg: dict, component: str) -> list[dict]:
                     }
                 )
             else:
-                out.append(
-                    {
-                        "name": name,
-                        "type": ct,
-                        "default": dflt,
-                        "help": "",
-                        "ctor": True,
-                    }
-                )
+                out.append(_init_param_flag(p))
         return out
     state = cfg.get(component, {}).get("state", [])
     no_ctor = {s["name"] for s in state if s.get("no_ctor")}
@@ -355,6 +347,58 @@ def _ctor_flags(cfg: dict, component: str) -> list[dict]:
             {"name": n, "type": t, "default": d, "help": "", "ctor": True}
         )
     return out
+
+
+def _init_param_flag(p: tuple) -> dict:
+    """The constructor flag for scalar init param *p* (gh-2557).
+
+    What the binding does when an argument is not passed decides the flag:
+
+    * ``required`` -- there is no default, so the flag must be given:
+      ``required=True`` in Python, and the C app refuses a run without it
+      (exit 2, as argparse does).
+    * a ``default`` Python can spell -- both faces default the flag to it.
+    * a ``default_raw``, a ``default`` naming a C constant (gh-1488), or no
+      default at all -- Python has no literal for the binding's default, so
+      an unset flag is LEFT OUT of the call (``omit_unset``) and the binding
+      applies its own; the C app initialises the flag to that same default
+      (``c_default``): the ``default_raw`` expression, or the type's zero.
+
+    Reading ``default`` alone rendered ``size_t n = ;`` in the C app and
+    ``noise_hi=None`` in the console script for the last two kinds -- the
+    gh-2556 bug on the app face.
+
+    Examples
+    --------
+    >>> f = _init_param_flag(("hi", "size_t", "", "SIZE_MAX"))
+    >>> f["c_default"], f["omit_unset"], f["required"]
+    ('SIZE_MAX', True, False)
+    >>> f = _init_param_flag(
+    ...     ("n", "size_t", "", "", "", "", False, "", True)
+    ... )
+    >>> f["c_default"], f["omit_unset"], f["required"]
+    ('0', False, True)
+    >>> f = _init_param_flag(("gain", "double", "1.0"))
+    >>> f["default"], f["c_default"], f["omit_unset"]
+    ('1.0', '1.0', False)
+    """
+    name, ct, dflt = p[0], p[1], p[2]
+    raw = p[3] if len(p) > 3 else ""
+    required = bool(len(p) > 8 and p[8])
+    spellable = bool(dflt) and not T.is_c_only_default(ct, dflt)
+    return {
+        "name": name,
+        "type": ct,
+        "default": dflt if spellable else "",
+        "c_default": dflt or raw or T._CTYPE_META.get(ct, {}).get("zero", "0"),
+        "help": "",
+        "ctor": True,
+        "required": required,
+        "omit_unset": not required and not spellable,
+        # The C default is a `default_raw` expression, written for the
+        # binding's translation unit, where Python.h has `<math.h>` in scope.
+        "raw": bool(raw) and not dflt,
+    }
 
 
 def _extra_flags(flags: list[dict] | None) -> list[dict]:
@@ -404,7 +448,13 @@ def _argparse_block(flags: list[dict]) -> str:
             continue
         pytype = _PYTYPE.get(f["type"], "str")
         pydef = _py_default(f["default"], f["type"]) if f["default"] else None
-        helptext = _flag_help(f["name"], f["help"], pydef)
+        # gh-2557: an unset flag the call leaves out is documented by the
+        # binding's own default, the C spelling, not by `None`.
+        helptext = _flag_help(
+            f["name"],
+            f["help"],
+            f["c_default"] if f.get("omit_unset") else pydef,
+        )
         if f.get("required"):
             spec = "required=True"
         elif pydef is None:
@@ -425,10 +475,51 @@ def _argparse_block(flags: list[dict]) -> str:
 
 
 def _py_create_args(flags: list[dict]) -> str:
-    """Keyword-args for the Python constructor from ctor flags."""
-    return ", ".join(
-        f"{f['name']}=args.{f['name']}" for f in flags if f["ctor"]
-    )
+    """Keyword-args for the Python constructor from ctor flags.
+
+    gh-2557: a flag whose default Python cannot spell (``omit_unset``) is
+    passed only when it was given, so an unset one leaves the binding its
+    own default rather than handing it ``None``. That form is written one
+    argument per line with a trailing comma in every bracket: the layout
+    ruff keeps at any width (gh-1478), for the call at four spaces that
+    every app face embeds it in.
+
+    >>> _py_create_args([{"name": "n", "ctor": True}])
+    'n=args.n'
+    >>> print("obj = G(" + _py_create_args([
+    ...     {"name": "n", "ctor": True},
+    ...     {"name": "hi", "ctor": True, "omit_unset": True},
+    ... ]) + ")")
+    obj = G(
+            n=args.n,
+            **{
+                k: getattr(args, k)
+                for k in (
+                    "hi",
+                )
+                if getattr(args, k) is not None
+            },
+        )
+    """
+    ctor = [f for f in flags if f["ctor"]]
+    given = [
+        f"{f['name']}=args.{f['name']}"
+        for f in ctor
+        if not f.get("omit_unset")
+    ]
+    unset = [f["name"] for f in ctor if f.get("omit_unset")]
+    if not unset:
+        return ", ".join(given)
+    rows = [f"        {g}," for g in given] + [
+        "        **{",
+        "            k: getattr(args, k)",
+        "            for k in (",
+        *[f'                "{n}",' for n in unset],
+        "            )",
+        "            if getattr(args, k) is not None",
+        "        },",
+    ]
+    return "\n" + "\n".join(rows) + "\n    "
 
 
 def _np_dtype_of(t: str) -> str:
@@ -662,7 +753,9 @@ def _ctor_c_args(flags: list[dict], parsed: bool) -> str:
                 else f["name"]
             )
         else:
-            parts.append(f"/* {f['name']}= */{f['default']}")
+            parts.append(
+                f"/* {f['name']}= */{f.get('c_default') or f['default']}"
+            )
     return ", ".join(parts)
 
 
@@ -683,6 +776,7 @@ def _c_argv_parser(
     decls = []
     clauses = []
     usage_parts = []
+    required: list[str] = []  # gh-2557: ctor flags the run must be given
     help_rows = []  # (flag display, help text) for the --help screen
     for f in flags:
         chs = f.get("choices")
@@ -706,14 +800,27 @@ def _c_argv_parser(
         ct = f["type"]
         if ct not in _C_PARSE:
             continue  # not CLI-parseable; ctor uses its default literal
-        decls.append(f"    {ct} {f['name']} = {f['default']};")
+        # gh-2557: a ctor flag starts at the binding's own default, which
+        # for a `default_raw` param is the raw expression.
+        decls.append(
+            f"    {ct} {f['name']} = {f.get('c_default') or f['default']};"
+        )
         parse = cli_number_c(ct, f["name"], "argv[++i]")  # gh-2225
+        # A required ctor param has no default to start at: the run is
+        # refused without it, after the loop, as argparse refuses it.
+        must = f["ctor"] and f.get("required")
+        if must:
+            decls.append(f"    int {f['name']}_given = 0;")
+            required.append(f["name"])
         clauses.append(
             f'if (!strcmp(argv[i], "--{f["name"]}") && i + 1 < argc) {{\n'
             f"            {f['name']} = {parse};\n"
-            f"        }}"
+            + (f"            {f['name']}_given = 1;\n" if must else "")
+            + "        }"
         )
-        usage_parts.append(f"[--{f['name']} V]")
+        usage_parts.append(
+            f"--{f['name']} V" if must else f"[--{f['name']} V]"
+        )
         help_rows.append((f"--{f['name']} V", f["help"]))
 
     if want_in:
@@ -822,6 +929,15 @@ def _c_argv_parser(
         ]
 
     chunks = [*decls, "", loop]
+    for r in required:
+        chunks += [
+            "",
+            f"    if (!{r}_given) {{\n"
+            f'        fprintf(stderr, "error: --{r} is required\\n'
+            f'{usage}\\n");\n'
+            "        return 2;\n"
+            "    }",
+        ]
     if voids:
         chunks += ["", *voids]
     if opens:
@@ -1804,7 +1920,20 @@ def _build_ctx(
         "py_io_loop": py_io_loop,
         "arg_parse_block": arg_parse_block,
         "io_loop": io_loop,
-        "helpers": helpers,
+        # gh-2557: a `default_raw` (`NAN`, `INFINITY`) compiles in the
+        # binding because Python.h includes <math.h>; the app gets the same.
+        "helpers": "\n\n".join(
+            x
+            for x in (
+                (
+                    "#include <math.h>"
+                    if any(f.get("raw") for f in all_flags)
+                    else ""
+                ),
+                helpers,
+            )
+            if x
+        ),
         "app_create_line": (
             (f"    {WHY_DECL}\n" if _cw else "")
             + f"    {csym}_state_t *state = {create_call};"
