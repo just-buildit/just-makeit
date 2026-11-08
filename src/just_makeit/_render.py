@@ -32,7 +32,13 @@ from . import _outbuf
 from . import _incpath as INC
 from . import _csym as CSYM
 from ._report import Refusal
-from ._context._diagnostics import WHY_DECL, WHY_LOCAL, reason_raise_c
+from ._context._diagnostics import (
+    WHY_C_ARG,
+    WHY_C_PARAM,
+    WHY_DECL,
+    reason_raise_c,
+    WHY_LOCAL,
+)
 
 _TMPL_DIR = Path(__file__).parent / "templates"
 
@@ -1056,14 +1062,6 @@ def fn_c_decl(
     return f"{ret_disp} {fn_name}({c_param_list(c_parts)});\n"
 
 
-#: The trailing C parameter a ``why = true`` function takes (gh-1706). LAST,
-#: after `out` and every other parameter jm appends, because that is where a
-#: C API puts the optional out-param that names a refusal
-#: (``f(spec, out, max, &why)``), and one fixed place is what lets the
-#: prototype, the stub and the binding's call agree without a position key.
-WHY_C_PARAM = "const char **why"
-
-
 def _why_c_params(why: bool) -> "list[str]":
     """``[WHY_C_PARAM]`` for a ``why = true`` function, else ``[]``."""
     return [WHY_C_PARAM] if why else []
@@ -1804,7 +1802,7 @@ def _why_call_arg(why: bool) -> str:
 
     Appended LAST, matching `WHY_C_PARAM`'s place in the prototype.
     """
-    return f", &{WHY_LOCAL}" if why else ""
+    return f", {WHY_C_ARG}" if why else ""
 
 
 def _check_return_unreadable(fn_name: str, return_type: str) -> str:
@@ -2149,7 +2147,7 @@ def _py_wrapper_for_function(
         _rt_disp = return_type
         _args = f"{call_args}, " if call_args else ""
         _call = (
-            f"{c_name}({_args}&{WHY_LOCAL})"
+            f"{c_name}({_args}{WHY_C_ARG})"
             if why
             else f"{c_name}({call_args})"
         )

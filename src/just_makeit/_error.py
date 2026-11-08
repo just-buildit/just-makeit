@@ -44,6 +44,7 @@ def run(
     *,
     module: str | None = None,
     view: str = "",
+    why: "bool | None" = None,
 ) -> None:
     """Declare `object_name`'s create()-failure translation.
 
@@ -65,6 +66,13 @@ def run(
         module-object feature. Without this, a view inherits whatever the parent
         declares, which is usually what you want; declare a view's own only when
         its extra constructor parameters deserve their own wording.
+    why : bool or None, optional
+        ``create_why`` (gh-2552): the constructor takes a trailing
+        ``const char **why`` and a refusal raises *category* with the
+        sentence it wrote there, *message* when it wrote none. Written with
+        the translation it needs, so a manifest never holds one without the
+        other. ``None`` (the CLI) leaves the key as declared; it is
+        manifest-only, since it changes the sacred create() signature.
 
     Notes
     -----
@@ -144,9 +152,16 @@ def run(
             sys.exit(1)
         previous = v.get("create_error", "")
         C.set_view_create_error(cfg, object_name, view, category, message)
+        table = v
     else:
         previous = C.create_error(cfg, object_name)
         C.set_create_error(cfg, object_name, category, message)
+        table = cfg[object_name]
+    if why is not None:
+        if why:
+            table["create_why"] = True
+        else:
+            table.pop("create_why", None)
     C.save(root, cfg)
 
     verb = "replacing" if previous else "adding"

@@ -478,8 +478,33 @@ def _why_key_errors(cfg: dict) -> "list[str]":
     "[module.m.json] from_json_why = 'f' must be true or false"
     >>> _why_key_errors({"module": {"m": {"functions": [{"name": "g", "why": True}]}}})
     []
+
+    An object's or a view's ``create_why`` (gh-2552) is the same switch, for
+    its constructor, and is refused, as ``why`` without ``check_return`` is
+    (gh-1706), where nothing would raise the sentence: with no
+    ``create_error`` in force -- the view's own or the one it inherits --
+    a NULL create() keeps jm's undeclared ``MemoryError``.
+
+    >>> _why_key_errors({"g": {"create_why": True}})[0].split(":")[0]
+    '[g] create_why = true needs a create_error'
     """
     errors: list[str] = []
+    for comp in components(cfg):
+        entry = cfg.get(comp)
+        if not isinstance(entry, dict):
+            continue
+        rows = [(f"[{comp}]", entry, create_error(cfg, comp))]
+        rows += [
+            (
+                f"[[{comp}.views]] {v.get('class_name', '?')!r}",
+                v,
+                view_create_error(cfg, comp, v),
+            )
+            for v in views(cfg, comp)
+            if isinstance(v, dict)
+        ]
+        for where, table, category in rows:
+            errors += _create_why_errors(where, table, category)
     for mid, mod in (cfg.get("module") or {}).items():
         if not isinstance(mod, dict):
             continue
@@ -528,6 +553,55 @@ def _why_key_errors(cfg: dict) -> "list[str]":
                         "function as taking a trailing `const char **why`."
                     )
     return errors
+
+
+def _create_why_errors(where: str, table: dict, category: str) -> "list[str]":
+    """Why *table*'s ``create_why`` cannot be generated, or ``[]`` (gh-2552).
+
+    *where* names the table in the message, *category* is the
+    ``create_error`` in force for it. Three refusals, each the gh-1706 one
+    for a module function's ``why``: a value that is not a bool (gh-1722),
+    no exception to raise the sentence as, and an init param named ``why``
+    -- jm appends that parameter itself.
+
+    Examples
+    --------
+    >>> _create_why_errors("[g]", {"create_why": "f"}, "ValueError")[0][:30]
+    "[g] create_why = 'f' must be t"
+    >>> _create_why_errors("[g]", {"create_why": True}, "ValueError")
+    []
+    >>> _create_why_errors("[g]", {}, "")
+    []
+    """
+    if "create_why" not in table:
+        return []
+    value = table["create_why"]
+    if not isinstance(value, bool):
+        return [
+            f"{where} create_why = {value!r} must be true or false: it "
+            "marks the constructor as taking a trailing `const char **why`. "
+            "Name the function in create_fn."
+        ]
+    if not value:
+        return []
+    if not category:
+        return [
+            f"{where} create_why = true needs a create_error: the sentence "
+            "the constructor writes to `const char **why` is raised as the "
+            "declared create_error, and with none a refused create() "
+            "reports MemoryError. Declare one (`jm error`), or drop "
+            "create_why."
+        ]
+    if any(
+        isinstance(p, dict) and p.get("name") == "why"
+        for p in table.get("init_params") or []
+    ):
+        return [
+            f"{where} declares create_why = true and an init param named "
+            "`why`; jm appends `const char **why` itself. Rename the "
+            "parameter."
+        ]
+    return []
 
 
 def _consumed_fn_errors(cfg: dict) -> "list[str]":
@@ -8430,6 +8504,39 @@ def object_create_fn(cfg: dict, component: str) -> str | None:
     return cfg.get(component, {}).get("create_fn") or None
 
 
+def object_create_why(cfg: dict, component: str) -> bool:
+    """Whether the object's constructor names its refusal (gh-2552).
+
+    ``create_why = true`` is gh-1706's ``why`` on the constructor: the
+    create() the binding calls -- ``create_fn`` or ``<stem>_create`` --
+    takes a trailing ``const char **why``, and a refusal raises
+    ``create_error`` with the sentence it wrote there, or
+    ``create_error_message`` when it wrote none. A view's own constructor is
+    a different function, so a view states its own (`view_create_why`).
+
+    >>> object_create_why({"g": {"create_why": True}}, "g")
+    True
+    >>> object_create_why({"g": {}}, "g")
+    False
+    """
+    return cfg.get(component, {}).get("create_why") is True
+
+
+def view_create_why(view: dict) -> bool:
+    """Whether a view's constructor names its refusal (gh-2552).
+
+    Never inherited from the parent, unlike ``create_error``: the key states
+    the SIGNATURE of the view's own ``create_fn``, a different C function
+    from the parent's create().
+
+    >>> view_create_why({"class_name": "B", "create_why": True})
+    True
+    >>> view_create_why({"class_name": "B"})
+    False
+    """
+    return view.get("create_why") is True
+
+
 def object_create_name(cfg: dict, component: str) -> str:
     """The C constructor an object's glue calls: THE one answer (gh-1591).
 
@@ -9025,8 +9132,8 @@ _OBJECT_ORDER = (
     "core_macro", "core_header", "step_delegates_to_steps", "serializable",
     "set_state_status_errors",
     "streamable", "async_stream", "stream_block_default", "class_name",
-    "create_fn", "create_error", "create_error_message", "doc",
-    "depends_on", "extra_link_libs", "extra_include_dirs", "core_args",
+    "create_fn", "create_error", "create_error_message", "create_why",
+    "doc", "depends_on", "extra_link_libs", "extra_include_dirs", "core_args",
     "impl", "create_impl", "reset_impl", "destroy_impl", "init_post_parse",
     "destroy", "array_args", "state", "init_params", "init_groups",
     "records", "methods", "properties", "extra_methods", "warnings",
@@ -9120,7 +9227,8 @@ _KEY_ORDER: "dict[str, tuple[str, ...]]" = {
     "<obj>.views": (
         "class_name", "module", "create_fn", "doc", "init_params",
         "exclude_properties", "exclude_methods", "create_error",
-        "create_error_message", "warnings", "methods", "properties",
+        "create_error_message", "create_why", "warnings", "methods",
+        "properties",
     ),
     "<obj>.views.init_params": _INIT_PARAM_ORDER,
 }  # fmt: skip

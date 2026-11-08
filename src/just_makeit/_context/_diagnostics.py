@@ -302,6 +302,18 @@ WHY_LOCAL = "_why"
 #: one that succeeds, leaves it untouched.
 WHY_DECL = f"const char *{WHY_LOCAL} = NULL;"
 
+#: The trailing C parameter a ``why`` switch appends (gh-1706): a module
+#: function's ``why``, an object's or a view's ``create_why`` (gh-2552).
+#: LAST, after `out` and every other parameter jm appends, because that is
+#: where a C API puts the optional out-param that names a refusal
+#: (``f(spec, out, max, &why)``), and one fixed place is what lets the
+#: prototype, the stub and the binding's call agree without a position key.
+WHY_C_PARAM = "const char **why"
+
+#: The argument the binding passes for `WHY_C_PARAM`: the address of the
+#: `WHY_LOCAL` that `WHY_DECL` declares.
+WHY_C_ARG = f"&{WHY_LOCAL}"
+
 
 def reason_raise_c(
     fallback: str, why: str = "", indent: int = 8, category: str = "ValueError"
@@ -1246,7 +1258,9 @@ def empty_is_none_doc(m: dict) -> str:
     )
 
 
-def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":
+def create_raises_doc(
+    category: str, message: str, why: bool = False
+) -> "list[tuple[str, str]]":
     """The ``raises=`` argument for a component's CLASS docstring (gh-805 §F).
 
     `raises_doc` is the per-method reading of the same question; this is the
@@ -1270,6 +1284,9 @@ def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":
     message : str
         The declared exception text. This is quoted verbatim because it is
         what the caller sees at the REPL.
+    why : bool, optional
+        ``create_why`` (gh-2552): the constructor names its refusal, so the
+        text is that sentence, and *message* only when it gives none.
 
     Examples
     --------
@@ -1280,13 +1297,21 @@ def create_raises_doc(category: str, message: str) -> "list[tuple[str, str]]":
     'ValueError'
     >>> desc
     'If construction fails. The exception message is ``rate must be positive``.'
+    >>> create_raises_doc("ValueError", "bad", why=True)[0][1]
+    'If construction fails. The exception message is the reason the constructor gives, or ``bad`` when it gives none.'
     """
     if not category:
         return []
+    text = (
+        "the reason the constructor gives, or "
+        f"``{message}`` when it gives none"
+        if why
+        else f"``{message}``"
+    )
     return [
         (
             category,
-            f"If construction fails. The exception message is ``{message}``.",
+            f"If construction fails. The exception message is {text}.",
         )
     ]
 
@@ -1540,6 +1565,7 @@ def make_errors_ctx(
     undeclared_body: str = "",
     *,
     csym: str,
+    why: bool = False,
 ) -> dict[str, str]:
     """Build the create()-failure translation block (gh-482).
 
@@ -1562,6 +1588,14 @@ def make_errors_ctx(
         ``MemoryError``, so it passes its own here — that keeps every existing
         handle module's generated C byte-identical while still sharing the
         *declared* rendering below, which is the part gh-514 needed.
+    why : bool, optional
+        The object's ``create_why`` (gh-2552): the constructor took a
+        trailing ``const char **why`` and the binding passed the address of
+        `WHY_LOCAL`. A refusal that wrote a sentence raises it as
+        *category*; one that wrote none keeps *message*. Through
+        `reason_raise_c`, the one emitter of that choice. Only read with a
+        declared *category* -- `_config` refuses ``create_why`` without
+        one, as gh-1706 refuses ``why`` without ``check_return``.
 
     Returns
     -------
@@ -1590,6 +1624,18 @@ def make_errors_ctx(
                             "bad params");
             return -1;
         }
+    >>> out = make_errors_ctx(
+    ...     "acq", "ValueError", "bad params", csym="acq", why=True
+    ... )
+    >>> print(out["create_fail_block"], end="")
+        if (!self->handle) {
+            if (_why)
+                PyErr_SetString(PyExc_ValueError, _why);
+            else
+                PyErr_SetString(PyExc_ValueError,
+                                "bad params");
+            return -1;
+        }
     """
     if not category:
         # The pre-gh-482 hardcoded template text, to the byte. gh-509: when the
@@ -1602,9 +1648,19 @@ def make_errors_ctx(
             f'                        "{_cfn} returned NULL");\n'
         )
     else:
-        body = (
-            f"        PyErr_SetString(PyExc_{category},\n"
-            f"{_c_string_literal(message, 24)});\n"
+        # Under `why` the raise sits one block deeper (`reason_raise_c`'s
+        # `else`), so the literal is wrapped for its real column, then handed
+        # over relative to the raise's own, as that emitter takes it.
+        _deeper = 4 if why else 0
+        literal = "\n".join(
+            ln[8 + _deeper :]
+            for ln in _c_string_literal(message, 24 + _deeper).split("\n")
+        )
+        body = reason_raise_c(
+            f"PyErr_SetString(PyExc_{category},\n{literal});\n",
+            WHY_LOCAL if why else "",
+            indent=8,
+            category=category,
         )
     return {
         "create_fail_block": (

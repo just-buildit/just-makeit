@@ -13,11 +13,13 @@ from .. import _config as C
 from .._report import Refusal
 from .. import _csym as CSYM
 from .._docstring import (
+    WHY_PARAM_DOC,
     enum_param_desc,
     struct_member_doc,
     render_numpy_doc,
     render_runtime_doc,
 )
+from ._diagnostics import WHY_C_ARG, WHY_C_PARAM, WHY_DECL
 from ._parse import (
     _build_ml_doc,
     borrow_view_c as _borrow_view_c,
@@ -200,6 +202,35 @@ def _stub_body(
     )
 
 
+#: The ``@param`` line every scaffolded constructor documents its trailing
+#: ``const char **why`` with (gh-2552) -- the text `reconcile_param_docs`
+#: gives the same parameter of an authored docblock (gh-1722).
+WHY_PARAM_DOC_LINE = f" * @param why  {WHY_PARAM_DOC}"
+
+
+def _with_why_local(ctx: dict, create_why: bool) -> dict:
+    """*ctx* with the ``_why`` local declared ahead of every create() call.
+
+    gh-2552. Under ``create_why`` each constructor call the binding makes
+    passes `WHY_C_ARG`; the local it points at is declared once, at the head
+    of ``array_args_parse_block`` -- the first slot of ``tp_init`` that can
+    hold a call (an ``optional`` array's constructor choice is made there)
+    and the one before ``create_line``, which holds every other.
+
+    Examples
+    --------
+    >>> _with_why_local({"array_args_parse_block": ""}, True)
+    {'array_args_parse_block': '    const char *_why = NULL;\\n'}
+    >>> _with_why_local({"array_args_parse_block": ""}, False)
+    {'array_args_parse_block': ''}
+    """
+    if create_why:
+        ctx["array_args_parse_block"] = f"    {WHY_DECL}\n" + ctx.get(
+            "array_args_parse_block", ""
+        )
+    return ctx
+
+
 def _two_dispatches(component: str, first: str, second: str) -> str:
     """Why two per-call constructor choices on one object are refused.
 
@@ -236,6 +267,7 @@ def _build_no_state_init_ctx(
     create_fn: "str | None" = None,
     *,
     csym: str,
+    create_why: bool = False,
 ) -> dict[str, str]:
     """Build the init-parse context keys for a --no-state object.
 
@@ -878,6 +910,17 @@ def _build_no_state_init_ctx(
                 or dflt_s
                 or _CTYPE_META[ct_s]["zero"]
             )
+
+    # gh-2552: `create_why`'s trailing `const char **why`, LAST -- after
+    # every init param -- in the prototype, the binding's call and the C
+    # seed alike. Appended to the parts, so every constructor built from
+    # them (create() and gh-1827's alternates) takes it, and a refusal from
+    # any of them reaches the one `create_fail_block`.
+    if create_why:
+        sig_parts.append(WHY_C_PARAM)
+        doc_parts.append(WHY_PARAM_DOC_LINE)
+        call_parts.append(WHY_C_ARG)
+        c_create_parts_ordered.append("NULL")
 
     # gh-1072: one rule for "an empty C parameter list reads `void`", shared
     # with every prototype `_render` emits. These two sites already join the
@@ -2777,6 +2820,7 @@ def make_state_ctx(
     csym: str,
     str_hints: "dict[str, str] | None" = None,
     reset_impl: bool = False,
+    create_why: bool = False,
 ) -> dict[str, str]:
     """Return template context keys derived from the state variable list.
 
@@ -2810,6 +2854,11 @@ def make_state_ctx(
     ``<component>_create`` directly and blank ``create_line``, so callers that
     use those paths must not also pass ``create_fn`` (the view generator
     rejects array-dispatch parents up front).
+
+    create_why (gh-2552) appends ``const char **why`` to every constructor
+    the binding calls, LAST, and passes the address of a ``_why`` local
+    initialised to NULL; `make_errors_ctx` raises what it holds. It is the
+    C side only -- Python never sees the parameter.
 
     str_hints maps an array state field to its ``str_hint`` (gh-1761),
     from `_config.state_str_hints`: its ``set_<name>`` appends it to the
@@ -2959,7 +3008,19 @@ def make_state_ctx(
                     init_post_parse_impl=init_post_parse_impl,
                     create_fn=create_fn,
                     csym=csym,
+                    create_why=create_why,
                 )
+            )
+        elif create_why:
+            # gh-2552: `create(void)` becomes `create(const char **why)`.
+            base.update(
+                create_params=WHY_C_PARAM,
+                create_param_docs=WHY_PARAM_DOC_LINE,
+                create_line=f"    self->handle = {_create}({WHY_C_ARG});\n",
+                c_create_args="NULL",
+                bench_create_stmt=(
+                    f"    {csym}_state_t *obj = {_create}(NULL);"
+                ),
             )
         # gh-1857: nothing in the stub's body reads a constructor parameter.
         base["create_assignments"] = _stub_body(
@@ -2990,7 +3051,7 @@ def make_state_ctx(
                 csym=csym,
             )
         )
-        return _apply_no_reset(base, no_reset)
+        return _apply_no_reset(_with_why_local(base, create_why), no_reset)
 
     if roles is None:
         roles = {}
@@ -3047,7 +3108,13 @@ def make_state_ctx(
         for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
     ]
     scalar_param_parts = [f"{ct} {name}" for name, ct, _ in ctor_scalars]
-    all_param_parts = arr_param_parts + scalar_param_parts
+    # gh-2552: the trailing `const char **why`, as in
+    # `_build_no_state_init_ctx`; the call and the seed take it below.
+    all_param_parts = (
+        arr_param_parts
+        + scalar_param_parts
+        + ([WHY_C_PARAM] if create_why else [])
+    )
     create_params = c_param_list(all_param_parts)
 
     arr_doc_parts = [
@@ -3058,7 +3125,11 @@ def make_state_ctx(
         f" * @param {name}  Initial {name} (default: {dflt})."
         for name, _, dflt in ctor_scalars
     ]
-    all_docs = arr_doc_parts + scalar_doc_parts
+    all_docs = (
+        arr_doc_parts
+        + scalar_doc_parts
+        + ([WHY_PARAM_DOC_LINE] if create_why else [])
+    )
     create_param_docs = (
         "\n".join(all_docs)
         or " * @param (none)  All array fields initialise to zero."
@@ -3241,7 +3312,11 @@ def make_state_ctx(
         for (name, _), (ct, __) in zip(_aa, _aa_ctypes)
     ]
     scalar_call_parts = [name for name, _, __ in ctor_scalars]
-    create_call_args = ", ".join(arr_call_parts + scalar_call_parts)
+    create_call_args = ", ".join(
+        arr_call_parts
+        + scalar_call_parts
+        + ([WHY_C_ARG] if create_why else [])
+    )
 
     if _aa or ctor_scalars:
         post_str = ("\n".join(post_lines) + "\n") if post_lines else ""
@@ -3278,7 +3353,9 @@ def make_state_ctx(
 
     c_arr_call_parts = ["NULL, 0" for _ in _aa]
     c_create_args = ", ".join(
-        c_arr_call_parts + [dflt for _, _, dflt in ctor_scalars]
+        c_arr_call_parts
+        + [dflt for _, _, dflt in ctor_scalars]
+        + (["NULL"] if create_why else [])
     )
 
     _NP_PY_TYPE: dict[str, str] = {
@@ -3833,6 +3910,7 @@ def make_state_ctx(
             init_post_parse_impl=init_post_parse_impl,
             create_fn=create_fn,
             csym=csym,
+            create_why=create_why,
         )
         # gh-122: _build_no_state_init_ctx generates empty create-arg strings
         # when an init_param has no explicit default. Fall back to the matching
@@ -3892,7 +3970,10 @@ def make_state_ctx(
                 f"{_NP_PY_TYPE.get(_CTYPE_TO_DTYPE.get(dt, 'float32'), 'np.float32')})"
                 for aname, dt in array_args
             ]
-            _c_args = ", ".join(_aa_c + _ip_c)
+            # gh-2552: the seed for the trailing `why`, as the first build.
+            _c_args = ", ".join(
+                _aa_c + _ip_c + (["NULL"] if create_why else [])
+            )
             _py_args = ", ".join(_aa_py + _ip_py)
             _init_ctx["c_create_args"] = _c_args
             _init_ctx["py_create_args"] = _py_args
@@ -3988,4 +4069,4 @@ def make_state_ctx(
         )
     )
     result.update(_reset_wrapper_slots(component, csym=csym))
-    return _apply_no_reset(result, no_reset)
+    return _apply_no_reset(_with_why_local(result, create_why), no_reset)
