@@ -520,9 +520,21 @@ def _why_key_errors(cfg: dict) -> "list[str]":
         ]
         for where, table, category, params in rows:
             errors += _create_why_errors(where, table, category, params)
+        errors += _method_why_errors(cfg, comp)
     for mid, mod in (cfg.get("module") or {}).items():
         if not isinstance(mod, dict):
             continue
+        # gh-2407: a handle method's `why`, in the handle's vocabulary.
+        if is_handle_module(cfg, mid):
+            from ._context._diagnostics import method_why_errors
+
+            for m in handle_methods(cfg, mid):
+                errors += method_why_errors(
+                    f"[[module.{mid}.methods]] {m.get('name', '?')!r}",
+                    m,
+                    [str(a.get("name", "")) for a in m.get("args") or []],
+                    handle=True,
+                )
         jtbl = mod.get("json")
         for face in ("from_json", "from_file"):
             key = f"{face}_why"
@@ -567,6 +579,45 @@ def _why_key_errors(cfg: dict) -> "list[str]":
                         f"why = {v!r} must be true or false: it marks the "
                         "function as taking a trailing `const char **why`."
                     )
+    return errors
+
+
+def _method_why_errors(cfg: dict, comp: str) -> "list[str]":
+    """`method_why_errors` over *comp*'s methods and its views' (gh-2574).
+
+    A view's are the entries it renders (`resolved_view_methods`): an
+    override of a parent method carries the parent's params, so a parent
+    param named ``why`` meets the view's ``why`` the way it meets the
+    parent's.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"methods": [{"name": "m", "why": True}]}}
+    >>> _method_why_errors(cfg, "o")[0][:40]
+    "[[o.methods]] 'm' declares why = true, b"
+    """
+    from ._context._diagnostics import method_why_errors
+
+    def names(m: dict) -> "list[str]":
+        rows = m.get("extra_args") or m.get("params") or []
+        return [str(p.get("name", "")) for p in rows if isinstance(p, dict)]
+
+    tables = [(f"[[{comp}.methods]]", methods(cfg, comp))]
+    tables += [
+        (
+            f"[[{comp}.views]] {v.get('class_name', '?')!r} method",
+            resolved_view_methods(cfg, comp, v),
+        )
+        for v in views(cfg, comp)
+        if isinstance(v, dict)
+    ]
+    errors: list[str] = []
+    for where, rows in tables:
+        for m in rows:
+            if isinstance(m, dict):
+                errors += method_why_errors(
+                    f"{where} {m.get('name', '?')!r}", m, names(m)
+                )
     return errors
 
 

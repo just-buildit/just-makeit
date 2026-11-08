@@ -752,6 +752,10 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     # accompany it, and would replay with nothing to attach to.
     if m.get("status_return"):
         parts.append(_bool_flag("--status-return"))
+    # gh-2574: dropped here, a replayed method's kernel lost its trailing
+    # `const char **why` and the author's `_core.c` stopped compiling.
+    if m.get("why"):
+        parts.append(_bool_flag("--why"))
     if m.get("error"):
         parts.append(_flag("--error", str(m["error"])))
     if m.get("error_message"):

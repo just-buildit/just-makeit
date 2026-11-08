@@ -642,11 +642,19 @@ def _exit_body(
         )
 
     from .. import _borrow
+    from ._diagnostics import WHY_C_ARG, WHY_DECL, append_why, method_why
 
     category, message = raise_pair
+    # gh-2574: a finalizer declaring `why` is called with the pointer here
+    # too, and raises the sentence as its explicit call does (gh-541).
+    why = method_why(method)
+    call = f"{c_fn}(self->handle)"
+    if why:
+        call = append_why(call, c_fn, WHY_C_ARG)
     return (
         guard
-        + f"    int _rc = {c_fn}(self->handle);\n"
+        + (f"    {WHY_DECL}\n" if why else "")
+        + f"    int _rc = {call};\n"
         + "    if (_rc != 0) {\n"
         # gh-2470: the finalizer's own rows, as its explicit call raises
         # them -- the two calls disagreeing about raising is gh-541. No
@@ -655,8 +663,9 @@ def _exit_body(
             _borrow.status_rows(method),
             str(method.get("name", "")),
             _borrow.message_slots({}, csym, properties),
+            why,
         )
-        + _rc_raise_c(category, message)
+        + _rc_raise_c(category, message, why=why)
         + "    }\n"
         "    Py_RETURN_NONE;\n"
     )

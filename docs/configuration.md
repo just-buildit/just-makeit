@@ -1294,6 +1294,7 @@ way.
 | `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                    | ✅ (gh-2012)          |
 | `error_sentinel = "SIZE_MAX"`          | `jm method --error-sentinel EXPR` (a `size_t` count's refusal value raises)                         | ✅ (gh-2012)          |
 | `status_return = true`                 | `jm method --status-return` (the `int` is status only)                                              | ✅ (gh-823)           |
+| `why = true`                           | `jm method --why` (a refusal raises the sentence a trailing `const char **why` names)               | ✅ (gh-2574)          |
 | `borrow = true`                        | `jm method --borrow` (a zero-copy view of state memory)                                             | ✅ (gh-1312)          |
 | `borrow_count = "PARAM"`               | `jm method --borrow-count PARAM`                                                                    | ✅ (gh-1312)          |
 | `borrow_writeable = true`              | `jm method --borrow-writeable`                                                                      | ✅ (gh-1312)          |
@@ -1849,6 +1850,7 @@ One entry per `just-makeit method` call.
 | `error_sentinel`  | string                  | C constant a `size_t` count refuses with (gh-2012); also an `out=` method's count (gh-2559)                                       |
 | `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)                                                                          |
 | `status_return`   | bool                    | integer return is a status: ValueError on non-0 (gh-432, gh-2250); a `status_errors` row names another class per status (gh-2470) |
+| `why`             | bool                    | `--why`: the kernel takes a trailing `const char **why`; a declared refusal raises that sentence (gh-2574)                        |
 | `batch`           | bool                    | `--batch`                                                                                                                         |
 | `multi_output`    | array of strings        | `--multi-output` types                                                                                                            |
 | `out_type`        | string                  | `--out-type`                                                                                                                      |

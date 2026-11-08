@@ -52,7 +52,13 @@ from ._init import (
 from ._object import _regenerate_module
 from . import _linkcheck
 from . import _incpath as INC
-from ._context._diagnostics import DEFAULT_COUNT_TYPE, method_raises
+from ._context._diagnostics import (
+    DEFAULT_COUNT_TYPE,
+    WHY_C_PARAM,
+    append_why,
+    method_raises,
+    method_why_errors,
+)
 
 # gh-805 §B: the return types on which `_rc < 0` is a meaningful test.
 # Enumerated rather than derived from `_CTYPE_META[...]["kind"] == "int"`,
@@ -1466,6 +1472,54 @@ def _write_varargs_core_c(
 def _build_method_prototype(
     component: str,
     name: str,
+    *args,
+    why: bool = False,
+    **kwargs,
+) -> str:
+    """The C prototype declaration(s) of a method, ``why`` included.
+
+    `_shape_prototype` builds the declaration each result shape takes; a
+    method declaring ``why = true`` (gh-2574) then gets `WHY_C_PARAM`
+    LAST, through `append_why`, the one rule the binding's call and the
+    ``_core.c`` stub (`why_stub`) are written by too. Every reader of a
+    method's prototype -- the sacred header, the benchmark's call, the
+    built-in collision check -- comes through here.
+    """
+    proto = _shape_prototype(component, name, *args, **kwargs)
+    if not why:
+        return proto
+    c_fn = C.method_c_symbol(
+        kwargs["csym"], {"name": name, "fn": kwargs.get("c_fn", "")}
+    )
+    return append_why(proto, c_fn)
+
+
+def why_stub(stub: str, c_fn: str) -> str:
+    """A ``_core.c`` method stub taking ``why = true``'s parameter
+    (gh-2574).
+
+    `WHY_C_PARAM` appended to *c_fn*'s definition by `append_why`, as the
+    prototype's is, and ``(void)why;`` as the body's first statement, as
+    every other parameter a stub does not read gets: a stub that refuses
+    nothing writes no sentence.
+
+    >>> print(why_stub("int\\nf(s_t *state)\\n{\\n    return 0;\\n}\\n", "f"))
+    int
+    f(s_t *state, const char **why)
+    {
+        (void)why;
+        return 0;
+    }
+    <BLANKLINE>
+    """
+    stub = append_why(stub, c_fn, WHY_C_PARAM)
+    at = stub.index("{\n", stub.index(WHY_C_PARAM)) + 2
+    return f"{stub[:at]}    (void)why;\n{stub[at:]}"
+
+
+def _shape_prototype(
+    component: str,
+    name: str,
     arg_type: str,
     return_type: str,
     variable_output: bool,
@@ -1698,6 +1752,9 @@ _SIGNATURE_COERCIONS: dict = {
     "nogil": (bool, False),
     "status_return": (bool, False),
     "error_negative": (bool, False),
+    # gh-2574: the kernel takes a trailing `const char **why` -- part of
+    # its C signature, so two methods differing in it differ in the call.
+    "why": (bool, False),
     "error": (str, ""),
     "error_message": (str, ""),
     "codec": (str, ""),
@@ -1908,6 +1965,7 @@ def run(
     status_return: bool = False,
     fn: str = "",
     error_negative: bool = False,
+    why: bool = False,
     error: str = "",
     error_message: str = "",
     doc: str = "",
@@ -2226,6 +2284,26 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-2574: `why` is read only where the binding raises; the manifest's
+    # load refuses the same declaration (`_config._method_why_errors`),
+    # this the CLI's, before anything is written.
+    _why_err = method_why_errors(
+        f"method '{object_name}.{method_name}'",
+        {
+            "why": why,
+            "error_negative": error_negative,
+            "status_return": status_return,
+            "error_on_empty": error_on_empty,
+            "error_sentinel": error_sentinel,
+            "borrow": borrow,
+            "none_on_empty": none_on_empty,
+            "status_fn": status_fn,
+            "status_errors": status_errors or [],
+        },
+        [str(p.get("name", "")) for p in _params_as_dicts(params)],
+    )
+    if _why_err:
+        raise _report.Refusal(_why_err[0])
     # gh-805 §A2: `fn` is spliced verbatim into the generated C, so a
     # non-identifier produces a file that does not compile. Deliberately not
     # the gh-625 name predicate, though gh-784's `isascii()` term has since
@@ -2877,6 +2955,9 @@ def run(
                 csym=csym,
                 error_sentinel=error_sentinel,
             )
+        if why:
+            # gh-2574: the definition takes what the prototype declares.
+            stub = why_stub(stub, _c_fn)
         if impl_body is not None:
             from . import _impl as I
 
@@ -2960,6 +3041,7 @@ def run(
             csym=csym,
             count_type=count_type or DEFAULT_COUNT_TYPE,
             no_count=no_count,
+            why=why,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
@@ -3105,6 +3187,9 @@ def run(
         method_entry["fn"] = fn
     if error_negative:
         method_entry["error_negative"] = True
+    # gh-2574: written only when set, like `error_negative` above.
+    if why:
+        method_entry["why"] = True
     if error:
         method_entry["error"] = error
     if error_message:

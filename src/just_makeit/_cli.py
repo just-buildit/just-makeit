@@ -255,6 +255,10 @@ Commands:
     --status-return             The int return carries ONLY status (0 = ok): the
                                 binding raises on non-zero and the method returns
                                 None. Mutually exclusive with --error-negative.
+    --why                       The C function takes a trailing
+                                `const char **why`; a declared refusal raises
+                                the sentence it writes there, else the
+                                --error-message. Needs a refusal to raise.
     --py-return-type STR        Override the .pyi return annotation; --return-type
                                 still drives the C signature.
     --single                    With --result-field, return ONE named record (a

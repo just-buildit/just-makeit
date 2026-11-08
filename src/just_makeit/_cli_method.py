@@ -63,6 +63,7 @@ def run(args: list[str]) -> None:
     fn = ""
     error_negative = False
     status_return = False
+    why = False
     error = ""
     error_message = ""
     batch_method = False
@@ -261,6 +262,12 @@ def run(args: list[str]) -> None:
         # the replay would otherwise emit `--error` with nothing to attach to.
         elif tok == "--status-return":
             status_return = True
+            i += 1
+        # gh-2574: the kernel takes a trailing `const char **why`; the
+        # binding passes `&_why` and a refusal raises what it wrote --
+        # `jm function --why`'s flag (gh-1706), on a method.
+        elif tok == "--why":
+            why = True
             i += 1
         elif tok == "--error":
             i += 1
@@ -900,6 +907,7 @@ def run(args: list[str]) -> None:
         fn=fn,
         error_negative=error_negative,
         status_return=status_return,
+        why=why,
         error=error,
         error_message=error_message,
         doc=doc,

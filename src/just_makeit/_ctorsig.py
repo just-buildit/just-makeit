@@ -556,6 +556,75 @@ def order_drift(root: Path, tree: Path, cfg: dict) -> "list[OrderDrift]":
     return out
 
 
+def _takes_why(params: str) -> bool:
+    """Whether a parameter list ends in a method's ``why`` (gh-2574).
+
+    >>> _takes_why("s_t *state, int mode, const char ** why")
+    True
+    >>> _takes_why("s_t *state, int mode")
+    False
+    """
+    from ._context._diagnostics import WHY_C_PARAM
+
+    return _norm(params).endswith(_norm(WHY_C_PARAM))
+
+
+def why_drift(root: Path, tree: Path, cfg: dict) -> "list[CtorDrift]":
+    """Every method declaration whose trailing ``why`` the header and the
+    manifest disagree about (gh-2574, gh-2407).
+
+    `drift`'s check, for the parameter a method's ``why = true`` appends.
+    A module object's sacred header only GAINS declarations on `apply`
+    (`_apply._declared_method_decls`), so adding ``why`` to a method that
+    is already declared leaves the old prototype in place, and the binding
+    then passes an argument the header does not take -- a compile error
+    several files from the cause. The declaration *tree* (a replay of
+    *cfg*) renders is compared with *root*'s, for every method of every
+    object and its views. Only the ``why`` parameter is the finding: the
+    rest of a method's prototype is the author's to adopt, and every other
+    disagreement is already a compile error naming the declaration.
+    """
+    out: "list[CtorDrift]" = []
+    for comp in C.components(cfg):
+        stem = _csym.stem(cfg, comp)
+        rows = list(C.methods(cfg, comp))
+        for v in C.views(cfg, comp):
+            rows += C.resolved_view_methods(cfg, comp, v)
+        syms = sorted({C.method_c_symbol(stem, m) for m in rows})
+        if not syms:
+            continue
+        sides = []
+        for base in (tree, root):
+            try:
+                text = INC.core_h(base, comp, cfg).read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            found: "dict[str, Signature]" = {}
+            for sig in signatures(text):
+                found.setdefault(sig.name, sig)
+            sides.append(found)
+        want, have = sides
+        for sym in syms:
+            w, h = want.get(sym), have.get(sym)
+            if w is None or h is None:
+                continue
+            if _takes_why(w.params) == _takes_why(h.params):
+                continue
+            out.append(
+                CtorDrift(
+                    component=comp,
+                    rel=INC.core_rel(comp, cfg),
+                    # As written, one space per run: `_norm` would print
+                    # `const char * *why`.
+                    declared=" ".join(h.spelled.split()),
+                    rendered=" ".join(w.spelled.split()),
+                    csym=stem,
+                    fn=sym,
+                )
+            )
+    return out
+
+
 @dataclass(frozen=True)
 class ExampleDrift:
     """A file-comment example calling `create()` with the wrong arg count.
