@@ -55,6 +55,7 @@ from . import _targets
 from . import _render as R
 from . import _report
 from . import _types as T
+from ._context._diagnostics import WHY_C_ARG, WHY_DECL, WHY_LOCAL
 from ._docstring import class_import_path
 from ._init import _to_title
 from ._init import _write as _write_guarded
@@ -1614,9 +1615,17 @@ def _build_ctx(
     csym = CSYM.stem(cfg, component)
 
     # gh-2552: a constructor declared `create_why` takes a trailing
-    # `const char **why`. The app passes NULL -- "no reason wanted" in that
-    # contract -- and reports a refusal by its existing message.
-    _why = ["NULL"] if C.object_create_why(cfg, component) else []
+    # `const char **why`: the app passes `WHY_C_ARG` and prints the sentence
+    # the constructor wrote, or its own message when it wrote none.
+    _cw = C.object_create_why(cfg, component)
+    _why = [WHY_C_ARG] if _cw else []
+    _failed = f"{create_name}() failed"
+    app_create_fail = (
+        f'        fprintf(stderr, "error: %s\\n",\n'
+        f'                {WHY_LOCAL} ? {WHY_LOCAL} : "{_failed}");'
+        if _cw
+        else f'        fprintf(stderr, "error: {_failed}\\n");'
+    )
 
     def _create_call(parsed: bool) -> str:
         a = ", ".join(
@@ -1796,7 +1805,11 @@ def _build_ctx(
         "arg_parse_block": arg_parse_block,
         "io_loop": io_loop,
         "helpers": helpers,
-        "app_create_line": f"    {csym}_state_t *state = {create_call};",
+        "app_create_line": (
+            (f"    {WHY_DECL}\n" if _cw else "")
+            + f"    {csym}_state_t *state = {create_call};"
+        ),
+        "app_create_fail": app_create_fail,
         "create_name": create_name,
         "cleanup_tail": cleanup_tail,
         # gh-944: the same closes, one block deeper, for the `create() failed`
