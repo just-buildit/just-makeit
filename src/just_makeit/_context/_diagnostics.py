@@ -160,6 +160,7 @@ def _rc_raise_c(
     *,
     pad: int = 8,
     fail: str = "return NULL;",
+    why: str = "",
 ) -> str:
     """The ``PyErr_Format`` that turns a failing return code into an exception.
 
@@ -226,14 +227,38 @@ def _rc_raise_c(
                              "seek failed",
                              (long long)_rc);
                 return NULL;
+
+    *why* is a method's ``why = true`` (gh-2574, gh-2407): the C expression
+    holding the sentence the kernel wrote, or empty. With one, the raise is
+    `reason_raise_c`'s -- the sentence as *category* when there is one, this
+    message and code when there is not -- and the code is NOT appended to
+    the sentence, which names the refusal better than a number does.
+
+    >>> print(_rc_raise_c("OSError", "seek failed", why="_why"), end="")
+            if (_why)
+                PyErr_SetString(PyExc_OSError, _why);
+            else
+                PyErr_Format(PyExc_OSError, "%s (rc=%lld)",
+                             "seek failed",
+                             (long long)_rc);
+            return NULL;
     """
-    lead = " " * pad
+    # Under `why` the raise sits one block deeper (`reason_raise_c`'s
+    # `else`), so the literal is wrapped for its real column and handed over
+    # relative to the raise's own, as that emitter takes it.
+    deeper = 4 if why else 0
+    cut = pad + deeper
+    literal = "\n".join(
+        ln[cut:]
+        for ln in _c_string_literal(message, indent + deeper).split("\n")
+    )
+    statement = (
+        f'PyErr_Format(PyExc_{category}, "%s (rc=%lld)",\n'
+        f"{literal},\n"
+        f"{' ' * (indent - pad)}(long long)_rc);\n"
+    )
     return (
-        f"{lead}PyErr_Format(PyExc_{category},"
-        f' "%s (rc=%lld)",\n'
-        f"{_c_string_literal(message, indent)},\n"
-        f"{' ' * indent}(long long)_rc);\n"
-        f"{lead}{fail}\n"
+        reason_raise_c(statement, why, pad, category) + f"{' ' * pad}{fail}\n"
     )
 
 
@@ -245,6 +270,7 @@ def empty_raise_c(
     ret: bool = True,
     *,
     pad: int = 8,
+    why: str = "",
 ) -> str:
     """The raise for a ``variable_output`` kernel that wrote nothing (gh-1159).
 
@@ -283,12 +309,41 @@ def empty_raise_c(
     "bad length");
             return NULL;
     <BLANKLINE>
+
+    *why* is `_rc_raise_c`'s: a method's ``why = true`` sentence, raised
+    through `reason_raise_c` in place of *message* when the kernel wrote
+    one (gh-2574). *decrefs* then runs first, on a line of its own.
+
+    >>> print(empty_raise_c("ValueError", "empty", "Py_DECREF(a); ",
+    ...                     why="_why"), end="")
+            Py_DECREF(a);
+            if (_why)
+                PyErr_SetString(PyExc_ValueError, _why);
+            else
+                PyErr_SetString(PyExc_ValueError,
+                                "empty");
+            return NULL;
     """
     lead = " " * pad
+    if not why:
+        return (
+            f"{lead}{decrefs}"
+            f"PyErr_SetString(PyExc_{category},\n"
+            f"{_c_string_literal(message, indent)});\n"
+            + (f"{lead}return NULL;\n" if ret else "")
+        )
+    literal = "\n".join(
+        ln[pad + 4 :]
+        for ln in _c_string_literal(message, indent + 4).split("\n")
+    )
     return (
-        f"{lead}{decrefs}"
-        f"PyErr_SetString(PyExc_{category},\n"
-        f"{_c_string_literal(message, indent)});\n"
+        (f"{lead}{decrefs.strip()}\n" if decrefs.strip() else "")
+        + reason_raise_c(
+            f"PyErr_SetString(PyExc_{category},\n{literal});\n",
+            why,
+            pad,
+            category,
+        )
         + (f"{lead}return NULL;\n" if ret else "")
     )
 
@@ -313,6 +368,160 @@ WHY_C_PARAM = "const char **why"
 #: The argument the binding passes for `WHY_C_PARAM`: the address of the
 #: `WHY_LOCAL` that `WHY_DECL` declares.
 WHY_C_ARG = f"&{WHY_LOCAL}"
+
+
+def append_why(text: str, fn: str, arg: str = WHY_C_PARAM) -> str:
+    """*text* with *arg* appended to the parameter list of *fn*'s first
+    appearance (gh-2574, gh-2407).
+
+    THE one place a method's ``why`` lands in C: the ``_core.h`` prototype
+    and the ``_core.c`` stub get `WHY_C_PARAM`, the binding's kernel call
+    `WHY_C_ARG`. LAST, after every parameter jm or the author put there --
+    `WHY_C_PARAM`'s rule -- so the three cannot disagree about where it is
+    whatever shape built the list in front of it: a method has a dozen
+    prototype shapes and two builders of each, and threading the parameter
+    through all of them is the copy that drifts.
+
+    *fn* is matched as a whole identifier followed by ``(``, so a
+    variable-output kernel's ``<fn>_max_out`` sibling, declared beside it,
+    is not the one changed. Raises ``ValueError`` when *fn* is not there:
+    a render that silently dropped the parameter is the defect this exists
+    to make impossible.
+
+    Examples
+    --------
+    >>> append_why("size_t f_max_out(s_t *state);\\nint f(s_t *state, "
+    ...            "float *out);", "f").split("\\n")[1]
+    'int f(s_t *state, float *out, const char **why);'
+    >>> append_why("k(self->handle, (size_t)n)", "k", WHY_C_ARG)
+    'k(self->handle, (size_t)n, &_why)'
+    """
+    m = re.search(rf"\b{re.escape(fn)}\s*\(", text)
+    if m is None:
+        raise ValueError(f"append_why: no call or declaration of {fn}")
+    depth = 0
+    for i in range(m.end() - 1, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return f"{text[:i]}, {arg}{text[i:]}"
+    raise ValueError(f"append_why: unbalanced parameter list of {fn}")
+
+
+def method_why(m: dict) -> str:
+    """The C local a method's refusal sentence is in, or ``""`` (gh-2574).
+
+    `WHY_LOCAL` when the method declares ``why = true``: its kernel takes a
+    trailing `WHY_C_PARAM` and the binding passes `WHY_C_ARG`. The *why*
+    every refusal emitter takes -- `_rc_raise_c`, `empty_raise_c`,
+    `_borrow.status_switch_c` -- so one answer decides whether the kernel
+    is handed the pointer and whether the raise reads it. An object
+    method, a view's and a ``kind = "handle"`` method (gh-2407) read it
+    alike. Only ``True`` counts: a function name is the natural wrong
+    guess and is refused at load (gh-1722).
+
+    Examples
+    --------
+    >>> method_why({"name": "m", "why": True})
+    '_why'
+    >>> method_why({"name": "m"})
+    ''
+    """
+    return WHY_LOCAL if m.get("why") is True else ""
+
+
+def method_why_read(m: dict, *, handle: bool = False) -> bool:
+    """Whether method *m*'s binding RAISES on a refusal, so a ``why``
+    sentence would be read (gh-2574, gh-2407).
+
+    The object face's refusals are `method_raises`'s -- ``status_return``
+    (with its ``status_errors`` rows), ``error_negative``,
+    ``error_on_empty``, ``error_sentinel`` -- plus a ``borrow``, whose NULL
+    always raises unless ``none_on_empty`` makes it an answer and no
+    ``status_errors`` row raises first. A handle method's are
+    `handle_declared_raise`'s. Anywhere else the pointer would be passed to
+    C and read by nobody, gh-1232's silent key, so ``why`` is refused there
+    (as a function's ``why`` without ``check_return`` is, gh-1706).
+
+    Examples
+    --------
+    >>> method_why_read({"name": "m", "status_return": True})
+    True
+    >>> method_why_read({"name": "m", "borrow": True, "none_on_empty": True})
+    False
+    >>> method_why_read({"name": "m", "fn": "f", "error": "OSError"},
+    ...                 handle=True)
+    True
+    """
+    if handle:
+        return handle_declared_raise(m) is not None
+    if method_raises(m):
+        return True
+    rows = bool(m.get("status_fn") and m.get("status_errors"))
+    return bool(m.get("borrow") and (not m.get("none_on_empty") or rows))
+
+
+def method_why_errors(
+    where: str, m: dict, params: "list[str]", *, handle: bool = False
+) -> "list[str]":
+    """Why method *m*'s ``why`` cannot be generated, or ``[]`` (gh-2574).
+
+    The three refusals gh-1706 gives a module function's ``why`` and
+    gh-2552 a constructor's ``create_why``, for a method: a value that is
+    not a bool (gh-1722 -- a function NAME is the natural wrong guess, and
+    a string is truthy), no refusal for the sentence to be raised by
+    (`method_why_read`), and a parameter named ``why``, which would collide
+    with the one jm appends. *params* are the names the C function takes
+    -- an inherited or grouped param's included. Asked by the manifest's
+    load (`_config`) for every object, view and handle method, and by
+    ``jm method`` before it writes; *handle* reads *m* in the ``kind =
+    "handle"`` vocabulary (gh-2407).
+
+    Examples
+    --------
+    >>> method_why_errors("m", {"why": "f"}, [])[0][:30]
+    "m: why = 'f' must be true or f"
+    >>> method_why_errors("m", {"why": True}, [])[0][:40]
+    'm declares why = true, but its binding r'
+    >>> method_why_errors("m", {"why": True, "status_return": True}, ["why"])
+    ['m declares why = true and a parameter named `why`; jm appends `const \
+char **why` itself. Rename the parameter.']
+    >>> method_why_errors("m", {"status_return": True}, ["why"])
+    []
+    """
+    if "why" not in m:
+        return []
+    value = m["why"]
+    if not isinstance(value, bool):
+        return [
+            f"{where}: why = {value!r} must be true or false: it says "
+            "whether the C function takes a trailing `const char **why`. "
+            "Write `why = true`, or drop the key."
+        ]
+    if not value:
+        return []
+    if not method_why_read(m, handle=handle):
+        how = (
+            "`error` over an int `returns`, or status_return"
+            if handle
+            else "status_return, error_negative, error_on_empty or "
+            "error_sentinel, or a borrow whose NULL raises"
+        )
+        return [
+            f"{where} declares why = true, but its binding raises on no "
+            "refusal: the sentence the C function writes to "
+            "`const char **why` is raised when the call is refused, and "
+            f"nothing here refuses. Declare the refusal ({how}), or drop "
+            "why."
+        ]
+    if "why" in params:
+        return [
+            f"{where} declares why = true and a parameter named `why`; jm "
+            "appends `const char **why` itself. Rename the parameter."
+        ]
+    return []
 
 
 def reason_raise_c(
@@ -1011,11 +1220,21 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     >>> raises_doc({"name": "drain", "fn": "sink_drain", "returns": "int",
     ...             "error": "OSError"}, handle=True)[0][0]
     'OSError'
+
+    Under ``why = true`` (gh-2574, gh-2407) every entry says the text is
+    the sentence the C call wrote, and the declared message only when it
+    wrote none -- `said`, the one wording.
+
+    >>> raises_doc({"name": "w", "status_return": True, "why": True,
+    ...             "error_message": "short write"})[0][1].split(". ")[1]
+    'The exception message is the reason the C call gives, or ``short \
+write``, with the return code appended (gh-869), when it gives none.'
     """
     pair = handle_declared_raise(m) if handle else declared_raise(m)
     if pair is None:
         return []
     category, message = pair
+    why = bool(method_why(m))
     # gh-2012: a `variable_output` method may declare its zero refusal AND a
     # negative code or a sentinel, and each is its own condition with its own
     # message shape -- `(rc=N)` is appended to one and not the other. One
@@ -1027,9 +1246,8 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
         out.append(
             (
                 category,
-                f"If the C call returns a negative value. The exception "
-                f"message is ``{message}``, with the return code appended "
-                f"(gh-869).",
+                "If the C call returns a negative value. The exception "
+                f"message is {said(message, why, rc=True)}.",
             )
         )
     if m.get("error_sentinel"):
@@ -1037,8 +1255,8 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
             (
                 category,
                 f"If the C call returns ``{m['error_sentinel']}``, its "
-                f"refusal value, in place of a count. The exception message "
-                f"is ``{message}``.",
+                "refusal value, in place of a count. The exception message "
+                f"is {said(message, why)}.",
             )
         )
     # gh-1159: a refusal is not a status, and saying so matters. This text is
@@ -1054,7 +1272,8 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
                 category,
                 f"If the C call writes no output. Its return value is a "
                 f"count, so a zero-length result is a REFUSAL rather than an "
-                f"empty answer. The exception message is ``{message}``.",
+                "empty answer. The exception message is "
+                f"{said(message, why)}.",
             )
         )
     if out:
@@ -1063,15 +1282,41 @@ def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":
     # documented first and the blanket entry says it covers the rest.
     rows = list(m.get("status_errors") or [])
     subject = str(m.get("fn") if handle else m.get("name", ""))
-    return status_rows_raises_doc(rows, subject) + [
+    return status_rows_raises_doc(rows, subject, why) + [
         (
             category,
             f"If the C call returns "
             f"{'any other' if rows else 'a'} non-zero status. The exception "
-            f"message is ``{message}``, with the return code appended "
-            f"(gh-869).",
+            f"message is {said(message, why, rc=True)}.",
         )
     ]
+
+
+def said(message: str, why: bool, *, rc: bool = False) -> str:
+    """What a ``Raises`` entry says the exception text is.
+
+    *message* quoted, with ``(rc=N)`` noted when *rc*; under a method's
+    ``why`` (gh-2574) the C call's own sentence first, and *message* only
+    when it gave none -- the order `reason_raise_c` tests them in. The
+    constructor's wording (`create_raises_doc`), for a call.
+
+    Examples
+    --------
+    >>> said("bad", False)
+    '``bad``'
+    >>> said("bad", True)
+    'the reason the C call gives, or ``bad`` when it gives none'
+    """
+    text = f"``{message}``" + (
+        ", with the return code appended (gh-869)" if rc else ""
+    )
+    if not why:
+        return text
+    return (
+        f"the reason the C call gives, or {text}"
+        + (", " if rc else " ")
+        + "when it gives none"
+    )
 
 
 def status_row_message(row: dict, name: str) -> str:
@@ -1095,7 +1340,7 @@ def status_row_message(row: dict, name: str) -> str:
 
 
 def status_rows_raises_doc(
-    rows: "list[dict]", name: str
+    rows: "list[dict]", name: str, why: bool = False
 ) -> "list[tuple[str, str]]":
     """One ``Raises`` entry per ``status_errors`` row (gh-2470).
 
@@ -1121,7 +1366,7 @@ message is ``set_freq failed (DP_ERR_MEMORY)``.')]
             (
                 str(row.get("error", "")),
                 f"If the C call returns ``{status}``. The exception message "
-                f"is ``{message}``.",
+                f"is {said(message, why)}.",
             )
         )
     return out

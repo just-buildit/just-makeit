@@ -67,6 +67,7 @@ ______________________________________________________________________
 | C enum whose values are not 0..n-1 (`[[enum]] enumerators`)       | [C enum constants](examples/enum_constants.md)                                       |
 | Raise on non-zero return (`--check-return`)                       | [Extend command](commands/extend.md#just-makeit-function)                            |
 | Raise the C refusal's own reason (`--why`)                        | [Extend command](commands/extend.md#just-makeit-function)                            |
+| A method raises its C refusal's reason (`why`)                    | [Extend command](commands/extend.md#a-method-can-name-its-refusal-why)               |
 | Raise a composer's refusal reason (`from_json_why`, `create_why`) | [Object-of-objects](object-of-objects.md#47-json-faces-generated-vs-delegated)       |
 | Raise a constructor's refusal reason (`create_why`)               | [Extend command](commands/extend.md#the-constructor-can-name-its-refusal-create_why) |
 | Writable property                                                 | [Feature tour](feature-tour.md)                                                      |

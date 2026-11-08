@@ -351,6 +351,9 @@ METHOD_KEYS = frozenset(
         "error_negative",
         "error",
         "error_message",
+        # gh-2574: the kernel takes a trailing `const char **why`, and a
+        # refusal raises the sentence it wrote.
+        "why",
         # misc
         "manual_stub",
         "bench",
@@ -755,6 +758,8 @@ HANDLE_METHOD_KEYS = frozenset(
         "status_errors",
         "out_len_fn",
         "doc",
+        # gh-2407: the C function takes a trailing `const char **why`.
+        "why",
     }
 )
 #: A capsule / composer method: the OBJECT spelling of a signature.

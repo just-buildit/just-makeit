@@ -65,8 +65,10 @@ _SAMPLES = {
 #: Keys whose own load-time rule (`_config.manifest_type_errors`) refuses
 #: them off a variable_output / list-of-records method, which a batch method
 #: is not -- so `apply` refuses them before its replay reaches the batch
-#: table. `jm method` asks the table first.
-_LOAD_RULES = {"consumed_fn", "no_count", "out_cols", "short_out"}
+#: table. `jm method` asks the table first. gh-2574: `why` is refused at
+#: load on any method with no refusal for the sentence to be raised by,
+#: and a batch method has none.
+_LOAD_RULES = {"consumed_fn", "no_count", "out_cols", "short_out", "why"}
 
 
 def _sample(key: str) -> str:

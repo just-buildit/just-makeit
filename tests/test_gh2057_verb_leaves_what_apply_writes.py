@@ -701,6 +701,11 @@ CASES: "dict[str, dict[str, Case]]" = {
         "error-negative": _case(
             "method", "o", "m2", "{M}", "--arg-type", "void",
             "--return-type", "int32_t", "--error-negative", only=BASE),
+        # gh-2574: the kernel takes a trailing `const char **why`, on a
+        # standalone and a module object alike.
+        "why": _case(
+            "method", "o", "m2", "{M}", "--param", "n:int",
+            "--return-type", "int", "--status-return", "--why"),
         "fn": _case("method", "o", "m2", "{M}", "--arg-type", "double",
                     "--return-type", "double", "--fn", "o_custom_m2",
                     only=BASE),
