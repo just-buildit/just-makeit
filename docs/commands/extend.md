@@ -909,8 +909,9 @@ each such setter. Declare `error` on the property, or make the setter
 
 On a module object whose
 [fragment is sacred](../configuration.md#who-owns-a-modules-binding-fragment)
-(the default), a setter already in the fragment follows the manifest when
-it is jm's own render: see
+(the default), a setter already in the fragment keeps its body, as any
+member's does; `jm apply` refuses one that ignores the status `error` now
+declares: see
 [Changing how an existing property is read](#changing-how-an-existing-property-is-read).
 
 ### A getter that can fail (`--getter-status`)
@@ -977,18 +978,26 @@ Moving a property between backings -- `field`, `--expr`, a computed getter,
     `int <stem>_get_<prop>(const <stem>_state_t *state, T *out);` or
     `T <stem>_get_<prop>(const <stem>_state_t *state);`. Coming from `field`
     or `--expr` there is no getter yet, and jm declares and stubs it.
-- **The binding.** A standalone object's binding is rendered whole. A
-    module object's fragment is
-    [sacred](../configuration.md#who-owns-a-modules-binding-fragment), and
-    `jm apply` re-renders a getter or setter wrapper in it when the wrapper
-    is jm's own render of the property under another backing (`update ... Acc_getprop_eta (backing changed)`), together with the runtime docstring
-    whose `Raises` section moved. A wrapper you wrote is kept -- unless it
-    ignores a status the manifest now declares, which would never raise:
-    `jm apply` refuses, naming it. Delete the wrapper and its row in the
-    `PyGetSetDef` table and re-run `jm apply` to receive jm's, or make it
-    raise on a non-zero return.
-- **`jm status --check`** counts both before you apply: a wrapper `apply`
-    would re-render and one it would refuse (`PROPERTY STATUS`).
+
+- **The binding.** A standalone object's binding is rendered whole, so it
+    follows. A module object's fragment is
+    [sacred](../configuration.md#who-owns-a-modules-binding-fragment): jm
+    keeps every wrapper in it, because it cannot tell its own old render
+    from one you edited. A wrapper that now ignores a status the manifest
+    declares (it reads the old member or expression, or calls the getter or
+    setter without testing it) would never raise, so `jm apply` refuses,
+    naming each one. The step is yours, once per property:
+
+    1. In `<mod>_ext_<obj>.c`, delete the property's wrappers
+        (`<Class>_getprop_<prop>`, and `<Class>_setprop_<prop>` on a
+        writable one) and its row in the `PyGetSetDef` table.
+    1. Re-run `jm apply`. The member is missing, so jm renders it fresh:
+        the status-testing wrapper, and the row with the `Raises` docstring.
+
+    Or keep a wrapper of your own that raises on a non-zero return.
+
+- **`jm status --check`** fails on such a wrapper before you apply
+    (`PROPERTY STATUS`).
 
 ### Enum-valued properties (`--enum`)
 

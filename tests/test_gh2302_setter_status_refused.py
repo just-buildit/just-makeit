@@ -116,11 +116,30 @@ def test_a_wrapped_prototype_is_read(tmp_path) -> None:
 
 
 def test_declaring_error_is_the_way_out(tmp_path) -> None:
+    """On a module object the fragment's setter, written before `error`,
+    is kept (the fragment is sacred) and does not test the status, so
+    gh-2538 refuses it too until it is deleted with its row -- after
+    which `apply` renders the status-testing one."""
     root = _project(tmp_path, module=True)
     _author_int_setter(root)
     _refused(root)
     _manifest_with(root, 'error = "ValueError"')
+    err = _refused(root)
+    assert "Acc_setprop_alpha does not test p_acc_set_alpha()'s" in err, err
+    ext = root / "native" / "src" / "dsp" / "dsp_ext_acc.c"
+    text = ext.read_text(encoding="utf-8")
+    start = text.index("static int\nAcc_setprop_alpha(")
+    text = text[:start] + text[text.index("\n}\n", start) + 3 :]
+    row = text.index('    { "alpha", (getter)Acc_getprop_alpha,')
+    text = text[:row] + text[text.index("\n", row) + 1 :]
+    # The getter goes with the row; `apply` renders all three back.
+    start = text.index("static PyObject *\nAcc_getprop_alpha(")
+    text = text[:start] + text[text.index("\n}\n", start) + 3 :]
+    ext.write_text(text, encoding="utf-8")
     _ok("apply", cwd=root)
+    assert "int _rc = p_acc_set_alpha(self->handle, v);" in ext.read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.parametrize(

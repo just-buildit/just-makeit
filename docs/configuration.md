@@ -2330,11 +2330,11 @@ object's `<mod>_ext_<obj>.c` is the same generated wrapper code, and is
 members. So where a wrapper lives decides whether it receives fixes. The
 exceptions are the units with nothing in them to author, which jm keeps
 current in place: a `*_max_out` binding's arity, the `[[enum]]` tables, the
-teardown wrappers of an object that declares `[<obj>.destroy]`, a
-record's dtype builders (gh-2055), and a property's getter or setter
-wrapper that is jm's own render of another backing of the same row
-(gh-2538; see
-[Changing how an existing property is read](commands/extend.md#changing-how-an-existing-property-is-read)).
+teardown wrappers of an object that declares `[<obj>.destroy]`, and a
+record's dtype builders (gh-2055). A property's getter or setter wrapper is
+not one of them: when a manifest change leaves one ignoring a status the
+row now declares, `apply` refuses rather than rewrite it -- see
+[Changing how an existing property is read](commands/extend.md#changing-how-an-existing-property-is-read).
 
 `fragment` on the object changes that:
 
