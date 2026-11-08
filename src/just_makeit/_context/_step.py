@@ -16,6 +16,7 @@ from .._docstring import (
     render_numpy_doc,
     render_runtime_doc,
 )
+from ._diagnostics import WHY_C_PARAM
 from ._methods import bench_record_c
 from ._parse import _build_ml_doc, _step_parse_block
 from ._parse import ctrl_parse_c as _ctrl_parse_c
@@ -285,6 +286,14 @@ def _header_example(
      * int level = 0; // your value
      * const float *h = NULL; // your value
      * q_state_t *obj = q_create(level, h);
+    >>> d = _header_example(
+    ...     {"csym": "q", "create_params": "int level, const char **why"},
+    ...     [],
+    ...     [],
+    ... )
+    >>> print(d["create_example_c"], end="")
+     * int level = 0; // your value
+     * q_state_t *obj = q_create(level, NULL);
     """
     if ctx.get("lifecycle_reset", " / reset"):
         verbs = [*verbs, "reset"]
@@ -303,7 +312,16 @@ def _header_example(
     # `_ctorsig.param_decls` over the `split_params` that counts them back.
     decls: list[str] = []
     names: list[str] = []
-    for ctype, pname in _ctorsig.param_decls(ctx.get("create_params", "")):
+    params = _ctorsig.param_decls(ctx.get("create_params", ""))
+    for i, (ctype, pname) in enumerate(params):
+        # gh-2552: `create_why`'s trailing `const char **why` is "no reason
+        # wanted" as NULL, which the example passes as the C test does,
+        # rather than declaring a local the reader would think to fill.
+        if i == len(params) - 1 and _ctorsig.param_decls(WHY_C_PARAM) == [
+            (ctype, pname)
+        ]:
+            names.append("NULL")
+            continue
         sep = "" if ctype.endswith("*") else " "
         zero = "NULL" if ctype.endswith("*") else "0"
         decls.append(f"{ctype}{sep}{pname} = {zero}; // your value")

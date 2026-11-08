@@ -13,7 +13,11 @@
     own (its `create_fn` is a different function) and still inherits the
     parent's `create_error`. Refused at load: a `create_why` with no
     `create_error` in force, one that is not `true`/`false`, and one beside
-    an init param named `why`, grouped or not; `jm remove error` is refused
+    an init param named `why`, grouped, inherited by a view, or its own; `jm remove error` is refused
     while a `create_why` raises through the translation. The `const char **why` parameter and the
     `&_why` argument are now one constant each, shared by module functions,
     composers, objects and views.
+    `jm status`'s `CTOR` check (gh-1076) now compares every view's
+    `create_fn` against the header too, and names the constructor it
+    compared: a drifted view prototype broke the build with `status --check`
+    exiting 0.

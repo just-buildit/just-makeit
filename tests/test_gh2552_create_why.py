@@ -188,6 +188,9 @@ def test_the_header_documents_why(scaffold: Path) -> None:
 def test_c_test_and_bench_pass_null(scaffold: Path) -> None:
     test_c = (scaffold / "native/tests/test_cor_core.c").read_text("utf-8")
     assert "rs_cor_create(0, NULL)" in test_c
+    # So does the header's @code example, rather than a `why` local.
+    hdr = (scaffold / "native/inc/rs/cor/cor_core.h").read_text("utf-8")
+    assert " * rs_cor_state_t *obj = rs_cor_create(mode, NULL);" in hdr, hdr
 
 
 @pytest.mark.parametrize("stub", ["src/rs/cor.pyi", "src/rs/dsp/dsp.pyi"])
@@ -225,6 +228,28 @@ def test_a_header_without_why_is_a_finding(scaffold: Path, tmp_path) -> None:
     assert r.returncode != 0
     out = r.stdout + r.stderr
     assert "CTOR" in out and "rs_acc_create(int mode)" in out, out
+
+
+def test_a_view_header_without_why_is_a_finding(
+    scaffold: Path, tmp_path
+) -> None:
+    """A view's ``create_fn`` is injected into the same sacred header, and
+    `apply` does not rewrite it there; the gh-1076 check compares it too,
+    so a prototype missing the parameter is ``CTOR``, not a silent break."""
+    proj = tmp_path / "rs"
+    shutil.copytree(scaffold, proj)
+    hdr = proj / "native/inc/rs/acc/acc_core.h"
+    text = hdr.read_text("utf-8")
+    decl = "rs_acc_state_t *rs_acc_create_burst(int mode, const char **why);"
+    assert text.count(decl) == 1, text
+    hdr.write_text(
+        text.replace(decl, "rs_acc_state_t *rs_acc_create_burst(int mode);"),
+        "utf-8",
+    )
+    r = run_cli("status", "--check", cwd=proj)
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "CTOR" in out and "rs_acc_create_burst(int mode)" in out, out
 
 
 def test_script_names_the_manifest_only_key(scaffold: Path) -> None:
@@ -282,11 +307,36 @@ def test_a_non_bool_create_why_is_refused(tmp_path) -> None:
         COR_TOML.replace("create_why = true", 'create_why = "rs_cor_why"'),
     )
     assert "create_why = 'rs_cor_why' must be true or false" in out, out
+    # Its own hint: there is no function to name, only a switch.
+    assert "Name the function" not in out, out
 
 
 def test_an_init_param_named_why_is_refused(tmp_path) -> None:
     out = _refusal(tmp_path, COR_TOML.replace('name = "mode"', 'name = "why"'))
     assert "an init param named `why`" in out, out
+
+
+def test_a_view_inheriting_a_param_named_why_is_refused(tmp_path) -> None:
+    """A view with no ``init_params`` of its own takes its parent's; a
+    parent param named ``why`` collides with the view's trailing one just
+    as its own would (``int why, const char **why`` does not compile)."""
+    _ok("new", "rq", "--object", "seed", cwd=tmp_path)
+    proj = tmp_path / "rq"
+    _ok("module", "mm", cwd=proj)
+    (proj / "objects" / "o.toml").write_text(
+        '[o]\ncreate_error = "ValueError"\ncreate_error_message = "no"\n'
+        '\n[[o.init_params]]\nname = "why"\ntype = "int"\ndefault = "0"\n'
+        '\n[[o.views]]\nclass_name = "B"\ncreate_fn = "rq_o_create_b"\n'
+        "create_why = true\n",
+        encoding="utf-8",
+    )
+    mod = proj / "modules" / "mm.toml"
+    text = mod.read_text(encoding="utf-8")
+    mod.write_text(text.replace("objects = []", 'objects = ["o"]'), "utf-8")
+    r = run_cli("apply", cwd=proj)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0, out
+    assert "[[o.views]] 'B' declares create_why = true and an init" in out
 
 
 def test_a_grouped_init_param_named_why_is_refused(tmp_path) -> None:

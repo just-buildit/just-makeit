@@ -1764,12 +1764,18 @@ ValueError: Correlator: framing='burst' takes a 1-D ref
 
 It is manifest-only: it changes the sacred `create()` prototype, so add the
 key and run `just-makeit apply`. A fresh scaffold's header, `_core.c` stub,
-binding, C test and bench all carry the parameter. On an existing object the
-standalone header is updated in place and your `_core.c` definition is yours to
-change. A module object's header and binding fragment are yours too, so
-`apply` rewrites neither: `jm status` reports the header's `create()` as
-`CTOR` until you add the parameter, and re-running `just-makeit error` for the
-object re-renders its fragment's constructor.
+binding, C test and bench all carry the parameter. On an existing object:
+
+- A standalone object's header is updated in place, and `apply` warns with
+    the old and new prototypes. Your `_core.c` definition is yours to change,
+    and so are the C test and bench, which keep calling the old prototype
+    until you add the trailing `NULL`.
+- A module object's header and binding fragment are yours too, so `apply`
+    rewrites neither. `jm status` reports the header's prototype as `CTOR`
+    until you add the parameter, and re-running `just-makeit error` for the
+    object re-renders its fragment's constructor.
+- A view's `create_fn` is declared in the same header and checked the same
+    way: a prototype without the parameter is `CTOR` (`jm error <obj> --view   <Class> ...` re-renders the view's constructor).
 
 ______________________________________________________________________
 
