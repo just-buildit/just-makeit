@@ -112,6 +112,79 @@ def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
     return out
 
 
+def getter_shape_mismatch(root: Path, cfg: dict) -> "list[str]":
+    """Each C getter whose declared shape is not the one the binding calls.
+
+    gh-2538. A computed property's binding calls
+    ``<stem>_get_<p>(self->handle)`` -- or, under ``getter_status``,
+    ``<stem>_get_<p>(self->handle, &value)``. Moving a property between the
+    two leaves the author's declaration (and definition) in the old shape:
+    a module object's header is only ever added to (gh-627), and a
+    standalone one's definition in the sacred ``_core.c`` is never
+    rewritten. The build then fails on a call jm generated, naming a
+    function whose signature jm did not tell anyone to change.
+
+    Refused before anything is written, naming the property and the
+    prototype to write: the declaration and the definition are the
+    author's to change. Not the setter's ``void`` -> ``int`` move:
+    `discarded_setter_status` documents that `apply` writes the ``int``
+    there as the way a property adopts ``error`` (gh-2302). Read through `_init.existing_decl`, the one by-name
+    prototype lookup; an absent declaration is not a finding (`apply`
+    declares it). The properties asked are the ones whose getter is a C
+    call jm declares: no ``field`` / ``expr`` / ``buf_field`` /
+    ``capsule``, a scalar type, not a state field's name.
+
+    Returns
+    -------
+    list of str
+        One message per getter, empty when every declaration fits.
+    """
+    from ._init import existing_decl
+
+    out = []
+    for comp in C.components(cfg):
+        state = frozenset(n for n, _, _ in C.state_vars(cfg, comp))
+        props = [
+            p
+            for p in C.properties(cfg, comp)
+            if not any(
+                p.get(k) for k in ("field", "expr", "buf_field", "capsule")
+            )
+            and str(p.get("type", "")) in T._CTYPE_META
+            and p["name"] not in state
+        ]
+        if not props:
+            continue
+        try:
+            text = INC.core_h(root, comp, cfg).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        stem = CSYM.stem(cfg, comp)
+        for p in props:
+            fn = CSYM.property_getter(stem, p["name"])
+            pat = existing_decl(text, fn)
+            if pat is None:
+                continue
+            params = pat.search(text).group(0).split(fn, 1)[1]
+            takes_out = "," in params
+            if takes_out == bool(p.get("getter_status")):
+                continue
+            want = getter_prototype(p, fn, stem, str(p["type"]))
+            out.append(
+                f"`{comp}.{p['name']}` "
+                + (
+                    "declares getter_status"
+                    if p.get("getter_status")
+                    else "does not declare getter_status"
+                )
+                + f", so its binding calls {fn}() as `{want}`, but"
+                f" {INC.core_rel(comp, cfg)} declares it in the other"
+                " shape. Change the declaration and its definition to"
+                f" `{want};` (gh-2538)."
+            )
+    return out
+
+
 def plain_accessor_decls(
     object_name: str,
     prop_name: str,

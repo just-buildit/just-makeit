@@ -15,3 +15,16 @@
     call to test: a writable property, `field`, `expr`, `buf_field`,
     `capsule`, a container or `json` property, and one named for a state
     field. A property without it renders exactly as before.
+- **Changing an existing property's backing reaches a module object's
+    fragment** (gh-2538). A sacred fragment kept every wrapper body it
+    found, so a property moved from `expr`, `field` or a plain getter to
+    `getter_status` (or between `expr` and a plain getter, or a setter
+    gaining `error`) went on doing the old thing at runtime, while the
+    header, stub and `.pyi` said otherwise and `status --check` passed.
+    `jm apply` now re-renders a getter or setter wrapper that is jm's own
+    render of another backing of the same row, with the runtime docstring
+    whose `Raises` section moved; refuses a hand-written wrapper that
+    ignores a status the manifest declares, naming the fix; and refuses
+    while the header declares the getter in the other shape from the one
+    its binding calls, naming the prototype. `status --check` counts the
+    first two as drift (`PROPERTY STATUS`).
