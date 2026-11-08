@@ -932,7 +932,7 @@ def _merge_module_init(
     ...        '__all__ = ["Nco"]\\n')
     >>> print(_merge_module_init(src, 'dsp', ['Nco', 'Mixer']))
     # dsp/__init__.py
-    from .dsp import Nco, Mixer  # noqa: E402
+    from .dsp import Mixer, Nco  # noqa: E402
     __all__ = ["Nco", "Mixer"]
     <BLANKLINE>
 
@@ -975,7 +975,8 @@ def _merge_module_init(
     existing_names = _parse_import_names(m.group(0)) if m else []
 
     # Authoritative: the module's own import line holds exactly its current
-    # C-extension exports. Keep surviving names in their existing order, drop
+    # C-extension exports (laid out in isort order on the way out, gh-2571;
+    # this order is `__all__`'s). Keep surviving names in their order, drop
     # any the manifest no longer declares (gh-329: a removed object must not
     # linger as a stale `from .<module> import Old` → ImportError at runtime),
     # then append newly added names.

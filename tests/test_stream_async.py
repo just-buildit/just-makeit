@@ -82,7 +82,7 @@ class TestAsyncCodegen:
         assert C.is_streamable(cfg, "osc") is True  # implied
         pyi = (root / "src/proj/osc.pyi").read_text()
         assert (
-            "from typing import final, AsyncIterator, Callable, Iterator"
+            "from typing import AsyncIterator, Callable, Iterator, final"
             in pyi
         )
         assert (

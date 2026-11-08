@@ -324,6 +324,7 @@ def test_apply_adds_the_enum_to_an_older_re_export(tmp_path):
     root = _module_with_two_objects(tmp_path)
     init = root / "src" / "proj" / "m" / "__init__.py"
     old = init.read_text().replace(f", {ENUM_NAME}", "")
+    old = old.replace(f" {ENUM_NAME}, ", " ")
     old = old.replace(f'"{ENUM_NAME}", ', "").replace(f', "{ENUM_NAME}"', "")
     init.write_text(old)
     assert ENUM_NAME not in init.read_text(), "fixture premise"

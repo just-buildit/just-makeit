@@ -88,7 +88,7 @@ def test_reexports_idempotent_and_single_line(tmp_path):
     assert init.read_text(encoding="utf-8") == first  # idempotent
     # Single-line canonical, like jm's other __init__.py imports — a long
     # import is NOT pre-wrapped (no churn vs the rest of the package).
-    assert "from .fn_api import " + ", ".join(NAMES) in first
+    assert "from .fn_api import " + ", ".join(sorted(NAMES)) in first
     assert "\n    api_create," not in first  # not parenthesised multi-line
 
 
@@ -272,7 +272,7 @@ def test_merge_keeps_extra_types_in_import_and_all():
         '__all__ = ["Mix", "ExtraA", "ExtraB"]\n'
     )
     out = _merge_module_init(src, "sig", ["Mix", "ExtraA", "ExtraB"])
-    assert "from .sig import Mix, ExtraA, ExtraB  # noqa: E402" in out
+    assert "from .sig import ExtraA, ExtraB, Mix  # noqa: E402" in out
     assert '"ExtraA"' in out and '"ExtraB"' in out
 
 

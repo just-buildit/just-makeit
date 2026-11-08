@@ -219,7 +219,7 @@ class TestTheMethodFace:
         # no `import os` is an undefined name -- a working annotation on
         # paper and a broken stub in a type checker.
         if "os." in _PY_ANNOTATION[ptype]:
-            assert "\nimport os" in pyi, pyi
+            assert "import os" in pyi.splitlines(), pyi
 
     def test_the_path_borrow_is_released_after_the_call(self, tmp_path):
         """gh-219's rule, and the one thing that differs per face.
@@ -265,7 +265,7 @@ class TestTheModuleFunctionFace:
         ast.parse(pyi)
         assert f"p: {_PY_ANNOTATION[ptype]}" in pyi, pyi
         if "os." in _PY_ANNOTATION[ptype]:
-            assert "\nimport os" in pyi, pyi
+            assert "import os" in pyi.splitlines(), pyi
 
 
 class TestEveryPrototypeBranch:
