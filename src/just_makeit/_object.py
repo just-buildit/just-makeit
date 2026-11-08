@@ -1102,6 +1102,13 @@ def _merge_module_init(
         result = _ALL_RE.sub(lambda _: new_all, result, count=1)
     else:
         result = result.rstrip("\n") + f"\n{new_all}\n"
+    # gh-2571: jm's re-export lines in isort order -- the names within each
+    # and the lines among themselves -- so a project selecting ruff's `I`
+    # finds this file clean. Only runs of relative imports: the rest of the
+    # file is the author's.
+    from ._pyfmt import sort_imports
+
+    result = sort_imports(result, relative_only=True)
     return _modplatforms.guard_init(result, platforms or {})
 
 

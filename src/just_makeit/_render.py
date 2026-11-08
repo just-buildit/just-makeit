@@ -626,15 +626,16 @@ def render_scaffold_py(template: str, ctx: dict) -> str:
     then never names it: ruff's ``F401`` on a fresh scaffold. Whether the
     file needs each is asked of the rendered text, the way the stubs decide
     ``os``/``Any``/numpy, rather than of a list of the shapes that happen to
-    use arrays today. The blank lines the snippets met with are then laid
-    out by :func:`_pyfmt.py_blank_lines`.
+    use arrays today. The imports are then put in isort order by
+    :func:`_pyfmt.sort_imports` (gh-2571), and the blank lines the snippets
+    met with laid out by :func:`_pyfmt.py_blank_lines`.
 
     >>> render_scaffold_py("import numpy as np\\nx = 1\\n", {})
     'x = 1\\n'
     >>> render_scaffold_py("import numpy as np\\nx = np.ones(1)\\n", {})
     'import numpy as np\\nx = np.ones(1)\\n'
     """
-    from ._pyfmt import py_blank_lines
+    from ._pyfmt import py_blank_lines, sort_imports
 
     text = render(template, ctx)
     for line, name in (
@@ -644,7 +645,8 @@ def render_scaffold_py(template: str, ctx: dict) -> str:
         without = text.replace(f"{line}\n", "", 1)
         if not re.search(rf"\b{name}\.", without):
             text = without
-    return py_blank_lines(text)
+    first_party = str(ctx.get("package", "")).split(".")[0]
+    return py_blank_lines(sort_imports(text, first_party))
 
 
 def render(template: str, ctx: dict) -> str:
@@ -806,7 +808,7 @@ def render_component_pyi(ctx: dict) -> str:
         render(COMPONENT_PYI, ctx),
         {ctx["Component"]: method_table_flags(render(COMPONENT_EXT_C, ctx))},
     )
-    return reflow_pyi(stub)
+    return reflow_pyi(stub, first_party=str(ctx.get("package", "")))
 
 
 #: An assertion **statement** in the rendered C test. Anchored to the start of

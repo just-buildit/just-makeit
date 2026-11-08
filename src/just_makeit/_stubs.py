@@ -3577,4 +3577,10 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             owner=cfg,
         )["module_methods_def"]
     )
-    return reflow_pyi(mark_positional_only("\n".join(parts), _flags)) + "\n"
+    return (
+        reflow_pyi(
+            mark_positional_only("\n".join(parts), _flags),
+            first_party=pkg,
+        )
+        + "\n"
+    )

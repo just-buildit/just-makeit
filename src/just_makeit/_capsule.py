@@ -805,7 +805,10 @@ def render_pyi(cfg: dict, module: str) -> str:
     from ._pyfmt import reflow_pyi
     from ._stubs import prune_stub_imports
 
-    return reflow_pyi("\n".join(prune_stub_imports(lines)))
+    return reflow_pyi(
+        "\n".join(prune_stub_imports(lines)),
+        first_party=C.project_name(cfg),
+    )
 
 
 # ── materialization (driven by jm apply's _replay) ───────────────────────────
