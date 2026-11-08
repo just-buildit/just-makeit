@@ -759,11 +759,19 @@ def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
     ...                          "error": "ValueError"}, "acc_set_alpha")
     ('ValueError', 'acc_set_alpha failed')
 
-    Under ``getter_status`` (gh-2538) the pair is the GETTER's, read by
-    `property_getter_raise`; `validate_property_error` refuses it on a
-    writable property, so the two never meet.
+    Under ``getter_status`` (gh-2538) on a read-only property the pair is
+    the GETTER's, read by `property_getter_raise`, and there is no setter:
+
+    >>> property_declared_raise({"name": "eta", "getter_status": True,
+    ...                          "error": "AttributeError"}, "") is None
+    True
+
+    On a writable one it stays the setter's, and the getter's failure has
+    its own pair, ``getter_error`` / ``getter_error_message`` (gh-2543).
     """
     if not p.get("error"):
+        return None
+    if p.get("getter_status") and not p.get("writable"):
         return None
     return _raise_pair(p, setter)
 
@@ -788,6 +796,13 @@ def property_getter_raise(p: dict, getter: str) -> "tuple[str, str] | None":
     `validate_property_error` refuses ``getter_status`` wherever there is no
     C getter call to test, so a pair here is always one the binding raises.
 
+    On a WRITABLE property ``error`` / ``error_message`` are the setter's
+    (gh-2182), so the getter's failure is named by its own pair,
+    ``getter_error`` / ``getter_error_message`` (gh-2543), which
+    `validate_property_error` requires there and refuses anywhere else.
+    *getter* is `_csym.status_reader` of the row: the getter, or a buffer
+    view's ``<stem>_<prop>_status``.
+
     Examples
     --------
     >>> property_getter_raise({"name": "eta"}, "cor_get_eta") is None
@@ -800,9 +815,22 @@ def property_getter_raise(p: dict, getter: str) -> "tuple[str, str] | None":
     ...                        "error_message": "eta is search-only"},
     ...                       "cor_get_eta")
     ('AttributeError', 'eta is search-only')
+    >>> property_getter_raise({"name": "k", "writable": True,
+    ...                        "getter_status": True, "error": "ValueError",
+    ...                        "getter_error": "AttributeError"},
+    ...                       "cor_get_k")
+    ('AttributeError', 'cor_get_k failed')
     """
     if not p.get("getter_status"):
         return None
+    if p.get("writable"):
+        return _raise_pair(
+            {
+                "error": p.get("getter_error"),
+                "error_message": p.get("getter_error_message"),
+            },
+            getter,
+        )
     return _raise_pair(p, getter)
 
 
@@ -823,7 +851,19 @@ def getter_prototype(p: dict, getter: str, csym: str, ctype: str) -> str:
     >>> getter_prototype({"name": "eta", "getter_status": True},
     ...                  "cor_get_eta", "cor", "double")
     'int cor_get_eta(const cor_state_t *state, double *out)'
+
+    A buffer view (``buf_field``) has no getter: under ``getter_status``
+    (gh-2543) *getter* is its status function (`_csym.status_reader`),
+    which only answers whether the view exists -- the binding reads the
+    buffer member itself.
+
+    >>> getter_prototype({"name": "c", "getter_status": True,
+    ...                   "buf_field": "corr"}, "cor_c_status", "cor",
+    ...                  "double[]")
+    'int cor_c_status(const cor_state_t *state)'
     """
+    if p.get("getter_status") and p.get("buf_field"):
+        return f"int {getter}(const {csym}_state_t *state)"
     if p.get("getter_status"):
         return f"int {getter}(const {csym}_state_t *state, {ctype} *out)"
     return f"{ctype} {getter}(const {csym}_state_t *state)"
@@ -873,6 +913,15 @@ def property_raises_doc(
     >>> desc.startswith("On read, if ``cor_get_eta`` returns non-zero")
     True
 
+    A writable property declaring both (gh-2543) documents both, the read
+    first:
+
+    >>> [c for c, _ in property_raises_doc(
+    ...     {"name": "k", "writable": True, "getter_status": True,
+    ...      "getter_error": "AttributeError", "error": "ValueError"},
+    ...     "cor_set_k", "cor_get_k")]
+    ['AttributeError', 'ValueError']
+
     Examples
     --------
     >>> property_raises_doc({"name": "alpha"}, "acc_set_alpha")
@@ -885,29 +934,37 @@ def property_raises_doc(
     >>> desc.startswith("On assignment, if ``acc_set_alpha`` refuses")
     True
     """
+    out: list[tuple[str, str]] = []
     got = property_getter_raise(p, getter)
     if got is not None:
         category, message = got
-        return [
+        # gh-2543: a buffer view's status function writes nothing; it only
+        # says whether there is a view to build.
+        what = (
+            "before the view is built"
+            if p.get("buf_field")
+            else "instead of writing a value"
+        )
+        out.append(
             (
                 category,
-                f"On read, if ``{getter}`` returns non-zero instead of "
-                f"writing a value. The exception message is ``{message}``, "
-                f"with the return code appended.",
+                f"On read, if ``{getter}`` returns non-zero {what}. The "
+                f"exception message is ``{message}``, with the return code "
+                f"appended.",
             )
-        ]
-    pair = property_declared_raise(p, setter)
-    if pair is None:
-        return []
-    category, message = pair
-    return [
-        (
-            category,
-            f"On assignment, if ``{setter}`` refuses the value by returning "
-            f"non-zero. The exception message is ``{message}``, with the "
-            f"return code appended.",
         )
-    ]
+    pair = property_declared_raise(p, setter)
+    if pair is not None:
+        category, message = pair
+        out.append(
+            (
+                category,
+                f"On assignment, if ``{setter}`` refuses the value by "
+                f"returning non-zero. The exception message is "
+                f"``{message}``, with the return code appended.",
+            )
+        )
+    return out
 
 
 def raises_doc(m: dict, *, handle: bool = False) -> "list[tuple[str, str]]":

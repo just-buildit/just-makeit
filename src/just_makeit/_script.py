@@ -821,6 +821,13 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     # returning the value, which the author's status getter does not match.
     if p.get("getter_status"):
         parts.append(_bool_flag("--getter-status"))
+    # gh-2543: a writable property's getter failure; `error` is the setter's.
+    if p.get("getter_error"):
+        parts.append(_flag("--getter-error", p["getter_error"]))
+    if p.get("getter_error_message"):
+        parts.append(
+            _flag("--getter-error-message", p["getter_error_message"])
+        )
 
     if p.get("buf_field"):
         parts.append(_flag("--buf-field", p["buf_field"]))

@@ -555,6 +555,10 @@ PROPERTY_KEYS = frozenset(
         # int status and writes the value through an out-pointer, and a
         # non-zero status raises `error` with `error_message` on read.
         "getter_status",
+        # gh-2543: on a writable property, what a failing read raises --
+        # `error` / `error_message` stay the setter's there (gh-2182).
+        "getter_error",
+        "getter_error_message",
     }
 )
 

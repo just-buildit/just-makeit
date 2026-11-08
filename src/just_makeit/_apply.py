@@ -1416,6 +1416,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             error_message=p.get("error_message", ""),
             # gh-2538: a getter that can fail.
             getter_status=bool(p.get("getter_status")),
+            # gh-2543: a writable property's getter failure.
+            getter_error=p.get("getter_error", ""),
+            getter_error_message=p.get("getter_error_message", ""),
         )
 
     for comp in all_comps:
@@ -3852,10 +3855,12 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
     """
     from . import _types as _T
     from ._context._diagnostics import setter_return_type
-    from ._property import plain_accessor_decls
+    from ._property import buffer_status_decls, plain_accessor_decls
 
     out: list[str] = []
     for p in C.properties(cfg, comp):
+        # gh-2543: a buffer view's status function, the one C call it makes.
+        out += buffer_status_decls(p, csym=CSYM.stem(cfg, comp))
         if (
             p.get("field")
             or p.get("expr")
