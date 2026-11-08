@@ -97,9 +97,9 @@ class TestOptionalArray2D:
 
     def test_py_create_args_omits_optional_array(self):
         ctx = _ctx(self.PARAMS)
-        # Test helper creates with scalar defaults only; optional array omitted.
-        assert "bank" not in ctx["py_create_args"]
-        assert "0.0" in ctx["py_create_args"]
+        # The optional array is omitted, and so is the defaulted scalar: a
+        # scaffolded call leaves every default to the binding (gh-2556).
+        assert ctx["py_create_args"] == ""
 
     def test_kwlist_contains_bank(self):
         ctx = _ctx(self.PARAMS)

@@ -35,8 +35,12 @@ from _jmrun import run_cli
 
 TOKEN = "# jm:generated test_g.py"
 
+#: Required, with an `example_value`: since gh-2556 a defaulted param is
+#: left out of a scaffolded construction, so only one the call must spell
+#: shows the new constructor reaching the test.
 INIT_PARAM = (
-    '\n[[g.init_params]]\nname = "level"\ntype = "int"\ndefault = "3"\n'
+    '\n[[g.init_params]]\nname = "level"\ntype = "int"\n'
+    'required = true\nexample_value = "3"\n'
 )
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None

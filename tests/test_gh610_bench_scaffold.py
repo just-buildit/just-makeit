@@ -78,7 +78,31 @@ _PARAMS = [
     ("window", "string_enum:hann,kaiser", "hann"),
     ("sequential", "bool", "true"),
     ("max_n_blocks", "int", "100000"),
+    # gh-2556: a scaffolded construction spells only what it must -- a
+    # required param -- and leaves every defaulted one to the binding. This
+    # is the param the keyword-construction assertions below read; slot 8 is
+    # `required`, slot 14 the `example_value` (gh-1105) the call carries.
+    (
+        "n_taps",
+        "int",
+        "",
+        "",
+        "",
+        "",
+        False,
+        "",
+        True,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "7",
+    ),
 ]
+
+#: The defaulted params, none of which a scaffolded call restates.
+_DEFAULTED = [n for n, _, d, *_ in _PARAMS if d]
 
 
 def _scaffold(tmp_path, pytest_benchmark=True):
@@ -104,8 +128,8 @@ class TestBenchFixtureIsKeywordAndValid:
         src = _bench_py(root).read_text(encoding="utf-8")
         assert "CarrierAcq(" in src
         call_line = next(ln for ln in src.splitlines() if "CarrierAcq(" in ln)
-        assert "sample_rate_hz=" in call_line
-        assert "sequential=True" in call_line
+        assert "CarrierAcq(n_taps=7)" in call_line
+        assert not [n for n in _DEFAULTED if f"{n}=" in call_line]
         assert "true" not in call_line
         # The bench file itself must be valid, importable Python.
         ast.parse(src)
@@ -121,8 +145,7 @@ class TestBenchFixtureIsKeywordAndValid:
         )
         src = _bench_py(root).read_text(encoding="utf-8")
         call_line = next(ln for ln in src.splitlines() if "CarrierAcq(" in ln)
-        assert "sequential=True" in call_line
-        assert "max_n_blocks=100000" in call_line
+        assert "CarrierAcq(n_taps=7)" in call_line
 
 
 class TestPyiConstructorSignatureIsValid:
@@ -146,8 +169,8 @@ class TestPyiConstructorSignatureIsValid:
         while lines[i].rstrip().endswith(("(", ",")):
             i += 1
             example += " " + lines[i].strip().removeprefix("... ")
-        assert "sequential=True" in example
-        assert "window=" in example
+        assert "n_taps=7" in example
+        assert not [n for n in _DEFAULTED if f"{n}=" in example]
 
 
 class TestModuleAggregatedPyiUnaffectedRegression:
@@ -180,7 +203,9 @@ class TestModuleAggregatedPyiUnaffectedRegression:
         while lines[i].rstrip().endswith(("(", ",")):
             i += 1
             example += " " + lines[i].strip().removeprefix("... ")
-        assert "sequential=True" in example
+        assert "n_taps=7" in example
+        assert not [n for n in _DEFAULTED if f"{n}=" in example]
+        assert "sequential: bool = True" in pyi
         assert "true" not in example
         ast.parse(pyi)
 
