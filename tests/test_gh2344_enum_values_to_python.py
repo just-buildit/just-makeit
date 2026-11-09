@@ -277,7 +277,12 @@ def test_a_table_the_fragment_lacks_is_not_published(tmp_path):
     stub = (root / "src" / "proj" / "m" / "m.pyi").read_text()
     assert ENUM_NAME not in stub, stub
     r = run_cli("status", "--check", cwd=root)
-    assert r.returncode == 0, r.stdout + r.stderr
+    # Nothing jm owns is behind: the one finding is the fragment's own
+    # body, which lacks the choice refusal the manifest now declares for
+    # `k` -- a missing guard, so it gates as GUARD (gh-2581).
+    assert "0 missing, 0 stale" in r.stdout, r.stdout + r.stderr
+    assert "1 missing-guard (!)" in r.stdout, r.stdout + r.stderr
+    assert "m_ext_a.c: go" in r.stdout, r.stdout
 
 
 @pytest.mark.skipif(_SKIP is not None, reason=_SKIP or "")
