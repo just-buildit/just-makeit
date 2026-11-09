@@ -947,6 +947,37 @@ def wrap_all(text: str, add: "Iterable[str]" = ()) -> str:
     return text[: m.start()] + _fmt_all(names) + text[m.end() :]
 
 
+def rewrap_comments(existing: str, rendered: str) -> str:
+    """*existing* with each overlong comment line jm wraps, wrapped.
+
+    gh-2514: a module ``__init__.py`` is a merge target, so jm's header
+    comment, written once, stayed as an older jm wrote it: one line past 79
+    columns for a long module name. A whole-line comment in *existing* is
+    rewritten only when *rendered* -- jm's own render of the file -- holds
+    exactly its wrapped form (:func:`_pyfmt.reflow_comment`). That is the
+    proof the line is jm's; an author's comment, long or not, is never one,
+    and is left as written.
+
+    >>> line = "# m/__init__.py " + "word " * 14 + "end."
+    >>> from just_makeit._pyfmt import reflow_comment
+    >>> rendered = "\\n".join(reflow_comment(line)) + "\\nx = 1\\n"
+    >>> rewrap_comments(line + "\\nx = 1\\n", rendered) == rendered
+    True
+    >>> mine = "# " + "mine " * 18 + "\\n"
+    >>> rewrap_comments(mine, rendered) == mine
+    True
+    """
+    from ._pyfmt import reflow_comment
+
+    out = []
+    for line in existing.split("\n"):
+        wrapped = "\n".join(reflow_comment(line))
+        if wrapped != line and f"{wrapped}\n" in rendered:
+            line = wrapped
+        out.append(line)
+    return "\n".join(out)
+
+
 def package_siblings(cfg: dict, module: str) -> list[str]:
     """Leaf names of the other modules whose Python artifacts share
     *module*'s package directory (gh-523).
@@ -3276,27 +3307,26 @@ def _regenerate_module_now(
     pkg_module_dir = root / "src" / pkg / out_pkg
     init_path = pkg_module_dir / "__init__.py"
     existed = init_path.exists()
-    if existed:
-        base = init_path.read_text(encoding="utf-8")
-    else:
-        # Fresh scaffold: the template with no exports, which the merge below
-        # fills -- the one path for a module with members and one without
-        # (gh-2070). With none, the merge writes no import line, since an
-        # empty `from .<leaf> import` is a SyntaxError.
-        # gh-2514: its header comment names the module; a long one wraps.
-        from ._pyfmt import reflow_py
+    # Fresh scaffold: the template with no exports, which the merge below
+    # fills -- the one path for a module with members and one without
+    # (gh-2070). With none, the merge writes no import line, since an empty
+    # `from .<leaf> import` is a SyntaxError.
+    from ._pyfmt import reflow_py
 
-        base = reflow_py(
-            R.render(
-                R.MODULE_INIT_PY_EMPTY,
-                Ctx.make_module_ctx(
-                    module,
-                    pkg,
-                    C.module_package_resolved(cfg, module),
-                    C.module_doc(cfg, module),
-                ),
-            )
-        )
+    fresh = R.render(
+        R.MODULE_INIT_PY_EMPTY,
+        Ctx.make_module_ctx(
+            module,
+            pkg,
+            C.module_package_resolved(cfg, module),
+            C.module_doc(cfg, module),
+        ),
+    )
+    # gh-2514: its header comment names the module; a long one wraps --
+    # and one an older jm wrote on one line is wrapped in place.
+    base = reflow_py(fresh)
+    if existed:
+        base = rewrap_comments(init_path.read_text(encoding="utf-8"), base)
     # The import line in __init__.py is `from .<leaf> import ...`, so the merge
     # must match/emit against the leaf, not the dotted id.
     merged = _merge_module_init(

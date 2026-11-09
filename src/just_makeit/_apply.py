@@ -2680,9 +2680,17 @@ def _merge_module_init_file(
         _leading_docstring,
         _merge_module_docstring,
         _merge_module_init,
+        rewrap_comments,
     )
 
     temp_text = temp_path.read_text(encoding="utf-8")
+    # gh-2514: a header comment an older jm wrote past 79 columns, wrapped
+    # as the temp render wraps it -- even in a module with no export yet.
+    original = real_path.read_text(encoding="utf-8")
+    existing = rewrap_comments(original, temp_text)
+    if existing != original:
+        _textio.write_text(real_path, existing)
+    rewrapped = existing != original
     # Indentation allowed: a platform-restricted module's own line sits
     # inside its gh-1463 guard in the temp render, and the names are the same.
     m = re.search(
@@ -2692,13 +2700,12 @@ def _merge_module_init_file(
         re.MULTILINE,
     )
     if not m:
-        return False
+        return rewrapped
     raw = re.sub(r"#[^\n]*", "", m.group(1)).strip().strip("()")
     exports = [n.strip() for n in raw.split(",") if n.strip()]
     if not exports:
-        return False
+        return rewrapped
 
-    existing = real_path.read_text(encoding="utf-8")
     merged = _merge_module_init(
         existing,
         module,
@@ -2717,7 +2724,7 @@ def _merge_module_init_file(
     if merged != existing:
         _textio.write_text(real_path, merged)
         return True
-    return False
+    return rewrapped
 
 
 def _status_allowed(cfg: dict, rel: str) -> bool:
