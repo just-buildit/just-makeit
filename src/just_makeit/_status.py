@@ -2267,8 +2267,9 @@ def run(
     # gh-2574: printed under --check too, for gh-1076's reason above.
     if _why_drift:
         print(
-            f"WHY ({len(_why_drift)}) — a method's trailing `const char"
-            " **why` differs between\n  the header and the manifest:"
+            f"WHY ({len(_why_drift)}) — a method's trailing `int *status`"
+            " / `const char **why`\n  differs between the header and the"
+            " manifest:"
         )
         for d in _why_drift:
             print(f"  ! {d.rel}")
@@ -2280,8 +2281,8 @@ def run(
             "  binding passes what the manifest says and the header does not"
             " take it.\n"
             "  Edit the declaration and its _core.c definition to match, or"
-            " drop `why`.\n"
-            "  Not suppressible. See gh-2574."
+            " drop `why` /\n  `status_out`.\n"
+            "  Not suppressible. See gh-2574, gh-2584."
         )
         print()
 

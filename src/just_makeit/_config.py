@@ -526,15 +526,19 @@ def _why_key_errors(cfg: dict) -> "list[str]":
             continue
         # gh-2407: a handle method's `why`, in the handle's vocabulary.
         if is_handle_module(cfg, mid):
-            from ._context._diagnostics import method_why_errors
+            from ._context._diagnostics import (
+                method_status_out_errors,
+                method_why_errors,
+            )
 
             for m in handle_methods(cfg, mid):
-                errors += method_why_errors(
-                    f"[[module.{mid}.methods]] {m.get('name', '?')!r}",
-                    m,
-                    [str(a.get("name", "")) for a in m.get("args") or []],
-                    handle=True,
-                )
+                for check in (method_status_out_errors, method_why_errors):
+                    errors += check(
+                        f"[[module.{mid}.methods]] {m.get('name', '?')!r}",
+                        m,
+                        [str(a.get("name", "")) for a in m.get("args") or []],
+                        handle=True,
+                    )
         jtbl = mod.get("json")
         for face in ("from_json", "from_file"):
             key = f"{face}_why"
@@ -583,7 +587,8 @@ def _why_key_errors(cfg: dict) -> "list[str]":
 
 
 def _method_why_errors(cfg: dict, comp: str) -> "list[str]":
-    """`method_why_errors` over *comp*'s methods and its views' (gh-2574).
+    """`method_why_errors` over *comp*'s methods and its views' (gh-2574),
+    and `method_status_out_errors` (gh-2584).
 
     A view's are the entries it renders (`resolved_view_methods`): an
     override of a parent method carries the parent's params, so a parent
@@ -596,7 +601,10 @@ def _method_why_errors(cfg: dict, comp: str) -> "list[str]":
     >>> _method_why_errors(cfg, "o")[0][:40]
     "[[o.methods]] 'm' declares why = true, b"
     """
-    from ._context._diagnostics import method_why_errors
+    from ._context._diagnostics import (
+        method_status_out_errors,
+        method_why_errors,
+    )
 
     def names(m: dict) -> "list[str]":
         rows = m.get("extra_args") or m.get("params") or []
@@ -615,9 +623,11 @@ def _method_why_errors(cfg: dict, comp: str) -> "list[str]":
     for where, rows in tables:
         for m in rows:
             if isinstance(m, dict):
-                errors += method_why_errors(
-                    f"{where} {m.get('name', '?')!r}", m, names(m)
-                )
+                # gh-2584: `status_out`'s refusals, on the same rows.
+                for check in (method_status_out_errors, method_why_errors):
+                    errors += check(
+                        f"{where} {m.get('name', '?')!r}", m, names(m)
+                    )
     return errors
 
 

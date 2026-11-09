@@ -756,6 +756,9 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     # `const char **why` and the author's `_core.c` stopped compiling.
     if m.get("why"):
         parts.append(_bool_flag("--why"))
+    # gh-2584: likewise the kernel's `int *status`.
+    if m.get("status_out"):
+        parts.append(_bool_flag("--status-out"))
     if m.get("error"):
         parts.append(_flag("--error", str(m["error"])))
     if m.get("error_message"):

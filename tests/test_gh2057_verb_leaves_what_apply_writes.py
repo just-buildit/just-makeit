@@ -706,6 +706,11 @@ CASES: "dict[str, dict[str, Case]]" = {
         "why": _case(
             "method", "o", "m2", "{M}", "--param", "n:int",
             "--return-type", "int", "--status-return", "--why"),
+        # gh-2584: and `int *status` ahead of it, on a refused count.
+        "status-out": _case(
+            "method", "o", "m2", "{M}", "--arg-type", "float[]",
+            "--return-type", "float", "--variable-output",
+            "--error-sentinel", "SIZE_MAX", "--status-out", "--why"),
         "fn": _case("method", "o", "m2", "{M}", "--arg-type", "double",
                     "--return-type", "double", "--fn", "o_custom_m2",
                     only=BASE),

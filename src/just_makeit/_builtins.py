@@ -240,6 +240,7 @@ def overridden_builtin_slots(
             borrow=bool(m.get("borrow")),
             csym=ctx["csym"],
             why=m.get("why") is True,  # gh-2574
+            status_out=m.get("status_out") is True,  # gh-2584
         )
         builtin = ctx.get(_DECL_SLOT[m["name"]], "")
         # The built-in's slot may carry a Doxygen block above the declaration;

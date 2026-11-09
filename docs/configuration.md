@@ -1295,11 +1295,12 @@ way.
 | `error_sentinel = "SIZE_MAX"`          | `jm method --error-sentinel EXPR` (a `size_t` count's refusal value raises)                         | ✅ (gh-2012)          |
 | `status_return = true`                 | `jm method --status-return` (the `int` is status only)                                              | ✅ (gh-823)           |
 | `why = true`                           | `jm method --why` (a refusal raises the sentence a trailing `const char **why` names)               | ✅ (gh-2574)          |
+| `status_out = true`                    | `jm method --status-out` (a refused count's `int *status` picks a `status_errors` row)              | ✅ (gh-2584)          |
 | `borrow = true`                        | `jm method --borrow` (a zero-copy view of state memory)                                             | ✅ (gh-1312)          |
 | `borrow_count = "PARAM"`               | `jm method --borrow-count PARAM`                                                                    | ✅ (gh-1312)          |
 | `borrow_writeable = true`              | `jm method --borrow-writeable`                                                                      | ✅ (gh-1312)          |
 | `status_fn = "SYMBOL"`                 | `jm method --status-fn SYMBOL` (why a borrow returned NULL)                                         | ✅ (gh-1418)          |
-| `status_errors = [{...}]`              | `jm method --status-error STATUS:Exc[:msg]` (with `--status-fn` or `--status-return`; repeatable)   | ✅ (gh-1418, gh-2470) |
+| `status_errors = [{...}]`              | `jm method --status-error STATUS:Exc[:msg]` (with `--status-fn`, `--status-return` or `--status-out`; repeatable) | ✅ (gh-1418, gh-2470, gh-2584) |
 | `releases = ["..."]`                   | `jm method --releases NAME[,NAME…]`                                                                 | ✅ (gh-1426)          |
 | `release_count = "PARAM"`              | `jm method --release-count PARAM`                                                                   | ✅ (gh-1426)          |
 | `strict = true`                        | `jm method --strict` (refuse, never cast, an array input)                                           | ✅ (gh-1426)          |
@@ -1851,6 +1852,7 @@ One entry per `just-makeit method` call.
 | `nogil`           | bool                    | `--nogil` (release the GIL across the kernel; see below)                                                                          |
 | `status_return`   | bool                    | integer return is a status: ValueError on non-0 (gh-432, gh-2250); a `status_errors` row names another class per status (gh-2470) |
 | `why`             | bool                    | `--why`: the kernel takes a trailing `const char **why`; a declared refusal raises that sentence (gh-2574)                        |
+| `status_out`      | bool                    | `--status-out`: the kernel takes `int *status`; a refused count's code picks a `status_errors` row (gh-2584)                      |
 | `batch`           | bool                    | `--batch`                                                                                                                         |
 | `multi_output`    | array of strings        | `--multi-output` types                                                                                                            |
 | `out_type`        | string                  | `--out-type`                                                                                                                      |
