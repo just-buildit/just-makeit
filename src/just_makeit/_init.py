@@ -1924,6 +1924,7 @@ def run(
         if C.is_pytest_benchmark(cfg)
         else R.COMPONENT_BENCH_PY
     )
+    ctx["class_import"] = R.class_import(pkg, ctx["Component"])
     ctx["bench_run"] = R.bench_run(
         f"src/{pkg}/benchmarks/bench_{comp}.py", C.is_pytest_benchmark(cfg)
     )

@@ -11,15 +11,64 @@ from .._types import (
     np_dtype_doctest_lines,
 )
 from .._docstring import (
+    STUB_TARGET_WIDTH,
     class_import_line,
     delegator_note,
     render_numpy_doc,
     render_runtime_doc,
 )
 from ._diagnostics import WHY_C_PARAM
+from ._state import py_new
 from ._methods import bench_record_c
 from ._parse import _build_ml_doc, _step_parse_block
 from ._parse import ctrl_parse_c as _ctrl_parse_c
+
+
+def _new(head: str, Component: str, ctx: dict, tail: str = "") -> str:
+    """``<head><Component>(<args>)<tail>``, held to 79 columns (gh-2514).
+
+    Every test body here constructs the object through this, from the
+    context's ``py_create_parts`` (:func:`_state.py_new`), so a long class
+    or parameter name is laid out once, the same way, at every placement.
+    A context built without the parts passes its rendered arguments whole.
+    """
+    return py_new(f"{head}{Component}(", _parts(ctx), tail)
+
+
+#: The label the plain benchmark's `_bench` reports construction under.
+_CREATE = ['"create"']
+
+
+def _parts(ctx: dict) -> "list[str]":
+    """The context's constructor arguments, one by one (see :func:`_new`)."""
+    parts = ctx.get("py_create_parts")
+    if parts is None:
+        args = ctx.get("py_create_args", "")
+        parts = [args] if args else []
+    return parts
+
+
+def _timed_new(head: str, lead: "list[str]", Component: str, ctx: dict) -> str:
+    """``<head><lead>, lambda: <Component>(<args>))``: a benchmark timing
+    construction, held to 79 columns (gh-2514).
+
+    One line while it fits. Past it, the outer call one argument per line
+    with a magic trailing comma, and the constructor inside it laid out by
+    :func:`_new` -- both layouts ``ruff format`` keeps at any width,
+    measured with jm's pinned ruff.
+
+    >>> _timed_new("    benchmark(", [], "G", {"py_create_parts": ["n=1"]})
+    '    benchmark(lambda: G(n=1))'
+    """
+    parts = _parts(ctx)
+    lam = f"lambda: {Component}({', '.join(parts)})"
+    line = f"{head}{', '.join([*lead, lam])})"
+    if len(line) <= STUB_TARGET_WIDTH:
+        return line
+    ind = head[: len(head) - len(head.lstrip(" "))]
+    rows = "".join(f"{ind}    {a},\n" for a in lead)
+    inner = py_new(f"{ind}    lambda: {Component}(", parts)
+    return f"{head}\n{rows}{inner},\n{ind})"
 
 
 def _rc(release: "list[str]", indent: str = "    ") -> str:
@@ -449,21 +498,21 @@ def make_step_ctx(
         _lifecycle = (
             f"\n"
             f"    def test_context_manager(self):\n"
-            f"        with {Component}({py_create_args}) as obj:\n"
+            f"{_new('        with ', Component, ctx, ' as obj:')}\n"
             f"            self.assertIsNotNone(obj)\n"
             f"\n"
             f"    def test_destroy(self):\n"
-            f"        obj = {Component}({py_create_args})\n"
+            f"{_new('        obj = ', Component, ctx)}\n"
             f"        obj.destroy()\n"
         )
         _lifecycle_pure = (
             f"\n"
             f"def test_context_manager():\n"
-            f"    with {Component}({py_create_args}) as obj:\n"
+            f"{_new('    with ', Component, ctx, ' as obj:')}\n"
             f"        assert obj is not None\n"
             f"\n"
             f"def test_destroy():\n"
-            f"    obj = {Component}({py_create_args})\n"
+            f"{_new('    obj = ', Component, ctx)}\n"
             f"    obj.destroy()\n"
         )
         return {
@@ -497,13 +546,12 @@ def make_step_ctx(
             # timed. The slots nest; `render` substitutes to a fixed point.
             "bm_step_py": (
                 "\n\ndef test_bench_create(benchmark):\n"
-                "    benchmark(lambda: <<Component>>(<<py_create_args>>))\n"
+                f"{_timed_new('    benchmark(', [], Component, ctx)}\n"
             ),
             "bm_steps_py": "",
             "bench_step_py": (
                 "    del obj  # no step() to time\n"
-                '    dt = _bench("create", lambda: '
-                "<<Component>>(<<py_create_args>>))\n"
+                f"{_timed_new('    dt = _bench(', _CREATE, Component, ctx)}\n"
                 "    print(f\"  {'create':<22} {dt * 1e6:9.3f} µs\")\n"
             ),
             "bench_steps_py": "",
@@ -746,7 +794,7 @@ def make_step_ctx(
         _bw_pytest = (
             f"\n"
             f"    def test_steps_runs(self):\n"
-            f"        obj = {Component}({py_create_args})\n"
+            f"{_new('        obj = ', Component, ctx)}\n"
             f"        x = np.zeros(4, dtype={in_np_dtype})\n"
             f"        out = obj.steps(x)\n"
             f"        assert out.shape == (4,)\n"
@@ -756,7 +804,7 @@ def make_step_ctx(
             f"        assert out.dtype == {out_np_dtype}\n"
             f"\n"
             f"    def test_steps_out_param(self):\n"
-            f"        obj = {Component}({py_create_args})\n"
+            f"{_new('        obj = ', Component, ctx)}\n"
             f"        x = np.zeros(4, dtype={in_np_dtype})\n"
             f"        buf = np.zeros(4, dtype={out_np_dtype})\n"
             f"        ret = obj.steps(x, buf)\n"
@@ -765,13 +813,13 @@ def make_step_ctx(
         _bw_pytest_pure = (
             f"\n"
             f"def test_steps_runs():\n"
-            f"    obj = {Component}({py_create_args})\n"
+            f"{_new('    obj = ', Component, ctx)}\n"
             f"    x = np.zeros(4, dtype={in_np_dtype})\n"
             f"    out = obj.steps(x)\n"
             f"    assert out.shape == (4,)\n"
             f"\n"
             f"def test_steps_out_param():\n"
-            f"    obj = {Component}({py_create_args})\n"
+            f"{_new('    obj = ', Component, ctx)}\n"
             f"    x = np.zeros(4, dtype={in_np_dtype})\n"
             f"    buf = np.zeros(4, dtype={out_np_dtype})\n"
             f"    ret = obj.steps(x, buf)\n"
@@ -780,12 +828,12 @@ def make_step_ctx(
         _bw_lifecycle = (
             f"\n"
             f"    def test_context_manager(self):\n"
-            f"        with {Component}({py_create_args}) as obj:\n"
+            f"{_new('        with ', Component, ctx, ' as obj:')}\n"
             f"            x = np.zeros(4, dtype={in_np_dtype})\n"
             f"            obj.steps(x)\n"
             f"\n"
             f"    def test_destroy(self):\n"
-            f"        obj = {Component}({py_create_args})\n"
+            f"{_new('        obj = ', Component, ctx)}\n"
             f"        obj.destroy()\n"
             f'        with _raises(RuntimeError, match="destroyed"):\n'
             f"            obj.steps(np.zeros(4, dtype={in_np_dtype}))\n"
@@ -793,12 +841,12 @@ def make_step_ctx(
         _bw_lifecycle_pure = (
             f"\n"
             f"def test_context_manager():\n"
-            f"    with {Component}({py_create_args}) as obj:\n"
+            f"{_new('    with ', Component, ctx, ' as obj:')}\n"
             f"        x = np.zeros(4, dtype={in_np_dtype})\n"
             f"        obj.steps(x)\n"
             f"\n"
             f"def test_destroy():\n"
-            f"    obj = {Component}({py_create_args})\n"
+            f"{_new('    obj = ', Component, ctx)}\n"
             f"    obj.destroy()\n"
             f'    with pytest.raises(RuntimeError, match="destroyed"):\n'
             f"        obj.steps(np.zeros(4, dtype={in_np_dtype}))\n"
@@ -2004,24 +2052,24 @@ def make_step_ctx(
                 step_pytest_methods = (
                     f"\n"
                     f"    def test_step_runs(self):\n"
-                    f"        obj = {Component}({py_create_args})\n"
+                    f"{_new('        obj = ', Component, ctx)}\n"
                     f"        y = obj.step()\n"
                     f"        {_assert_y}\n"
                     f"\n"
                     f"    def test_steps_runs(self):\n"
-                    f"        obj = {Component}({py_create_args})\n"
+                    f"{_new('        obj = ', Component, ctx)}\n"
                     f"        assert obj.steps(64) is None\n"
                 )
             else:
                 step_pytest_methods = (
                     f"\n"
                     f"    def test_step_runs(self):\n"
-                    f"        obj = {Component}({py_create_args})\n"
+                    f"{_new('        obj = ', Component, ctx)}\n"
                     f"        y = obj.step()\n"
                     f"        {_assert_y}\n"
                     f"\n"
                     f"    def test_steps_shape_dtype(self):\n"
-                    f"        obj = {Component}({py_create_args})\n"
+                    f"{_new('        obj = ', Component, ctx)}\n"
                     f"        y = obj.steps(64)\n"
                     f"        self.assertEqual(y.shape, (64,))\n"
                     f"        self.assertEqual(y.dtype, {out_np_dtype})\n"
@@ -2030,12 +2078,12 @@ def make_step_ctx(
             step_pytest_methods = (
                 f"\n"
                 f"    def test_step_runs(self):\n"
-                f"        obj = {Component}({py_create_args})\n"
+                f"{_new('        obj = ', Component, ctx)}\n"
                 f"        y = obj.step({in_py_test_val})\n"
                 f"        {_assert_y}\n"
                 f"\n"
                 f"    def test_steps_runs(self):\n"
-                f"        obj = {Component}({py_create_args})\n"
+                f"{_new('        obj = ', Component, ctx)}\n"
                 f"        x = np.ones(64, dtype={in_np_dtype})\n"
                 f"        assert obj.steps(x) is None\n"
             )
@@ -2043,12 +2091,12 @@ def make_step_ctx(
             step_pytest_methods = (
                 f"\n"
                 f"    def test_step_runs(self):\n"
-                f"        obj = {Component}({py_create_args})\n"
+                f"{_new('        obj = ', Component, ctx)}\n"
                 f"        y = obj.step({in_py_test_val})\n"
                 f"        {_assert_y}\n"
                 f"\n"
                 f"    def test_steps_shape_dtype(self):\n"
-                f"        obj = {Component}({py_create_args})\n"
+                f"{_new('        obj = ', Component, ctx)}\n"
                 f"        x = np.ones(64, dtype={in_np_dtype})\n"
                 f"        y = obj.steps(x)\n"
                 f"        self.assertEqual(y.shape, (64,))\n"
@@ -2057,29 +2105,29 @@ def make_step_ctx(
                 f"    def test_steps_out_param(self):\n"
                 f"        x = np.ones(64, dtype={in_np_dtype})\n"
                 f"        buf = np.zeros(64, dtype={out_np_dtype})\n"
-                f"        obj1 = {Component}({py_create_args})\n"
+                f"{_new('        obj1 = ', Component, ctx)}\n"
                 f"        ret = obj1.steps(x, buf)\n"
                 f"        self.assertIs(ret, buf)\n"
-                f"        obj2 = {Component}({py_create_args})\n"
+                f"{_new('        obj2 = ', Component, ctx)}\n"
                 f"        np.testing.assert_array_equal(ret, obj2.steps(x))\n"
             )
     else:
         step_pytest_methods = (
             f"\n"
             f"    def test_step_runs(self):\n"
-            f"        obj = {Component}({py_create_args})\n"
+            f"{_new('        obj = ', Component, ctx)}\n"
             f"        y = {_step_call_test}\n"
             f"        {_assert_y}\n"
         )
     lifecycle_pytest_methods = (
         f"\n"
         f"    def test_context_manager(self):\n"
-        f"        with {Component}({py_create_args}) as obj:\n"
+        f"{_new('        with ', Component, ctx, ' as obj:')}\n"
         f"            y = {_step_call_test}\n"
         f"        {_assert_y}\n"
         f"\n"
         f"    def test_destroy(self):\n"
-        f"        obj = {Component}({py_create_args})\n"
+        f"{_new('        obj = ', Component, ctx)}\n"
         f"        obj.destroy()\n"
         f'        with _raises(RuntimeError, match="destroyed"):\n'
         f"            {_step_call_test}\n"
@@ -2091,24 +2139,24 @@ def make_step_ctx(
                 step_pytest_methods_pure = (
                     f"\n"
                     f"def test_step_runs():\n"
-                    f"    obj = {Component}({py_create_args})\n"
+                    f"{_new('    obj = ', Component, ctx)}\n"
                     f"    y = obj.step()\n"
                     f"    {_assert_y}\n"
                     f"\n"
                     f"def test_steps_runs():\n"
-                    f"    obj = {Component}({py_create_args})\n"
+                    f"{_new('    obj = ', Component, ctx)}\n"
                     f"    assert obj.steps(64) is None\n"
                 )
             else:
                 step_pytest_methods_pure = (
                     f"\n"
                     f"def test_step_runs():\n"
-                    f"    obj = {Component}({py_create_args})\n"
+                    f"{_new('    obj = ', Component, ctx)}\n"
                     f"    y = obj.step()\n"
                     f"    {_assert_y}\n"
                     f"\n"
                     f"def test_steps_shape_dtype():\n"
-                    f"    obj = {Component}({py_create_args})\n"
+                    f"{_new('    obj = ', Component, ctx)}\n"
                     f"    y = obj.steps(64)\n"
                     f"    assert y.shape == (64,)\n"
                     f"    assert y.dtype == {out_np_dtype}\n"
@@ -2117,12 +2165,12 @@ def make_step_ctx(
             step_pytest_methods_pure = (
                 f"\n"
                 f"def test_step_runs():\n"
-                f"    obj = {Component}({py_create_args})\n"
+                f"{_new('    obj = ', Component, ctx)}\n"
                 f"    y = obj.step({in_py_test_val})\n"
                 f"    {_assert_y}\n"
                 f"\n"
                 f"def test_steps_runs():\n"
-                f"    obj = {Component}({py_create_args})\n"
+                f"{_new('    obj = ', Component, ctx)}\n"
                 f"    x = np.ones(64, dtype={in_np_dtype})\n"
                 f"    assert obj.steps(x) is None\n"
             )
@@ -2130,12 +2178,12 @@ def make_step_ctx(
             step_pytest_methods_pure = (
                 f"\n"
                 f"def test_step_runs():\n"
-                f"    obj = {Component}({py_create_args})\n"
+                f"{_new('    obj = ', Component, ctx)}\n"
                 f"    y = obj.step({in_py_test_val})\n"
                 f"    {_assert_y}\n"
                 f"\n"
                 f"def test_steps_shape_dtype():\n"
-                f"    obj = {Component}({py_create_args})\n"
+                f"{_new('    obj = ', Component, ctx)}\n"
                 f"    x = np.ones(64, dtype={in_np_dtype})\n"
                 f"    y = obj.steps(x)\n"
                 f"    assert y.shape == (64,)\n"
@@ -2144,29 +2192,29 @@ def make_step_ctx(
                 f"def test_steps_out_param():\n"
                 f"    x = np.ones(64, dtype={in_np_dtype})\n"
                 f"    buf = np.zeros(64, dtype={out_np_dtype})\n"
-                f"    obj1 = {Component}({py_create_args})\n"
+                f"{_new('    obj1 = ', Component, ctx)}\n"
                 f"    ret = obj1.steps(x, buf)\n"
                 f"    assert ret is buf\n"
-                f"    obj2 = {Component}({py_create_args})\n"
+                f"{_new('    obj2 = ', Component, ctx)}\n"
                 f"    np.testing.assert_array_equal(ret, obj2.steps(x))\n"
             )
     else:
         step_pytest_methods_pure = (
             f"\n"
             f"def test_step_runs():\n"
-            f"    obj = {Component}({py_create_args})\n"
+            f"{_new('    obj = ', Component, ctx)}\n"
             f"    y = {_step_call_test}\n"
             f"    {_assert_y}\n"
         )
     lifecycle_pytest_methods_pure = (
         f"\n"
         f"def test_context_manager():\n"
-        f"    with {Component}({py_create_args}) as obj:\n"
+        f"{_new('    with ', Component, ctx, ' as obj:')}\n"
         f"        y = {_step_call_test}\n"
         f"    {_assert_y}\n"
         f"\n"
         f"def test_destroy():\n"
-        f"    obj = {Component}({py_create_args})\n"
+        f"{_new('    obj = ', Component, ctx)}\n"
         f"    obj.destroy()\n"
         f'    with pytest.raises(RuntimeError, match="destroyed"):\n'
         f"        {_step_call_test}\n"

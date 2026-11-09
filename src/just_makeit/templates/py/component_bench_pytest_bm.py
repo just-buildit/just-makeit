@@ -6,13 +6,13 @@
 import numpy as np
 import pytest
 
-from <<package>> import <<Component>>
+<<class_import>>
 
 <<bench_block_consts>>
 
 
 @pytest.fixture
 def obj():
-    return <<Component>>(<<py_create_args>>)
+<<py_new_return_4>>
 <<bm_step_py>>
 <<bm_steps_py>>

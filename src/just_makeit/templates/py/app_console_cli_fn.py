@@ -8,13 +8,13 @@ Install:  pip install -e .   Run:  <<name>> --help
 
 import argparse
 
-from .<<module>> import <<function>>
+<<fn_import_console>>
 
 
 def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="<<name>>",
-        description="<<project>>: <<function>>() command-line tool.",
+<<description_arg>>
     )
 <<argparse_state_args>>
     return p
@@ -22,7 +22,7 @@ def _make_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _make_parser().parse_args()
-    result = <<function>>(<<py_call_args>>)
+<<py_call>>
     print(result)
 
 

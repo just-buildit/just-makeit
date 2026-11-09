@@ -57,6 +57,8 @@ from . import _report
 from . import _types as T
 from ._context._diagnostics import WHY_C_ARG, WHY_DECL, WHY_LOCAL
 from ._docstring import class_import_path
+from ._object import _fmt_from_import
+from ._pyfmt import call_lines, str_kwarg_lines
 from ._init import _to_title
 from ._init import _write as _write_guarded
 
@@ -516,13 +518,42 @@ def _argparse_block(flags: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _py_create_args(flags: list[dict]) -> str:
-    """Keyword-args for the Python constructor from ctor flags (gh-2557).
+def _py_create(Component: str, flags: list[dict]) -> str:
+    """The app's ``obj = <Component>(...)`` from its ctor flags (gh-2557).
 
-    >>> _py_create_args([{"name": "n", "ctor": True}])
-    'n=args.n'
+    >>> _py_create("G", [{"name": "n", "ctor": True}])
+    '    obj = G(n=args.n)'
     """
-    return _py_call_args([f for f in flags if f["ctor"]], keyword=True)
+    ctor = [f for f in flags if f["ctor"]]
+    return _py_call(f"    obj = {Component}(", ctor, keyword=True)
+
+
+def _py_call(head: str, flags: list[dict], *, keyword: bool) -> str:
+    """``<head><args>)``, the call a Python app face makes, at 79 columns.
+
+    *head* runs up to the ``(`` at four spaces (``"    obj = G("``,
+    ``"    result = fir("``). gh-2514: a long class, function or flag name
+    put the one-line call past 79 columns, so it is laid out by
+    :func:`_pyfmt.call_lines` from its arguments. A call with a flag Python
+    cannot spell unset is already one argument per line
+    (:func:`_py_call_args`), which holds at any width.
+
+    >>> _py_call("    result = f(", [{"name": "n"}], keyword=False)
+    '    result = f(args.n)'
+    """
+    if any(f.get("omit_unset") for f in flags):
+        return f"{head}{_py_call_args(flags, keyword=keyword)})"
+    return call_lines(head, _py_given(flags, keyword=keyword))
+
+
+def _py_given(flags: list[dict], *, keyword: bool) -> list[str]:
+    """The arguments of the flags *flags* passes always: every one but an
+    ``omit_unset`` flag's."""
+    return [
+        (f"{f['name']}=" if keyword else "") + f"args.{f['name']}"
+        for f in flags
+        if not f.get("omit_unset")
+    ]
 
 
 def _py_call_args(flags: list[dict], *, keyword: bool) -> str:
@@ -555,11 +586,7 @@ def _py_call_args(flags: list[dict], *, keyword: bool) -> str:
             },
         )
     """
-    given = [
-        (f"{f['name']}=" if keyword else "") + f"args.{f['name']}"
-        for f in flags
-        if not f.get("omit_unset")
-    ]
+    given = _py_given(flags, keyword=keyword)
     unset = [f["name"] for f in flags if f.get("omit_unset")]
     if not unset:
         return ", ".join(given)
@@ -722,7 +749,7 @@ def _py_io_loop(
     sample_type: bool = False,
 ) -> str:
     """4-space-indented Python body for the given object shape."""
-    create = f"    obj = {Component}(<<py_create_args>>)"
+    create = "<<py_create>>"
     if sample_type and shape == "generator":
         return "\n".join(
             [
@@ -1652,7 +1679,20 @@ def _build_fn_ctx(
             ret_t,
             pnames + (["NULL"] if fn.get("why") else []),
         ),
-        "py_call_args": _py_call_args(fn_flags, keyword=False),
+        "py_call": _py_call(
+            f"    result = {function}(", fn_flags, keyword=False
+        ),
+        # gh-2514: each face's import of the function, held to 79 columns
+        # by the one rule every import jm writes follows.
+        "fn_import_console": _fmt_from_import(module, [function], marker=""),
+        "fn_import_pep723": _fmt_from_import(
+            f"{pkg}.{module}", [function], relative=False, marker=""
+        ),
+        "description_arg": str_kwarg_lines(
+            "        ",
+            "description",
+            f"{pkg}: {function}() command-line tool.",
+        ),
     }
 
 
@@ -1760,6 +1800,9 @@ def _build_cmd_ctx(
         "usage": _cmd_usage(name, commands),
         "command_fns": _py_command_fns(commands),
         "subparsers": _py_subparsers(commands),
+        "description_arg": str_kwarg_lines(
+            "        ", "description", f"{pkg} command-line tool."
+        ),
     }
 
 
@@ -1929,7 +1972,7 @@ def _build_ctx(
                 ret_t,
                 sample_type=sample_type,
             ),
-            {"py_create_args": _py_create_args(all_flags)},
+            {"py_create": _py_create(Component, all_flags)},
         )
         if sample_type:
             py_io_loop = (
@@ -1961,11 +2004,11 @@ def _build_ctx(
             "write stdout>> */"
         )
         py_io_loop = R.render(
-            f"    obj = {Component}(<<py_create_args>>)\n"
+            "<<py_create>>\n"
             "    # <<IMPLEMENT: open input/output, call obj.step(), write>>\n"
             "    _ = obj\n"
             "    sys.exit(0)",
-            {"py_create_args": _py_create_args(all_flags)},
+            {"py_create": _py_create(Component, all_flags)},
         )
         cleanup_tail = ""
         helpers = ""
@@ -1975,6 +2018,14 @@ def _build_ctx(
         "project": pkg,
         "package": pkg,
         "import_pkg": import_pkg,
+        # gh-2514: the PEP 723 face's import of the class, and the
+        # parser's description, each held to 79 columns where it is made.
+        "class_import": R.class_import(import_pkg, Component),
+        "description_arg": str_kwarg_lines(
+            "        ",
+            "description",
+            f"{pkg}: {Component}-powered stream tool.",
+        ),
         "version": version,
         "component": component,
         "Component": Component,
@@ -2146,12 +2197,32 @@ def _main_file(
         # gh-1583: the app includes the project's headers, in its layout.
         text = R.render(c_tmpl, {**INC.ctx_slots(root), **ctx})
     else:
-        from ._pyfmt import reflow_py
-
-        # gh-2514: a long app, class or flag name, held to 79 columns.
         tmpl = console_tmpl if entry["target"] == "console" else pep_tmpl
-        text = reflow_py(R.render(tmpl, ctx))
+        text = _wrap_summary(R.render(tmpl, ctx))
     return _app_file(root, cfg, entry), text
+
+
+def _wrap_summary(text: str) -> str:
+    """*text* with its module docstring's summary held to 79 columns.
+
+    Every Python app face opens its docstring with a summary naming the
+    project, the app and its class or function (gh-2514), so a long one
+    passed 79 columns. That one line -- the first to open a docstring -- is
+    wrapped by :func:`_pyfmt.reflow_docstring_open`; nothing else is read.
+
+    >>> q = chr(34) * 3
+    >>> out = _wrap_summary(q + "p: " + "word " * 16 + "end." + chr(10) + q)
+    >>> [len(ln) <= 79 for ln in out.splitlines()]
+    [True, True, True]
+    >>> out.startswith(q + "p: word")
+    True
+    """
+    from ._pyfmt import reflow_docstring_open
+
+    lines = text.split("\n")
+    at = next(i for i, ln in enumerate(lines) if ln.startswith('"""'))
+    lines[at : at + 1] = reflow_docstring_open(lines[at])
+    return "\n".join(lines)
 
 
 def _scaffold(

@@ -4,7 +4,8 @@
 # ///
 """<<project>> — <<name>>: multi-command CLI (PEP 723).
 
-Run with:  uv run <<name>>.py --help    (requires <<project>>==<<version>>)
+Run with:  uv run <<name>>.py --help
+Requires <<project>>==<<version>>.
 """
 
 import argparse
@@ -13,7 +14,8 @@ import argparse
 
 def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="<<name>>", description="<<project>> command-line tool."
+        prog="<<name>>",
+<<description_arg>>
     )
     sub = p.add_subparsers(dest="command", required=True)
 <<subparsers>>
