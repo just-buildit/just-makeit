@@ -42,8 +42,9 @@ jm status
 
 It exits 1 and sorts what is behind into kinds, each with what to do about
 it: files the manifest implies that are **missing** or **stale**, a binding
-fragment that is **unreconciled**, create-only files that are **outdated**,
-C cores that are **unwired** from the C library, and fixes to the root
+fragment that is **unreconciled** -- and, because its wrappers lack guards
+today's jm emits, **guard** -- create-only files that are **outdated**, C
+cores that are **unwired** from the C library, and fixes to the root
 `CMakeLists.txt` template that yours lacks (**root cmake**). Keep this output — every
 step below answers one of its sections.
 
@@ -58,12 +59,15 @@ wiring jm owns, then stamps `just-makeit.toml` with the version you ran. It
 also warns, loudly, about a fragment it will not rewrite:
 
 ```
-warning ~: native/src/dsp/dsp_ext_fir.c: binding no longer matches the
+warning !: native/src/dsp/dsp_ext_fir.c: binding no longer matches the
 manifest [...; steps: jm's out= guard tests C-contiguity and this fragment
-does not, so a strided out= is filled through a copy and silently ignored]
+does not, so a strided out= is filled through a copy and silently ignored].
+... Missing safety guard(s) in decimate, shape, steps: this fails `jm status
+--check` (GUARD, gh-2581) and cannot be allowed; ...
 ```
 
-Hold that thought — step 5 shows what it means, and step 6 fixes it.
+The `!` means `jm status --check` fails on it until the fragment has the
+guards. Hold that thought — step 5 shows what it means, and step 6 fixes it.
 
 ## 3. The root `CMakeLists.txt`, which jm maintains only in part
 

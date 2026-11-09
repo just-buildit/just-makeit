@@ -570,6 +570,10 @@ def run(
     # declares (`getter_status`, a setter's `error`): the conversion
     # silently does nothing at runtime. Same shape, same allow hatch.
     property_entries: list[tuple[str, str, bool]] = []
+    # gh-2581: (path, member, {label: why}) for a sacred fragment's member
+    # lacking a SAFETY guard jm's render has (`_docsync.missing_guards`).
+    # Gates, never allowed: a missing guard is not a choice an author makes.
+    guard_entries: list[tuple[str, str, dict]] = []
     # gh-848: why each unreconciled fragment differs, keyed by path.
     # Kept beside `entries` rather than widened into its tuple, which
     # several call sites unpack positionally.
@@ -921,6 +925,20 @@ def run(
                     after.decode("utf-8", "replace"),
                 ):
                     state = "stale"
+                # gh-2581: a member both sides define that lacks a guard
+                # jm now emits. Asked of every unreconciled fragment, STALE
+                # ones included -- an absent member elsewhere in the file is
+                # apply's to add and says nothing about this one's body. Only
+                # here: the replay above swallowed apply's own warning, so
+                # nothing else counts it.
+                if rel_posix in unreconciled:
+                    for _m, _g in sorted(
+                        _docsync.missing_guards(
+                            before.decode("utf-8", "replace"),
+                            after.decode("utf-8", "replace"),
+                        ).items()
+                    ):
+                        guard_entries.append((rel_posix, _m, _g))
                 # gh-612: a fragment whose constructor kwlist no longer
                 # agrees with what the manifest generates. jm has been able
                 # to answer this since doppler#616, but only ever asked it
@@ -1282,6 +1300,10 @@ def run(
         # gh-2574: gates, never suppressed, for gh-1076's reasons: while
         # they disagree the binding does not compile against the header.
         + len(_why_drift)
+        # gh-2581: gates, never suppressed, for gh-1076's reasons and one
+        # more: the build and the tests pass over a missing guard, so this
+        # is the only place it is ever said. One per member.
+        + len(guard_entries)
         # gh-2488: gates unless allowed. A file jm owns that it could not
         # compare is not a pass: passing would certify a file this run
         # never read, and the drift it may hold is the drift `--check`
@@ -1443,6 +1465,18 @@ def run(
                             "manifest": d.rendered,
                         }
                         for d in _why_drift
+                    ],
+                    # gh-2581: a sacred fragment's member lacking a safety
+                    # guard jm now emits; `guards` are `_docsync.MARKERS`
+                    # labels, `why` their sentences.
+                    "missing_guards": [
+                        {
+                            "path": p,
+                            "member": m,
+                            "guards": sorted(g),
+                            "why": [g[k] for k in sorted(g)],
+                        }
+                        for p, m, g in guard_entries
                     ],
                     # gh-1502: advisory, like `silent_benchmarks` below.
                     "create_example_drift": [
@@ -1786,7 +1820,8 @@ def run(
                 "  that no longer matches the manifest is reported (see the "
                 "`warning:` lines\n"
                 "  above) and left alone.\n"
-                "  None of this counts as drift for `--check`."
+                "  None of this counts as drift for `--check`, except a missing\n"
+                "  safety guard: that is GUARD (gh-2581)."
             )
             print()
         if allowed:
@@ -2283,6 +2318,31 @@ def run(
             "  Edit the declaration and its _core.c definition to match, or"
             " drop `why` /\n  `status_out`.\n"
             "  Not suppressible. See gh-2574, gh-2584."
+        )
+        print()
+
+    # gh-2581: printed under --check too, for gh-1076's reason above.
+    if guard_entries:
+        print(
+            f"GUARD ({len(guard_entries)}) — a binding fragment's member lacks"
+            " a safety guard jm now emits:"
+        )
+        for p, m, g in guard_entries:
+            print(f"  ! {p}: {m}")
+            for k in sorted(g):
+                print(f"      {k}: {g[k]}")
+        print(
+            "  The fragment is yours, so `apply` keeps its body and never adds"
+            " a guard to it.\n"
+            "  Re-render it: `jm adopt --check` says whether jm can take it"
+            " over (`jm adopt\n"
+            "  <obj>`, after which `apply` renders it whole), or delete the"
+            " file and re-run\n"
+            "  `jm apply` (any hand-written body in it is lost). Or add the"
+            " guard to the\n"
+            "  wrapper by hand: `jm status --diff` shows jm's render."
+            " Not suppressible.\n"
+            "  See gh-2581."
         )
         print()
 
@@ -2814,6 +2874,7 @@ def run(
         and not _ctor_drift
         and not _order_drift
         and not _why_drift
+        and not guard_entries
         # gh-2488: "up to date" over a file this run could not compare.
         and not any(not al for _p, al in racing_entries)
     ):
@@ -3005,6 +3066,11 @@ def run(
             )
             + (f", {len(_why_drift)} why-drift (!)" if _why_drift else "")
             + (
+                f", {len(guard_entries)} missing-guard (!)"
+                if guard_entries
+                else ""
+            )
+            + (
                 f", {sum(1 for _p, al in racing_entries if not al)}"
                 " changed-during-run (!)"
                 if any(not al for _p, al in racing_entries)
@@ -3135,15 +3201,15 @@ def run(
                 f"{_lead}\n  {_n_refresh} of them `jm apply` rewrites in "
                 f"place — run it. The rest differ in a\n  wrapper body, "
                 f"which is yours and which apply never re-renders (gh-767).\n"
-                f"  Not counted as drift. Run `jm status` without --check to "
-                f"list them."
+                f"  Not counted as drift (a missing guard is: GUARD). Run "
+                f"`jm status`\n  without --check to list them."
             )
         else:
             print(
                 f"{_lead}\n  `jm apply` reconciles them member by member "
                 f"(gh-767) but never re-renders a\n  wrapper body — that "
-                f"part is yours. Not counted as drift. Run `jm status`\n"
-                f"  without --check to list them."
+                f"part is yours. Not counted as drift (a missing guard\n"
+                f"  is: GUARD). Run `jm status` without --check to list them."
             )
 
     # gh-760: strict mode makes the count a gate. Opt-in and off by default,
