@@ -1432,7 +1432,40 @@ _INLINE_CMDS = frozenset({"p", "c", "a", "e", "b", "ref"})
 _CODE_OPEN_RE = re.compile(r"^[@\\]code\b")
 _CODE_CLOSE_RE = re.compile(r"^[@\\]endcode\b")
 
-_PARAM_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s+(.*)$")
+# One ``@param`` argument: a name, or Doxygen's comma-separated group of
+# names sharing one description (``@param a, b, c  Desc.``, spaces after the
+# commas optional -- gh-2223), then whitespace and the description. Group 1
+# is the name list as written; `_param_names` splits it. A comma that is
+# not between two identifiers (``@param gain Scale, roughly.``) is prose,
+# so the group cannot swallow a description.
+_PARAM_NAMES = r"[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*"
+_PARAM_RE = re.compile(rf"^({_PARAM_NAMES})\s+(.*)$")
+
+
+#: Python argument name -> the C name jm gives the same argument in the
+#: prototype it writes, where the two differ. A block method's input is
+#: the Python ``x`` and the C ``const T *in`` (`_method`'s ``step_param``
+#: lowering), so a header documents it as ``@param in``. This is the one
+#: name-to-name bridge :func:`render_numpy_method_doc` has: an argument
+#: takes the ``@param`` of its own name or of its entry here, never one
+#: chosen by position (gh-2223).
+C_PARAM_NAMES: "dict[str, str]" = {"x": "in"}
+
+
+def _param_names(group: str) -> "list[str]":
+    """The names a ``@param`` name list documents, in order.
+
+    Doxygen documents every name of a comma-separated group with the one
+    description that follows it (gh-2223), so a group is as many params.
+
+    Examples
+    --------
+    >>> _param_names("state, x,x_len")
+    ['state', 'x', 'x_len']
+    >>> _param_names("gain")
+    ['gain']
+    """
+    return [n.strip() for n in group.split(",")]
 
 
 def _norm_brief(text: str) -> str:
@@ -1946,6 +1979,18 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
      * @param why  Set to a static reason on refusal; may be NULL.
      */
 
+    A comma group documents each name it lists, so it is kept, once, while
+    any of them survives (gh-2223):
+
+    >>> print(reconcile_param_docs(
+    ...     "/**\\n * @brief Make.\\n * @param a, b  Bounds.\\n */",
+    ...     "s_t *s_create(int a, int b, int c);"))
+    /**
+     * @brief Make.
+     * @param a, b  Bounds.
+     * @param c
+     */
+
     Already correct is left byte-identical, so this is idempotent and a
     freshly scaffolded project does not report drift against itself:
 
@@ -1958,7 +2003,12 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
         return block
     _fn, names, _returns = sig
     lines = block.splitlines()
-    param_re = re.compile(r"^\s*\*\s*@param\s+(\w+)\b(.*)$")
+    # gh-2223: the name list is `parse_doxygen_block`'s -- one name or a
+    # comma group (`@param a, b  Shared.`), after an optional `[in]` -- so a
+    # line documenting several parameters is one line documenting each.
+    param_re = re.compile(
+        rf"^\s*\*\s*@param(?:\[[^\]]*\])?\s+({_PARAM_NAMES})\b(.*)$"
+    )
     # gh-1261: a description that wraps onto a following physical line (the
     # 79-column style makes this common) is not itself a `@param` line, so a
     # PURE line-based capture -- one dict entry per matched line -- silently
@@ -1977,17 +2027,20 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
     # inside an unterminated `/**` comment.
     close_re = re.compile(r"^\s*\*/\s*$")
 
+    # Every name of a group maps to the SAME list of lines, so the group is
+    # kept while any name it documents survives, and emitted once.
     existing: dict[str, list[str]] = {}
     first_idx = None
     kept: list[str] = []
-    current: str | None = None
+    current: list[str] | None = None
     for line in lines:
         m = param_re.match(line)
         if m:
             if first_idx is None:
                 first_idx = len(kept)
-            current = m.group(1)
-            existing[current] = [line]
+            current = [line]
+            for n in _param_names(m.group(1)):
+                existing[n] = current
             continue
         if (
             current is not None
@@ -1995,7 +2048,7 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
             and not tag_re.match(line)
             and not close_re.match(line)
         ):
-            existing[current].append(line)
+            current.append(line)
             continue
         current = None
         kept.append(line)
@@ -2022,7 +2075,13 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
             return f"{indent} * @param why  {WHY_PARAM_DOC}"
         return f"{indent} * @param {n}"
 
-    rebuilt = [ln for n in names for ln in existing.get(n, [_bare(n)])]
+    rebuilt: list[str] = []
+    emitted: set[int] = set()  # a group's lines go out once, at its first
+    for n in names:
+        group = existing.get(n, [_bare(n)])
+        if id(group) not in emitted:
+            emitted.add(id(group))
+            rebuilt += group
     return "\n".join(kept[:first_idx] + rebuilt + kept[first_idx:])
 
 
@@ -2104,7 +2163,9 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
 
     brief_parts: list[str] = []
     body_lines: list[str] = []
-    params: list[tuple[str, str]] = []
+    # (names, description parts) per `@param` line -- gh-2223: one line
+    # may name several.
+    params: list[tuple[list[str], list[str]]] = []
     param_dirs: dict[str, str] = {}
     return_parts: list[str] = []
     example_lines: list[str] = []
@@ -2141,9 +2202,16 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
             elif cmd == "param":
                 pm = _PARAM_RE.match(rest)
                 if pm:
-                    params.append([pm.group(1), pm.group(2).strip()])
+                    # gh-2223: one entry per `@param` LINE, holding every
+                    # name its comma group lists, so a continuation line
+                    # extends the one description they share; the entry is
+                    # expanded to one param per name below.
+                    names = _param_names(pm.group(1))
+                    params.append((names, [pm.group(2).strip()]))
                     if direction:
-                        param_dirs[pm.group(1)] = direction.strip()
+                        param_dirs.update(
+                            dict.fromkeys(names, direction.strip())
+                        )
                     target = "param"
                 else:
                     target = "body"  # malformed @param: ignore tag, keep text
@@ -2176,7 +2244,7 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
         if target == "brief":
             brief_parts.append(stripped)
         elif target == "param":
-            params[-1][1] = (params[-1][1] + " " + stripped).strip()
+            params[-1][1].append(stripped)
         elif target == "return":
             return_parts.append(stripped)
         elif target == "tag":
@@ -2219,7 +2287,11 @@ def parse_doxygen_block(raw: str, name: str | None = None) -> DoxyBlock | None:
         # the commonest).
         brief=_clean(brief),
         body=[_clean(b) for b in body_lines],
-        params=[(n, _clean(d)) for n, d in params],
+        params=[
+            (n, _clean(" ".join(parts)))
+            for names, parts in params
+            for n in names
+        ],
         returns=_clean(returns),
         examples=example_lines,
         param_dirs=param_dirs,
@@ -3006,8 +3078,6 @@ def render_numpy_doc(
     param_defaults : dict, optional
         `_gluedoc.binding_param_docs`: jm's description of each binding
         argument this member synthesized, used when the header has none.
-        Its keys are also what :func:`render_numpy_method_doc` keeps out of
-        the positional ``@param`` match (gh-2028).
     none_when : str, optional
         The sentence saying when an optional return is ``None``, appended
         to the ``Returns`` description -- `_diagnostics.empty_is_none_doc`
@@ -3322,11 +3392,8 @@ def _numpy_sections(
         delimiter.
     """
     if block is not None:
-        # gh-2028: `param_defaults` is `_gluedoc.binding_param_docs`, keyed
-        # by exactly the arguments this method's binding synthesized -- so
-        # its keys are the names the positional match must not consume.
         summary, body, descs, ret, examples = render_numpy_method_doc(
-            block, py_params, binding=frozenset(param_defaults or ())
+            block, py_params
         )
     else:
         summary, body, descs, ret, examples = "", [], {}, "", []
@@ -3635,7 +3702,6 @@ def enum_param_desc(choices: "Collection[str]") -> str:
 def render_numpy_method_doc(
     block: DoxyBlock,
     py_params: list[tuple[str, str]],
-    binding: "Collection[str]" = (),
 ) -> tuple[str, list[str], dict[str, str], str, list[str]]:
     """Resolve a method's prose fields from *block* for numpy rendering.
 
@@ -3649,9 +3715,12 @@ def render_numpy_method_doc(
         Parsed header comment for this method.
     py_params : list of tuple(str, str)
         ``(name, type_annotation)`` for the *Python-facing* arguments only,
-        in order. Used to filter the Doxygen ``@param`` list down to real
-        Python args (drops C-only params like ``state``/``x_len``/
-        ``max_out``) and to align descriptions when names differ.
+        in order. Each takes the ``@param`` of its own name, or of the C
+        name jm gives it in the prototype (:data:`C_PARAM_NAMES`: the block
+        input ``x`` is ``in``), and nothing else (gh-2223). A C-only
+        ``@param`` (``state``, ``x_len``, ``max_out``) documents no Python
+        argument, and an argument with no ``@param`` of its name gets ``""``
+        -- never the prose of whichever ``@param`` shares its position.
 
         Since gh-1042 the caller includes the binding's own ``count`` /
         ``out=`` here when the shape offers them, so they are documented and
@@ -3659,12 +3728,6 @@ def render_numpy_method_doc(
         listed above as C-only, which it is not: it is Python-facing, and
         treating it as C-only is what silently discarded an authored
         ``@param out``.
-    binding : collection of str, optional
-        The names in *py_params* that are jm's own binding arguments -- the
-        keys of `_gluedoc.binding_param_docs` for this method (``count``,
-        ``out``). An authored ``@param`` of the same name still documents
-        one, but they never take part in the positional match below
-        (gh-2028).
 
     Returns
     -------
@@ -3683,40 +3746,29 @@ def render_numpy_method_doc(
     >>> b = DoxyBlock(brief="Run.", params=[("in", "Samples."),
     ...                                     ("gain", "Scale.")])
     >>> py = [("x", "ndarray"), ("gain", "float"), ("out", "ndarray")]
-    >>> render_numpy_method_doc(b, py, binding={"out"})[2]
-    {'gain': 'Scale.', 'x': 'Samples.', 'out': ''}
+    >>> render_numpy_method_doc(b, py)[2]
+    {'x': 'Samples.', 'gain': 'Scale.', 'out': ''}
+
+    Documenting C-only parameters takes nothing from a Python argument
+    without a ``@param`` of its own (gh-2223):
+
+    >>> b = DoxyBlock(brief="Run.", params=[("state", "The state."),
+    ...                                     ("max_out", "Capacity.")])
+    >>> render_numpy_method_doc(b, [("x", "ndarray")])[2]
+    {'x': ''}
     """
-    py_names = [n for n, _ in py_params]
-    # exact-name matches first
+    # gh-2223: by NAME only. Each Python argument takes the `@param` of its
+    # own name, or of the C name jm itself gives that argument in the
+    # prototype (`C_PARAM_NAMES`). Nothing else: the positional zip that
+    # used to pair leftover `@param`s with leftover arguments handed `x`
+    # the prose of whatever C-only parameter (`out`, `max_out`, `status`)
+    # happened to share its slot, the moment the counts agreed.
     desc_by_name: dict[str, str] = {}
-    matched = set()
-    for n in py_names:
+    for n, _ in py_params:
         d = block.param_desc(n)
-        if d is not None:
-            desc_by_name[n] = d
-            matched.add(n)
-    # positional zip of the remaining (Doxygen names that aren't Python args,
-    # e.g. C `in` -> Python `x`) only when the leftover counts align.
-    #
-    # gh-2028: the binding's own arguments are not leftovers. `count` and
-    # `out=` are jm's, appended after the author's arguments, and documented
-    # by name (`@param out`) or by jm's default -- never by whichever C
-    # `@param` happens to sit in their position. Counted in, they made every
-    # method that has one misalign: `run(x, gain, out)` against `@param in`,
-    # `@param gain` is two Python leftovers against one Doxygen, the zip was
-    # skipped, and `in`'s prose never reached `x`. Every input-only
-    # `variable_output` method has carried `out=` since gh-219, so its
-    # `@param in` reached `x` only when the header also spelled `@param out`.
-    leftover_py = [
-        n for n in py_names if n not in matched and n not in binding
-    ]
-    if leftover_py:
-        leftover_dox = [d for nm, d in block.params if nm not in py_names]
-        if len(leftover_dox) == len(leftover_py):
-            for n, d in zip(leftover_py, leftover_dox):
-                desc_by_name[n] = d
-    for n in py_names:
-        desc_by_name.setdefault(n, "")
+        if d is None and n in C_PARAM_NAMES:
+            d = block.param_desc(C_PARAM_NAMES[n])
+        desc_by_name[n] = d or ""
     # gh-2379: an enum-backed parameter is documented by its choices.
     for n, ann in py_params:
         if isinstance(ann, EnumAnn) and ann.choices:
