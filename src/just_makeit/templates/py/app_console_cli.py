@@ -19,7 +19,7 @@ from . import <<Component>>
 def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="<<name>>",
-        description="<<project>>: <<Component>>-powered stream tool.",
+<<description_arg>>
     )
     p.add_argument(
         "--input",

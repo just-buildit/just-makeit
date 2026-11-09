@@ -44,8 +44,17 @@ from just_makeit._docstring import STUB_TARGET_WIDTH
 #: takes the package `__all__` to 81; and a module of 24 (its `__init__.py`
 #: header comment) of long function names, which
 #: `test_a_platform_guarded_reexport_*` below puts under a platform guard.
+#: And a module of 32 whose object's first-party import passes 79 in its
+#: test, its benchmark, its `.pyi` doctest and a PEP 723 app; a function
+#: there with a console and a PEP 723 app over it (each face's import of
+#: it, and its call); and a `--no-step` object, whose benchmarks time the
+#: constructor inside a `lambda`. Multi-command apps (`--command`) are not
+#: here: they are not ruff-clean even at short names (gh-2577).
 _LONG = "a_very_long_standalone_component_name"
 _GUARDED = "guarded_functions_module"
+_MOD = "pipeline_stages_and_more_of_them"
+_MOBJ = "a_very_long_module_object_component_name"
+_FN = "a_long_module_function_name_for_tests"
 _LONG_NAMES = [
     "module pipeline_stages",
     *(
@@ -54,7 +63,7 @@ _LONG_NAMES = [
         for n in (10, 2, 1, 11, 3, 4, 5)
     ),
     f"object {_LONG} --arg-type float --return-type float"
-    " --state gain_value_of_the_stage:double:1.0",
+    " --state gain_value_of_the_stage_in_decibels:double:1.0",
     f"app --target console --object {_LONG} --name a_long_console_tool_name",
     # One character more than the PEP 723 description holds at 79.
     f"object {_LONG}_b --arg-type float --return-type float",
@@ -77,6 +86,16 @@ _LONG_NAMES = [
             "interpolate_between_samples",
         )
     ),
+    f"module {_MOD}",
+    f"object {_MOBJ} --module {_MOD} --arg-type float --return-type float"
+    " --init-param number_of_taps_in_the_fir_filter_bank:int:16",
+    f"app --target pep723 --object {_MOBJ} --module {_MOD}"
+    " --name a_long_module_script",
+    f"function {_FN} --module {_MOD} --param x_value_long:double"
+    " --return-type double",
+    f"app --target pep723 --function {_FN} --name a_long_fn_script_name",
+    f"app --target console --function {_FN} --name a_long_fn_console_tool",
+    f"object {_LONG}_n --no-step --state gain_value_of_the_stage_in_decibels:double:1.0",
 ]
 
 #: Each shape: the CLI calls after ``jm new p``, one command per string. A

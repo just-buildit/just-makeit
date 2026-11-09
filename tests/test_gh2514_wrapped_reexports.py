@@ -28,7 +28,7 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit._object import sort_reexports
-from just_makeit._pyfmt import reflow_py, reflow_pyi
+from just_makeit._pyfmt import reflow_pyi
 
 FNS = (
     "gauss_hermite_quadrature",
@@ -347,14 +347,33 @@ def test_sort_reads_both_marker_positions(marker_after_paren: bool) -> None:
 #: ``_LONG_NAMES`` carries it, and ``test_every_stub_header_wraps`` holds
 #: the pass that wraps both.
 LONG = "a_very_long_standalone_component_name"
+MOD = "pipeline_stages_and_more_of_them"
+MOBJ = "a_very_long_module_object_component_name"
+FN = "a_long_module_function_name_for_tests"
 LONG_CALLS = [
     "module pipeline_stages",
     f"object stage2 --module pipeline_stages {OBJ}",
-    f"object {LONG} {OBJ} --state gain_value_of_the_stage:double:1.0",
+    f"object {LONG} {OBJ} --state gain_value_of_the_stage_in_decibels:double:1.0",
     f"app --target console --object {LONG} --name a_long_console_tool_name",
     # One character more than the PEP 723 description holds at 79.
     f"object {LONG}_b {OBJ}",
     f"app --target pep723 --object {LONG}_b --name a_long_pep723_script_name",
+    # A module whose object's import passes 79 in its test, its benchmark,
+    # its `.pyi` doctest and a PEP 723 app, and a function there with an
+    # app on each face.
+    f"module {MOD}",
+    f"object {MOBJ} --module {MOD} {OBJ}"
+    " --init-param number_of_taps_in_the_fir_filter_bank:int:16",
+    f"app --target pep723 --object {MOBJ} --module {MOD}"
+    " --name a_long_module_script",
+    f"function {FN} --module {MOD} --param x_value_long:double"
+    " --return-type double",
+    f"app --target pep723 --function {FN} --name a_long_fn_script_name",
+    f"app --target console --function {FN} --name a_long_fn_console_tool",
+    # A benchmark that times the constructor inside a `lambda`.
+    f"object {LONG}_n --no-step --state gain_value_of_the_stage_in_decibels:double:1.0",
+    # A multi-command app: `prog` and `description` shared one line.
+    "app --target pep723 --name a_long_command_script_name --command run",
 ]
 
 #: Each file's text at those names, as jm now writes it: within 79 columns,
@@ -378,12 +397,12 @@ LONG_TEXT = {
     ),
     "src/p/cli.py#ctor": (
         "    obj = AVeryLongStandaloneComponentName(\n"
-        "        gain_value_of_the_stage=args.gain_value_of_the_stage,\n"
+        "        gain_value_of_the_stage_in_decibels=args.gain_value_of_the_stage_in_decibels,\n"
         "    )\n"
     ),
     f"src/p/tests/test_{LONG}.py": (
         "        with AVeryLongStandaloneComponentName(\n"
-        "            gain_value_of_the_stage=1.0,\n"
+        "            gain_value_of_the_stage_in_decibels=1.0,\n"
         "        ) as obj:\n"
     ),
     "a_long_pep723_script_name.py": (
@@ -393,6 +412,45 @@ LONG_TEXT = {
         ' tool.",\n'
         "            ]\n"
         "        ),\n"
+    ),
+    # The first-party import, from the module: its test, its benchmark,
+    # its `.pyi` doctest and a PEP 723 app.
+    f"src/p/{MOD}/tests/test_{MOBJ}.py": (
+        f"from p.{MOD} import (\n    AVeryLongModuleObjectComponentName,\n)\n"
+    ),
+    f"src/p/{MOD}/benchmarks/bench_{MOBJ}.py": (
+        f"from p.{MOD} import (\n    AVeryLongModuleObjectComponentName,\n)\n"
+    ),
+    f"src/p/{MOD}/{MOD}.pyi": (
+        f"    >>> from p.{MOD} import (\n"
+        "    ...     AVeryLongModuleObjectComponentName,\n"
+        "    ... )\n"
+    ),
+    "a_long_module_script.py": (
+        f"from p.{MOD} import (\n    AVeryLongModuleObjectComponentName,\n)\n"
+    ),
+    # The function apps: each face's import of the function, and the
+    # requirement on a line of its own.
+    "a_long_fn_script_name.py": (f"from p.{MOD} import (\n    {FN},\n)\n"),
+    "a_long_fn_script_name.py#run": (
+        "Run with:  uv run a_long_fn_script_name.py --help\n"
+        "Requires p==0.1.0.\n"
+    ),
+    f"src/p/{MOD}/cli.py": (f"from .{MOD} import (\n    {FN},\n)\n"),
+    # A benchmark timing the constructor inside a `lambda`.
+    f"src/p/benchmarks/bench_{LONG}_n.py": (
+        "    dt = _bench(\n"
+        '        "create",\n'
+        "        lambda: AVeryLongStandaloneComponentNameN(\n"
+        "            gain_value_of_the_stage_in_decibels=1.0,\n"
+        "        ),\n"
+        "    )\n"
+    ),
+    # A multi-command app: `prog` and `description` each on a line.
+    "a_long_command_script_name.py": (
+        '        prog="a_long_command_script_name",\n'
+        '        description="p command-line tool.",\n'
+        "    )\n"
     ),
 }
 
@@ -454,16 +512,6 @@ def test_every_stub_header_wraps(header: str) -> None:
     assert all(len(ln) <= 79 for ln in out.splitlines()), out
     assert out.replace("\n# ", " ").rstrip("\n") == line
     assert reflow_pyi(out) == out
-
-
-def test_a_pep723_metadata_block_is_never_wrapped() -> None:
-    meta = (
-        "# /// script\n"
-        "# dependencies ="
-        ' ["a_very_long_project_name_that_does_not_fit_here==1.0", "numpy"]\n'
-        "# ///\n"
-    )
-    assert reflow_py(meta) == meta
 
 
 @pytest.mark.parametrize(

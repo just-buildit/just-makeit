@@ -50,7 +50,9 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
-from just_makeit._stubs import _ctor_demo_lines  # noqa: E402
+from just_makeit._docstring import (  # noqa: E402
+    ctor_demo_lines as _ctor_demo_lines,
+)
 from just_makeit._pyfmt import (  # noqa: E402
     _split_top_level,
     reflow_line,

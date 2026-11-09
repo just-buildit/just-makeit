@@ -21,6 +21,7 @@ For a dotless id every slot but ``module_tp`` collapses to the bare name (and
 from __future__ import annotations
 
 from .. import _config as C
+from .._pyfmt import reflow_comment
 
 
 def make_module_ctx(
@@ -65,6 +66,14 @@ def make_module_ctx(
         ),
         "module_docstring_py": docstring_py,
         "module_doc_c": doc_c,
+        # gh-2514: the `__init__.py` header names the package path, so a
+        # long one wraps at its spaces (`_pyfmt.reflow_comment`).
+        "module_init_header": "\n".join(
+            reflow_comment(
+                f"# {package}/__init__.py — re-export all types from the C"
+                " extension."
+            )
+        ),
     }
 
 

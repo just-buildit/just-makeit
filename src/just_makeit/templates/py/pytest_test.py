@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from <<package>> import <<Component>>
+<<class_import>>
 
 # ---------------------------------------------------------------------------
 # pytest compatibility shim — tests run under both pytest and unittest discover
@@ -50,7 +50,7 @@ except ImportError:
 
 class Test<<Component>>(unittest.TestCase):
 <<pytest_class_skip>>    def test_create(self):
-        obj = <<Component>>(<<py_create_args>>)
+<<py_new_obj_8>>
         self.assertIsNotNone(obj)
 <<step_pytest_methods>>
     def test_getter_setter(self):

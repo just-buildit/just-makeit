@@ -60,11 +60,12 @@ from ._docstring import (
     authored_param_docs,
     docstring_body,
     class_import_line,
+    ctor_demo_lines,
+    import_demo_lines,
     merge_doc_blocks,
     method_doc,
     name_summary,
     ctor_demo_label,
-    STUB_TARGET_WIDTH,
     ClassParam,
     class_docstring,
     inherit_ctor_params,
@@ -960,53 +961,6 @@ def _doctest_out(ctype: str, default: str) -> str | None:
     return held
 
 
-def _ctor_demo_lines(Component: str, py_create_args: str) -> list[str]:
-    """The ``>>> obj = Component(...)`` demo, wrapped if it does not fit.
-
-    gh-744. A component with many init-params produced a 257-column example
-    line (doppler's ``MpskReceiver``). Unlike an author's ``@code`` block --
-    which jm preserves byte-for-byte, trailing comment alignment and all --
-    this line is jm's own, so jm owns its width.
-
-    A doctest continues with ``...``, so the wrapped form is still a runnable
-    example and still one statement. Shown here with the prompts spelled out
-    rather than as a live block, since this illustrates the *output* and is
-    not itself an example to run::
-
-        [PS1] obj = Thing(
-        [PS2]     alpha=1,
-        [PS2]     beta=2,
-        [PS2] )
-
-    where ``[PS1]`` is ``>>>`` and ``[PS2]`` is ``...``.
-
-    Parameters
-    ----------
-    Component : str
-        Class name to construct.
-    py_create_args : str
-        Rendered keyword arguments, comma-separated.
-
-    Returns
-    -------
-    list of str
-        Doctest lines at the class docstring's 4-space indent.
-    """
-    from ._pyfmt import _split_top_level
-
-    flat = f"    >>> obj = {Component}({py_create_args})"
-    if len(flat) <= STUB_TARGET_WIDTH:
-        return [flat]
-    parts = _split_top_level(py_create_args)
-    if not parts:  # a single unsplittable argument -- leave it readable
-        return [flat]
-    return (
-        [f"    >>> obj = {Component}("]
-        + [f"    ...     {p}," for p in parts]
-        + ["    ... )"]
-    )
-
-
 def _build_class_docstring(
     Component: str,
     state_vars: list,
@@ -1240,8 +1194,8 @@ def _build_class_docstring(
         "    --------",
         f"    {ctor_demo_label(init_params)}",
         "",
-        f"    >>> {import_line}",
-        *_ctor_demo_lines(Component, py_create_args),
+        *import_demo_lines(import_line),
+        *ctor_demo_lines(Component, py_create_args),
     ]
     for name, out in scalar_getters[:3]:
         ex += [f"    >>> obj.get_{name}()", f"    {out}"]

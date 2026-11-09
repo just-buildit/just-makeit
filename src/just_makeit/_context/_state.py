@@ -20,6 +20,7 @@ from .._docstring import (
     render_runtime_doc,
 )
 from ._diagnostics import WHY_C_ARG, WHY_C_PARAM, WHY_DECL
+from .._pyfmt import call_lines
 from ._parse import (
     _build_ml_doc,
     borrow_view_c as _borrow_view_c,
@@ -52,6 +53,38 @@ from ._types import (
     _py_eq,
     _py_sample_val,
 )
+
+
+def py_new(head: str, parts: "list[str]", tail: str = "") -> str:
+    """A Python statement constructing the object, held to 79 columns.
+
+    *head* is the statement up to the class's ``(`` (``"    obj = Fir("``),
+    *parts* its ``py_create_parts``. gh-2514: a long class or parameter name
+    put ``obj = <Class>(<param>=...)`` past 79 columns, and the ones
+    ``ruff format`` broke differed by width; :func:`_pyfmt.call_lines`
+    explodes it one argument per line, the layout ruff keeps at any width.
+
+    >>> py_new("    obj = Fir(", ["n=4"])
+    '    obj = Fir(n=4)'
+    """
+    return call_lines(head, parts, tail)
+
+
+def py_new_slots(Component: str, parts: "list[str]") -> "dict[str, str]":
+    """The template slots that construct the object, one per placement.
+
+    The test and benchmark templates write the statement at a fixed indent
+    and head; each is rendered here, through :func:`py_new`, so the width it
+    is held to counts the indent it sits at (gh-2514).
+
+    >>> py_new_slots("Fir", ["n=4"])["py_new_obj_8"]
+    '        obj = Fir(n=4)'
+    """
+    return {
+        "py_new_obj_4": py_new(f"    obj = {Component}(", parts),
+        "py_new_obj_8": py_new(f"        obj = {Component}(", parts),
+        "py_new_return_4": py_new(f"    return {Component}(", parts),
+    }
 
 
 def accessor_block(csym: str, fn: str, doc_blocks: "dict | None"):
@@ -1778,7 +1811,7 @@ def _build_no_state_init_ctx(
     py_create_args = ", ".join(py_create_parts)
 
     c_create_args = ", ".join(c_create_parts_ordered)
-    test_obj = f"        obj = {Component}({py_create_args})"
+    test_obj = py_new(f"        obj = {Component}(", py_create_parts)
 
     return {
         # gh-790: the borrowed-handle owner refs. Deliberately NOT the
@@ -1828,6 +1861,11 @@ def _build_no_state_init_ctx(
         ),
         "pyi_param_docs": pyi_param_docs,
         "py_create_args": py_create_args,
+        # gh-2514: the arguments one by one, so every generated Python call
+        # that constructs the object is laid out from them (`py_new`), and
+        # the statements the test and benchmark templates write.
+        "py_create_parts": py_create_parts,
+        **py_new_slots(Component, py_create_parts),
         "c_create_args": c_create_args,
         # gh-181: on this path an empty c_create_args means the object has no
         # init params, i.e. a `create(void)` — so `<comp>_create()` is callable
@@ -2960,6 +2998,8 @@ def make_state_ctx(
             "pyi_param_docs": "    (none)",
             "getter_setter_stubs_pyi": "",
             "py_create_args": "",
+            "py_create_parts": [],
+            **py_new_slots(Component, []),
             "getter_setter_test_py": (
                 "        pass  # no auto-state; add assertions for your fields"
             ),
@@ -3612,18 +3652,18 @@ def make_state_ctx(
     # state-var parameter is optional, which is what makes omitting one exact
     # rather than a guess; restating it wrote `Gate(threshold=LVL_INFO)`, a
     # NameError in the test, the benchmark and the doctest alike.
-    py_create_args = ", ".join(
-        py_arr_args
-        + [
-            f"{name}={_py_default(ct, dflt)}"
-            for name, ct, dflt in ctor_scalars
-            if not T.is_c_only_default(ct, dflt)
-        ]
-    )
+    py_create_parts = py_arr_args + [
+        f"{name}={_py_default(ct, dflt)}"
+        for name, ct, dflt in ctor_scalars
+        if not T.is_c_only_default(ct, dflt)
+    ]
+    py_create_args = ", ".join(py_create_parts)
+    # gh-2514: the tests' construction, held to 79 columns.
+    test_obj = py_new(f"        obj = {Component}(", py_create_parts)
 
     # ── PYTEST: getter_setter_test_py ────────────────────────────────────
 
-    gs_lines = [f"        obj = {Component}({py_create_args})"]
+    gs_lines = [test_obj]
     # gh-1105: assert the POST-CONSTRUCTION value only when jm knows it.
     #
     # It knows it for the state-var constructor: jm generates that create()
@@ -3688,7 +3728,7 @@ def make_state_ctx(
 
     # ── PYTEST: reset_test_py ────────────────────────────────────────────
 
-    rs_lines = [f"        obj = {Component}({py_create_args})"]
+    rs_lines = [test_obj]
     if _authors_reset:
         # gh-1882: an author's reset() may keep a field on purpose -- a delay
         # line keeps its `length` -- so asserting the declared defaults is a
@@ -3856,6 +3896,8 @@ def make_state_ctx(
         "pyi_param_docs": pyi_param_docs,
         "getter_setter_stubs_pyi": getter_setter_stubs_pyi,
         "py_create_args": py_create_args,
+        "py_create_parts": py_create_parts,
+        **py_new_slots(Component, py_create_parts),
         "getter_setter_test_py": getter_setter_test_py,
         "reset_test_py": reset_test_py,
         "getter_setter_test_py_pure": (
@@ -3971,6 +4013,11 @@ def make_state_ctx(
             "pyi_object_imports",
             "pyi_param_docs",
             "py_create_args",
+            # gh-2514: and the arguments one by one, with every statement
+            # built from them, or the templates construct with the state
+            # half's arguments.
+            "py_create_parts",
+            *py_new_slots("", []),
             "c_create_args",
             "bench_create_stmt",
             # gh-1328: the ctor-override path rebuilds the create slots, so
@@ -4002,7 +4049,7 @@ def make_state_ctx(
         # present, kept, and built from the wrong half's data. Every other
         # generated test used `Obj(cap=0)` while these two used `Obj()`, which
         # a required init-param turns into a TypeError.
-        _ctor_call = f"{Component}({result.get('py_create_args', '')})"
+        _parts = result.get("py_create_parts", [])
         for _k, _ind in (
             ("getter_setter_test_py", "        "),
             ("reset_test_py", "        "),
@@ -4012,7 +4059,10 @@ def make_state_ctx(
             _v = result.get(_k, "")
             _stale = f"{_ind}obj = {Component}()"
             if _v.startswith(_stale):
-                result[_k] = f"{_ind}obj = {_ctor_call}" + _v[len(_stale) :]
+                result[_k] = (
+                    py_new(f"{_ind}obj = {Component}(", _parts)
+                    + _v[len(_stale) :]
+                )
     # gh-1857: the stub reads only the state-field parameters it assigns
     # (`obj->k = k;`). Under init_params there are none -- `ctor_scalars` is
     # empty -- and an --array-arg is never assigned, so every other

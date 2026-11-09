@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 
-from <<package>>.<<module>> import <<Component>>
+<<class_import>>
 
 REPS = 1_000
 <<bench_block_consts>>
@@ -24,7 +24,7 @@ def _bench(label: str, fn, *args, reps: int = REPS) -> float:
 
 
 def main() -> None:
-    obj = <<Component>>(<<py_create_args>>)
+<<py_new_obj_4>>
     print("<<component>>")
 <<bench_step_py>>
 <<bench_steps_py>>
