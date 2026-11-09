@@ -531,7 +531,9 @@ def method_status_out_errors(
     parameter named ``status``, which would collide with the one jm
     appends. A ``kind = "handle"`` method's only refusal is a non-zero
     ``int`` return, which is that same status, so it is refused there for
-    the ``status_return`` reason. Asked by the manifest's load and by
+    the ``status_return`` reason. A ``status_out`` with no
+    ``status_errors`` rows would change only the C signature, so it is
+    refused too. Asked by the manifest's load and by
     ``jm method``, as `method_why_errors` is.
 
     Examples
@@ -540,8 +542,12 @@ def method_status_out_errors(
     'm: status_out = 1 must be true or fa'
     >>> method_status_out_errors("m", {"status_out": True}, [])[0][:46]
     'm declares status_out = true, but no count ref'
+    >>> m = {"status_out": True, "error_sentinel": "SIZE_MAX"}
+    >>> method_status_out_errors("m", m, [])[0][-25:]
+    'rows, or drop status_out.'
     >>> method_status_out_errors(
-    ...     "m", {"status_out": True, "error_sentinel": "SIZE_MAX"}, [])
+    ...     "m", {"status_out": True, "error_sentinel": "SIZE_MAX",
+    ...           "status_errors": [{"status": "E", "error": "OSError"}]}, [])
     []
     """
     if "status_out" not in m:
@@ -574,6 +580,16 @@ def method_status_out_errors(
             f"{where} declares status_out = true and a parameter named "
             "`status`; jm appends `int *status` itself. Rename the "
             "parameter."
+        ]
+    # The converse of a table with no status to read (`_borrow.why_not`):
+    # a status with no table changes only the C signature, and the binding
+    # reads it into nothing.
+    if not m.get("status_errors"):
+        return [
+            f"{where} declares status_out = true, but no `status_errors` "
+            "rows: the code the C function writes to `int *status` picks "
+            "a row, and there is none to pick. Declare `status_errors` "
+            "rows, or drop status_out."
         ]
     return []
 

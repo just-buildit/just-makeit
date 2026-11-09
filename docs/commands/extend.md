@@ -606,10 +606,12 @@ size_t
     without a count refusal, beside `--status-return` (that status is the
     return value, which the rows already match -- and so on every
     `kind = "handle"` method, whose refusal is its non-zero `int`), for a value
-    that is not `true` / `false`, and beside a parameter named `status`.
+    that is not `true` / `false`, beside a parameter named `status`, and
+    with no `--status-error` row for the code to pick.
 - A module object's header only gains declarations on `apply`, so adding the
-    key to an existing method makes `apply` warn and `jm status` report `WHY`
-    until the prototype takes `int *status` too.
+    key to an existing method makes `apply` warn -- naming what to add and
+    where, `int *status` going before a `why` already there -- and
+    `jm status` report `WHY` until the prototype takes it too.
 
 #### Naming the synthesized count
 

@@ -281,16 +281,18 @@ _ACC_DECL = (
 )
 
 
-def _drop_status(scaffold: Path, tmp_path: Path) -> Path:
+def _drop_status(
+    scaffold: Path, tmp_path: Path, keep: str = ", const char **why"
+) -> Path:
+    """A copy of *scaffold* whose ``rq_acc_pmax`` declaration ends in
+    *keep* instead of the manifest's ``int *status, const char **why``."""
     proj = tmp_path / "rq"
     shutil.copytree(scaffold, proj)
     hdr = proj / "native/inc/rq/acc/acc_core.h"
     text = hdr.read_text("utf-8")
     full = f"{_ACC_DECL}, int *status, const char **why);"
     assert text.count(full) == 1, text
-    hdr.write_text(
-        text.replace(full, f"{_ACC_DECL}, const char **why);"), "utf-8"
-    )
+    hdr.write_text(text.replace(full, f"{_ACC_DECL}{keep});"), "utf-8")
     return proj
 
 
@@ -307,16 +309,26 @@ def test_a_header_without_status_is_a_finding(
     assert "WHY (1)" in out and "rq_acc_pmax(" in out, out
 
 
-def test_apply_warns_when_the_header_lacks_status(
-    scaffold: Path, tmp_path: Path
+@pytest.mark.parametrize(
+    "keep, remedy",
+    [(", const char **why",
+      "Add `int *status` before `const char **why` in the declaration"),
+     ("", "Add `int *status, const char **why` last to the declaration"),
+     (", int *status", "Add `const char **why` last to the declaration")],
+    ids=["status-only", "both", "why-only"],
+)  # fmt: skip
+def test_apply_warns_by_what_the_header_lacks(
+    scaffold: Path, tmp_path: Path, keep: str, remedy: str
 ) -> None:
-    proj = _drop_status(scaffold, tmp_path)
+    """The warning names what is missing, in the order jm appends it: a
+    ``status`` missing beside a present ``why`` goes BEFORE it."""
+    proj = _drop_status(scaffold, tmp_path, keep)
     r = run_cli("apply", cwd=proj)
     out = r.stdout + r.stderr
     assert r.returncode == 0, out
     warned = [ln for ln in out.splitlines() if ln.startswith("warning")]
     assert len(warned) == 1 and "rq_acc_pmax()" in warned[0], out
-    assert "with `int *status` before it" in out, out
+    assert remedy in " ".join(out.split()), out
 
 
 # -- refused at load -----------------------------------------------------------
@@ -358,6 +370,27 @@ def test_status_out_with_status_return_is_refused(tmp_path) -> None:
     )
     out = _refusal(tmp_path, toml)
     assert "declares status_out = true, but its status is its return" in out
+
+
+def test_status_out_without_rows_is_refused(tmp_path: Path) -> None:
+    out = _refusal(tmp_path, _PLAIN.replace(ROWS.format(t="cor.methods"), ""))
+    assert "declares status_out = true, but no `status_errors` rows" in out
+    assert "Declare `status_errors` rows, or drop status_out." in out
+
+
+def test_the_cli_refuses_status_out_without_rows(tmp_path: Path) -> None:
+    _ok("new", "sq", cwd=tmp_path)
+    proj = tmp_path / "sq"
+    _ok("object", "cor", cwd=proj)
+    before = sorted(p.as_posix() for p in proj.rglob("*"))
+    r = run_cli(
+        "method", "cor", "pmax", "--arg-type", "float[]", "--return-type",
+        "float", "--variable-output", "--error-sentinel", "SIZE_MAX",
+        "--status-out", cwd=proj,
+    )  # fmt: skip
+    assert r.returncode != 0, r.stdout
+    assert "but no `status_errors` rows" in r.stderr
+    assert sorted(p.as_posix() for p in proj.rglob("*")) == before
 
 
 def test_a_non_bool_status_out_is_refused(tmp_path: Path) -> None:
