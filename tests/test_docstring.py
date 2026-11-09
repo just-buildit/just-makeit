@@ -215,7 +215,7 @@ class TestRenderNumpyMethodDoc:
         assert descs["x"] == "Input samples, complex64, length x_len."
         assert ret == "Number of output samples written."
 
-    def test_positional_zip_when_name_differs(self):
+    def test_no_positional_match_when_name_differs(self):
         raw = """\
 /**
  * @brief Scale.
@@ -226,8 +226,9 @@ class TestRenderNumpyMethodDoc:
         _s, _b, descs, _r, _ex = render_numpy_method_doc(
             b, py_params=[("x", "NDArray[float32]")]
         )
-        # C `samples` aligns positionally to Python `x`
-        assert descs["x"] == "The input array."
+        # gh-2223: by name only -- C `samples` is not jm's name for `x`, so
+        # it documents nothing rather than whatever shares its position.
+        assert descs["x"] == ""
 
     def test_missing_param_desc_is_empty_string(self):
         b = DoxyBlock(brief="Hi.")

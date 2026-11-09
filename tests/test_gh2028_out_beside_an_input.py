@@ -16,7 +16,9 @@ Python leftover with no Doxygen partner, the counts stopped agreeing, the zip
 was skipped, and ``x`` fell back to ``Input.``. The same arithmetic had
 always applied to every input-only ``variable_output`` method, which has
 carried ``out=`` since gh-219: its ``@param in`` reached ``x`` only when the
-header also spelled ``@param out``.
+header also spelled ``@param out``. (gh-2223 since deleted the positional
+match outright: ``in`` reaches ``x`` by name, so these tests now hold by
+name alone.)
 
 So the fix is two halves, and each is sabotaged separately:
 
@@ -96,7 +98,7 @@ _BLOCK = DoxyBlock(
 def test_a_binding_argument_takes_no_positional_slot(binding):
     """`in` reaches `x` whichever binding arguments sit beside it."""
     py = [("x", "ndarray"), ("gain", "float")] + [(b, "T") for b in binding]
-    descs = render_numpy_method_doc(_BLOCK, py, binding=set(binding))[2]
+    descs = render_numpy_method_doc(_BLOCK, py)[2]
     assert descs["x"] == "Samples to scale."
     assert descs["gain"] == "Linear scale."
     assert all(descs[b] == "" for b in binding), descs
@@ -123,7 +125,7 @@ def test_an_authored_out_still_documents_out():
         params=[("in", "Samples."), ("out", "Your buffer.")],
     )
     descs = render_numpy_method_doc(
-        block, [("x", "ndarray"), ("out", "ndarray")], binding={"out"}
+        block, [("x", "ndarray"), ("out", "ndarray")]
     )[2]
     assert descs == {"out": "Your buffer.", "x": "Samples."}
 
