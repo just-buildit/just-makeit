@@ -1475,6 +1475,10 @@ def run(
                             "member": m,
                             "guards": sorted(g),
                             "why": [g[k] for k in sorted(g)],
+                            # What clears each: jm's own spelling of it.
+                            "forms": [
+                                _docsync.marker(k).form for k in sorted(g)
+                            ],
                         }
                         for p, m, g in guard_entries
                     ],
@@ -2331,18 +2335,25 @@ def run(
             print(f"  ! {p}: {m}")
             for k in sorted(g):
                 print(f"      {k}: {g[k]}")
+                _form = _docsync.marker(k).form
+                if _form:
+                    print(f"        jm's form: {_form}")
         print(
             "  The fragment is yours, so `apply` keeps its body and never adds"
             " a guard to it.\n"
-            "  Re-render it: `jm adopt --check` says whether jm can take it"
-            " over (`jm adopt\n"
-            "  <obj>`, after which `apply` renders it whole), or delete the"
-            " file and re-run\n"
-            "  `jm apply` (any hand-written body in it is lost). Or add the"
-            " guard to the\n"
-            "  wrapper by hand: `jm status --diff` shows jm's render."
-            " Not suppressible.\n"
-            "  See gh-2581."
+            "  A finding clears when the member carries jm's own form of the"
+            " guard, shown\n"
+            "  above. Re-render the fragment: `jm adopt --check` says whether"
+            " jm can take\n"
+            "  it over (`jm adopt <obj>`, after which `apply` renders it"
+            " whole), or delete\n"
+            "  the file and re-run `jm apply` (any hand-written body in it is"
+            " lost). Or\n"
+            "  write the guard by hand in that form (`jm status --diff` shows"
+            " jm's render).\n"
+            "  An equivalent spelled another way is not recognised yet"
+            " (gh-2589).\n"
+            "  Not suppressible. See gh-2581."
         )
         print()
 

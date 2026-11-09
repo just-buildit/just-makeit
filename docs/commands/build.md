@@ -855,24 +855,36 @@ lacks. Each marker is classified once, in the table both `apply` and
 without it lets a call touch freed or out-of-range memory, or return a
 wrong answer with no exception: the output-size and returned-count checks,
 a refusal the manifest declares (`error_sentinel`, `error_negative`,
-`status_return`, a `status_errors` row), the `out=` contiguity test, the
+`status_return`, a `status_errors` row, `strict`), the `out=` contiguity test, the
 integer range test, the inflight count and teardown wait of a call that
 releases the GIL (gh-2272), a retained or required capsule, a borrow
 release's record, a deferred free, the byte-array converter and a
 `str_hint`, and a records method's capacity and consumed-input loop.
 
 Everything else is **advisory** and stays an `UNRECONCILED` reason: a
-calling convention, a result's Python shape, `nogil` itself (holding the
-GIL is slower, never unsafe) and `strict` (the converted copy reads the
-same values). The stub and the binding disagree there, but the call does
-the right thing or fails loudly.
+calling convention, a result's Python shape and `nogil` itself (holding
+the GIL is slower, never unsafe). The stub and the binding disagree there,
+but the call does the right thing or fails loudly.
 
 `apply` marks the warning `!` when it names a guard, and `GUARD` counts
-one finding per member. The fix is jm's render of the fragment:
-`jm adopt --check` says whether jm can take it over (`jm adopt <obj>`, so
-every later fix arrives too), or delete it and re-run `jm apply`. A body
-you wrote yourself keeps its code; add the guard to it by hand -- `jm status --diff` shows jm's. Never suppressible: a missing guard is not a choice a
-project makes.
+one finding per member, with **jm's form** of each missing guard (in
+`--json`, `forms`).
+
+A finding clears when the member carries that form. There are two ways:
+
+- **Re-render the fragment.** `jm adopt --check` says whether jm can take
+    it over (`jm adopt <obj>`, so every later fix arrives too), or delete it
+    and re-run `jm apply`.
+- **Write the guard by hand in jm's form.** A body you wrote yourself
+    keeps its code. `jm status --diff` shows jm's render.
+
+The markers read jm's own spelling. A guard written another way -- an `if (rc == DP_EIO)` in place of a `case DP_EIO:` arm, a range test on a local
+not named `<p>_raw` -- is not recognised yet (gh-2589). Never suppressible:
+a missing guard is not a choice a project makes.
+
+A teardown's inflight wait is asked of a fragment only when some member of
+that fragment releases the GIL. A fragment rendered before gh-2259 holds it
+everywhere, so its teardown has nothing to wait for.
 
 ### Why a stand-down is `UNCHECKED` and not silence
 

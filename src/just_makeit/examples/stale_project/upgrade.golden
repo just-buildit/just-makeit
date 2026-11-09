@@ -85,18 +85,25 @@ UNWIRED (2) — component core(s) folded into no C library:
 GUARD (3) — a binding fragment's member lacks a safety guard jm now emits:
   ! native/src/dsp/dsp_ext_fir.c: decimate
       out-contiguity: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        jm's form: PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) in the out= test
       output-size: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
+        jm's form: if (<x>_need > (size_t)NPY_MAX_INTP) {...}
       returned-count: jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
+        jm's form: if ((size_t)(n_out) > (size_t)(_cap)) {...}
   ! native/src/dsp/dsp_ext_fir.c: shape
       output-size: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
+        jm's form: if (<x>_need > (size_t)NPY_MAX_INTP) {...}
   ! native/src/dsp/dsp_ext_fir.c: steps
       out-contiguity: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        jm's form: PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) in the out= test
   The fragment is yours, so `apply` keeps its body and never adds a guard to it.
-  Re-render it: `jm adopt --check` says whether jm can take it over (`jm adopt
-  <obj>`, after which `apply` renders it whole), or delete the file and re-run
-  `jm apply` (any hand-written body in it is lost). Or add the guard to the
-  wrapper by hand: `jm status --diff` shows jm's render. Not suppressible.
-  See gh-2581.
+  A finding clears when the member carries jm's own form of the guard, shown
+  above. Re-render the fragment: `jm adopt --check` says whether jm can take
+  it over (`jm adopt <obj>`, after which `apply` renders it whole), or delete
+  the file and re-run `jm apply` (any hand-written body in it is lost). Or
+  write the guard by hand in that form (`jm status --diff` shows jm's render).
+  An equivalent spelled another way is not recognised yet (gh-2589).
+  Not suppressible. See gh-2581.
 
 SUPERSEDED (1) — file(s) jm has renamed:
   → jb.toml  (bootstrap.toml)
@@ -114,7 +121,7 @@ just-makeit: applying just-makeit.toml
   stamp   just-makeit.toml  [project] jm_version = <HEAD>
 
   update  native/src/dsp/dsp_ext_fir.c: docstring(s) rewritten from the header for decimate_max_out, destroy
-warning !: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation; shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match. Missing safety guard(s) in decimate, shape, steps: this fails `jm status --check` (GUARD, gh-2581) and cannot be allowed; re-render the fragment as above, or add the guard by hand.
+warning !: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation; shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match. Missing safety guard(s) in decimate, shape, steps: this fails `jm status --check` (GUARD, gh-2581) and cannot be allowed; re-render the fragment as above, or write the guard in jm's own form, which `jm status` shows.
 warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   create  .clang-tidy
   create  .gitattributes
@@ -193,18 +200,25 @@ PACKAGING (2) — packaging template(s) jm does not own, behind today's render:
 GUARD (3) — a binding fragment's member lacks a safety guard jm now emits:
   ! native/src/dsp/dsp_ext_fir.c: decimate
       out-contiguity: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        jm's form: PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) in the out= test
       output-size: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
+        jm's form: if (<x>_need > (size_t)NPY_MAX_INTP) {...}
       returned-count: jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
+        jm's form: if ((size_t)(n_out) > (size_t)(_cap)) {...}
   ! native/src/dsp/dsp_ext_fir.c: shape
       output-size: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
+        jm's form: if (<x>_need > (size_t)NPY_MAX_INTP) {...}
   ! native/src/dsp/dsp_ext_fir.c: steps
       out-contiguity: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        jm's form: PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) in the out= test
   The fragment is yours, so `apply` keeps its body and never adds a guard to it.
-  Re-render it: `jm adopt --check` says whether jm can take it over (`jm adopt
-  <obj>`, after which `apply` renders it whole), or delete the file and re-run
-  `jm apply` (any hand-written body in it is lost). Or add the guard to the
-  wrapper by hand: `jm status --diff` shows jm's render. Not suppressible.
-  See gh-2581.
+  A finding clears when the member carries jm's own form of the guard, shown
+  above. Re-render the fragment: `jm adopt --check` says whether jm can take
+  it over (`jm adopt <obj>`, after which `apply` renders it whole), or delete
+  the file and re-run `jm apply` (any hand-written body in it is lost). Or
+  write the guard by hand in that form (`jm status --diff` shows jm's render).
+  An equivalent spelled another way is not recognised yet (gh-2589).
+  Not suppressible. See gh-2581.
 
 SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
@@ -221,7 +235,7 @@ $ jm apply   # exit 0
 warning: project schema is v7, current is v9. Run 'just-makeit upgrade' to get new features.
 just-makeit: applying just-makeit.toml
 
-warning !: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation; shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match. Missing safety guard(s) in decimate, shape, steps: this fails `jm status --check` (GUARD, gh-2581) and cannot be allowed; re-render the fragment as above, or add the guard by hand.
+warning !: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation; shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match. Missing safety guard(s) in decimate, shape, steps: this fails `jm status --check` (GUARD, gh-2581) and cannot be allowed; re-render the fragment as above, or write the guard in jm's own form, which `jm status` shows.
 warning ~: jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   update  CMakeLists.txt
 
@@ -308,18 +322,25 @@ PACKAGING (2) — packaging template(s) jm does not own, behind today's render:
 GUARD (3) — a binding fragment's member lacks a safety guard jm now emits:
   ! native/src/dsp/dsp_ext_fir.c: decimate
       out-contiguity: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        jm's form: PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) in the out= test
       output-size: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
+        jm's form: if (<x>_need > (size_t)NPY_MAX_INTP) {...}
       returned-count: jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation
+        jm's form: if ((size_t)(n_out) > (size_t)(_cap)) {...}
   ! native/src/dsp/dsp_ext_fir.c: shape
       output-size: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension
+        jm's form: if (<x>_need > (size_t)NPY_MAX_INTP) {...}
   ! native/src/dsp/dsp_ext_fir.c: steps
       out-contiguity: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored
+        jm's form: PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) in the out= test
   The fragment is yours, so `apply` keeps its body and never adds a guard to it.
-  Re-render it: `jm adopt --check` says whether jm can take it over (`jm adopt
-  <obj>`, after which `apply` renders it whole), or delete the file and re-run
-  `jm apply` (any hand-written body in it is lost). Or add the guard to the
-  wrapper by hand: `jm status --diff` shows jm's render. Not suppressible.
-  See gh-2581.
+  A finding clears when the member carries jm's own form of the guard, shown
+  above. Re-render the fragment: `jm adopt --check` says whether jm can take
+  it over (`jm adopt <obj>`, after which `apply` renders it whole), or delete
+  the file and re-run `jm apply` (any hand-written body in it is lost). Or
+  write the guard by hand in that form (`jm status --diff` shows jm's render).
+  An equivalent spelled another way is not recognised yet (gh-2589).
+  Not suppressible. See gh-2581.
 
 SILENT (1) — benchmark(s) that record no measurement:
   ~ native/benchmarks/bench_dsp_core.c (1 function(s), none timed yet)
@@ -395,7 +416,7 @@ adopt --packaging — jm owns cmake/'s packaging templates where nothing is lost
 $ jm apply   # exit 0
 just-makeit: applying just-makeit.toml
 
-warning !: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation; shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match. Missing safety guard(s) in decimate, shape, steps: this fails `jm status --check` (GUARD, gh-2581) and cannot be allowed; re-render the fragment as above, or add the guard by hand.
+warning !: native/src/dsp/dsp_ext_fir.c: binding no longer matches the manifest [decimate: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored; jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; jm refuses a count the kernel returns past the buffer it was given and this fragment does not, so an overrunning kernel's result is shaped past its allocation; shape: jm's output-size guard refuses a size past NPY_MAX_INTP and this fragment does not, so an oversized result wraps to a negative dimension; steps: jm's out= guard tests C-contiguity and this fragment does not, so a strided out= is filled through a copy and silently ignored]. A sacred fragment only gains missing members on apply, so a changed member stays as written while the .pyi moves — the stub now documents behaviour the extension does not have. Delete native/src/dsp/dsp_ext_fir.c and re-run `just-makeit apply` to regenerate it (any hand-written body in it is lost), or edit the binding to match. Missing safety guard(s) in decimate, shape, steps: this fails `jm status --check` (GUARD, gh-2581) and cannot be allowed; re-render the fragment as above, or write the guard in jm's own form, which `jm status` shows.
   create  .gitignore
   create  Doxyfile
   create  Makefile

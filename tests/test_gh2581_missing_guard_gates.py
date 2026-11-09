@@ -55,6 +55,10 @@ _IF_BLOCK = re.compile(r"\n[ \t]*if\s*\([^{};]*\)\s*\{[^{}]*\}")
 #: (``Py_RETURN_NONE;``), and it is removed as one.
 _STATEMENT = re.compile(r"\n[ \t]*[^{}\n;]*;")
 
+#: A `status_errors` row is a `case <STATUS>:` arm of the status switch; a
+#: fragment rendered before the row lacks its label.
+_CASE_ARM = re.compile(r"\n[ \t]*case\s+[A-Za-z_]\w*\s*:")
+
 #: A guard that is a CALL rather than a block: gh-1700's converter, which a
 #: fragment rendered before it spells as numpy's own.
 _CALL_SWAPS = (("jm_array_arg(", "PyArray_FROM_OTF("),)
@@ -80,8 +84,90 @@ def fresh(tmp_path_factory) -> "tuple[Path, str]":
     )  # fmt: skip
     for m in METHODS:
         _ok("method", "o", *m, cwd=proj)
+    _rich(proj)
     _ok("apply", cwd=proj)
     return proj, proj.joinpath(*FRAG).read_text(encoding="utf-8")
+
+
+#: The second object's fragment: the safety rows `o`'s shapes do not reach.
+RICH = ("native", "src", "m", "m_ext_r.c")
+
+#: Every fragment the sweep walks.
+FRAGS = (FRAG, RICH)
+
+#: The rows no fixture here renders: `single` and `record_dtype` result
+#: shapes, both advisory. Only these rely on the table test at the end;
+#: every other row is proved on a real render by the sweep.
+UNRENDERED = {"PyStructSequence_New", "PyArray_NewFromDescr"}
+
+#: Methods declared in TOML: a capsule param both retained and required, a
+#: byte array with a `str_hint`, and a list-of-records method with its
+#: consumed-input function and (in the header, below) its capacity.
+_RICH_TOML = """
+[[r.methods]]
+name = "attach"
+return_type = "int"
+status_return = true
+params = [{ name = "t", type = "p_tt_state_t *", capsule = "p.tt", \
+header = "p/tt/tt_core.h", retain = true, required = true }]
+
+[[r.methods]]
+name = "hint"
+return_type = "int"
+params = [{ name = "b", type = "uint8_t[]", str_hint = "pass bytes" }]
+
+[[r.methods]]
+name = "rec"
+arg_type = "float"
+return_type = "div_t"
+result_fields = [{name = "quot", type = "int"}, {name = "rem", type = "int"}]
+consumed_fn = "p_r_rec_used"
+"""
+
+
+def _rich(proj: Path) -> None:
+    """Object `r`, whose render carries the borrow, release, status-table,
+    strict, capsule, str_hint and records guards (gh-2581 review)."""
+    _ok("object", "tt", "--module", "m", "--state", "k:int:0", cwd=proj)
+    _ok(
+        "property", "tt", "_capsule", "--module", "m",
+        "--type", "capsule", "--capsule", "p.tt",
+        cwd=proj,
+    )  # fmt: skip
+    _ok("object", "r", "--module", "m", "--state", "used:size_t:0", cwd=proj)
+    _ok(
+        "method", "r", "wait", "--module", "m", "--borrow",
+        "--param", "n:size_t", "--return-type", "float _Complex",
+        "--status-fn", "r_status",
+        "--status-error", "A:ValueError:bad",
+        "--status-error", "B:EOFError:end",
+        cwd=proj,
+    )  # fmt: skip
+    _ok(
+        "method", "r", "consume", "--module", "m", "--arg-type", "void",
+        "--return-type", "void", "--param", "n:size_t",
+        "--releases", "wait",
+        cwd=proj,
+    )  # fmt: skip
+    _ok(
+        "method", "r", "sx", "--module", "m", "--arg-type", "float[]",
+        "--return-type", "bool", "--strict",
+        cwd=proj,
+    )  # fmt: skip
+    toml = proj / "objects" / "r.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8") + _RICH_TOML, encoding="utf-8"
+    )
+    # The author's half of the records method: what it consumed, and the
+    # capacity that sizes each call -- in the sacred header.
+    (h,) = proj.glob("native/inc/**/r_core.h")
+    text = h.read_text(encoding="utf-8")
+    cut = text.rindex("#ifdef __cplusplus")
+    decls = (
+        "size_t p_r_rec_used(const p_r_state_t *state);\n"
+        "size_t p_r_rec_max_out(p_r_state_t *state, size_t n_in);\n"
+    )
+    h.write_text(text[:cut] + decls + text[cut:], encoding="utf-8")
 
 
 def _markers(text: str, member: str) -> frozenset:
@@ -101,7 +187,7 @@ def _without(text: str, member: str, label: str) -> "str | None":
     body = _docsync._row_bodies(text)[member][0]
     edits = [
         body[: m.start()] + body[m.end() :]
-        for rx in (_IF_BLOCK, _STATEMENT)
+        for rx in (_IF_BLOCK, _STATEMENT, _CASE_ARM)
         for m in rx.finditer(body)
     ]
 
@@ -176,47 +262,118 @@ def test_a_fresh_render_is_green(fresh):
 def test_each_guard_removed_in_turn_gates_and_only_a_guard(fresh):
     """The class: every marker, removed alone, is GUARD iff its row says
     safety -- and ``status --check`` exits non-zero exactly then."""
-    proj, text = fresh
-    frag = proj.joinpath(*FRAG)
+    proj, _text = fresh
     seen: dict = {True: set(), False: set()}
-    try:
-        for member, label in _cases(text):
-            safety = _docsync.marker(label).safety
-            edited = _without(text, member, label)
-            if edited is None:
-                # A marker no single block, statement or call carries in
-                # this member -- `raises` where several refusals each
-                # raise, a `Py_None` per return -- is proved on another
-                # member; the assertion after the loop holds every label
-                # to at least one.
-                continue
-            frag.write_text(edited, encoding="utf-8")
-            r = run_cli("status", "--json", cwd=proj)
-            found = {
-                (g["path"], g["member"], lab)
-                for g in json.loads(r.stdout)["missing_guards"]
-                for lab in g["guards"]
-            }
-            guard = ("/".join(FRAG), member, label) in found
-            assert guard == safety, (member, label, sorted(found))
-            if safety:
-                # Gates: the exit code is the drift count.
-                assert r.returncode != 0, (member, label)
-            seen[safety].add(label)
-    finally:
-        frag.write_text(text, encoding="utf-8")
-    # Every safety label the render carries was proved at least once, and
+    present: set = set()
+    for rel in FRAGS:
+        frag = proj.joinpath(*rel)
+        text = frag.read_text(encoding="utf-8")
+        present |= {lab for _n, lab in _cases(text)}
+        try:
+            for member, label in _cases(text):
+                safety = _docsync.marker(label).safety
+                edited = _without(text, member, label)
+                if edited is None:
+                    # A marker no single block, statement or call carries
+                    # in this member -- `raises` where several refusals
+                    # each raise, a `Py_None` per return -- is proved on
+                    # another member; the assertions after the loop hold
+                    # every label to at least one.
+                    continue
+                frag.write_text(edited, encoding="utf-8")
+                r = run_cli("status", "--json", cwd=proj)
+                found = {
+                    (g["path"], g["member"], lab)
+                    for g in json.loads(r.stdout)["missing_guards"]
+                    for lab in g["guards"]
+                }
+                guard = ("/".join(rel), member, label) in found
+                assert guard == safety, (rel, member, label, sorted(found))
+                if safety:
+                    # Gates: the exit code is the drift count.
+                    assert r.returncode != 0, (member, label)
+                seen[safety].add(label)
+        finally:
+            frag.write_text(text, encoding="utf-8")
+    # Every safety label the renders carry was proved at least once, and
     # an advisory one too, so neither half of the classification went
     # untested. (`nogil` is a macro pair, not a statement: the test below
     # removes it.)
     assert "Py_RETURN_NONE" in seen[False], seen
-    want_safety = {
-        lab for _n, lab in _cases(text) if _docsync.marker(lab).safety
-    }
+    want_safety = {lab for lab in present if _docsync.marker(lab).safety}
     assert seen[True] == want_safety, (
         f"never removed: {sorted(want_safety - seen[True])}; teach "
         "_without its shape"
     )
+    # ...and the renders carry EVERY safety row, so each is proved on real
+    # code rather than only against the table.
+    rows = {lab.partition(":")[0] for lab in seen[True]}
+    safety_rows = {k for k, v in _docsync.MARKERS.items() if v.safety}
+    assert rows == safety_rows, sorted(safety_rows - rows)
+
+
+def test_the_unrendered_rows_are_exactly_these(fresh):
+    proj, _text = fresh
+    present = {
+        lab.partition(":")[0]
+        for rel in FRAGS
+        for _n, lab in _cases(proj.joinpath(*rel).read_text(encoding="utf-8"))
+    }
+    assert set(_docsync.MARKERS) - present == UNRENDERED, present
+
+
+def test_a_fragment_that_never_releases_has_no_teardown_to_wait(fresh):
+    """A fragment rendered before gh-2259 holds the GIL in every member, so
+    its teardown has nothing to wait for: no GUARD on `destroy` or
+    `__exit__` (gh-2581 review). `nogil` itself stays advisory."""
+    proj, text = fresh
+    frag = proj.joinpath(*FRAG)
+    old = re.sub(
+        r"Py_BEGIN_ALLOW_THREADS([\s\S]*?)Py_END_ALLOW_THREADS", r"\1", text
+    )
+    old = re.sub(r"\n[ \t]*jm_inflight_(?:enter|leave)\([^;]*\);", "", old)
+    old = re.sub(
+        r"\n[ \t]*if\s*\(\s*jm_inflight_wait\([^{}]*\)\s*\{[^{}]*\}", "", old
+    )
+    assert "jm_inflight_wait" not in old and "ALLOW_THREADS" not in old
+    try:
+        frag.write_text(old, encoding="utf-8")
+        # Premise: the render's teardown waits and this one does not.
+        feat = _docsync._method_feature_symbols
+        assert "teardown-waits" in feat(text)["destroy"]
+        assert "teardown-waits" not in feat(old)["destroy"]
+        assert not any("nogil" in m for m in feat(old).values())
+        r = run_cli("status", "--json", cwd=proj)
+        assert json.loads(r.stdout)["missing_guards"] == [], r.stdout
+        r = _status(proj)
+        assert r.returncode == 0, r.stdout + r.stderr
+    finally:
+        frag.write_text(text, encoding="utf-8")
+
+
+def test_a_fragment_that_releases_still_waits(fresh):
+    """The other half: while any member releases, a teardown without the
+    wait is a GUARD on both teardowns."""
+    proj, text = fresh
+    frag = proj.joinpath(*FRAG)
+    old = re.sub(
+        r"\n[ \t]*if\s*\(\s*jm_inflight_wait\([^{}]*\)\s*\{[^{}]*\}", "", text
+    )
+    assert old != text
+    try:
+        frag.write_text(old, encoding="utf-8")
+        r = run_cli("status", "--json", cwd=proj)
+        found = {
+            (g["member"], lab)
+            for g in json.loads(r.stdout)["missing_guards"]
+            for lab in g["guards"]
+        }
+        assert found == {
+            ("destroy", "teardown-waits"),
+            ("__exit__", "teardown-waits"),
+        }, found
+    finally:
+        frag.write_text(text, encoding="utf-8")
 
 
 def test_an_advisory_difference_alone_stays_green(fresh):
@@ -279,6 +436,13 @@ def test_the_issue_case_json_allow_and_apply(fresh):
         r = _status(proj, "--allow", "/".join(FRAG))
         assert r.returncode != 0, r.stdout + r.stderr
         assert "GUARD (" in r.stdout
+        # The remedy says what clears it: jm's own form of each guard,
+        # since an equivalent spelled otherwise is not recognised (gh-2589).
+        assert (
+            "jm's form: if (<x>_need > (size_t)NPY_MAX_INTP) {...}" in r.stdout
+        ), r.stdout
+        assert "gh-2589" in r.stdout, r.stdout
+        assert all(rd[0]["forms"]), rd
 
         r = run_cli("apply", cwd=proj)
         assert r.returncode == 0, r.stdout + r.stderr
@@ -294,11 +458,10 @@ def test_the_issue_case_json_allow_and_apply(fresh):
         frag.write_text(text, encoding="utf-8")
 
 
-@pytest.mark.parametrize("label", sorted(_docsync.MARKERS))
-def test_every_row_is_read_for_its_severity(label, monkeypatch):
-    """`missing_guards` decides by the row, for every row -- a row the
-    fixture above cannot render (a `status_errors` case, a retained
-    capsule) included."""
+@pytest.mark.parametrize("label", sorted(UNRENDERED))
+def test_an_unrendered_row_is_read_for_its_severity(label, monkeypatch):
+    """`missing_guards` decides by the row, for the rows (`UNRENDERED`) no
+    fixture here renders; the sweep proves every other on real code."""
     text = (
         "static PyObject *f(PyObject *s, PyObject *a) { return NULL; }\n"
         "static PyMethodDef M_methods[] = {\n"
@@ -340,6 +503,13 @@ DECIDED_SAFETY = {
 @pytest.mark.parametrize("label", sorted(DECIDED_SAFETY))
 def test_the_guards_the_issue_names_are_safety(label):
     assert _docsync.MARKERS[label].safety, label
+
+
+def test_every_safety_row_shows_what_clears_it():
+    """GUARD's remedy is jm's own form of the guard (gh-2581 review): a
+    safety row without one would leave the reader nothing to write."""
+    bare = [k for k, v in _docsync.MARKERS.items() if v.safety and not v.form]
+    assert not bare, bare
 
 
 def test_only_shape_and_nogil_rows_are_advisory():
