@@ -2145,10 +2145,12 @@ def _main_file(
     if entry["target"] == "c":
         # gh-1583: the app includes the project's headers, in its layout.
         text = R.render(c_tmpl, {**INC.ctx_slots(root), **ctx})
-    elif entry["target"] == "console":
-        text = R.render(console_tmpl, ctx)
     else:
-        text = R.render(pep_tmpl, ctx)
+        from ._pyfmt import reflow_py
+
+        # gh-2514: a long app, class or flag name, held to 79 columns.
+        tmpl = console_tmpl if entry["target"] == "console" else pep_tmpl
+        text = reflow_py(R.render(tmpl, ctx))
     return _app_file(root, cfg, entry), text
 
 

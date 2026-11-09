@@ -577,8 +577,234 @@ def reflow_pyi(text: str, width: int = STUB_TARGET_WIDTH) -> str:
             if doc != [line]:
                 out.extend(doc)
                 continue
+            # gh-2514: a header comment naming a long module.
+            comment = reflow_comment(line, width)
+            if comment != [line]:
+                out.extend(comment)
+                continue
         out.extend(reflow_line(line, width))
     return "\n".join(stub_blank_lines(out))
+
+
+#: A whole-line ``#`` comment: its indent and its text.
+_COMMENT_RE = re.compile(r"^(?P<indent>[ ]*)# (?P<text>\S.*)$")
+
+#: A PEP 723 metadata block opens and closes on ``# /// ...``; the lines
+#: between are TOML, which a prose wrap would corrupt.
+_PEP723_FENCE = "# ///"
+
+
+def reflow_comment(line: str, width: int = STUB_TARGET_WIDTH) -> list[str]:
+    """Wrap an overlong whole-line ``#`` comment at word boundaries.
+
+    jm's generated headers interpolate a name into fixed prose -- ``# <m>/
+    <m>.pyi — type stubs for the <m> C extension.`` -- so a long module name
+    pushed them past the column target (gh-2514). Ruff's E501 forgives a
+    line that is a single word, but ``# word`` is two, so a comment has to
+    wrap. A word longer than the line is never broken; it goes alone on its
+    line, the best any wrap can do.
+
+    Returns ``[line]`` unchanged when it fits or is not a whole-line comment.
+
+    >>> for ln in reflow_comment("    # alpha beta gamma delta", 18):
+    ...     print(ln)
+        # alpha beta
+        # gamma delta
+    >>> reflow_comment("x = 1  # trailing comment", 10)
+    ['x = 1  # trailing comment']
+    """
+    if len(line) <= width:
+        return [line]
+    m = _COMMENT_RE.match(line)
+    if not m:
+        return [line]
+    lead = f"{m['indent']}# "
+    out: list[str] = []
+    for word in m["text"].split():
+        if out and len(out[-1]) + 1 + len(word) <= width:
+            out[-1] += f" {word}"
+        else:
+            out.append(lead + word)
+    return out
+
+
+def _balanced(body: str) -> bool:
+    """Whether *body*'s brackets close in order, ignoring string contents --
+    so ``f(a) + g(b)`` is not read as one call's argument list."""
+    depth = 0
+    quote = ""
+    for ch in body:
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0 and not quote
+
+
+#: A statement that is one call: ``obj = X(...)``, ``return X(...)``,
+#: ``with X(...) as obj:`` or a bare ``f(...)``, with its arguments on the
+#: same line.
+_CALL_RE = re.compile(
+    r"^(?P<indent>[ ]*)"
+    r"(?P<head>(?:[A-Za-z_][\w.]* = |return |(?P<with>with ))?"
+    r"[A-Za-z_][\w.]*\()"
+    r"(?P<body>.+)\)(?P<tail>(?: as [A-Za-z_]\w*)?:)?$"
+)
+
+
+def reflow_call(line: str, width: int = STUB_TARGET_WIDTH) -> list[str]:
+    """Break an overlong one-line call into one argument per line.
+
+    With a magic trailing comma: the one layout ``ruff format`` keeps at any
+    line length, measured with jm's pinned ruff. Hugging the arguments on
+    one indented line is what ruff writes at 79, but at its default 88 it
+    joins a call that fits there back onto one line -- a project's
+    formatter would then rewrite jm's file, which ``status --check`` calls
+    STALE (gh-1432). gh-2514: ``obj = <a long class name>(<a long state>=
+    args.<it>)`` in an app's ``cli.py``.
+
+    Returns ``[line]`` unchanged when it fits or is not a single call.
+
+    >>> for ln in reflow_call("    obj = T(alpha=1, beta=2)", 18):
+    ...     print(ln)
+        obj = T(
+            alpha=1,
+            beta=2,
+        )
+    >>> for ln in reflow_call("with T(alpha=1) as t:", 18):
+    ...     print(ln)
+    with T(
+        alpha=1,
+    ) as t:
+    """
+    if len(line) <= width:
+        return [line]
+    m = _CALL_RE.match(line)
+    if not m or not _balanced(m["body"]) or bool(m["with"]) != bool(m["tail"]):
+        return [line]
+    ind = m["indent"]
+    body = m["body"].strip()
+    parts = _split_top_level(body) or [body]
+    return (
+        [ind + m["head"]]
+        + [f"{ind}    {p.rstrip(',')}," for p in parts]
+        + [ind + ")" + (m["tail"] or "")]
+    )
+
+
+#: A keyword argument that is one plain string: ``description="...",``.
+_STR_KWARG_RE = re.compile(
+    r'^(?P<indent>[ ]*)(?P<key>[A-Za-z_]\w*)="(?P<text>[^"\\]*)",$'
+)
+
+
+def reflow_str_kwarg(line: str, width: int = STUB_TARGET_WIDTH) -> list[str]:
+    """Break an overlong ``key="...",`` argument at its spaces.
+
+    A string cannot wrap the way a call does: ruff never splits one, and it
+    joins implicitly concatenated pieces, or drops the parentheses around a
+    lone string, whenever the result fits -- which depends on the line
+    length, so no plain-string layout is the same at 79 and at ruff's
+    default 88. The words therefore go in a list with a magic trailing
+    comma, joined by one space at run time: the same text, in the one
+    layout ``ruff format`` keeps at any width (measured with jm's pinned
+    ruff). Words are grouped greedily onto each line; a single word too long
+    for one stands alone, as ``"word",``, which E501 forgives, having no
+    space to break at. gh-2514: an app's ``description="<pkg>: <Class>-
+    powered stream tool."``.
+
+    >>> for ln in reflow_str_kwarg('    desc="alpha beta gamma",', 25):
+    ...     print(ln)
+        desc=" ".join(
+            [
+                "alpha beta",
+                "gamma",
+            ]
+        ),
+    >>> " ".join(["alpha beta", "gamma"]) == "alpha beta gamma"
+    True
+    """
+    if len(line) <= width:
+        return [line]
+    m = _STR_KWARG_RE.match(line)
+    if not m or "  " in m["text"] or m["text"] != m["text"].strip():
+        # Runs of spaces would not survive the join; leave them long.
+        return [line]
+    ind = m["indent"]
+    room = width - len(ind) - 8 - 3
+    groups: list[str] = []
+    for word in m["text"].split(" "):
+        if groups and len(groups[-1]) + 1 + len(word) <= room:
+            groups[-1] += f" {word}"
+        else:
+            groups.append(word)
+    return (
+        [f'{ind}{m["key"]}=" ".join(', f"{ind}    ["]
+        + [f'{ind}        "{g}",' for g in groups]
+        + [f"{ind}    ]", f"{ind}),"]
+    )
+
+
+def reflow_py(text: str, width: int = STUB_TARGET_WIDTH) -> str:
+    """Hold a generated ``.py`` file's long-name lines to *width* (gh-2514).
+
+    jm's ``.py`` templates interpolate component, module and app names into
+    fixed text. A long enough name pushed a header comment, a docstring's
+    summary line, a constructor call or an ``argparse`` description past 79
+    columns: E501 for a project that selects it, a ``ruff format`` rewrite
+    for the call. This is the ``.py`` counterpart to :func:`reflow_pyi`:
+    one pass over the rendered text, so every template is covered, rather
+    than a width check at each interpolation.
+
+    Each overlong line is offered, in turn, to :func:`reflow_comment`,
+    :func:`reflow_docstring_open`, :func:`reflow_call` and
+    :func:`reflow_str_kwarg`; the first that changes it wins. A line that
+    fits is never touched, so a short-named project renders byte for byte
+    as before. The interior of a multi-line docstring, a PEP 723 metadata
+    block, and anything none of them recognises are left as they are.
+    Idempotent: what it writes fits.
+
+    >>> src = "    obj = Thing(alpha=args.alpha)\\n"
+    >>> print(reflow_py(src, 24), end="")
+        obj = Thing(
+            alpha=args.alpha,
+        )
+    >>> reflow_py(reflow_py(src, 24), 24) == reflow_py(src, 24)
+    True
+    """
+    out: list[str] = []
+    in_doc = ""
+    in_meta = False
+    for line in text.split("\n"):
+        if in_doc:
+            out.append(line)
+            if in_doc in line:
+                in_doc = ""
+            continue
+        if line.startswith(_PEP723_FENCE):
+            in_meta = not in_meta
+            out.append(line)
+            continue
+        opener = next((q for q in _TRIPLE if line.count(q) % 2), "")
+        if opener:
+            out.extend(reflow_docstring_open(line, width))
+            in_doc = opener
+            continue
+        if in_meta or len(line) <= width:
+            out.append(line)
+            continue
+        for fn in (reflow_comment, reflow_call, reflow_str_kwarg):
+            lines = fn(line, width)
+            if lines != [line]:
+                break
+        out.extend(lines)
+    return "\n".join(out)
 
 
 def flatten_prose(text: str) -> str:

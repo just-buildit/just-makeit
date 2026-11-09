@@ -33,6 +33,52 @@ import _downstream_gates as G
 from _jmrun import run_cli
 from just_makeit._docstring import STUB_TARGET_WIDTH
 
+#: gh-2514: names long enough to push every generated line that interpolates
+#: one past 79 columns. A module of 15 characters (`pipeline_stages`: its
+#: `.pyi` and `__init__.py` header comments) of many objects (its wrapped
+#: re-export in natural order, `Stage2` before `Stage10`); a standalone
+#: component of 37 (its benchmark docstring's `Run` line), with a long state
+#: name and a console and a PEP 723 app over it (the app's docstring, its
+#: constructor call and its `argparse` description); long standalone names
+#: whose package re-exports wrap and do not, in one run, and a third that
+#: takes the package `__all__` to 81; and a module of 24 (its `__init__.py`
+#: header comment) of long function names, which
+#: `test_a_platform_guarded_reexport_*` below puts under a platform guard.
+_LONG = "a_very_long_standalone_component_name"
+_GUARDED = "guarded_functions_module"
+_LONG_NAMES = [
+    "module pipeline_stages",
+    *(
+        f"object stage{n} --module pipeline_stages --arg-type float"
+        " --return-type float"
+        for n in (10, 2, 1, 11, 3, 4, 5)
+    ),
+    f"object {_LONG} --arg-type float --return-type float"
+    " --state gain_value_of_the_stage:double:1.0",
+    f"app --target console --object {_LONG} --name a_long_console_tool_name",
+    # One character more than the PEP 723 description holds at 79.
+    f"object {_LONG}_b --arg-type float --return-type float",
+    f"app --target pep723 --object {_LONG}_b --name a_long_pep723_script_name",
+    *(
+        f"object {o} --arg-type float --return-type float"
+        for o in (
+            "long_standalone_component_10",
+            "long_standalone_component_2",
+            "shorter_one",
+        )
+    ),
+    f"module {_GUARDED}",
+    *(
+        f"function {f} --module {_GUARDED} --param x:double"
+        " --return-type double"
+        for f in (
+            "render_waveform_description",
+            "fill_coefficients_for_window",
+            "interpolate_between_samples",
+        )
+    ),
+]
+
 #: Each shape: the CLI calls after ``jm new p``, one command per string. A
 #: first call spelled ``new ...`` replaces the default ``new p``.
 SHAPES: "dict[str, list[str]]" = {
@@ -184,39 +230,13 @@ SHAPES: "dict[str, list[str]]" = {
         "object s10 --module m --arg-type void --return-type float",
         "object s2 --module m --arg-type float[] --return-type float[]",
     ],
-    # gh-2514: re-exports past 79 columns on one line, written wrapped: a
-    # module of many objects (the wrapped names in natural order, `Stage2`
-    # before `Stage10`), long standalone names in the package, and a module
-    # of long function names that `test_a_platform_guarded_reexport_*`
-    # below puts under a platform guard.
-    "wrapped_reexports": [
-        "module stages",
-        *(
-            f"object stage{n} --module stages --arg-type float"
-            " --return-type float"
-            for n in (10, 2, 1, 11, 3, 4, 5)
-        ),
-        # 81 columns on one line, so wrapped, beside 79, so not: one run of
-        # the two forms, in natural order. A third name takes the package
-        # `__all__` to 81.
-        *(
-            f"object {o} --arg-type float --return-type float"
-            for o in (
-                "long_standalone_component_10",
-                "long_standalone_component_2",
-                "shorter_one",
-            )
-        ),
-        "module guarded",
-        *(
-            f"function {f} --module guarded --param x:double"
-            " --return-type double"
-            for f in (
-                "render_waveform_description",
-                "fill_coefficients_for_window",
-                "interpolate_between_samples",
-            )
-        ),
+    # gh-2514: every line that interpolates a name, at names long enough to
+    # pass 79 columns (`_LONG_NAMES`).
+    "wrapped_reexports": _LONG_NAMES,
+    # And the pytest face's benchmark and test, whose `Run:` line differs.
+    "wrapped_reexports_pytest": [
+        "new p --pytest --pytest-benchmark",
+        *_LONG_NAMES,
     ],
     "app_console_generator": [
         "object s --arg-type void --return-type float",
@@ -312,22 +332,19 @@ def test_a_platform_guarded_reexport_is_ruff_clean(tmp_path: Path) -> None:
     the width counts the indent. ``platforms`` is a manifest key with no
     CLI flag, so the shape is declared in the fragment and applied."""
     proj = _scaffold(tmp_path, SHAPES["wrapped_reexports"])
-    frag = proj / "modules" / "guarded.toml"
+    frag = proj / "modules" / f"{_GUARDED}.toml"
     text = frag.read_text(encoding="utf-8")
+    table = f"[module.{_GUARDED}]\n"
     frag.write_text(
-        text.replace(
-            "[module.guarded]\n",
-            '[module.guarded]\nplatforms = ["linux", "macos"]\n',
-            1,
-        ),
+        text.replace(table, f'{table}platforms = ["linux", "macos"]\n', 1),
         encoding="utf-8",
     )
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
-    init = (proj / "src" / "p" / "guarded" / "__init__.py").read_text(
+    init = (proj / "src" / "p" / _GUARDED / "__init__.py").read_text(
         encoding="utf-8"
     )
     # Armed: the guard is there and the import inside it is wrapped.
-    assert "    from .guarded import (  # noqa: E402\n" in init, init
+    assert f"    from .{_GUARDED} import (  # noqa: E402\n" in init, init
     _assert_ruff_clean(proj, "platform_guarded")
     _assert_clean_at_jms_width(proj, "platform_guarded")

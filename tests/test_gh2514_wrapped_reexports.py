@@ -28,6 +28,7 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit._object import sort_reexports
+from just_makeit._pyfmt import reflow_py, reflow_pyi
 
 FNS = (
     "gauss_hermite_quadrature",
@@ -336,3 +337,130 @@ def test_sort_reads_both_marker_positions(marker_after_paren: bool) -> None:
     else:
         src = f"from .util import (\n{body})  # noqa: E402\n"
     assert sort_reexports(src, {"util"}) == UTIL.split("\n\n")[0] + "\n"
+
+
+# -- every other line that interpolates a name ------------------------------
+#: A standalone component of 37 characters, with a long state name and a
+#: console and a PEP 723 app over it, and a module of 15 (gh-2514): each
+#: pushed a line of fixed text that names it past 79 columns. The module's
+#: ``__init__.py`` header needs a longer one; the gh-1478 gate's
+#: ``_LONG_NAMES`` carries it, and ``test_every_stub_header_wraps`` holds
+#: the pass that wraps both.
+LONG = "a_very_long_standalone_component_name"
+LONG_CALLS = [
+    "module pipeline_stages",
+    f"object stage2 --module pipeline_stages {OBJ}",
+    f"object {LONG} {OBJ} --state gain_value_of_the_stage:double:1.0",
+    f"app --target console --object {LONG} --name a_long_console_tool_name",
+    # One character more than the PEP 723 description holds at 79.
+    f"object {LONG}_b {OBJ}",
+    f"app --target pep723 --object {LONG}_b --name a_long_pep723_script_name",
+]
+
+#: Each file's text at those names, as jm now writes it: within 79 columns,
+#: and in the layouts jm's pinned ruff keeps at 79 and at its default 88.
+#: A key's ``#suffix`` only tells two entries for one file apart.
+LONG_TEXT = {
+    f"src/p/benchmarks/bench_{LONG}.py": (
+        "Run standalone, from the project root:  python FILE, where FILE is\n"
+        "\n"
+        f"    src/p/benchmarks/bench_{LONG}.py\n"
+    ),
+    "src/p/pipeline_stages/pipeline_stages.pyi": (
+        "# pipeline_stages/pipeline_stages.pyi — type stubs for the"
+        " pipeline_stages C\n"
+        "# extension.\n"
+    ),
+    "src/p/cli.py": (
+        '"""p — a_long_console_tool_name: AVeryLongStandaloneComponentName'
+        " command-line\n"
+        "interface.\n"
+    ),
+    "src/p/cli.py#ctor": (
+        "    obj = AVeryLongStandaloneComponentName(\n"
+        "        gain_value_of_the_stage=args.gain_value_of_the_stage,\n"
+        "    )\n"
+    ),
+    f"src/p/tests/test_{LONG}.py": (
+        "        with AVeryLongStandaloneComponentName(\n"
+        "            gain_value_of_the_stage=1.0,\n"
+        "        ) as obj:\n"
+    ),
+    "a_long_pep723_script_name.py": (
+        '        description=" ".join(\n'
+        "            [\n"
+        '                "p: AVeryLongStandaloneComponentNameB-powered stream'
+        ' tool.",\n'
+        "            ]\n"
+        "        ),\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def long_proj(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _scaffold(
+        tmp_path_factory.mktemp("gh2514l"), ["new p", *LONG_CALLS]
+    )
+
+
+@pytest.mark.parametrize("key", sorted(LONG_TEXT))
+def test_a_long_name_keeps_its_line_within_79(
+    long_proj: Path, key: str
+) -> None:
+    text = (long_proj / key.split("#")[0]).read_text(encoding="utf-8")
+    assert LONG_TEXT[key] in text, f"{key}:\n{text}"
+    # The one line allowed past 79: a whitespace-free path, which E501
+    # forgives, having nowhere to break.
+    over = [
+        ln for ln in text.splitlines() if len(ln) > 79 and " " in ln.strip()
+    ]
+    assert not over, over
+
+
+def test_the_long_name_scaffold_has_converged(long_proj: Path) -> None:
+    _converged(long_proj)
+
+
+def test_the_pytest_benchmark_run_line_wraps(tmp_path: Path) -> None:
+    root = _scaffold(
+        tmp_path,
+        ["new p --pytest --pytest-benchmark", f"object {LONG} {OBJ}"],
+    )
+    text = (root / f"src/p/benchmarks/bench_{LONG}.py").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "Run, from the project root:  pytest --benchmark-only FILE, where"
+        " FILE is\n\n"
+        f"    src/p/benchmarks/bench_{LONG}.py\n"
+    ) in text, text
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "# h/h.pyi — type stubs for the {m} handle extension.",
+        "# c.pyi — type stubs for the {m} capsule extension.",
+        "# m.pyi — composer OO types for {m} (jm; gh-287).",
+    ],
+)
+def test_every_stub_header_wraps(header: str) -> None:
+    """The handle, capsule and composer stubs need TOML to scaffold, so the
+    pass they all go through is held directly: a header naming a long
+    module wraps at word boundaries, and a second pass changes nothing."""
+    line = header.format(m="a_module_name_long_enough_to_pass_the_target")
+    out = reflow_pyi(line + "\n")
+    assert all(len(ln) <= 79 for ln in out.splitlines()), out
+    assert out.replace("\n# ", " ").rstrip("\n") == line
+    assert reflow_pyi(out) == out
+
+
+def test_a_pep723_metadata_block_is_never_wrapped() -> None:
+    meta = (
+        "# /// script\n"
+        "# dependencies ="
+        ' ["a_very_long_project_name_that_does_not_fit_here==1.0", "numpy"]\n'
+        "# ///\n"
+    )
+    assert reflow_py(meta) == meta
