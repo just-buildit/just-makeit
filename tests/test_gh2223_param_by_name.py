@@ -181,11 +181,19 @@ def test_reconcile_keeps_a_group_once():
         "/**\n * @brief Make.\n * @param[in] a,b  Bounds.\n"
         " * @param gone  Old.\n */"
     )
-    out = reconcile_param_docs(block, "s_t *s_create(int a, int b, int c);")
+    decl = "s_t *s_create(int a, int b, int c, int d, int e);"
+    out = reconcile_param_docs(block, decl)
     assert out.count("@param[in] a,b  Bounds.") == 1, out
     assert "@param a\n" not in out and "@param b\n" not in out, out
     assert "@param gone" not in out, out
-    assert " * @param c" in out, out
+    # Every new name arrives bare, in signature order, each exactly once.
+    bare = [ln for ln in out.splitlines() if ln.startswith(" * @param")]
+    assert bare == [
+        " * @param[in] a,b  Bounds.",
+        " * @param c",
+        " * @param d",
+        " * @param e",
+    ], out
 
 
 # -- generated: both stubs and the runtime literal ---------------------------
