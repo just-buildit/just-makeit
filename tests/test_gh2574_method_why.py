@@ -408,6 +408,35 @@ def test_a_header_without_why_is_a_finding(
     assert "WHY (1)" in out and f"header:   {decl.split(' ', 1)[1]})" in out
 
 
+def test_apply_warns_when_the_header_keeps_the_old_prototype(
+    scaffold: Path, tmp_path: Path
+) -> None:
+    """Adding ``why`` to a module object's existing method: `apply` writes
+    a binding passing ``&_why`` and leaves the sacred prototype alone, so
+    it says so -- one warning per method, naming the remedy -- instead of
+    leaving the C build to fail with only `jm status` explaining it."""
+    proj = tmp_path / "rq"
+    shutil.copytree(scaffold, proj)
+    clean = run_cli("apply", cwd=proj)
+    assert clean.returncode == 0, clean.stderr
+    assert "const char **why` last" not in clean.stdout + clean.stderr
+    hdr = proj / "native/inc/rq/acc/acc_core.h"
+    text = hdr.read_text("utf-8")
+    decl = "int rq_acc_stat(rq_acc_state_t *state, int mode"
+    assert text.count(f"{decl}, const char **why);") == 1, text
+    hdr.write_text(
+        text.replace(f"{decl}, const char **why);", f"{decl});"), "utf-8"
+    )
+    r = run_cli("apply", cwd=proj)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    warned = [ln for ln in out.splitlines() if ln.startswith("warning")]
+    assert len(warned) == 1, out
+    assert "rq_acc_stat()" in warned[0], out
+    assert "Add `const char **why` last to the declaration" in out, out
+    assert "`jm status` (WHY)" in out, out
+
+
 # -- refused at load -----------------------------------------------------------
 
 

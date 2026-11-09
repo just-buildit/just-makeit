@@ -4819,6 +4819,31 @@ def _apply_manifest(
                 f"{', '.join(f'{n}()' for n in _names)}"
             )
 
+        # gh-2574: a method that newly declares `why` on a module object
+        # keeps its old prototype -- that sacred header only gains
+        # declarations -- so the binding just written passes `&_why` to a
+        # function that does not take it. Said here, on the channel gh-632's
+        # prototype replacement warns on, since this run wrote the call and
+        # the build is where it would surface otherwise. After every write,
+        # inside the `with` (the render is the temp tree's); never in
+        # `status`'s scratch run, which reports it as `WHY` itself.
+        if replay_out is None:
+            from . import _ctorsig
+
+            for _d in _ctorsig.why_drift(root, temp_root, cfg):
+                _report.warn(
+                    f"{_d.rel}: {_d.fn}() and the manifest disagree about a"
+                    " trailing `const char **why`, so the binding does not"
+                    " compile against it\n"
+                    f"    header:   {_d.fn}({_d.declared})\n"
+                    f"    manifest: {_d.fn}({_d.rendered})\n"
+                    "  Add `const char **why` last to the declaration and"
+                    " its _core.c definition (or drop `why`); see"
+                    " `jm status` (WHY).",
+                    # `jm status --check` counts it (WHY).
+                    gates=True,
+                )
+
     bench_updated = _reconcile_bench_cmake(root, cfg)
 
     # Refresh runtime __doc__ in per-object binding fragments

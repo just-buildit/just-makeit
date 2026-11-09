@@ -17,5 +17,5 @@
     flag. Refused at load: `why` on a method with no refusal, a value that
     is not `true`/`false`, and beside a parameter named `why`. A module
     object's header that lacks the parameter is a `jm status` finding,
-    `WHY`. The one place the parameter lands is `_diagnostics.append_why`,
+    `WHY`, and `apply` warns for each such method, naming the remedy. The one place the parameter lands is `_diagnostics.append_why`,
     for the prototype, the stub and every kernel call alike.
