@@ -6,7 +6,7 @@
     could give `x` the text "Output buffer." and `L` the text "Second
     output." in the `.pyi` stubs and the runtime `__doc__`. doppler hit
     this while adopting v0.126.0. Doxygen's grouped
-    `@param state, x, x_len, L  As fold().` was also dropped entirely,
+    `@param state, x, x_len, L As fold().` was also dropped entirely,
     which left the real arguments over for that pairing. Now an argument
     reads the `@param` of its own name, or `@param in` for the block input
     `x` (jm's own C name for it), or the `Input.` placeholder. A comma
