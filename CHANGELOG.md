@@ -1,5 +1,91 @@
 ## [Unreleased]
 
+## [0.125.0] — 2026-11-08
+
+### Added
+
+- **A method's refusal can raise the reason its C function names**
+    (gh-2574, gh-2407). A method told its refusal causes apart only by
+    return code, so one `error_message` had to list every rule. `why = true`
+    (`jm method --why`) on `[[<obj>.methods]]`, a view's methods or a
+    `kind = "handle"` module's `[[module.X.methods]]` is gh-1706's `why` on a
+    method: the kernel takes a trailing `const char **why` after every other
+    parameter, the binding passes the address of a local initialised to
+    `NULL`, and the method's declared refusal raises its exception with the
+    sentence the kernel wrote, or today's message when it wrote none. Every
+    refusal a method can declare carries it -- `status_return` and its
+    `status_errors` rows, `error_negative`, a count's `error_on_empty` /
+    `error_sentinel` / signed `error_negative` on both call paths, the
+    `out=` count, a `borrow`'s NULL and the `exit` finalizer `__exit__`
+    calls -- under `nogil` too, where the sentence is read after the GIL is
+    back. The parameter is C only; the header prototype, the `_core.c` stub,
+    the bench and the `Raises` sections agree, and `jm script` replays the
+    flag. Refused at load: `why` on a method with no refusal, a value that
+    is not `true`/`false`, and beside a parameter named `why`. A module
+    object's header that lacks the parameter is a `jm status` finding,
+    `WHY`, and `apply` warns for each such method, naming the remedy. The one place the parameter lands is `_diagnostics.append_why`,
+    for the prototype, the stub and every kernel call alike.
+
+### Fixed
+
+- **A long component, module, function or app name no longer pushes a
+    generated line past 79 columns** (gh-2514). The same names that
+    overflowed the re-exports also overflowed lines in tests, benchmarks,
+    stubs, a module's `__init__.py` and the Python app faces.
+
+    - Headers and summaries: a benchmark docstring's `Run` line, a module's
+        `.pyi` and `__init__.py` header comments, and an app's docstring
+        summary.
+    - Calls: the constructor call in tests, benchmarks and apps, and a
+        function app's call.
+    - Imports from the project's own package: in tests, benchmarks, `.pyi`
+        doctests and apps.
+    - An app's `argparse` description.
+
+    Each site now writes its own line already held to 79 columns:
+
+    - A header or summary wraps at its spaces.
+    - A call puts one argument per line with a trailing comma.
+    - An import uses the parenthesised form the re-exports use.
+    - A description becomes a `" ".join([...])` of its words.
+    - The benchmark puts its path alone on its own line.
+
+    Each of these layouts is one ruff's formatter keeps at both 79 and its
+    default 88. A multi-command app now puts `prog` and `description` on
+    lines of their own, which stopped at 87 to 90 columns. Short names
+    render as before. An existing project's long lines are rewritten on its
+    next `jm apply`. A module `__init__.py` header, which jm writes only
+    once, is also rewritten, but only when the line is exactly the one jm
+    wrote. An author's own comments are never touched.
+
+- **A long re-export in an `__init__.py` is wrapped at 79 columns**
+    (gh-2514). jm wrote a module's `from .<leaf> import ...` line
+    and its `__all__` on one line whatever their length, so a module
+    re-exporting `gauss_hermite_quadrature` and three more names got lines
+    of 130 columns: E501 at 79, a `ruff format` rewrite even at ruff's 88,
+    and every `jm apply` undid the formatter's wrap. Past 79 columns jm
+    now writes ruff's own form: one name per line, a trailing comma, and
+    the `# noqa: E402` after the `(`. Both `ruff check --select I --fix`
+    and `ruff format` keep it at any line length. Below 79 columns the
+    single line is unchanged. The same holds for a package's standalone
+    re-exports and `__all__`, and for a platform-guarded import, which is
+    indented line by line. An import that `ruff format` wrapped, with the
+    marker after the `)`, reads back to jm's form. An existing project's
+    long lines are wrapped on its next `jm apply`.
+
+- **Scaffolded Python passes ruff's isort rule** (gh-2571). A project that
+    selects `I` (doppler does) got `I001` on almost every generated file:
+    the test put `import unittest`, `import numpy as np` and
+    `from <pkg> import X` in one block, the benchmark glued `time` to numpy,
+    both `.pyi` stubs glued `from typing` to numpy, and a package's
+    re-exports kept the order the objects were added in. Every test,
+    benchmark and stub now writes its imports in isort's sections, one
+    blank line apart, with the names in each `from` import sorted, and jm's
+    re-export lines in an `__init__.py` are sorted naturally (`w2` before
+    `w10`). Only jm's own re-export lines move; the author's lines in an
+    `__init__.py` stay exactly as written. An existing project's files
+    move to that order on its next `jm apply`.
+
 ## [0.124.0] — 2026-11-08
 
 ### Added
