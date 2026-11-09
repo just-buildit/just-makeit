@@ -67,8 +67,16 @@ _SAMPLES = {
 #: is not -- so `apply` refuses them before its replay reaches the batch
 #: table. `jm method` asks the table first. gh-2574: `why` is refused at
 #: load on any method with no refusal for the sentence to be raised by,
-#: and a batch method has none.
-_LOAD_RULES = {"consumed_fn", "no_count", "out_cols", "short_out", "why"}
+#: and a batch method has none. gh-2584: `status_out` likewise, with no
+#: count refusal for the cause to be read on.
+_LOAD_RULES = {
+    "consumed_fn",
+    "no_count",
+    "out_cols",
+    "short_out",
+    "why",
+    "status_out",
+}
 
 
 def _sample(key: str) -> str:

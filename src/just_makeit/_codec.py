@@ -351,7 +351,9 @@ def render_pack(
     # is Python; the recheck releases what the call holds. The scalar path
     # borrows its string from the argument and holds nothing.
     call_scalar = _reindent(
-        _nogil_call("int", "_rc", sink_scalar, nogil, release="", why="")
+        _nogil_call(
+            "int", "_rc", sink_scalar, nogil, release="", why="", status=""
+        )
     )
     # A codec's sink names no refusal: gh-2574's `why` is a method kernel's.
     call_buffer = _nogil_call(
@@ -361,6 +363,7 @@ def render_pack(
         nogil,
         release="free(_buf); Py_XDECREF(_seq);",
         why="",
+        status="",
     )
     fail = (
         f'        PyErr_SetString(PyExc_ValueError, "{name} failed");\n'

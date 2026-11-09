@@ -253,6 +253,7 @@ def _emit_execute(backing: str, sym: str, method: dict) -> str:
         release="Py_DECREF(x_arr); Py_DECREF(out_arr);",
         # A capsule method declares no refusal to name (gh-2574).
         why="",
+        status="",
         gone=f"{backing}_state has already been destroyed",
     )
     _out_guard = _coerce.out_buffer_guard(
@@ -321,6 +322,7 @@ def _emit_void_method(backing: str, sym: str, method: dict) -> str:
         owner="w",
         release="",
         why="",
+        status="",
         gone=f"{backing}_state has already been destroyed",
     )
     return f"""static PyObject *

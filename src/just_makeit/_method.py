@@ -54,9 +54,9 @@ from . import _linkcheck
 from . import _incpath as INC
 from ._context._diagnostics import (
     DEFAULT_COUNT_TYPE,
-    WHY_C_PARAM,
-    append_why,
+    append_tail,
     method_raises,
+    method_status_out_errors,
     method_why_errors,
 )
 
@@ -1474,6 +1474,7 @@ def _build_method_prototype(
     name: str,
     *args,
     why: bool = False,
+    status_out: bool = False,
     **kwargs,
 ) -> str:
     """The C prototype declaration(s) of a method, ``why`` included.
@@ -1484,24 +1485,30 @@ def _build_method_prototype(
     ``_core.c`` stub (`why_stub`) are written by too. Every reader of a
     method's prototype -- the sacred header, the benchmark's call, the
     built-in collision check -- comes through here.
+
+    *status_out* (gh-2584) puts ``int *status`` in front of it, through
+    `append_tail`, the same call that places ``why``.
     """
     proto = _shape_prototype(component, name, *args, **kwargs)
-    if not why:
+    if not (why or status_out):
         return proto
     c_fn = C.method_c_symbol(
         kwargs["csym"], {"name": name, "fn": kwargs.get("c_fn", "")}
     )
-    return append_why(proto, c_fn)
+    return append_tail(proto, c_fn, status=status_out, why=why)
 
 
-def why_stub(stub: str, c_fn: str) -> str:
+def why_stub(
+    stub: str, c_fn: str, *, why: bool = True, status_out: bool = False
+) -> str:
     """A ``_core.c`` method stub taking ``why = true``'s parameter
-    (gh-2574).
+    (gh-2574), and ``status_out = true``'s ahead of it (gh-2584).
 
-    `WHY_C_PARAM` appended to *c_fn*'s definition by `append_why`, as the
-    prototype's is, and ``(void)why;`` as the body's first statement, as
-    every other parameter a stub does not read gets: a stub that refuses
-    nothing writes no sentence.
+    The trailing parameters appended to *c_fn*'s definition by
+    `append_tail`, as the prototype's are, and ``(void)<name>;`` for each
+    as the body's first statements, as every other parameter a stub does
+    not read gets: a stub that refuses nothing writes no sentence and no
+    cause.
 
     >>> print(why_stub("int\\nf(s_t *state)\\n{\\n    return 0;\\n}\\n", "f"))
     int
@@ -1511,10 +1518,15 @@ def why_stub(stub: str, c_fn: str) -> str:
         return 0;
     }
     <BLANKLINE>
+    >>> why_stub("int\\nf(s_t *s)\\n{\\n    return 0;\\n}\\n", "f",
+    ...          why=False, status_out=True).split("\\n")[1:4]
+    ['f(s_t *s, int *status)', '{', '    (void)status;']
     """
-    stub = append_why(stub, c_fn, WHY_C_PARAM)
-    at = stub.index("{\n", stub.index(WHY_C_PARAM)) + 2
-    return f"{stub[:at]}    (void)why;\n{stub[at:]}"
+    stub = append_tail(stub, c_fn, status=status_out, why=why)
+    at = stub.index("{\n", stub.index(f"{c_fn}(")) + 2
+    unused = ("status",) * status_out + ("why",) * why
+    voids = "".join(f"    (void){n};\n" for n in unused)
+    return f"{stub[:at]}{voids}{stub[at:]}"
 
 
 def _shape_prototype(
@@ -1755,6 +1767,8 @@ _SIGNATURE_COERCIONS: dict = {
     # gh-2574: the kernel takes a trailing `const char **why` -- part of
     # its C signature, so two methods differing in it differ in the call.
     "why": (bool, False),
+    # gh-2584: the kernel takes `int *status` -- part of its signature too.
+    "status_out": (bool, False),
     "error": (str, ""),
     "error_message": (str, ""),
     "codec": (str, ""),
@@ -1966,6 +1980,7 @@ def run(
     fn: str = "",
     error_negative: bool = False,
     why: bool = False,
+    status_out: bool = False,
     error: str = "",
     error_message: str = "",
     doc: str = "",
@@ -2287,20 +2302,24 @@ def run(
     # gh-2574: `why` is read only where the binding raises; the manifest's
     # load refuses the same declaration (`_config._method_why_errors`),
     # this the CLI's, before anything is written.
-    _why_err = method_why_errors(
-        f"method '{object_name}.{method_name}'",
-        {
-            "why": why,
-            "error_negative": error_negative,
-            "status_return": status_return,
-            "error_on_empty": error_on_empty,
-            "error_sentinel": error_sentinel,
-            "borrow": borrow,
-            "none_on_empty": none_on_empty,
-            "status_fn": status_fn,
-            "status_errors": status_errors or [],
-        },
-        [str(p.get("name", "")) for p in _params_as_dicts(params)],
+    # gh-2584: `status_out` likewise, from the same declaration.
+    _decl = {
+        "why": why,
+        "status_out": status_out,
+        "error_negative": error_negative,
+        "status_return": status_return,
+        "error_on_empty": error_on_empty,
+        "error_sentinel": error_sentinel,
+        "borrow": borrow,
+        "none_on_empty": none_on_empty,
+        "status_fn": status_fn,
+        "status_errors": status_errors or [],
+    }
+    _names = [str(p.get("name", "")) for p in _params_as_dicts(params)]
+    _why_err = method_status_out_errors(
+        f"method '{object_name}.{method_name}'", _decl, _names
+    ) + method_why_errors(
+        f"method '{object_name}.{method_name}'", _decl, _names
     )
     if _why_err:
         raise _report.Refusal(_why_err[0])
@@ -2786,6 +2805,8 @@ def run(
             "status_errors": status_errors or [],
             # gh-2470: a returned status is the other thing a row can match.
             "status_return": status_return,
+            # gh-2584: and a refused count's cause, under `status_out`.
+            "status_out": status_out,
         },
         # gh-1426 C: the message slots resolve against THIS object's
         # params and properties, so the refusal moved to just after
@@ -2955,9 +2976,9 @@ def run(
                 csym=csym,
                 error_sentinel=error_sentinel,
             )
-        if why:
+        if why or status_out:
             # gh-2574: the definition takes what the prototype declares.
-            stub = why_stub(stub, _c_fn)
+            stub = why_stub(stub, _c_fn, why=why, status_out=status_out)
         if impl_body is not None:
             from . import _impl as I
 
@@ -3042,6 +3063,7 @@ def run(
             count_type=count_type or DEFAULT_COUNT_TYPE,
             no_count=no_count,
             why=why,
+            status_out=status_out,
         ).split("\n")
 
     # gh-666: a newly injected prototype gets jm's prose-free doc skeleton, so
@@ -3190,6 +3212,9 @@ def run(
     # gh-2574: written only when set, like `error_negative` above.
     if why:
         method_entry["why"] = True
+    # gh-2584: likewise.
+    if status_out:
+        method_entry["status_out"] = True
     if error:
         method_entry["error"] = error
     if error_message:

@@ -60,9 +60,9 @@ from ._diagnostics import (
     # defaults a third time behind a branch that cannot be taken.
     _raise_pair as raise_pair_of,
     _rc_raise_c,
-    WHY_C_ARG,
+    STATUS_DECL,
     WHY_DECL,
-    append_why,
+    append_tail,
     count_type as count_type_of,
     declared_raise,
     empty_is_none,
@@ -72,6 +72,7 @@ from ._diagnostics import (
     fixed_result_parts as _fixed_result_parts,
     optional_ann,
     getter_prototype,
+    method_status,
     method_why,
     property_declared_raise,
     property_getter_raise,
@@ -299,6 +300,7 @@ def _nogil_call(
     *,
     release: str,
     why: str,
+    status: str,
     gone: str = "destroyed",
 ) -> str:
     """Emit ``<decl> <var> = <call>;``, with the GIL released when *nogil*.
@@ -351,21 +353,28 @@ def _nogil_call(
     right above it -- above the released block too, so under `nogil` the
     sentence is read after the GIL is back, where the raise is.
 
+    gh-2584: *status* is `method_status`'s answer, required for the same
+    reason: non-empty, the call gets `STATUS_C_ARG` before `WHY_C_ARG`
+    (`append_tail`) and `STATUS_DECL` lands beside `WHY_DECL`, outside the
+    released block, so the cause is read with the GIL held too.
+
     Examples
     --------
     >>> print(_nogil_call("int", "_rc", "k(self->handle)", False,
-    ...                   release="", why=""), end="")
+    ...                   release="", why="",
+    ...                   status=""), end="")
         if (!self->handle) {
             PyErr_SetString(PyExc_RuntimeError, "destroyed");
             return NULL;
         }
         int _rc = k(self->handle);
     >>> print(_nogil_call("", "", "k(self->handle)", False,
-    ...                   release="Py_DECREF(x);", why="")[-17:], end="")
+    ...                   release="Py_DECREF(x);", why="",
+    ...                   status="")[-17:], end="")
     k(self->handle);
     >>> body = _nogil_call(
     ...     "", "", "k(self->handle, (float *)PyArray_DATA(a))", True,
-    ...     release="", why="")
+    ...     release="", why="", status="")
     >>> print(body[body.index("    float *"):], end="")
         float * _ng0 = (float *)PyArray_DATA(a);
         void *_jm_h = self->handle;
@@ -376,10 +385,13 @@ def _nogil_call(
         jm_inflight_leave(&self->_jm_inflight);
     """
     again = _inflight.recheck(owner, call_expr, release, gone)
-    if why:
+    if status or why:
         fn = call_expr[: call_expr.index("(")].strip()
-        call_expr = append_why(call_expr, fn, WHY_C_ARG)
-        again += f"    {WHY_DECL}\n"
+        call_expr = append_tail(
+            call_expr, fn, status=bool(status), why=bool(why), call=True
+        )
+        again += f"    {STATUS_DECL}\n" if status else ""
+        again += f"    {WHY_DECL}\n" if why else ""
     if not nogil:
         lead = f"{decl} {var} = " if var else ""
         return f"{again}    {lead}{call_expr};\n"
@@ -421,6 +433,7 @@ def _kernel_call_block(
     *,
     release: str,
     why: str,
+    status: str,
 ) -> str:
     """``size_t n_out = <call>;`` — the variable-output shape.
 
@@ -438,14 +451,27 @@ def _kernel_call_block(
             nogil,
             release=release,
             why=why,
+            status=status,
         )
     return _nogil_call(
-        "size_t", "n_out", call_expr, nogil, release=release, why=why
+        "size_t",
+        "n_out",
+        call_expr,
+        nogil,
+        release=release,
+        why=why,
+        status=status,
     )
 
 
 def _count_refusal_c(
-    m: dict, name: str, release: str, pad: str, *, count: str = "n_out"
+    m: dict,
+    name: str,
+    release: str,
+    pad: str,
+    *,
+    status: str,
+    count: str = "n_out",
 ) -> str:
     """A returned count's declared refusal value (gh-2012, gh-2559).
 
@@ -479,6 +505,10 @@ def _count_refusal_c(
     rather than sizing an array; its param cleanup has already run, so it
     passes an empty *release*.
 
+    gh-2584: *status* is the method's `_borrow.status_out_switch_c`, handed
+    to both raises -- required, so no count path can drop a
+    ``status_out`` table.
+
     Empty when the method declares neither, so its binding is unchanged.
     """
     body = len(pad) + 4
@@ -493,6 +523,7 @@ def _count_refusal_c(
                 indent=body + 13,
                 pad=body,
                 why=method_why(m),
+                status=status,
             )
             + f"{pad}}}\n"
             f"{pad}size_t n_out = (size_t)_rc;\n"
@@ -509,6 +540,7 @@ def _count_refusal_c(
                 indent=body + 16,
                 pad=body,
                 why=method_why(m),
+                status=status,
             )
             + f"{pad}}}\n"
         )
@@ -516,11 +548,23 @@ def _count_refusal_c(
 
 
 def _single_kernel_block(
-    ret_disp: str, call_expr: str, nogil: bool, *, release: str, why: str
+    ret_disp: str,
+    call_expr: str,
+    nogil: bool,
+    *,
+    release: str,
+    why: str,
+    status: str,
 ) -> str:
     """``<ret> _r = <call>;`` — a single record returned by value (gh-261)."""
     return _nogil_call(
-        ret_disp, "_r", call_expr, nogil, release=release, why=why
+        ret_disp,
+        "_r",
+        call_expr,
+        nogil,
+        release=release,
+        why=why,
+        status=status,
     )
 
 
@@ -1020,6 +1064,7 @@ def _bench_method_block(
         c_fn=m.get("fn", ""),
         csym=csym,
         why=bool(method_why(m)),
+        status_out=bool(method_status(m)),
     )
     kernel = _prototype_params(proto)
     declared = {p["name"]: p["type"] for p in params}
@@ -1043,6 +1088,9 @@ def _bench_method_block(
         "result": f"{name}_results",
         # gh-2574: a timing loop has no use for the refusal's sentence.
         "why": "NULL",
+        # gh-2584: but a kernel may write its cause without testing the
+        # pointer -- the binding always passes one -- so it gets a local.
+        "status": f"&{name}_status",
     }
     for pname, ptr in kernel:
         if pname in declared:
@@ -1073,6 +1121,10 @@ def _bench_method_block(
     # BENCH_N calls with no input is BENCH_N calls.
     unit, iters = "JM_BENCH_SAMPLE", "BENCH_N"
     lines.append(f"        double _times_{name}[ITERATIONS];")
+    if method_status(m):
+        lines.append(
+            f"        int {name}_status = 0;\n        (void){name}_status;"
+        )
 
     if result_fields and not single_record and not borrow_m:
         # gh-244: a results[]/max_results method returns a count (size_t),
@@ -2554,6 +2606,13 @@ def make_methods_ctx(
         # gh-2574: the C local a refusal's sentence is in, or "" -- handed
         # to every kernel call (`_nogil_call`) and every refusal's raise.
         _mwhy = method_why(m)
+        # gh-2584: the local a refused count's cause is in, or "" -- handed
+        # to every kernel call -- and the switch its `status_errors` rows
+        # render on it, handed to every count refusal's raise.
+        _mstatus = method_status(m)
+        _mstatus_sw = _borrow.status_out_switch_c(
+            m, name, _borrow.message_slots(m, csym, properties)
+        )
         # gh-805 §B: the int return is a VALUE unless it is negative, in
         # which case it is an error code — `open`/`read`/`snprintf` and every
         # registry-style lookup work this way. Distinct from `status_return`,
@@ -3303,8 +3362,12 @@ def make_methods_ctx(
         # gh-2574: `why`'s trailing parameter, LAST -- through the one
         # `append_why`, so whichever shape built the declaration above, it
         # ends where `_method._build_method_prototype`'s and the stub's do.
-        if _mwhy:
-            decl_lines[-1] = append_why(decl_lines[-1], c_fn)
+        # gh-2584: `status_out`'s `int *status` lands in front of it, by
+        # the same call.
+        if _mstatus or _mwhy:
+            decl_lines[-1] = append_tail(
+                decl_lines[-1], c_fn, status=bool(_mstatus), why=bool(_mwhy)
+            )
         for _j in range(_ndecl, len(decl_lines)):
             _doc = scaffold_doc_block(decl_lines[_j], name)
             if _doc:
@@ -3380,6 +3443,7 @@ def make_methods_ctx(
                     f"        ({ret_disp} *)PyArray_DATA({out_arr}))",
                     nogil,
                     why=_mwhy,
+                    status=_mstatus,
                     release=f"Py_DECREF({held});"
                     + (" Py_DECREF(in_arr);" if has_arg else ""),
                 )
@@ -3821,6 +3885,7 @@ def make_methods_ctx(
                         nogil,
                         m,
                         why=_mwhy,
+                        status=_mstatus,
                         release=f"Py_DECREF(out_arr); {_decref_early_vo}",
                     )
                 )
@@ -3836,6 +3901,7 @@ def make_methods_ctx(
                             *raise_pair_of(m, name),
                             decrefs="Py_DECREF(out_arr); ",
                             why=_mwhy,
+                            status=_mstatus_sw,
                         ).replace("\n", "\n    ")[:-4]
                         + "        }\n"
                     )
@@ -4011,7 +4077,13 @@ def make_methods_ctx(
                     # gh-2012: a declared refusal value, read before the
                     # guard below -- which would otherwise report it as an
                     # overrun. This path holds `out_arr`.
-                    + _count_refusal_c(m, name, "Py_DECREF(out_arr);", " " * 8)
+                    + _count_refusal_c(
+                        m,
+                        name,
+                        "Py_DECREF(out_arr);",
+                        " " * 8,
+                        status=_mstatus_sw,
+                    )
                     # gh-2327: kept once the kernel has not refused -- here,
                     # or after the empty refusal below when it declares one.
                     + ("" if error_on_empty else _reindent(_keep))
@@ -4195,6 +4267,7 @@ def make_methods_ctx(
                 nogil,
                 m,
                 why=_mwhy,
+                status=_mstatus,
                 release=f"{_decref_arrs} {_decref_early_vo}",
             )
             if error_on_empty:
@@ -4209,6 +4282,7 @@ def make_methods_ctx(
                         if _decref_arrs.strip()
                         else "",
                         why=_mwhy,
+                        status=_mstatus_sw,
                     )
                     + "    }\n"
                 )
@@ -4320,7 +4394,9 @@ def make_methods_ctx(
                     f"{decref_in}"
                     # gh-2012: the same refusal, before the same guard. This
                     # path holds the arrays it allocated, not `out_arr`.
-                    + _count_refusal_c(m, name, _decref_arrs, " " * 4)
+                    + _count_refusal_c(
+                        m, name, _decref_arrs, " " * 4, status=_mstatus_sw
+                    )
                     + ("" if error_on_empty else _keep)
                     # gh-1716: past `_cap`, PyArray_Resize below GREW the
                     # result into memory the kernel never wrote.
@@ -4627,6 +4703,7 @@ def make_methods_ctx(
                         f"{c_fn}({_st}, {_p_call})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=_cleanup_inline,
                     )
                     + _p_cleanup
@@ -4656,6 +4733,7 @@ def make_methods_ctx(
                         f" n_in)",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release="Py_DECREF(in_arr);",
                     )
                     + "    Py_DECREF(in_arr);\n"
@@ -4670,7 +4748,8 @@ def make_methods_ctx(
                     f"    }}\n"
                 )
                 _s_call = _single_kernel_block(
-                    ret_disp, f"{c_fn}({_st})", nogil, release="", why=_mwhy
+                    ret_disp, f"{c_fn}({_st})", nogil, release="", why=_mwhy,
+                    status=_mstatus,
                 )
             _set_lines = []
             for _i, _f in enumerate(result_fields):
@@ -4796,6 +4875,7 @@ def make_methods_ctx(
                         f"{c_fn}({_st}, {_p_call}, results, {_rf_cap})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=f"{_rf_free} {_p_cleanup}".strip(),
                     )
                     + _p_cleanup
@@ -4821,6 +4901,7 @@ def make_methods_ctx(
                         f"results, {_rf_cap})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=f"{_rf_free} Py_DECREF(in_arr);".strip(),
                     )
                     + "    Py_DECREF(in_arr);\n"
@@ -4832,6 +4913,7 @@ def make_methods_ctx(
                     f"{c_fn}({_st}, results, {_rf_cap})",
                     nogil,
                     why=_mwhy,
+                    status=_mstatus,
                     release=_rf_free,
                 )
             # The stack array needs no release; a heap buffer is freed on
@@ -4875,6 +4957,7 @@ def make_methods_ctx(
                             f"{c_fn}({_st}, {_p_call}, results, {cap})",
                             nogil,
                             why=_mwhy,
+                            status=_mstatus,
                             release=rel,
                         )
                         + _keep
@@ -4898,6 +4981,7 @@ def make_methods_ctx(
                         f"{c_fn}({_st}, _in, n_in, results, {cap})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=rel,
                     ),
                     ptr="_in",
@@ -5023,6 +5107,7 @@ def make_methods_ctx(
                         f"{c_fn}({call_args_c})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"
@@ -5099,11 +5184,12 @@ def make_methods_ctx(
                         f"{c_fn}({call_args_c})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"
                     f"    if (_rc < 0) {{\n"
-                    + _rc_raise_c(*_raise_pair, why=_mwhy)
+                    + _rc_raise_c(*_raise_pair, why=_mwhy, status=_mstatus_sw)
                     + "    }\n"
                     + _keep
                     + f"    return {ret_meta['to_py']('_rc')};\n"
@@ -5194,6 +5280,7 @@ def make_methods_ctx(
                     f"{c_fn}({call_args_c}{_extra_args}{_out_arg})",
                     nogil,
                     why=_mwhy,
+                    status=_mstatus,
                     release=(
                         " ".join(_p_cleanup.split())
                         + (" Py_DECREF(_out);" if out_type else "")
@@ -5265,6 +5352,7 @@ def make_methods_ctx(
                         f"{c_fn}({call_args_c})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"
@@ -5273,7 +5361,9 @@ def make_methods_ctx(
                     # variable_output count does -- before the retain swap,
                     # which keeps only what a call that did not refuse
                     # was handed.
-                    + _count_refusal_c(m, name, "", "    ", count=_res)
+                    + _count_refusal_c(
+                        m, name, "", "    ", count=_res, status=_mstatus_sw
+                    )
                     + f"{_keep}"
                     f"    return {ret_expr};\n"
                 )
@@ -5285,6 +5375,7 @@ def make_methods_ctx(
                         f"{c_fn}({call_args_c})",
                         nogil,
                         why=_mwhy,
+                        status=_mstatus,
                         release=" ".join(_p_cleanup.split()),
                     )
                     + f"{_p_cleanup}"

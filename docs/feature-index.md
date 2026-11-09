@@ -68,6 +68,7 @@ ______________________________________________________________________
 | Raise on non-zero return (`--check-return`)                       | [Extend command](commands/extend.md#just-makeit-function)                            |
 | Raise the C refusal's own reason (`--why`)                        | [Extend command](commands/extend.md#just-makeit-function)                            |
 | A method raises its C refusal's reason (`why`)                    | [Extend command](commands/extend.md#a-method-can-name-its-refusal-why)               |
+| A count's refusal picks its exception per cause (`status_out`)    | [Extend command](commands/extend.md#a-counts-refusal-can-pick-its-exception-status-out) |
 | Raise a composer's refusal reason (`from_json_why`, `create_why`) | [Object-of-objects](object-of-objects.md#47-json-faces-generated-vs-delegated)       |
 | Raise a constructor's refusal reason (`create_why`)               | [Extend command](commands/extend.md#the-constructor-can-name-its-refusal-create_why) |
 | Writable property                                                 | [Feature tour](feature-tour.md)                                                      |

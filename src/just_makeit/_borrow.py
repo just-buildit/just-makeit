@@ -121,6 +121,7 @@ from . import _csym as CSYM
 from ._context._diagnostics import (
     DOUBLE_REPR,
     format_raise_c,
+    method_status,
     method_why,
     placeholders,
     reason_raise_c,
@@ -783,6 +784,43 @@ def status_switch_c(
     )
 
 
+def status_out_switch_c(
+    m: dict, name: str, slots: "dict[str, tuple[str, str]]"
+) -> str:
+    """A ``status_out`` count method's row switch, or ``""`` (gh-2584).
+
+    `status_switch_c` over the method's ``status_errors`` rows, switching on
+    the cause the kernel wrote to ``*status`` (`method_status`'s local)
+    rather than on a returned code: the one table, the one emitter, a
+    different subject. Every refusal emitter of a count -- `_rc_raise_c`
+    and `empty_raise_c` -- takes the result as its *status* and places it
+    ahead of its declared raise, so it runs only when the declared refusal
+    fired, and a cause no row names falls through to that raise. Under
+    ``why`` a row raises the kernel's sentence, as every row does.
+
+    Examples
+    --------
+    >>> m = {"name": "pmax", "status_out": True, "error_sentinel": "S",
+    ...      "status_errors": [{"status": "E_NOMEM", "error": "MemoryError"}]}
+    >>> print(status_out_switch_c(m, "pmax", {}), end="")
+            switch (_status) {
+            case E_NOMEM:
+            PyErr_SetString(PyExc_MemoryError,
+            "pmax failed (E_NOMEM)");
+            return NULL;
+            default: break;
+            }
+    >>> status_out_switch_c({"name": "pmax"}, "pmax", {})
+    ''
+    """
+    subject = method_status(m)
+    if not subject:
+        return ""
+    return status_switch_c(
+        status_rows(m), name, slots, method_why(m), subject=subject
+    )
+
+
 def status_cases_c(
     rows: list[dict],
     name: str,
@@ -855,7 +893,13 @@ def why_not(
         # gh-2470: a `status_return` method reads a status too -- the int
         # its kernel returned -- so the rows have something to match. The
         # `status_fn` stays a borrow's: here the status IS the return.
-        if m.get("status_return") and status_rows(m) and not status_fn(m):
+        # gh-2584: so does a `status_out` count method -- the cause its
+        # kernel wrote when it refused the count.
+        if (
+            (m.get("status_return") or method_status(m))
+            and status_rows(m)
+            and not status_fn(m)
+        ):
             return rows_why_not(
                 status_rows(m),
                 f"method '{name}'",
@@ -866,21 +910,23 @@ def why_not(
         # would be recorded, exit 0, and dropped -- which is the whole
         # finding of this issue, one shape over.
         if status_fn(m) or status_rows(m):
-            if m.get("status_return"):
+            if m.get("status_return") or method_status(m):
                 return (
                     f"method '{name}': `status_fn` names the function a "
                     f"BORROW asks why it returned NULL.\n"
-                    f"  This method returns its status, so its "
+                    f"  This method reports its status itself, so its "
                     f"`status_errors` rows match that return directly.\n"
                     f"  Drop `status_fn`."
                 )
             return (
                 f"method '{name}': `status_fn` / `status_errors` describe "
                 f"why a BORROW returned NULL, or which\n"
-                f"  exception a `status_return` method's status raises.\n"
+                f"  exception a `status_return` method's status raises, "
+                f"or a `status_out`\n  count method's refusal cause.\n"
                 f"  This method is not a borrow and returns no status, so "
-                f"there is nothing to read.\n  Declare `borrow` or "
-                f"`status_return`, or drop the keys -- a method that "
+                f"there is nothing to read.\n  Declare `borrow`, "
+                f"`status_return` or `status_out`, or drop the keys -- a "
+                f"method that "
                 f"reports failure\n  another way uses `error` / "
                 f"`error_message`."
             )

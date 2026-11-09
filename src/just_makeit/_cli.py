@@ -259,6 +259,12 @@ Commands:
                                 `const char **why`; a declared refusal raises
                                 the sentence it writes there, else the
                                 --error-message. Needs a refusal to raise.
+    --status-out                The C function takes `int *status` (before
+                                `why`): when its count is refused, the
+                                code it wrote picks a --status-error row,
+                                else the declared --error. Needs
+                                --error-sentinel, --error-negative or
+                                --error-on-empty.
     --py-return-type STR        Override the .pyi return annotation; --return-type
                                 still drives the C signature.
     --single                    With --result-field, return ONE named record (a

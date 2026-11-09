@@ -64,6 +64,7 @@ def run(args: list[str]) -> None:
     error_negative = False
     status_return = False
     why = False
+    status_out = False
     error = ""
     error_message = ""
     batch_method = False
@@ -268,6 +269,11 @@ def run(args: list[str]) -> None:
         # `jm function --why`'s flag (gh-1706), on a method.
         elif tok == "--why":
             why = True
+            i += 1
+        # gh-2584: the kernel takes `int *status`; a refused count's cause
+        # picks a `--status-error` row.
+        elif tok == "--status-out":
+            status_out = True
             i += 1
         elif tok == "--error":
             i += 1
@@ -908,6 +914,7 @@ def run(args: list[str]) -> None:
         error_negative=error_negative,
         status_return=status_return,
         why=why,
+        status_out=status_out,
         error=error,
         error_message=error_message,
         doc=doc,

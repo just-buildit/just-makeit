@@ -161,6 +161,7 @@ def _rc_raise_c(
     pad: int = 8,
     fail: str = "return NULL;",
     why: str = "",
+    status: str = "",
 ) -> str:
     """The ``PyErr_Format`` that turns a failing return code into an exception.
 
@@ -242,6 +243,11 @@ def _rc_raise_c(
                              "seek failed",
                              (long long)_rc);
             return NULL;
+
+    *status* is a ``status_out`` method's row switch (gh-2584): the
+    ``switch (_status)`` `_borrow.status_out_switch_c` renders at column 8,
+    placed ahead of the raise at *pad*. A matching row raises and returns;
+    falling out of it is this raise, the declared one.
     """
     # Under `why` the raise sits one block deeper (`reason_raise_c`'s
     # `else`), so the literal is wrapped for its real column and handed over
@@ -258,8 +264,21 @@ def _rc_raise_c(
         f"{' ' * (indent - pad)}(long long)_rc);\n"
     )
     return (
-        reason_raise_c(statement, why, pad, category) + f"{' ' * pad}{fail}\n"
+        _at(status, pad)
+        + reason_raise_c(statement, why, pad, category)
+        + f"{' ' * pad}{fail}\n"
     )
+
+
+def _at(block: str, pad: int) -> str:
+    """*block*, rendered at column 8, moved to column *pad* (gh-2584).
+
+    >>> _at("        x;\\n", 12)
+    '            x;\\n'
+    >>> _at("", 12)
+    ''
+    """
+    return textwrap.indent(block, " " * (pad - 8)) if pad > 8 else block
 
 
 def empty_raise_c(
@@ -271,6 +290,7 @@ def empty_raise_c(
     *,
     pad: int = 8,
     why: str = "",
+    status: str = "",
 ) -> str:
     """The raise for a ``variable_output`` kernel that wrote nothing (gh-1159).
 
@@ -323,11 +343,22 @@ def empty_raise_c(
                 PyErr_SetString(PyExc_ValueError,
                                 "empty");
             return NULL;
+
+    *status* is `_rc_raise_c`'s: a ``status_out`` method's row switch
+    (gh-2584), after *decrefs* and ahead of the raise.
     """
     lead = " " * pad
+    if status:
+        # gh-2584: the rows run after the release, like the raise below,
+        # since a matching row returns from the wrapper.
+        if decrefs.strip():
+            status = f"{lead}{decrefs.strip()}\n" + _at(status, pad)
+            decrefs = ""
+        else:
+            status = _at(status, pad)
     if not why:
         return (
-            f"{lead}{decrefs}"
+            status + f"{lead}{decrefs}"
             f"PyErr_SetString(PyExc_{category},\n"
             f"{_c_string_literal(message, indent)});\n"
             + (f"{lead}return NULL;\n" if ret else "")
@@ -337,7 +368,8 @@ def empty_raise_c(
         for ln in _c_string_literal(message, indent + 4).split("\n")
     )
     return (
-        (f"{lead}{decrefs.strip()}\n" if decrefs.strip() else "")
+        status
+        + (f"{lead}{decrefs.strip()}\n" if decrefs.strip() else "")
         + reason_raise_c(
             f"PyErr_SetString(PyExc_{category},\n{literal});\n",
             why,
@@ -408,6 +440,142 @@ def append_why(text: str, fn: str, arg: str = WHY_C_PARAM) -> str:
             if depth == 0:
                 return f"{text[:i]}, {arg}{text[i:]}"
     raise RuntimeError(f"append_why: unbalanced parameter list of {fn}")
+
+
+#: The local a count method's refusal CAUSE lands in, under ``status_out =
+#: true`` (gh-2584): the kernel writes the code naming why it refused, and
+#: the method's ``status_errors`` rows map it to an exception class.
+STATUS_LOCAL = "_status"
+
+#: The declaration of `STATUS_LOCAL`. Zero before the call, so a kernel that
+#: refuses without writing a cause matches no row (unless the author maps 0)
+#: and the method's own declared raise answers.
+STATUS_DECL = f"int {STATUS_LOCAL} = 0;"
+
+#: The C parameter ``status_out`` adds: BEFORE `WHY_C_PARAM` when both are
+#: declared, so the two trailing out-params sit in one fixed order the
+#: prototype, the stub and the call all take from `append_tail`.
+STATUS_C_PARAM = "int *status"
+
+#: The argument the binding passes for `STATUS_C_PARAM`.
+STATUS_C_ARG = f"&{STATUS_LOCAL}"
+
+
+def append_tail(
+    text: str, fn: str, *, status: bool, why: bool, call: bool = False
+) -> str:
+    """*text* with a method's trailing out-params appended to *fn*'s
+    parameter list: ``int *status`` (gh-2584), then ``const char **why``
+    (gh-2574).
+
+    `append_why` applied once per parameter, in that order, so the one
+    insertion rule places both and they cannot land in different orders on
+    the prototype, the stub and the binding's call. *call* picks the
+    argument spelling (`STATUS_C_ARG`, `WHY_C_ARG`) over the declaration's.
+    Every writer of a method kernel's parameter list comes through here.
+
+    Examples
+    --------
+    >>> append_tail("int f(s_t *state);", "f", status=True, why=True)
+    'int f(s_t *state, int *status, const char **why);'
+    >>> append_tail("f(self->handle)", "f", status=True, why=False,
+    ...             call=True)
+    'f(self->handle, &_status)'
+    >>> append_tail("f(x)", "f", status=False, why=False)
+    'f(x)'
+    """
+    for on, param, arg in (
+        (status, STATUS_C_PARAM, STATUS_C_ARG),
+        (why, WHY_C_PARAM, WHY_C_ARG),
+    ):
+        if on:
+            text = append_why(text, fn, arg if call else param)
+    return text
+
+
+def method_status(m: dict) -> str:
+    """The C local a count method's refusal cause is in, or ``""``
+    (gh-2584).
+
+    `STATUS_LOCAL` when the method declares ``status_out = true``: its
+    kernel takes `STATUS_C_PARAM` and the binding passes `STATUS_C_ARG`,
+    reading it only when the method's declared refusal fires. Only
+    ``True`` counts; any other value is refused at load
+    (`method_status_out_errors`).
+
+    Examples
+    --------
+    >>> method_status({"name": "m", "status_out": True})
+    '_status'
+    >>> method_status({"name": "m", "status_out": "yes"})
+    ''
+    """
+    return STATUS_LOCAL if m.get("status_out") is True else ""
+
+
+#: The refusals ``status_out`` reads the cause of (gh-2584): a returned
+#: COUNT's. A ``status_return`` method's status is its return value.
+COUNT_REFUSALS = ("error_negative", "error_on_empty", "error_sentinel")
+
+
+def method_status_out_errors(
+    where: str, m: dict, params: "list[str]", *, handle: bool = False
+) -> "list[str]":
+    """Why method *m*'s ``status_out`` cannot be generated, or ``[]``
+    (gh-2584).
+
+    `method_why_errors`' refusals, for the parameter ``status_out`` adds:
+    a value that is not a bool, no count refusal for the cause to be read
+    on (one of `COUNT_REFUSALS`), ``status_return`` -- whose status IS the
+    return value, which its ``status_errors`` rows already match -- and a
+    parameter named ``status``, which would collide with the one jm
+    appends. A ``kind = "handle"`` method's only refusal is a non-zero
+    ``int`` return, which is that same status, so it is refused there for
+    the ``status_return`` reason. Asked by the manifest's load and by
+    ``jm method``, as `method_why_errors` is.
+
+    Examples
+    --------
+    >>> method_status_out_errors("m", {"status_out": 1}, [])[0][:36]
+    'm: status_out = 1 must be true or fa'
+    >>> method_status_out_errors("m", {"status_out": True}, [])[0][:46]
+    'm declares status_out = true, but no count ref'
+    >>> method_status_out_errors(
+    ...     "m", {"status_out": True, "error_sentinel": "SIZE_MAX"}, [])
+    []
+    """
+    if "status_out" not in m:
+        return []
+    value = m["status_out"]
+    if not isinstance(value, bool):
+        return [
+            f"{where}: status_out = {value!r} must be true or false: it "
+            "says whether the C function takes an `int *status` naming why "
+            "it refused. Write `status_out = true`, or drop the key."
+        ]
+    if not value:
+        return []
+    if handle or m.get("status_return"):
+        return [
+            f"{where} declares status_out = true, but its status is its "
+            "return value: `status_errors` rows already match the non-zero "
+            "`int` it returns. Drop status_out."
+        ]
+    if not any(m.get(k) for k in COUNT_REFUSALS):
+        return [
+            f"{where} declares status_out = true, but no count refusal: "
+            "the `int *status` the C function writes is read only when "
+            "its returned count is refused, and nothing here refuses one. "
+            "Declare error_sentinel, error_negative or error_on_empty, or "
+            "drop status_out."
+        ]
+    if "status" in params:
+        return [
+            f"{where} declares status_out = true and a parameter named "
+            "`status`; jm appends `int *status` itself. Rename the "
+            "parameter."
+        ]
+    return []
 
 
 def method_why(m: dict) -> str:
@@ -1276,12 +1444,21 @@ write``, with the return code appended (gh-869), when it gives none.'
                 f"{said(message, why)}.",
             )
         )
+    rows = list(m.get("status_errors") or [])
+    subject = str(m.get("fn") if handle else m.get("name", ""))
     if out:
+        # gh-2584: under `status_out` a refused count's cause picks a row,
+        # which raises ahead of the declared class -- so each row is
+        # documented first, as on a status method, and the entries above
+        # cover a cause no row names.
+        if method_status(m):
+            return (
+                status_rows_raises_doc(rows, subject, why, refused=True)
+                + out
+            )
         return out
     # gh-2470: a declared row raises ahead of the blanket class, so each is
     # documented first and the blanket entry says it covers the rest.
-    rows = list(m.get("status_errors") or [])
-    subject = str(m.get("fn") if handle else m.get("name", ""))
     return status_rows_raises_doc(rows, subject, why) + [
         (
             category,
@@ -1340,7 +1517,7 @@ def status_row_message(row: dict, name: str) -> str:
 
 
 def status_rows_raises_doc(
-    rows: "list[dict]", name: str, why: bool = False
+    rows: "list[dict]", name: str, why: bool = False, *, refused: bool = False
 ) -> "list[tuple[str, str]]":
     """One ``Raises`` entry per ``status_errors`` row (gh-2470).
 
@@ -1357,6 +1534,14 @@ def status_rows_raises_doc(
 message is ``set_freq failed (DP_ERR_MEMORY)``.')]
     >>> status_rows_raises_doc([], "set_freq")
     []
+
+    *refused* is a ``status_out`` count method's table (gh-2584): the row
+    matches the cause the C call wrote to ``*status`` when it refused, not
+    a value it returned.
+
+    >>> status_rows_raises_doc([{"status": "E_NOMEM", "error": "MemoryError"}],
+    ...                        "f", refused=True)[0][1][:58]
+    'If the C call refuses and reports ``E_NOMEM`` in ``*status'
     """
     out: "list[tuple[str, str]]" = []
     for row in rows:
@@ -1365,8 +1550,13 @@ message is ``set_freq failed (DP_ERR_MEMORY)``.')]
         out.append(
             (
                 str(row.get("error", "")),
-                f"If the C call returns ``{status}``. The exception message "
-                f"is {said(message, why)}.",
+                (
+                    f"If the C call refuses and reports ``{status}`` in "
+                    "``*status``."
+                    if refused
+                    else f"If the C call returns ``{status}``."
+                )
+                + f" The exception message is {said(message, why)}.",
             )
         )
     return out

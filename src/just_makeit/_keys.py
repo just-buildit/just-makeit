@@ -354,6 +354,9 @@ METHOD_KEYS = frozenset(
         # gh-2574: the kernel takes a trailing `const char **why`, and a
         # refusal raises the sentence it wrote.
         "why",
+        # gh-2584: the kernel takes `int *status`, and a refused count's
+        # cause picks a `status_errors` row.
+        "status_out",
         # misc
         "manual_stub",
         "bench",
@@ -760,6 +763,9 @@ HANDLE_METHOD_KEYS = frozenset(
         "doc",
         # gh-2407: the C function takes a trailing `const char **why`.
         "why",
+        # gh-2584: recognised so its load refusal is the answer: a handle
+        # method's status is its return value.
+        "status_out",
     }
 )
 #: A capsule / composer method: the OBJECT spelling of a signature.

@@ -1371,6 +1371,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # gh-2574: named here like every key, or the replay declares
             # the kernel without its trailing `const char **why`.
             why=m.get("why") is True,
+            # gh-2584: likewise, or the replay drops `int *status`.
+            status_out=m.get("status_out") is True,
             error=m.get("error", ""),
             error_message=m.get("error_message", ""),
             doc=m.get("doc", ""),
@@ -4843,13 +4845,14 @@ def _apply_manifest(
 
             for _d in _ctorsig.why_drift(root, temp_root, cfg):
                 _report.warn(
-                    f"{_d.rel}: {_d.fn}() and the manifest disagree about a"
-                    " trailing `const char **why`, so the binding does not"
-                    " compile against it\n"
+                    f"{_d.rel}: {_d.fn}() and the manifest disagree about"
+                    " its trailing `int *status` / `const char **why`, so"
+                    " the binding does not compile against it\n"
                     f"    header:   {_d.fn}({_d.declared})\n"
                     f"    manifest: {_d.fn}({_d.rendered})\n"
                     "  Add `const char **why` last to the declaration and"
-                    " its _core.c definition (or drop `why`); see"
+                    " its _core.c definition, with `int *status` before it"
+                    " under `status_out` (gh-2584), or drop the key; see"
                     " `jm status` (WHY).",
                     # `jm status --check` counts it (WHY).
                     gates=True,

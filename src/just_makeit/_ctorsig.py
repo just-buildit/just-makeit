@@ -556,22 +556,33 @@ def order_drift(root: Path, tree: Path, cfg: dict) -> "list[OrderDrift]":
     return out
 
 
-def _takes_why(params: str) -> bool:
-    """Whether a parameter list ends in a method's ``why`` (gh-2574).
+def _tail(params: str) -> "tuple[bool, bool]":
+    """``(status, why)``: whether a parameter list ends in a method's
+    ``int *status`` (gh-2584) and its ``const char **why`` (gh-2574), in
+    the order `append_tail` places them.
 
-    >>> _takes_why("s_t *state, int mode, const char ** why")
-    True
-    >>> _takes_why("s_t *state, int mode")
-    False
+    >>> _tail("s_t *state, int mode, const char ** why")
+    (False, True)
+    >>> _tail("s_t *state, int mode, int * status, const char **why")
+    (True, True)
+    >>> _tail("s_t *state, int *status")
+    (True, False)
+    >>> _tail("s_t *state, int mode")
+    (False, False)
     """
-    from ._context._diagnostics import WHY_C_PARAM
+    from ._context._diagnostics import STATUS_C_PARAM, WHY_C_PARAM
 
-    return _norm(params).endswith(_norm(WHY_C_PARAM))
+    parts = [p.strip() for p in _norm(params).split(",")]
+    why = parts[-1] == _norm(WHY_C_PARAM)
+    rest = parts[:-1] if why else parts
+    status = bool(rest) and rest[-1] == _norm(STATUS_C_PARAM)
+    return status, why
 
 
 def why_drift(root: Path, tree: Path, cfg: dict) -> "list[CtorDrift]":
-    """Every method declaration whose trailing ``why`` the header and the
-    manifest disagree about (gh-2574, gh-2407).
+    """Every method declaration whose trailing ``why`` -- or ``int *status``
+    ahead of it (gh-2584) -- the header and the manifest disagree about
+    (gh-2574, gh-2407).
 
     `drift`'s check, for the parameter a method's ``why = true`` appends.
     A module object's sacred header only GAINS declarations on `apply`
@@ -580,7 +591,7 @@ def why_drift(root: Path, tree: Path, cfg: dict) -> "list[CtorDrift]":
     then passes an argument the header does not take -- a compile error
     several files from the cause. The declaration *tree* (a replay of
     *cfg*) renders is compared with *root*'s, for every method of every
-    object and its views. Only the ``why`` parameter is the finding: the
+    object and its views. Only those parameters are the finding: the
     rest of a method's prototype is the author's to adopt, and every other
     disagreement is already a compile error naming the declaration.
     """
@@ -608,7 +619,7 @@ def why_drift(root: Path, tree: Path, cfg: dict) -> "list[CtorDrift]":
             w, h = want.get(sym), have.get(sym)
             if w is None or h is None:
                 continue
-            if _takes_why(w.params) == _takes_why(h.params):
+            if _tail(w.params) == _tail(h.params):
                 continue
             out.append(
                 CtorDrift(
