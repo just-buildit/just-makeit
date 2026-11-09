@@ -248,9 +248,11 @@ def run(root: Path) -> None:
     # status names, under ROOT CMAKE, each root-template fix this project's
     # root CMakeLists.txt lacks (gh-1459, gh-1471) -- apply splices only the
     # marked blocks, so none of them arrived.
-    root_fixes = re.findall(
-        r"^  ↑ (\S+) \(gh-\d+\)", log.jm("status"), re.MULTILINE
-    )
+    # gh-2581: and it now EXITS 1 until step 7, because the fragment 0.33.14
+    # rendered lacks guards today's jm emits -- GUARD, which gates.
+    status = log.jm("status", expect=1)
+    assert "GUARD (" in status and "out-contiguity" in status, status
+    root_fixes = re.findall(r"^  ↑ (\S+) \(gh-\d+\)", status, re.MULTILINE)
     assert {"libm", "static-name"} <= set(root_fixes), root_fixes
 
     # ── 4. The root CMakeLists.txt, which jm maintains only in part ──────
@@ -277,7 +279,7 @@ def run(root: Path) -> None:
     # status names the create-only files OUTDATED. apply never rewrites one:
     # yours to adopt. Diff each first -- none was edited here, so each takes
     # jm's render the same way, by deleting it and letting apply write today's.
-    status = log.jm("status")
+    status = log.jm("status", expect=1)  # GUARD, until step 7
     assert "ROOT CMAKE" not in status, status
     block = status[status.index("OUTDATED (") :].split("\n\n")[0]
     outdated = re.findall(r"^  ↑ (\S+)$", block, re.MULTILINE)

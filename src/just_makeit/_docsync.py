@@ -1064,6 +1064,33 @@ def _method_signatures(text: str) -> dict:
     return out
 
 
+class _Feature(NamedTuple):
+    """One per-member marker: how to see it, what to say, and its severity.
+
+    The sentence travels WITH the spellings rather than being composed at
+    the report site, because the two can disagree -- and did. Every marker
+    was reported as "the manifest declares <label>", which is true of
+    `strict` and `releases` and false of an `out=` guard: that one is jm's
+    own, and a fragment lacking it predates it rather than contradicting a
+    manifest. doppler was sent looking for a `strict` key that was not in
+    the file (gh-1432).
+
+    ``safety`` is the severity, and it lives HERE, on the one row that
+    names the marker, so `apply`'s warning and `status`'s ``GUARD`` finding
+    read the same answer (gh-2581). A marker is safety when a fragment
+    lacking it lets a call touch freed or out-of-range memory, or return a
+    wrong result with no exception -- a guard. Everything else (a calling
+    convention, a result's Python type, holding the GIL, a conversion that
+    copies) is advisory: the stub and the binding disagree, and the call
+    either still does the right thing or fails loudly. The field has no
+    default, so a new marker cannot be added without deciding.
+    """
+
+    spellings: tuple
+    why: str
+    safety: bool
+
+
 #: The jm-emitted constructs that decide what a binding hands back, and the
 #: manifest key each one is the signature of. Measured from the rendered
 #: fragment for every shape rather than assumed:
@@ -1082,14 +1109,33 @@ def _method_signatures(text: str) -> dict:
 #: checked may be **hand-written**: a body returning ``Py_None`` after its own
 #: ``Py_INCREF`` implements the same shape as the ``Py_RETURN_NONE`` macro jm
 #: emits, and flagging it would be a false positive on correct code.
+#:
+#: Every shape is advisory (gh-2581): a binding returning another shape than
+#: the ``.pyi`` says fails at the caller's first use of the result, loudly.
+#: The raise below is the exception -- it is a declared refusal.
 _RETURN_SHAPE_MARKERS = {
-    "Py_RETURN_NONE": ("Py_RETURN_NONE", "Py_None"),
-    "PyStructSequence_New": ("PyStructSequence_New",),
-    "PyArray_NewFromDescr": (
-        "PyArray_NewFromDescr",
-        "PyArray_SimpleNewFromDescr",
+    "Py_RETURN_NONE": _Feature(
+        ("Py_RETURN_NONE", "Py_None"),
+        "the manifest's status_return result is None, and this fragment "
+        "returns the status",
+        safety=False,
     ),
-    "PyList_New": ("PyList_New",),
+    "PyStructSequence_New": _Feature(
+        ("PyStructSequence_New",),
+        "the manifest's single result is one record, absent here",
+        safety=False,
+    ),
+    "PyArray_NewFromDescr": _Feature(
+        ("PyArray_NewFromDescr", "PyArray_SimpleNewFromDescr"),
+        "the manifest's record_dtype result is a structured ndarray, "
+        "absent here",
+        safety=False,
+    ),
+    "PyList_New": _Feature(
+        ("PyList_New",),
+        "the manifest's result is a list of records, absent here",
+        safety=False,
+    ),
 }
 
 #: The error-translation axis, kept separate because it cannot be a plain
@@ -1101,6 +1147,16 @@ _RETURN_SHAPE_MARKERS = {
 #: uses the guard's spelling more than once.
 _RAISE_MARKER = "raises"
 _RAISE_SPELLINGS = ("PyErr_Format", "PyErr_SetObject", "PyErr_SetFromErrno")
+#: Its row in the shape table: no spellings (`_raises` reads it), and safety
+#: -- the manifest declares a refusal (`status_return`, `error_negative`),
+#: and a fragment without the raise hands the failure back as a value.
+_RETURN_SHAPE_MARKERS[_RAISE_MARKER] = _Feature(
+    (),
+    "the manifest declares a refusal for this result (status_return or "
+    "error_negative) and this fragment does not raise it, so a failed "
+    "call returns its code as a value",
+    safety=True,
+)
 
 
 def _raises(code: str) -> bool:
@@ -1258,22 +1314,6 @@ _RECORDS_CAPACITY_RE = re.compile(
 )
 
 
-class _Feature(NamedTuple):
-    """One declared-feature marker: how to see it, and what to say.
-
-    The sentence travels WITH the spellings rather than being composed at
-    the report site, because the two can disagree -- and did. Every marker
-    was reported as "the manifest declares <label>", which is true of
-    `strict` and `releases` and false of an `out=` guard: that one is jm's
-    own, and a fragment lacking it predates it rather than contradicting a
-    manifest. doppler was sent looking for a `strict` key that was not in
-    the file (gh-1432).
-    """
-
-    spellings: tuple
-    why: str
-
-
 #: Constructs a DECLARED FEATURE puts in a wrapper, which the three axes
 #: above cannot see: `status_errors`, `strict` and `releases` all leave the
 #: METH flags, the PyArg format and the return shape identical while
@@ -1298,6 +1338,8 @@ _FEATURE_MARKERS = {
         ("Py_BEGIN_ALLOW_THREADS", "PyEval_SaveThread"),
         "the manifest declares nogil and this fragment calls the kernel "
         "holding the GIL, so no other thread runs while it does",
+        # Advisory (gh-2581): holding the GIL is slower, never unsafe.
+        safety=False,
     ),
     # gh-2272: jm's own guard, which a fragment rendered before it lacks --
     # including one that does release the GIL. Named for its consequence:
@@ -1307,17 +1349,22 @@ _FEATURE_MARKERS = {
         "the manifest declares nogil and this fragment does not count the "
         "released call, so a close()/destroy() on another thread frees the "
         "state under it (gh-2272); delete the fragment and re-run apply",
+        safety=True,
     ),
     "teardown-waits": _Feature(
         ("jm_inflight_wait",),
         "this object releases the GIL and this fragment's teardown frees "
         "without waiting for a call still running (gh-2272); delete the "
         "fragment and re-run apply",
+        safety=True,
     ),
     # gh-1426 A: the record a release defaults its count from.
     "borrow-release": _Feature(
         ("_jm_borrowed",),
         "the manifest declares a borrow release, absent here",
+        # Safety (gh-2581): without the record a bare release frees a count
+        # nobody borrowed -- the old hand-written body consumed 0 silently.
+        safety=True,
     ),
     # gh-1426 B: a strict input is REFUSED rather than converted. The
     # contiguity test is the marker -- but only once the `out=` guard's
@@ -1329,6 +1376,11 @@ _FEATURE_MARKERS = {
         ("PyArray_IS_C_CONTIGUOUS",),
         "the manifest declares strict, so the input is refused rather "
         "than converted; this fragment converts it",
+        # Safety (gh-2581): a refusal the manifest declares. Converted, a
+        # wrong dtype or rank reaches the kernel as a silent cast or a
+        # flattened copy -- and the refusal's raise is what the shape axis
+        # would otherwise name as a missing `raises`.
+        safety=True,
     ),
     # gh-1432 / doppler#1440: NOT a manifest declaration -- jm's own
     # `out=` guard, which a fragment rendered before gh-581's contiguity
@@ -1338,6 +1390,7 @@ _FEATURE_MARKERS = {
         (_OUT_CONTIG_RE,),
         "jm's out= guard tests C-contiguity and this fragment does not, "
         "so a strided out= is filled through a copy and silently ignored",
+        safety=True,
     ),
     # gh-1710: NOT a manifest declaration either -- jm's own guard, which a
     # fragment rendered before it lacks. Named for its consequence.
@@ -1346,6 +1399,7 @@ _FEATURE_MARKERS = {
         "jm's output-size guard refuses a size past NPY_MAX_INTP and this "
         "fragment does not, so an oversized result wraps to a negative "
         "dimension",
+        safety=True,
     ),
     # gh-1734: gh-1700's converter, jm's own like the two guards above --
     # a fragment rendered before it converts its array arguments with a
@@ -1356,6 +1410,7 @@ _FEATURE_MARKERS = {
         "jm converts a uint8_t[] / int8_t[] argument through jm_array_arg "
         "and this fragment does not, so a bytes, bytearray or memoryview "
         "is parsed as text rather than read as its bytes",
+        safety=True,
     ),
     # gh-2144: jm's own guard as well -- a fragment rendered before it casts
     # an integer argument to its C type with no range test. Named for its
@@ -1365,6 +1420,7 @@ _FEATURE_MARKERS = {
         "jm refuses an integer argument outside its C type's range and "
         "this fragment does not, so an out-of-range value wraps silently "
         "(an int8_t given 300 arrives as 44)",
+        safety=True,
     ),
     # gh-1716: jm's own guard, the read-side twin of the output-size one
     # -- a fragment rendered before it trusts the count its kernel returns.
@@ -1374,6 +1430,7 @@ _FEATURE_MARKERS = {
         "jm refuses a count the kernel returns past the buffer it was "
         "given and this fragment does not, so an overrunning kernel's "
         "result is shaped past its allocation",
+        safety=True,
     ),
     # gh-1756: a manifest declaration this time -- a param's `str_hint`,
     # which a fragment rendered before it never passes. gh-1761: an array
@@ -1385,6 +1442,7 @@ _FEATURE_MARKERS = {
         "the manifest declares a str_hint on an array param or state "
         "field and this fragment does not pass it to jm_array_arg, so a "
         "str is converted by numpy rather than refused with the hint",
+        safety=True,
     ),
     # gh-2012: a manifest declaration -- `error_negative` over a signed
     # `count_type`, or `error_sentinel` -- added to a variable_output method
@@ -1398,6 +1456,7 @@ _FEATURE_MARKERS = {
         "this fragment does not test it, so a refusal is not the declared "
         "error: a variable_output count reaches the overflow guard as "
         "RuntimeError, and an out= method's count returns as an int",
+        safety=True,
     ),
     # gh-2184: not a manifest key -- the AUTHOR's `<c>_<m>_max_out`, declared
     # in the sacred header after the fragment was rendered. Named for its
@@ -1407,6 +1466,7 @@ _FEATURE_MARKERS = {
         "the header declares this method's <name>_max_out capacity and "
         "this fragment does not ask it, so a call returns at most the "
         "fixed max_results records and drops the rest",
+        safety=True,
     ),
     # gh-2204: a manifest declaration -- `consumed_fn`, added to a
     # list-of-records method after its sacred fragment was rendered. Named
@@ -1416,6 +1476,7 @@ _FEATURE_MARKERS = {
         "the manifest declares consumed_fn and this fragment calls the "
         "kernel once, so the input it leaves when its result buffer fills "
         "is never offered and those records are lost",
+        safety=True,
     ),
     # gh-2327: a manifest declaration -- `retain` on a capsule param, added
     # after its sacred fragment was rendered. Named for its consequence,
@@ -1426,6 +1487,7 @@ _FEATURE_MARKERS = {
         "does not keep its owner, so the object passed can be freed while "
         "the kernel still holds its pointer (gh-2327); delete the fragment "
         "and re-run apply",
+        safety=True,
     ),
     # gh-2360: a manifest declaration -- `required = true` on a capsule
     # param, added after its sacred fragment was rendered. Named for its
@@ -1436,6 +1498,7 @@ _FEATURE_MARKERS = {
         "this fragment passes None to the kernel as NULL, so the call "
         "fails in C instead of raising TypeError at the binding; delete "
         "the fragment and re-run apply",
+        safety=True,
     ),
     # gh-2187: jm's own teardown for an object that lends views, which parks
     # the state for tp_dealloc. A teardown jm wrote before the object lent is
@@ -1447,8 +1510,40 @@ _FEATURE_MARKERS = {
         "this object lends views and this teardown frees the state at "
         "once, so a view read after destroy() reads freed memory "
         "(gh-2187)",
+        safety=True,
+    ),
+    # gh-1432: a `status_errors` row, read per ROW by `_CASE_LABEL_RE`
+    # (labels ``case:<IDENT>``), so it has no spelling here. The sentence
+    # names the rows at the report site; this row is its severity. Safety
+    # (gh-2581): a status the table lacks is not raised as the exception the
+    # manifest declares for it.
+    "case": _Feature(
+        (),
+        "the manifest declares {cases}, absent here, so a status_errors "
+        "row's status is not raised as declared",
+        safety=True,
     ),
 }
+
+#: Every per-member marker `signature_drift_details` can name, shape axis and
+#: feature axis, in the one table both `apply`'s warning and `status`'s
+#: ``GUARD`` read their severity from (gh-2581). A ``case:<IDENT>`` or
+#: ``refusal-value:<v>`` label is its prefix's row.
+MARKERS = {**_RETURN_SHAPE_MARKERS, **_FEATURE_MARKERS}
+
+
+def marker(label: str) -> _Feature:
+    """The `MARKERS` row for *label*, a ``prefix:value`` label by its prefix.
+
+    >>> marker("output-size").safety
+    True
+    >>> marker("refusal-value:SIZE_MAX").safety
+    True
+    >>> marker("nogil").safety
+    False
+    """
+    return MARKERS[label.partition(":")[0]]
+
 
 #: A `case <IDENT>:` label. The rows of a `status_errors` table ARE its
 #: labels, so comparing the set catches a row added, removed or renamed --
@@ -1517,8 +1612,8 @@ def _method_return_shapes(text: str) -> dict:
         code = _code_mask(body) if body else ""
         found = {
             label
-            for label, spellings in _RETURN_SHAPE_MARKERS.items()
-            if any(s in code for s in spellings)
+            for label, feat in _RETURN_SHAPE_MARKERS.items()
+            if any(s in code for s in feat.spellings)
         }
         # gh-1710 / gh-1716 / gh-2144: jm's output-size, returned-count and
         # range guards are reported on the feature axis, so none is also
@@ -1570,60 +1665,121 @@ def signature_drift_details(existing: str, reference: str) -> "dict[str, str]":
                 f"{n}: binding {_show(ex[n])} vs manifest {_show(sig)}"
             )
 
-    # gh-815: the calling convention is only one of the two ways a member can
-    # stop matching the manifest. `status_return`, `error_negative`, `single`
-    # and `record_dtype` all leave METH flags and the PyArg format *identical*
-    # and change what comes back, so they sail past the comparison above —
-    # while the .pyi, regenerated from the same manifest, moves.
-    ex_shape = _method_return_shapes(existing)
-    ref_shape = _method_return_shapes(reference)
-    for n, markers in ref_shape.items():
-        missing = markers - ex_shape.get(n, frozenset())
-        if not missing:
-            continue
-        want = ", ".join(sorted(missing))
-        note = f"{n}: the manifest's result shape needs {want}, absent here"
+    for n, labels in sorted(_missing_markers(existing, reference).items()):
+        note = f"{n}: {'; '.join(_marker_whys(labels))}"
         details[n] = f"{details[n]}; {note}" if n in details else note
+    return details
 
-    # gh-1432: the fourth axis. `status_errors`, `strict` and `releases`
-    # change the body and NOTHING above -- same METH flags, same PyArg
-    # format, same return shape -- so a manifest edit after first render
-    # was silently absent from the fragment while `apply` reported the
-    # project already matched and `status --check` exited 0.
-    #
-    # Same direction as the two above, for the same reason: what the
-    # reference declares and the fragment lacks is a change not received;
-    # the converse is the author's body doing more, which is the point of
-    # a sacred fragment.
+
+def _missing_markers(existing: str, reference: str) -> "dict[str, set]":
+    """``{member: labels}`` the reference's body has and *existing*'s lacks.
+
+    The marker half of `signature_drift_details`, on both of its axes, read
+    once for the two readers that classify it -- that function and
+    `missing_guards` (gh-2581) -- so the GUARD a status reports and the
+    warning an apply prints cannot disagree about what is missing.
+
+    gh-815: the calling convention is only one of the ways a member can stop
+    matching the manifest. `status_return`, `error_negative`, `single` and
+    `record_dtype` leave METH flags and the PyArg format *identical* and
+    change what comes back, so they sail past the signature comparison --
+    while the .pyi, regenerated from the same manifest, moves.
+
+    gh-1432: the feature axis. `status_errors`, `strict` and `releases`
+    change the body and NOTHING above -- same METH flags, same PyArg format,
+    same return shape -- so a manifest edit after first render was silently
+    absent from the fragment while `apply` reported the project already
+    matched and `status --check` exited 0.
+
+    Same direction on both, for the reason `signature_drift_details` gives:
+    what the reference declares and the fragment lacks is a change not
+    received; the converse is the author's body doing more, which is the
+    point of a sacred fragment.
+    """
+    ex_shape = _method_return_shapes(existing)
     ex_feat = _method_feature_symbols(existing)
     ref_feat = _method_feature_symbols(reference)
+    out: dict = {}
+    for n, markers in _method_return_shapes(reference).items():
+        missing = set(markers - ex_shape.get(n, frozenset()))
+        if missing:
+            out[n] = missing
     for n, markers in ref_feat.items():
         missing = set(markers - ex_feat.get(n, frozenset()))
         # gh-2272: a body that holds the GIL has nothing to count; saying
         # so as well as "holding the GIL" names one fix twice.
         if "nogil" in missing:
             missing.discard("nogil-counted")
-        if not missing:
-            continue
-        # Each marker says why in its own words. Composing one sentence
-        # here made every finding read "the manifest declares <label>",
-        # which is false of a jm-owned guard -- and sent doppler looking
-        # for a `strict` key that no manifest in the report had.
-        cases = sorted(m[5:] for m in missing if m.startswith("case:"))
-        whys = list(
-            dict.fromkeys(
-                _FEATURE_MARKERS[m.partition(":")[0]].why
-                for m in sorted(missing)
-                if not m.startswith("case:")
-            )
+        if missing:
+            out.setdefault(n, set()).update(missing)
+    return out
+
+
+def _marker_whys(labels) -> list:
+    """The sentences for *labels*, each marker in its own words, in order.
+
+    Composing one sentence for every marker made each finding read "the
+    manifest declares <label>", which is false of a jm-owned guard -- and
+    sent doppler looking for a `strict` key that no manifest in the report
+    had. A shape is named by what the manifest's result needs; a
+    ``case:<IDENT>`` row by the rows, together.
+    """
+    shapes = sorted(m for m in labels if m in _RETURN_SHAPE_MARKERS)
+    cases = sorted(m[5:] for m in labels if m.startswith("case:"))
+    whys = []
+    if shapes:
+        whys.append(
+            f"the manifest's result shape needs {', '.join(shapes)}, "
+            "absent here"
         )
-        if cases:
-            whys.append(
-                f"the manifest declares {', '.join(cases)}, absent here"
-            )
-        note = f"{n}: {'; '.join(whys)}"
-        details[n] = f"{details[n]}; {note}" if n in details else note
-    return details
+    whys += dict.fromkeys(
+        marker(m).why
+        for m in sorted(labels)
+        if m not in _RETURN_SHAPE_MARKERS and not m.startswith("case:")
+    )
+    if cases:
+        whys.append(marker("case").why.format(cases=", ".join(cases)))
+    return whys
+
+
+def missing_guards(existing: str, reference: str) -> "dict[str, dict]":
+    """``{member: {label: why}}`` for each SAFETY marker *existing* lacks.
+
+    gh-2581. A sacred fragment rendered by an older jm keeps its body, so a
+    guard jm now emits -- the output-size check, a declared refusal, the
+    inflight count a released call needs -- can be missing indefinitely.
+    `signature_drift_details` names it beside every advisory difference;
+    this is the subset whose `MARKERS` row says ``safety``, which `status`
+    reports as ``GUARD`` and `--check` fails on, and which `apply`'s
+    warning says gates.
+
+    Only a member BOTH sides define: a member the fragment lacks entirely
+    is `apply`'s to add (`transplant_missing_bindings`), with its guards,
+    and `status` already counts that as STALE.
+
+    Parameters
+    ----------
+    existing : str
+        The fragment as it is on disk.
+    reference : str
+        jm's current render of it.
+
+    Returns
+    -------
+    dict
+        Member name to ``{label: sentence}``, labels as `MARKERS` keys them
+        (``refusal-value:SIZE_MAX``, ``case:EIO``). Empty when no guard is
+        missing.
+    """
+    present = set(_row_bodies(existing))
+    out: dict = {}
+    for n, labels in _missing_markers(existing, reference).items():
+        if n not in present:
+            continue
+        guards = sorted(m for m in labels if marker(m).safety)
+        if guards:
+            out[n] = {m: _marker_whys([m])[0] for m in guards}
+    return out
 
 
 def warn_signature_drift(rel, existing: str, reference: str) -> list:
@@ -1642,12 +1798,24 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
     made for a hand-edited ``impl`` body. Returns the drifted names (for
     tests); emits nothing when they agree, which is the overwhelmingly common
     case.
+
+    gh-2581: when what diverged includes a SAFETY marker (`missing_guards`),
+    the warning gates and says so -- `status --check` fails on it as
+    ``GUARD``. Otherwise it stays advisory.
     """
     details = signature_drift_details(existing, reference)
 
     if not details:
         return []
     drifted = sorted(details)
+    guards = missing_guards(existing, reference)
+    gate = (
+        f" Missing safety guard(s) in {', '.join(sorted(guards))}: this"
+        " fails `jm status --check` (GUARD, gh-2581) and cannot be allowed;"
+        " re-render the fragment as above, or add the guard by hand."
+        if guards
+        else ""
+    )
     _report.warn(
         f"{rel}: binding no longer matches the manifest"
         f" [{'; '.join(details[n] for n in drifted)}]. A sacred fragment only"
@@ -1655,12 +1823,13 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
         " written while the .pyi moves — the stub now documents behaviour the"
         f" extension does not have. Delete {rel} and re-run"
         " `just-makeit apply` to regenerate it (any hand-written body in it is"
-        " lost), or edit the binding to match.",
-        # Advisory: `jm status` reports these fragments as unreconciled and
-        # says outright they are not counted as drift, because no jm command
-        # clears them — the remaining difference is one only the author can
-        # settle.
-        gates=False,
+        f" lost), or edit the binding to match.{gate}",
+        # Advisory unless a guard is missing: `jm status` reports these
+        # fragments as unreconciled and does not count them, because no jm
+        # command clears them -- the difference is one only the author can
+        # settle. A missing guard is one the author cannot mean (gh-2581),
+        # so it reaches `drift_count` as GUARD, and the mark says so.
+        gates=bool(guards),
     )
     return drifted
 

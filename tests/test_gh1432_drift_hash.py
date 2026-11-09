@@ -145,11 +145,12 @@ class TestAnEditedFeatureIsReported:
         assert "refused rather than converted" in out, out
 
     def test_status_check_is_not_the_reporter(self, tmp_path):
-        """`status` surfaces it; the drift itself is advisory.
+        """`status` surfaces it, by name.
 
-        No jm command clears a sacred fragment, so this stays a report
-        rather than a gate -- the remaining difference is one only the
-        author can settle, which is what `warn_signature_drift` says.
+        No jm command clears a sacred fragment, so the difference is one
+        only the author can settle. A `status_errors` row is a declared
+        refusal, though, so since gh-2581 a missing one also gates as
+        `GUARD` -- `tests/test_gh2581_missing_guard_gates.py` holds that.
         """
         proj = _project(tmp_path)
         _borrow_with_table(proj)

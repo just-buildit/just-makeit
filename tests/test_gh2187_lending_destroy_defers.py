@@ -366,6 +366,14 @@ def _jm(root: Path, *argv: str) -> str:
     return " ".join((r.stdout + r.stderr).split())
 
 
+def _guarded(root: Path) -> str:
+    """`jm status` over a teardown missing its deferred free: it gates
+    (gh-2581), so this expects exit 1 where `_jm` expects 0."""
+    r = run_cli("status", cwd=root)
+    assert r.returncode == 1, (r.stdout + r.stderr)[-3000:]
+    return " ".join((r.stdout + r.stderr).split())
+
+
 def _module_ring(tmp_path: Path) -> Path:
     """``ring`` in module ``mod``, lending nothing when it is written."""
     root = tmp_path / "p"
@@ -453,10 +461,25 @@ class TestAModuleObjectThatStartsLending:
         # The author's stays; the one jm wrote beside it is still jm's.
         assert _parks(root) == ["Ring_exit"], _teardown(root)
         for argv in (("apply",), ("status",)):
-            said = _jm(root, *argv)
+            said = _jm(root, *argv) if argv == ("apply",) else _guarded(root)
             assert "destroy: this object lends views" in said, (argv, said)
             assert _FREED_UNDER in said, (argv, said)
             assert "__exit__: this object lends" not in said, (argv, said)
+
+    def test_the_kept_teardown_gates_status_check(self, tmp_path):
+        """A deferred free is a safety guard (gh-2581): the kept teardown
+        frees under a live view, so `status --check` fails on it."""
+        root = _module_ring(tmp_path)
+        frag = _fragment(root)
+        text = frag.read_text()
+        head = (
+            "Ring_destroy(RingObject *self, PyObject *Py_UNUSED(ignored))\n{\n"
+        )
+        frag.write_text(text.replace(head, head + "    (void)self;\n"))
+        _jm(root, *_BORROW)
+        r = run_cli("status", "--check", cwd=root)
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "GUARD (" in r.stdout and "deferred-free" in r.stdout, r.stdout
 
     def test_apply_never_parks_into_a_field_the_struct_lacks(self, tmp_path):
         """A manifest edited by hand to lend reaches `jm apply`, which never
