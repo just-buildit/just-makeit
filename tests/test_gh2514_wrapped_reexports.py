@@ -464,3 +464,49 @@ def test_a_pep723_metadata_block_is_never_wrapped() -> None:
         "# ///\n"
     )
     assert reflow_py(meta) == meta
+
+
+@pytest.mark.parametrize(
+    "exports, verb",
+    [(True, "apply"), (False, "apply"), (True, "function")],
+    ids=["module", "empty", "jm-function"],
+)
+def test_an_older_module_header_is_wrapped(
+    tmp_path: Path, exports: bool, verb: str
+) -> None:
+    """A module ``__init__.py`` is a merge target, so its header comment is
+    written once. One an older jm wrote on one line past 79 columns is
+    wrapped by the next apply -- in a module with no export yet too -- or
+    the next verb that merges the file, and an author's long comment beside
+    it is left as written."""
+    mod = "guarded_functions_module"
+    calls = ["new p", f"module {mod}"]
+    if exports:
+        calls.append(
+            f"function {FNS[0]} --module {mod} --param x:double"
+            " --return-type double"
+        )
+    root = _scaffold(tmp_path, calls)
+    init = root / "src/p" / mod / "__init__.py"
+    jm = init.read_text(encoding="utf-8")
+    wrapped = (
+        f"# {mod}/__init__.py — re-export all types from the C\n# extension.\n"
+    )
+    assert jm.startswith(wrapped), jm
+    mine = "# " + "the author's own comment, long on purpose " * 2 + "\n"
+    older = jm.replace(wrapped, wrapped.replace("C\n# ", "C ")) + mine
+    init.write_text(older, encoding="utf-8")
+    if verb == "apply":
+        _jm(root, "apply")
+        assert init.read_text(encoding="utf-8") == jm + mine
+    else:
+        _jm(
+            root,
+            *shlex.split(
+                f"function {FNS[1]} --module {mod} --param x:double"
+                " --return-type double"
+            ),
+        )
+        text = init.read_text(encoding="utf-8")
+        assert text.startswith(wrapped) and text.endswith(mine), text
+    _converged(root)

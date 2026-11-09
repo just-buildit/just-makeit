@@ -9,4 +9,7 @@
     comma. A description becomes a `" ".join([...])` of its words. The
     benchmark puts its path alone on its own line. Each is a layout ruff's
     formatter keeps at both 79 and its default 88. Short names render
-    exactly as before.
+    exactly as before. An existing project's long lines are rewritten on
+    its next `jm apply`. That includes a module `__init__.py` header, which
+    jm writes only once: it is wrapped when the line is exactly the one jm
+    wrote. An author's own comments are never touched.
