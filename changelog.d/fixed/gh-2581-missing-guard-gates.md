@@ -19,4 +19,6 @@
     warning is now marked `!` when it names a guard. **On upgrade this can
     turn a downstream drift gate red: each finding is a guard the binding
     does not have.** Re-render the fragment (`jm adopt`, or delete it and
-    re-run `jm apply`) or add the guard by hand.
+    re-run `jm apply`), or write the guard in jm's own form, which `GUARD`
+    shows; an equivalent spelled another way is not recognised yet
+    (gh-2589).

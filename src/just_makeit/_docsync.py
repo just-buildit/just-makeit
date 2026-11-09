@@ -1089,6 +1089,10 @@ class _Feature(NamedTuple):
     spellings: tuple
     why: str
     safety: bool
+    #: jm's own spelling of a safety guard, as ``GUARD`` shows it: what
+    #: clears the finding, since the marker recognises only this form
+    #: (gh-2581; an equivalent written another way is gh-2589).
+    form: str = ""
 
 
 #: The jm-emitted constructs that decide what a binding hands back, and the
@@ -1156,6 +1160,7 @@ _RETURN_SHAPE_MARKERS[_RAISE_MARKER] = _Feature(
     "error_negative) and this fragment does not raise it, so a failed "
     "call returns its code as a value",
     safety=True,
+    form="PyErr_Format(<error>, ...) on the declared failure",
 )
 
 
@@ -1350,6 +1355,8 @@ _FEATURE_MARKERS = {
         "released call, so a close()/destroy() on another thread frees the "
         "state under it (gh-2272); delete the fragment and re-run apply",
         safety=True,
+        form="jm_inflight_enter(&self->_jm_inflight) before "
+        "Py_BEGIN_ALLOW_THREADS, jm_inflight_leave(...) after",
     ),
     "teardown-waits": _Feature(
         ("jm_inflight_wait",),
@@ -1357,6 +1364,8 @@ _FEATURE_MARKERS = {
         "without waiting for a call still running (gh-2272); delete the "
         "fragment and re-run apply",
         safety=True,
+        form="if (jm_inflight_wait(&self->_jm_inflight) < 0) {...} "
+        "before the free",
     ),
     # gh-1426 A: the record a release defaults its count from.
     "borrow-release": _Feature(
@@ -1365,6 +1374,8 @@ _FEATURE_MARKERS = {
         # Safety (gh-2581): without the record a bare release frees a count
         # nobody borrowed -- the old hand-written body consumed 0 silently.
         safety=True,
+        form="n = self->_jm_borrowed for an omitted count; "
+        "self->_jm_borrowed = 0;",
     ),
     # gh-1426 B: a strict input is REFUSED rather than converted. The
     # contiguity test is the marker -- but only once the `out=` guard's
@@ -1381,6 +1392,8 @@ _FEATURE_MARKERS = {
         # flattened copy -- and the refusal's raise is what the shape axis
         # would otherwise name as a missing `raises`.
         safety=True,
+        form="if (!PyArray_IS_C_CONTIGUOUS((PyArrayObject *)<p>_obj) "
+        "...) {...refuse...}",
     ),
     # gh-1432 / doppler#1440: NOT a manifest declaration -- jm's own
     # `out=` guard, which a fragment rendered before gh-581's contiguity
@@ -1391,6 +1404,8 @@ _FEATURE_MARKERS = {
         "jm's out= guard tests C-contiguity and this fragment does not, "
         "so a strided out= is filled through a copy and silently ignored",
         safety=True,
+        form="PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj) in "
+        "the out= test",
     ),
     # gh-1710: NOT a manifest declaration either -- jm's own guard, which a
     # fragment rendered before it lacks. Named for its consequence.
@@ -1400,6 +1415,7 @@ _FEATURE_MARKERS = {
         "fragment does not, so an oversized result wraps to a negative "
         "dimension",
         safety=True,
+        form="if (<x>_need > (size_t)NPY_MAX_INTP) {...}",
     ),
     # gh-1734: gh-1700's converter, jm's own like the two guards above --
     # a fragment rendered before it converts its array arguments with a
@@ -1411,6 +1427,7 @@ _FEATURE_MARKERS = {
         "and this fragment does not, so a bytes, bytearray or memoryview "
         "is parsed as text rather than read as its bytes",
         safety=True,
+        form='jm_array_arg(<p>_obj, NPY_UINT8, <flags>, "<p>")',
     ),
     # gh-2144: jm's own guard as well -- a fragment rendered before it casts
     # an integer argument to its C type with no range test. Named for its
@@ -1421,6 +1438,7 @@ _FEATURE_MARKERS = {
         "this fragment does not, so an out-of-range value wraps silently "
         "(an int8_t given 300 arrives as 44)",
         safety=True,
+        form="if (<p>_raw > (<type>)<T>_MAX ...) {...}",
     ),
     # gh-1716: jm's own guard, the read-side twin of the output-size one
     # -- a fragment rendered before it trusts the count its kernel returns.
@@ -1431,6 +1449,7 @@ _FEATURE_MARKERS = {
         "given and this fragment does not, so an overrunning kernel's "
         "result is shaped past its allocation",
         safety=True,
+        form="if ((size_t)(n_out) > (size_t)(_cap)) {...}",
     ),
     # gh-1756: a manifest declaration this time -- a param's `str_hint`,
     # which a fragment rendered before it never passes. gh-1761: an array
@@ -1443,6 +1462,7 @@ _FEATURE_MARKERS = {
         "field and this fragment does not pass it to jm_array_arg, so a "
         "str is converted by numpy rather than refused with the hint",
         safety=True,
+        form='jm_array_arg_hint(<p>_obj, ..., "<p>", "<hint>")',
     ),
     # gh-2012: a manifest declaration -- `error_negative` over a signed
     # `count_type`, or `error_sentinel` -- added to a variable_output method
@@ -1457,6 +1477,7 @@ _FEATURE_MARKERS = {
         "error: a variable_output count reaches the overflow guard as "
         "RuntimeError, and an out= method's count returns as an int",
         safety=True,
+        form="if (n_out == <sentinel>) {...} or if (_rc < 0) {...}",
     ),
     # gh-2184: not a manifest key -- the AUTHOR's `<c>_<m>_max_out`, declared
     # in the sacred header after the fragment was rendered. Named for its
@@ -1467,6 +1488,7 @@ _FEATURE_MARKERS = {
         "this fragment does not ask it, so a call returns at most the "
         "fixed max_results records and drops the rest",
         safety=True,
+        form="<c>_<m>_max_out(...) sizing the PyList_New",
     ),
     # gh-2204: a manifest declaration -- `consumed_fn`, added to a
     # list-of-records method after its sacred fragment was rendered. Named
@@ -1477,6 +1499,7 @@ _FEATURE_MARKERS = {
         "kernel once, so the input it leaves when its result buffer fills "
         "is never offered and those records are lost",
         safety=True,
+        form="if (_consumed > ...) {...} re-offering the input",
     ),
     # gh-2327: a manifest declaration -- `retain` on a capsule param, added
     # after its sacred fragment was rendered. Named for its consequence,
@@ -1488,6 +1511,7 @@ _FEATURE_MARKERS = {
         "the kernel still holds its pointer (gh-2327); delete the fragment "
         "and re-run apply",
         safety=True,
+        form="a _jm_retain_<p> owner field, swapped in after the call",
     ),
     # gh-2360: a manifest declaration -- `required = true` on a capsule
     # param, added after its sacred fragment was rendered. Named for its
@@ -1499,6 +1523,7 @@ _FEATURE_MARKERS = {
         "fails in C instead of raising TypeError at the binding; delete "
         "the fragment and re-run apply",
         safety=True,
+        form="if (<p>_obj == Py_None || <p>_obj == NULL) {...}",
     ),
     # gh-2187: jm's own teardown for an object that lends views, which parks
     # the state for tp_dealloc. A teardown jm wrote before the object lent is
@@ -1511,6 +1536,7 @@ _FEATURE_MARKERS = {
         "once, so a view read after destroy() reads freed memory "
         "(gh-2187)",
         safety=True,
+        form="park the state in self->_jm_parked for tp_dealloc",
     ),
     # gh-1432: a `status_errors` row, read per ROW by `_CASE_LABEL_RE`
     # (labels ``case:<IDENT>``), so it has no spelling here. The sentence
@@ -1522,6 +1548,7 @@ _FEATURE_MARKERS = {
         "the manifest declares {cases}, absent here, so a status_errors "
         "row's status is not raised as declared",
         safety=True,
+        form="case <STATUS>: in the status switch",
     ),
 }
 
@@ -1704,12 +1731,20 @@ def _missing_markers(existing: str, reference: str) -> "dict[str, set]":
         missing = set(markers - ex_shape.get(n, frozenset()))
         if missing:
             out[n] = missing
+    # gh-2581 review: a teardown has nothing to wait for unless some member
+    # of THIS fragment releases the GIL. The wait sits on `destroy` and
+    # `__exit__`, not on the member that releases, so the per-member rule
+    # below cannot see it: a fragment rendered before gh-2259, holding the
+    # GIL everywhere, was told twice that "this object releases the GIL".
+    releases = any("nogil" in m for m in ex_feat.values())
     for n, markers in ref_feat.items():
         missing = set(markers - ex_feat.get(n, frozenset()))
         # gh-2272: a body that holds the GIL has nothing to count; saying
         # so as well as "holding the GIL" names one fix twice.
         if "nogil" in missing:
             missing.discard("nogil-counted")
+        if not releases:
+            missing.discard("teardown-waits")
         if missing:
             out.setdefault(n, set()).update(missing)
     return out
@@ -1812,7 +1847,8 @@ def warn_signature_drift(rel, existing: str, reference: str) -> list:
     gate = (
         f" Missing safety guard(s) in {', '.join(sorted(guards))}: this"
         " fails `jm status --check` (GUARD, gh-2581) and cannot be allowed;"
-        " re-render the fragment as above, or add the guard by hand."
+        " re-render the fragment as above, or write the guard in jm's own"
+        " form, which `jm status` shows."
         if guards
         else ""
     )
