@@ -1,6 +1,6 @@
 """Benchmark for <<Component>>.
 
-Run standalone:  python src/<<package>>/<<module>>/benchmarks/bench_<<component>>.py
+<<bench_run>>
 Or via make:     make bench
 """
 

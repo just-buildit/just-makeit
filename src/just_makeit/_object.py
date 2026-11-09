@@ -3283,14 +3283,19 @@ def _regenerate_module_now(
         # fills -- the one path for a module with members and one without
         # (gh-2070). With none, the merge writes no import line, since an
         # empty `from .<leaf> import` is a SyntaxError.
-        base = R.render(
-            R.MODULE_INIT_PY_EMPTY,
-            Ctx.make_module_ctx(
-                module,
-                pkg,
-                C.module_package_resolved(cfg, module),
-                C.module_doc(cfg, module),
-            ),
+        # gh-2514: its header comment names the module; a long one wraps.
+        from ._pyfmt import reflow_py
+
+        base = reflow_py(
+            R.render(
+                R.MODULE_INIT_PY_EMPTY,
+                Ctx.make_module_ctx(
+                    module,
+                    pkg,
+                    C.module_package_resolved(cfg, module),
+                    C.module_doc(cfg, module),
+                ),
+            )
         )
     # The import line in __init__.py is `from .<leaf> import ...`, so the merge
     # must match/emit against the leaf, not the dotted id.
@@ -3948,7 +3953,15 @@ def run(
     # override when set, else the module's own pypath as a dotted import path.
     # Without a package override this is exactly the module id (flat or
     # dotted), so unpackaged modules render byte-identically.
-    _py_ctx = {**ctx, "module": class_import_path("", _out_pkg)}
+    _py_ctx = {
+        **ctx,
+        "module": class_import_path("", _out_pkg),
+        # gh-2514: the benchmark's own path, held to 79 columns.
+        "bench_run": R.bench_run(
+            f"src/{pkg}/{_out_pkg}/benchmarks/bench_{comp}.py",
+            C.is_pytest_benchmark(cfg),
+        ),
+    }
 
     def r_py(tmpl):
         return R.render_scaffold_py(tmpl, _py_ctx)

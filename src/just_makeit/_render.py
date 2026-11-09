@@ -618,6 +618,37 @@ def unfilled_slots(text: str) -> "set[str]":
 _RENDER_SWEEPS = 8
 
 
+def bench_run(path: str, pytest_benchmark: bool) -> str:
+    """The ``Run`` line of a scaffolded Python benchmark's docstring.
+
+    One line while it fits the column target. Past it -- a long component
+    or module name (gh-2514) -- the command is spelled with ``FILE`` and the
+    path goes alone on an indented line of its own. A line that is one
+    whitespace-free word is the one shape ruff's E501 forgives at any length
+    (measured with jm's pinned ruff), since nothing could shorten it; the
+    path is that word, so the docstring fits for any name, and the command
+    is still one copy away.
+
+    >>> bench_run("src/p/benchmarks/bench_w.py", False)
+    'Run standalone:  python src/p/benchmarks/bench_w.py'
+    >>> print(bench_run("src/p/" + "x" * 60 + ".py", True))
+    Run, from the project root:  pytest --benchmark-only FILE, where FILE is
+    <BLANKLINE>
+        src/p/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.py
+    """
+    from ._docstring import STUB_TARGET_WIDTH
+
+    if pytest_benchmark:
+        line = f"Run: pytest {path} --benchmark-only"
+        lead = "Run, from the project root:  pytest --benchmark-only FILE"
+    else:
+        line = f"Run standalone:  python {path}"
+        lead = "Run standalone, from the project root:  python FILE"
+    if len(line) <= STUB_TARGET_WIDTH:
+        return line
+    return f"{lead}, where FILE is\n\n    {path}"
+
+
 def render_scaffold_py(template: str, ctx: dict) -> str:
     """Render a scaffolded Python test or benchmark (gh-1478).
 
@@ -645,7 +676,7 @@ def render_scaffold_py(template: str, ctx: dict) -> str:
     from p import G
     G()
     """
-    from ._pyfmt import py_blank_lines
+    from ._pyfmt import py_blank_lines, reflow_py
 
     text = render(template, ctx)
     for line, name in (
@@ -668,7 +699,8 @@ def render_scaffold_py(template: str, ctx: dict) -> str:
         without = "\n".join(lines)
         if not re.search(rf"\b{name}\.", without):
             text = without
-    return py_blank_lines(text)
+    # gh-2514: and a long class or path name held to 79 columns.
+    return py_blank_lines(reflow_py(text))
 
 
 def render(template: str, ctx: dict) -> str:

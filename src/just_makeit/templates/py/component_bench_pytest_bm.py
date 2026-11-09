@@ -1,6 +1,6 @@
 """Benchmark for <<Component>>.
 
-Run: pytest src/<<package>>/benchmarks/bench_<<component>>.py --benchmark-only
+<<bench_run>>
 """
 
 import numpy as np
