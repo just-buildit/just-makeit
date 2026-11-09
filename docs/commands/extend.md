@@ -555,8 +555,9 @@ ValueError: set_decim: decim must be in 1..n
 
 The header, the `_core.c` stub, the binding and the bench all carry the
 parameter. On an existing method your `_core.c` definition is yours to change;
-a module object's header only gains declarations on `apply`, so `jm status`
-reports `WHY` until its prototype takes the parameter too.
+a module object's header only gains declarations on `apply`, so `apply` warns
+for each method whose prototype lacks the parameter, and `jm status` reports
+`WHY` until the declaration and its `_core.c` definition take it too.
 
 #### Naming the synthesized count
 
