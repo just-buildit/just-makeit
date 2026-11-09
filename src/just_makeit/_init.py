@@ -1924,6 +1924,9 @@ def run(
         if C.is_pytest_benchmark(cfg)
         else R.COMPONENT_BENCH_PY
     )
+    ctx["bench_run"] = R.bench_run(
+        f"src/{pkg}/benchmarks/bench_{comp}.py", C.is_pytest_benchmark(cfg)
+    )
     init_py_tmpl = R.PACKAGE_INIT_PY
 
     # C headers. Object creation is create-only (the verb errors on a
