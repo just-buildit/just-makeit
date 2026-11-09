@@ -579,6 +579,39 @@ def _tail(params: str) -> "tuple[bool, bool]":
     return status, why
 
 
+def tail_remedy(declared: str, rendered: str) -> str:
+    """The edit that brings a header's method declaration to the manifest's
+    trailing ``int *status`` / ``const char **why`` (gh-2584).
+
+    Named by what actually differs, in `append_tail`'s order, rather than
+    a sentence that always says ``why`` first: a missing ``status`` beside
+    a ``why`` the header already has goes BEFORE it, not last.
+
+    Examples
+    --------
+    >>> tail_remedy("s_t *s, const char **why",
+    ...             "s_t *s, int *status, const char **why")
+    'Add `int *status` before `const char **why` in'
+    >>> tail_remedy("s_t *s", "s_t *s, int *status, const char **why")
+    'Add `int *status, const char **why` last to'
+    >>> tail_remedy("s_t *s", "s_t *s, const char **why")
+    'Add `const char **why` last to'
+    >>> tail_remedy("s_t *s, int *status", "s_t *s")
+    'Remove `int *status` from'
+    """
+    from ._context._diagnostics import STATUS_C_PARAM, WHY_C_PARAM
+
+    have, want = _tail(declared), _tail(rendered)
+    names = (STATUS_C_PARAM, WHY_C_PARAM)
+    add = [n for n, h, w in zip(names, have, want) if w and not h]
+    drop = [n for n, h, w in zip(names, have, want) if h and not w]
+    if add == [STATUS_C_PARAM] and have[1]:
+        return f"Add `{STATUS_C_PARAM}` before `{WHY_C_PARAM}` in"
+    if add:
+        return f"Add `{', '.join(add)}` last to"
+    return f"Remove `{', '.join(drop)}` from"
+
+
 def why_drift(root: Path, tree: Path, cfg: dict) -> "list[CtorDrift]":
     """Every method declaration whose trailing ``why`` -- or ``int *status``
     ahead of it (gh-2584) -- the header and the manifest disagree about

@@ -15,8 +15,10 @@
     the bench, the `.pyi` `Raises` rows and `jm script` agree. Refused at
     load: no count refusal, beside `status_return` (and so on a
     `kind = "handle"` method, whose refusal is its returned status), a
-    value that is not `true`/`false`, and beside a parameter named
-    `status`. A module object's header lacking the parameter is `jm status`'s
-    `WHY` finding and an `apply` warning, as for `why`. The parameter lands
+    value that is not `true`/`false`, beside a parameter named `status`,
+    and with no `status_errors` row for the code to pick. A module object's header lacking the parameter is `jm status`'s
+    `WHY` finding and an `apply` warning, as for `why`; the warning names
+    what to add and where, `int *status` going before a `why` already
+    there. The parameter lands
     through `_diagnostics.append_tail`, one call over gh-2574's
     `append_why`, and the rows render through `_borrow.status_switch_c`.

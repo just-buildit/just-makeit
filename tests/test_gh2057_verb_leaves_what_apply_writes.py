@@ -710,7 +710,8 @@ CASES: "dict[str, dict[str, Case]]" = {
         "status-out": _case(
             "method", "o", "m2", "{M}", "--arg-type", "float[]",
             "--return-type", "float", "--variable-output",
-            "--error-sentinel", "SIZE_MAX", "--status-out", "--why"),
+            "--error-sentinel", "SIZE_MAX", "--status-out", "--why",
+            "--status-error", "O_E_NOMEM:MemoryError"),
         "fn": _case("method", "o", "m2", "{M}", "--arg-type", "double",
                     "--return-type", "double", "--fn", "o_custom_m2",
                     only=BASE),

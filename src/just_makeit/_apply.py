@@ -4850,10 +4850,10 @@ def _apply_manifest(
                     " the binding does not compile against it\n"
                     f"    header:   {_d.fn}({_d.declared})\n"
                     f"    manifest: {_d.fn}({_d.rendered})\n"
-                    "  Add `const char **why` last to the declaration and"
-                    " its _core.c definition, with `int *status` before it"
-                    " under `status_out` (gh-2584), or drop the key; see"
-                    " `jm status` (WHY).",
+                    # gh-2584: what differs, in `append_tail`'s order.
+                    f"  {_ctorsig.tail_remedy(_d.declared, _d.rendered)}"
+                    " the declaration and its _core.c definition (or"
+                    " change the manifest key); see `jm status` (WHY).",
                     # `jm status --check` counts it (WHY).
                     gates=True,
                 )
