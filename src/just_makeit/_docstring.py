@@ -2075,12 +2075,17 @@ def reconcile_param_docs(block: str, decl: str, indent: str = "") -> str:
             return f"{indent} * @param why  {WHY_PARAM_DOC}"
         return f"{indent} * @param {n}"
 
+    # A group's lines go out once, at its first surviving name. Compared by
+    # identity against the groups already out, never by `id()` of a list
+    # that may have been freed and its id reused.
     rebuilt: list[str] = []
-    emitted: set[int] = set()  # a group's lines go out once, at its first
+    emitted: list[list[str]] = []
     for n in names:
-        group = existing.get(n, [_bare(n)])
-        if id(group) not in emitted:
-            emitted.add(id(group))
+        group = existing.get(n)
+        if group is None:
+            rebuilt.append(_bare(n))
+        elif not any(g is group for g in emitted):
+            emitted.append(group)
             rebuilt += group
     return "\n".join(kept[:first_idx] + rebuilt + kept[first_idx:])
 
