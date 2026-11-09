@@ -316,6 +316,22 @@ def test_the_binding_passes_the_pointer_last(scaffold: Path, fn: str) -> None:
         assert args.rstrip().endswith("&_why"), (fn, args)
 
 
+def test_the_rendered_header_slot_takes_why(scaffold: Path) -> None:
+    """A standalone header's ``method_decls`` is the second builder of a
+    method's prototype (the peer of `_build_method_prototype`); it ends in
+    the parameter too, for every shape."""
+    from just_makeit import _config as C
+    from just_makeit import _glue
+
+    cfg = C.load(scaffold)
+    decls = _glue.component_ctx(cfg, "cor", "rq", scaffold)["method_decls"]
+    for fn, params in PROTOS.items():
+        if fn.startswith("rq_cor_"):
+            assert re.search(
+                rf"\b{fn}\({re.escape(params)}\);", " ".join(decls.split())
+            ), (fn, decls)
+
+
 def test_the_bench_passes_null(scaffold: Path) -> None:
     bench = _read(scaffold, "native/benchmarks/bench_cor_core.c")
     assert re.search(r"rq_cor_neg\(obj, 0, NULL\)", bench), bench
