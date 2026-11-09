@@ -1453,8 +1453,7 @@ write``, with the return code appended (gh-869), when it gives none.'
         # cover a cause no row names.
         if method_status(m):
             return (
-                status_rows_raises_doc(rows, subject, why, refused=True)
-                + out
+                status_rows_raises_doc(rows, subject, why, refused=True) + out
             )
         return out
     # gh-2470: a declared row raises ahead of the blanket class, so each is

@@ -1254,65 +1254,65 @@ way.
 
 ### `[[<component>.methods]]` entries
 
-| TOML field                             | CLI flag                                                                                            | Status                |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------- |
-| `name`, `arg_type`, `return_type`      | `jm method <obj> <method> --arg-type T --return-type T`                                             | ✅                    |
-| `doc = "..."`                          | `jm method --doc "text"`                                                                            | ✅                    |
-| `fn = "SYMBOL"`                        | `jm method --fn SYMBOL`                                                                             | ✅ (0.49.0)           |
-| `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                                                          | ✅                    |
-| `params … {out = true}` (or `mutable`) | `jm method --out-param name:T[]` (writable, repeatable)                                             | ✅                    |
-| `params … {str_hint = "..."}`          | (TOML only) an array refuses a `str`, with this appended                                            | ✅ (gh-1756)          |
-| `params … {rank = N}`                  | (TOML only) an array of any other rank is refused                                                   | ✅ (gh-805)           |
-| `params … {elements_per_sample = N}`   | (TOML only) the kernel's counts are in samples of N elements                                        | ✅ (gh-1996)          |
-| `varargs = true`                       | `jm method --varargs`                                                                               | ✅                    |
-| `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)                                              | ✅ (0.14.2)           |
-| `variable_output = true`               | `jm method --variable-output`                                                                       | ✅                    |
-| `pass_capacity = true`                 | `jm method --pass-capacity`                                                                         | ✅ (0.14.4)           |
-| `exact_max_out = true`                 | `jm method --exact-max-out`                                                                         | ✅ (0.55.0)           |
-| `short_out = true`                     | `jm method --short-out`                                                                             | ✅ (gh-2230)          |
-| `count_default = "EXPR"`               | `jm method --count-default EXPR`                                                                    | ✅ (0.34.0)           |
-| `count_name = "NAME"`                  | `jm method --count-name NAME`                                                                       | ✅ (gh-1074)          |
-| `no_count = true`                      | `jm method --no-count`                                                                              | ✅ (gh-2233)          |
-| `out_cols = "EXPR"`                    | `jm method --out-cols EXPR`                                                                         | ✅ (gh-2115)          |
-| `nogil = true`                         | `jm method --nogil`                                                                                 | ✅ (0.15.2)           |
-| `max_out = N` (sibling stub)           | `jm method --max-out N`                                                                             | ✅ (0.13.23)          |
-| `multi_output = ["T", ...]`            | `jm method --multi-output T` (repeatable)                                                           | ✅                    |
-| `out_type = "T"`                       | `jm method --out-type T`                                                                            | ✅                    |
-| `out_divisor = N`                      | `jm method --out-divisor N`                                                                         | ✅                    |
-| `batch = true`                         | `jm method --batch`                                                                                 | ✅                    |
-| `bench = false`                        | `jm method --no-bench`                                                                              | ✅                    |
-| `result_fields = [{name, type, doc?}]` | `jm method --result-field name:type[:doc]` (repeatable)                                             | ✅ (0.13.23)          |
-| `single = true`                        | `jm method --single`                                                                                | ✅ (0.19.6)           |
-| `record_name = "..."`                  | `jm method --record-name NAME` (with `--single`)                                                    | ✅ (0.19.8)           |
-| `record_module = "..."`                | `jm method --record-module MOD` (with `--single`)                                                   | ✅ (0.19.14)          |
-| `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)                                                   | ✅ (0.41.0)           |
-| `record_dtype = "STRUCT"`              | `jm method --record-dtype STRUCT` (with `--variable-output`)                                        | ✅ (0.47.0)           |
-| `max_results = N`                      | (TOML only; default 64. A header-declared `<name>_max_out` sizes it instead, gh-2184)               | 🟡                    |
-| `consumed_fn = "SYMBOL"`               | `jm method --consumed-fn SYMBOL` (re-offer the input a list-of-records call left)                   | ✅ (gh-2204)          |
-| `none_on_empty = true`                 | `jm method --none-on-empty` (an empty result is `None`)                                             | ✅ (gh-1418)          |
-| `error_on_empty = true`                | `jm method --error-on-empty` (an empty result raises)                                               | ✅ (gh-1159)          |
-| `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                    | ✅ (gh-2012)          |
-| `error_sentinel = "SIZE_MAX"`          | `jm method --error-sentinel EXPR` (a `size_t` count's refusal value raises)                         | ✅ (gh-2012)          |
-| `status_return = true`                 | `jm method --status-return` (the `int` is status only)                                              | ✅ (gh-823)           |
-| `why = true`                           | `jm method --why` (a refusal raises the sentence a trailing `const char **why` names)               | ✅ (gh-2574)          |
-| `status_out = true`                    | `jm method --status-out` (a refused count's `int *status` picks a `status_errors` row)              | ✅ (gh-2584)          |
-| `borrow = true`                        | `jm method --borrow` (a zero-copy view of state memory)                                             | ✅ (gh-1312)          |
-| `borrow_count = "PARAM"`               | `jm method --borrow-count PARAM`                                                                    | ✅ (gh-1312)          |
-| `borrow_writeable = true`              | `jm method --borrow-writeable`                                                                      | ✅ (gh-1312)          |
-| `status_fn = "SYMBOL"`                 | `jm method --status-fn SYMBOL` (why a borrow returned NULL)                                         | ✅ (gh-1418)          |
+| TOML field                             | CLI flag                                                                                                          | Status                         |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `name`, `arg_type`, `return_type`      | `jm method <obj> <method> --arg-type T --return-type T`                                                           | ✅                             |
+| `doc = "..."`                          | `jm method --doc "text"`                                                                                          | ✅                             |
+| `fn = "SYMBOL"`                        | `jm method --fn SYMBOL`                                                                                           | ✅ (0.49.0)                    |
+| `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                                                                        | ✅                             |
+| `params … {out = true}` (or `mutable`) | `jm method --out-param name:T[]` (writable, repeatable)                                                           | ✅                             |
+| `params … {str_hint = "..."}`          | (TOML only) an array refuses a `str`, with this appended                                                          | ✅ (gh-1756)                   |
+| `params … {rank = N}`                  | (TOML only) an array of any other rank is refused                                                                 | ✅ (gh-805)                    |
+| `params … {elements_per_sample = N}`   | (TOML only) the kernel's counts are in samples of N elements                                                      | ✅ (gh-1996)                   |
+| `varargs = true`                       | `jm method --varargs`                                                                                             | ✅                             |
+| `extra_args = [{name, type}]`          | `jm method --extra-arg name:type` (alias for `params`)                                                            | ✅ (0.14.2)                    |
+| `variable_output = true`               | `jm method --variable-output`                                                                                     | ✅                             |
+| `pass_capacity = true`                 | `jm method --pass-capacity`                                                                                       | ✅ (0.14.4)                    |
+| `exact_max_out = true`                 | `jm method --exact-max-out`                                                                                       | ✅ (0.55.0)                    |
+| `short_out = true`                     | `jm method --short-out`                                                                                           | ✅ (gh-2230)                   |
+| `count_default = "EXPR"`               | `jm method --count-default EXPR`                                                                                  | ✅ (0.34.0)                    |
+| `count_name = "NAME"`                  | `jm method --count-name NAME`                                                                                     | ✅ (gh-1074)                   |
+| `no_count = true`                      | `jm method --no-count`                                                                                            | ✅ (gh-2233)                   |
+| `out_cols = "EXPR"`                    | `jm method --out-cols EXPR`                                                                                       | ✅ (gh-2115)                   |
+| `nogil = true`                         | `jm method --nogil`                                                                                               | ✅ (0.15.2)                    |
+| `max_out = N` (sibling stub)           | `jm method --max-out N`                                                                                           | ✅ (0.13.23)                   |
+| `multi_output = ["T", ...]`            | `jm method --multi-output T` (repeatable)                                                                         | ✅                             |
+| `out_type = "T"`                       | `jm method --out-type T`                                                                                          | ✅                             |
+| `out_divisor = N`                      | `jm method --out-divisor N`                                                                                       | ✅                             |
+| `batch = true`                         | `jm method --batch`                                                                                               | ✅                             |
+| `bench = false`                        | `jm method --no-bench`                                                                                            | ✅                             |
+| `result_fields = [{name, type, doc?}]` | `jm method --result-field name:type[:doc]` (repeatable)                                                           | ✅ (0.13.23)                   |
+| `single = true`                        | `jm method --single`                                                                                              | ✅ (0.19.6)                    |
+| `record_name = "..."`                  | `jm method --record-name NAME` (with `--single`)                                                                  | ✅ (0.19.8)                    |
+| `record_module = "..."`                | `jm method --record-module MOD` (with `--single`)                                                                 | ✅ (0.19.14)                   |
+| `record_doc = "..."`                   | `jm method --record-doc "text"` (with `--single`)                                                                 | ✅ (0.41.0)                    |
+| `record_dtype = "STRUCT"`              | `jm method --record-dtype STRUCT` (with `--variable-output`)                                                      | ✅ (0.47.0)                    |
+| `max_results = N`                      | (TOML only; default 64. A header-declared `<name>_max_out` sizes it instead, gh-2184)                             | 🟡                             |
+| `consumed_fn = "SYMBOL"`               | `jm method --consumed-fn SYMBOL` (re-offer the input a list-of-records call left)                                 | ✅ (gh-2204)                   |
+| `none_on_empty = true`                 | `jm method --none-on-empty` (an empty result is `None`)                                                           | ✅ (gh-1418)                   |
+| `error_on_empty = true`                | `jm method --error-on-empty` (an empty result raises)                                                             | ✅ (gh-1159)                   |
+| `count_type = "int64_t"`               | `jm method --count-type T` (a signed count; with `error_negative`, `< 0` raises)                                  | ✅ (gh-2012)                   |
+| `error_sentinel = "SIZE_MAX"`          | `jm method --error-sentinel EXPR` (a `size_t` count's refusal value raises)                                       | ✅ (gh-2012)                   |
+| `status_return = true`                 | `jm method --status-return` (the `int` is status only)                                                            | ✅ (gh-823)                    |
+| `why = true`                           | `jm method --why` (a refusal raises the sentence a trailing `const char **why` names)                             | ✅ (gh-2574)                   |
+| `status_out = true`                    | `jm method --status-out` (a refused count's `int *status` picks a `status_errors` row)                            | ✅ (gh-2584)                   |
+| `borrow = true`                        | `jm method --borrow` (a zero-copy view of state memory)                                                           | ✅ (gh-1312)                   |
+| `borrow_count = "PARAM"`               | `jm method --borrow-count PARAM`                                                                                  | ✅ (gh-1312)                   |
+| `borrow_writeable = true`              | `jm method --borrow-writeable`                                                                                    | ✅ (gh-1312)                   |
+| `status_fn = "SYMBOL"`                 | `jm method --status-fn SYMBOL` (why a borrow returned NULL)                                                       | ✅ (gh-1418)                   |
 | `status_errors = [{...}]`              | `jm method --status-error STATUS:Exc[:msg]` (with `--status-fn`, `--status-return` or `--status-out`; repeatable) | ✅ (gh-1418, gh-2470, gh-2584) |
-| `releases = ["..."]`                   | `jm method --releases NAME[,NAME…]`                                                                 | ✅ (gh-1426)          |
-| `release_count = "PARAM"`              | `jm method --release-count PARAM`                                                                   | ✅ (gh-1426)          |
-| `strict = true`                        | `jm method --strict` (refuse, never cast, an array input)                                           | ✅ (gh-1426)          |
-| `error_negative = true`                | `jm method --error-negative`                                                                        | ✅ (0.49.0)           |
-| `error = "EXC"`                        | `jm method --error EXC`                                                                             | ✅ (0.49.0)           |
-| `error_message = "..."`                | `jm method --error-message TEXT`                                                                    | ✅ (0.49.0)           |
-| `py_return_type = "..."`               | `jm method --py-return-type STR`                                                                    | ✅                    |
-| `manual_stub = true`                   | `jm method --manual-stub` (binding hand-written in `_ext_<obj>_extra.c`; `.pyi` stub kept verbatim) | ✅ (gh-428)           |
-| `codec = "..."`                        | (TOML only) variant codec applied to the result                                                     | 🟡                    |
-| `sink_fn = "SYMBOL"`                   | (TOML only) C sink the method feeds instead of returning                                            | 🟡                    |
-| `impl = "..."` body                    | (manifest only; `jm method --impl` lifts once and records nothing)                                  | ✅                    |
-| `impl_file`, `replace`                 | (manifest only; `--impl` / `--replace` record nothing)                                              | ✅                    |
+| `releases = ["..."]`                   | `jm method --releases NAME[,NAME…]`                                                                               | ✅ (gh-1426)                   |
+| `release_count = "PARAM"`              | `jm method --release-count PARAM`                                                                                 | ✅ (gh-1426)                   |
+| `strict = true`                        | `jm method --strict` (refuse, never cast, an array input)                                                         | ✅ (gh-1426)                   |
+| `error_negative = true`                | `jm method --error-negative`                                                                                      | ✅ (0.49.0)                    |
+| `error = "EXC"`                        | `jm method --error EXC`                                                                                           | ✅ (0.49.0)                    |
+| `error_message = "..."`                | `jm method --error-message TEXT`                                                                                  | ✅ (0.49.0)                    |
+| `py_return_type = "..."`               | `jm method --py-return-type STR`                                                                                  | ✅                             |
+| `manual_stub = true`                   | `jm method --manual-stub` (binding hand-written in `_ext_<obj>_extra.c`; `.pyi` stub kept verbatim)               | ✅ (gh-428)                    |
+| `codec = "..."`                        | (TOML only) variant codec applied to the result                                                                   | 🟡                             |
+| `sink_fn = "SYMBOL"`                   | (TOML only) C sink the method feeds instead of returning                                                          | 🟡                             |
+| `impl = "..."` body                    | (manifest only; `jm method --impl` lifts once and records nothing)                                                | ✅                             |
+| `impl_file`, `replace`                 | (manifest only; `--impl` / `--replace` record nothing)                                                            | ✅                             |
 
 ### `[[<component>.properties]]` entries
 

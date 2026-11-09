@@ -4748,7 +4748,11 @@ def make_methods_ctx(
                     f"    }}\n"
                 )
                 _s_call = _single_kernel_block(
-                    ret_disp, f"{c_fn}({_st})", nogil, release="", why=_mwhy,
+                    ret_disp,
+                    f"{c_fn}({_st})",
+                    nogil,
+                    release="",
+                    why=_mwhy,
                     status=_mstatus,
                 )
             _set_lines = []

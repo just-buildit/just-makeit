@@ -65,9 +65,7 @@ def _method(table: str, name: str, keys: str, params: str = "") -> str:
         f"\n[[{table}]]\nname = {name!r}\n{keys}"
         'error = "RuntimeError"\n'
         f'error_message = "{name} refused"\n'
-        "status_out = true\n"
-        + params
-        + ROWS.format(t=table)
+        "status_out = true\n" + params + ROWS.format(t=table)
     ).replace("'", '"')
 
 
@@ -84,6 +82,16 @@ COR = [
     ),
     ("vneg", _VO + 'count_type = "int64_t"\nerror_negative = true\n', ""),
     ("vemp", _VO + "error_on_empty = true\nnogil = true\nwhy = true\n", ""),
+    # doppler's `bank_power_max` itself: no block input, array params,
+    # extra outputs, the capacity, the GIL released.
+    (
+        "bank",
+        'arg_type = "void"\nreturn_type = "float"\nvariable_output = true\n'
+        'max_out = 4\npass_capacity = true\nmulti_output = ["uint32_t"]\n'
+        'error_sentinel = "SIZE_MAX"\nnogil = true\nwhy = true\n',
+        '\n[[{t}.params]]\nname = "x"\ntype = "float[]"\n'
+        '\n[[{t}.params]]\nname = "L"\ntype = "size_t"\n',
+    ),
     (
         "vmo",
         _VO + 'error_sentinel = "SIZE_MAX"\nmulti_output = ["float"]\n'
@@ -323,9 +331,8 @@ def _refusal(tmp_path: Path, toml: str) -> str:
     return r.stdout + r.stderr
 
 
-_PLAIN = (
-    '[cor]\narg_type = "float"\nreturn_type = "float"\n'
-    + _method("cor.methods", "pmax", _VO + 'error_sentinel = "SIZE_MAX"\n')
+_PLAIN = '[cor]\narg_type = "float"\nreturn_type = "float"\n' + _method(
+    "cor.methods", "pmax", _VO + 'error_sentinel = "SIZE_MAX"\n'
 )
 
 
@@ -458,11 +465,10 @@ def test_without_the_key_the_render_is_unchanged() -> None:
 
 def _refuse_c(said: str, refuse: str, why: bool) -> str:
     """The refusals every kernel shares, by *mode*."""
-    say = (
-        lambda s: f'        if (why)\n            *why = "{s}";\n'
-        if why
-        else ""
-    )
+
+    def say(s):
+        return f'        if (why)\n            *why = "{s}";\n' if why else ""
+
     return (
         "    if (mode == 1) {\n        *status = RQ_E_ARG;\n"
         + say(f"{said}: bad argument")
@@ -501,6 +507,10 @@ BODIES = {
     "rq_cor_fill": "    (void)state;\n"
     + _refuse_c("fill", "SIZE_MAX", True)
     + "    if (buf_len)\n        buf[0] = 4.0f;\n    return 1;\n",
+    "rq_cor_bank": "    (void)state;\n    (void)L;\n    (void)max_out;\n"
+    "    int mode = x_len ? (int)x[0] : 0;\n"
+    + _refuse_c("bank", "SIZE_MAX", True)
+    + "    out[0] = 4.0f;\n    out1[0] = 5u;\n    return 1;\n",
     "rq_cor_neg": "    (void)state;\n"
     + _refuse_c("neg", "-1", True)
     + "    return 5;\n",
@@ -604,6 +614,7 @@ calls = {
     "vrec": lambda m: c.vrec(x(m)),
     "fill": lambda m: c.fill(np.zeros(2, np.float32), m),
     "neg": lambda m: c.neg(m),
+    "bank": lambda m: c.bank(x(m), 3),
     "acc.pmax": lambda m: a.pmax(x(m)),
     "acc.pmax_out": lambda m: a.pmax(x(m), out=np.zeros(4, np.float32)),
     "AccView.vpmax": lambda m: v.vpmax(x(m)),
@@ -645,6 +656,7 @@ CALLS = [
     ("vrec", True, ""),
     ("fill", True, ""),
     ("neg", True, " (rc=-1)"),
+    ("bank", True, ""),
     ("acc.pmax", True, ""),
     ("acc.pmax_out", True, ""),
     ("AccView.vpmax", True, ""),
@@ -661,7 +673,9 @@ def test_an_argument_code_raises_its_row(probe, key, why, _rc) -> None:
     """``RQ_E_ARG`` picks the ``ValueError`` row; the kernel's sentence,
     when it wrote one, is the text."""
     name = _said(key).rsplit(".", 1)[-1]
-    text = f"{_said(key)}: bad argument" if why else f"{name} failed (RQ_E_ARG)"
+    text = (
+        f"{_said(key)}: bad argument" if why else f"{name} failed (RQ_E_ARG)"
+    )
     assert probe[f"{key}1"] == ["ValueError", text], probe[f"{key}1"]
 
 
