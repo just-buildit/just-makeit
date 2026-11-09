@@ -384,9 +384,9 @@ def append_why(text: str, fn: str, arg: str = WHY_C_PARAM) -> str:
 
     *fn* is matched as a whole identifier followed by ``(``, so a
     variable-output kernel's ``<fn>_max_out`` sibling, declared beside it,
-    is not the one changed. Raises ``ValueError`` when *fn* is not there:
-    a render that silently dropped the parameter is the defect this exists
-    to make impossible.
+    is not the one changed. Raises ``RuntimeError`` (a jm bug, not a
+    refusal) when *fn* is not there: a render that silently dropped the
+    parameter is the defect this exists to make impossible.
 
     Examples
     --------
@@ -398,7 +398,7 @@ def append_why(text: str, fn: str, arg: str = WHY_C_PARAM) -> str:
     """
     m = re.search(rf"\b{re.escape(fn)}\s*\(", text)
     if m is None:
-        raise ValueError(f"append_why: no call or declaration of {fn}")
+        raise RuntimeError(f"append_why: no call or declaration of {fn}")
     depth = 0
     for i in range(m.end() - 1, len(text)):
         if text[i] == "(":
@@ -407,7 +407,7 @@ def append_why(text: str, fn: str, arg: str = WHY_C_PARAM) -> str:
             depth -= 1
             if depth == 0:
                 return f"{text[:i]}, {arg}{text[i:]}"
-    raise ValueError(f"append_why: unbalanced parameter list of {fn}")
+    raise RuntimeError(f"append_why: unbalanced parameter list of {fn}")
 
 
 def method_why(m: dict) -> str:
