@@ -66,7 +66,8 @@ from pathlib import Path
 from . import _config as C
 from . import _csym as CSYM
 from . import _record
-from ._docstring import class_import_line as _class_import_line
+from . import _render as _R
+from ._docstring import class_import_path as _class_import_path
 from ._context._state import _unseedable_required
 from . import _textio
 from . import _types as T
@@ -367,10 +368,12 @@ def render(
         # is importable from. `from <pkg> import <cls>` is simply wrong for
         # an object in a module, and doppler met it as an ImportError.
         # gh-2054: from the module's package, not its id.
-        _class_import_line(
-            pkg,
+        # gh-2514: held to 79 columns, as every first-party import is.
+        _R.class_import(
+            _class_import_path(
+                pkg, C.module_package_resolved(cfg, C.module_of(cfg, comp))
+            ),
             cls,
-            C.module_package_resolved(cfg, C.module_of(cfg, comp)),
         ),
         "",
         "",

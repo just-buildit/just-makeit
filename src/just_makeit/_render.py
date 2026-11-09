@@ -649,6 +649,22 @@ def bench_run(path: str, pytest_benchmark: bool) -> str:
     return f"{lead}, where FILE is\n\n    {path}"
 
 
+def class_import(path: str, Component: str) -> str:
+    """``from <path> import <Component>``, a generated file's import of
+    the class it exercises, held to 79 columns (gh-2514).
+
+    The same rule as the package's re-exports, through the same function
+    (:func:`_object._fmt_from_import`): one line while it fits, ruff's
+    parenthesised form with a magic trailing comma past it.
+
+    >>> class_import("p.dsp", "Fir")
+    'from p.dsp import Fir'
+    """
+    from ._object import _fmt_from_import
+
+    return _fmt_from_import(path, [Component], relative=False, marker="")
+
+
 def render_scaffold_py(template: str, ctx: dict) -> str:
     """Render a scaffolded Python test or benchmark (gh-1478).
 
@@ -676,7 +692,7 @@ def render_scaffold_py(template: str, ctx: dict) -> str:
     from p import G
     G()
     """
-    from ._pyfmt import py_blank_lines, reflow_py
+    from ._pyfmt import py_blank_lines
 
     text = render(template, ctx)
     for line, name in (
@@ -699,8 +715,7 @@ def render_scaffold_py(template: str, ctx: dict) -> str:
         without = "\n".join(lines)
         if not re.search(rf"\b{name}\.", without):
             text = without
-    # gh-2514: and a long class or path name held to 79 columns.
-    return py_blank_lines(reflow_py(text))
+    return py_blank_lines(text)
 
 
 def render(template: str, ctx: dict) -> str:

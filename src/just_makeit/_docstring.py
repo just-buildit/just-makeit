@@ -192,6 +192,89 @@ def class_import_line(pkg: str, Component: str, module_dir: str = "") -> str:
     return f"from {class_import_path(pkg, module_dir)} import {Component}"
 
 
+def import_demo_lines(import_line: str, indent: str = "    ") -> list[str]:
+    """A doctest's ``>>> from <path> import <Class>``, held to 79 columns.
+
+    *import_line* is :func:`class_import_line`'s. gh-2514: a long package
+    path and class name put the doctest's import line past 79 columns in a
+    ``.pyi``. Past it, the import is parenthesised and continued with
+    ``...``, which a doctest runs as one statement -- the same wrapped form
+    the scaffold's own imports take (:func:`_object._fmt_from_import`).
+
+    >>> import_demo_lines("from p import Fir")
+    ['    >>> from p import Fir']
+    >>> long = import_demo_lines("from p.m import " + "X" * 70)
+    >>> [ln.strip()[:3] for ln in long]
+    ['>>>', '...', '...']
+    >>> long[0].endswith("import (") and long[2].endswith(")")
+    True
+    """
+    line = f"{indent}>>> {import_line}"
+    if len(line) <= STUB_TARGET_WIDTH:
+        return [line]
+    head, _, name = import_line.rpartition(" import ")
+    return [
+        f"{indent}>>> {head} import (",
+        f"{indent}...     {name},",
+        f"{indent}... )",
+    ]
+
+
+def ctor_demo_lines(Component: str, py_create_args: str) -> list[str]:
+    """The ``>>> obj = Component(...)`` demo, wrapped if it does not fit.
+
+    gh-744. A component with many init-params produced a 257-column example
+    line (doppler's ``MpskReceiver``). Unlike an author's ``@code`` block --
+    which jm preserves byte-for-byte, trailing comment alignment and all --
+    this line is jm's own, so jm owns its width.
+
+    A doctest continues with ``...``, so the wrapped form is still a runnable
+    example and still one statement. Shown here with the prompts spelled out
+    rather than as a live block, since this illustrates the *output* and is
+    not itself an example to run::
+
+        [PS1] obj = Thing(
+        [PS2]     alpha=1,
+        [PS2]     beta=2,
+        [PS2] )
+
+    where ``[PS1]`` is ``>>>`` and ``[PS2]`` is ``...``.
+
+    Parameters
+    ----------
+    Component : str
+        Class name to construct.
+    py_create_args : str
+        Rendered keyword arguments, comma-separated.
+
+    Returns
+    -------
+    list of str
+        Doctest lines at the class docstring's 4-space indent.
+
+    gh-2514: every synthesized doctest that constructs the object -- the
+    class docstring's and each method's -- goes through this one.
+    """
+    from ._pyfmt import _split_top_level
+
+    flat = f"    >>> obj = {Component}({py_create_args})"
+    if len(flat) <= STUB_TARGET_WIDTH:
+        return [flat]
+    parts = _split_top_level(py_create_args)
+    if not parts:
+        # One argument goes on a line of its own when that fits (gh-2514):
+        # a long class and parameter name passed 79 columns with just one.
+        # One too long even there is left readable on the one line.
+        if len(f"    ...     {py_create_args},") > STUB_TARGET_WIDTH:
+            return [flat]
+        parts = [py_create_args]
+    return (
+        [f"    >>> obj = {Component}("]
+        + [f"    ...     {p}," for p in parts]
+        + ["    ... )"]
+    )
+
+
 def header_default(desc: str | None) -> str | None:
     """Extract the trailing ``(default: X)`` value from a ``@param`` description.
 

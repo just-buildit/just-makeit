@@ -12,7 +12,8 @@ import argparse
 
 def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="<<name>>", description="<<project>> command-line tool."
+        prog="<<name>>",
+<<description_arg>>
     )
     sub = p.add_subparsers(dest="command", required=True)
 <<subparsers>>

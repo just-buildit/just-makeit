@@ -837,7 +837,14 @@ def sort_reexports(text: str, owned: "Iterable[str]") -> str:
     return "".join(out)
 
 
-def _fmt_from_import(module: str, names: list[str], indent: str = "") -> str:
+def _fmt_from_import(
+    module: str,
+    names: list[str],
+    indent: str = "",
+    *,
+    relative: bool = True,
+    marker: str = _NOQA,
+) -> str:
     """Render a ``from .<module> import ...`` re-export, at *indent*.
 
     One line while it fits the column target
@@ -850,6 +857,10 @@ def _fmt_from_import(module: str, names: list[str], indent: str = "") -> str:
     platform-guarded re-export sits inside an ``if`` (gh-1463) -- and the
     width counts it. :data:`_REEXPORT_RE` reads both forms back.
 
+    The same rule holds every import jm writes from the project's own
+    package: a test's, a benchmark's or a PEP 723 app's ``from <pkg>.<mod>
+    import <Class>`` passes *relative* false and no *marker* (gh-2514).
+
     >>> _fmt_from_import("m", ["A", "B"])
     'from .m import A, B  # noqa: E402'
     >>> print(_fmt_from_import("util", ["gauss_hermite_quadrature",
@@ -858,12 +869,15 @@ def _fmt_from_import(module: str, names: list[str], indent: str = "") -> str:
         gauss_hermite_quadrature,
         interpolate_between_samples,
     )
+    >>> _fmt_from_import("p.m", ["Fir"], relative=False, marker="")
+    'from p.m import Fir'
     """
-    line = f"{indent}from .{module} import {', '.join(names)}{_NOQA}"
+    source = f".{module}" if relative else module
+    line = f"{indent}from {source} import {', '.join(names)}{marker}"
     if len(line) <= STUB_TARGET_WIDTH:
         return line
     body = "".join(f"{indent}    {n},\n" for n in names)
-    return f"{indent}from .{module} import ({_NOQA}\n{body}{indent})"
+    return f"{indent}from {source} import ({marker}\n{body}{indent})"
 
 
 def _parse_all_names(body: str) -> list[str]:
@@ -3311,9 +3325,7 @@ def _regenerate_module_now(
     # fills -- the one path for a module with members and one without
     # (gh-2070). With none, the merge writes no import line, since an empty
     # `from .<leaf> import` is a SyntaxError.
-    from ._pyfmt import reflow_py
-
-    fresh = R.render(
+    base = R.render(
         R.MODULE_INIT_PY_EMPTY,
         Ctx.make_module_ctx(
             module,
@@ -3322,9 +3334,8 @@ def _regenerate_module_now(
             C.module_doc(cfg, module),
         ),
     )
-    # gh-2514: its header comment names the module; a long one wraps --
-    # and one an older jm wrote on one line is wrapped in place.
-    base = reflow_py(fresh)
+    # gh-2514: an older jm wrote a long header comment on one line; it is
+    # wrapped in place.
     if existed:
         base = rewrap_comments(init_path.read_text(encoding="utf-8"), base)
     # The import line in __init__.py is `from .<leaf> import ...`, so the merge
@@ -3986,6 +3997,9 @@ def run(
     _py_ctx = {
         **ctx,
         "module": class_import_path("", _out_pkg),
+        "class_import": R.class_import(
+            class_import_path(pkg, _out_pkg), ctx["Component"]
+        ),
         # gh-2514: the benchmark's own path, held to 79 columns.
         "bench_run": R.bench_run(
             f"src/{pkg}/{_out_pkg}/benchmarks/bench_{comp}.py",
