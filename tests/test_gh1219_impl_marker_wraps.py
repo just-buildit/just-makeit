@@ -127,7 +127,9 @@ def test_clang_format_leaves_the_wrapped_marker_alone(
     out = subprocess.run(
         ["clang-format", str(src)],
         capture_output=True,
-        text=True,
+        # clang-format writes the file's own bytes, UTF-8; the locale's
+        # codec (cp1252 on Windows) misread the marker's em dash (gh-1570).
+        encoding="utf-8",
         cwd=tmp_path,
         timeout=120,
     ).stdout
@@ -160,7 +162,9 @@ def test_the_unwrapped_form_is_what_was_unstable(tmp_path: Path):
     out = subprocess.run(
         ["clang-format", str(src)],
         capture_output=True,
-        text=True,
+        # clang-format writes the file's own bytes, UTF-8; the locale's
+        # codec (cp1252 on Windows) misread the marker's em dash (gh-1570).
+        encoding="utf-8",
         cwd=tmp_path,
         timeout=120,
     ).stdout

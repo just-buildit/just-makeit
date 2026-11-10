@@ -29,6 +29,7 @@ from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 
 import contextlib
+import importlib.machinery
 import io
 import os
 import shutil
@@ -110,8 +111,15 @@ def _stubtest(so_dir: Path, leaf: str) -> list[str]:
     copied module, so one leaked dir per shape per run adds up fast — 12 GB of
     ``/tmp`` had accumulated before this was caught.
     """
-    sos = list(so_dir.glob(f"{leaf}.*.so"))
-    assert sos, f"no built {leaf}.*.so in {so_dir}"
+    # The suffixes this interpreter imports an extension by: `.<tag>.so` on
+    # Linux and macOS, `.<tag>.pyd` on Windows (gh-1570). Spelling `.so`
+    # here found nothing on the clang-cl leg, the first one to run it.
+    sos = [
+        p
+        for suffix in importlib.machinery.EXTENSION_SUFFIXES
+        for p in so_dir.glob(f"{leaf}{suffix}")
+    ]
+    assert sos, f"no built {leaf} extension in {so_dir}"
     pyi = so_dir / f"{leaf}.pyi"
     assert pyi.exists(), f"no {leaf}.pyi in {so_dir}"
 
@@ -287,16 +295,18 @@ def _mod(tmp, obj="gizmo", state=(("gain", "double", "1.0"),), **objkw):
 def _append_core(root, comp, code):
     """Append a C body to a component's sacred `_core.c`."""
     core = root / "native" / "src" / comp / f"{comp}_core.c"
-    core.write_text(core.read_text() + "\n" + code + "\n")
+    core.write_text(
+        core.read_text(encoding="utf-8") + "\n" + code + "\n", encoding="utf-8"
+    )
 
 
 def _append_header(root, comp, code):
     """Append a declaration to a component's `_core.h`, before the include
     guard's closing `#endif` so a sibling `_ext` fragment sees it."""
     h = root / INC_ROOT / comp / f"{comp}_core.h"
-    text = h.read_text()
+    text = h.read_text(encoding="utf-8")
     idx = text.rfind("#endif")
-    h.write_text(text[:idx] + code + "\n\n" + text[idx:])
+    h.write_text(text[:idx] + code + "\n\n" + text[idx:], encoding="utf-8")
 
 
 def _write_enum(root, name, values):
@@ -909,7 +919,7 @@ size_t mixer_execute(mixer_state_t *s, float _Complex *out, size_t max) {
         mixer_segment_t *sg = &s->segs[s->seg_i];
         if (s->pos >= sg->num_samples) { s->seg_i++; s->pos = 0; continue; }
         double f = sg->n_sources ? sg->sources[0].freq : 0.0;
-        out[k++] = (float)(f * (double)s->pos) + 0.0f * _Complex_I;
+        out[k++] = (float)(f * (double)s->pos);
         s->pos++;
     }
     return k;

@@ -38,7 +38,9 @@ def _kinds(found: "set[str]") -> "set[str]":
 
 
 def test_status_check_failing_is_a_finding(root: Path) -> None:
-    (root / "p" / "src" / "p" / "gain.pyi").write_text("# edited\n")
+    (root / "p" / "src" / "p" / "gain.pyi").write_text(
+        "# edited\n", encoding="utf-8"
+    )
     found = G.findings(root)
     assert any(f.startswith("p\tstatus --check\t") for f in found), found
 
@@ -47,7 +49,9 @@ def test_a_reapply_that_warns_is_a_finding(root: Path) -> None:
     cml = root / "p" / "CMakeLists.txt"
     text = cml.read_text(encoding="utf-8")
     assert "# ── Components" in text
-    cml.write_text(text.replace("# ── Components", "# (removed)"))
+    cml.write_text(
+        text.replace("# ── Components", "# (removed)"), encoding="utf-8"
+    )
     found = G.findings(root)
     assert any(
         f.startswith("p\tre-apply warns\t") and "Components" in f
@@ -63,7 +67,7 @@ def test_a_reapply_that_writes_is_a_finding(root: Path) -> None:
 
 def test_ruff_check_and_format_are_findings(root: Path) -> None:
     (root / "p" / "src" / "p" / "planted.py").write_text(
-        "import os,sys\nx=1\n"
+        "import os,sys\nx=1\n", encoding="utf-8"
     )
     found = G.findings(root)
     assert "p\truff check\tsrc/p/planted.py E401" in found, found
@@ -84,22 +88,27 @@ def test_the_ratchet_refuses_new_findings_and_stale_lines(
     monkeypatch.setattr(G, "SHRINK", True)
     # A fresh scaffold has no findings of its own since gh-1478, and this
     # needs at least one to drop from the file: plant two.
-    (root / "p" / "src" / "p" / "planted.py").write_text("import os,sys\n")
+    (root / "p" / "src" / "p" / "planted.py").write_text(
+        "import os,sys\n", encoding="utf-8"
+    )
     found = G.findings(root)
     assert len(found) >= 2, found
 
-    (ratchets / "ex.txt").write_text("".join(f"{f}\n" for f in found))
+    (ratchets / "ex.txt").write_text(
+        "".join(f"{f}\n" for f in found), encoding="utf-8"
+    )
     G.check("ex", root)  # exactly recorded: passes
 
     (ratchets / "ex.txt").write_text(
-        "".join(f"{f}\n" for f in sorted(found)[1:])
+        "".join(f"{f}\n" for f in sorted(found)[1:]), encoding="utf-8"
     )
     with pytest.raises(AssertionError, match="did not fail before"):
         G.check("ex", root)
 
     (ratchets / "ex.txt").write_text(
         "".join(f"{f}\n" for f in found)
-        + "p\truff check\tsrc/p/gain.pyi E999\n"
+        + "p\truff check\tsrc/p/gain.pyi E999\n",
+        encoding="utf-8",
     )
     with pytest.raises(AssertionError, match="only shrinks"):
         G.check("ex", root)
@@ -120,6 +129,6 @@ def test_a_line_about_a_file_this_run_lacks_is_not_gone(
         "absent_project\tstatus --check\tSTALE",
     ]
     (ratchets / "ex.txt").write_text(
-        "".join(f"{f}\n" for f in [*found, *elsewhere])
+        "".join(f"{f}\n" for f in [*found, *elsewhere]), encoding="utf-8"
     )
     G.check("ex", root)  # neither line could be observed here

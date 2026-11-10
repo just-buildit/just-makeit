@@ -42,6 +42,24 @@ JOB = "examples-windows"
 _IMPORT = re.compile(r"^(?:import _exports\b|from _exports import )", re.M)
 
 
+def _job_block(text: str, job: str) -> str:
+    """The lines of *job* under ``jobs:``, up to the next job key.
+
+    Not read here any more (``windows_tests`` reads the steps through
+    PyYAML), but other test modules import it.
+    """
+    lines = text.splitlines()
+    head = f"  {job}:"
+    starts = [i for i, ln in enumerate(lines) if ln.rstrip() == head]
+    assert len(starts) == 1, f"{head!r} occurs {len(starts)}x in {CI_YML}"
+    out = []
+    for ln in lines[starts[0] + 1 :]:
+        if re.match(r"^  \S", ln):
+            break
+        out.append(ln)
+    return "\n".join(out)
+
+
 _TEST_PATH = re.compile(r"\btests/test_\w+\.py\b")
 
 
