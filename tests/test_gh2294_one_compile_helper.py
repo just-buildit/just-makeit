@@ -41,8 +41,10 @@ GATE: a test builds C or C++ through `_cbuild.build`, and the Windows CI
 from __future__ import annotations
 
 import ast
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -302,3 +304,21 @@ def test_windows_job_runs_the_compiled_tests():
     """The Windows job runs ``make test-compiled`` (gh-2294)."""
     block = _job_block(CI_YML.read_text(encoding="utf-8"), "examples-windows")
     assert re.search(r"^\s+run: make test-compiled\b", block, re.M), block
+
+
+def test_cc_names_the_compiler_as_cmake_reads_it(monkeypatch, tmp_path):
+    """``CC`` chooses the compiler, as it does for CMake: it is how the
+    Windows job's ``CC=clang-cl`` reaches every fixture (gh-2294). One
+    that resolves to nothing leaves the default search in charge."""
+    import _compilers
+
+    monkeypatch.delenv("CC", raising=False)
+    fallback = _compilers.default_cc()
+    exe = tmp_path / ("mycc.exe" if sys.platform == "win32" else "mycc")
+    exe.write_text("")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CC", "mycc")
+    assert Path(_compilers.default_cc()).name == exe.name
+    monkeypatch.setenv("CC", "no-such-compiler-gh2294")
+    assert _compilers.default_cc() == fallback
