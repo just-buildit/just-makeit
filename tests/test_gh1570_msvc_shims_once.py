@@ -12,6 +12,10 @@ The two packages need not come from one jm. Each shim is therefore guarded
 by itself, with the remap that routes the C99 name to it: one guard over
 the whole set would let an older package included first hide a shim only a
 newer one defines, leaving that name on the UCRT's struct-typed function.
+A guard also stands down when the C99 name is already a macro, which is how
+a package built before this fix (its shims unguarded) is honoured when it
+is included first. Included after a fixed one it cannot be: that package
+must come first, and nothing here claims otherwise.
 
 This holds the fix on every leg: the headers are compiled together by clang
 with ``_MSC_VER`` defined, which takes the MSVC branch on any host. It
@@ -21,6 +25,8 @@ GATE: a translation unit including two jm packages' ``clib_common.h`` on
       the MSVC branch compiles.
 GATE: when the package included first lacks a shim the second has, the
       unit still gets that shim and its remap.
+GATE: a package with the pre-fix (unguarded) shims, included first, and a
+      fixed one compile together.
 """
 
 from __future__ import annotations
@@ -36,7 +42,11 @@ from just_makeit import _incpath as INC
 from just_makeit._new import run as new_run
 
 #: A shim as the header spells it: its own guard, the function, the remap.
-_SHIM = re.compile(r"#ifndef JM_SHIM_(?P<name>\w+)\n.*?\n#endif\n", re.DOTALL)
+_SHIM = re.compile(
+    r"#if !defined\(JM_SHIM_(?P<name>\w+)\)(?: && !defined\(\w+\))?\n"
+    r"#define JM_SHIM_\w+\n(?P<body>.*?\n)#endif\n",
+    re.DOTALL,
+)
 
 
 def _packages(root: Path) -> "list[tuple[Path, str]]":
@@ -97,5 +107,26 @@ def test_an_older_package_first_hides_no_shim(tmp_path: Path, shim) -> None:
         packages,
         f"#ifndef {name}\n#error {name} is not remapped\n#endif\n"
         f"void *p = (void *)&jm_{name};\n",
+    )
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_pre_fix_package_first_serves_the_fixed_one(tmp_path: Path) -> None:
+    """The header included first is the shape jm shipped before this fix:
+    the same six shims and remaps, with no guard of their own. Rendered
+    from the fixed header by stripping each shim's guard, so it tracks the
+    template rather than a copy of it."""
+    packages = _packages(tmp_path)
+    older, _ = packages[0]
+    text = older.read_text(encoding="utf-8")
+    pre_fix, n = _SHIM.subn(lambda m: m.group("body"), text)
+    assert n == 6, n
+    assert "#define JM_SHIM_" not in pre_fix
+    older.write_text(pre_fix, encoding="utf-8")
+    r = _compile(
+        tmp_path,
+        packages,
+        "float f(float _Complex z) { return cabsf(z) + cargf(z); }\n"
+        "double _Complex g(double _Complex z) { return cexp(z); }\n",
     )
     assert r.returncode == 0, r.stderr

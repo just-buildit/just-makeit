@@ -30,7 +30,13 @@
  * the remap that routes the C99 name to it. One guard over the whole set
  * would let an older package included first hide a shim only a newer one
  * defines, leaving that name on the UCRT's struct-typed function. Per shim,
- * any mix of package versions defines each exactly once. */
+ * any mix of package versions defines each exactly once.
+ *
+ * A guard also stands down when the C99 name is already a macro: a package
+ * built before this release defined the same shims unguarded, with the same
+ * `#define cabsf jm_cabsf` remaps, so its definitions serve both. Nothing
+ * can detect it the other way round, so a package built before this release
+ * must be included first. */
 /* `I` only: `_Complex_I` is reserved to the implementation (gh-944), and
  * nothing jm writes spells it. Nor is `complex` redefined, although the UCRT
  * maps it to its `struct _complex`: jm spells `_Complex` everywhere, and a
@@ -43,7 +49,7 @@
 #define creal __builtin_creal
 #define cimag __builtin_cimag
 #define conj __builtin_conj
-#ifndef JM_SHIM_CABSF
+#if !defined(JM_SHIM_CABSF) && !defined(cabsf)
 #define JM_SHIM_CABSF
 static inline float
 jm_cabsf(float _Complex z)
@@ -52,7 +58,7 @@ jm_cabsf(float _Complex z)
 }
 #define cabsf jm_cabsf
 #endif
-#ifndef JM_SHIM_CARGF
+#if !defined(JM_SHIM_CARGF) && !defined(cargf)
 #define JM_SHIM_CARGF
 static inline float
 jm_cargf(float _Complex z)
@@ -61,7 +67,7 @@ jm_cargf(float _Complex z)
 }
 #define cargf jm_cargf
 #endif
-#ifndef JM_SHIM_CEXPF
+#if !defined(JM_SHIM_CEXPF) && !defined(cexpf)
 #define JM_SHIM_CEXPF
 static inline float _Complex
 jm_cexpf(float _Complex z)
@@ -72,7 +78,7 @@ jm_cexpf(float _Complex z)
 }
 #define cexpf jm_cexpf
 #endif
-#ifndef JM_SHIM_CABS
+#if !defined(JM_SHIM_CABS) && !defined(cabs)
 #define JM_SHIM_CABS
 static inline double
 jm_cabs(double _Complex z)
@@ -81,7 +87,7 @@ jm_cabs(double _Complex z)
 }
 #define cabs jm_cabs
 #endif
-#ifndef JM_SHIM_CARG
+#if !defined(JM_SHIM_CARG) && !defined(carg)
 #define JM_SHIM_CARG
 static inline double
 jm_carg(double _Complex z)
@@ -90,7 +96,7 @@ jm_carg(double _Complex z)
 }
 #define carg jm_carg
 #endif
-#ifndef JM_SHIM_CEXP
+#if !defined(JM_SHIM_CEXP) && !defined(cexp)
 #define JM_SHIM_CEXP
 static inline double _Complex
 jm_cexp(double _Complex z)
