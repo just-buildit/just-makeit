@@ -21,12 +21,11 @@ compiler: every label in the rendered ``_ext.c`` of either shape has a
 from __future__ import annotations
 
 import re
-import subprocess
-import sysconfig
 from pathlib import Path
 
 import pytest
 from _jminc import INC_DIR
+import _cbuild as cbuild
 from _jmrun import run_cli
 from test_gh2283_composer_doc_faces import (
     _BACKINGS,
@@ -97,14 +96,13 @@ def test_every_label_is_reached(proj):
 
 @pytest.mark.skipif(_CC is None, reason="no C compiler available")
 def test_ext_builds_warning_clean(proj):
-    import numpy as np
-
-    r = subprocess.run(
-        [_CC, "-c", "-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror",
-         "-I", str(proj / INC_DIR),
-         "-I", sysconfig.get_path("include"),
-         "-I", np.get_include(),
-         str(proj / _EXT), "-o", str(proj / "playlist_ext.o")],
-        capture_output=True, text=True, timeout=600,
-    )  # fmt: skip
-    assert r.returncode == 0, r.stderr
+    cbuild.build(
+        "obj",
+        [proj / _EXT],
+        cbuild.output(proj, "playlist_ext", "obj"),
+        std="c11",
+        warnings=["all", "extra", "error"],
+        includes=[proj / INC_DIR],
+        python=True,
+        numpy=True,
+    )
