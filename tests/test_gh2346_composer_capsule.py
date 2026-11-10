@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import _cbuild as cbuild
 from _compilers import asan_env, asan_skip_reason, default_cc
 from _jmrun import run_cli
 
@@ -219,22 +220,18 @@ def test_the_getter_compiles_against_the_lend_helper(tmp_path):
         "PyObject *probe(ComposerObject *s) "
         "{ return Composer_get__capsule(s, NULL); }\n"
     )
-    r = subprocess.run(
-        [
-            _CC,
-            "-c",
-            "-std=c11",
-            "-Werror=implicit-function-declaration",
-            "-Werror=int-conversion",
-            f"-I{__import__('sysconfig').get_paths()['include']}",
-            str(src),
-            "-o",
-            str(tmp_path / "probe.o"),
+    cbuild.build(
+        "obj",
+        [src],
+        cbuild.output(tmp_path, "probe", "obj"),
+        compiler=_CC,
+        std="c11",
+        warnings=[
+            "error=implicit-function-declaration",
+            "error=int-conversion",
         ],
-        capture_output=True,
-        text=True,
+        python=True,
     )
-    assert r.returncode == 0, r.stderr
 
 
 # -- 4. built end to end --------------------------------------------------------

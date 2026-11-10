@@ -24,13 +24,11 @@ be), and "does it build" is the property that actually matters.
 
 from __future__ import annotations
 
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -117,7 +115,9 @@ class TestGeneratedC:
         assert "First line of the doc." in text
         assert "Second line -- this newline is the whole bug." in text
 
-    @pytest.mark.skipif(default_cc() is None, reason="no C compiler available")
+    @pytest.mark.skipif(
+        cbuild.compiler_for() is None, reason="no C compiler available"
+    )
     def test_generated_c_has_no_unterminated_literal(self, project):
         """The property that actually matters: it compiles.
 
@@ -127,18 +127,12 @@ class TestGeneratedC:
         string is a *lexer* error and shows up regardless.
         """
         _root, frag = project
-        r = subprocess.run(
-            [
-                default_cc(),
-                "-fsyntax-only",
-                "-I",
-                str(frag.parents[2] / "inc"),
-                "-I",
-                sysconfig.get_paths()["include"],
-                str(frag),
-            ],
-            capture_output=True,
-            text=True,
+        r = cbuild.build(
+            "syntax",
+            [frag],
+            check=False,
+            includes=[frag.parents[2] / "inc"],
+            python=True,
         )
         assert "missing terminating" not in r.stderr, r.stderr[:400]
         assert "unterminated" not in r.stderr, r.stderr[:400]

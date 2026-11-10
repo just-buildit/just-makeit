@@ -30,22 +30,16 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _handle
 
-_CC = default_cc()
-_LINK = (
-    ["-bundle", "-undefined", "dynamic_lookup"]
-    if sys.platform == "darwin"
-    else ["-shared"]
-)
+_CC = cbuild.compiler_for()
 
 _DOC = {
     "b_drain": (
@@ -186,23 +180,12 @@ def test_the_emitted_doc_compiles_and_help_shows_it(tmp_path):
     pkg = tmp_path / "p"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    import numpy as np
-
-    subprocess.run(
-        [
-            _CC,
-            *_LINK,
-            "-fPIC",
-            f"-I{tmp_path}",
-            f"-I{sysconfig.get_paths()['include']}",
-            f"-I{np.get_include()}",
-            str(src),
-            str(tmp_path / "b.c"),
-            "-o",
-            str(pkg / f"sink{sysconfig.get_config_var('EXT_SUFFIX')}"),
-        ],
-        check=True,
-        capture_output=True,
+    cbuild.build(
+        "ext",
+        [src, tmp_path / "b.c"],
+        cbuild.output(pkg, "sink", "ext"),
+        includes=[tmp_path],
+        numpy=True,
     )
     r = subprocess.run(
         [

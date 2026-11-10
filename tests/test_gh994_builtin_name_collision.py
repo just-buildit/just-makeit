@@ -37,13 +37,11 @@ from _jmrun import warning_lines  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 
 import re
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -52,12 +50,12 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 #: The generated CMake asks for C99 with GNU extensions on; compile jm's
 #: output under the flags its real build uses, not stricter ones.
-_STD = "-std=gnu99"
+_STD = "gnu99"
 
 #: The state field every case declares, so the `get_`/`set_` accessor pair
 #: exists to collide with.
@@ -171,18 +169,17 @@ def _definitions_of(text: str, symbol: str) -> int:
 
 
 def _compile(
-    path: Path, include_dirs: "list[str]"
-) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            _CC,
-            "-fsyntax-only",
-            _STD,
-            *(f"-I{d}" for d in include_dirs),
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
+    path: Path, include_dirs: "list[str]", ext: bool = False
+) -> cbuild.Built:
+    return cbuild.build(
+        "syntax",
+        [path],
+        compiler=_CC,
+        check=False,
+        std=_STD,
+        includes=include_dirs,
+        python=ext,
+        numpy=ext,
     )
 
 
@@ -421,17 +418,14 @@ class TestGeneratedTreeCompiles:
     def test_ext_c_compiles(
         self, tmp_path, build, name, arg_type, return_type, params, var_out
     ):
-        numpy = pytest.importorskip("numpy")
+        pytest.importorskip("numpy")
         root = build(
             tmp_path / "proj", name, arg_type, return_type, params, var_out
         )
         proc = _compile(
             root / "native/src/osc/osc_ext.c",
-            [
-                str(root / INC_DIR),
-                sysconfig.get_paths()["include"],
-                numpy.get_include(),
-            ],
+            [str(root / INC_DIR)],
+            ext=True,
         )
         assert proc.returncode == 0, proc.stderr
 

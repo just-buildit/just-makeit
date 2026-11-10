@@ -26,22 +26,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _handle
 
-_CC = default_cc()
-_LINK = (
-    ["-bundle", "-undefined", "dynamic_lookup"]
-    if sys.platform == "darwin"
-    else ["-shared"]
-)
+_CC = cbuild.compiler_for()
 
 _BASE = {
     "kind": "handle",
@@ -120,8 +114,6 @@ def test_a_no_arg_handle_compiles_and_constructs(tmp_path):
     against a half-fix: the kwlist and the argument list are two separate
     errors one line apart.
     """
-    import numpy as np
-
     # gh-1368: generated glue reaches complex math through clib_common.h,
     # which a real project always has in native/inc -- render the real one.
     from just_makeit import _render as R
@@ -144,21 +136,12 @@ def test_a_no_arg_handle_compiles_and_constructs(tmp_path):
     pkg = tmp_path / "p"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    subprocess.run(
-        [
-            _CC,
-            *_LINK,
-            "-fPIC",
-            f"-I{tmp_path}",
-            f"-I{sysconfig.get_paths()['include']}",
-            f"-I{np.get_include()}",
-            str(tmp_path / "clk.c"),
-            str(tmp_path / "b.c"),
-            "-o",
-            str(pkg / f"clk{sysconfig.get_config_var('EXT_SUFFIX')}"),
-        ],
-        check=True,
-        capture_output=True,
+    cbuild.build(
+        "ext",
+        [tmp_path / "clk.c", tmp_path / "b.c"],
+        cbuild.output(pkg, "clk", "ext"),
+        includes=[tmp_path],
+        numpy=True,
     )
     r = subprocess.run(
         [

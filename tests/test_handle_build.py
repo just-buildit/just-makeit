@@ -17,14 +17,12 @@ from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 
 import importlib.util
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 import numpy as np
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -32,7 +30,7 @@ from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
 from just_makeit._new import run as new_run
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 pytestmark = pytest.mark.skipif(_CC is None, reason="no C compiler available")
 
 
@@ -376,34 +374,16 @@ def _compile_import(
         )
     )
     ext_c = tmp / "native" / "src" / mod_name / f"{mod_name}_ext.c"
-    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
-    so = tmp / f"{mod_name}{suffix}"
-
-    link = (
-        ["-bundle", "-undefined", "dynamic_lookup"]
-        if sys.platform == "darwin"
-        else ["-shared"]
-    )
-    cmd = [
-        _CC,
-        *link,
-        "-fPIC",
-        "-O2",
-        "-std=c11",
-        "-I",
-        str(tmp / INC_DIR),
-        "-I",
-        sysconfig.get_path("include"),
-        "-I",
-        np.get_include(),
-        str(ext_c),
-        str(backing_c),
-        "-o",
-        str(so),
-    ]
-    subprocess.run(
-        cmd, check=True, capture_output=True, text=True, timeout=600
-    )
+    so = cbuild.build(
+        "ext",
+        [ext_c, backing_c],
+        cbuild.output(tmp, mod_name, "ext"),
+        compiler=_CC,
+        std="c11",
+        flags=["-O2"],
+        includes=[tmp / INC_DIR],
+        numpy=True,
+    ).path
 
     spec = importlib.util.spec_from_file_location(mod_name, so)
     mod = importlib.util.module_from_spec(spec)

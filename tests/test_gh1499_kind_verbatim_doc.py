@@ -45,18 +45,15 @@ from just_makeit import _incpath as INC  # noqa: E402
 
 import ast
 import importlib.util
-import subprocess
-import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 from _jmrun import run_cli
 from test_gh1493_verbatim_doc import _contains_block, _doc, _expected
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 pytestmark = pytest.mark.skipif(_CC is None, reason="no C compiler available")
 
 
@@ -393,27 +390,17 @@ _SOURCES = {
 
 def _import(proj: Path, mod: str):
     """Compile *mod*'s binding with its backing and import the ``.so``."""
-    import numpy as np
-
     out = proj / "build-kinds"
     out.mkdir(exist_ok=True)
-    so = out / f"{mod}{sysconfig.get_config_var('EXT_SUFFIX') or '.so'}"
-    link = (
-        ["-bundle", "-undefined", "dynamic_lookup"]
-        if sys.platform == "darwin"
-        else ["-shared"]
-    )
-    r = subprocess.run(
-        [_CC, *link, "-fPIC", "-std=c11",
-         "-Werror=implicit-function-declaration",
-         "-I", str(proj / INC_DIR),
-         "-I", sysconfig.get_path("include"),
-         "-I", np.get_include(),
-         *[str(proj / s) for s in _SOURCES[mod]],
-         "-o", str(so)],
-        capture_output=True, text=True, timeout=600,
-    )  # fmt: skip
-    assert r.returncode == 0, r.stderr
+    so = cbuild.build(
+        "ext",
+        [proj / s for s in _SOURCES[mod]],
+        cbuild.output(out, mod, "ext"),
+        std="c11",
+        warnings=["error=implicit-function-declaration"],
+        includes=[proj / INC_DIR],
+        numpy=True,
+    ).path
     spec = importlib.util.spec_from_file_location(mod, so)
     assert spec is not None and spec.loader is not None
     m = importlib.util.module_from_spec(spec)

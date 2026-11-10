@@ -12,20 +12,17 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
-import numpy as np
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._render import make_functions_ctx
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 pytestmark = pytest.mark.skipif(_CC is None, reason="no C compiler available")
 
 # A function taking a path (filename), an enum (kind), and a scalar (extra). It
@@ -83,34 +80,15 @@ PyMODINIT_FUNC PyInit_logm(void) {{
 """
     c = tmp / "logm.c"
     c.write_text(src)
-    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
-    so = tmp / f"logm{suffix}"
-    link = (
-        ["-bundle", "-undefined", "dynamic_lookup"]
-        if sys.platform == "darwin"
-        else ["-shared"]
-    )
-    subprocess.run(
-        [
-            _CC,
-            *link,
-            "-fPIC",
-            "-O2",
-            "-std=c11",
-            "-Wall",
-            "-Werror",
-            "-I",
-            sysconfig.get_path("include"),
-            "-I",
-            np.get_include(),
-            str(c),
-            "-o",
-            str(so),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    so = cbuild.build(
+        "ext",
+        [c],
+        cbuild.output(tmp, "logm", "ext"),
+        flags=["-O2"],
+        std="c11",
+        warnings=["all", "error"],
+        numpy=True,
+    ).path
     spec = importlib.util.spec_from_file_location("logm", so)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -44,13 +44,13 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 #: The generated CMake asks for C99 with GNU extensions on, so match it here
 #: rather than compiling jm's own output under stricter flags than the real
 #: build uses.
-_STD = "-std=gnu99"
+_STD = "gnu99"
 
 
 def _project(dest: Path) -> Path:
@@ -196,26 +196,20 @@ class TestRuntimeBehaviour:
 
     def _build_and_run(self, root: Path, comp: str, tmp_path: Path):
         src = root / "native" / "tests" / f"test_{comp}_core.c"
-        exe = tmp_path / f"t_{comp}"
         core = root / "native" / "src" / comp / f"{comp}_core.c"
-        cp = subprocess.run(
-            [
-                _CC,
-                _STD,
-                "-I",
-                str(root / INC_DIR),
-                "-o",
-                str(exe),
-                str(src),
-                str(core),
-                "-lm",
-            ],
-            capture_output=True,
-            text=True,
+        cp = cbuild.build(
+            "exe",
+            [src, core],
+            cbuild.output(tmp_path, f"t_{comp}", "exe"),
+            compiler=_CC,
+            check=False,
+            std=_STD,
+            includes=[root / INC_DIR],
+            libs=["m"],
         )
         if cp.returncode != 0:
             pytest.skip(f"scaffold does not compile here:\n{cp.stderr}")
-        run = subprocess.run([str(exe)], capture_output=True, text=True)
+        run = subprocess.run([str(cp.path)], capture_output=True, text=True)
         return run
 
     def test_scaffold_only_says_so_then_stops_saying_it(self, tmp_path):

@@ -11,14 +11,11 @@ it composes with the gh-353 ``path``/``enum`` args. Mirrors
 from __future__ import annotations
 
 import importlib.util
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
-import numpy as np
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -74,7 +71,7 @@ def test_check_return_composes_with_path_and_enum():
 
 # ── compile + run ────────────────────────────────────────────────────────────
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 _BACKING = """
 #include <stddef.h>
@@ -116,34 +113,15 @@ PyMODINIT_FUNC PyInit_iom(void) {{
 """
     c = tmp_path / "iom.c"
     c.write_text(src)
-    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
-    so = tmp_path / f"iom{suffix}"
-    link = (
-        ["-bundle", "-undefined", "dynamic_lookup"]
-        if sys.platform == "darwin"
-        else ["-shared"]
-    )
-    subprocess.run(
-        [
-            _CC,
-            *link,
-            "-fPIC",
-            "-O2",
-            "-std=c11",
-            "-Wall",
-            "-Werror",
-            "-I",
-            sysconfig.get_path("include"),
-            "-I",
-            np.get_include(),
-            str(c),
-            "-o",
-            str(so),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    so = cbuild.build(
+        "ext",
+        [c],
+        cbuild.output(tmp_path, "iom", "ext"),
+        flags=["-O2"],
+        std="c11",
+        warnings=["all", "error"],
+        numpy=True,
+    ).path
     spec = importlib.util.spec_from_file_location("iom", so)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

@@ -17,12 +17,11 @@ is a skip naming it, and a skip is not a pass.
 
 from __future__ import annotations
 
-import subprocess
-import sysconfig
 from pathlib import Path
 
 import pytest
 
+import _cbuild as cbuild
 from _compilers import find_compiler
 from _jmrun import run_cli
 
@@ -71,35 +70,23 @@ def test_each_header_compiles_with_nothing_called(
     if cc is None:
         pytest.skip(f"{cc_name} is not installed; this leg did not run")
     inc = project / "native" / "inc"
-    py_inc = sysconfig.get_paths()["include"]
-    np = pytest.importorskip("numpy")
+    pytest.importorskip("numpy")
     failures = []
     for hdr in _headers(project):
         tu = tmp_path / "tu.c"
         rel = hdr.relative_to(project).as_posix()
         tu.write_text(f'#include "{hdr.name}"\n')
-        r = subprocess.run(
-            [
-                cc,
-                "-std=gnu99",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-c",
-                "-I",
-                str(hdr.parent),
-                "-I",
-                str(inc),
-                "-I",
-                py_inc,
-                "-I",
-                np.get_include(),
-                str(tu),
-                "-o",
-                str(tmp_path / "tu.o"),
-            ],
-            capture_output=True,
-            text=True,
+        r = cbuild.build(
+            "obj",
+            [tu],
+            tmp_path / ("tu" + cbuild.suffix("obj", cc)),
+            compiler=cc,
+            check=False,
+            std="gnu99",
+            warnings=["all", "extra", "error"],
+            includes=[hdr.parent, inc],
+            python=True,
+            numpy=True,
         )
         if r.returncode != 0:
             failures.append(f"{rel}:\n{r.stderr}")

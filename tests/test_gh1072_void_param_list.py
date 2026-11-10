@@ -49,12 +49,11 @@ import io
 import itertools
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -64,7 +63,7 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._types import c_param_list  # noqa: E402
 
-_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
+_NO_TOOLCHAIN = shutil.which("cmake") is None or cbuild.compiler_for() is None
 
 
 def _quiet(fn, *a, **kw):
@@ -417,20 +416,14 @@ class TestItActuallyCompiles:
             f'#include "{header.name}"\n',
             encoding="utf-8",
         )
-        cc = default_cc()
         inc = root / INC_DIR
-        proc = subprocess.run(
-            [
-                cc,
-                "-std=c99",
-                "-fsyntax-only",
-                f"-I{header.parent}",
-                # `clib_common.h` sits one level up, beside the package
-                # header; the generated CMake puts both on the include path.
-                f"-I{inc}",
-                str(tu),
-            ],
-            capture_output=True,
-            text=True,
+        proc = cbuild.build(
+            "syntax",
+            [tu],
+            std="c99",
+            # `clib_common.h` sits one level up, beside the package
+            # header; the generated CMake puts both on the include path.
+            includes=[header.parent, inc],
+            check=False,
         )
         assert proc.returncode == 0, proc.stderr

@@ -32,6 +32,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
 from _compilers import default_cc
 from _jm_bench import materialize_bench
@@ -281,24 +282,13 @@ class TestTheLayoutMatchesTheCompiler:
             "        offsetof(iq_pair_t, i), offsetof(iq_pair_t, q));\n"
             "    return 0;\n}\n"
         )
-        exe = tmp / "layout"
-        cc = default_cc()
-        r = subprocess.run(
-            [
-                cc,
-                str(src),
-                "-I",
-                str(root / INC_DIR),
-                "-I",
-                str(root / INC_ROOT / "ring"),
-                "-o",
-                str(exe),
-            ],
-            capture_output=True,
-            text=True,
+        exe = cbuild.build(
+            "exe",
+            [src],
+            cbuild.output(tmp, "layout", "exe"),
             timeout=300,
-        )
-        assert r.returncode == 0, r.stderr
+            includes=[root / INC_DIR, root / INC_ROOT / "ring"],
+        ).path
         out = subprocess.run(
             [str(exe)], capture_output=True, text=True, timeout=60
         ).stdout.split()

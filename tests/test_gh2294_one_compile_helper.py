@@ -159,10 +159,11 @@ def _is_query(seq: ast.AST) -> bool:
 def compiler_runs(tree: ast.Module) -> "list[int]":
     """Lines of a list that runs a compiler: what a hand-written compile is.
 
-    Its first element is a name bound from a lookup, a lookup call, or --
-    when the list is ``subprocess``'s argv or carries an option -- a
-    compiler's name. A query
-    of the compiler (``[cc, "--version"]``) builds nothing and is not one.
+    Its first element is a compiler -- a name bound from a lookup, a
+    lookup call, or a compiler's name -- and the list is a command:
+    ``subprocess``'s argv, or one carrying a ``-`` option. A list that
+    merely holds a compiler (``(gcc, env)``, a parametrize list) is not
+    one, and neither is a query (``[cc, "--version"]``).
     """
     names = _compiler_names(tree)
     argvs = _argvs(tree)
@@ -171,12 +172,14 @@ def compiler_runs(tree: ast.Module) -> "list[int]":
         if not isinstance(node, (ast.List, ast.Tuple)) or not node.elts:
             continue
         head = node.elts[0]
-        named = isinstance(head, ast.Constant) and head.value in COMPILER_NAMES
-        hit = (
+        compiler = (
             (isinstance(head, ast.Name) and head.id in names)
             or (isinstance(head, ast.Call) and _is_lookup(head))
-            or (named and (id(node) in argvs or _has_option(node)))
+            or (
+                isinstance(head, ast.Constant) and head.value in COMPILER_NAMES
+            )
         )
+        hit = compiler and (id(node) in argvs or _has_option(node))
         if hit and not _is_query(node):
             out.append(node.lineno)
     return sorted(out)
@@ -241,13 +244,18 @@ def test_every_exception_still_runs_its_compiler():
         ("import subprocess\nsubprocess.run(['cc', 'a.c'])\n", [2], []),
         ("cmd = ['gcc', '-O2', 'demo.c']\n", [1], []),
         ("_CC = default_cc()\nx = [_CC, '-c', 'a.c']\n", [2], []),
-        ("x = [default_cxx(), 'a.cpp']\n", [1], []),
-        ("_CC = a() or find_compiler('clang')\ny = (_CC, 'a.c')\n", [2], []),
+        ("x = [default_cxx(), '-c', 'a.cpp']\n", [1], []),
+        (
+            "_CC = a() or find_compiler('clang')\ny = (_CC, '-c', 'a.c')\n",
+            [2],
+            [],
+        ),
         ("link = ['-shared']\n", [], [1]),
         # Not findings: a query, a parametrize list, a docstring.
         ("_CC = default_cc()\nsubprocess.run([_CC, '--version'])\n", [], []),
         ("_CC = default_cc()\nx = [_CC, '-print-file-name=a.so']\n", [], []),
         ("pytest.mark.parametrize('cc', ['gcc', 'clang'])\n", [], []),
+        ("gcc = find_compiler('gcc')\nx = (gcc, env)\n", [], []),
         ('"""Pass -shared to cc."""\n', [], []),
     ],
 )

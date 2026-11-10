@@ -60,14 +60,14 @@ from just_makeit import _incpath as INC  # noqa: E402
 import subprocess
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc, default_cxx
 
 from _jmrun import JmRun, run_cli
 
 
-_CC = default_cc()
-_CXX = default_cxx()
+_CC = cbuild.compiler_for()
+_CXX = cbuild.compiler_for(cxx=True)
 _needs_cxx = pytest.mark.skipif(_CXX is None, reason="no C++ compiler on PATH")
 
 
@@ -145,29 +145,23 @@ class TestEveryGeneratedHeaderIsCxxIncludable:
             p.relative_to(inc).as_posix() for p in inc.rglob("*.h")
         )
         assert len(headers) >= 6, headers
-        import sysconfig
 
         failures = []
         for rel in headers:
             src = tmp_path / "probe.cpp"
             src.write_text(f'#include "{rel}"\nint main() {{ return 0; }}\n')
-            r = subprocess.run(
-                [
-                    _CXX,
-                    "-std=c++11",
-                    "-Wall",
-                    "-Wextra",
-                    "-c",
-                    str(src),
-                    f"-I{inc}",
-                    f"-I{sysconfig.get_paths()['include']}",
-                    "-o",
-                    str(tmp_path / "probe.o"),
-                ],
-                capture_output=True,
-                text=True,
+            r = cbuild.build(
+                "obj",
+                [src],
+                cbuild.output(tmp_path, "probe", "obj", cxx=True),
+                cxx=True,
+                check=False,
+                std="c++11",
+                warnings=["all", "extra"],
+                includes=[inc],
+                python=True,
             )
-            if r.returncode != 0:
+            if not r.ok:
                 # The WHOLE message. Truncating it to the first two
                 # lines cost a CI round trip: both were "In file
                 # included from ...", which named the symptom and
@@ -213,51 +207,32 @@ class TestTheAbiSurvivesTheCrossing:
             "    return 0;\n"
             "}\n"
         )
-        core_o = tmp_path / "core.o"
-        assert (
-            subprocess.run(
-                [
-                    _CC,
-                    "-std=c99",
-                    "-c",
-                    str(core_c),
-                    f"-I{inc}",
-                    "-o",
-                    str(core_o),
-                ],
-                capture_output=True,
-                text=True,
-            ).returncode
-            == 0
-        )
-        caller_o = tmp_path / "caller.o"
-        r = subprocess.run(
-            [
-                _CXX,
-                "-std=c++11",
-                "-Wall",
-                "-c",
-                str(caller),
-                f"-I{inc}",
-                "-o",
-                str(caller_o),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        assert r.returncode == 0, r.stderr
-        exe = tmp_path / "mixed"
+        core_o = cbuild.build(
+            "obj",
+            [core_c],
+            cbuild.output(tmp_path, "core", "obj"),
+            std="c99",
+            includes=[inc],
+        ).path
+        caller_o = cbuild.build(
+            "obj",
+            [caller],
+            cbuild.output(tmp_path, "caller", "obj", cxx=True),
+            cxx=True,
+            std="c++11",
+            warnings=["all"],
+            includes=[inc],
+        ).path
         # The C++ driver, deliberately: linking C++ objects with the C driver
         # leaves the runtime undefined. That is gh-1149's problem, not this
         # one — here the C++ side is the CALLER and jm's core stays C.
-        assert (
-            subprocess.run(
-                [_CXX, str(caller_o), str(core_o), "-o", str(exe), "-lm"],
-                capture_output=True,
-                text=True,
-            ).returncode
-            == 0
-        )
+        exe = cbuild.build(
+            "exe",
+            [caller_o, core_o],
+            cbuild.output(tmp_path, "mixed", "exe", cxx=True),
+            cxx=True,
+            libs=["m"],
+        ).path
         out = subprocess.run([str(exe)], capture_output=True, text=True)
         assert out.returncode == 0, out.stderr
         assert out.stdout.strip() == "3.0 4.0", out.stdout

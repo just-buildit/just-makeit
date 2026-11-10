@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 from _jm_bench import materialize_bench
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -43,7 +43,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _MAKE = shutil.which("make")
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
@@ -252,26 +252,15 @@ class TestItShipsNoDeadCode:
         # unused. A project building its benchmarks with -Werror could not
         # compile a jm scaffold at all.
         root = _unfillable(tmp_path)
-        done = subprocess.run(
-            [
-                _CC,
-                "-std=gnu99",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-c",
-                "-o",
-                "/dev/null",
-                str(root / "native" / "benchmarks" / "bench_tlm_core.c"),
-                "-I",
-                str(root / INC_DIR),
-                "-I",
-                str(root / "native" / "benchmarks"),
-            ],
-            capture_output=True,
-            text=True,
+        cbuild.build(
+            "obj",
+            [root / "native" / "benchmarks" / "bench_tlm_core.c"],
+            cbuild.output(tmp_path, "bench_tlm_core", "obj"),
+            compiler=_CC,
+            std="gnu99",
+            warnings=["all", "extra", "error"],
+            includes=[root / INC_DIR, root / "native" / "benchmarks"],
         )
-        assert done.returncode == 0, done.stderr
 
     def test_the_timers_follow_the_timing_block(self, tmp_path):
         empty = _bench_src(_unfillable(tmp_path), "tlm")

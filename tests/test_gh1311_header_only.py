@@ -37,6 +37,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
 from _compilers import default_cc
 
@@ -192,24 +193,15 @@ class TestTheHeaderHasNoExternalLinkage:
             "int tu1(void); int tu2(void);\n"
             "int main(void) { return tu1() + tu2() > 0 ? 0 : 1; }\n"
         )
-        cc = default_cc()
-        r = subprocess.run(
-            [
-                cc,
-                "-std=c99",
-                f"-I{inc}",
-                "-o",
-                str(tmp_path / "a.out"),
-                str(tmp_path / "tu1.c"),
-                str(tmp_path / "tu2.c"),
-                str(tmp_path / "main.c"),
-                "-lm",
-            ],
-            capture_output=True,
-            text=True,
+        cbuild.build(
+            "exe",
+            [tmp_path / "tu1.c", tmp_path / "tu2.c", tmp_path / "main.c"],
+            cbuild.output(tmp_path, "a.out", "exe"),
             timeout=300,
+            std="c99",
+            includes=[inc],
+            libs=["m"],
         )
-        assert r.returncode == 0, r.stdout + r.stderr
 
 
 class TestTheCoreLibraryIsInterface:

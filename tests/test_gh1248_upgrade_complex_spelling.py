@@ -32,12 +32,11 @@ from just_makeit import _incpath as INC  # noqa: E402
 import contextlib
 import io
 import re
-import subprocess
 import sys
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cxx
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -178,7 +177,7 @@ def test_clib_common_h_is_left_alone(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    default_cxx() is None,
+    cbuild.compiler_for(cxx=True) is None,
     reason="no C++ compiler",
 )
 def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
@@ -189,7 +188,6 @@ def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
     """
     root = _project(tmp_path)
     _upgrade_out(root)
-    cxx = default_cxx()
     inc = root / INC_DIR
     body = (
         "int main(){ std::vector<std::complex<float> > v;"
@@ -203,12 +201,15 @@ def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
     for name, src in orders.items():
         tu = tmp_path / f"{name}.cpp"
         tu.write_text(src)
-        r = subprocess.run(
-            [cxx, "-std=c++11", "-fsyntax-only", "-I", str(inc), str(tu)],
-            capture_output=True,
-            text=True,
+        r = cbuild.build(
+            "syntax",
+            [tu],
+            cxx=True,
+            check=False,
+            std="c++11",
+            includes=[inc],
         )
-        assert r.returncode == 0, f"{name} did not compile:\n{r.stderr}"
+        assert r.ok, f"{name} did not compile:\n{r.stderr}"
 
 
 class TestCommentsAndStringsAreProse:

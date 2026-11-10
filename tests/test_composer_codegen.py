@@ -1554,13 +1554,11 @@ class TestPyiDocstrings:
 # ── gh-343: compile-check that the emitted serializer include resolves the
 #    fn's declaration (the gap the compiler-free unit gate above misses — this
 #    is the exact implicit-declaration miscompile doppler hit). ────────────────
-import subprocess  # noqa: E402
-
+import _cbuild as cbuild  # noqa: E402
 import pytest  # noqa: E402
-from _compilers import default_cc  # noqa: E402
 from just_makeit._pyfmt import flatten_signatures
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 
 @pytest.mark.skipif(_CC is None, reason="no C compiler available")
@@ -1604,25 +1602,17 @@ def test_emitted_serializer_include_makes_fn_decl_visible(tmp_path):
         "    return probe_serialize(fs, segs, n);\n"
         "}\n"
     )
-    obj = tmp_path / "probe.o"
-    subprocess.run(
-        [
-            _CC,
-            "-c",
-            "-std=c11",
-            "-Werror=implicit-function-declaration",
-            "-Werror=int-conversion",
-            "-I",
-            str(tmp_path),
-            str(probe),
-            "-o",
-            str(obj),
+    obj = cbuild.build(
+        "obj",
+        [probe],
+        cbuild.output(tmp_path, "probe", "obj"),
+        std="c11",
+        warnings=[
+            "error=implicit-function-declaration",
+            "error=int-conversion",
         ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+        includes=[tmp_path],
+    ).path
     assert obj.exists()
 
 
