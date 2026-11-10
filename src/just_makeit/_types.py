@@ -152,9 +152,9 @@ _CTYPE_META: dict[str, dict] = {
     # "out of range for int32_t [lo, hi]" -- one message per platform.
     "int32_t": _fwint(
         "int32_t",
-        "L",
-        "long long",
-        "0LL",
+        "l",
+        "long",
+        "0L",
         "np.int32",
         _TO_PY_LONG,
         narrow=True,
