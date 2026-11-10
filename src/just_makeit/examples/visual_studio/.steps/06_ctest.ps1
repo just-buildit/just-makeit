@@ -1,0 +1,1 @@
+ctest --preset windows-release

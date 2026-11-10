@@ -46,6 +46,65 @@ def scratch_dir() -> "Iterator[str]":
         shutil.rmtree(path, ignore_errors=True)
 
 
+def run_jm(cwd: "str | Path", *args: str) -> str:
+    """Run ``just-makeit <args>`` in *cwd*, in this process; its output.
+
+    What an example calls when its step IS a jm command line, so the
+    example runs the words its README shows rather than the Python function
+    behind them. In-process for the same reason the test suite's
+    ``run_cli`` is (gh-1374): a child costs a process start and, under
+    coverage, a data file, and isolates nothing a restored ``sys.argv`` and
+    working directory do not.
+
+    Parameters
+    ----------
+    cwd
+        The directory the command runs in; the caller's own working
+        directory is restored afterwards, on every way out.
+    *args
+        The command line without the program name.
+
+    Returns
+    -------
+    str
+        Everything the command printed, both streams in the order written,
+        as a terminal would show them.
+
+    Raises
+    ------
+    AssertionError
+        When the command exits non-zero, naming it and quoting its output.
+
+    Examples
+    --------
+    >>> with scratch_dir() as d:
+    ...     out = run_jm(d, "new", "demo")
+    ...     (Path(d) / "demo" / "just-makeit.toml").exists()
+    True
+    """
+    import io
+
+    from just_makeit._cli import main
+
+    buf = io.StringIO()
+    argv, here = sys.argv, os.getcwd()
+    sys.argv = ["just-makeit", *args]
+    os.chdir(cwd)
+    code = 0
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            try:
+                main()
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+    finally:
+        sys.argv = argv
+        os.chdir(here)
+    text = buf.getvalue()
+    assert code == 0, f"jm {' '.join(args)} exited {code}\n{text}"
+    return text
+
+
 def _examples_root() -> Path | None:
     """Return the examples/ directory, searching installed then editable paths."""
     import just_makeit
