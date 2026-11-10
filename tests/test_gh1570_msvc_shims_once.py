@@ -32,9 +32,9 @@ GATE: a package with the pre-fix (unguarded) shims, included first, and a
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
 
 from _compilers import find_compiler
@@ -60,7 +60,7 @@ def _packages(root: Path) -> "list[tuple[Path, str]]":
     return out
 
 
-def _compile(root: Path, packages, body: str) -> "subprocess.CompletedProcess":
+def _compile(root: Path, packages, body: str) -> "cbuild.Built":
     tu = root / "both.c"
     tu.write_text(
         "".join(f'#include "{spelled}"\n' for _, spelled in packages) + body,
@@ -68,11 +68,15 @@ def _compile(root: Path, packages, body: str) -> "subprocess.CompletedProcess":
     )
     cc = find_compiler("clang")
     assert cc, "clang is on every CI leg; it is what takes the MSVC branch"
-    inc_dirs = [f"-I{root / pkg / INC.INC_DIR}" for pkg in ("alpha", "beta")]
-    return subprocess.run(
-        [cc, "-fsyntax-only", "-D_MSC_VER=1930", *inc_dirs, str(tu)],
-        capture_output=True,
-        text=True,
+    # Plain clang, never clang-cl: the MSVC branch is taken by the define,
+    # so this runs on every leg.
+    return cbuild.build(
+        "syntax",
+        [tu],
+        compiler=cc,
+        includes=[root / pkg / INC.INC_DIR for pkg in ("alpha", "beta")],
+        defines=["_MSC_VER=1930"],
+        check=False,
         timeout=120,
     )
 
