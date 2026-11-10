@@ -18,6 +18,12 @@ IDE**, opening the project folder. Both configure through the same generated
     or LLVM (`winget install LLVM.LLVM`).
 - **Python 3.9+**, x64.
 
+The first two are declared in the project's `bootstrap.toml`, in its
+`[dev.winget]` table, so `make install-deps` from Git Bash installs them
+(gh-2598). It asks `vswhere` for a Visual Studio instance that has both. If
+none does, it installs the Build Tools with them, or adds them to Build Tools
+already installed, raising a UAC prompt when the shell is not elevated.
+
 **Why clang-cl and not MSVC's `cl.exe`:** jm generates C99 `float _Complex`,
 which `cl.exe` does not have at all; `clib_common.h` stops such a build with
 an `#error` naming the fix. clang-cl has `_Complex` while targeting the same
