@@ -153,31 +153,19 @@ class TestTheKeyIsWellFormed:
         p = {"name": "x", "type": "capsule", "ctype": "should_be_ignored"}
         assert (p.get("type") or p.get("ctype", "size_t")) == "capsule"
 
-    def test_the_cli_refuses_it_without_a_capsule(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_the_cli_refuses_it_without_a_capsule(self, tmp_path: Path):
         """On its own it describes a pointer nothing publishes."""
-        from just_makeit._cli import main
+        from _jmrun import run_cli
 
-        root = _project(tmp_path)
-        monkeypatch.chdir(root)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "just-makeit",
-                "property",
-                "nco",
-                "p",
-                "--type",
-                "double",
-                "--capsule-type",
-                "int *",
-            ],
+        r = run_cli(
+            "property",
+            "nco",
+            "p",
+            "--type",
+            "double",
+            "--capsule-type",
+            "int *",
+            cwd=_project(tmp_path),
         )
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            with pytest.raises(SystemExit) as exc:
-                main()
-        assert exc.value.code != 0
-        assert "needs --capsule" in err.getvalue()
+        assert r.returncode != 0
+        assert "needs --capsule" in r.stderr

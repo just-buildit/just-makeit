@@ -7,5 +7,4 @@
     maps to. The example's test runs the PowerShell lines the page shows, so
     the Windows clang-cl CI job now drives the IDE's path, and it checks
     every preset name and the toolbar label against the generated
-    `CMakePresets.json`. `docs/windows.md` links to it. An example can run a
-    jm command line in-process through `_example.run_jm`.
+    `CMakePresets.json`. `docs/windows.md` links to it.
