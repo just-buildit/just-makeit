@@ -9,6 +9,10 @@ There are two ways in: **PowerShell**, from a terminal, and the **Visual Studio
 IDE**, opening the project folder. Both configure through the same generated
 `CMakePresets.json` (gh-1376), so they build the same thing.
 
+The [Visual Studio on Windows](examples/visual_studio.md) example walks
+through both, from `jm new` to a passing test run, with each IDE action next
+to the command it maps to; the clang-cl job above runs those commands.
+
 ## What you need
 
 - **Visual Studio 2022 or later**, or the standalone **Build Tools**, with the

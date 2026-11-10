@@ -68,6 +68,7 @@ GALLERY = {
     "composer_seams": "Composer seams",
     "stale_project": "Upgrading an old project",
     "kitchen_sink": "Kitchen sink",
+    "visual_studio": "Visual Studio on Windows",
 }
 
 # Examples with no README, deliberately. These are end-to-end regression
