@@ -9,10 +9,6 @@ There are two ways in: **PowerShell**, from a terminal, and the **Visual Studio
 IDE**, opening the project folder. Both configure through the same generated
 `CMakePresets.json` (gh-1376), so they build the same thing.
 
-The [Visual Studio on Windows](examples/visual_studio.md) example walks
-through both, from `jm new` to a passing test run, with each IDE action next
-to the command it maps to; the clang-cl job above runs those commands.
-
 ## What you need
 
 - **Visual Studio 2022 or later**, or the standalone **Build Tools**, with the
@@ -80,6 +76,10 @@ missing or has no numpy; create it as above, then **Project > Delete Cache
 and Reconfigure**.
 
 VS Code's *CMake Tools* extension reads the same file, on every platform.
+
+The [Visual Studio on Windows](examples/visual_studio.md) example walks
+through all of it, from `jm new` to a passing test run, with each IDE action
+next to the command it maps to; CI's clang-cl job runs those commands.
 
 ## Changing the presets
 
