@@ -9,14 +9,6 @@
 #if !defined(__clang__)
 #error "C99 _Complex is required; on Windows build with clang-cl, not cl.exe"
 #endif
-/* gh-1570: guarded ACROSS packages, not by the per-package guard above. Two
- * jm libraries installed side by side each ship this file under their own
- * guard, and a consumer including both defined every `jm_c*` shim twice --
- * a redefinition error, on this ABI only, the moment one translation unit
- * reached both. The shims are the same in every package, so the first
- * definition serves all. */
-#ifndef JM_MSVC_COMPLEX_SHIMS
-#define JM_MSVC_COMPLEX_SHIMS
 /* The UCRT's own <complex.h> FIRST, so its `_Fcomplex` declarations are
  * already parsed -- and its include guard already set -- before the C99 names
  * are remapped below. Then any later #include <complex.h>, from numpy's
@@ -24,6 +16,21 @@
  * through the macros. */
 #include <complex.h>
 #include <math.h>
+/* gh-1570: what follows is NOT under this file's per-package guard alone.
+ * Two jm libraries installed side by side each ship this file, under their
+ * own guards, and a consumer including both reaches this block twice --
+ * possibly from two jm versions, one with a shim the other lacks.
+ *
+ * The macro remaps need no guard: C allows a macro to be redefined with an
+ * identical replacement list (C99 6.10.3p2), and every jm spells these the
+ * same. `I` is #undef'd first, because the UCRT's <complex.h> defines it as
+ * its own struct constant; a second package then redefines it identically.
+ *
+ * Each `static inline` shim is guarded BY ITSELF, as `JM_SHIM_<NAME>`, with
+ * the remap that routes the C99 name to it. One guard over the whole set
+ * would let an older package included first hide a shim only a newer one
+ * defines, leaving that name on the UCRT's struct-typed function. Per shim,
+ * any mix of package versions defines each exactly once. */
 /* `I` only: `_Complex_I` is reserved to the implementation (gh-944), and
  * nothing jm writes spells it. Nor is `complex` redefined, although the UCRT
  * maps it to its `struct _complex`: jm spells `_Complex` everywhere, and a
@@ -36,16 +43,26 @@
 #define creal __builtin_creal
 #define cimag __builtin_cimag
 #define conj __builtin_conj
+#ifndef JM_SHIM_CABSF
+#define JM_SHIM_CABSF
 static inline float
 jm_cabsf(float _Complex z)
 {
     return hypotf(__builtin_crealf(z), __builtin_cimagf(z));
 }
+#define cabsf jm_cabsf
+#endif
+#ifndef JM_SHIM_CARGF
+#define JM_SHIM_CARGF
 static inline float
 jm_cargf(float _Complex z)
 {
     return atan2f(__builtin_cimagf(z), __builtin_crealf(z));
 }
+#define cargf jm_cargf
+#endif
+#ifndef JM_SHIM_CEXPF
+#define JM_SHIM_CEXPF
 static inline float _Complex
 jm_cexpf(float _Complex z)
 {
@@ -53,16 +70,28 @@ jm_cexpf(float _Complex z)
     return __builtin_complex(e * cosf(__builtin_cimagf(z)),
                              e * sinf(__builtin_cimagf(z)));
 }
+#define cexpf jm_cexpf
+#endif
+#ifndef JM_SHIM_CABS
+#define JM_SHIM_CABS
 static inline double
 jm_cabs(double _Complex z)
 {
     return hypot(__builtin_creal(z), __builtin_cimag(z));
 }
+#define cabs jm_cabs
+#endif
+#ifndef JM_SHIM_CARG
+#define JM_SHIM_CARG
 static inline double
 jm_carg(double _Complex z)
 {
     return atan2(__builtin_cimag(z), __builtin_creal(z));
 }
+#define carg jm_carg
+#endif
+#ifndef JM_SHIM_CEXP
+#define JM_SHIM_CEXP
 static inline double _Complex
 jm_cexp(double _Complex z)
 {
@@ -70,13 +99,8 @@ jm_cexp(double _Complex z)
     return __builtin_complex(e * cos(__builtin_cimag(z)),
                              e * sin(__builtin_cimag(z)));
 }
-#define cabsf jm_cabsf
-#define cargf jm_cargf
-#define cexpf jm_cexpf
-#define cabs jm_cabs
-#define carg jm_carg
 #define cexp jm_cexp
-#endif /* JM_MSVC_COMPLEX_SHIMS */
+#endif
 #else
 #include <complex.h>
 #endif
