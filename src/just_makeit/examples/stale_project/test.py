@@ -33,9 +33,7 @@ Also runnable directly: python3 src/just_makeit/examples/stale_project/test.py
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
-import io
 import os
 import re
 import shutil
@@ -44,6 +42,7 @@ import sys
 from just_makeit import _incpath as INC
 from pathlib import Path
 from just_makeit import _textio
+from just_makeit._example import run_jm
 
 HERE = Path(__file__).parent
 TREE = HERE / "tree"
@@ -134,30 +133,11 @@ class _Log:
     def jm(self, *args: str, expect: int = 0) -> str:
         """Run ``just-makeit <args>`` in the project and record its output.
 
-        In-process, like the other examples: one buffer for both streams, so
-        warnings sit where the terminal would show them.
+        Through `_example.run_jm`, like the other examples: one stream for
+        both, so warnings sit where the terminal would show them.
         """
-        from just_makeit._cli import main
-
-        buf = io.StringIO()
-        argv, cwd = sys.argv, os.getcwd()
-        sys.argv = ["just-makeit", *args]
-        os.chdir(self.proj)
-        code = 0
-        try:
-            with (
-                contextlib.redirect_stdout(buf),
-                contextlib.redirect_stderr(buf),
-            ):
-                try:
-                    main()
-                except SystemExit as e:
-                    code = e.code if isinstance(e.code, int) else 1
-        finally:
-            sys.argv = argv
-            os.chdir(cwd)
-        text = buf.getvalue()
-        assert code == expect, f"jm {' '.join(args)} exited {code}\n{text}"
+        text = run_jm(self.proj, *args, expect=expect)
+        code = expect
         # The copy's location and the running version are the only inputs
         # that differ between runs, and neither is what this is about.
         norm = (
@@ -262,10 +242,10 @@ def run(root: Path) -> None:
     # stale.lib`). `jm status --diff` shows the file against today's render;
     # here, never edited, it is taken whole from a scratch `jm new` of the
     # same name, and apply re-splices the managed blocks.
-    from just_makeit._new import run as jm_new
-
-    with contextlib.redirect_stdout(io.StringIO()):
-        jm_new("stale", root / "fresh" / "stale")
+    # Not logged: the scratch project is not the user's, and the golden is
+    # what THEIR project reports.
+    (root / "fresh").mkdir()
+    run_jm(root / "fresh", "new", "stale")
     shutil.copyfile(
         root / "fresh" / "stale" / "CMakeLists.txt", proj / "CMakeLists.txt"
     )

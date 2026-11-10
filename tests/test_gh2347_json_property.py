@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
-from just_makeit._cli import main as cli_main
+from _jmrun import run_cli  # noqa: E402
 from just_makeit._context import make_properties_ctx
 from just_makeit._context._methods import validate_json_property
 from just_makeit._module import run as module_run
@@ -305,15 +305,9 @@ class TestCli:
     """The flags as a user reaches them, through the argv parser."""
 
     @staticmethod
-    def _cli(monkeypatch, cwd, *args):
-        """Run ``jm <args>`` in *cwd*; returns the SystemExit code (0 if none)."""
-        monkeypatch.chdir(cwd)
-        monkeypatch.setattr(sys, "argv", ["just-makeit", *args])
-        try:
-            cli_main()
-        except SystemExit as exc:
-            return exc.code or 0
-        return 0
+    def _cli(cwd, *args):
+        """Run ``jm <args>`` in *cwd*, in-process (gh-2597)."""
+        return run_cli(*args, cwd=cwd)
 
     @pytest.fixture()
     def fresh(self, tmp_path):
@@ -321,9 +315,8 @@ class TestCli:
         new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")], c_prefix=None)
         return dest
 
-    def test_flags_reach_the_manifest(self, fresh, monkeypatch):
-        rc = self._cli(
-            monkeypatch,
+    def test_flags_reach_the_manifest(self, fresh):
+        r = self._cli(
             fresh,
             "property",
             "rdr",
@@ -333,16 +326,13 @@ class TestCli:
             "--py-type",
             "list[dict[str, Any]]",
         )
-        assert rc == 0
+        assert r.returncode == 0
         props = {p["name"]: p for p in C.properties(C.load(fresh), "rdr")}
         assert props["annotations"]["py_type"] == "list[dict[str, Any]]"
 
-    def test_bad_declaration_exits_before_the_manifest(
-        self, fresh, monkeypatch, capsys
-    ):
+    def test_bad_declaration_exits_before_the_manifest(self, fresh):
         before = (fresh / C.FILENAME).read_text()
-        rc = self._cli(
-            monkeypatch,
+        r = self._cli(
             fresh,
             "property",
             "rdr",
@@ -351,8 +341,8 @@ class TestCli:
             "json",
             "--writable",
         )
-        assert rc != 0
-        assert "read-only" in capsys.readouterr().err
+        assert r.returncode != 0
+        assert "read-only" in r.stderr
         assert (fresh / C.FILENAME).read_text() == before
 
 

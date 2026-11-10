@@ -24,14 +24,11 @@ Also runnable directly: python3 src/just_makeit/examples/enum_constants/test.py
 
 from __future__ import annotations
 
-import contextlib
-import io
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-from just_makeit._example import scratch_dir
+from just_makeit._example import run_jm, scratch_dir
 
 HERE = Path(__file__).parent
 
@@ -103,28 +100,6 @@ print("every choice reached C as its constant")
 """
 
 
-def _jm(proj: Path, *args: str) -> str:
-    """``just-makeit <args>`` in *proj*, in this process; its output."""
-    from just_makeit._cli import main
-
-    buf = io.StringIO()
-    argv, cwd = sys.argv, os.getcwd()
-    sys.argv = ["just-makeit", *args]
-    os.chdir(proj)
-    code = 0
-    try:
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            try:
-                main()
-            except SystemExit as e:
-                code = e.code if isinstance(e.code, int) else 1
-    finally:
-        sys.argv = argv
-        os.chdir(cwd)
-    assert code == 0, f"jm {' '.join(args)} exited {code}\n{buf.getvalue()}"
-    return buf.getvalue()
-
-
 def _cmd(args, cwd) -> str:
     r = subprocess.run(
         args, cwd=cwd, capture_output=True, text=True, timeout=600
@@ -147,7 +122,7 @@ def run(root: Path) -> None:
     # The default is LVL_INFO's value. A C constant would do for the C,
     # but the scaffolded Python test spells the default too, and there a C
     # name means nothing.
-    _jm(
+    run_jm(
         root,
         "new",
         "levels",
@@ -167,7 +142,7 @@ def run(root: Path) -> None:
     # The Python test was scaffolded for the constructor `jm new` wrote; this
     # one takes `level`. It still carries its ownership token, so `apply`
     # renders it for the new constructor (gh-1489) -- no delete step.
-    _jm(proj, "apply")
+    run_jm(proj, "apply")
     test_py = (proj / "src/levels/tests/test_gate.py").read_text(
         encoding="utf-8"
     )
@@ -201,10 +176,10 @@ def run(root: Path) -> None:
         "    (void)state; (void)level;\n    return (int)0;",
         "    return level >= state->threshold;",
     )
-    _jm(proj, "apply")
+    run_jm(proj, "apply")
     pyi = (proj / "src/levels/gate.pyi").read_text(encoding="utf-8")
     assert '- ``"auto"`` — Let the gate choose' in pyi, pyi
-    _jm(proj, "status", "--check")
+    run_jm(proj, "status", "--check")
 
     # ── 5. Build, test, and cross every path ─────────────────────────────
     _cmd(

@@ -49,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
-from just_makeit._cli import main as cli_main
+from _jmrun import run_cli  # noqa: E402
 from just_makeit._context import make_properties_ctx
 from just_makeit._context._methods import validate_container_property
 from just_makeit._csym import container_accessors
@@ -721,15 +721,9 @@ class TestCli:
     """
 
     @staticmethod
-    def _cli(monkeypatch, cwd, *args):
-        """Run ``jm <args>`` in *cwd*; returns the SystemExit code (0 if none)."""
-        monkeypatch.chdir(cwd)
-        monkeypatch.setattr(sys, "argv", ["just-makeit", *args])
-        try:
-            cli_main()
-        except SystemExit as exc:
-            return exc.code or 0
-        return 0
+    def _cli(cwd, *args):
+        """Run ``jm <args>`` in *cwd*, in-process (gh-2597)."""
+        return run_cli(*args, cwd=cwd)
 
     @pytest.fixture()
     def project(self, tmp_path):
@@ -737,11 +731,8 @@ class TestCli:
         new_run("dsp", dest, ["rdr"], [("cap", "size_t", "16")], c_prefix=None)
         return dest
 
-    def test_every_container_flag_reaches_the_manifest(
-        self, project, monkeypatch
-    ):
-        rc = self._cli(
-            monkeypatch,
+    def test_every_container_flag_reaches_the_manifest(self, project):
+        r = self._cli(
             project,
             "property",
             "rdr",
@@ -757,7 +748,7 @@ class TestCli:
             "--value-fn",
             "rdr_kwval",
         )
-        assert rc == 0
+        assert r.returncode == 0
         (prop,) = C.properties(C.load(project), "rdr")
         assert prop["type"] == "dict"
         assert prop["value_type"] == "object"
@@ -765,13 +756,10 @@ class TestCli:
         assert prop["key_fn"] == "rdr_kwtag"
         assert prop["value_fn"] == "rdr_kwval"
 
-    def test_typed_non_pointer_value_declares_with_a_space(
-        self, project, monkeypatch
-    ):
+    def test_typed_non_pointer_value_declares_with_a_space(self, project):
         """`double` needs a separator before the name; `const char *` must not
         get one. Only the pointer case was covered before."""
-        rc = self._cli(
-            monkeypatch,
+        r = self._cli(
             project,
             "property",
             "rdr",
@@ -781,7 +769,7 @@ class TestCli:
             "--value-type",
             "double",
         )
-        assert rc == 0
+        assert r.returncode == 0
         h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
         assert (
             "double rdr_gains_value(const rdr_state_t *state, size_t i);" in h
@@ -797,12 +785,11 @@ class TestCli:
         ],
     )
     def test_container_flags_are_rejected_on_a_scalar(
-        self, project, monkeypatch, capsys, flag, value
+        self, project, flag, value
     ):
         """A silently ignored flag is the foot-gun this project keeps paying
         for, so each one is an error rather than a no-op."""
-        rc = self._cli(
-            monkeypatch,
+        r = self._cli(
             project,
             "property",
             "rdr",
@@ -812,17 +799,14 @@ class TestCli:
             flag,
             value,
         )
-        assert rc == 1
-        assert (
-            "applies only to a container property" in capsys.readouterr().err
-        )
+        assert r.returncode == 1
+        assert "applies only to a container property" in r.stderr
         assert not C.properties(C.load(project), "rdr")
 
     def test_incoherent_declaration_exits_before_touching_the_manifest(
-        self, project, monkeypatch, capsys
+        self, project
     ):
-        rc = self._cli(
-            monkeypatch,
+        r = self._cli(
             project,
             "property",
             "rdr",
@@ -832,13 +816,12 @@ class TestCli:
             "--key-fn",
             "f",
         )
-        assert rc == 1
-        assert "only for a dict" in capsys.readouterr().err
+        assert r.returncode == 1
+        assert "only for a dict" in r.stderr
         assert not C.properties(C.load(project), "rdr")
 
-    def test_writable_container_is_refused(self, project, monkeypatch, capsys):
-        rc = self._cli(
-            monkeypatch,
+    def test_writable_container_is_refused(self, project):
+        r = self._cli(
             project,
             "property",
             "rdr",
@@ -847,16 +830,12 @@ class TestCli:
             "dict",
             "--writable",
         )
-        assert rc == 1
-        assert "read-only" in capsys.readouterr().err
+        assert r.returncode == 1
+        assert "read-only" in r.stderr
 
-    def test_unsupported_type_lists_the_container_kinds(
-        self, project, monkeypatch, capsys
-    ):
-        rc = self._cli(
-            monkeypatch, project, "property", "rdr", "k", "--type", "nope"
-        )
-        assert rc == 1
-        err = capsys.readouterr().err
+    def test_unsupported_type_lists_the_container_kinds(self, project):
+        r = self._cli(project, "property", "rdr", "k", "--type", "nope")
+        assert r.returncode == 1
+        err = r.stderr
         for kind in ("dict", "list", "tuple"):
             assert kind in err
