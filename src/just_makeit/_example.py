@@ -11,13 +11,16 @@ test) inside a temporary directory, printing live output.
 from __future__ import annotations
 
 import contextlib
+import io
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import IO, Iterator
 
 
 @contextlib.contextmanager
@@ -46,34 +49,194 @@ def scratch_dir() -> "Iterator[str]":
         shutil.rmtree(path, ignore_errors=True)
 
 
-def run_jm(cwd: "str | Path", *args: str) -> str:
-    """Run ``just-makeit <args>`` in *cwd*, in this process; its output.
+@dataclass(frozen=True)
+class JmRun:
+    """What `subprocess.run(..., capture_output=True, text=True)` returns.
 
-    What an example calls when its step IS a jm command line, so the
-    example runs the words its README shows rather than the Python function
-    behind them. In-process for the same reason the test suite's
-    ``run_cli`` is (gh-1374): a child costs a process start and, under
-    coverage, a data file, and isolates nothing a restored ``sys.argv`` and
-    working directory do not.
+    Only the three attributes callers read. Anything else would be a
+    promise this cannot keep -- there is no `.pid` and no `.args` worth
+    reporting for a call that never left the process.
+    """
+
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def run_cli(
+    *args: str,
+    cwd: "str | Path | None" = None,
+    stdin: str = "",
+    merge_stderr: bool = False,
+) -> JmRun:
+    r"""Call ``just-makeit <args>`` in this process and collect its output.
+
+    The ONE in-process jm runner: the test suite's ``tests/_jmrun.run_cli``
+    and every bundled example call this, and
+    ``tests/test_gh2597_one_in_process_runner.py`` refuses a ``main()``
+    called anywhere else. It lives in the package, not the tests, because
+    the wheel ships the examples and they run it.
+
+    Why in-process (gh-1374): 52 test files each spawned
+    ``python -c "from just_makeit._cli import main; main()"``, ~3300
+    children per suite run, and under coverage each child paid ~7 ms to
+    start, ~43 ms more to start coverage and a data file to combine:
+    measured 2026-09-19, the children cost 227 s of a 503 s coverage run to
+    buy one percentage point. Nothing needed a process; the child existed
+    for isolation -- argv, cwd, stdin, ``SystemExit`` -- and this provides
+    all of it. ``tests/test_gh1374_cli_in_process.py`` holds the few files
+    that still need a real child, and why.
+
+    Copies of this drifted before it was one (gh-2597): two examples
+    redirected ``sys.stdout`` only and kept the manifest cache, so both
+    fixes below were missing there.
+
+    Parameters
+    ----------
+    *args
+        The command line, without the program name: ``run_cli("new", "p")``
+        is ``just-makeit new p``.
+    cwd
+        Directory to run in, restored afterwards on every way out. ``None``
+        runs where the caller already is, as ``subprocess.run(cwd=None)``
+        does.
+    stdin
+        What the command reads. The default, empty, is what a child got:
+        pytest gives a subprocess ``/dev/null``, so a prompt sees EOF and
+        `_confirm` declines. It is supplied explicitly because pytest's own
+        captured stdin raises ``OSError`` on read rather than EOF -- `jm
+        regenerate` prompts, and four tests failed on that difference alone.
+        ``stdin="y\n"`` answers a prompt.
+    merge_stderr
+        Write both streams to ``stdout``, in the order written, as a
+        terminal shows them; ``stderr`` is then empty. What an example
+        recording a user's view wants, so a warning sits beside the line it
+        is about.
+
+    Returns
+    -------
+    JmRun
+        ``returncode`` is 0 when ``main()`` returns, the code carried by
+        ``SystemExit`` when it exits (``sys.exit("message")`` prints the
+        message and is 1, as in a child), and 1 for an uncaught exception,
+        whose traceback lands in ``stderr`` exactly where a child put it.
+
+    Notes
+    -----
+    Two things a child had for free, kept here:
+
+    - **An empty manifest cache** (gh-2095). ``_incpath._CFG_CACHE`` follows
+      jm's own writes, but a hand edit the caller made since the last
+      command is not one; it is cleared so the manifest is read fresh.
+    - **Capture at the file descriptor**, not only ``sys.stdout``. jm shells
+      out to cmake, ctest and pytest, and a child writes to fd 1, which
+      ``contextlib.redirect_stdout`` does not touch. That output would
+      vanish from the result, and an assertion that something is ABSENT
+      would pass having looked at nothing (gh-1374; `jm test`'s parsed
+      summary is how this was found).
+
+    ``main()`` is imported per call rather than at module import, because
+    importing jm is part of what the CLI does and a caller may have just
+    rewritten a template on disk.
+
+    Examples
+    --------
+    >>> r = run_cli("--version", cwd=tempfile.mkdtemp())
+    >>> r.returncode
+    0
+    >>> bool(r.stdout.strip())
+    True
+    """
+    from just_makeit import _incpath
+    from just_makeit._cli import main
+
+    _incpath._CFG_CACHE.clear()
+
+    def capture() -> "IO[str]":
+        # Line-buffered, so this process's lines and its children's, which
+        # share the file offset through fd 1 / fd 2, land in the order
+        # written.
+        return tempfile.TemporaryFile(
+            "w+", encoding="utf-8", newline="", buffering=1
+        )
+
+    with contextlib.ExitStack() as files:
+        out = files.enter_context(capture())
+        err = out if merge_stderr else files.enter_context(capture())
+        previous_argv, previous_stdin = sys.argv, sys.stdin
+        previous_out, previous_err = sys.stdout, sys.stderr
+        previous_cwd = os.getcwd()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        saved_fds = os.dup(1), os.dup(2)
+        sys.argv = ["just-makeit", *args]
+        sys.stdin = io.StringIO(stdin)
+        sys.stdout, sys.stderr = out, err
+        os.dup2(out.fileno(), 1)
+        os.dup2(err.fileno(), 2)
+        if cwd is not None:
+            os.chdir(cwd)
+        try:
+            try:
+                main()
+                code = 0
+            except SystemExit as exit_:
+                if exit_.code is None:
+                    code = 0
+                elif isinstance(exit_.code, int):
+                    code = exit_.code
+                else:
+                    print(exit_.code, file=sys.stderr)
+                    code = 1
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                code = 1
+        finally:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.dup2(saved_fds[0], 1)
+            os.dup2(saved_fds[1], 2)
+            for fd in saved_fds:
+                os.close(fd)
+            sys.argv, sys.stdin = previous_argv, previous_stdin
+            sys.stdout, sys.stderr = previous_out, previous_err
+            os.chdir(previous_cwd)
+        out.seek(0)
+        stdout = out.read()
+        stderr = ""
+        if err is not out:
+            err.seek(0)
+            stderr = err.read()
+        return JmRun(code, stdout, stderr)
+
+
+def run_jm(cwd: "str | Path", *args: str, expect: int = 0) -> str:
+    """Run ``just-makeit <args>`` in *cwd* through `run_cli`; its output.
+
+    What an example calls when its step IS a jm command line: both streams
+    in one, as the user's terminal shows them, and the exit code held to
+    *expect*.
 
     Parameters
     ----------
     cwd
-        The directory the command runs in; the caller's own working
-        directory is restored afterwards, on every way out.
+        The directory the command runs in.
     *args
         The command line without the program name.
+    expect
+        The exit code the command must return; ``jm status`` on a stale
+        project is 1, by design.
 
     Returns
     -------
     str
-        Everything the command printed, both streams in the order written,
-        as a terminal would show them.
+        Everything the command and its children printed, in order.
 
     Raises
     ------
     AssertionError
-        When the command exits non-zero, naming it and quoting its output.
+        When the exit code is not *expect*, naming the command and quoting
+        its output.
 
     Examples
     --------
@@ -82,27 +245,11 @@ def run_jm(cwd: "str | Path", *args: str) -> str:
     ...     (Path(d) / "demo" / "just-makeit.toml").exists()
     True
     """
-    import io
-
-    from just_makeit._cli import main
-
-    buf = io.StringIO()
-    argv, here = sys.argv, os.getcwd()
-    sys.argv = ["just-makeit", *args]
-    os.chdir(cwd)
-    code = 0
-    try:
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            try:
-                main()
-            except SystemExit as e:
-                code = e.code if isinstance(e.code, int) else 1
-    finally:
-        sys.argv = argv
-        os.chdir(here)
-    text = buf.getvalue()
-    assert code == 0, f"jm {' '.join(args)} exited {code}\n{text}"
-    return text
+    r = run_cli(*args, cwd=cwd, merge_stderr=True)
+    assert r.returncode == expect, (
+        f"jm {' '.join(args)} exited {r.returncode}, not {expect}\n{r.stdout}"
+    )
+    return r.stdout
 
 
 def _examples_root() -> Path | None:

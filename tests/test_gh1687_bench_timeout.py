@@ -36,7 +36,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _bench as B  # noqa: E402
-from just_makeit import _cli  # noqa: E402
+from _jmrun import run_cli  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit._report import Refusal  # noqa: E402
 
@@ -233,8 +233,8 @@ class TestTheFlag:
     def _captured(self, monkeypatch, *argv):
         seen: dict = {}
         monkeypatch.setattr(B, "run", lambda *a, **k: seen.update(k))
-        monkeypatch.setattr(sys, "argv", ["just-makeit", "bench", *argv])
-        _cli.main()
+        r = run_cli("bench", *argv)
+        assert r.returncode == 0, r.stderr
         return seen
 
     def test_timeout_reaches_run_as_a_number(self, monkeypatch):
@@ -245,15 +245,11 @@ class TestTheFlag:
     def test_no_flag_leaves_it_to_the_manifest(self, monkeypatch):
         assert self._captured(monkeypatch)["timeout"] is None
 
-    def test_a_non_number_is_refused(self, monkeypatch, capsys):
+    def test_a_non_number_is_refused(self, monkeypatch):
         monkeypatch.setattr(B, "run", lambda *a, **k: None)
-        monkeypatch.setattr(
-            sys, "argv", ["just-makeit", "bench", "--timeout", "soon"]
-        )
-        with pytest.raises(SystemExit) as exc:
-            _cli.main()
-        assert exc.value.code == 1
-        assert "--timeout requires a number" in capsys.readouterr().err
+        r = run_cli("bench", "--timeout", "soon")
+        assert r.returncode == 1
+        assert "--timeout requires a number" in r.stderr
 
 
 def test_fixture_scripts_are_executable(tmp_path, monkeypatch):

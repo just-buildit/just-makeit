@@ -45,7 +45,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _cfmt  # noqa: E402
-from just_makeit import _cli  # noqa: E402
+from _jmrun import run_cli  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _status  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
@@ -164,11 +164,11 @@ class TestRealClangFormat:
     )
 
     def test_apply_then_status_is_clean_for_a_wrapping_module_doc(
-        self, tmp_path, capsys, monkeypatch
+        self, tmp_path
     ):
         """The doppler symptom, reproduced.
 
-        `jm apply` must run through `_cli.main`, not `_apply.run`: ``apply``
+        `jm apply` must run through the CLI, not `_apply.run`: ``apply``
         is in ``_C_EMITTING_COMMANDS``, so the CLI adds the post-command
         format pass over the real tree that `jm status`'s replay never runs.
         Calling `_apply.run` directly formats both sides once and the bug
@@ -183,10 +183,8 @@ class TestRealClangFormat:
         module_run(root, "ber", doc=self._DOC)
         object_run(root, "ber", "ber", state_vars=[("gain", "double", "1.0")])
 
-        monkeypatch.chdir(root)
-        monkeypatch.setattr(sys, "argv", ["just-makeit", "apply"])
-        _cli.main()
-        capsys.readouterr()
+        r = run_cli("apply", cwd=root)
+        assert r.returncode == 0, r.stderr
 
         # The reported symptom: apply converges, yet status still says stale.
         assert _status.run(root, check=True) == 0
