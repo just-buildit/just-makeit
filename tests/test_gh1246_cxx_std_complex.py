@@ -49,6 +49,7 @@ from just_makeit import _incpath as INC
 import os
 import shutil
 import subprocess
+import sys
 
 import _cbuild as cbuild
 import pytest
@@ -120,7 +121,11 @@ def built(tmp_path_factory):
     )
     assert bld.returncode == 0, f"build failed:\n{bld.stdout}\n{bld.stderr}"
 
-    static = build / "libcxxlib.a"
+    # The combined static library's name per platform, as
+    # `_exports.artifacts` reads it: clang-cl's is `<pkg>_static.lib`.
+    static = build / (
+        "cxxlib_static.lib" if sys.platform == "win32" else "libcxxlib.a"
+    )
     assert static.is_file(), (
         "the project's combined static C library was not built; "
         f"build/ holds: {sorted(p.name for p in build.iterdir())}"

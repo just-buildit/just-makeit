@@ -112,6 +112,11 @@ class TestTheMakeBackendCanBuildABenchmark:
     @pytest.mark.skipif(
         _CC is None or _MAKE is None, reason="needs make and a C compiler"
     )
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="allow-listed: the make build backend is POSIX-only and "
+        "refuses Windows by design (gh-1368)",
+    )
     def test_make_bench_actually_builds_and_runs(self, tmp_path):
         root = _make_project(tmp_path, "fir")
         done = subprocess.run(

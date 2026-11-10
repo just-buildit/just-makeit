@@ -171,6 +171,13 @@ ASAN_NO_PRELOAD_MACOS = (
     "macOS: the ASan runtime cannot be preloaded into this interpreter"
 )
 
+#: The same on Windows (gh-2294), allow-listed the same way: there is no
+#: loader variable at all, and clang-cl's ASan runtime is linked into the
+#: instrumented image, which here is the extension, not the interpreter.
+ASAN_NO_PRELOAD_WINDOWS = (
+    "Windows: the ASan runtime cannot be preloaded into this interpreter"
+)
+
 
 def asan_env(cc: "str | None") -> "dict[str, str] | None":
     """The environment that loads *cc*'s AddressSanitizer runtime, or None.
@@ -218,16 +225,19 @@ def asan_env(cc: "str | None") -> "dict[str, str] | None":
 def asan_skip_reason() -> str:
     """Why an ASan test skips on this platform when `asan_env` is None.
 
-    On macOS it is `ASAN_NO_PRELOAD_MACOS`, which the skip gate accepts,
+    On macOS it is `ASAN_NO_PRELOAD_MACOS` (on Windows
+    `ASAN_NO_PRELOAD_WINDOWS`), which the skip gate accepts,
     because no install makes the preload take. Elsewhere it names the
     missing tool, which the gate refuses.
 
-    >>> asan_skip_reason() in (ASAN_NO_PRELOAD_MACOS,
+    >>> asan_skip_reason() in (ASAN_NO_PRELOAD_MACOS, ASAN_NO_PRELOAD_WINDOWS,
     ...                        "no cmake / C compiler / AddressSanitizer runtime")
     True
     """
     if sys.platform == "darwin":
         return ASAN_NO_PRELOAD_MACOS
+    if sys.platform == "win32":
+        return ASAN_NO_PRELOAD_WINDOWS
     return "no cmake / C compiler / AddressSanitizer runtime"
 
 

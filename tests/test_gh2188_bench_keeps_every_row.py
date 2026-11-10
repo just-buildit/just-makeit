@@ -58,7 +58,11 @@ DRIVER = r"""
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/utsname.h>
+#endif
 
 static long live = 0;
 

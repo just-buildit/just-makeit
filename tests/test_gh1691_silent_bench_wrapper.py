@@ -223,7 +223,11 @@ class TestTheScanIsNotFooledTheOtherWay:
         assert _silent(silent_project) == ["tlm"]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="sh stand-in binary")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="allow-listed: the stand-in bench binary is an sh script, "
+    "which Windows cannot run",
+)
 def test_jm_bench_reports_silent_from_the_json(tmp_path, monkeypatch, capsys):
     """The authoritative verdict: a binary that ran and wrote an empty
     `benchmarks` array is named, whatever its source looks like."""

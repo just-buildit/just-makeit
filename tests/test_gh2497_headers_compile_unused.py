@@ -19,13 +19,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import sys
+
 import pytest
 
 import _cbuild as cbuild
 from _compilers import find_compiler
 from _jmrun import run_cli
 
-COMPILERS = ("gcc", "clang")
+#: The compilers a header must be warning-clean under. Windows has no gcc
+#: leg (MinGW is retired, gh-1368): there it is the compiler a Windows
+#: project builds with, clang-cl, and plain clang (gh-2294).
+COMPILERS = (
+    ("clang-cl", "clang") if sys.platform == "win32" else ("gcc", "clang")
+)
 
 
 @pytest.fixture(scope="module")

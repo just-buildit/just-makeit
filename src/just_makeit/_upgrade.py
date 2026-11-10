@@ -392,7 +392,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         template = getattr(R, step.template_attr)
         _textio.write_text(dest, R.render(template, ctx))
-        print(f"  create  {dest.relative_to(root)}")
+        print(f"  create  {dest.relative_to(root).as_posix()}")
 
     elif isinstance(step, AddTomlKey):
         target = C.load(root)
@@ -407,7 +407,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
         if not gitkeep.exists():
             gitkeep.parent.mkdir(parents=True, exist_ok=True)
             _textio.write_text(gitkeep, "")
-            print(f"  create  {gitkeep.relative_to(root)}")
+            print(f"  create  {gitkeep.relative_to(root).as_posix()}")
         makefile = root / "Makefile"
         if makefile.exists():
             old = makefile.read_text(encoding="utf-8")
@@ -511,7 +511,7 @@ def _apply_step(root: Path, step, ctx: dict[str, str]) -> None:
                     comp_ctx["bench_destroy_stmt"] = ""
                     comp_ctx["bench_methods_timing_block"] = ""
             _textio.write_text(bench_c, R.render(tmpl, comp_ctx))
-            print(f"  update  {bench_c.relative_to(root)}")
+            print(f"  update  {bench_c.relative_to(root).as_posix()}")
 
 
 #: The files whose ``#include`` lines the header move respells.
@@ -840,7 +840,7 @@ def _report_c_prefix(root: Path) -> None:
         f"{C.c_prefix(cfg)!r} (gh-1591):"
     )
     for path in changed:
-        print(f"  {path.relative_to(root)}")
+        print(f"  {path.relative_to(root).as_posix()}")
     # One line per rename, `old<TAB>new` and nothing else on it, so the
     # table is a TSV as printed -- `awk -F'\t' 'NF == 2'` lifts it for
     # code jm does not own (another language's FFI, docs) with no flag or
@@ -889,7 +889,7 @@ def _report_repairs(root: Path) -> None:
         f"(`complex` -> `_Complex`, gh-1246):"
     )
     for path in fixed:
-        print(f"  {path.relative_to(root)}")
+        print(f"  {path.relative_to(root).as_posix()}")
     print(
         "  Same type, same ABI -- identical tokens after preprocessing.\n"
         "  Rebuild and run your tests. If you adopted jm's new "

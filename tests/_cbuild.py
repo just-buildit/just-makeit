@@ -153,6 +153,33 @@ def _python_libdir() -> str:
     return os.path.join(sys.base_exec_prefix, "libs")
 
 
+#: The oldest C++ the MSVC standard library compiles as: it has no C++11
+#: mode (its headers deduce return types), and cl has no ``/std:c++11``.
+_MSVC_CXX_FLOOR = 14
+
+
+def _std(std: str) -> str:
+    """*std*, raised to the oldest C++ the platform's library supports.
+
+    On Windows a C++ translation unit includes the MSVC STL, which needs
+    C++14, so ``c++11`` means the oldest C++ there is: ``c++14``. A C
+    standard, and every standard elsewhere, is unchanged.
+
+    Examples
+    --------
+    >>> _std("c11")
+    'c11'
+    >>> _std("c++11") == ("c++14" if sys.platform == "win32" else "c++11")
+    True
+    """
+    for lang in ("c++", "gnu++"):
+        ver = std[len(lang) :] if std.startswith(lang) else ""
+        if sys.platform == "win32" and ver.isdigit():
+            if int(ver) < _MSVC_CXX_FLOOR:
+                return f"{lang}{_MSVC_CXX_FLOOR}"
+    return std
+
+
 def command(
     kind: str,
     sources: "Iterable[str | os.PathLike[str]]",
@@ -239,7 +266,7 @@ def command(
 
         incs.append(np.get_include())
     srcs = [str(s) for s in sources]
-    driver = [f"-std={std}"] if std else []
+    driver = [f"-std={_std(std)}"] if std else []
     driver += [f"-W{w}" for w in warnings]
     driver += list(flags)
     if is_msvc(compiler):
@@ -266,7 +293,9 @@ def command(
             argv += ["-bundle", "-undefined", "dynamic_lookup"]
         else:
             argv.append("-shared")
-    if kind in ("ext", "obj"):
+    if kind in ("ext", "obj") and sys.platform != "win32":
+        # Position-independent code is a question for ELF and Mach-O; a
+        # clang that targets the MSVC ABI refuses the flag outright.
         argv.append("-fPIC")
     argv += {"syntax": ["-fsyntax-only"], "obj": ["-c"]}.get(kind, [])
     argv += driver
