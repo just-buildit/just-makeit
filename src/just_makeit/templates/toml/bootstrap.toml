@@ -63,3 +63,17 @@ packages = [
     "python3-devel",
     "python3-numpy",
 ]
+
+# Windows: clang-cl against the MSVC ABI. vs_requires is what install-deps
+# probes for and adds: the MSVC libraries, Windows SDK, CMake and Ninja
+# (VCTools) and clang-cl (VC.Llvm.Clang). See docs/windows.md.
+[dev.winget]
+packages = [
+    "Microsoft.VisualStudio.BuildTools",
+]
+
+[dev.winget."Microsoft.VisualStudio.BuildTools"]
+vs_requires = [
+    "Microsoft.VisualStudio.Workload.VCTools",
+    "Microsoft.VisualStudio.Component.VC.Llvm.Clang",
+]

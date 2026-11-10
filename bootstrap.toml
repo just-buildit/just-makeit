@@ -26,12 +26,21 @@ packages = ["gcc", "clang", "make", "cmake", "pkgconf-pkg-config", "python3-deve
 [dev.zypper]
 packages = ["gcc", "clang", "make", "cmake", "pkg-config", "python3-devel", "python3-numpy"]
 
-[dev.msys2]
+# Windows: clang-cl against the MSVC ABI (gh-1368). The Build Tools id says
+# nothing about its workloads, so vs_requires names what jm needs and
+# install-deps probes for exactly that (vswhere), adding it when absent:
+# the MSVC libraries + Windows SDK + CMake/Ninja (VCTools) and clang-cl
+# (VC.Llvm.Clang). make, uv and Git Bash run jm's own Makefile (gh-2598).
+[dev.winget]
 packages = [
-    "mingw-w64-ucrt-x86_64-gcc",
-    "mingw-w64-ucrt-x86_64-cmake",
-    "mingw-w64-ucrt-x86_64-python",
-    "mingw-w64-ucrt-x86_64-python-numpy",
-    "make",
-    "pkg-config",
+    "Microsoft.VisualStudio.BuildTools",
+    "ezwinports.make",
+    "astral-sh.uv",
+    "Git.Git",
+]
+
+[dev.winget."Microsoft.VisualStudio.BuildTools"]
+vs_requires = [
+    "Microsoft.VisualStudio.Workload.VCTools",
+    "Microsoft.VisualStudio.Component.VC.Llvm.Clang",
 ]
