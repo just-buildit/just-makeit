@@ -59,3 +59,10 @@ just-makeit method acc_cf64 madd2d \
     --return-type void \
     --param "x:double _Complex[]" \
     --param "h:float[]"
+
+# AccCf64 only: add a whole number, range-checked as int32_t
+just-makeit method acc_cf64 add_int \
+    --module accumulator \
+    --arg-type void \
+    --return-type void \
+    --param "k:int32_t"
