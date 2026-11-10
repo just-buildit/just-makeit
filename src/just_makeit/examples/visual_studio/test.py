@@ -25,7 +25,10 @@ a stated reason, printed when it happens:
 
 On every platform ``pip install numpy`` is replaced by a ``.pth`` file
 linking the venv to the numpy this test runs under: the test must not need
-the network, and that numpy is the one the build is checked against.
+the network, and that numpy is the one the build is checked against. So
+``py -m venv .venv`` runs ``--without-pip``: nothing uses the venv's pip,
+and an interpreter with no ``ensurepip`` -- a Debian Python without
+``python3-venv``, as in CI's Linux image -- cannot make a venv with one.
 
 Called by tests/test_examples.py via run(root).
 Also runnable directly: python3 examples/visual_studio/test.py
@@ -137,6 +140,17 @@ def _run_step(name: str, cwd: Path) -> Path:
         elif head == "cd":
             cwd = cwd / rest[0]
         elif head == "py":
+            if rest[:2] == ["-m", "venv"]:
+                # pip is only ever used for `pip install numpy`, which is a
+                # .pth link here; and an interpreter without ensurepip (a
+                # Debian python without python3-venv, CI's Linux image)
+                # cannot make a venv WITH pip at all.
+                _note(
+                    "py -m venv runs --without-pip: the venv's only pip"
+                    " line is replaced, and this interpreter may have no"
+                    " ensurepip"
+                )
+                rest = [*rest[:2], "--without-pip", *rest[2:]]
             _sh([sys.executable, *rest], cwd)
         elif head == ".venv/Scripts/python":
             if rest[:3] == ["-m", "pip", "install"]:
