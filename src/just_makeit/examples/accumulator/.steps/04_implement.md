@@ -133,7 +133,17 @@ my_acc_acc_cf64_madd2d(
     for (size_t i = 0; i < n; i++)
         state->acc += x[i] * (double)h[i];
 }
+
+void
+my_acc_acc_cf64_add_int(my_acc_acc_cf64_state_t *state, int32_t k)
+{
+    state->acc += (double)k;
+}
 ```
+
+`add_int` needs no range check of its own: the generated binding has already
+refused any Python int outside `int32_t`, so `k` is always a value the type
+holds.
 
 The patch scripts automate these edits. They live in this example's `.steps/`
 directory, which ships inside the installed just-makeit package; from
@@ -222,7 +232,7 @@ $ PYTHONPATH=src python -m doctest -v src/my_acc/accumulator/accumulator.pyi
     (4+6j)
 {g}ok{/g}
 {d}...{/d}
-{g}25 passed and 0 failed.{/g}
+{g}30 passed and 0 failed.{/g}
 {g}Test passed.{/g}
 ```
 

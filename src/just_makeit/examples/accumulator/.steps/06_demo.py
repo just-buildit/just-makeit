@@ -61,3 +61,14 @@ c.reset()
 c.step(5 + 6j)
 dumped = c.dump()
 print(f"AccCf64 dump() = {dumped}, get() after = {c.get()}")
+
+# AccCf64 add_int: an int32_t param -- the edges arrive exactly, one past
+# them is refused before C is called
+c.reset()
+c.add_int(2**31 - 1)
+c.add_int(-(2**31))
+print(f"AccCf64 add_int(INT32_MAX) + add_int(INT32_MIN): get() = {c.get()}")
+try:
+    c.add_int(2**31)
+except OverflowError as exc:
+    print(f"AccCf64 add_int(2**31): OverflowError: {exc}")
