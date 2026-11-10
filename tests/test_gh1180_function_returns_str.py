@@ -43,12 +43,11 @@ rather than enumerated.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -58,7 +57,7 @@ from just_makeit import _render as R  # noqa: E402
 from just_makeit import _stubs as S  # noqa: E402
 from just_makeit._types import unsupported_return_type_help  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 #: doppler's case: bits in, hex text out, length reported by the return.
 FN = dict(
@@ -200,19 +199,13 @@ class TestTheDeclAndTheStubAgree:
             "#include <stdint.h>\n#include <stddef.h>\n" + decl + "\n" + stub,
             encoding="utf-8",
         )
-        return subprocess.run(
-            [
-                _CC,
-                "-c",
-                "-std=c11",
-                "-Werror",
-                str(src),
-                "-o",
-                str(tmp_path / "probe.o"),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=600,
+        return cbuild.build(
+            "obj",
+            [src],
+            cbuild.output(tmp_path, "probe", "obj"),
+            check=False,
+            std="c11",
+            warnings=["error"],
         ).returncode
 
     def test_the_str_shape(self, tmp_path: Path) -> None:

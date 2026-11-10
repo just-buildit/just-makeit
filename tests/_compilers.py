@@ -61,10 +61,24 @@ def _first_on_path(names: "tuple[str, ...]") -> "str | None":
     return None
 
 
+def _from_env(var: str) -> "str | None":
+    """The compiler environment variable *var* names, when it resolves.
+
+    CMake reads ``CC`` / ``CXX`` before its own search, so a box that sets
+    one builds every generated project with it -- the Windows CI leg sets
+    ``CC=clang-cl`` (gh-1368, gh-2294). A test asking what CMake picks has
+    to ask the same way. A value that names nothing on PATH is not an
+    answer, and the default search runs instead.
+    """
+    name = os.environ.get(var, "").strip()
+    return shutil.which(name) if name else None
+
+
 def default_cc() -> "str | None":
     """The C compiler CMake picks when nobody chooses one, or None.
 
-    The first of `C_COMPILERS` on PATH, unversioned: the question is what a
+    ``CC`` when it is set and resolves, as CMake reads it first; else the
+    first of `C_COMPILERS` on PATH, unversioned: the question is what a
     generated project builds with by default, so ``clang-18`` alone does not
     count (see :func:`find_compiler` for that question). None means no C
     compiler at all, and the caller's skip says so.
@@ -74,21 +88,21 @@ def default_cc() -> "str | None":
     >>> default_cc() is None or os.path.isabs(default_cc())
     True
     """
-    return _first_on_path(C_COMPILERS)
+    return _from_env("CC") or _first_on_path(C_COMPILERS)
 
 
 def default_cxx() -> "str | None":
     """The C++ compiler CMake picks when nobody chooses one, or None.
 
-    The first of `CXX_COMPILERS` on PATH, unversioned, as
-    :func:`default_cc` is for C.
+    ``CXX`` when it is set and resolves, else the first of
+    `CXX_COMPILERS` on PATH, unversioned, as :func:`default_cc` is for C.
 
     Examples
     --------
     >>> default_cxx() is None or os.path.isabs(default_cxx())
     True
     """
-    return _first_on_path(CXX_COMPILERS)
+    return _from_env("CXX") or _first_on_path(CXX_COMPILERS)
 
 
 def find_compiler(name: str) -> "str | None":
@@ -157,6 +171,13 @@ ASAN_NO_PRELOAD_MACOS = (
     "macOS: the ASan runtime cannot be preloaded into this interpreter"
 )
 
+#: The same on Windows (gh-2294), allow-listed the same way: there is no
+#: loader variable at all, and clang-cl's ASan runtime is linked into the
+#: instrumented image, which here is the extension, not the interpreter.
+ASAN_NO_PRELOAD_WINDOWS = (
+    "Windows: the ASan runtime cannot be preloaded into this interpreter"
+)
+
 
 def asan_env(cc: "str | None") -> "dict[str, str] | None":
     """The environment that loads *cc*'s AddressSanitizer runtime, or None.
@@ -204,16 +225,19 @@ def asan_env(cc: "str | None") -> "dict[str, str] | None":
 def asan_skip_reason() -> str:
     """Why an ASan test skips on this platform when `asan_env` is None.
 
-    On macOS it is `ASAN_NO_PRELOAD_MACOS`, which the skip gate accepts,
+    On macOS it is `ASAN_NO_PRELOAD_MACOS` (on Windows
+    `ASAN_NO_PRELOAD_WINDOWS`), which the skip gate accepts,
     because no install makes the preload take. Elsewhere it names the
     missing tool, which the gate refuses.
 
-    >>> asan_skip_reason() in (ASAN_NO_PRELOAD_MACOS,
+    >>> asan_skip_reason() in (ASAN_NO_PRELOAD_MACOS, ASAN_NO_PRELOAD_WINDOWS,
     ...                        "no cmake / C compiler / AddressSanitizer runtime")
     True
     """
     if sys.platform == "darwin":
         return ASAN_NO_PRELOAD_MACOS
+    if sys.platform == "win32":
+        return ASAN_NO_PRELOAD_WINDOWS
     return "no cmake / C compiler / AddressSanitizer runtime"
 
 

@@ -47,13 +47,11 @@ import contextlib
 import io
 import os
 import re
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -64,7 +62,7 @@ from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._record import RecordReg, registrations  # noqa: E402
 from just_makeit._render import record_registration_c  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 _FIELDS = [
@@ -280,23 +278,19 @@ class TestStandaloneObject:
 
     @_needs_cc
     def test_the_generated_ext_c_compiles(self, tmp_path):
-        numpy = pytest.importorskip("numpy")
+        pytest.importorskip("numpy")
         root = _scaffold_standalone(tmp_path)
-        proc = subprocess.run(
-            [
-                _CC,
-                "-fsyntax-only",
-                "-std=gnu99",
-                f"-I{root / INC_DIR}",
-                f"-I{sysconfig.get_paths()['include']}",
-                f"-I{numpy.get_include()}",
-                str(root / "native" / "src" / "sync" / "sync_ext.c"),
-            ],
-            capture_output=True,
-            text=True,
+        proc = cbuild.build(
+            "syntax",
+            [root / "native" / "src" / "sync" / "sync_ext.c"],
+            check=False,
             cwd=os.fspath(root),
+            std="gnu99",
+            includes=[root / INC_DIR],
+            python=True,
+            numpy=True,
         )
-        assert proc.returncode == 0, proc.stderr
+        assert proc.ok, proc.stderr
 
 
 class TestModuleAggregatedObject:
@@ -326,23 +320,19 @@ class TestModuleAggregatedObject:
 
     @_needs_cc
     def test_the_generated_aggregator_compiles(self, tmp_path):
-        numpy = pytest.importorskip("numpy")
+        pytest.importorskip("numpy")
         root = _scaffold_module(tmp_path)
-        proc = subprocess.run(
-            [
-                _CC,
-                "-fsyntax-only",
-                "-std=gnu99",
-                f"-I{root / INC_DIR}",
-                f"-I{sysconfig.get_paths()['include']}",
-                f"-I{numpy.get_include()}",
-                str(root / "native" / "src" / "m" / "m_ext.c"),
-            ],
-            capture_output=True,
-            text=True,
+        proc = cbuild.build(
+            "syntax",
+            [root / "native" / "src" / "m" / "m_ext.c"],
+            check=False,
             cwd=os.fspath(root),
+            std="gnu99",
+            includes=[root / INC_DIR],
+            python=True,
+            numpy=True,
         )
-        assert proc.returncode == 0, proc.stderr
+        assert proc.ok, proc.stderr
 
 
 class TestApplyIsIdempotent:

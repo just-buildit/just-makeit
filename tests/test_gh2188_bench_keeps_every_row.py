@@ -35,12 +35,12 @@ import json
 import subprocess
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 HEADER_DIR = Path(__file__).parent.parent / "src/just_makeit/templates/c/inc"
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 #: Records argv[1] rows, row k timed at (k + 1) ms for each of argv[2]
@@ -58,7 +58,11 @@ DRIVER = r"""
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/utsname.h>
+#endif
 
 static long live = 0;
 
@@ -113,26 +117,15 @@ def driver(tmp_path_factory) -> Path:
     d = tmp_path_factory.mktemp("gh2188")
     src = d / "driver.c"
     src.write_text(DRIVER, encoding="utf-8")
-    exe = d / "driver"
-    r = subprocess.run(
-        [
-            _CC,
-            "-std=gnu99",
-            "-Wall",
-            "-Wextra",
-            "-Werror",
-            "-I",
-            str(HEADER_DIR),
-            "-o",
-            str(exe),
-            str(src),
-            "-lm",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert r.returncode == 0, r.stdout + r.stderr
-    return exe
+    return cbuild.build(
+        "exe",
+        [src],
+        cbuild.output(d, "driver", "exe"),
+        std="gnu99",
+        warnings=["all", "extra", "error"],
+        includes=[HEADER_DIR],
+        libs=["m"],
+    ).path
 
 
 @_needs_cc

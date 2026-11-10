@@ -17,15 +17,13 @@ GATE: no two composer settings, whatever their names, declare the same C local
 from __future__ import annotations
 
 import re
-import subprocess
-import sysconfig
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 from just_makeit import _composer
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 #: Sibling pairs chosen to collide under some plausible naming scheme.
 PAIRS = [
@@ -82,18 +80,11 @@ def test_the_settings_code_compiles(tmp_path, names):
         "    return 0;\n}\n",
         encoding="utf-8",
     )
-    r = subprocess.run(
-        [
-            _CC,
-            "-c",
-            "-std=c11",
-            "-Werror",
-            f"-I{sysconfig.get_paths()['include']}",
-            str(src),
-            "-o",
-            str(tmp_path / "probe.o"),
-        ],
-        capture_output=True,
-        text=True,
+    cbuild.build(
+        "obj",
+        [src],
+        cbuild.output(tmp_path, "probe", "obj"),
+        std="c11",
+        warnings=["error"],
+        python=True,
     )
-    assert r.returncode == 0, r.stderr

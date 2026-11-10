@@ -533,6 +533,15 @@ jobs:
         # tests/test_gh1648_exports_run_on_windows.py refuses a narrowing.
         run: make test-examples
 
+      # gh-2294: jm's own compiled unit tests, under clang-cl -- every file
+      # that builds C through tests/_cbuild.py, which speaks clang-cl as
+      # well as cc (the Makefile derives the list). Before this no compiled
+      # fixture in the suite ran on Windows; the job's CC reaches them all.
+      # tests/test_gh2294_one_compile_helper.py refuses this step going
+      # away.
+      - name: Compiled unit tests (clang-cl)
+        run: make test-compiled
+
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
     needs: changes

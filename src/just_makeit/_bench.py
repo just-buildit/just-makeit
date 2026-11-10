@@ -819,7 +819,7 @@ def _save_snapshot(
     hdir.mkdir(parents=True, exist_ok=True)
     path = _snapshot_path(hdir, tag, is_c)
     _textio.write_text(path, json.dumps(report, indent=2))
-    print(f"  saved      {path.relative_to(root)}")
+    print(f"  saved      {path.relative_to(root).as_posix()}")
 
 
 # ── regression gate (gh-141) ───────────────────────────────────────────────────

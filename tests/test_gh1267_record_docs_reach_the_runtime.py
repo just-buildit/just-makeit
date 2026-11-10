@@ -45,11 +45,10 @@ import contextlib
 import io
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -63,13 +62,8 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
-_LINK = (
-    ["-bundle", "-undefined", "dynamic_lookup"]
-    if sys.platform == "darwin"
-    else ["-shared"]
-)
 
 
 def _quiet(fn, *a, **kw):
@@ -286,7 +280,7 @@ def test_the_built_type_carries_the_docs(tmp_path):
     """`help()` on the built module, which is what the issue measured."""
     from just_makeit._apply import run as apply_run
 
-    np = pytest.importorskip("numpy")
+    pytest.importorskip("numpy")
     root = _scaffold(tmp_path)
     _document(root)
     _quiet(apply_run, root)
@@ -298,30 +292,17 @@ def test_the_built_type_carries_the_docs(tmp_path):
         ),
         encoding="utf-8",
     )
-    build = subprocess.run(
+    cbuild.build(
+        "ext",
         [
-            _CC,
-            "-fPIC",
-            *_LINK,
-            "-std=gnu99",
-            f"-I{root / INC_DIR}",
-            f"-I{sysconfig.get_paths()['include']}",
-            f"-I{np.get_include()}",
-            str(root / "native" / "src" / "mm" / "mm_ext.c"),
-            str(root / "native" / "src" / "o" / "o_core.c"),
-            "-o",
-            str(
-                root
-                / "src"
-                / "demo"
-                / "mm"
-                / f"mm{sysconfig.get_config_var('EXT_SUFFIX')}"
-            ),
+            root / "native" / "src" / "mm" / "mm_ext.c",
+            root / "native" / "src" / "o" / "o_core.c",
         ],
-        capture_output=True,
-        text=True,
+        cbuild.output(root / "src" / "demo" / "mm", "mm", "ext"),
+        std="gnu99",
+        includes=[root / INC_DIR],
+        numpy=True,
     )
-    assert build.returncode == 0, build.stderr
     r = subprocess.run(
         [
             sys.executable,

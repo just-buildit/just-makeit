@@ -28,8 +28,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -40,7 +40,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 
 def _quiet(fn, *a, **kw):
@@ -156,20 +156,14 @@ class TestTheReportedFalsePositive:
         (bench / "bench_tlm_core.c").write_text(
             _THROUGH_HEADER, encoding="utf-8"
         )
-        exe = tmp_path / "bench_tlm_core"
-        subprocess.run(
-            [
-                _CC,
-                "-std=gnu99",
-                "-I",
-                str(bench),
-                str(bench / "bench_tlm_core.c"),
-                "-o",
-                str(exe),
-                "-lm",
-            ],
-            check=True,
-        )
+        exe = cbuild.build(
+            "exe",
+            [bench / "bench_tlm_core.c"],
+            cbuild.output(tmp_path, "bench_tlm_core", "exe"),
+            std="gnu99",
+            includes=[bench],
+            libs=["m"],
+        ).path
         subprocess.run(
             [str(exe)], cwd=tmp_path, check=True, capture_output=True
         )
@@ -229,7 +223,11 @@ class TestTheScanIsNotFooledTheOtherWay:
         assert _silent(silent_project) == ["tlm"]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="sh stand-in binary")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="allow-listed: the stand-in bench binary is an sh script, "
+    "which Windows cannot run",
+)
 def test_jm_bench_reports_silent_from_the_json(tmp_path, monkeypatch, capsys):
     """The authoritative verdict: a binary that ran and wrote an empty
     `benchmarks` array is named, whatever its source looks like."""

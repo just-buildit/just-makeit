@@ -29,7 +29,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 from _jm_bench import materialize_bench
 from _jmrun import run_cli
 
@@ -38,7 +38,7 @@ from just_makeit import _bench as B
 HEADER_DIR = Path(__file__).parent.parent / "src/just_makeit/templates/c/inc"
 HEADER = HEADER_DIR / "jm_bench.h"
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 #: Every row's per-round times, in milliseconds, scaled by its index: an
@@ -115,26 +115,16 @@ def _build(d: Path, source: str) -> Path:
     project builds its benchmarks."""
     src = d / "driver.c"
     src.write_text(source, encoding="utf-8")
-    exe = d / "driver"
-    built = subprocess.run(
-        [
-            _CC,
-            "-std=gnu99",
-            "-Wall",
-            "-Wextra",
-            "-Werror",
-            "-I",
-            str(HEADER_DIR),
-            "-o",
-            str(exe),
-            str(src),
-            "-lm",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert built.returncode == 0, built.stdout + built.stderr
-    return exe
+    return cbuild.build(
+        "exe",
+        [src],
+        cbuild.output(d, "driver", "exe"),
+        compiler=_CC,
+        std="gnu99",
+        warnings=["all", "extra", "error"],
+        includes=[HEADER_DIR],
+        libs=["m"],
+    ).path
 
 
 @pytest.fixture(scope="module")

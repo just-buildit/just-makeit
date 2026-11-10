@@ -387,7 +387,8 @@ TEST_ALL_DEPS = test test-examples
 # a temp prefix and consumes with the documented hints; only CI, on a
 # throwaway runner, installs to the default prefix with none
 # (CONSUMER_SMOKE_DEFAULT_PREFIX=1) -- so `make gates` never sudo-installs.
-GATES_DEPS    = lint test test-examples coverage-gate bench docs-check \
+GATES_DEPS    = lint test test-examples test-compiled coverage-gate bench \
+                docs-check \
                 consumer-smoke
 
 # `docs-check` (the strict build, then tests/test_docs.py) is a merge gate

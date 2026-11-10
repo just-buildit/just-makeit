@@ -26,19 +26,18 @@ building a narrow TU from the emitted fragment rather than the whole
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _composer
 from just_makeit import _config as C
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 _SETTING = {
     "name": "seed_advance",
@@ -216,20 +215,17 @@ def test_the_emitted_setting_code_compiles(tmp_path):
         f"{table}\n"
         f"static PyObject *\n{getter}\n"
     )
-    r = subprocess.run(
-        [
-            _CC,
-            "-c",
-            "-std=c11",
-            "-Werror=implicit-function-declaration",
-            "-Werror=int-conversion",
-            f"-I{tmp_path}",
-            f"-I{__import__('sysconfig').get_paths()['include']}",
-            str(src),
-            "-o",
-            str(tmp_path / "probe.o"),
+    r = cbuild.build(
+        "obj",
+        [src],
+        cbuild.output(tmp_path, "probe", "obj"),
+        std="c11",
+        warnings=[
+            "error=implicit-function-declaration",
+            "error=int-conversion",
         ],
-        capture_output=True,
-        text=True,
+        includes=[tmp_path],
+        python=True,
+        check=False,
     )
     assert r.returncode == 0, r.stderr

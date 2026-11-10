@@ -356,6 +356,7 @@ from just_makeit._pyfmt import flatten_signatures  # noqa: E402,F401
 # nobody put it on PATH. The second is a gate that is not running.
 from _compilers import (  # noqa: E402
     ASAN_NO_PRELOAD_MACOS,
+    ASAN_NO_PRELOAD_WINDOWS,
     POSIX_ONLY,
     WINDOWS_CONSUMER_GAP,
 )
@@ -378,8 +379,10 @@ _ALLOWED_SKIPS = (
     # but preloading it into the runner's interpreter does not take
     # ("Interceptors are not working", just-makeit#2353 run 40042035671).
     # The behaviour tests beside them run on macOS, so the fix is still
-    # checked there. A missing runtime on Linux is not allowed.
+    # checked there. A missing runtime on Linux is not allowed. Windows
+    # has no preload at all (gh-2294).
     ASAN_NO_PRELOAD_MACOS,
+    ASAN_NO_PRELOAD_WINDOWS,
     # gh-1570: the Windows examples leg runs every PROJECT_ENV_TESTS file.
     # A consumer route not yet ported to the MSVC ABI (a filed gap, named
     # in the reason), and a subject with no Windows counterpart.

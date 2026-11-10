@@ -35,6 +35,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
 import sys
 
@@ -94,8 +95,10 @@ def installed(tmp_path_factory):
     xtra = root / "xtra"
     xtra.mkdir()
     (xtra / "xtra.c").write_text(_XTRA_C, encoding="utf-8")
-    _run(["cc", "-fPIC", "-c", "xtra.c", "-o", "xtra.o"], xtra)
-    _run(["ar", "rcs", "libxtra.a", "xtra.o"], xtra)
+    obj = cbuild.build(
+        "obj", [xtra / "xtra.c"], cbuild.output(xtra, "xtra", "obj")
+    ).path
+    _run(["ar", "rcs", "libxtra.a", obj.name], xtra)
 
     r = run_cli("new", "pub", "--object", "pub", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr

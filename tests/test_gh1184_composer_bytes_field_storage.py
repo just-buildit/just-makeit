@@ -49,12 +49,11 @@ a measurement instead of a claim.
 from __future__ import annotations
 
 import copy
-import subprocess
 import sys
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
@@ -62,7 +61,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from just_makeit import _composer  # noqa: E402
 from test_composer_codegen import _cfg  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 
 def _with_bits(**changes) -> dict:
@@ -262,20 +261,16 @@ def _compiles(tmp_path: Path, tag: str, call: str, free_line: str) -> int:
         "}\n",
         encoding="utf-8",
     )
-    return subprocess.run(
-        [
-            _CC,
-            "-c",
-            "-std=c11",
-            "-Werror=incompatible-pointer-types",
-            "-Werror=int-conversion",
-            str(probe),
-            "-o",
-            str(tmp_path / f"probe_{tag}.o"),
+    return cbuild.build(
+        "obj",
+        [probe],
+        cbuild.output(tmp_path, f"probe_{tag}", "obj"),
+        check=False,
+        std="c11",
+        warnings=[
+            "error=incompatible-pointer-types",
+            "error=int-conversion",
         ],
-        capture_output=True,
-        text=True,
-        timeout=600,
     ).returncode
 
 

@@ -30,20 +30,18 @@ satisfy every refusal test on its own.
 
 from __future__ import annotations
 
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 _HEAD = (
@@ -235,23 +233,19 @@ class TestTheAcceptedTreeCompiles:
     """
 
     def test_omittable_arrays_compile(self, tmp_path):
-        numpy = pytest.importorskip("numpy")
+        pytest.importorskip("numpy")
         root = _apply(tmp_path, TestTheWorkingSpellingStillWorks._OMITTABLE)
         for rel in (
             "native/src/frame/frame_core.c",
             "native/src/frame/frame_ext.c",
         ):
-            proc = subprocess.run(
-                [
-                    _CC,
-                    "-fsyntax-only",
-                    "-std=gnu99",
-                    f"-I{root / 'native' / 'inc'}",
-                    f"-I{sysconfig.get_paths()['include']}",
-                    f"-I{numpy.get_include()}",
-                    str(root / rel),
-                ],
-                capture_output=True,
-                text=True,
+            proc = cbuild.build(
+                "syntax",
+                [root / rel],
+                std="gnu99",
+                includes=[root / "native" / "inc"],
+                python=True,
+                numpy=True,
+                check=False,
             )
             assert proc.returncode == 0, f"{rel}: {proc.stderr}"

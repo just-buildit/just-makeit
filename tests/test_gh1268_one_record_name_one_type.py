@@ -49,11 +49,10 @@ import io
 import re
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -66,13 +65,8 @@ from just_makeit._record import RecordReg  # noqa: E402
 from just_makeit._render import record_registration_c  # noqa: E402
 from just_makeit._view import run as view_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
-_LINK = (
-    ["-bundle", "-undefined", "dynamic_lookup"]
-    if sys.platform == "darwin"
-    else ["-shared"]
-)
 
 _FIELDS = [
     {"name": "n", "type": "uint64_t", "doc": "How many."},
@@ -285,28 +279,21 @@ def test_the_built_module_survives_a_collection(tmp_path):
     type is merely unreachable, and without the churn the freed arena still
     holds a plausible-looking type.
     """
-    np = pytest.importorskip("numpy")
+    pytest.importorskip("numpy")
     root = _scaffold(tmp_path)
     _implement(root)
     pkg = root / "src" / "demo" / "m"
-    build = subprocess.run(
+    cbuild.build(
+        "ext",
         [
-            _CC,
-            "-fPIC",
-            *_LINK,
-            "-std=gnu99",
-            f"-I{root / INC_DIR}",
-            f"-I{sysconfig.get_paths()['include']}",
-            f"-I{np.get_include()}",
-            str(root / "native" / "src" / "m" / "m_ext.c"),
-            str(root / "native" / "src" / "acc" / "acc_core.c"),
-            "-o",
-            str(pkg / f"m{sysconfig.get_config_var('EXT_SUFFIX')}"),
+            root / "native" / "src" / "m" / "m_ext.c",
+            root / "native" / "src" / "acc" / "acc_core.c",
         ],
-        capture_output=True,
-        text=True,
+        cbuild.output(pkg, "m", "ext"),
+        std="gnu99",
+        includes=[root / INC_DIR],
+        numpy=True,
     )
-    assert build.returncode == 0, build.stderr
     r = subprocess.run(
         [
             sys.executable,

@@ -34,11 +34,10 @@ from _jminc import INC_ROOT  # noqa: E402
 
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -58,18 +57,7 @@ def _cli(*args, cwd) -> JmRun:
     return run_cli(*args, cwd=cwd)
 
 
-# macOS does not allow a `-shared` extension to leave the CPython symbols
-# undefined; it wants a bundle with `dynamic_lookup`. Same split
-# `test_handle_build` already uses -- reused rather than re-derived, because
-# getting this wrong is invisible until the one CI leg that is not this
-# laptop, which is exactly how it was found (gh-1117).
-_LINK = (
-    ["-bundle", "-undefined", "dynamic_lookup"]
-    if sys.platform == "darwin"
-    else ["-shared"]
-)
-
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 
 
 def _cfg(pkg="pgdemo"):
@@ -167,35 +155,20 @@ class TestEmittedCCompilesAndUnifies:
         (pkg / "own" / "__init__.py").write_text(
             "from .own import *  # noqa: F401,F403\n"
         )
-        ext = sysconfig.get_config_var("EXT_SUFFIX")
-        inc = sysconfig.get_paths()["include"]
         for leaf in ("own", "hand"):
             rz = _procglobal.rendezvous_c(cfg, leaf)
             assert rz, f"{leaf} emitted no rendezvous"
             src = tmp_path / f"{leaf}.c"
             src.write_text(_MODULE_C.format(leaf=leaf, rz=rz))
             # -Werror: the block must be clean C, not merely compilable.
-            subprocess.run(
-                [
-                    _CC,
-                    "-Wall",
-                    "-Wextra",
-                    "-Werror",
-                    *_LINK,
-                    "-fPIC",
-                    f"-I{tmp_path}",
-                    f"-I{inc}",
-                    str(src),
-                    str(tmp_path / "flag_core.c"),
-                    "-o",
-                    str(
-                        (pkg / "own" / f"{leaf}{ext}")
-                        if leaf == "own"
-                        else (pkg / f"{leaf}{ext}")
-                    ),
-                ],
-                check=True,
-                capture_output=True,
+            cbuild.build(
+                "ext",
+                [src, tmp_path / "flag_core.c"],
+                cbuild.output(
+                    pkg / "own" if leaf == "own" else pkg, leaf, "ext"
+                ),
+                warnings=["all", "extra", "error"],
+                includes=[tmp_path],
             )
         return tmp_path
 
@@ -245,25 +218,14 @@ class TestEmittedCCompilesAndUnifies:
         pkg = tmp_path / "pgdemo"
         pkg.mkdir()
         (pkg / "__init__.py").write_text("")
-        ext = sysconfig.get_config_var("EXT_SUFFIX")
-        inc = sysconfig.get_paths()["include"]
         for leaf in ("own", "hand"):
             src = tmp_path / f"{leaf}.c"
             src.write_text(_MODULE_C.format(leaf=leaf, rz=""))
-            subprocess.run(
-                [
-                    _CC,
-                    *_LINK,
-                    "-fPIC",
-                    f"-I{tmp_path}",
-                    f"-I{inc}",
-                    str(src),
-                    str(tmp_path / "flag_core.c"),
-                    "-o",
-                    str(pkg / f"{leaf}{ext}"),
-                ],
-                check=True,
-                capture_output=True,
+            cbuild.build(
+                "ext",
+                [src, tmp_path / "flag_core.c"],
+                cbuild.output(pkg, leaf, "ext"),
+                includes=[tmp_path],
             )
         out = self._run(
             tmp_path,
@@ -734,8 +696,6 @@ def test_a_hand_written_binding_can_join_using_only_the_header(tmp_path):
     (pkg / "own" / "__init__.py").write_text(
         "from .own import *  # noqa: F401,F403\n"
     )
-    ext = sysconfig.get_config_var("EXT_SUFFIX")
-    inc = sysconfig.get_paths()["include"]
     sources = {
         "own": _MODULE_C.format(
             leaf="own", rz=_procglobal.rendezvous_c(cfg, "own")
@@ -745,27 +705,12 @@ def test_a_hand_written_binding_can_join_using_only_the_header(tmp_path):
     for leaf, text in sources.items():
         src = tmp_path / f"{leaf}.c"
         src.write_text(text)
-        subprocess.run(
-            [
-                _CC,
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                *_LINK,
-                "-fPIC",
-                f"-I{tmp_path}",
-                f"-I{inc}",
-                str(src),
-                str(tmp_path / "flag_core.c"),
-                "-o",
-                str(
-                    (pkg / "own" / f"{leaf}{ext}")
-                    if leaf == "own"
-                    else (pkg / f"{leaf}{ext}")
-                ),
-            ],
-            check=True,
-            capture_output=True,
+        cbuild.build(
+            "ext",
+            [src, tmp_path / "flag_core.c"],
+            cbuild.output(pkg / "own" if leaf == "own" else pkg, leaf, "ext"),
+            warnings=["all", "extra", "error"],
+            includes=[tmp_path],
         )
     r = subprocess.run(
         [

@@ -22,10 +22,9 @@ GATE: after `jm upgrade` then `jm apply`, the manifest body and the rendered
 from __future__ import annotations
 
 import shutil
-import subprocess
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cxx
 
 from _jmrun import run_cli
 from just_makeit import _incpath
@@ -112,7 +111,9 @@ def test_prose_inside_a_body_keeps_its_words(tree):
     assert "/* float complex, quoted in a comment */" in h, h
 
 
-@pytest.mark.skipif(default_cxx() is None, reason="no C++ compiler")
+@pytest.mark.skipif(
+    cbuild.compiler_for(cxx=True) is None, reason="no C++ compiler"
+)
 def test_the_upgraded_header_parses_as_cpp(tree, tmp_path):
     """gh-1148's reason for the respell: a C++ caller includes the header.
     Checked on the header as built -- after upgrade then apply -- over a
@@ -125,9 +126,4 @@ def test_the_upgraded_header_parses_as_cpp(tree, tmp_path):
     _textio.write_text(
         tu, '#include "p/g/g_core.h"\nint main() { return 0; }\n'
     )
-    r = subprocess.run(
-        [default_cxx(), "-std=c++11", "-fsyntax-only", f"-I{inc}", str(tu)],
-        capture_output=True,
-        text=True,
-    )
-    assert r.returncode == 0, r.stderr
+    cbuild.build("syntax", [tu], cxx=True, std="c++11", includes=[inc])

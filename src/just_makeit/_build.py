@@ -297,7 +297,7 @@ def cmd_dry_run() -> None:
         if c_files:
             print("  C sources:")
             for f in c_files:
-                print(f"    {f.relative_to(root)}")
+                print(f"    {f.relative_to(root).as_posix()}")
         else:
             print("  C sources:  (none)")
     else:
@@ -313,7 +313,7 @@ def cmd_dry_run() -> None:
         if py_files or pyi_files:
             print("  Python package:")
             for f in py_files + pyi_files:
-                print(f"    {f.relative_to(root)}")
+                print(f"    {f.relative_to(root).as_posix()}")
     print()
 
     # #2128: name the commands `jm build` would run for this backend, with the

@@ -29,18 +29,17 @@ the mistake gh-994 already made once.
 from __future__ import annotations
 from _jminc import INC_DIR, INC_ROOT  # noqa: E402
 
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _composer  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 _MODULE = "playlist"
@@ -176,18 +175,14 @@ class TestAConsumerCanActuallyUseIt:
         inc = self._tree(tmp_path)
         src = tmp_path / "consumer.c"
         src.write_text(body, encoding="utf-8")
-        return subprocess.run(
-            [
-                _CC,
-                "-fsyntax-only",
-                "-std=gnu99",
-                "-Wall",
-                "-Werror",
-                f"-I{inc}",
-                str(src),
-            ],
-            capture_output=True,
-            text=True,
+        return cbuild.build(
+            "syntax",
+            [src],
+            compiler=_CC,
+            check=False,
+            std="gnu99",
+            warnings=["all", "error"],
+            includes=[inc],
         )
 
     def test_a_c_consumer_compiles_against_the_header_alone(self, tmp_path):

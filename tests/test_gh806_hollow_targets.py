@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -48,14 +48,14 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 #: The generated CMake asks for C99 with GNU extensions on (it never sets
 #: C_EXTENSIONS OFF), which is what makes `struct timespec` visible to the
 #: benchmark. Compiling with a bare `-std=c99` here would fail on jm's own
 #: output for a reason the real build does not have.
-_STD = "-std=gnu99"
+_STD = "gnu99"
 
 
 def _quiet(fn, *a, **kw):
@@ -472,24 +472,18 @@ class TestTheEmptyBenchmarkSaysSo:
     @_needs_cc
     def test_a_bench_that_measured_nothing_says_so(self, tmp_path):
         root = _project(tmp_path, "tlm", no_step=True)
-        exe = tmp_path / "bench"
-        subprocess.run(
+        exe = cbuild.build(
+            "exe",
             [
-                _CC,
-                _STD,
-                "-o",
-                str(exe),
-                str(root / "native" / "benchmarks" / "bench_tlm_core.c"),
-                str(root / "native" / "src" / "tlm" / "tlm_core.c"),
-                "-I",
-                str(root / INC_DIR),
-                "-I",
-                str(root / "native" / "benchmarks"),
-                "-lm",
+                root / "native" / "benchmarks" / "bench_tlm_core.c",
+                root / "native" / "src" / "tlm" / "tlm_core.c",
             ],
-            check=True,
-            capture_output=True,
-        )
+            cbuild.output(tmp_path, "bench", "exe"),
+            compiler=_CC,
+            std=_STD,
+            includes=[root / INC_DIR, root / "native" / "benchmarks"],
+            libs=["m"],
+        ).path
         done = subprocess.run(
             [str(exe)], cwd=tmp_path, capture_output=True, text=True
         )
@@ -504,22 +498,18 @@ class TestTheEmptyBenchmarkSaysSo:
 
 def _run_c_test(root: Path, comp: str, tmp_path: Path) -> str:
     """Compile and run one generated C test; return its stdout."""
-    exe = tmp_path / f"t_{comp}"
-    subprocess.run(
+    exe = cbuild.build(
+        "exe",
         [
-            _CC,
-            _STD,
-            "-o",
-            str(exe),
-            str(root / "native" / "tests" / f"test_{comp}_core.c"),
-            str(root / "native" / "src" / comp / f"{comp}_core.c"),
-            "-I",
-            str(root / INC_DIR),
-            "-lm",
+            root / "native" / "tests" / f"test_{comp}_core.c",
+            root / "native" / "src" / comp / f"{comp}_core.c",
         ],
-        check=True,
-        capture_output=True,
-    )
+        cbuild.output(tmp_path, f"t_{comp}", "exe"),
+        compiler=_CC,
+        std=_STD,
+        includes=[root / INC_DIR],
+        libs=["m"],
+    ).path
     done = subprocess.run([str(exe)], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     return done.stdout

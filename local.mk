@@ -14,7 +14,7 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 coverage-subprocess-check coverage-shard \
                 gates-index gates-declared-check \
                 doppler-pin-check consumer-smoke install-history-update \
-                ci-test-legs site-files
+                ci-test-legs site-files test-compiled
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -246,3 +246,17 @@ site-files: ## Copy install.sh and aliases.toml into SITE_FILES_DIR (default sit
 	mkdir -p $(SITE_FILES_DIR)
 	cp install.sh $(SITE_FILES_DIR)/install.sh
 	cp aliases.toml $(SITE_FILES_DIR)/aliases.toml
+
+# gh-2294: every test that compiles C through tests/_cbuild.py, the one
+# compile helper, which speaks clang-cl as well as cc. ci.yml's Windows job
+# runs this, so those fixtures -- an extension built from a generated
+# `_ext.c`, a header compiled to an object -- run under clang-cl, which
+# nothing in jm's own suite did before. Derived, never listed: a file is in
+# the moment it imports the helper. The project-env files are left to their
+# own Windows line (PROJECT_ENV_TESTS). On Linux and macOS `test` already
+# runs every one of these.
+COMPILED_TESTS = $(filter-out $(PROJECT_ENV_TESTS),$(shell grep -lE \
+                 '^(import _cbuild|from _cbuild import )' tests/test_*.py))
+
+test-compiled: ## Run every test that compiles C through tests/_cbuild.py (gh-2294)
+	$(PYTEST) $(PYTEST_PARALLEL) -v $(COMPILED_TESTS)

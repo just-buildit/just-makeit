@@ -28,12 +28,10 @@ import os
 import platform
 import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
-import numpy as np
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -89,7 +87,7 @@ def test_a_scalar_only_function_keeps_its_one_line_form():
     assert "    return PyLong_FromLong((long)twice(v));" in body, body
 
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _GLIBC = platform.libc_ver()[0] == "glibc"
 
 _BACKING = """
@@ -128,29 +126,15 @@ PyMODINIT_FUNC PyInit_cnt(void) {{
 """
     c = tmp / "cnt.c"
     c.write_text(src)
-    so = tmp / f"cnt{sysconfig.get_config_var('EXT_SUFFIX') or '.so'}"
-    subprocess.run(
-        [
-            _CC,
-            "-shared",
-            "-fPIC",
-            "-O2",
-            "-std=c11",
-            "-Wall",
-            "-Werror",
-            "-I",
-            sysconfig.get_path("include"),
-            "-I",
-            np.get_include(),
-            str(c),
-            "-o",
-            str(so),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return so
+    return cbuild.build(
+        "ext",
+        [c],
+        cbuild.output(tmp, "cnt", "ext"),
+        std="c11",
+        warnings=["all", "error"],
+        flags=["-O2"],
+        numpy=True,
+    ).path
 
 
 _PROBE = """

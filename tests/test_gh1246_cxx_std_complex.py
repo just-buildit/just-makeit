@@ -49,9 +49,11 @@ from just_makeit import _incpath as INC
 import os
 import shutil
 import subprocess
+import sys
 
+import _cbuild as cbuild
 import pytest
-from _compilers import default_cc, default_cxx
+from _compilers import default_cc
 
 from just_makeit import _cli_object
 from just_makeit._new import run as new_run
@@ -62,13 +64,12 @@ def _skip_reason() -> str | None:
         return "cmake not found"
     if default_cc() is None:
         return "no C compiler found"
-    if default_cxx() is None:
+    if cbuild.compiler_for(cxx=True) is None:
         return "no C++ compiler found"
     return None
 
 
 _SKIP = _skip_reason()
-_CXX = default_cxx()
 
 # jm's header first, then <complex> -- the macro poisons what follows.
 _JM_FIRST = '#include "<<P>>cplx/cplx_core.h"\n#include <complex>\n'
@@ -120,7 +121,11 @@ def built(tmp_path_factory):
     )
     assert bld.returncode == 0, f"build failed:\n{bld.stdout}\n{bld.stderr}"
 
-    static = build / "libcxxlib.a"
+    # The combined static library's name per platform, as
+    # `_exports.artifacts` reads it: clang-cl's is `<pkg>_static.lib`.
+    static = build / (
+        "cxxlib_static.lib" if sys.platform == "win32" else "libcxxlib.a"
+    )
     assert static.is_file(), (
         "the project's combined static C library was not built; "
         f"build/ holds: {sorted(p.name for p in build.iterdir())}"
@@ -144,22 +149,17 @@ class TestACxx11TuCanUseStdComplex:
         # gh-1583: the jm header is spelled in the project's layout.
         includes = includes.replace("<<P>>", INC.prefix(root))
         src.write_text(includes + _USES_STD_COMPLEX, encoding="utf-8")
-        r = subprocess.run(
-            [
-                _CXX,
-                "-std=c++11",
-                "-Wall",
-                "-c",
-                str(src),
-                f"-I{root / 'native' / 'inc'}",
-                "-o",
-                str(tmp_path / f"{order}.o"),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=600,
+        r = cbuild.build(
+            "obj",
+            [src],
+            cbuild.output(tmp_path, order, "obj", cxx=True),
+            cxx=True,
+            check=False,
+            std="c++11",
+            warnings=["all"],
+            includes=[root / "native" / "inc"],
         )
-        assert r.returncode == 0, (
+        assert r.ok, (
             f"a C++11 TU using std::complex failed to compile with the jm "
             f"header included {order.replace('_', ' ')}:\n{r.stderr}"
         )
@@ -199,24 +199,19 @@ class TestItLinksTheRealLibraryAndRuns:
             "}\n",
             encoding="utf-8",
         )
-        exe = tmp_path / "app"
-        link = subprocess.run(
-            [
-                _CXX,
-                "-std=c++11",
-                "-Wall",
-                str(app),
-                f"-I{root / 'native' / 'inc'}",
-                str(static),
-                "-lm",
-                "-o",
-                str(exe),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=600,
+        link = cbuild.build(
+            "exe",
+            [app, static],
+            cbuild.output(tmp_path, "app", "exe", cxx=True),
+            cxx=True,
+            check=False,
+            std="c++11",
+            warnings=["all"],
+            includes=[root / "native" / "inc"],
+            libs=["m"],
         )
-        assert link.returncode == 0, (
+        exe = link.path
+        assert link.ok, (
             f"a C++11 app failed to build against the real library:\n"
             f"{link.stderr}"
         )

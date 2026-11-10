@@ -42,13 +42,11 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild as cbuild
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -58,7 +56,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
 
-_CC = default_cc()
+_CC = cbuild.compiler_for()
 _needs_cc = pytest.mark.skipif(_CC is None, reason="no C compiler on PATH")
 
 
@@ -233,22 +231,19 @@ class TestTheAcceptedTreeStillCompiles:
         ["reset", "destroy", "step", "steps", "get_gain", "set_gain"],
     )
     def test_ext_c_compiles(self, tmp_path, monkeypatch, name):
-        numpy = pytest.importorskip("numpy")
+        pytest.importorskip("numpy")
         root = _plain(tmp_path / "proj", monkeypatch)
         _add(root, name)
         # monkeypatch.chdir left us inside the project; compile by abspath.
-        proc = subprocess.run(
-            [
-                _CC,
-                "-fsyntax-only",
-                "-std=gnu99",
-                f"-I{root / 'native' / 'inc'}",
-                f"-I{sysconfig.get_paths()['include']}",
-                f"-I{numpy.get_include()}",
-                str(root / "native" / "src" / "osc" / "osc_ext.c"),
-            ],
-            capture_output=True,
-            text=True,
+        proc = cbuild.build(
+            "syntax",
+            [root / "native" / "src" / "osc" / "osc_ext.c"],
+            compiler=_CC,
+            check=False,
             cwd=os.fspath(root),
+            std="gnu99",
+            includes=[root / "native" / "inc"],
+            python=True,
+            numpy=True,
         )
         assert proc.returncode == 0, proc.stderr
