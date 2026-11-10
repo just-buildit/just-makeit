@@ -215,3 +215,24 @@ def asan_skip_reason() -> str:
     if sys.platform == "darwin":
         return ASAN_NO_PRELOAD_MACOS
     return "no cmake / C compiler / AddressSanitizer runtime"
+
+
+#: gh-1570: the skip reasons of a consumer test on the Windows (clang-cl)
+#: examples leg, each allow-listed by this exact text by
+#: `tests/conftest.py`'s skip gate (gh-1442). A test that is not one of
+#: these runs there; one that skips for any other reason fails the run.
+#:
+#: The C consumer surface on the MSVC ABI is a real, filed gap
+#: (gh-2599): jm's ``.pc`` and several manifest keys speak GNU link
+#: flags (``-L``/``-l``, ``m``), the runner has no ``pkg-config``, the
+#: consumer matrix's layouts are POSIX paths, and a DLL keeps its own copy
+#: of a static dependency where ELF interposes one. Skipped by name until
+#: that issue lands, not left off the leg.
+WINDOWS_CONSUMER_GAP = (
+    "Windows: this C consumer route is not ported to the MSVC ABI yet "
+    "(gh-2599)"
+)
+#: What has no Windows counterpart at all, such as a root-owned (``sudo``)
+#: install stood in for by POSIX directory permissions. Each use names its
+#: subject after the prefix.
+POSIX_ONLY = "POSIX-only subject:"

@@ -33,10 +33,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from _compilers import WINDOWS_CONSUMER_GAP
 from _jmrun import run_cli
 from just_makeit._new import run as new_run
 
@@ -116,6 +118,7 @@ def _pc_env(pfx: Path) -> "dict[str, str]":
     return env
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_CONSUMER_GAP)
 def test_one_unit_includes_both_by_the_prefixed_path(world):
     root, pfx = world
     tu = root / "side_by_side.c"
@@ -169,4 +172,7 @@ def test_find_package_consumer_of_both_links_and_runs(world):
     )
     _run(["cmake", "-S", ".", "-B", "b", f"-DCMAKE_PREFIX_PATH={pfx}"], cons)
     _run(["cmake", "--build", "b"], cons)
-    _run([cons / "b" / "c"], cons)
+    # A DLL is found on PATH, not through an rpath (gh-1570).
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([str(pfx / "bin"), env.get("PATH", "")])
+    _run([cons / "b" / "c"], cons, env)

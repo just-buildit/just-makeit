@@ -9,6 +9,14 @@
 #if !defined(__clang__)
 #error "C99 _Complex is required; on Windows build with clang-cl, not cl.exe"
 #endif
+/* gh-1570: guarded ACROSS packages, not by the per-package guard above. Two
+ * jm libraries installed side by side each ship this file under their own
+ * guard, and a consumer including both defined every `jm_c*` shim twice --
+ * a redefinition error, on this ABI only, the moment one translation unit
+ * reached both. The shims are the same in every package, so the first
+ * definition serves all. */
+#ifndef JM_MSVC_COMPLEX_SHIMS
+#define JM_MSVC_COMPLEX_SHIMS
 /* The UCRT's own <complex.h> FIRST, so its `_Fcomplex` declarations are
  * already parsed -- and its include guard already set -- before the C99 names
  * are remapped below. Then any later #include <complex.h>, from numpy's
@@ -68,6 +76,7 @@ jm_cexp(double _Complex z)
 #define cabs jm_cabs
 #define carg jm_carg
 #define cexp jm_cexp
+#endif /* JM_MSVC_COMPLEX_SHIMS */
 #else
 #include <complex.h>
 #endif

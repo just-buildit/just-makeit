@@ -66,7 +66,15 @@ from typing import NamedTuple
 
 import pytest
 
+from _compilers import WINDOWS_CONSUMER_GAP
+
 from _jmrun import run_cli
+
+
+# gh-1570: run on the Windows leg, skipped there by a registered reason.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason=WINDOWS_CONSUMER_GAP
+)
 
 #: Underscored on purpose (gh-1581): the one spelling that tells the
 #: library's name from the old hyphenated .pc name.
@@ -162,9 +170,13 @@ def world(tmp_path_factory):
     cm = proj / "CMakeLists.txt"
     text = cm.read_text(encoding="utf-8")
     assert len(re.findall(r"VERSION 0\.1\.0\b", text)) == 1
-    cm.write_text(text.replace("VERSION 0.1.0", f"VERSION {VERSION}"))
+    cm.write_text(
+        text.replace("VERSION 0.1.0", f"VERSION {VERSION}"), encoding="utf-8"
+    )
     # gh-1583: an installed package's headers are included as `<pkg>/...`.
-    (root / "c.c").write_text(_CONSUMER.replace("<<P>>", INC.prefix(proj)))
+    (root / "c.c").write_text(
+        _CONSUMER.replace("<<P>>", INC.prefix(proj)), encoding="utf-8"
+    )
 
     layouts: "dict[str, Layout]" = {}
 
@@ -250,7 +262,8 @@ def _find_package(
         "project(cons C)\n"
         f"find_package({NAME} {VERSION} REQUIRED)\n"
         "add_executable(c ../c.c)\n"
-        f"target_link_libraries(c PRIVATE {TARGETS[linkage]})\n"
+        f"target_link_libraries(c PRIVATE {TARGETS[linkage]})\n",
+        encoding="utf-8",
     )
     _run(["cmake", "-S", ".", "-B", "b", *where], cons)
     _run(["cmake", "--build", "b"], cons)
@@ -359,7 +372,7 @@ def test_the_pc_names_the_prefix_it_was_installed_under(world, layout):
     the staging dir, and not a path relative to the file."""
     _, _, _, layouts = world
     lay = layouts[layout]
-    text = _pc_file(lay).read_text()
+    text = _pc_file(lay).read_text(encoding="utf-8")
     assert "${pcfiledir}" not in text, text
     # The first FIELD: gh-1589's ownership token and note lead the file as
     # comments.
@@ -391,7 +404,7 @@ def test_the_pc_spells_an_absolute_libdir_once(world):
     _, _, _, layouts = world
     for name in ("abs-libdir", "abs-libdir-outside"):
         lay = layouts[name]
-        text = _pc_file(lay).read_text()
+        text = _pc_file(lay).read_text(encoding="utf-8")
         assert "}//" not in text, text
         assert f"libdir={lay.libdir}\n" in text, text
 
@@ -414,7 +427,7 @@ def test_the_pc_has_no_empty_field_or_blank_tail(world, layout):
     as `URL:`, and the template's empty slots leave no blank lines."""
     root, _, _, layouts = world
     lay = layouts[layout]
-    text = _pc_file(lay).read_text()
+    text = _pc_file(lay).read_text(encoding="utf-8")
     empty = [ln for ln in text.splitlines() if re.fullmatch(r"[\w.]+:\s*", ln)]
     assert empty == [], empty
     assert text.endswith("\n") and not text.endswith("\n\n"), repr(text[-40:])
@@ -470,7 +483,8 @@ def test_zero_x_version_matching(world, request_, found):
         "cmake_minimum_required(VERSION 3.16)\n"
         "project(ver C)\n"
         f"find_package({NAME} {request_} QUIET)\n"
-        f'message(STATUS "FOUND=${{{NAME}_FOUND}}")\n'
+        f'message(STATUS "FOUND=${{{NAME}_FOUND}}")\n',
+        encoding="utf-8",
     )
     out = _run(
         ["cmake", "-S", ".", "-B", "b", f"-DCMAKE_PREFIX_PATH={lay.prefix}"],

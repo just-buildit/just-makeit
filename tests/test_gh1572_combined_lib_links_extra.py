@@ -93,10 +93,13 @@ def installed(tmp_path_factory):
 
     ext = root / "extdep"
     ext.mkdir()
-    (ext / "CMakeLists.txt").write_text(_EXT_CMAKE)
-    (ext / "extdep.h").write_text("int extdep_twice(int x);\n")
+    (ext / "CMakeLists.txt").write_text(_EXT_CMAKE, encoding="utf-8")
+    (ext / "extdep.h").write_text(
+        "int extdep_twice(int x);\n", encoding="utf-8"
+    )
     (ext / "extdep.c").write_text(
-        '#include "extdep.h"\nint extdep_twice(int x) { return 2 * x; }\n'
+        '#include "extdep.h"\nint extdep_twice(int x) { return 2 * x; }\n',
+        encoding="utf-8",
     )
     ext_pfx = root / "ext_pfx"
     _cmake_install(ext, root / "ext_b", ext_pfx)
@@ -126,12 +129,13 @@ def installed(tmp_path_factory):
     for d, obj in (("util", "util_obj"), ("more", "more_objs")):
         (proj / "native" / "src" / d).mkdir()
         (proj / "native" / "src" / d / f"{d}.c").write_text(
-            f"int jmx_{d}_one(void) {{ return 1; }}\n"
+            f"int jmx_{d}_one(void) {{ return 1; }}\n", encoding="utf-8"
         )
         (proj / "native" / "src" / d / "CMakeLists.txt").write_text(
             f"add_library({obj} OBJECT {d}.c)\n"
             f"set_target_properties({obj} PROPERTIES"
-            " POSITION_INDEPENDENT_CODE ON)\n"
+            " POSITION_INDEPENDENT_CODE ON)\n",
+            encoding="utf-8",
         )
     cfg["project"]["c_deps"] = ["util", "more"]
     cfg["alpha"]["extra_link_libs"] += [
@@ -145,12 +149,13 @@ def installed(tmp_path_factory):
     # doppler's does -- the state in which restating them doubles them.
     root_cmake = proj / "CMakeLists.txt"
     root_cmake.write_text(
-        root_cmake.read_text()
+        root_cmake.read_text(encoding="utf-8")
         + "".join(
             f"target_sources(jmx_{lib} PRIVATE $<TARGET_OBJECTS:{obj}>)\n"
             for lib in ("lib", "lib_static")
             for obj in ("util_obj", "more_objs")
-        )
+        ),
+        encoding="utf-8",
     )
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -158,9 +163,10 @@ def installed(tmp_path_factory):
     for core in _CORES:
         (src,) = proj.glob(f"native/src/*/{core}_core.c")
         src.write_text(
-            src.read_text()
+            src.read_text(encoding="utf-8")
             + '\n#include "extdep.h"\n'
-            + f"int {core}_ext(int x) {{ return extdep_twice(x); }}\n"
+            + f"int {core}_ext(int x) {{ return extdep_twice(x); }}\n",
+            encoding="utf-8",
         )
 
     pfx = root / "pfx"
@@ -181,9 +187,9 @@ def test_every_emit_site_links_the_combined_libraries(installed):
         (cm,) = [
             p
             for p in proj.glob("native/src/*/CMakeLists.txt")
-            if f"add_library({core}_core" in p.read_text()
+            if f"add_library({core}_core" in p.read_text(encoding="utf-8")
         ]
-        text = cm.read_text()
+        text = cm.read_text(encoding="utf-8")
         for lib, scope in (("_lib", "PRIVATE"), ("_lib_static", "PUBLIC")):
             assert (
                 f"target_link_libraries(${{PROJECT_NAME}}{lib} {scope}\n"
@@ -196,13 +202,14 @@ def test_an_installed_consumer_links(installed, target):
     root, _, pfx, ext_pfx = installed
     cons = root / f"cons_{target}"
     cons.mkdir()
-    (cons / "c.c").write_text(_CONSUMER)
+    (cons / "c.c").write_text(_CONSUMER, encoding="utf-8")
     (cons / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.16)\n"
         "project(cons C)\n"
         "find_package(jmx REQUIRED)\n"
         "add_executable(c c.c)\n"
-        f"target_link_libraries(c PRIVATE jmx::{target})\n"
+        f"target_link_libraries(c PRIVATE jmx::{target})\n",
+        encoding="utf-8",
     )
     _run(
         [

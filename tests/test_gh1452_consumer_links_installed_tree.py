@@ -38,10 +38,12 @@ from just_makeit import _incpath as INC  # noqa: E402
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from _compilers import WINDOWS_CONSUMER_GAP
 from _jmrun import run_cli
 
 _CONSUMER = (
@@ -84,7 +86,7 @@ def installed(tmp_path_factory):
     )
     proj = root / "jmpc"
     h = proj / INC_ROOT / "gain" / "gain_core.h"
-    s = h.read_text()
+    s = h.read_text(encoding="utf-8")
     s = s.replace(
         "#ifndef GAIN_CORE_H", "#include <math.h>\n#ifndef GAIN_CORE_H", 1
     )
@@ -97,7 +99,8 @@ def installed(tmp_path_factory):
     h.write_text(
         s[:o]
         + "{\n    return sqrtf(fabsf(x)) * powf(10.0f, state->level / 20.0f);"
-        + s[c:]
+        + s[c:],
+        encoding="utf-8",
     )
     pfx = proj / "pfx"
     for cmd in (
@@ -116,7 +119,9 @@ def installed(tmp_path_factory):
         r = _run(cmd, proj)
         assert r.returncode == 0, (cmd, r.stdout[-1500:], r.stderr[-1500:])
     # gh-1583: an installed package's headers are included as `<pkg>/...`.
-    (proj / "c.c").write_text(_CONSUMER.replace("<<P>>", INC.prefix(proj)))
+    (proj / "c.c").write_text(
+        _CONSUMER.replace("<<P>>", INC.prefix(proj)), encoding="utf-8"
+    )
     return proj, pfx
 
 
@@ -132,6 +137,7 @@ def _pkg(pfx: Path, *args: str) -> "list[str]":
     return r.stdout.split()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_CONSUMER_GAP)
 class TestPkgConfigConsumer:
     def test_libs_carries_libm(self, installed):
         _, pfx = installed
@@ -180,7 +186,8 @@ class TestFindPackageConsumer:
             "add_executable(c ../c.c)\n"
             "target_link_libraries(c PRIVATE demo::demo)\n"
             "add_executable(cs ../c.c)\n"
-            "target_link_libraries(cs PRIVATE demo::demo-static)\n"
+            "target_link_libraries(cs PRIVATE demo::demo-static)\n",
+            encoding="utf-8",
         )
         for cmd in (
             [
@@ -204,8 +211,14 @@ class TestFindPackageConsumer:
         one) -- so it is the linker flag `-lm`."""
         _, pfx = installed
         text = "".join(
-            p.read_text()
+            p.read_text(encoding="utf-8")
             for p in (pfx / "lib" / "cmake").rglob("*targets*.cmake")
         )
-        assert 'INTERFACE_LINK_LIBRARIES "-lm"' in text, text[:600]
+        if sys.platform == "win32":
+            # The UCRT carries libm: `JM_MATH_LIBRARY` is empty there, and
+            # the export must not hand an MSVC-ABI link a GNU flag it
+            # cannot take (gh-1570).
+            assert "-lm" not in text, text[:600]
+        else:
+            assert 'INTERFACE_LINK_LIBRARIES "-lm"' in text, text[:600]
         assert "libm.so" not in text and "libm.a" not in text, text[:600]

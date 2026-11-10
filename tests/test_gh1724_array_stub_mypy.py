@@ -10,6 +10,7 @@ skipping.
 
 from __future__ import annotations
 
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -38,6 +39,9 @@ def project(tmp_path_factory) -> Path:
 # -- the type checker, on the generated stubs --------------------------------
 
 
+_ERROR = re.compile(r"^(.*?):(\d+): error:")
+
+
 def _mypy(project: Path, use: str, tmp_path: Path) -> list[int]:
     """Line numbers mypy reports an error on, for *use* against *project*."""
     from mypy import api
@@ -52,14 +56,21 @@ def _mypy(project: Path, use: str, tmp_path: Path) -> list[int]:
             str(script),
         ]
     )
-    errs = [ln for ln in out.splitlines() if ": error:" in ln]
+    # `<path>:<line>: error:`, split from the RIGHT of the path: a Windows
+    # path carries a drive colon, so the first `:` is not the separator
+    # (gh-1570; the clang-cl leg read every error as one in the stub).
+    errs = [
+        m.groups()
+        for m in map(_ERROR.match, out.splitlines())
+        if m is not None
+    ]
     # Armed: mypy ran and type-checked the file; a usage error or a crash
     # reports no `error:` line, which would read as every call passing.
     assert "Success" in out or "Found" in out, out + err
     # A stub mypy cannot read fails as an error in the STUB, not in use.py,
     # and would read as the call being refused.
-    assert all(e.split(":")[0].endswith("use.py") for e in errs), out + err
-    return sorted({int(e.split(":")[1]) for e in errs})
+    assert all(path.endswith("use.py") for path, _ in errs), out + err
+    return sorted({int(line) for _, line in errs})
 
 
 # (call, mypy must refuse it)
