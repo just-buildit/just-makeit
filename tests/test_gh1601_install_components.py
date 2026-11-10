@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+from _compilers import POSIX_ONLY
 
 from _jmrun import run_cli
 
@@ -103,6 +105,11 @@ def test_the_two_are_a_plain_install_and_disjoint(installs):
     assert installs["runtime"] | installs["dev"] == installs["all"]
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=f"{POSIX_ONLY} a root-owned (sudo) install, stood in for by a "
+    "read-only directory and a symlink",
+)
 def test_an_install_after_a_root_one_rewrites_the_pc(installs, tmp_path):
     """The ``.pc`` is written into the BUILD tree at install time, then
     copied. ``sudo cmake --install`` leaves that file owned by root, and

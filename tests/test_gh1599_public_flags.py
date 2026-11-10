@@ -36,9 +36,18 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import sys
+
+from _compilers import WINDOWS_CONSUMER_GAP
 
 from _jmrun import run_cli
 from just_makeit import _config as C
+
+
+# gh-1570: run on the Windows leg, skipped there by a registered reason.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason=WINDOWS_CONSUMER_GAP
+)
 
 _XTRA_C = "int xtra_value(void) { return 42; }\n"
 
@@ -84,7 +93,7 @@ def installed(tmp_path_factory):
     root = tmp_path_factory.mktemp("gh1599")
     xtra = root / "xtra"
     xtra.mkdir()
-    (xtra / "xtra.c").write_text(_XTRA_C)
+    (xtra / "xtra.c").write_text(_XTRA_C, encoding="utf-8")
     _run(["cc", "-fPIC", "-c", "xtra.c", "-o", "xtra.o"], xtra)
     _run(["ar", "rcs", "libxtra.a", "xtra.o"], xtra)
 
@@ -97,9 +106,13 @@ def installed(tmp_path_factory):
     C.save(proj, cfg)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
-    (proj / "native" / "inc" / "pub" / "pub_api.h").write_text(_API_H)
+    (proj / "native" / "inc" / "pub" / "pub_api.h").write_text(
+        _API_H, encoding="utf-8"
+    )
     core = proj / "native" / "src" / "pub" / "pub_core.c"
-    core.write_text(core.read_text() + _CORE_ADD)
+    core.write_text(
+        core.read_text(encoding="utf-8") + _CORE_ADD, encoding="utf-8"
+    )
 
     pfx = root / "pfx"
     b = proj / "b"
@@ -120,7 +133,7 @@ def installed(tmp_path_factory):
     _run(["cmake", "--build", b], proj)
     _run(["ctest", "--test-dir", b, "--output-on-failure"], proj)
     _run(["cmake", "--install", b], proj)
-    (root / "c.c").write_text(_CONSUMER)
+    (root / "c.c").write_text(_CONSUMER, encoding="utf-8")
     return root, pfx
 
 
@@ -149,7 +162,8 @@ def _find_package(root: Path, pfx: Path, target: str) -> str:
         "project(cons C)\n"
         "find_package(pub REQUIRED)\n"
         "add_executable(c ../c.c)\n"
-        f"target_link_libraries(c PRIVATE {target})\n"
+        f"target_link_libraries(c PRIVATE {target})\n",
+        encoding="utf-8",
     )
     _run(["cmake", "-S", ".", "-B", "b", f"-DCMAKE_PREFIX_PATH={pfx}"], cons)
     _run(["cmake", "--build", "b"], cons)
@@ -170,7 +184,7 @@ def test_find_package_consumer(installed, target):
 
 def test_the_pc_carries_both_publicly(installed):
     _, pfx = installed
-    text = (pfx / "lib" / "pkgconfig" / "pub.pc").read_text()
+    text = (pfx / "lib" / "pkgconfig" / "pub.pc").read_text(encoding="utf-8")
     libs = next(ln for ln in text.splitlines() if ln.startswith("Libs:"))
     cflags = next(ln for ln in text.splitlines() if ln.startswith("Cflags:"))
     assert "-lxtra" in libs, text

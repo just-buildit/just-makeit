@@ -51,8 +51,16 @@ from pathlib import Path
 
 import pytest
 
+from _compilers import WINDOWS_CONSUMER_GAP
+
 from _jmrun import run_cli
 from just_makeit import _config as C
+
+
+# gh-1570: run on the Windows leg, skipped there by a registered reason.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason=WINDOWS_CONSUMER_GAP
+)
 
 _EXT_CMAKE = r"""
 cmake_minimum_required(VERSION 3.16)
@@ -174,7 +182,7 @@ def _project(root: Path, name: str, env: dict, ext_pfx: Path) -> Path:
     # gh-1583: an installed package's headers are included as `<pkg>/...`,
     # so each package gets the consumer spelled for it.
     (root / f"c_{name}.c").write_text(
-        _CONSUMER.replace("<<P>>", INC.prefix(proj))
+        _CONSUMER.replace("<<P>>", INC.prefix(proj)), encoding="utf-8"
     )
     cfg = C.load(proj)
     cfg["project"].update(_fill(decl, ext_pfx))
@@ -194,18 +202,21 @@ def _project(root: Path, name: str, env: dict, ext_pfx: Path) -> Path:
     assert r.returncode == 0, r.stdout + r.stderr
 
     h = proj / INC_ROOT / "alpha" / "alpha_core.h"
-    s = h.read_text()
+    s = h.read_text(encoding="utf-8")
     anchor = f'#include "{INC.include("clib_common.h", proj)}"'
     assert s.count(anchor) == 1, s
     h.write_text(
         s.replace(anchor, anchor + '\n#include "extdep.h"')
-        + "\nint alpha_cfg_k(const extdep_cfg_t *c);\nint alpha_bump(void);\n"
+        + "\nint alpha_cfg_k(const extdep_cfg_t *c);\nint alpha_bump(void);\n",
+        encoding="utf-8",
     )
     core = proj / "native" / "src" / "alpha" / "alpha_core.c"
     core.write_text(
-        core.read_text() + "\nint alpha_cfg_k(const extdep_cfg_t *c)"
+        core.read_text(encoding="utf-8")
+        + "\nint alpha_cfg_k(const extdep_cfg_t *c)"
         " { return extdep_twice(c->k); }\n"
-        "int alpha_bump(void) { return extdep_bump(); }\n"
+        "int alpha_bump(void) { return extdep_bump(); }\n",
+        encoding="utf-8",
     )
     pfx = root / f"{name}_pfx"
     _cmake_install(
@@ -223,9 +234,9 @@ def installed(tmp_path_factory):
     root = tmp_path_factory.mktemp("w")
     ext, ext_pfx = root / "extdep", root / "ext_pfx"
     ext.mkdir()
-    (ext / "CMakeLists.txt").write_text(_EXT_CMAKE)
-    (ext / "extdep.h").write_text(_EXT_H)
-    (ext / "extdep.c").write_text(_EXT_C)
+    (ext / "CMakeLists.txt").write_text(_EXT_CMAKE, encoding="utf-8")
+    (ext / "extdep.h").write_text(_EXT_H, encoding="utf-8")
+    (ext / "extdep.c").write_text(_EXT_C, encoding="utf-8")
     env = dict(os.environ)
     env["PKG_CONFIG_PATH"] = str(ext_pfx / "lib" / "pkgconfig")
     _cmake_install(ext, ext_pfx, env)
@@ -266,7 +277,8 @@ def _consume_cmake(root, ext_pfx, name, pfx, target, env) -> str:
         "project(cons C)\n"
         f"find_package({name} REQUIRED)\n"
         f"add_executable(c ../c_{name}.c)\n"
-        f"target_link_libraries(c PRIVATE {name}::{target})\n"
+        f"target_link_libraries(c PRIVATE {name}::{target})\n",
+        encoding="utf-8",
     )
     _run(
         [
@@ -334,6 +346,7 @@ def test_the_export_carries_no_absolute_dependency_path(installed):
     root, ext_pfx, pfxs, _ = installed
     for pfx in (pfxs[name] for name in sorted(_STYLES)):
         text = "".join(
-            p.read_text() for p in (pfx / "lib" / "cmake").rglob("*.cmake")
+            p.read_text(encoding="utf-8")
+            for p in (pfx / "lib" / "cmake").rglob("*.cmake")
         )
         assert str(ext_pfx) not in text, text[:1500]

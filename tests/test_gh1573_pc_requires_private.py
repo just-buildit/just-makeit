@@ -27,9 +27,18 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import sys
+
+from _compilers import WINDOWS_CONSUMER_GAP
 
 from _jmrun import run_cli
 from just_makeit import _config as C
+
+
+# gh-1570: run on the Windows leg, skipped there by a registered reason.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason=WINDOWS_CONSUMER_GAP
+)
 
 _EXT_CMAKE = """\
 cmake_minimum_required(VERSION 3.16)
@@ -77,10 +86,13 @@ def installed(tmp_path_factory):
     root = tmp_path_factory.mktemp("w")
     ext, ext_pfx, pfx = root / "extdep", root / "ext_pfx", root / "pfx"
     ext.mkdir()
-    (ext / "CMakeLists.txt").write_text(_EXT_CMAKE)
-    (ext / "extdep.h").write_text("int extdep_twice(int x);\n")
+    (ext / "CMakeLists.txt").write_text(_EXT_CMAKE, encoding="utf-8")
+    (ext / "extdep.h").write_text(
+        "int extdep_twice(int x);\n", encoding="utf-8"
+    )
     (ext / "extdep.c").write_text(
-        '#include "extdep.h"\nint extdep_twice(int x) { return 2 * x; }\n'
+        '#include "extdep.h"\nint extdep_twice(int x) { return 2 * x; }\n',
+        encoding="utf-8",
     )
     env = dict(os.environ)
     env["PKG_CONFIG_PATH"] = str(ext_pfx / "lib" / "pkgconfig")
@@ -96,22 +108,23 @@ def installed(tmp_path_factory):
     assert r.returncode == 0, r.stdout + r.stderr
     core = proj / "native" / "src" / "alpha" / "alpha_core.c"
     core.write_text(
-        core.read_text()
+        core.read_text(encoding="utf-8")
         + '\n#include "extdep.h"\n'
-        + "int alpha_ext(int x) { return extdep_twice(x); }\n"
+        + "int alpha_ext(int x) { return extdep_twice(x); }\n",
+        encoding="utf-8",
     )
     _cmake_install(proj, pfx, env, "-DBUILD_PYTHON=OFF")
 
     env["PKG_CONFIG_PATH"] = os.pathsep.join(
         [str(pfx / "lib" / "pkgconfig"), env["PKG_CONFIG_PATH"]]
     )
-    (root / "c.c").write_text(_CONSUMER)
+    (root / "c.c").write_text(_CONSUMER, encoding="utf-8")
     return root, pfx, env
 
 
 def test_the_pc_requires_the_module(installed):
     _, pfx, _ = installed
-    pc = (pfx / "lib" / "pkgconfig" / "jmx.pc").read_text()
+    pc = (pfx / "lib" / "pkgconfig" / "jmx.pc").read_text(encoding="utf-8")
     assert "\nRequires.private: extdep\n" in pc, pc
 
 

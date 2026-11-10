@@ -354,7 +354,11 @@ from just_makeit._pyfmt import flatten_signatures  # noqa: E402,F401
 # The line is not "environmental" -- it is whether a MAINTAINER COULD FIX IT.
 # AVX-512 is absent because the host lacks the silicon; ruff is absent because
 # nobody put it on PATH. The second is a gate that is not running.
-from _compilers import ASAN_NO_PRELOAD_MACOS  # noqa: E402
+from _compilers import (  # noqa: E402
+    ASAN_NO_PRELOAD_MACOS,
+    POSIX_ONLY,
+    WINDOWS_CONSUMER_GAP,
+)
 
 _ALLOWED_SKIPS = (
     # A ratchet with nothing left to hold. It shrinks to empty by design.
@@ -376,6 +380,11 @@ _ALLOWED_SKIPS = (
     # The behaviour tests beside them run on macOS, so the fix is still
     # checked there. A missing runtime on Linux is not allowed.
     ASAN_NO_PRELOAD_MACOS,
+    # gh-1570: the Windows examples leg runs every PROJECT_ENV_TESTS file.
+    # A consumer route not yet ported to the MSVC ABI (a filed gap, named
+    # in the reason), and a subject with no Windows counterpart.
+    WINDOWS_CONSUMER_GAP,
+    POSIX_ONLY,
     # test_gh1374's own subject: it must contain the spelling it hunts for.
     "names the pattern in order to detect it",
     "allow-listed:",
