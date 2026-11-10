@@ -522,26 +522,16 @@ jobs:
           PROJECT_ENV_TESTS="tests/test_gh1641_crlf_checkout.py"
 
       - name: Run example tests
-        # PROJECT_ENV_TESTS is narrowed to the example builds alone.
-        # gh-1442 moved five tool-gated files onto this path; running
-        # them here would put `mypy.stubtest` against a clang-cl-built
-        # extension, cmake-lint and clang-format convergence on Windows
-        # for the first time, all in the PR that moved them. Deliberately
-        # not bundled -- tracked as a follow-up on gh-1442.
-        #
-        # gh-1376: plus the CMakePresets.json build, which on this runner
-        # drives the `windows-*` presets Visual Studio shows -- clang-cl,
-        # Ninja and the project's .venv chosen by the preset alone.
-        #
-        # gh-1648: plus every file that reads a built library's exports
-        # through tests/_exports.py -- the DLL's export table and the static
-        # .lib -- so the c_prefix symbol gates run here and not only on the
-        # ELF/Mach-O legs. tests/test_gh1648_exports_run_on_windows.py
-        # fails if one is missing from this line.
-        run: make test-examples PROJECT_ENV_TESTS="tests/test_examples.py
-          tests/test_gh1376_presets_build.py
-          tests/test_gh1591_c_prefix_nm.py
-          tests/test_gh1653_upgrade_builds.py"
+        # Every PROJECT_ENV_TESTS file, as the Makefile declares it -- no
+        # list here. This step narrowed it to the example builds until
+        # gh-1570, so mypy.stubtest against a clang-cl-built extension,
+        # cmake-lint and clang-format convergence never ran on Windows, and
+        # a file added to the Makefile was off this leg by default (gh-1648
+        # found two symbol gates that way). A test that cannot hold here is
+        # registered through the suite's skip gate (tests/conftest.py) with
+        # its reason, not left off a list.
+        # tests/test_gh1648_exports_run_on_windows.py refuses a narrowing.
+        run: make test-examples
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
