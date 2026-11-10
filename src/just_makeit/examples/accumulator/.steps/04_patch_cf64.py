@@ -2,7 +2,8 @@
 
 Replaces:
   - my_acc_acc_cf64_step in acc_cf64_core.h  (uses TODO: implement marker)
-  - my_acc_acc_cf64_get, dump, madd, add2d, madd2d in acc_cf64_core.c
+  - my_acc_acc_cf64_get, dump, madd, add2d, madd2d, add_int in
+    acc_cf64_core.c
     (use <<IMPLEMENT: name >> marker)
 """
 
@@ -97,6 +98,10 @@ text = patch_fn(
     "    for (size_t i = 0; i < n; i++)\n"
     "        state->acc += x[i] * (double)h[i];",
 )
+
+# The binding has already refused any k outside int32_t, so the C body sees
+# only a value a double holds exactly.
+text = patch_fn(text, "add_int", "    state->acc += (double)k;")
 
 core.write_text(text, encoding="utf-8")
 print(f"patched {core}")

@@ -20,6 +20,8 @@ AccF32 add2d(3x4 arange): get() = 66.0
 AccCf64 after push (1+2j)+(3+4j): get() = (4+6j)
 AccCf64 madd: get() = (2.75+2.75j)
 AccCf64 dump() = (5+6j), get() after = 0j
+AccCf64 add_int(INT32_MAX) + add_int(INT32_MIN): get() = (-1+0j)
+AccCf64 add_int(2**31): OverflowError: k: 2147483648 is out of range for int32_t [-2147483648, 2147483647]
 ```
 
 All operations go through the C extension with no Python arithmetic.  The

@@ -90,6 +90,29 @@ ENRICHMENTS = {
                 " * @return The sum accumulated since the last reset or dump.\n"
                 " */\n",
             ),
+            # The int32_t range check is part of the documented contract:
+            # the edge value arrives exactly, one past it is refused with
+            # the same message on every platform.
+            (
+                "void my_acc_acc_cf64_add_int(",
+                "/**\n"
+                " * @brief Add the whole number k to the accumulator.\n"
+                " * @param k  Any int32_t; a value outside raises"
+                " OverflowError.\n"
+                " * @code\n"
+                " * >>> from my_acc.accumulator import AccCf64\n"
+                " * >>> a = AccCf64()\n"
+                " * >>> a.add_int(2**31 - 1)\n"
+                " * >>> a.get()\n"
+                " * (2147483647+0j)\n"
+                " * >>> a.add_int(2**31)\n"
+                " * Traceback (most recent call last):\n"
+                " *     ...\n"
+                " * OverflowError: k: 2147483648 is out of range for"
+                " int32_t [-2147483648, 2147483647]\n"
+                " * @endcode\n"
+                " */\n",
+            ),
         ],
     },
 }

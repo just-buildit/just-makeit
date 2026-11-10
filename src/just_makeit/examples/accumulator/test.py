@@ -159,6 +159,21 @@ def run(root: Path) -> None:
             params=[("x", elem_type), ("h", "float[]")],
         )
 
+    # gh-2280: a scalar int32_t param. Its parse must not depend on the width
+    # of the platform's C `long` (32 bits on Windows), so the checks in step 8
+    # pin the range edges and the refusal message on every leg that runs this.
+    method_run(
+        dest,
+        "acc_cf64",
+        "add_int",
+        module="accumulator",
+        arg_type="void",
+        return_type="void",
+        variable_output=False,
+        multi_output=[],
+        params=[("k", "int32_t")],
+    )
+
     # Verify stubs were appended to both core.c files
     core_f32 = (
         dest / "native" / "src" / "acc_f32" / "acc_f32_core.c"
@@ -171,7 +186,7 @@ def run(root: Path) -> None:
     core_cf64 = (
         dest / "native" / "src" / "acc_cf64" / "acc_cf64_core.c"
     ).read_text(encoding="utf-8")
-    for name in ("get", "dump", "madd", "add2d", "madd2d"):
+    for name in ("get", "dump", "madd", "add2d", "madd2d", "add_int"):
         assert f"<<IMPLEMENT: {name} >>" in core_cf64, (
             f"stub for {name} missing from acc_cf64_core.c"
         )
@@ -288,6 +303,31 @@ g3 = c.get()
 assert abs(g3.real - 2.0) < 1e-10, f"cf64 steps real: {g3.real}"
 assert abs(g3.imag - 2.0) < 1e-10, f"cf64 steps imag: {g3.imag}"
 
+# AccCf64 add_int: an int32_t param (gh-2280). Every int32_t arrives
+# exactly -- a double holds them all, so get() reads k back -- and one past
+# either edge is refused by jm's range check, with ONE message on LP64
+# (Linux/macOS, 64-bit long) and LLP64 (Windows, 32-bit long) alike. A parse
+# through C `long` passes this on LP64 and is refused by CPython's own "too
+# large to convert to C long" on LLP64 (gh-2269).
+INT32_MIN, INT32_MAX = -(2**31), 2**31 - 1
+for k in (INT32_MIN, -1, 0, 7, INT32_MAX):
+    c.reset()
+    c.add_int(k)
+    assert c.get() == complex(k, 0), f"add_int({k}) read back {c.get()}"
+for k in (INT32_MAX + 1, INT32_MIN - 1):
+    c.reset()
+    try:
+        c.add_int(k)
+    except OverflowError as exc:
+        want = (
+            f"k: {k} is out of range for int32_t "
+            f"[{INT32_MIN}, {INT32_MAX}]"
+        )
+        assert str(exc) == want, f"add_int({k}): {exc!r}, want {want!r}"
+    else:
+        raise AssertionError(f"add_int({k}) was accepted")
+    assert c.get() == 0j, f"refused add_int({k}) still reached C"
+
 print("accumulator: all checks passed")
 """,
         ],
@@ -313,6 +353,7 @@ print("accumulator: all checks passed")
     assert "def steps(self" in pyi
     assert "def get(self" in pyi
     assert "def dump(self" in pyi
+    assert "def add_int(self, k: int)" in pyi, "add_int stub missing"
 
     # The Doxygen enrichment (step 5b) reached the stub: class summaries from
     # create()'s @brief, method prose from @brief/@param/@return, and a @code
