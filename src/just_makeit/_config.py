@@ -4483,13 +4483,17 @@ def enums(cfg: dict) -> dict[str, list[str]]:
 
     Value order *is* the C integer value — append-only, never reorder. A
     parameter refers to one with ``type = "enum:wfm_type"`` (see
-    :func:`resolve_enum_type`)."""
+    :func:`resolve_enum_type`). An optional ``doc`` is the docstring of the
+    module attribute the enum is published under (gh-2606), carried on
+    :class:`EnumChoices` beside ``enumerators``."""
     out: dict[str, list[str]] = {}
     for e in cfg.get("enum", []):
         name = e.get("name")
         if name:
             out[name] = EnumChoices(
-                e.get("values", []), e.get("enumerators") or None
+                e.get("values", []),
+                e.get("enumerators") or None,
+                doc=str(e.get("doc") or "").strip(),
             )
     return out
 
@@ -4510,11 +4514,16 @@ class EnumChoices(list):
     ride on the registry every face already takes, so a face cannot bind an
     enum without them. ``constants`` is ``None`` for an enum that declares
     none -- position is then the C int, exactly as before.
+
+    ``doc`` (gh-2606) is the ``[[enum]]`` row's ``doc`` key, the docstring of
+    the module attribute the enum is published under; ``""`` when the row
+    declares none, and the stub then writes a generated one.
     """
 
-    def __init__(self, values, constants=None) -> None:
+    def __init__(self, values, constants=None, *, doc: str = "") -> None:
         super().__init__(values)
         self.constants = list(constants) if constants else None
+        self.doc = doc
 
 
 def codecs(cfg: dict) -> dict:

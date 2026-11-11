@@ -518,6 +518,12 @@ RECORD_KEYS = frozenset({"name", "fields", "type", "doc"})
 #: Keys valid on a ``[[<component>.records.fields]]`` row.
 RECORD_FIELD_KEYS = frozenset({"name", "type", "doc"})
 
+#: Keys valid on a top-level ``[[enum]]`` row: its choices, the C constant
+#: each binds to (gh-1450), and the docstring of the module attribute it is
+#: published under (gh-2606). Walked so a misspelt ``doc`` is reported
+#: rather than leaving the attribute with its generated docstring.
+ENUM_KEYS = frozenset({"name", "values", "enumerators", "doc"})
+
 #: Keys valid on a ``[[<component>.properties]]`` entry.
 PROPERTY_KEYS = frozenset(
     {
@@ -1050,6 +1056,7 @@ KIND_KEYS: dict[str, frozenset] = {
     "function": FUNCTION_KEYS,
     "function param": FUNCTION_PARAM_KEYS,
     "extra_method": EXTRA_METHOD_KEYS,  # gh-1997
+    "enum": ENUM_KEYS,  # gh-2606
     # gh-1114: the `kind`-bearing module faces. Registered here so `_check`
     # and `Unknown.valid_for` treat them exactly like every other table --
     # a key written on the wrong face is then named as belonging to the
@@ -1541,6 +1548,10 @@ def unknown_keys(cfg: dict) -> list:
 
     own = project_field_keys(cfg)
     found: list = []
+    # gh-2606: the top-level `[[enum]]` rows, first because every face
+    # reads them.
+    for entry in _entries(cfg, "enum"):
+        found += _check("enum", f"[[enum]] {entry.get('name', '?')}", entry)
     for name in components(cfg):
         section = cfg.get(name)
         if not isinstance(section, dict):
