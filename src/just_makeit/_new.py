@@ -21,6 +21,32 @@ from . import _incpath as INC
 from . import _pins
 
 
+#: The one way a generated Makefile installs a package into ``$(PYTHON)``
+#: (gh-2610): ``$(PYTHON) -c "$(PY_INSTALL)" <pip args>``. With pip in that
+#: interpreter it is ``-m pip install``; without -- a venv ``uv`` made, which
+#: has no pip by design -- it is ``uv pip install --python <it>``, pip's
+#: ``--force-reinstall`` spelled uv's way. With neither it fails naming both
+#: commands, never as ``No module named pip``. Python rather than shell so
+#: the one line runs under ``cmd.exe`` and ``/bin/sh`` alike; it holds no
+#: ``$``, ``#``, ``"``, ``<``, ``>``, ``|`` or ``&``, which make or either
+#: shell would read. Rendered into both backends' Makefiles from here, so
+#: there is no second copy to drift.
+PY_INSTALL = (
+    "PY_INSTALL = import importlib.util, shutil, subprocess, sys;"
+    " a = sys.argv[1:]; py = sys.executable;"
+    " uv = shutil.which('uv');"
+    " ua = ['--reinstall' if x == '--force-reinstall' else x for x in a];"
+    " cmd = [py, '-m', 'pip', 'install'] + a"
+    " if importlib.util.find_spec('pip')"
+    " else [uv, 'pip', 'install', '--python', py] + ua if uv else None;"
+    " sys.exit(subprocess.call(cmd) if cmd else 'error: ' + py"
+    " + ' has no pip and uv is not on PATH, so make cannot install '"
+    " + ' '.join(a) + '. Run either: ' + py + ' -m ensurepip, then '"
+    " + py + ' -m pip install ' + ' '.join(a) + ' -- or, with uv: uv pip"
+    " install --python ' + py + ' ' + ' '.join(ua) + ' (gh-2610).')"
+)
+
+
 def _make_project_ctx(
     project: str,
     version: str = "0.1.0",
@@ -29,11 +55,11 @@ def _make_project_ctx(
     if pytest_:
         ensure_win = (
             '\t$(PYTHON) -c "import pytest" 2>nul || '
-            f"$(PYTHON) -m pip install {_pins.PYTEST_DQ}\n"
+            f'$(PYTHON) -c "$(PY_INSTALL)" {_pins.PYTEST_DQ}\n'
         )
         ensure_unix = (
             '\t@$(PYTHON) -c "import pytest" 2>/dev/null || '
-            f"$(PYTHON) -m pip install {_pins.PYTEST_SHELL}\n"
+            f'$(PYTHON) -c "$(PY_INSTALL)" {_pins.PYTEST_SHELL}\n'
         )
         cmd_win = "$(PYTHON) -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)\""
         cmd_unix = "$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret"
@@ -52,6 +78,7 @@ def _make_project_ctx(
         # gh-2083/gh-2084: the CMake copy's spelling, rendered beside the full
         # version. `project(VERSION)` takes the release segment only.
         "cmake_version": C.cmake_version(version),
+        "py_install": PY_INSTALL,
         "ensure_pytest_win": ensure_win,
         "ensure_pytest_unix": ensure_unix,
         "py_test_cmd_win": cmd_win,
@@ -126,9 +153,12 @@ README_BY_BACKEND = {
             "  it has no C99 `float _Complex`. To use the `Makefile`,\n"
             "  install GNU make (`winget install ezwinports.make`); or open\n"
             "  the folder in Visual Studio, which configures through the\n"
-            "  generated `CMakePresets.json`\n"
-            "  ([Building on Windows]"
-            "(https://just-buildit.github.io/just-makeit/windows/))."
+            "  generated `CMakePresets.json` -- after creating `.venv`,\n"
+            "  with pip or `uv sync`, as\n"
+            "  [Building on Windows]"
+            "(https://just-buildit.github.io/just-makeit/windows/"
+            "#the-projects-venv)\n"
+            "  shows."
         ),
         "readme_make_builds": "cmake configure + build",
         "readme_c_tests": "CTest",

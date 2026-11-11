@@ -1,14 +1,17 @@
-# visual_studio example
+# visual_studio_pip example
 
 A generated project built and tested the way a Visual Studio user does it on
-Windows: scaffold from PowerShell, open the folder, pick a preset, build, run
-the tests.
+Windows, with the project's `.venv` made by **pip**: scaffold from
+PowerShell, create the venv, open the folder, pick a preset, build, run the
+tests. Using uv instead? Follow
+[Visual Studio on Windows (uv)](visual_studio_uv.md); the two pages differ
+only in the venv step.
 
 Every IDE action below is shown next to the command line it maps to. Visual
 Studio and the command line read the same generated `CMakePresets.json`
 (gh-1376), so each pair configures, builds and tests the same thing. This
 example's own test runs the commands on this page, step by step, and CI runs
-it on `windows-latest` with clang-cl.
+them as written on `windows-latest` with clang-cl.
 
 ## TL;DR -- see it work first
 
@@ -17,25 +20,17 @@ clang-cl needs:
 
 ```powershell
 py -m pip install just-makeit
-jm example visual_studio
-# visual_studio: PASSED
+jm example visual_studio_pip
+# visual_studio_pip: PASSED
 ```
 
 ## Prerequisites
 
 Visual Studio 2022 or later with the *Desktop development with C++*
-workload, clang-cl, and an x64 Python 3.9+. The full list, and why the
-compiler is clang-cl rather than `cl.exe`, is in
-[Building on Windows](../windows.md#what-you-need).
-
-Install just-makeit into that Python, with pip or with uv:
-
-```powershell
-py -m pip install just-makeit
-uv tool install just-makeit
-```
-
-Visual Studio ships CMake and Ninja, so nothing else is needed.
+workload, clang-cl, and an x64 Python 3.9+ with the `py` launcher. The full
+list, and why the compiler is clang-cl rather than `cl.exe`, is in
+[Building on Windows](../windows.md#what-you-need). Visual Studio ships
+CMake and Ninja, so nothing else is needed.
 
 ---
 
@@ -75,19 +70,24 @@ jm's, and already call it.
 
 ---
 
-## 3. Create the project's `.venv`
+## 3. Create the project's `.venv` -- before opening Visual Studio
 
 The presets name the project's own interpreter, `.venv\Scripts\python.exe`,
-so it must exist, with numpy, before the first configure:
+so it must exist, with numpy, before the first configure. From the same
+prompt, in `my_vs`, with no virtual environment active:
 
 ```powershell
 py -m venv .venv
 .venv\Scripts\python -m pip install numpy
 ```
 
-With uv, `uv venv` then `uv pip install numpy` does the same.
-[Building on Windows](../windows.md#the-projects-venv) explains why the
-presets name an interpreter rather than search for one.
+The first line makes the venv, with pip in it; the second installs numpy
+into it. [Building on Windows](../windows.md#the-projects-venv) explains why
+the presets name an interpreter rather than search for one.
+
+Only on a project with no `.venv` yet. A `.venv` that uv made -- `uv sync`
+makes one -- has no pip, and running `py -m venv .venv` over it does not add
+one: keep it, and follow the [uv page](visual_studio_uv.md) instead.
 
 ---
 
@@ -105,6 +105,11 @@ from a **Developer PowerShell for VS**, which loads that environment:
 ```powershell
 cmake --preset windows-release
 ```
+
+Open the folder only once step 3 has made `.venv`. Opened first, the
+configure stops with `Python3_EXECUTABLE is ...\.venv\Scripts\python.exe,
+which does not exist`, and Visual Studio keeps that failed configure: create
+the `.venv` as in step 3, then **Project > Delete Cache and Reconfigure**.
 
 The preset alone chooses clang-cl, Ninja and the `.venv` interpreter; nothing
 in the environment has to. The build tree is `out\build\windows-release\`.
@@ -152,9 +157,9 @@ interpreter:
 The generated tests run under `unittest` as written; with pytest installed in
 the `.venv`, `.venv\Scripts\python -m pytest src` runs them too.
 
-If the configure step fails with `Could NOT find Python3`, the `.venv` is
-missing or has no numpy: create it as in step 3, then **Project > Delete
-Cache and Reconfigure**.
+If the configure step fails with `Could NOT find Python3` and names
+`NumPy`, the `.venv` has no numpy: run the last line of step 3 again, then
+**Project > Delete Cache and Reconfigure**.
 
 ---
 

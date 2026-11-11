@@ -25,7 +25,9 @@ make                     # compiles the extension into src/<<package>>/
 pip install -e .         # points Python at src/; compiles nothing
 ```
 
-Re-run `make` after any C change; Python edits take effect immediately.
+`make` builds against the project's `.venv` when it has one, otherwise the
+first `python` on `PATH`; `PYTHON=/path/to/python` picks another. Re-run
+`make` after any C change; Python edits take effect immediately.
 
 ## Development build
 

@@ -72,6 +72,9 @@ SABOTAGE = {
     "msvc-runtime": r"set\(\s*CMAKE_MSVC_RUNTIME_LIBRARY\b[^)]*\)",
     "complex-range": r"add_compile_options\(\s*/clang:-fcx-limited-range\s*\)",
     "win-defines": r"\b_USE_MATH_DEFINES\b(?=\))",
+    # gh-2610: the missing-.venv refusal before find_package(Python3).
+    "venv-check": r"if\(Python3_EXECUTABLE\s+AND\s+IS_ABSOLUTE.*?"
+    r"\(gh-2610\)\"\)\s+endif\(\)",
     # gh-1589: without its end sentinel the install section is the author's.
     "install-block": r"# ── End install[^\n]*\n",
 }

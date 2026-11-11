@@ -67,6 +67,34 @@ if(MSVC AND BUILD_PYTHON)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 if(BUILD_PYTHON)
+  # gh-2610: the presets in CMakePresets.json name the project's own .venv
+  # (gh-814), and Visual Studio configures the moment the folder is opened --
+  # before a .venv may exist. find_package would then fail as a bare `Could NOT
+  # find Python3`, which says nothing about the cause, and Visual Studio keeps
+  # that failed cache. So an interpreter that was named and is not there is
+  # refused here, with the way out.
+  if(Python3_EXECUTABLE
+     AND IS_ABSOLUTE "${Python3_EXECUTABLE}"
+     AND NOT EXISTS "${Python3_EXECUTABLE}")
+    if(WIN32)
+      set(_jm_venv_help
+          [=[  with pip:  py -m venv .venv
+             .venv\Scripts\python -m pip install numpy
+  with uv:   uv sync]=])
+    else()
+      set(_jm_venv_help
+          [=[  with pip:  python3 -m venv .venv
+             .venv/bin/python -m pip install numpy
+  with uv:   uv sync]=])
+    endif()
+    message(
+      FATAL_ERROR
+        "Python3_EXECUTABLE is ${Python3_EXECUTABLE}, which does not exist. "
+        "The presets name the project's own .venv: create it from the "
+        "project folder, either way:\n${_jm_venv_help}\n"
+        "then configure again (in Visual Studio: Project > Delete Cache and "
+        "Reconfigure). (gh-2610)")
+  endif()
   find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module
                                            NumPy)
 endif()
