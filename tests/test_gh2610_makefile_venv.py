@@ -150,6 +150,11 @@ class TestTheInterpreter:
         assert f'{py} -c "' in r.stdout, r.stdout
 
 
+#: How the component rule, spliced into a make-backend Makefile that may
+#: predate PY_INSTALL, installs: pip there, as before, never `python -c ""`.
+_FALLBACK = '$(if $(PY_INSTALL),-c "$(PY_INSTALL)",-m pip install)'
+
+
 def _recipes(text: str) -> list[str]:
     return [ln for ln in text.splitlines() if ln.startswith("\t")]
 
@@ -167,7 +172,9 @@ class TestTheInstall:
         # numpy's repair (both arms of the cmake one) and pytest's.
         assert len(installs) >= 2, installs
         for ln in installs:
-            assert "-m pip install" not in ln, ln
+            # The one bare pip allowed is the component rule's fallback for
+            # a Makefile older than PY_INSTALL (see TestAnOldMakefile).
+            assert "-m pip install" not in ln.replace(_FALLBACK, ""), ln
             assert '-c "$(PY_INSTALL)"' in ln, ln
         assert any("numpy" in ln for ln in installs), installs
         assert any("pytest" in ln for ln in installs), installs
@@ -229,3 +236,38 @@ class TestTheInstall:
         assert "No module named pip" not in r.stderr, r.stderr
         assert f"{sys.executable} -m pip install" in r.stderr, r.stderr
         assert f"uv pip install --python {sys.executable}" in r.stderr
+
+
+class TestAnOldMakefile:
+    """A make-backend Makefile from before gh-2610 has no ``PY_INSTALL``.
+
+    `apply` still splices each new component's rule into it, and an empty
+    ``$(PY_INSTALL)`` would make the repair ``python -c ""`` -- exit 0,
+    nothing installed. The rule falls back to the pip it always ran.
+    """
+
+    def _dry_run(self, makefile: str, proj: Path) -> str:
+        (proj / "Makefile.old").write_text(makefile, encoding="utf-8")
+        r = subprocess.run(
+            ["make", "-n", "-f", "Makefile.old", "all"],
+            cwd=proj,
+            env=_env(),
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        return r.stdout
+
+    def test_without_py_install_the_rule_runs_pip(self, make_proj):
+        text = (make_proj / "Makefile").read_text(encoding="utf-8")
+        old = re.sub(r"^PY_INSTALL = .*\n", "", text, flags=re.M)
+        assert old != text and "PY_INSTALL =" not in old
+        out = self._dry_run(old, make_proj)
+        assert "-m pip install --force-reinstall numpy" in out, out
+        assert '-c ""' not in out, out
+
+    def test_with_py_install_the_rule_runs_it(self, make_proj):
+        text = (make_proj / "Makefile").read_text(encoding="utf-8")
+        out = self._dry_run(text, make_proj)
+        assert "find_spec('pip')" in out, out
+        assert "-m pip install --force-reinstall numpy" not in out, out

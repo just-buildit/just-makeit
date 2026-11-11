@@ -72,10 +72,30 @@ if(BUILD_PYTHON)
   # opened -- before a .venv may exist. find_package would then fail as a bare
   # `Could NOT find Python3`, which says nothing about the cause, and Visual
   # Studio keeps that failed cache. So an interpreter that was named and is not
-  # there is refused here, with the way out.
+  # there is refused here, with the way out: how to create the .venv when it is
+  # the project's own, and where the name came from when it is not. Compared
+  # normalised, slashes and `..` resolved, and without case on Windows, where a
+  # drive letter may arrive either way.
   if(Python3_EXECUTABLE
      AND IS_ABSOLUTE "${Python3_EXECUTABLE}"
      AND NOT EXISTS "${Python3_EXECUTABLE}")
+    file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" _jm_py)
+    get_filename_component(_jm_py "${_jm_py}" ABSOLUTE)
+    set(_jm_venv "${CMAKE_SOURCE_DIR}/.venv/")
+    if(WIN32)
+      string(TOLOWER "${_jm_py}" _jm_py)
+      string(TOLOWER "${_jm_venv}" _jm_venv)
+    endif()
+    string(FIND "${_jm_py}" "${_jm_venv}" _jm_at)
+    if(NOT _jm_at EQUAL 0)
+      message(
+        FATAL_ERROR
+          "Python3_EXECUTABLE is ${Python3_EXECUTABLE}, which does not exist. "
+          "Point it at an interpreter that does, where it was set: the "
+          "configure preset or your CMakeUserPresets.json, or "
+          "-DPython3_EXECUTABLE= on the cmake line (PYTHON= for make). "
+          "(gh-2610)")
+    endif()
     if(WIN32)
       set(_jm_venv_help
           [=[  with pip:  py -m venv .venv

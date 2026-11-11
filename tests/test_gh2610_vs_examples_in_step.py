@@ -133,34 +133,57 @@ def test_the_cmake_refusal_gives_both_routes():
             assert line in text, line
 
 
-def test_a_missing_venv_is_refused_at_configure(tmp_path):
-    """The preset's ``.venv`` before it exists: what Visual Studio does
-    when the folder is opened first."""
+def _configure(tmp_path: Path, python: "str") -> str:
+    """Configure a fresh scaffold naming *python*; what CMake said."""
     cmake = shutil.which("cmake")
     assert cmake, "cmake is needed: `make test` runs where it is"
     r = run_cli("new", "rv", "--object", "g", cwd=tmp_path)
     assert r.returncode == 0, r.stdout + r.stderr
-    proj = tmp_path / "rv"
-    missing = proj / ".venv" / "bin" / "python"
     c = subprocess.run(
         [
             cmake,
             "-S",
-            str(proj),
+            str(tmp_path / "rv"),
             "-B",
             str(tmp_path / "b"),
-            f"-DPython3_EXECUTABLE={missing.as_posix()}",
+            f"-DPython3_EXECUTABLE={python}",
         ],
         capture_output=True,
         text=True,
     )
     said = " ".join((c.stdout + c.stderr).split())
-    assert c.returncode != 0
+    assert c.returncode != 0, said
     assert "Could NOT find Python3" not in said, said
-    for words in (
-        "which does not exist",
-        "uv sync",
-        "-m pip install numpy",
-        "Delete Cache and Reconfigure",
-    ):
+    assert "which does not exist" in said, said
+    return said
+
+
+#: What only the missing-.venv refusal says.
+_VENV_WORDS = (
+    "uv sync",
+    "-m pip install numpy",
+    "Delete Cache and Reconfigure",
+)
+
+
+@pytest.mark.parametrize(
+    "rel", [".venv/bin/python", "src/../.venv/bin/python"]
+)
+def test_a_missing_venv_is_refused_at_configure(tmp_path, rel):
+    """The preset's ``.venv`` before it exists: what Visual Studio does
+    when the folder is opened first. Spelled through ``..`` too: the
+    comparison is of the normalised path."""
+    said = _configure(tmp_path, (tmp_path / "rv").as_posix() + "/" + rel)
+    for words in _VENV_WORDS:
+        assert words in said, (words, said)
+
+
+def test_a_missing_other_interpreter_is_not_called_a_venv(tmp_path):
+    """A user preset's own interpreter -- docs/windows.md's
+    ``CMakeUserPresets.json`` example -- that is not there: say where it
+    was set, not to create a ``.venv``."""
+    said = _configure(tmp_path, (tmp_path / "Python312" / "python").as_posix())
+    for words in _VENV_WORDS + (".venv",):
+        assert words not in said, (words, said)
+    for words in ("CMakeUserPresets.json", "-DPython3_EXECUTABLE=", "PYTHON="):
         assert words in said, (words, said)
