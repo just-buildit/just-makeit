@@ -71,16 +71,23 @@ for name in _EXAMPLES:
         failed.append(name)
         continue
 
-    # Run pytest against every project directory created by this example.
+    # Run pytest against every project this example created -- found by its
+    # manifest, at any depth, as tests/test_examples.py finds them: the two
+    # Visual Studio examples both scaffold `my_vs`, so each scaffolds it into
+    # a folder named for itself (gh-2610).
     after = {d for d in dest.iterdir() if d.is_dir()}
     built[name] = sorted(p.name for p in (after - before))
-    for proj in sorted(after - before):
-        print(f"  [{name}] pytest {proj.name}/src ...", flush=True)
+    projects = sorted(
+        m.parent for d in after - before for m in d.rglob("just-makeit.toml")
+    )
+    for proj in projects:
+        rel = proj.relative_to(dest).as_posix()
+        print(f"  [{name}] pytest {rel}/src ...", flush=True)
         if _run_pytest(proj):
-            print(f"  [{name}] pytest {proj.name} PASSED", flush=True)
+            print(f"  [{name}] pytest {rel} PASSED", flush=True)
         else:
-            print(f"  [{name}] pytest {proj.name} FAILED", flush=True)
-            failed.append(f"{name}:pytest:{proj.name}")
+            print(f"  [{name}] pytest {rel} FAILED", flush=True)
+            failed.append(f"{name}:pytest:{rel}")
 
 if failed:
     print(f"\nFailed: {', '.join(failed)}", file=sys.stderr)

@@ -50,7 +50,7 @@ OUTDATED (5) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
-ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+ROOT CMAKE (9) — fixes jm's root CMakeLists.txt template carries that yours lacks:
   ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
   ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
   ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
@@ -58,6 +58,7 @@ ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours la
   ↑ msvc-runtime (gh-1368) [Windows (clang-cl)]: CMAKE_MSVC_RUNTIME_LIBRARY is not pinned to the release CRT, so a Debug build links python3X_d.lib, which only a debug Python ships
   ↑ complex-range (gh-1368) [Windows (clang-cl)]: no /clang:-fcx-limited-range, so complex multiply and divide link against __mulsc3/__divsc3, which the MSVC link lacks
   ↑ win-defines (gh-1368) [Windows]: the CRT and math defines are missing (_CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE, _USE_MATH_DEFINES): M_PI is undefined and every portable C99 call warns
+  ↑ venv-check (gh-2610): a Python3_EXECUTABLE that does not exist -- the presets' .venv, before it is created -- fails configure as CMake's bare `Could NOT find Python3` instead of saying to create the .venv and reconfigure
   ↑ install-block (gh-1589): the install section is not jm's managed block (no "# ── End install" line), so no packaging fix reaches it: the soname, the install-time .pc prefix, the macOS install name, the build-tree export. `jm adopt --packaging --check` shows what taking it changes
   Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
   not add these. `jm status --diff` prints it against today's render to merge
@@ -110,7 +111,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 39 OK, 9 missing, 9 stale, 1 unreconciled, 3 missing-guard (!), 5 outdated, 8 root-cmake, 2 packaging, 2 unwired (!).
+summary: 39 OK, 9 missing, 9 stale, 1 unreconciled, 3 missing-guard (!), 5 outdated, 9 root-cmake, 2 packaging, 2 unwired (!).
 
 $ jm apply   # exit 0
 warning: project schema is v7, current is v9. Run 'just-makeit upgrade' to get new features.
@@ -176,7 +177,7 @@ OUTDATED (5) — create-only file(s) behind jm's current version:
   rewrite a create-only file — adopting it is your call, and your own edits
   to it are here too. Diff before replacing; see docs/upgrading.md. Not counted.
 
-ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+ROOT CMAKE (9) — fixes jm's root CMakeLists.txt template carries that yours lacks:
   ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
   ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
   ↑ export-all (gh-1368) [Windows]: the shared library does not set WINDOWS_EXPORT_ALL_SYMBOLS, so its DLL exports nothing and every C consumer fails to link
@@ -184,6 +185,7 @@ ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours la
   ↑ msvc-runtime (gh-1368) [Windows (clang-cl)]: CMAKE_MSVC_RUNTIME_LIBRARY is not pinned to the release CRT, so a Debug build links python3X_d.lib, which only a debug Python ships
   ↑ complex-range (gh-1368) [Windows (clang-cl)]: no /clang:-fcx-limited-range, so complex multiply and divide link against __mulsc3/__divsc3, which the MSVC link lacks
   ↑ win-defines (gh-1368) [Windows]: the CRT and math defines are missing (_CRT_SECURE_NO_WARNINGS, _CRT_NONSTDC_NO_DEPRECATE, _USE_MATH_DEFINES): M_PI is undefined and every portable C99 call warns
+  ↑ venv-check (gh-2610): a Python3_EXECUTABLE that does not exist -- the presets' .venv, before it is created -- fails configure as CMake's bare `Could NOT find Python3` instead of saying to create the .venv and reconfigure
   ↑ install-block (gh-1589): the install section is not jm's managed block (no "# ── End install" line), so no packaging fix reaches it: the soname, the install-time .pc prefix, the macOS install name, the build-tree export. `jm adopt --packaging --check` shows what taking it changes
   Outside its marked blocks the root CMakeLists.txt is yours, so `apply` will
   not add these. `jm status --diff` prints it against today's render to merge
@@ -229,7 +231,7 @@ SUPERSEDED (1) — file(s) jm has renamed:
     jb.toml is now called bootstrap.toml; jm will not create bootstrap.toml beside it. Run `just-makeit upgrade` to rename it -- your edits come along.
   Not drift.
 
-summary: 57 OK, 0 missing, 0 stale, 1 unreconciled, 3 missing-guard (!), 1 silent bench, 5 outdated, 8 root-cmake, 2 packaging.
+summary: 57 OK, 0 missing, 0 stale, 1 unreconciled, 3 missing-guard (!), 1 silent bench, 5 outdated, 9 root-cmake, 2 packaging.
 
 $ jm apply   # exit 0
 warning: project schema is v7, current is v9. Run 'just-makeit upgrade' to get new features.

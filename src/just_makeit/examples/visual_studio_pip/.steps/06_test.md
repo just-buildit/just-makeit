@@ -19,6 +19,6 @@ interpreter:
 The generated tests run under `unittest` as written; with pytest installed in
 the `.venv`, `.venv\Scripts\python -m pytest src` runs them too.
 
-If the configure step fails with `Could NOT find Python3`, the `.venv` is
-missing or has no numpy: create it as in step 3, then **Project > Delete
-Cache and Reconfigure**.
+If the configure step fails with `Could NOT find Python3` and names
+`NumPy`, the `.venv` has no numpy: run the last line of step 3 again, then
+**Project > Delete Cache and Reconfigure**.

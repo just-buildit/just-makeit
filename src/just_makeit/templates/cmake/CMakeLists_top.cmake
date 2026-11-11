@@ -67,6 +67,64 @@ if(MSVC AND BUILD_PYTHON)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 if(BUILD_PYTHON)
+  # gh-2610: the IDE configurations jm generates name the project's own .venv
+  # interpreter (gh-814), and Visual Studio configures the moment the folder is
+  # opened -- before a .venv may exist. find_package would then fail as a bare
+  # `Could NOT find Python3`, which says nothing about the cause, and Visual
+  # Studio keeps that failed cache. So an interpreter that was named and is not
+  # there is refused here, with the way out: how to create the .venv when it is
+  # the project's own, and where the name came from when it is not. The folder
+  # holding the .venv exists even when the .venv does not, so it and the source
+  # folder are compared as the folders they are, not as text: each resolved
+  # (REALPATH: `..`, a symlink, a Windows 8.3 short name such as a runner's
+  # RUNNER~1), and without case on Windows, where a drive letter may arrive
+  # either way.
+  if(Python3_EXECUTABLE
+     AND IS_ABSOLUTE "${Python3_EXECUTABLE}"
+     AND NOT EXISTS "${Python3_EXECUTABLE}")
+    file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" _jm_py)
+    set(_jm_own FALSE)
+    string(FIND "${_jm_py}" "/.venv/" _jm_at REVERSE)
+    if(NOT _jm_at EQUAL -1)
+      string(SUBSTRING "${_jm_py}" 0 ${_jm_at} _jm_root)
+      get_filename_component(_jm_root "${_jm_root}" REALPATH)
+      get_filename_component(_jm_src "${CMAKE_SOURCE_DIR}" REALPATH)
+      if(WIN32)
+        string(TOLOWER "${_jm_root}" _jm_root)
+        string(TOLOWER "${_jm_src}" _jm_src)
+      endif()
+      if(_jm_root STREQUAL _jm_src)
+        set(_jm_own TRUE)
+      endif()
+    endif()
+    if(NOT _jm_own)
+      message(
+        FATAL_ERROR
+          "Python3_EXECUTABLE is ${Python3_EXECUTABLE}, which does not exist. "
+          "Point it at an interpreter that does, where it was set: the "
+          "configure preset or your CMakeUserPresets.json, or "
+          "-DPython3_EXECUTABLE= on the cmake line (PYTHON= for make). "
+          "(gh-2610)")
+    endif()
+    if(WIN32)
+      set(_jm_venv_help
+          [=[  with pip:  py -m venv .venv
+             .venv\Scripts\python -m pip install numpy
+  with uv:   uv sync]=])
+    else()
+      set(_jm_venv_help
+          [=[  with pip:  python3 -m venv .venv
+             .venv/bin/python -m pip install numpy
+  with uv:   uv sync]=])
+    endif()
+    message(
+      FATAL_ERROR
+        "Python3_EXECUTABLE is ${Python3_EXECUTABLE}, which does not exist. "
+        "It is the project's own .venv: create that from the project "
+        "folder, either way:\n${_jm_venv_help}\n"
+        "then configure again (in Visual Studio: Project > Delete Cache and "
+        "Reconfigure). (gh-2610)")
+  endif()
   find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module
                                            NumPy)
 endif()

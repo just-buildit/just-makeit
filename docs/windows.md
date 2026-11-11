@@ -35,14 +35,29 @@ Both ways find Python the same way: the presets name the project's own
 virtual environment, `.venv\Scripts\python.exe`, rather than letting CMake
 search for an interpreter. A search on a machine with more than one Python
 can configure against one numpy and import against another (gh-814), so
-the venv has to exist before the first configure. From the project folder:
+the venv has to exist before the first configure: make it before opening
+the folder in Visual Studio. From the project folder, with no virtual
+environment active, either with pip:
 
 ```powershell
 py -m venv .venv
 .venv\Scripts\python -m pip install numpy
 ```
 
-or, with uv, `uv venv` then `uv pip install numpy`.
+or with uv, which creates `.venv` from `pyproject.toml` with numpy and the
+project itself (editable) installed, and writes `uv.lock`:
+
+```powershell
+uv sync
+```
+
+A venv uv makes has no pip, by design: add packages to it with `uv add` or
+`uv pip install`, not `python -m pip`. Do not run `py -m venv .venv` over an
+existing `.venv` either; that does not add pip to it.
+
+When `.venv` is missing, the configure stops with `Python3_EXECUTABLE is .../.venv/Scripts/python.exe, which does not exist`, giving both ways to
+create it (gh-2610). The generated `Makefile` uses the same `.venv` when it
+exists, so `make` and the presets build against one interpreter.
 
 ## PowerShell
 
@@ -63,8 +78,10 @@ the rest: `windows-debug` and `windows-relwithdebinfo`. Preset builds go to
 
 **With GNU make installed**, `make build` and `make test` work too. The
 generated `Makefile` selects clang-cl and Ninja on Windows by itself, and
-`CC` or `CMAKE_GENERATOR` override either. It builds into `build\`, so it
-never shares a CMake cache with the presets.
+`CC` or `CMAKE_GENERATOR` override either. It builds against the project's
+`.venv` when there is one, the first `python` on `PATH` otherwise, and
+`PYTHON=` overrides it. It builds into `build\`, so it never shares a CMake
+cache with the presets.
 
 ## Visual Studio
 
@@ -77,15 +94,18 @@ never shares a CMake cache with the presets.
 1. **Build > Build All**.
 1. **Test > Test Explorer** lists the CTest tests; **Run All** runs them.
 
-If the configure step fails with `Could NOT find Python3`, the `.venv` is
-missing or has no numpy; create it as above, then **Project > Delete Cache
-and Reconfigure**.
+If the folder was opened before `.venv` existed, the configure stops
+saying so, and Visual Studio keeps that failed configure: create the `.venv`
+as above, then **Project > Delete Cache and Reconfigure**. The same applies
+to `Could NOT find Python3` naming `NumPy`: the `.venv` has no numpy.
 
 VS Code's *CMake Tools* extension reads the same file, on every platform.
 
-The [Visual Studio on Windows](examples/visual_studio.md) example walks
-through all of it, from `jm new` to a passing test run, with each IDE action
-next to the command it maps to; CI's clang-cl job runs those commands.
+Two examples walk through all of it, from `jm new` to a passing test run,
+with each IDE action next to the command it maps to, one for each way of
+making the `.venv`: [Visual Studio with pip](examples/visual_studio_pip.md)
+and [Visual Studio with uv](examples/visual_studio_uv.md). CI's clang-cl
+job runs both pages' commands as written.
 
 ## Changing the presets
 

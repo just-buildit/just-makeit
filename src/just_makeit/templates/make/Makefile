@@ -10,14 +10,24 @@
 #   make clean             Remove build artifacts
 #   make help              Show this message
 
+# One project, one interpreter (gh-814, gh-2610). The project's own `.venv`
+# is the interpreter CMakePresets.json names, and the one `jm build` uses, so
+# `make` uses it too whenever it exists; a `make` that built against the
+# first `python` on PATH while Visual Studio built against `.venv` compiled
+# one project for two interpreters. Precedence: PYTHON= on the command line,
+# then JUST_BUILDIT_PYTHON (a PEP 517 build's isolated interpreter), then
+# `.venv`, then PATH. `$(or ...)` stops at the first non-empty argument, so
+# PATH is only asked when there is no `.venv`.
 ifeq ($(OS), Windows_NT)
 SHELL      = cmd.exe
 NPROC      ?= 4
-PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())"))
+VENV_PYTHON = $(if $(wildcard .venv/Scripts/python.exe),$(CURDIR)/.venv/Scripts/python.exe)
+PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(VENV_PYTHON),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())"))
 else
 SHELL      = /bin/sh
 NPROC      ?= $(shell nproc 2>/dev/null || echo 4)
-PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(shell python3 -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null))
+VENV_PYTHON = $(if $(wildcard .venv/bin/python),$(CURDIR)/.venv/bin/python)
+PYTHON     ?= $(or $(JUST_BUILDIT_PYTHON),$(VENV_PYTHON),$(shell python3 -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null),$(shell python -c "import sys,pathlib;print(pathlib.Path(sys.executable).as_posix())" 2>/dev/null))
 endif
 BUILD_DIR  ?= build
 
@@ -47,6 +57,8 @@ BUILD_TYPE ?= Release
 # an unresolvable interpreter.
 NUMPY_HEADERS_OK     = import numpy, os, sys; sys.exit(0 if os.path.isdir(numpy.get_include()) else 1)
 NUMPY_HEADERS_VERIFY = import numpy, os, sys; p = numpy.get_include(); sys.exit(0 if os.path.isdir(p) else 'error: numpy is installed but its C headers are missing from ' + p + ' -- cmake cannot build the extension without them. Reinstall numpy for this interpreter (gh-824).')
+
+<<py_install>>
 
 # On Windows (OS=Windows_NT is always set by the OS itself, regardless of
 # shell), build with clang-cl and Ninja (gh-1368): clang-cl is the MSVC-ABI
@@ -86,11 +98,11 @@ all: build
 
 $(BUILD_DIR)/CMakeCache.txt:
 ifeq ($(OS), Windows_NT)
-	$(PYTHON) -c "$(NUMPY_HEADERS_OK)" 2>nul || $(PYTHON) -m pip install --force-reinstall numpy
+	$(PYTHON) -c "$(NUMPY_HEADERS_OK)" 2>nul || $(PYTHON) -c "$(PY_INSTALL)" --force-reinstall numpy
 	$(PYTHON) -c "$(NUMPY_HEADERS_VERIFY)"
 <<ensure_pytest_win>>
 else
-	@$(PYTHON) -c "$(NUMPY_HEADERS_OK)" 2>/dev/null || $(PYTHON) -m pip install --force-reinstall numpy
+	@$(PYTHON) -c "$(NUMPY_HEADERS_OK)" 2>/dev/null || $(PYTHON) -c "$(PY_INSTALL)" --force-reinstall numpy
 	@$(PYTHON) -c "$(NUMPY_HEADERS_VERIFY)"
 <<ensure_pytest_unix>>
 endif

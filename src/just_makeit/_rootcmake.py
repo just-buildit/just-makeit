@@ -368,6 +368,30 @@ def _has_win_defines(r: Root) -> bool:
     return all(d in defined for d in _WIN_DEFINES)
 
 
+def _finds_python(r: Root) -> bool:
+    return any(
+        c.name == "find_package" and c.args[:1] == ("Python3",)
+        for c in r.calls
+    )
+
+
+def _has_venv_check(r: Root) -> bool:
+    # gh-2610: an `if()` asking whether the named interpreter EXISTS, before
+    # the find_package that would otherwise fail as `Could NOT find Python3`.
+    # Any spelling of the variable reads the same: `${Python3_EXECUTABLE}`,
+    # quoted or not.
+    for c in r.calls:
+        if c.name == "find_package" and c.args[:1] == ("Python3",):
+            return False
+        if (
+            c.name == "if"
+            and "EXISTS" in c.args
+            and "${Python3_EXECUTABLE}" in c.args
+        ):
+            return True
+    return False
+
+
 _PC_VARS = ("JM_PC_PREFIX", "JM_PC_LIBDIR", "JM_PC_INCLUDEDIR")
 
 
@@ -452,6 +476,16 @@ FIXES: "tuple[Fix, ...]" = (
         + "): "
         "M_PI is undefined and every portable C99 call warns",
         _has_win_defines,
+    ),
+    Fix(
+        "venv-check",
+        "gh-2610",
+        "all",
+        "a Python3_EXECUTABLE that does not exist -- the presets' .venv, "
+        "before it is created -- fails configure as CMake's bare `Could NOT "
+        "find Python3` instead of saying to create the .venv and reconfigure",
+        _has_venv_check,
+        _finds_python,
     ),
     Fix(
         "install-block",

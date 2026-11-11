@@ -15,7 +15,10 @@ ifeq ($(OS), Windows_NT)
 $(error the "make" build backend is POSIX-only; on Windows set build = "cmake" in just-makeit.toml, which builds with clang-cl (gh-1368))
 endif
 SHELL  := /bin/sh
-PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),python3)
+# One project, one interpreter (gh-2610): the project's own `.venv` when it
+# exists, as `jm build` does; PYTHON= and JUST_BUILDIT_PYTHON still win.
+VENV_PYTHON = $(if $(wildcard .venv/bin/python),$(CURDIR)/.venv/bin/python)
+PYTHON ?= $(or $(JUST_BUILDIT_PYTHON),$(VENV_PYTHON),python3)
 CC     ?= cc
 CFLAGS ?= -O2 -fPIC -std=c99 -Wall
 
@@ -41,6 +44,8 @@ endif
 # no-op and cannot repair it.
 NUMPY_HEADERS_OK     = import numpy, os, sys; sys.exit(0 if os.path.isdir(numpy.get_include()) else 1)
 NUMPY_HEADERS_VERIFY = import numpy, os, sys; p = numpy.get_include(); sys.exit(0 if os.path.isdir(p) else 'error: numpy is installed but its C headers are missing from ' + p + ' -- the extension cannot compile without them. Reinstall numpy for this interpreter (gh-824).')
+
+<<py_install>>
 
 TARGETS :=
 C_TESTS :=

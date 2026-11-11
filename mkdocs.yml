@@ -92,7 +92,8 @@ nav:
     - Composer seams: examples/composer_seams.md
     - Upgrading an old project: examples/stale_project.md
     - Kitchen sink: examples/kitchen_sink.md
-    - Visual Studio on Windows: examples/visual_studio.md
+    - Visual Studio on Windows (pip): examples/visual_studio_pip.md
+    - Visual Studio on Windows (uv): examples/visual_studio_uv.md
   - For Developers:
     - Start Here: developers/START_HERE.md
     - Test philosophy: developers/testing.md

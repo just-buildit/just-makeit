@@ -74,7 +74,9 @@ def _mentions_reset(project, *, allow_manifest=True):
     hits = []
     for path, text in _generated_texts(project):
         body = text.replace("no_reset", "") if allow_manifest else text
-        if "reset" in body.lower():
+        # "preset" is not a reset: the root CMakeLists.txt names the user's
+        # CMakeUserPresets.json in its missing-interpreter refusal (gh-2610).
+        if re.search(r"(?<!p)reset", body.lower()):
             hits.append(path)
     return hits
 

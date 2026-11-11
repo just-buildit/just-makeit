@@ -12,6 +12,11 @@ from a **Developer PowerShell for VS**, which loads that environment:
 ```{04_configure.ps1}
 ```
 
+Open the folder only once step 3 has made `.venv`. Opened first, the
+configure stops with `Python3_EXECUTABLE is .../.venv/Scripts/python.exe,
+which does not exist`, and Visual Studio keeps that failed configure: create
+the `.venv` as in step 3, then **Project > Delete Cache and Reconfigure**.
+
 The preset alone chooses clang-cl, Ninja and the `.venv` interpreter; nothing
 in the environment has to. The build tree is `out\build\windows-release\`.
 **Debug (clang-cl)** and **RelWithDebInfo (clang-cl)** are the same with
