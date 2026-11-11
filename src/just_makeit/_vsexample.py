@@ -95,12 +95,14 @@ class _Run:
             print(f"  [{self.name}] {text}")
 
     def summary(self) -> str:
-        """What this run did NOT run as the README writes it."""
+        """Where this run departed from the README, line by line."""
         where = "Windows" if _WINDOWS else sys.platform
         if not self.noted:
             return f"[{self.name}] on {where}: every line ran as written."
         lines = "\n".join(f"  - {n}" for n in self.noted)
-        return f"[{self.name}] on {where}, substituted:\n{lines}"
+        return (
+            f"[{self.name}] on {where}, not as the README writes it:\n{lines}"
+        )
 
     def sh(self, argv: list[str], cwd: Path) -> str:
         """Run *argv* in :data:`_ENV`; its stdout, or fail with its output."""
@@ -192,45 +194,47 @@ def _require(tool: str) -> str:
 
 
 def _venv_line(run: _Run, head: str, rest: list[str], cwd: Path) -> bool:
-    """Run one of the venv step's lines; False when *head* is not one."""
-    if head == "py":
-        assert rest == ["-m", "venv", ".venv"], rest
-        if _WINDOWS:
-            run.sh([_require("py"), *rest], cwd)
-        else:
-            run.note(
-                "py -m venv .venv is this interpreter's -m venv"
-                " --without-pip: the pip line is replaced, and this"
-                " interpreter may have no ensurepip"
-            )
-            run.sh(
-                [sys.executable, "-m", "venv", "--without-pip", ".venv"], cwd
-            )
+    """Run one of the venv step's lines; False when *head* is not one.
+
+    On Windows every such line runs as written, whatever it says: a page
+    that tells the reader something wrong -- a pip line in a venv uv made --
+    fails here the way it fails for the reader. Elsewhere only the lines
+    with an offline substitute are accepted; any other is refused, as is
+    a line no runner knows.
+    """
+    pip = head == ".venv/Scripts/python" and rest[:2] == ["-m", "pip"]
+    if head not in ("py", "uv") and not pip:
+        return False
+    if _WINDOWS:
+        exe = str(_venv_python(cwd)) if pip else _require(head)
+        run.sh([exe, *rest], cwd)
         return True
-    if head == ".venv/Scripts/python" and rest[:3] == ["-m", "pip", "install"]:
-        assert rest[3:] == ["numpy"], rest
-        if _WINDOWS:
-            run.sh([str(_venv_python(cwd)), *rest], cwd)
-        else:
-            _link_numpy(run, cwd, "pip install numpy")
-        return True
-    if head == "uv":
-        assert rest == ["sync"], rest
-        if _WINDOWS:
-            run.sh([_require("uv"), *rest], cwd)
-        else:
-            run.note(
-                "uv sync is uv venv --python <this interpreter>: the"
-                " project's editable install is not run, and nothing is"
-                " downloaded"
-            )
-            run.sh(
-                [_require("uv"), "venv", "--python", sys.executable, ".venv"],
-                cwd,
-            )
-            _link_numpy(run, cwd, "uv sync's numpy")
-        return True
-    return False
+    line = " ".join([head, *rest])
+    if line == "py -m venv .venv":
+        run.note(
+            "py -m venv .venv is this interpreter's -m venv --without-pip:"
+            " the pip line is replaced, and this interpreter may have no"
+            " ensurepip"
+        )
+        run.sh([sys.executable, "-m", "venv", "--without-pip", ".venv"], cwd)
+    elif line == ".venv/Scripts/python -m pip install numpy":
+        _link_numpy(run, cwd, "pip install numpy")
+    elif line == "uv sync":
+        run.note(
+            "uv sync is uv venv --python <this interpreter>: the project's"
+            " editable install is not run, and nothing is downloaded"
+        )
+        run.sh(
+            [_require("uv"), "venv", "--python", sys.executable, ".venv"],
+            cwd,
+        )
+        _link_numpy(run, cwd, "uv sync's numpy")
+    else:
+        raise AssertionError(
+            f"{line!r} has no offline substitute off Windows -- teach"
+            " _vsexample one, never skip it"
+        )
+    return True
 
 
 def _run_step(run: _Run, name: str, cwd: Path) -> Path:
