@@ -162,11 +162,14 @@ def test_a_child_run_links_every_console_script(tmp_path):
         assert link.is_symlink(), f"{name} not linked:\n{res.said}"
         assert Path(os.readlink(link)) == m.venv / "bin" / name
     assert "Venv activated" not in res.said, res.said
-    # The real jm, through the link, from a PATH of only that directory
-    # and the system's.
+    # The link itself runs jm under a PATH of only that directory and the
+    # system's: nothing else -- no venv activation -- is needed. Run by
+    # its path, so it is this tree's jm (the venv's .pth points at the
+    # suite's just-makeit), never one found on PATH (gh-1625).
+    path = f"{m.bin}:{SYSTEM_PATH}"
     run = subprocess.run(
-        ["jm", "--version"],
-        env={"PATH": f"{m.bin}:{SYSTEM_PATH}", "HOME": str(m.home)},
+        [str(m.bin / "jm"), "--version"],
+        env={"PATH": path, "HOME": str(m.home)},
         capture_output=True,
         text=True,
         timeout=60,
