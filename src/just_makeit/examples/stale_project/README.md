@@ -78,7 +78,7 @@ template since your project was generated has arrived. `jm status` names each
 one under `ROOT CMAKE`, with what breaks without it:
 
 ```
-ROOT CMAKE (8) — fixes jm's root CMakeLists.txt template carries that yours lacks:
+ROOT CMAKE (9) — fixes jm's root CMakeLists.txt template carries that yours lacks:
   ↑ libm (gh-1452): the combined library does not link libm PUBLIC, so a C consumer built through find_package() fails with undefined math symbols
   ↑ static-name (gh-1368) [Windows]: the static library shares the shared library's OUTPUT_NAME, so both produce <name>.lib: `ninja: error: multiple rules generate`
   ...
