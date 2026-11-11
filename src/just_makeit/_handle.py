@@ -51,6 +51,7 @@ from ._context._methods import set_state_check_c
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
 from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
+from ._docstring import docstring_literal
 from ._context._parse import capsule_new_c as _capsule_new_c
 from ._context._parse import (
     scalar_arg_c,
@@ -2879,7 +2880,7 @@ def method_doc_lines(
             indent=8,
             raises=_raises,
         )
-    return [f'        """{doc_call} -> {ann}."""']
+    return ["        " + docstring_literal(f"{doc_call} -> {ann}.")]
 
 
 def render_pyi(
@@ -2982,7 +2983,7 @@ def render_pyi(
             if authored:
                 lines.extend(authored_docstring(authored, 8))
             else:
-                lines.append(f'        """{doc}"""')
+                lines.append("        " + docstring_literal(doc))
             if f.get("writable_fn"):
                 lines.append(f"    @{f['name']}.setter")
                 lines.append(
@@ -2997,20 +2998,28 @@ def render_pyi(
         lines.append("    @property")
         lines.append("    def _capsule(self) -> Any:")
         lines.append(
-            f'        """Borrowed `{_cap_pyi}` capsule for this handle.\n\n'
-            f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
-            f"        capsule is accepted. It never frees the handle, and it\n"
-            f"        keeps this object alive; it is valid until the handle\n"
-            f'        is closed."""'
+            "        "
+            + docstring_literal(
+                f"Borrowed `{_cap_pyi}` capsule for this handle.\n\n"
+                f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
+                "        capsule is accepted. It never frees the handle, and it\n"
+                "        keeps this object alive; it is valid until the handle\n"
+                "        is closed."
+            )
         )
 
     # serializable state triplet (gh-403).
     if C.is_serializable(cfg, module):
         lines.append("    def state_bytes(self) -> int:")
-        lines.append('        """Serialized state size in bytes."""')
+        lines.append(
+            "        " + docstring_literal("Serialized state size in bytes.")
+        )
         lines.append("    def get_state(self) -> bytes:")
         lines.append(
-            '        """Serialize the handle\'s mutable state to bytes."""'
+            "        "
+            + docstring_literal(
+                "Serialize the handle's mutable state to bytes."
+            )
         )
         # gh-2212: `METH_O`, so the blob is positional-only.
         lines.append(
@@ -3023,16 +3032,21 @@ def render_pyi(
             # gh-2470: the declared rows, as the binding raises them.
             lines += set_state_doc(_ss_rows)
         else:
-            lines.append(f'        """{SET_STATE_SUMMARY}"""')
+            lines.append("        " + docstring_literal(SET_STATE_SUMMARY))
 
     # RAII surface.
     lines.append("    def close(self) -> None:")
-    lines.append(f'        """{close_doc(cfg, module)}"""')
+    lines.append("        " + docstring_literal(close_doc(cfg, module)))
     if C.handle_context(cfg, module):
         lines.append(f"    def __enter__(self) -> {tname}:")
-        lines.append('        """Enter context; return self."""')
+        lines.append(
+            "        " + docstring_literal("Enter context; return self.")
+        )
         lines.append("    def __exit__(self, *exc: Any) -> None:")
-        lines.append('        """Exit context and close the handle."""')
+        lines.append(
+            "        "
+            + docstring_literal("Exit context and close the handle.")
+        )
     lines.append("")
 
     # Module-level factories (alternate constructors, gh-565): free functions

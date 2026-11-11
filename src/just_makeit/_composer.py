@@ -57,6 +57,7 @@ from ._context._diagnostics import (
     reason_raise_c,
 )
 from ._docstring import (
+    docstring_literal,
     ClassParam,
     DoxyBlock,
     authored_c_doc,
@@ -5956,11 +5957,14 @@ def render_pyi(cfg: dict, module: str) -> str:
         lines += [
             "    @property",
             "    def _capsule(self) -> Any:",
-            f'        """Borrowed `{_cap_pyi}` capsule for this composer.\n\n'
-            f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
-            f"        capsule is accepted. It never frees the composer, and\n"
-            f"        it keeps this object alive; it is valid until the\n"
-            f'        composer is closed."""',
+            "        "
+            + docstring_literal(
+                f"Borrowed `{_cap_pyi}` capsule for this composer.\n\n"
+                f"        Pass it (or this object) wherever a `{_cap_pyi}`\n"
+                "        capsule is accepted. It never frees the composer, and\n"
+                "        it keeps this object alive; it is valid until the\n"
+                "        composer is closed."
+            ),
         ]
     lines += [
         "    def close(self) -> None:",
