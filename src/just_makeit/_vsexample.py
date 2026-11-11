@@ -36,11 +36,12 @@ failure:
   condition, so CMake refuses them on any other host;
 - ``.venv\\Scripts\\python`` is ``.venv/bin/python``, where a venv puts it
   off Windows;
-- the venv lines do not download. ``py -m venv .venv`` is this
-  interpreter's ``-m venv --without-pip`` (CI's Linux image has no
-  ``ensurepip``), ``uv sync`` is ``uv venv --python <this interpreter>``
-  (without the project's editable install, which compiles nothing), and
-  ``pip install numpy`` -- or the numpy ``uv sync`` installs -- is a
+- the venv lines do not download. ``py -m venv .venv`` and ``uv sync``
+  are both this interpreter's ``-m venv --without-pip`` (CI's Linux image
+  has no ``ensurepip``; a uv venv has no pip either; the docker image has
+  no uv), so ``uv sync``'s editable install of the project, which compiles
+  nothing, is not run; and ``pip install numpy`` -- or the numpy ``uv
+  sync`` installs -- is a
   ``.pth`` file linking the venv to the numpy this test runs under, the
   one the build is checked against.
 
@@ -85,7 +86,7 @@ class _Run:
 
     def __init__(self, example: Path) -> None:
         self.name = example.name
-        self.steps = example / ".steps"
+        self.steps = example.resolve() / ".steps"
         self.noted: list[str] = []
 
     def note(self, text: str) -> None:
@@ -220,14 +221,14 @@ def _venv_line(run: _Run, head: str, rest: list[str], cwd: Path) -> bool:
     elif line == ".venv/Scripts/python -m pip install numpy":
         _link_numpy(run, cwd, "pip install numpy")
     elif line == "uv sync":
+        # A pip-less venv, as uv's is; made without uv, which an image
+        # that builds the examples (docker/) need not have.
         run.note(
-            "uv sync is uv venv --python <this interpreter>: the project's"
-            " editable install is not run, and nothing is downloaded"
+            "uv sync is this interpreter's -m venv --without-pip: the"
+            " project's editable install is not run, and nothing is"
+            " downloaded"
         )
-        run.sh(
-            [_require("uv"), "venv", "--python", sys.executable, ".venv"],
-            cwd,
-        )
+        run.sh([sys.executable, "-m", "venv", "--without-pip", ".venv"], cwd)
         _link_numpy(run, cwd, "uv sync's numpy")
     else:
         raise AssertionError(
@@ -349,9 +350,13 @@ def _configure_too_early(run: _Run, proj: Path) -> None:
 
 
 def _walk(run: _Run, root: Path) -> None:
-    # 1. jm new + the component, from the PowerShell lines.
-    proj = _run_step(run, "01_scaffold.ps1", root)
-    assert proj == root / "my_vs", proj
+    # 1. jm new + the component, from the PowerShell lines. Into a folder
+    # named for the example: both examples scaffold `my_vs`, and
+    # docker/build_examples.py builds every example under one root.
+    base = root / run.name
+    base.mkdir()
+    proj = _run_step(run, "01_scaffold.ps1", base)
+    assert proj == base / "my_vs", proj
     _check_names_against_presets(run, proj)
 
     # 2. The edit the reader makes in the editor.
