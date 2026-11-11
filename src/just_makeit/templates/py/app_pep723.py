@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = "<<requires_python>>"
 # dependencies = ["<<project>>==<<version>>", "numpy"]
 # ///
 """<<project>> standalone script (PEP 723).

@@ -85,7 +85,7 @@ def test_every_template_pin_matches_jms_own_workflows():
 # -- gh-2629: the Python list is the project's pyproject.toml ------------
 
 _VERSION = re.compile(r"^Programming Language :: Python :: (3\.\d+)$")
-_LITERAL = re.compile(r"[\"'](3\.\d+)[\"']")
+_LITERAL = re.compile(r"(?:[\"']|[<>=~!]=?)(3\.\d+)\b")
 _NOTE = "declares no `Programming Language"
 
 
@@ -140,13 +140,22 @@ def _drop_classifier(root: Path, version: str) -> None:
 
 
 def test_no_template_carries_a_python_version_literal():
-    """The CI and pyproject templates name no Python version: both are
-    slots, so there is no list in jm's source to fall behind."""
+    """No template jm ships names a Python version: the CI matrix, the
+    generated ``pyproject.toml`` and every PEP 723 app's floor are slots,
+    so there is no copy in jm's source to fall behind (gh-2629, gh-2631).
+
+    Every template, so a template added later is held too. A version is
+    ``3.N`` quoted or after a comparison operator -- what a matrix entry or
+    a version specifier spells; CMake's ``VERSION 3.16`` is neither.
+    """
+    templates = sorted(p for p in TEMPLATES.rglob("*") if p.is_file())
+    assert len(templates) > 20, "the template walk found almost nothing"
     found = {
-        rel: _LITERAL.findall((TEMPLATES / rel).read_text(encoding="utf-8"))
-        for rel in ("ci/github.yml", "toml/pyproject.toml")
+        p.relative_to(TEMPLATES).as_posix(): hits
+        for p in templates
+        if (hits := _LITERAL.findall(p.read_text(encoding="utf-8")))
     }
-    assert not any(found.values()), f"hand-kept versions: {found}"
+    assert not found, f"hand-kept Python versions: {found}"
     assert "<<python_versions>>" in TEMPLATE.read_text(encoding="utf-8")
 
 
@@ -244,3 +253,75 @@ def test_a_workflow_jm_does_not_understand_is_left_alone(tmp_path):
     _drop_classifier(root, _declared(root)[0])
     assert run_cli("apply", cwd=root).returncode == 0
     assert ci.read_text(encoding="utf-8") == doubled
+
+
+# -- gh-2631: a PEP 723 app script declares the project's floor -----------
+
+
+def _app_floor(root: Path) -> str:
+    m = re.search(
+        r'^# requires-python = "([^"]*)"$',
+        (root / "tool.py").read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert m, "the app script declares no floor"
+    return m.group(1)
+
+
+def _pep723_project(tmp_path: Path) -> Path:
+    root = _new(tmp_path, ci=False)
+    assert run_cli("object", "eng", cwd=root).returncode == 0
+    r = run_cli(
+        "app",
+        "--target",
+        "pep723",
+        "--object",
+        "eng",
+        "--name",
+        "tool",
+        cwd=root,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    return root
+
+
+def test_a_pep723_app_declares_the_projects_floor(tmp_path):
+    """Raise the project's floor: `status` calls the script STALE, `apply`
+    rewrites its floor to match, and nothing is left to report."""
+    root = _pep723_project(tmp_path)
+    jm_floor = metadata.metadata("just-makeit")["Requires-Python"]
+    assert _app_floor(root) == jm_floor
+
+    p = root / "pyproject.toml"
+    text = p.read_text(encoding="utf-8")
+    raised = text.replace(f'"{jm_floor}"', '">=3.12"', 1)
+    assert raised != text
+    p.write_text(raised, encoding="utf-8")
+
+    st = run_cli("status", "--check", cwd=root)
+    assert st.returncode != 0 and "tool.py" in st.stdout, st.stdout
+    assert run_cli("apply", cwd=root).returncode == 0
+    assert _app_floor(root) == ">=3.12"
+    assert run_cli("status", "--check", cwd=root).returncode == 0
+
+
+def test_a_pep723_app_without_a_project_floor_takes_jms(tmp_path):
+    """No floor in pyproject.toml: the script declares jm's, and the
+    author's file is not written."""
+    root = _pep723_project(tmp_path)
+    p = root / "pyproject.toml"
+    jm_floor = metadata.metadata("just-makeit")["Requires-Python"]
+    # Off jm's floor first, so falling back is a change apply must make.
+    p.write_text(
+        p.read_text(encoding="utf-8").replace(f'"{jm_floor}"', '">=3.12"', 1),
+        encoding="utf-8",
+    )
+    assert run_cli("apply", cwd=root).returncode == 0
+    assert _app_floor(root) == ">=3.12"
+    text = p.read_text(encoding="utf-8")
+    stripped = re.sub(r"^requires-python = .*\n", "", text, flags=re.M)
+    assert stripped != text
+    p.write_text(stripped, encoding="utf-8")
+    assert run_cli("apply", cwd=root).returncode == 0
+    assert _app_floor(root) == jm_floor
+    assert p.read_text(encoding="utf-8") == stripped

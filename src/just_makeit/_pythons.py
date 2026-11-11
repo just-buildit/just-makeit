@@ -15,6 +15,9 @@ is rendered from there.
   (:func:`sync_ci`). The CI stays static YAML -- nothing parses
   ``pyproject.toml`` at run time. Because `status` replays `apply`, a CI
   whose list disagrees with the classifiers reads as STALE until then.
+- A PEP 723 app script declares the project's ``requires-python``
+  (:func:`requires_python`, gh-2631); it is regenerated glue, so `apply`
+  keeps it current.
 
 **A project with no version classifiers** -- one scaffolded before this, or
 one whose author removed them -- is left alone: ``pyproject.toml`` is the
@@ -111,6 +114,34 @@ def declared(root: Path) -> "list[str]":
     if not isinstance(cls, list):
         return []
     return versions([c for c in cls if isinstance(c, str)])
+
+
+def requires_python(root: Path) -> str:
+    """The project's ``[project] requires-python``, or jm's own.
+
+    gh-2631: what a generated PEP 723 app script declares, so the script
+    a project ships asks for the interpreters its ``pyproject.toml`` does.
+    jm's own floor stands in only while the project has not said -- no
+    ``pyproject.toml``, one that does not parse, or no string there.
+
+    Examples
+    --------
+    >>> import tempfile
+    >>> root = Path(tempfile.mkdtemp())
+    >>> _ = (root / "pyproject.toml").write_text(
+    ...     '[project]\\nrequires-python = ">=3.11"\\n'
+    ... )
+    >>> requires_python(root)
+    '>=3.11'
+    """
+    try:
+        with (root / "pyproject.toml").open("rb") as f:
+            doc = tomllib.load(f)
+    except (OSError, ValueError):
+        return jm_requires_python()
+    proj = doc.get("project")
+    req = proj.get("requires-python") if isinstance(proj, dict) else None
+    return req if isinstance(req, str) else jm_requires_python()
 
 
 def ci_versions(root: Path) -> "tuple[list[str], bool]":

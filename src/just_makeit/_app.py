@@ -52,6 +52,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _targets
+from . import _pythons
 from . import _render as R
 from . import _report
 from . import _types as T
@@ -2116,11 +2117,15 @@ def _link_target(cfg: dict, entry: dict) -> str:
 
 
 def _plan(
-    cfg: dict, entry: dict, argc_argv: bool = False
+    root: Path, cfg: dict, entry: dict, argc_argv: bool = False
 ) -> "tuple[dict, tuple[str, str, str]]":
     """The render context for *entry*'s app, and its three faces'
     templates (C, console, PEP 723). Exits naming what is missing when the
-    manifest no longer declares the app's source (:func:`_missing`)."""
+    manifest no longer declares the app's source (:func:`_missing`).
+
+    *root* is the project: the PEP 723 face declares the project's own
+    ``requires-python``, read from its ``pyproject.toml`` (gh-2631).
+    """
     why = _missing(cfg, entry)
     if why is not None:
         print(f"error: {why}", file=sys.stderr)
@@ -2129,29 +2134,25 @@ def _plan(
     if entry.get("function") is not None:
         # ── module-function app ──────────────────────────────────────────
         mod, fn = _find_fn(cfg, entry["function"], entry.get("module") or None)
-        return _build_fn_ctx(cfg, mod, entry["function"], name, fn), (
-            R.APP_MAIN_FN_C,
-            R.APP_CONSOLE_CLI_FN,
-            R.APP_PEP723_FN,
-        )
-    if entry.get("commands"):
+        ctx = _build_fn_ctx(cfg, mod, entry["function"], name, fn)
+        tmpls = (R.APP_MAIN_FN_C, R.APP_CONSOLE_CLI_FN, R.APP_PEP723_FN)
+    elif entry.get("commands"):
         # ── multi-command app ────────────────────────────────────────────
-        return _build_cmd_ctx(cfg, name, entry["commands"]), (
-            R.APP_MAIN_CMD_C,
-            R.APP_CONSOLE_CLI_CMD,
-            R.APP_PEP723_CMD,
+        ctx = _build_cmd_ctx(cfg, name, entry["commands"])
+        tmpls = (R.APP_MAIN_CMD_C, R.APP_CONSOLE_CLI_CMD, R.APP_PEP723_CMD)
+    else:
+        # ── object app ───────────────────────────────────────────────────
+        ctx = _build_ctx(
+            cfg,
+            _object_of(cfg, entry),
+            name,
+            entry["target"],
+            flags=entry.get("flags", []),
+            argc_argv=argc_argv,
+            module=entry.get("module"),
         )
-    # ── object app ───────────────────────────────────────────────────────
-    ctx = _build_ctx(
-        cfg,
-        _object_of(cfg, entry),
-        name,
-        entry["target"],
-        flags=entry.get("flags", []),
-        argc_argv=argc_argv,
-        module=entry.get("module"),
-    )
-    return ctx, (R.APP_MAIN_C, R.APP_CONSOLE_CLI, R.APP_PEP723)
+        tmpls = (R.APP_MAIN_C, R.APP_CONSOLE_CLI, R.APP_PEP723)
+    return {**ctx, "requires_python": _pythons.requires_python(root)}, tmpls
 
 
 def _console_module(root: Path, cfg: dict, entry: dict) -> "tuple[Path, str]":
@@ -2192,7 +2193,7 @@ def _main_file(
     One render, read by the writer and by `jm remove app`, which keeps a
     file whose bytes are not this (:func:`remove`).
     """
-    ctx, (c_tmpl, console_tmpl, pep_tmpl) = _plan(cfg, entry, argc_argv)
+    ctx, (c_tmpl, console_tmpl, pep_tmpl) = _plan(root, cfg, entry, argc_argv)
     if entry["target"] == "c":
         # gh-1583: the app includes the project's headers, in its layout.
         text = R.render(c_tmpl, {**INC.ctx_slots(root), **ctx})
