@@ -119,6 +119,42 @@ def test_install_ps1_is_ascii():
     assert not bad, bad
 
 
+def _ps1_code(text: str) -> str:
+    """install.ps1 with its comments and string literals blanked.
+
+    Block comments ``<# #>``, line comments, and single- and double-quoted
+    strings (``''`` and a backtick escape inside them) go, so what is left
+    is code: a word found there is a statement, not prose about one. A
+    here-string would need more; the file has none, and the caller checks.
+    """
+    token = re.compile(
+        r"<#.*?#>"  # block comment
+        r"|#[^\n]*"  # line comment
+        r"|'(?:[^']|'')*'"  # single-quoted string
+        r'|"(?:[^"`]|`.)*"',  # double-quoted string
+        re.S,
+    )
+    return token.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def test_install_ps1_has_no_exit_statement():
+    # jbx parses a .ps1 before it dot-sources it into the caller's session
+    # and refuses one holding `exit` anywhere: in a script block, exit
+    # closes the window (just-bashit#235). A failure must be a throw.
+    text = _ps1_text()
+    assert "@'" not in text and '@"' not in text, (
+        "a here-string: teach _ps1_code"
+    )
+    code = _ps1_code(text)
+    assert "Install-JustMakeit" in code and "throw" in code, "blanked too much"
+    hits = [
+        n
+        for n, line in enumerate(code.splitlines(), 1)
+        if re.search(r"(?i)(?<![\w$-])exit(?![\w-])", line)
+    ]
+    assert not hits, f"install.ps1 has `exit` on line(s) {hits}"
+
+
 def test_install_ps1_removes_every_function_it_defines():
     text = _ps1_text()
     defined = set(re.findall(r"^function ([\w-]+)", text, re.M))

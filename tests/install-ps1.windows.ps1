@@ -61,6 +61,27 @@ Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
 $onWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $bin = Join-Path $venv $(if ($onWindows) { 'Scripts' } else { 'bin' })
 $sep = [IO.Path]::PathSeparator
+$ext = if ($onWindows) { '.exe' } else { '' }
+
+# The launchers go to a scratch folder, never the real ~\.local\bin, and
+# one name there is already the user's: it must survive every run.
+$localBin = Join-Path $work 'bin'
+$env:JM_BIN_DIR = $localBin
+New-Item -ItemType Directory -Path $localBin | Out-Null
+$foreign = Join-Path $localBin "just-makeit$ext"
+Set-Content -LiteralPath $foreign -Value 'the user''s own' -Encoding ASCII
+
+# jbx refuses a script holding an `exit` (it would close the window) or a
+# parse error, so neither may appear -- read by the parser, not a grep, so
+# a comment saying `exit` is no finding and a real one is.
+$parseErrors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile(
+    $script, [ref]$null, [ref]$parseErrors)
+Assert-That ($parseErrors.Count -eq 0) "install.ps1 parses (errors: $parseErrors)"
+$exits = @($ast.FindAll({
+            $args[0] -is [Management.Automation.Language.ExitStatementAst] },
+        $true))
+Assert-That ($exits.Count -eq 0) "install.ps1 has no exit statement (got $($exits.Count))"
 
 # What the session holds before, so whatever iex leaves is a diff, not a
 # list of names this test would have to keep in step with install.ps1.
@@ -85,7 +106,7 @@ $funcs0 += 'Get-Leftover'
 $vars0 += 'funcs0', 'vars0', 'log', 'left'
 
 # -- first run: installs ------------------------------------------------------
-$log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 | Out-String
+$log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 3>&1 | Out-String
 Write-Information $log
 $left = @(Get-Leftover -Funcs $funcs0 -Vars $vars0)
 Assert-That ($left.Count -eq 0) "iex left nothing behind (got: $($left -join ', '))"
@@ -102,18 +123,42 @@ Assert-That ("$ver".Trim() -eq $want) "jm --version is the wheel's $want (got '$
 Assert-That (($env:PATH -split [regex]::Escape($sep))[0] -eq $bin) 'the venv Scripts folder is first on PATH'
 Assert-That (-not (Test-Path Env:VIRTUAL_ENV)) 'VIRTUAL_ENV is unset: the venv is on PATH, not activated'
 
+# Every launcher the venv's just-makeit declares is copied, byte for byte,
+# except the name that was already the user's, which is named and kept.
+$py = Join-Path $bin $(if ($onWindows) { 'python.exe' } else { 'python' })
+$names = @(& $py -c ("from importlib.metadata import distribution as d; " +
+        "print(chr(10).join(e.name for e in d('just-makeit').entry_points " +
+        "if e.group == 'console_scripts'))") | Where-Object { $_ })
+Assert-That ($names -contains 'jm') "the venv declares jm (got $($names -join ', '))"
+foreach ($n in $names) {
+    $copy = Join-Path $localBin "$n$ext"
+    if ($n -eq 'just-makeit') { continue }
+    $same = (Test-Path -LiteralPath $copy) -and
+        ([Convert]::ToBase64String([IO.File]::ReadAllBytes($copy)) -eq
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $bin "$n$ext"))))
+    Assert-That $same "$n$ext is copied into $localBin"
+}
+Assert-That ((Get-Content -Raw -LiteralPath $foreign).Trim() -eq 'the user''s own') 'a file jm did not put there is left as it was'
+Assert-That ($log -match [regex]::Escape("$foreign is not a launcher jm made")) 'and the run names it'
+if ($onWindows) {
+    Assert-That ($log -match 'jbx update-path') 'off the user Path, the run names jbx update-path'
+}
+$copiedJm = Join-Path $localBin "jm$ext"
+$fresh = & $copiedJm --version
+Assert-That ($LASTEXITCODE -eq 0 -and "$fresh".Trim() -eq $want) "the copied jm$ext runs on its own (got '$fresh')"
+
 # -- second run: already current, writes nothing --------------------------------
 $vars1 = @(Get-Variable -Scope Script | ForEach-Object { $_.Name }) +
     'vars1', 'stamp'
-$stamp = @(Get-ChildItem -LiteralPath $venv -Recurse -File |
+$stamp = @(Get-ChildItem -LiteralPath $venv, $localBin -Recurse -File |
         ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" })
 $log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 | Out-String
 Write-Information $log
 Assert-That ($log -match 'already current') "a second run says already current (got '$log')"
-$stamp2 = @(Get-ChildItem -LiteralPath $venv -Recurse -File |
+$stamp2 = @(Get-ChildItem -LiteralPath $venv, $localBin -Recurse -File |
         ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" })
 $changed = @(Compare-Object $stamp $stamp2)
-Assert-That ($changed.Count -eq 0) "a second run writes nothing in the venv (changed: $(($changed | ForEach-Object { $_.InputObject }) -join '; '))"
+Assert-That ($changed.Count -eq 0) "a second run writes nothing in the venv or the launchers (changed: $(($changed | ForEach-Object { $_.InputObject }) -join '; '))"
 $copies = @($env:PATH -split [regex]::Escape($sep) | Where-Object { $_ -eq $bin })
 Assert-That ($copies.Count -eq 1) "PATH holds the venv once after two runs (got $($copies.Count))"
 $left = @(Get-Leftover -Funcs $funcs0 -Vars ($vars1 + 'stamp2', 'changed', 'copies'))

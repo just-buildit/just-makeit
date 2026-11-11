@@ -10,11 +10,12 @@ PowerShell 7: from PowerShell,
 [jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
 runs jm's Windows installer,
 `install.ps1`, in this window. It installs just-makeit into its own venv,
-`%LOCALAPPDATA%\just-makeit\venv`, and puts that venv's `Scripts` folder
-first on this window's `PATH`, so `jm` runs on the next line. It does not
-activate that venv: the project's own `.venv` comes in step 3, and an active
-venv would change what `py` and `uv` pick. In a new window, run the same line
-again to get `jm` back; nothing is downloaded when jm is current.
+`%LOCALAPPDATA%\just-makeit\venv`, copies its launchers into
+`%USERPROFILE%\.local\bin`, and puts both folders on this window's `PATH`,
+so `jm` runs on the next line. It does not activate that venv: the
+project's own `.venv` comes in step 3, and an active venv would change what
+`py` and `uv` pick. If `jm` is not found in a new window, run
+`jbx update-path` once.
 [Building on Windows](../windows.md#installing-jm) says more.
 
 `scale` is one object with one piece of state, `factor`, and a `step()` that

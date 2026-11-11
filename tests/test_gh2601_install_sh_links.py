@@ -112,9 +112,16 @@ class Machine:
             _stub(self.stubs / tool, "echo cmake version 3.99.0")
         _stub(self.stubs / "pip", f'echo "just-makeit ({VERSION})"')
 
-    def run(self, *argv: str, path: str = "", interactive: bool = False):
+    def run(
+        self,
+        *argv: str,
+        path: str = "",
+        interactive: bool = False,
+        extra: "dict[str, str] | None" = None,
+    ):
         """Run bash *argv* as the user would, *path* before the stubs'."""
         env = {
+            **(extra or {}),
             "HOME": str(self.home),
             "PATH": ":".join(
                 p for p in (path, str(self.stubs), SYSTEM_PATH) if p
@@ -134,9 +141,11 @@ class Machine:
         res.said = res.stdout + res.stderr
         return res
 
-    def child(self, path: str = ""):
+    def child(self, path: str = "", extra: "dict[str, str] | None" = None):
         """``bash install.sh VENV``: install.sh as a child process."""
-        return self.run(str(INSTALL_SH), str(self.venv), path=path)
+        return self.run(
+            str(INSTALL_SH), str(self.venv), path=path, extra=extra
+        )
 
 
 def test_the_package_declares_jm():
@@ -171,7 +180,37 @@ def test_off_path_it_prints_the_line_to_add_and_not_ready(tmp_path):
     res = m.child()
     assert res.returncode == 0, res.said
     assert "is not on PATH" in res.said, res.said
+    assert "jbx update-path" in res.said, res.said
     assert 'export PATH="$HOME/.local/bin:$PATH"' in res.said, res.said
+    assert "is ready" not in res.said, res.said
+
+
+def test_under_jbx_the_marker_puts_the_directory_on_the_callers_path(
+    tmp_path,
+):
+    # The jbx shell function's handshake: a `path DIR` line in its reload
+    # marker is put on the caller's PATH when the script exits. So jm is
+    # ready in the caller, and the persisting hint is still printed.
+    m = Machine(tmp_path)
+    marker = tmp_path / "marker"
+    marker.write_text("", encoding="utf-8")
+    res = m.child(
+        extra={"JB_CALLER_APPLIES": "1", "JB_RELOAD_MARKER": str(marker)}
+    )
+    assert res.returncode == 0, res.said
+    assert marker.read_text(encoding="utf-8") == f"path {m.bin}\n"
+    assert "just-makeit is ready" in res.said, res.said
+    assert "jbx update-path" in res.said, res.said
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in res.said, res.said
+
+
+def test_without_the_handshake_the_marker_is_not_written(tmp_path):
+    m = Machine(tmp_path)
+    marker = tmp_path / "marker"
+    marker.write_text("", encoding="utf-8")
+    res = m.child(extra={"JB_RELOAD_MARKER": str(marker)})
+    assert res.returncode == 0, res.said
+    assert marker.read_text(encoding="utf-8") == ""
     assert "is ready" not in res.said, res.said
 
 

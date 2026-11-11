@@ -343,8 +343,12 @@ _jm_install() (
 # here) is symlinked into ~/.local/bin, the directory jbx's own get-jb.sh
 # installs into, pointing at the venv's bin so a re-run's upgrade is picked
 # up. A name there that is not a symlink into a jm venv is never replaced:
-# it is named, and the rest are linked. jm is called ready only when it was
-# linked AND ~/.local/bin is on PATH; otherwise the line to add is printed.
+# it is named, and the rest are linked. Under the jbx shell function
+# (JB_CALLER_APPLIES=1) a `path ~/.local/bin` line in its reload marker
+# puts the directory on the caller's PATH when this exits. jm is called
+# ready only when it was linked AND the caller will find it: the directory
+# is on PATH, or jbx applies it. Whenever it is not on PATH, `jbx
+# update-path` (persists it) and the plain `export PATH=...` are printed.
 # Only an interactive shell that sourced this file activates the venv
 # instead (gh-2601). tests/test_gh2601_install_sh_links.py runs each case.
 _jm_link() (
@@ -391,14 +395,32 @@ for e in d("just-makeit").entry_points:
     if [[ $jm_ok -eq 0 ]]; then
         warn "jm was not linked (see above), so it is not ready on PATH."
         warn "Run it as ${venv}/bin/jm, or move that file and re-run."
-    elif [[ ":${PATH}:" != *":${bin}:"* ]]; then
-        warn "${bin} is not on PATH, so jm is linked but not found yet."
-        warn "Add this line to your shell's rc file (~/.bashrc, ~/.zshrc):"
-        printf '\n    export PATH="$HOME/.local/bin:$PATH"\n\n'
-    else
+        return 0
+    fi
+    local applied=0
+    # Under the jbx shell function, a `path DIR` line in its reload marker
+    # puts DIR on the CALLER's PATH when this script exits (just-bashit's
+    # handshake), so jm works there at once.
+    if [[ "${JB_CALLER_APPLIES:-}" == 1 && -n "${JB_RELOAD_MARKER:-}" ]]; then
+        printf 'path %s\n' "$bin" >>"$JB_RELOAD_MARKER"
+        applied=1
+    fi
+    if [[ ":${PATH}:" == *":${bin}:"* ]]; then
         info "jm is linked into ${bin}, on PATH — just-makeit is ready:"
         printf '\n    jm new my_project --object my_object\n\n'
+        return 0
     fi
+    if [[ $applied -eq 1 ]]; then
+        info "jm is linked into ${bin}; jbx puts it on this shell's PATH"
+        info "when this install exits — just-makeit is ready:"
+        printf '\n    jm new my_project --object my_object\n\n'
+    else
+        warn "${bin} is not on PATH, so jm is linked but not found yet."
+    fi
+    warn "To keep ${bin} on PATH in new shells, run once:"
+    printf '\n    jbx update-path\n\n'
+    warn "or, without jbx, add this line to ~/.bashrc or ~/.zshrc:"
+    printf '\n    export PATH="$HOME/.local/bin:$PATH"\n\n'
 )
 
 # ── 8. Run, then link or activate ─────────────────────────────────────────────

@@ -24,6 +24,8 @@ jm example visual_studio_pip
 # visual_studio_pip: PASSED
 ```
 
+If `jm` is not found in a new shell, run `jbx update-path` once.
+
 ## Prerequisites
 
 Visual Studio 2022 or later with the *Desktop development with C++*
