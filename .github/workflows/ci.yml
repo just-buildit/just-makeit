@@ -504,6 +504,29 @@ jobs:
           make tool-install
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
 
+      # gh-2601: install.ps1, the Windows reader's one-liner, from this
+      # checkout and installing a wheel of it -- never the published script
+      # or PyPI's release. The Visual Studio examples' first line is that
+      # one-liner: JM_INSTALL_PS1 and JM_INSTALL_FROM point it here, and
+      # their jm lines then run through the jm it put on PATH.
+      - name: Build the wheel install.ps1 installs
+        run: |
+          make wheel
+          echo "JM_INSTALL_PS1=$(cygpath -w "$PWD/install.ps1")" >> "$GITHUB_ENV"
+          echo "JM_INSTALL_FROM=$(cygpath -w "$(ls "$PWD"/dist/just_makeit-*.whl)")" >> "$GITHUB_ENV"
+          echo "JM_VENV=$(cygpath -w "$RUNNER_TEMP/jm-venv")" >> "$GITHUB_ENV"
+
+      # The one-liner end to end through `iex`, in both editions a reader
+      # may type it into. tests/test_gh2601_install_ps1.py refuses either
+      # step going away.
+      - name: install.ps1 (pwsh 7)
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/install-ps1.windows.ps1
+
+      - name: install.ps1 (Windows PowerShell 5.1)
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/install-ps1.windows.ps1
+
       # gh-1839: gh-1641's line-ending gates against a REAL Windows clone.
       # Every other leg runs tests/test_gh1641_crlf_checkout.py with the
       # host's git configuration isolated and core.autocrlf=true forced --

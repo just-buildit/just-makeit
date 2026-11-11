@@ -23,9 +23,22 @@ ______________________________________________________________________
 
 ## Quickstart
 
-`install-deps` installs cmake, a C compiler, pkg-config and, on Linux,
-patchelf through your system package manager (only when one of them is
-missing), then numpy and just-makeit into a Python venv
+**Recommended: jbx**, the same line on every platform. Without jbx yet,
+[getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit) is one line first.
+
+```sh
+jbx just-makeit:install
+source /tmp/jm-venv/bin/activate   # Linux and macOS
+```
+
+On Linux and macOS jbx runs `install.sh` (below) in a child process, so
+the second line activates its venv in your shell. From Windows PowerShell,
+`jbx just-makeit:install` runs `install.ps1` (below) in the window itself,
+so `jm` is on its `PATH` at once.
+
+**Other ways.** `install-deps` installs cmake, a C compiler, pkg-config and,
+on Linux, patchelf through your system package manager (only when one of
+them is missing), then numpy and just-makeit into a Python venv
 (default `/tmp/jm-venv`, or pass your own path). Run
 `just-makeit install-deps --help` for the full reference.
 
@@ -49,6 +62,16 @@ pip install just-makeit && just-makeit install-deps [path]
 ```sh
 uv tool install just-makeit && just-makeit install-deps [path]
 ```
+
+**Windows PowerShell, without jbx:**
+
+```powershell
+irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
+```
+
+It installs jm into its own venv and puts it on this window's `PATH`; the
+compiler is Visual Studio's clang-cl. See
+[Building on Windows](https://just-buildit.github.io/just-makeit/windows/).
 
 **Docker (no install needed):**
 

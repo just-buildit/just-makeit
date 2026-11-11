@@ -62,6 +62,20 @@ you write a line of your algorithm. Fill in `step()` and ship.
 **<code class="jm-green">install</code>**{ .jm-card-title }
 
 Pick a method. Each one gets you `just-makeit` and its build dependencies.
+jbx is the recommended one, the same line on every platform; without jbx
+yet, [getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit) is one line first.
+
+=== "jbx"
+
+    ```sh
+    jbx just-makeit:install
+    source /tmp/jm-venv/bin/activate   # Linux and macOS
+    ```
+
+    On Linux and macOS jbx runs the curl installer in a child process, so
+    the second line activates its venv in your shell. From Windows
+    PowerShell it runs the Windows installer in the window itself, so `jm`
+    is on its `PATH` at once.
 
 === "curl"
 
@@ -80,6 +94,17 @@ Pick a method. Each one gets you `just-makeit` and its build dependencies.
     ```sh
     uv tool install just-makeit && just-makeit install-deps [path]
     ```
+
+=== "Windows"
+
+    From PowerShell, without jbx:
+
+    ```powershell
+    irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
+    ```
+
+    jm goes into its own venv, on this window's `PATH`; the compiler is
+    Visual Studio's clang-cl. See [Building on Windows](windows.md).
 
 === "Docker"
 

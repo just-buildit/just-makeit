@@ -33,6 +33,16 @@ just-makeit example array_processing
 
 ## Prerequisites
 
+With jbx, the recommended way on every platform
+([getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)):
+
+```sh
+jbx just-makeit:install
+source /tmp/jm-venv/bin/activate   # Linux and macOS
+```
+
+Or with the curl installer, which also activates the venv:
+
 ```sh
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 ```
@@ -49,4 +59,11 @@ venv at `/tmp/jm-venv`:
 ```sh
 pip install just-makeit && just-makeit install-deps
 source /tmp/jm-venv/bin/activate
+```
+
+On Windows, from PowerShell without jbx (see
+[Building on Windows](../windows.md)):
+
+```powershell
+irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
 ```

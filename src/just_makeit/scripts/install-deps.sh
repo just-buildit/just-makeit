@@ -81,6 +81,20 @@ will()  { printf '%s  --> %s  %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 warn()  { printf '%s warn%s  %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 die()   { printf '%serror%s  %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
+# ── Native Windows ────────────────────────────────────────────────────────────
+# Git Bash, MSYS2 and Cygwin run this script, but a Windows build uses
+# clang-cl and CMake from Visual Studio, which no package manager here
+# installs; the manager read as unknown and the run went on to check no
+# compiler at all (gh-2601). So it stops, naming what to do instead.
+case "$(uname)" in
+    MINGW*|MSYS*|CYGWIN*)
+        die "install-deps does not install on Windows. Build from a Developer
+    PowerShell for VS (Visual Studio 2022+ with the C++ workload and its
+    clang-cl component): https://just-buildit.github.io/just-makeit/windows/
+    To install jm itself, from PowerShell:
+    irm https://just-buildit.github.io/just-makeit/install.ps1 | iex" ;;
+esac
+
 # ── Detect package manager ────────────────────────────────────────────────────
 
 _detect_mgr() {

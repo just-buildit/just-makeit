@@ -9,6 +9,46 @@ There are two ways in: **PowerShell**, from a terminal, and the **Visual Studio
 IDE**, opening the project folder. Both configure through the same generated
 `CMakePresets.json` (gh-1376), so they build the same thing.
 
+## Installing jm
+
+From PowerShell -- Windows PowerShell 5.1 or PowerShell 7 -- with a
+Python 3.9+ installed, the recommended way is jbx, the same line as on
+Linux and macOS ([getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)):
+
+```powershell
+jbx just-makeit:install
+```
+
+From PowerShell, jbx runs jm's Windows installer, `install.ps1`, in the window
+itself. Without jbx, run that installer directly:
+
+```powershell
+irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
+```
+
+Either way it installs just-makeit into a venv of its own,
+`%LOCALAPPDATA%\just-makeit\venv`, and puts that venv's `Scripts` folder first
+on this window's `PATH`, so `jm` works at once. Then it reports whether
+clang-cl and cmake are on `PATH`, which a build needs: a warning, not a
+failure, since jm itself runs without them, and a Developer PowerShell for VS
+has both. It finds Python through the `py` launcher, then `python` on `PATH`,
+then `uv python find`.
+
+The venv is put on `PATH`, never activated. A project makes its own `.venv`
+(below), and an activated venv sets `VIRTUAL_ENV`, which makes `py` run that
+venv's Python and makes uv warn that it is not the project's. Nothing outside
+the window changes either: no profile and no user `PATH` is edited, as with
+the Linux and macOS installer. In a new window, run the same line again; when
+jm is current it downloads nothing and only sets `PATH`.
+
+Options are environment variables, since `irm | iex` passes no arguments:
+`$env:JM_VENV` picks the venv, `$env:JM_FORCE = '1'` rebuilds it, and
+`$env:JM_INSTALL_FROM` installs a wheel instead of PyPI's release.
+
+`pip install just-makeit` alone is not enough on Windows: pip puts `jm.exe`
+in a Python `Scripts` folder that is usually not on `PATH`, so `jm` is not
+found. From Git Bash, `install.sh` stops and names this line.
+
 ## What you need
 
 - **Visual Studio 2022 or later**, or the standalone **Build Tools**, with the

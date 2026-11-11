@@ -45,6 +45,20 @@ failure:
   ``.pth`` file linking the venv to the numpy this test runs under, the
   one the build is checked against.
 
+The first line installs jm itself, with the line the docs recommend:
+``jbx just-makeit:install`` (gh-2601). From PowerShell, jbx runs jm's
+``install.ps1`` dot-sourced in the session; on Windows this runner does
+the same, directly -- jbx is just-bashit's, and jm's CI does not depend on
+it -- in Windows PowerShell, and every ``jm`` line after it runs through
+the ``jm`` that install put on that session's PATH -- not this process's
+jm -- because "``jm`` is on PATH after the install" is the property the
+page promises. CI points it at the checkout: ``JM_INSTALL_PS1`` names the
+``install.ps1`` to run instead of fetching the published one, and
+``JM_INSTALL_FROM`` (read by install.ps1) the wheel it installs instead of
+PyPI's, so the run tests the tree, never a release. Elsewhere the line is
+not run -- install.ps1 is Windows PowerShell -- and the ``jm`` lines run
+through this process's jm, as the note says.
+
 Both examples also configure once BEFORE their venv step, as Visual Studio
 does when the folder is opened first, and require the refusal the README
 quotes (the root ``CMakeLists.txt`` names the missing ``.venv``), then
@@ -89,6 +103,9 @@ class _Run:
         self.name = example.name
         self.steps = example.resolve() / ".steps"
         self.noted: list[str] = []
+        #: The ``jm`` the install line put on PATH, once it has run; until
+        #: then, and off Windows, ``jm`` lines run in this process.
+        self.jm: "str | None" = None
 
     def note(self, text: str) -> None:
         """Record and print a substitution's reason, once per run."""
@@ -239,12 +256,71 @@ def _venv_line(run: _Run, head: str, rest: list[str], cwd: Path) -> bool:
     return True
 
 
+#: The page's install line, and what jbx runs for it from PowerShell: the
+#: ``install`` script of jm's site in its ``.ps1`` form, dot-sourced in the
+#: calling session so its PATH change reaches it.
+_INSTALL_LINE = "jbx just-makeit:install"
+_INSTALL_PS1 = "https://just-buildit.github.io/just-makeit/install.ps1"
+
+
+def _install_line(run: _Run, cwd: Path) -> None:
+    """Run the page's ``jbx just-makeit:install`` line.
+
+    On Windows, install.ps1 runs as jbx runs it from PowerShell --
+    dot-sourced as a script block in the session, here Windows
+    PowerShell's, the edition every Windows has -- but directly, not
+    through jbx: jbx is just-bashit's, tested there, and jm's CI must not
+    depend on it. That session then reports where ``jm`` resolves, which
+    becomes :attr:`_Run.jm`. With ``JM_INSTALL_PS1`` set, that file's text
+    is run in place of the published script's; ``JM_INSTALL_FROM`` and
+    ``JM_VENV`` reach install.ps1 through the environment. Off Windows the
+    line is not run. Each departure is a note.
+    """
+    if not _WINDOWS:
+        run.note(
+            f"{_INSTALL_LINE} is not run: on Windows it is install.ps1,"
+            " Windows PowerShell; the jm lines run through this process's"
+            " jm"
+        )
+        return
+    run.note(
+        f"{_INSTALL_LINE} runs {_INSTALL_PS1} as jbx does from PowerShell"
+        " (dot-sourced in the session), without jbx itself"
+    )
+    text = f"(Invoke-RestMethod {_INSTALL_PS1})"
+    local = os.environ.get("JM_INSTALL_PS1")
+    if local:
+        frm = os.environ.get("JM_INSTALL_FROM") or "PyPI"
+        run.note(f"install.ps1 is {local}, the checkout's, installing {frm}")
+        text = "(Get-Content -Raw -LiteralPath $env:JM_INSTALL_PS1)"
+    out = run.sh(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            f". ([scriptblock]::Create({text}));"
+            " (Get-Command jm -CommandType Application).Source",
+        ],
+        cwd,
+    )
+    print(out)
+    jm = out.strip().splitlines()[-1].strip()
+    assert Path(jm).is_file(), (
+        f"after the install line, jm resolves to {jm!r}, not a file:\n{out}"
+    )
+    run.jm = jm
+
+
 def _run_step(run: _Run, name: str, cwd: Path) -> Path:
     """Run every line of ``.steps/<name>`` from *cwd*; the cwd it ends in."""
     for argv in commands(run.steps / name):
         head, rest = argv[0], argv[1:]
-        if head == "jm":
+        if head == "jm" and run.jm:
+            run.sh([run.jm, *rest], cwd)
+        elif head == "jm":
             run_jm(cwd, *rest)
+        elif " ".join(argv) == _INSTALL_LINE:
+            _install_line(run, cwd)
         elif head == "cd":
             cwd = cwd / rest[0]
         elif _venv_line(run, head, rest, cwd):

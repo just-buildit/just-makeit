@@ -23,6 +23,15 @@ ______________________________________________________________________
 
 ## Prerequisites
 
+With jbx ([getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)), on any platform:
+
+```sh
+jbx just-makeit:install
+source /tmp/jm-venv/bin/activate   # Linux and macOS
+```
+
+Or with pip:
+
 ```sh
 pip install just-makeit && just-makeit install-deps
 ```
@@ -31,6 +40,13 @@ Or the one-liner installer:
 
 ```sh
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+```
+
+On Windows, from PowerShell without jbx (see
+[Building on Windows](windows.md)):
+
+```powershell
+irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
 ```
 
 ______________________________________________________________________

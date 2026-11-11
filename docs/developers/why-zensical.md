@@ -45,7 +45,7 @@ make docs-check   # the merge gate: strict build + tests/test_docs.py
 
 Run them through `make`: `make docs` first runs `scripts/copy_examples.py` to
 generate `docs/examples/`, then the strict build, then copies `install.sh`
-into `site/` — `make -n docs` prints the exact commands.
+and `install.ps1` into `site/` — `make -n docs` prints the exact commands.
 
 ## Dev dependencies
 

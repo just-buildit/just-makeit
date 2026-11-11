@@ -41,7 +41,7 @@ tell you:
 | `Makefile` / `standard.mk`  | This repo's configuration / the vendored cross-org targets (see [below](#where-the-targets-come-from)); `local.mk` holds repo-only targets |
 | `changelog.d/`              | Pending changelog fragments; absent while none is pending                                                                                  |
 | `bootstrap.toml`, `docker/` | System dependencies (`make install-deps`) and the container images                                                                         |
-| `install.sh`                | The curl installer, published at the docs site's root by `make docs`                                                                       |
+| `install.sh`, `install.ps1` | The curl installer and its Windows PowerShell twin, published at the docs site's root by `make docs`                                       |
 | `.github/workflows/`        | See [CI overview](#ci-overview)                                                                                                            |
 
 ______________________________________________________________________
