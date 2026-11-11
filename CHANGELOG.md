@@ -1,5 +1,89 @@
 ## [Unreleased]
 
+## [0.128.0] — 2026-11-11
+
+### Added
+
+- **A published `[[enum]]` table has a docstring in the `.pyi`** (gh-2606).
+    The module attribute an `[[enum]]` is published under (gh-2344) was a
+    bare annotation, and a documentation tool such as mkdocstrings hides an
+    attribute with no docstring, so a downstream API reference left every
+    published table out. An `[[enum]]` row now takes a `doc` key, written
+    as the attribute docstring right after the annotation. Without one, jm
+    writes a plain sentence for the reader of the API docs, naming the enum
+    and how a value is looked up (by value, or by code for an enum with
+    `enumerators`, naming its first and last C constants). A misspelt key
+    on an `[[enum]]` row is now reported like any other unknown manifest
+    key. The runtime value is a plain `tuple` / `dict`, which cannot carry
+    a docstring of its own.
+
+### Changed
+
+- **The generated `CMakeLists.txt` explains each step in plain terms.**
+    Its comments were a record of the issue behind each line: why a flag
+    exists, which bug it closed, the toolchain it was measured on. They
+    now say what each step does for the project -- the build type, the
+    Windows settings, the Python check, the C library, each part of the
+    install -- in a sentence or two, with no issue numbers. Each
+    component's `CMakeLists.txt` labels its extension module, C test and
+    benchmark, and no longer names `libmy_dsp.so`, a leftover project
+    name. The libm lookup moves up with the project-wide settings. Only
+    comments and placement change; what the project builds and installs is
+    the same.
+
+### Fixed
+
+- **A docstring whose text holds `"""` no longer breaks the `.pyi`**
+    (gh-2606). jm writes a manifest `doc` or a header `@brief` between
+    triple quotes as given, so a triple quote in the text ended the literal
+    early and the stub did not parse (`apply` failed reading it back). The
+    shared docstring layouts now escape it, and the one-line summary layout
+    also escapes a final quote or backslash that would merge with the
+    closing quotes, and doubles each backslash, so the docstring reads back
+    as the text.
+
+- **A name starting with `_` is imported by a generated `__init__.py` but
+    never listed in its `__all__`** (gh-2607). jm listed every object and
+    function it re-exported, so an object whose `class_name` is
+    `_SynthEngine`, a module function `_sweep_ends` or a private
+    `reexports` name reached `from pkg import *` and every tool that reads
+    `__all__` as the public surface. Every `__all__` jm writes -- a
+    module's, the package's, a platform guard's `__all__ +=` -- now leaves a
+    private name out, from one predicate, and an `__all__` the author laid
+    out is not handed one. The `from .<sub> import _SynthEngine` line
+    stays, so the name is still importable by name. `jm status --check`
+    reports an existing project's `__init__.py` `STALE` until the next
+    `jm apply` drops the names.
+
+- **A renamed or removed `reexports` key takes its import with it**
+    (gh-2608). Renaming `[module.X.reexports] cic_design` to `_cic_design`
+    made `jm apply` add `from ._cic_design import ...` and keep
+    `from .cic_design import ...`, so the package no longer imported, and
+    `jm status --check` agreed with the apply that left it. Nothing in the
+    statement tells jm's line from an author's (gh-342), so `apply` now
+    records the submodules it re-exported from, as
+    `[module.X] applied_reexports`, and on a later apply drops jm's
+    statement for a submodule on that record that the manifest no longer
+    declares. `status --check` reports the file `STALE` until it does. A
+    stale line written before the record existed is never touched: delete
+    it by hand, once.
+
+- **A `reexports` key starting with `_` survives a manifest save**
+    (gh-2608). jm's manifest writers took `_cic_design` for runtime state,
+    so any command that rewrote the module's `reexports` table deleted it
+    from the file. A key in that table is a submodule name, and every
+    reader and writer of the manifest now asks one question,
+    `_config.is_runtime_key`, about a `_` key.
+
+- **A standalone object's changed `class_name` converges on one apply**
+    (gh-2616). The package `__init__.py` kept `from .<comp> import Old`, an
+    import the extension no longer satisfies, and every `jm apply` added
+    one more `from .<comp> import New`, because only the first statement
+    from the component was read; `jm status --check` reported the file
+    `STALE` forever. `apply` now cuts jm's statements from a component in
+    the manifest back to the names it renders, each once, and takes a
+    dropped name out of a plain `__all__`.
+
 ## [0.127.1] — 2026-11-11
 
 ### Changed
