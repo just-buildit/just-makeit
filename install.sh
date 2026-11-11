@@ -164,6 +164,18 @@ _jm_install() (
         exit 1
     fi
 
+    # ── 0. Native Windows has its own installer (gh-2601) ─────────────────────
+
+    # Git Bash, MSYS2 and Cygwin all run this script, and none of them is
+    # where a Windows build happens: jm builds there with clang-cl from
+    # PowerShell, and install.ps1 is the installer for it. Without this the
+    # manager read as unknown and the run carried on, checking no compiler.
+    case "$(uname)" in
+        MINGW*|MSYS*|CYGWIN*)
+            die "install.sh does not install on Windows. From PowerShell, run:
+    irm https://just-buildit.github.io/just-makeit/install.ps1 | iex" ;;
+    esac
+
     # ── 1. Python version check ───────────────────────────────────────────────
 
     # The oldest Python just-makeit supports: pyproject.toml's
