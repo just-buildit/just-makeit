@@ -157,8 +157,10 @@ jobs:
       # pyproject classifiers, the one declaration (`make ci-pythons` prints
       # it). Promoting a Python is adding its classifier; every leg below,
       # the examples' newest-Python legs and artifact.yml's pre-publish legs
-      # follow by themselves. tests/test_own_ci_matrix.py refuses a workflow
-      # that lists Pythons of its own.
+      # follow by themselves. tests/test_own_ci_matrix.py refuses a Python
+      # spelled as a number anywhere but its listed exceptions. A leg a
+      # step singles out carries a key instead (`verb_gate_full`, below;
+      # `shrink` on the examples): the include merges it into that leg.
       #
       # The next Python, while it is still a PRE-RELEASE, is an `include`:
       # one leg, on ubuntu-latest, `"python-version": "next"` (the newest
@@ -199,7 +201,9 @@ jobs:
           MIDDLE: ubuntu-latest
           MATRIX: >-
             {"os": ["ubuntu-latest", "macos-latest", "ubuntu-24.04-arm"],
-            "exclude": [{"os": "macos-latest", "python-version": "3.9"}]}
+            "exclude": [{"os": "macos-latest", "python-version": "3.9"}],
+            "include": [{"os": "ubuntu-latest", "python-version": "middle",
+            "verb_gate_full": true}]}
           LEGS_EXAMPLES: >-
             {"include": [
             {"os": "ubuntu-latest", "python-version": "middle", "shrink": true},
@@ -375,11 +379,11 @@ jobs:
         # run, about a third of it. The whole of it on every leg added 5-8
         # minutes to a 4-core leg and timed Coverage out at 45.
         # tests/test_gh2057_verb_leaves_what_apply_writes.py refuses this
-        # line going away.
+        # line going away. The leg is the one the `legs` step marks
+        # `verb_gate_full`: ubuntu-latest at the middle Python, which the
+        # PR trim keeps, so it moves with the classifiers (gh-2626).
         env:
-          JM_VERB_GATE_FULL: >-
-            ${{ matrix.os == 'ubuntu-latest'
-            && matrix.python-version == '3.12' && '1' || '' }}
+          JM_VERB_GATE_FULL: ${{ matrix.verb_gate_full && '1' || '' }}
         # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
         # log ending at 99% and NO pytest summary, so there was no way to tell
         # which test died -- only that the job exited 1.

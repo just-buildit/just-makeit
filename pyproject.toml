@@ -155,11 +155,25 @@ dev = [
     "pytest-xdist>=3.8.0",
 ]
 
-# gh-2626: numpy is installed from a wheel or not at all. With no wheel for
-# a Python yet (numpy 2.5.1 had none for 3.15), uv fell back to building
-# the sdist, which on Windows died deep in meson ("Found GNU link.exe") and
-# elsewhere passed slowly on gcc. Refusing the build makes "no wheel yet"
-# the error. tests/test_own_ci_matrix.py checks the lock has one per
-# classifier Python.
+# gh-2626: every dependency that ships compiled code is installed from a
+# wheel or not at all. With no wheel for a Python yet (numpy 2.5.1 had none
+# for 3.15), uv fell back to building the sdist, which on Windows died deep
+# in meson ("Found GNU link.exe") and elsewhere passed slowly on gcc.
+# Refusing the build makes "no wheel yet" the error. The list is uv.lock's
+# packages with a platform wheel, held to it -- and the lock to a wheel per
+# classifier Python -- by tests/test_own_ci_matrix.py. Not `no-build =
+# true`: pyyaml has no cp315 wheel yet and builds from its sdist (gh-2637).
 [tool.uv]
-no-build-package = ["numpy"]
+no-build-package = [
+    "ast-serialize",
+    "clang-format",
+    "coverage",
+    "librt",
+    "markupsafe",
+    "mypy",
+    "numpy",
+    "ruff",
+    "tomli",
+    "watchdog",
+    "zensical",
+]

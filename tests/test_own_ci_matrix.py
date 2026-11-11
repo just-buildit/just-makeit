@@ -889,8 +889,11 @@ class TestEachMacosLegsRunner:
 _PY_LITERAL = re.compile(r"(?<![\w.])3\.\d{1,2}(?![\w.])")
 
 
-def _named_pythons(node: object) -> "set[str]":
-    """Every Python *node* (a parsed workflow job) names, outside `run:`.
+def _python_literals(
+    node: object, path: "tuple" = ()
+) -> "list[tuple[tuple, str]]":
+    """Every Python *node* (a parsed workflow job) spells as a number, with
+    the key path it sits at, outside `run:`.
 
     A `run:` script is shell, and builds things with versions of their own
     (`cmake_minimum_required(VERSION 3.16)`); every other value -- an
@@ -898,14 +901,26 @@ def _named_pythons(node: object) -> "set[str]":
     Python. An unquoted `3.12` parses as a float, so a number counts too.
     """
     if isinstance(node, dict):
-        return {
-            p for k, v in node.items() if k != "run" for p in _named_pythons(v)
-        }
+        return [
+            hit
+            for k, v in node.items()
+            if k != "run"
+            for hit in _python_literals(v, path + (k,))
+        ]
     if isinstance(node, list):
-        return {p for v in node for p in _named_pythons(v)}
+        return [
+            hit
+            for i, v in enumerate(node)
+            for hit in _python_literals(v, path + (i,))
+        ]
     if isinstance(node, (str, float)):
-        return set(_PY_LITERAL.findall(str(node)))
-    return set()
+        return [(path, p) for p in _PY_LITERAL.findall(str(node))]
+    return []
+
+
+def _named_pythons(node: object) -> "set[str]":
+    """The distinct Pythons :func:`_python_literals` finds in *node*."""
+    return {p for _, p in _python_literals(node)}
 
 
 def _workflow_jobs() -> "dict[tuple[str, str], dict]":
@@ -920,28 +935,97 @@ def _workflow_jobs() -> "dict[tuple[str, str], dict]":
     return out
 
 
-def test_no_workflow_job_lists_pythons() -> None:
-    """The rule: the supported Pythons are the pyproject classifiers, and
-    a CI job names at most ONE Python by number -- a setup pin, a single
-    leg's condition, an `exclude` cell. Two in one job is a list of them,
-    which drifts from the classifiers; name a Python by its place instead
-    (`oldest`, `middle`, `newest`, `next`), which `make ci-test-legs`
-    resolves. Registration-free: every job of every workflow."""
-    many = {
-        f"{f}:{job}": sorted(pys, key=_key)
-        for (f, job), body in _workflow_jobs().items()
-        for pys in [_named_pythons(body)]
-        if len(pys) > 1
-    }
-    assert not many, (
-        f"these jobs list Pythons of their own: {many}. The classifiers "
-        "in pyproject.toml are the one list (gh-2626)"
+#: The setup actions whose `python-version` input may name one Python.
+_SETUP = ("astral-sh/setup-uv@", "actions/setup-python@")
+
+#: Every Python a workflow may spell as a number, and why. Anywhere else a
+#: Python is the classifiers' (`make ci-test-legs`, by place: `oldest`,
+#: `middle`, `newest`, `next`), or a leg is singled out by a key the plan
+#: gives it (`verb_gate_full`, `shrink`). Two kinds, nothing else:
+#:
+#: * PIN -- a setup action's `python-version` in a job that runs a TOOL,
+#:   not jm's support: one interpreter to run it on, which moving to a new
+#:   Python changes nothing about. Keyed (file, job, version).
+#: * the `exclude` cell below, which is about ONE interpreter build.
+_PINS = {
+    ("ci.yml", "install-deps-smoke", "3.12"): "jm-install-deps on one "
+    "interpreter; the matrix covers the Pythons",
+    ("ci.yml", "coverage-shard", "3.14"): "coverage's numbers are taken on "
+    "one interpreter, so shards and the gate agree",
+    ("ci.yml", "coverage", "3.14"): "the coverage gate, the shards' Python",
+    ("ci.yml", "lint", "3.12"): ">=3.10 for mdformat; lint runs once",
+    ("ci.yml", "bench", "3.12"): "one interpreter, so timings compare",
+    ("ci.yml", "consumer-smoke", "3.12"): "the generated projects' floor "
+    "it installs against",
+    ("ci.yml", "wheel", "3.11"): "builds the pure wheel, as release.yml's "
+    "`build` does",
+    ("ci.yml", "docs", "3.12"): "the docs toolchain, run once",
+    ("docs.yml", "build", "3.12"): "the docs toolchain, run once",
+    ("release.yml", "build", "3.11"): "builds the pure wheel PyPI gets",
+    ("release.yml", "smoke", "3.12"): "the release's install smoke, one "
+    "interpreter; artifact.yml runs every declared Python",
+}
+
+#: The one Python spelled in a matrix: macOS 3.9 is Apple's own
+#: /usr/bin/python3 (3.9.6), unoptimised and 2.2x its siblings, so the leg
+#: is excluded (see the toolchain `legs` step). It is a fact about that
+#: build, not about the floor, so it is not `oldest`;
+#: `test_an_exclude_names_a_real_cell` retires it once 3.9 is dropped.
+_EXCLUDE = ("ci.yml", "toolchain", "3.9")
+
+
+def _stray_pythons() -> "tuple[list[str], set]":
+    """Each Python literal outside the exceptions, and the exceptions used."""
+    stray, used = [], set()
+    for (f, job), body in _workflow_jobs().items():
+        for path, py in _python_literals(body):
+            step = (
+                body["steps"][path[1]]
+                if path[:1] == ("steps",) and len(path) > 1
+                else {}
+            )
+            pin = (
+                path[2:] == ("with", "python-version")
+                and str(step.get("uses", "")).startswith(_SETUP)
+                and (f, job, py) in _PINS
+            )
+            cell = (
+                (f, job, py) == _EXCLUDE
+                and path[2:] == ("env", "MATRIX")
+                and {"os": "macos-latest", "python-version": py}
+                in json.loads(step["env"]["MATRIX"]).get("exclude", [])
+            )
+            if pin or cell:
+                used.add((f, job, py))
+            else:
+                where = ".".join(str(p) for p in path)
+                stray.append(f"{f}:{job}:{where} = {py}")
+    return stray, used
+
+
+def test_no_workflow_spells_a_python_but_its_exceptions() -> None:
+    """The rule (gh-2626): the supported Pythons are the pyproject
+    classifiers, and a workflow spells a Python as a number ONLY where
+    `_PINS` or `_EXCLUDE` says why. A list of them drifts from the
+    classifiers; so does a single one in a leg's condition -- the verb
+    gate's `matrix.python-version == '3.12'` stopped matching the leg a
+    PR runs the moment a promotion moved the middle. Registration-free
+    over every job of every workflow; the exceptions are listed, and one
+    no workflow uses any more fails too."""
+    stray, used = _stray_pythons()
+    assert not stray, (
+        "these name a Python by number; name it by its place (`oldest`, "
+        "`middle`, `newest`, `next`) or mark the leg with a key the plan "
+        f"gives it: {stray}"
     )
+    unused = (set(_PINS) | {_EXCLUDE}) - used
+    assert not unused, f"exceptions no workflow uses; delete them: {unused}"
 
 
 def test_the_python_scan_is_armed() -> None:
-    """It sees a pin, a list in each shape a workflow could write one, and
-    nothing in a `run:` script or an action's version."""
+    """It sees a pin, a list in each shape a workflow could write one, a
+    lone Python in a condition, and nothing in a `run:` script or an
+    action's version."""
     assert any(_named_pythons(j) for j in _workflow_jobs().values())
     for shape in (
         {"strategy": {"matrix": {"python-version": ["3.9", "3.15"]}}},
@@ -963,6 +1047,10 @@ def test_the_python_scan_is_armed() -> None:
         },
     ):
         assert len(_named_pythons(shape)) == 2, shape
+    cond = {
+        "steps": [{"env": {"X": "${{ matrix.python-version == '3.12' }}"}}]
+    }
+    assert _python_literals(cond) == [(("steps", 0, "env", "X"), "3.12")]
     assert not _named_pythons(
         {"run": "cmake 3.16; python3.12", "uses": "a/b@v10.3.3"}
     )
@@ -1064,48 +1152,172 @@ class TestTheExamplesBuildOnTheNewestPython:
             assert job in jobs["ci-passed"]["needs"], job
 
 
-def _locked_numpy_wheels() -> "list[str]":
-    """Every numpy wheel filename uv.lock records, across its versions."""
+def _lock() -> dict:
     from just_makeit import _config as C
 
     with open(ROOT / "uv.lock", "rb") as fh:
-        lock = C.tomllib.load(fh)
-    found = [
-        w["url"].rsplit("/", 1)[-1]
-        for p in lock.get("package", [])
-        if p.get("name") == "numpy"
+        return C.tomllib.load(fh)
+
+
+#: The two platforms the newest-Python example legs run on, as a wheel's
+#: platform tag starts and as a marker reads them.
+_WHEEL_PLATFORMS = {
+    "win_amd64": {"sys_platform": "win32", "platform_system": "Windows"},
+    "manylinux": {"sys_platform": "linux", "platform_system": "Linux"},
+}
+
+
+def _marker_env(py: str, plat: str) -> dict:
+    return {
+        "python_version": py,
+        "python_full_version": f"{py}.0",
+        "implementation_name": "cpython",
+        "platform_python_implementation": "CPython",
+        "os_name": "nt" if plat == "win_amd64" else "posix",
+        "platform_machine": "AMD64" if plat == "win_amd64" else "x86_64",
+        **_WHEEL_PLATFORMS[plat],
+    }
+
+
+def _holds(marker: "str | None", env: dict) -> bool:
+    from packaging.markers import Marker
+
+    return marker is None or Marker(marker).evaluate(env)
+
+
+def _fits(wheel: str, py: str, plat: str) -> bool:
+    """Whether *wheel* installs on CPython *py* on *plat* (`3.15`,
+    `win_amd64`): its own `cpXY`, an `abi3` built for an older one, or no
+    ABI at all. Free-threaded (`cp315t`) builds are not the default."""
+    pys, abi, platform = wheel[: -len(".whl")].split("-")[-3:]
+    xy = py.replace(".", "")
+    if platform != "any" and not platform.startswith(plat):
+        return False
+    if abi == "none":
+        return any(t in ("py3", f"cp{xy}") for t in pys.split("."))
+    if abi.startswith("abi3"):
+        return any(
+            t.startswith("cp") and int(t[2:]) <= int(xy)
+            for t in pys.split(".")
+        )
+    return abi == f"cp{xy}"
+
+
+def _compiled() -> "set[str]":
+    """Every locked package some version of which ships compiled code: a
+    wheel that is not `-none-any` (a platform wheel, even a `py3-none-`
+    binary such as ruff's). Derived from uv.lock, never listed."""
+    return {
+        p["name"]
+        for p in _lock()["package"]
         for w in p.get("wheels", [])
-    ]
-    if not found:
-        raise AssertionError("uv.lock records no numpy wheel at all")
-    return found
+        if not w["url"].endswith("-none-any.whl")
+    }
 
 
-@pytest.mark.parametrize("plat", ["win_amd64", "manylinux"])
-def test_every_declared_python_has_a_locked_numpy_wheel(plat: str) -> None:
-    """gh-2626: the examples' env installs numpy from uv.lock. With no
-    wheel for a Python (numpy 2.5.1 had none for 3.15) uv built the
-    sdist: on Windows meson died on Git's GNU link.exe, elsewhere it passed
-    slowly on gcc. pyproject's `[tool.uv] no-build-package` turns that into
-    "no wheel" at install; this says so before CI does, for every
-    classifier Python on the platforms its newest examples legs run."""
-    wheels = _locked_numpy_wheels()
-    missing = [
-        py
-        for py in sorted(_classifiers(), key=_key)
-        for tag in ["cp" + py.replace(".", "")]
-        if not any(f"-{tag}-{tag}-" in w and plat in w for w in wheels)
-    ]
-    assert not missing, (
-        f"uv.lock's numpy has no {plat} wheel for {missing}: re-lock with "
-        "`uv lock --upgrade-package numpy` once numpy publishes one"
+def _wanted(name: str, env: dict) -> bool:
+    """Whether anything in uv.lock installs *name* under *env*: some edge
+    into it -- a dependency, an optional or a dev group -- whose marker
+    holds there. One level only; a parent's own marker is its edge's."""
+    for p in _lock()["package"]:
+        edges = list(p.get("dependencies", []))
+        for group in ("optional-dependencies", "dev-dependencies"):
+            for deps in (p.get(group) or {}).values():
+                edges += deps
+        for e in edges:
+            if e["name"] == name and _holds(e.get("marker"), env):
+                return True
+    return False
+
+
+#: Locked versions with no wheel for a declared Python, built from their
+#: sdist there: each a REAL gap, keyed by the version so a re-lock or a
+#: new wheel retires it (the test refuses a stale entry).
+_NO_WHEEL_YET = {
+    ("pyyaml", "6.0.3", "3.15"): "PyYAML publishes no cp315 wheel yet "
+    "(6.0.3 is its latest, 2026-11-11); its sdist builds without a "
+    "compiler, falling back to pure Python (gh-2637)",
+}
+
+
+def _wheel_gaps() -> "tuple[list[str], set]":
+    """Each (package, version, Python, platform) uv.lock would build from
+    an sdist, and the `_NO_WHEEL_YET` entries that explained one."""
+    gaps, used = [], set()
+    pys = sorted(_classifiers(), key=_key)
+    compiled = _compiled()
+    for p in _lock()["package"]:
+        if p["name"] not in compiled:
+            continue
+        wheels = [w["url"].rsplit("/", 1)[-1] for w in p.get("wheels", [])]
+        for py in pys:
+            for plat in _WHEEL_PLATFORMS:
+                env = _marker_env(py, plat)
+                if not _wanted(p["name"], env) or not any(
+                    _holds(m, env)
+                    for m in p.get("resolution-markers") or [None]
+                ):
+                    continue
+                if any(_fits(w, py, plat) for w in wheels):
+                    continue
+                key = (p["name"], p["version"], py)
+                if key in _NO_WHEEL_YET:
+                    used.add(key)
+                else:
+                    gaps.append(f"{p['name']} {p['version']} cp{py} {plat}")
+    return gaps, used
+
+
+def test_every_compiled_dependency_installs_from_a_wheel() -> None:
+    """gh-2626: every locked package that ships compiled code has a wheel
+    for every classifier Python on the platforms the newest-Python example
+    legs run (win_amd64, manylinux x86_64). numpy 2.5.1 had none for 3.15,
+    so uv built its sdist: on Windows meson died on Git's GNU link.exe,
+    elsewhere it passed slowly on gcc. Derived from uv.lock -- the
+    packages, their versions per Python, the markers that install them."""
+    gaps, used = _wheel_gaps()
+    assert not gaps, (
+        f"uv.lock would build these from source: {gaps}. Re-lock to a "
+        "version with the wheel (`uv lock --upgrade-package <name>`), or, "
+        "if none exists yet, add it to _NO_WHEEL_YET with its issue"
     )
+    stale = set(_NO_WHEEL_YET) - used
+    assert not stale, f"_NO_WHEEL_YET entries now covered; delete: {stale}"
 
 
-def test_numpy_is_never_built_from_source() -> None:
-    """The refusal the test above anticipates, in the project's config."""
+def test_a_compiled_dependency_is_never_built_from_source() -> None:
+    """The refusal, in the project's config: every compiled package but
+    the `_NO_WHEEL_YET` ones is `no-build-package`, so the next new Python
+    without a wheel fails at install, naming it, not in a compiler. Not
+    `no-build = true`: PyYAML still needs its sdist on 3.15."""
     from just_makeit import _config as C
 
     with open(PYPROJECT, "rb") as fh:
         uv = C.tomllib.load(fh).get("tool", {}).get("uv", {})
-    assert "numpy" in uv.get("no-build-package", []), uv
+    sdist_ok = {name for name, _, _ in _NO_WHEEL_YET}
+    assert set(uv.get("no-build-package", [])) == _compiled() - sdist_ok, uv
+
+
+def test_the_wheel_matcher_is_armed() -> None:
+    """`_fits` on the wheel shapes uv.lock carries."""
+    assert _fits("numpy-2.5.4-cp315-cp315-win_amd64.whl", "3.15", "win_amd64")
+    assert not _fits(
+        "numpy-2.5.1-cp314-cp314-win_amd64.whl", "3.15", "win_amd64"
+    )
+    assert not _fits(
+        "numpy-2.5.4-cp315-cp315t-win_amd64.whl", "3.15", "win_amd64"
+    )
+    assert _fits(
+        "zensical-0.0.51-cp310-abi3-manylinux_2_17_x86_64.whl",
+        "3.15",
+        "manylinux",
+    )
+    assert not _fits(
+        "zensical-0.0.51-cp310-abi3-win_amd64.whl", "3.9", "win_amd64"
+    )
+    assert _fits("ruff-0.15.21-py3-none-win_amd64.whl", "3.15", "win_amd64")
+    assert not _fits(
+        "ruff-0.15.21-py3-none-win_amd64.whl", "3.15", "manylinux"
+    )
+    assert _fits("mypy-2.3.0-py3-none-any.whl", "3.15", "manylinux")
+    assert "numpy" in _compiled() and "packaging" not in _compiled()
