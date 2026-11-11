@@ -640,7 +640,7 @@ Without `doc`, jm writes one naming the enum and its shape:
 
 ```python
 ENG_STATE: tuple[str, ...]
-"""Choice names of [[enum]] 'eng_state', indexed by C value (a dense tuple)."""
+"""Names of the eng_state values, indexed by value."""
 ```
 
 The runtime value is a plain `tuple` or `dict`, which cannot carry a
