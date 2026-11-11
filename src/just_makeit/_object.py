@@ -901,16 +901,41 @@ def _parse_all_names(body: str) -> list[str]:
     return out
 
 
+def is_public(name: str) -> bool:
+    """Whether *name* belongs in a package's ``__all__`` (gh-2607).
+
+    ``__all__`` is a package's public list: what ``from pkg import *``
+    binds, and what a documentation index or an API checker reads as the
+    public surface. Python's convention is that a name starting with ``_``
+    is private, so it is never in that list -- an object whose
+    ``class_name`` is ``_SynthEngine``, a module function ``_sweep_ends``,
+    a re-exported ``_helper``. Its ``from .<sub> import _SynthEngine`` line
+    stays: the name is still importable by name, for tests and validators;
+    only ``import *`` and the tools reading ``__all__`` stop seeing it.
+
+    The one answer to the question: :func:`_fmt_all` asks it, and every
+    writer of an ``__all__`` goes through :func:`_fmt_all`, or asks it
+    before splicing a name into an ``__all__`` the author laid out.
+
+    >>> is_public("SynthEngine"), is_public("_SynthEngine")
+    (True, False)
+    """
+    return not name.startswith("_")
+
+
 def _fmt_all(names: list[str], indent: str = "", op: str = "=") -> str:
     """Render an ``__all__`` assignment (``__all__ <op> [...]``) at *indent*.
 
     One line while it fits the column target; past it (gh-2514), one name
     per line with a magic trailing comma -- ``ruff format``'s own form, which
     it keeps at any line length. *op* ``+=`` is a platform guard's
-    (gh-1463).
+    (gh-1463). A private name (:func:`is_public`) is left out, so no caller
+    has to remember to filter (gh-2607).
 
     >>> _fmt_all(["A", "B"])
     '__all__ = ["A", "B"]'
+    >>> _fmt_all(["A", "_Engine", "_helper"])
+    '__all__ = ["A"]'
     >>> print(_fmt_all(["gauss_hermite_quadrature",
     ...                 "interpolate_between_samples",
     ...                 "render_waveform_description"], "    ", "+="))
@@ -920,6 +945,7 @@ def _fmt_all(names: list[str], indent: str = "", op: str = "=") -> str:
             "render_waveform_description",
         ]
     """
+    names = [n for n in names if is_public(n)]
     head = f"{indent}__all__ {op} ["
     line = head + ", ".join(f'"{n}"' for n in names) + "]"
     if len(line) <= STUB_TARGET_WIDTH or not names:
