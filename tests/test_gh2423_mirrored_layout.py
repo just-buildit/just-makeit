@@ -347,8 +347,10 @@ def test_remove_deletes_from_the_mirrored_place(tmp_path):
 
 #: Pinned from origin/main 85ab6e69, a project made by `jm new p --object
 #: gain`, then `jm module util` + `jm function clamp` and an object of
-#: `[module."dsp.filters"]`. The regions gh-2423 moved into slots.
-_FLAT_COMPONENT = """add_executable(test_gain_core
+#: `[module."dsp.filters"]`. The regions gh-2423 moved into slots, with the
+#: one-line labels the templates gained since.
+_FLAT_COMPONENT = """# The C unit test; `ctest` runs it.
+add_executable(test_gain_core
     ${CMAKE_SOURCE_DIR}/native/tests/test_gain_core.c
     ${CMAKE_SOURCE_DIR}/native/tests/test_gain_symbols.c)
 target_link_libraries(test_gain_core PRIVATE
@@ -358,6 +360,7 @@ target_include_directories(test_gain_core
     PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 add_test(NAME test_gain_core COMMAND test_gain_core)
 
+# The C benchmark; built, but not run by ctest.
 add_executable(bench_gain_core
     ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_gain_core.c)
 target_link_libraries(bench_gain_core PRIVATE
@@ -367,7 +370,8 @@ target_include_directories(bench_gain_core
     PRIVATE ${CMAKE_SOURCE_DIR}/native/inc
             ${CMAKE_SOURCE_DIR}/native/benchmarks)
 """
-_FLAT_OBJECT_CORE = """add_executable(test_fir_core
+_FLAT_OBJECT_CORE = """# The C unit test; `ctest` runs it.
+add_executable(test_fir_core
                ${CMAKE_SOURCE_DIR}/native/tests/test_fir_core.c
                ${CMAKE_SOURCE_DIR}/native/tests/test_fir_symbols.c)
 target_link_libraries(test_fir_core
@@ -376,6 +380,7 @@ target_include_directories(test_fir_core
                            PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 add_test(NAME test_fir_core COMMAND test_fir_core)
 
+# The C benchmark; built, but not run by ctest.
 add_executable(
   bench_fir_core
   ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_fir_core.c)

@@ -3017,6 +3017,11 @@ def _reconciled_object_core_cmake(
     # just before the test executable (matches _inject_object_core_cmake).
     if include_dirs and include_dirs[0] not in new:
         anchor = f"add_executable(test_{comp}_core"
+        # Keep the target's label line with it.
+        from ._render import TEST_LABEL
+
+        if TEST_LABEL + anchor in new:
+            anchor = TEST_LABEL + anchor
         if anchor in new:
             block = (
                 f"target_include_directories({comp}_core PUBLIC\n    "

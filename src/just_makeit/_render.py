@@ -114,17 +114,19 @@ LIBM_PREAMBLE = _load("cmake/libm.cmake")
 # silently links no libm at all.
 LIBM_REF = "${JM_MATH_LIBRARY}"
 #: gh-1452: where the root file needs libm resolved -- after `project()`,
-#: before the combined library links it. An anchor on CODE, not a marker in
-#: a comment: the first version put `#<<libm_preamble>>` in a comment and
-#: cmake-format (a pre-commit hook on this very template) joined it onto the
-#: line above. The `.replace()` then matched nothing, the preamble was never
-#: inserted, and the combined library silently linked no libm at all -- the
-#: fix doing nothing, under a green suite, until a commit reformatted it.
-_TOP_LIBM_ANCHOR = "add_library(<<project_underscore>>_lib SHARED"
+#: before the combined library links it. The preamble goes right AFTER this
+#: line, with the project-wide settings, so it never separates a target from
+#: the comment above it. An anchor on CODE, not a marker in a comment: the
+#: first version put `#<<libm_preamble>>` in a comment and cmake-format (a
+#: pre-commit hook on this very template) joined it onto the line above. The
+#: `.replace()` then matched nothing, the preamble was never inserted, and the
+#: combined library silently linked no libm at all -- the fix doing nothing,
+#: under a green suite, until a commit reformatted it.
+_TOP_LIBM_ANCHOR = "set(CMAKE_POSITION_INDEPENDENT_CODE ON)\n"
 
 
 def _insert_libm_preamble(text: str) -> str:
-    """Put LIBM_PREAMBLE before the combined library, or fail at IMPORT.
+    """Put LIBM_PREAMBLE after the project settings, or fail at IMPORT.
 
     Asserted rather than trusted: an insertion that silently finds nothing
     is exactly how this shipped broken once. Failing here stops jm from
@@ -138,7 +140,7 @@ def _insert_libm_preamble(text: str) -> str:
             "it; the combined library would otherwise link no libm (gh-1452)."
         )
     return text.replace(
-        _TOP_LIBM_ANCHOR, LIBM_PREAMBLE + "\n" + _TOP_LIBM_ANCHOR, 1
+        _TOP_LIBM_ANCHOR, _TOP_LIBM_ANCHOR + "\n" + LIBM_PREAMBLE, 1
     )
 
 
@@ -230,11 +232,18 @@ def _module_link_libs(cname: str, extra_libs: Sequence[str]) -> str:
     return "\n    " + "\n    ".join(parts)
 
 
+#: The one-line labels above a C test and benchmark target. The component
+#: templates spell the same lines; `_apply` keeps a label with its target
+#: when it inserts before one.
+TEST_LABEL = "# The C unit test; `ctest` runs it.\n"
+BENCH_LABEL = "# The C benchmark; built, but not run by ctest.\n"
+
+
 def _module_test_target(cname: str, libs: str, owner: "INC.Owner") -> str:
     """The `test_<cname>_core` CMake target for a module (gh-1034)."""
     slots = INC.native_slots(owner, cname)
     return (
-        f"\nadd_executable(test_{cname}_core\n"
+        "\n" + TEST_LABEL + f"add_executable(test_{cname}_core\n"
         f"    ${{CMAKE_SOURCE_DIR}}/{slots['native_test_c']})\n"
         f"target_link_libraries(test_{cname}_core PRIVATE{libs})\n"
         f"target_include_directories(test_{cname}_core\n"
@@ -254,7 +263,7 @@ def bench_target(name: str, libs: str, owner: "INC.Owner") -> str:
     """
     slots = INC.native_slots(owner, name)
     return (
-        f"\nadd_executable(bench_{name}_core\n"
+        "\n" + BENCH_LABEL + f"add_executable(bench_{name}_core\n"
         f"    ${{CMAKE_SOURCE_DIR}}/{slots['native_bench_c']})\n"
         f"target_link_libraries(bench_{name}_core PRIVATE{libs})\n"
         f"target_include_directories(bench_{name}_core\n"
@@ -345,14 +354,15 @@ def object_core_decl(component: str, header_only: bool) -> str:
     Examples
     --------
     >>> print(object_core_decl("fir", header_only=False))
-    # OBJECT library — pure C core, no Python dependency.
+    # The component's C code, compiled once and linked into both its
+    # Python extension and the project's C library.
     add_library(fir_core OBJECT fir_core.c)
     target_include_directories(
       fir_core PUBLIC ${CMAKE_SOURCE_DIR}/native/inc
                       ${CMAKE_SOURCE_DIR}/native/inc/<<inc_prefix>><<core_dir>>)
     >>> print(object_core_decl("ring", header_only=True))
-    # INTERFACE library — the core is header-only, so there is nothing to
-    # compile, and an OBJECT library with no sources fails configure.
+    # The component's C code is all in its header, so there is nothing to
+    # compile: this target only passes on the include directories.
     add_library(ring_core INTERFACE)
     target_include_directories(
       ring_core INTERFACE ${CMAKE_SOURCE_DIR}/native/inc
@@ -362,10 +372,10 @@ def object_core_decl(component: str, header_only: bool) -> str:
     if header_only:
         head = f"  {component}_core INTERFACE "
         return (
-            "# INTERFACE library — the core is header-only, so there is nothing to"
+            "# The component's C code is all in its header, so there is"
+            " nothing to"
             + chr(10)
-            + "# compile, and an OBJECT library with no sources fails"
-            " configure."
+            + "# compile: this target only passes on the include directories."
             + chr(10)
             + f"add_library({component}_core INTERFACE)"
             + chr(10)
@@ -379,7 +389,9 @@ def object_core_decl(component: str, header_only: bool) -> str:
         )
     head = f"  {component}_core PUBLIC "
     return (
-        "# OBJECT library — pure C core, no Python dependency."
+        "# The component's C code, compiled once and linked into both its"
+        + chr(10)
+        + "# Python extension and the project's C library."
         + chr(10)
         + f"add_library({component}_core OBJECT {component}_core.c)"
         + chr(10)
@@ -467,8 +479,8 @@ def component_core_decl(component: str, header_only: bool) -> str:
     Examples
     --------
     >>> print(component_core_decl("fir", header_only=True))
-    # INTERFACE library — the core is header-only, so there is nothing
-    # to compile, and an OBJECT library with no sources fails configure.
+    # The component's C code is all in its header, so there is nothing to
+    # compile: this target only passes on the include directories.
     add_library(fir_core INTERFACE)
     target_include_directories(fir_core INTERFACE
         ${CMAKE_SOURCE_DIR}/native/inc
@@ -477,11 +489,10 @@ def component_core_decl(component: str, header_only: bool) -> str:
     inc = INC.CMAKE_INC
     if header_only:
         return (
-            "# INTERFACE library — the core is header-only, so there"
-            " is nothing"
+            "# The component's C code is all in its header, so there is"
+            " nothing to"
             + chr(10)
-            + "# to compile, and an OBJECT library with no sources fails"
-            " configure."
+            + "# compile: this target only passes on the include directories."
             + chr(10)
             + f"add_library({component}_core INTERFACE)"
             + chr(10)
@@ -492,10 +503,9 @@ def component_core_decl(component: str, header_only: bool) -> str:
             + f"    {inc}/<<inc_prefix>><<core_dir>>)"
         )
     return (
-        "# OBJECT library — pure C core, no Python dependency."
+        "# The component's C code, compiled once and linked into both its"
         + chr(10)
-        + "# Linked into both the Python DSO and the combined"
-        " libmy_dsp.so."
+        + "# Python extension and the project's C library."
         + chr(10)
         + f"add_library({component}_core OBJECT {component}_core.c)"
         + chr(10)
@@ -1307,8 +1317,8 @@ def with_extra_cmake(text: str, dirname: str) -> str:
     add_library(o_core OBJECT o_core.c)
     <BLANKLINE>
     # Your own CMake for this directory goes in o_extra.cmake beside this
-    # file: jm includes it and never writes it (gh-1351). This file is
-    # regenerated.
+    # file: it is included here and never overwritten. This file is
+    # regenerated by just-makeit.
     include(${CMAKE_CURRENT_LIST_DIR}/o_extra.cmake OPTIONAL)
     <BLANKLINE>
     """
@@ -1318,8 +1328,8 @@ def with_extra_cmake(text: str, dirname: str) -> str:
         + "\n\n"
         + f"# Your own CMake for this directory goes in {hook}"
         " beside this\n"
-        "# file: jm includes it and never writes it (gh-1351). This file is\n"
-        "# regenerated.\n"
+        "# file: it is included here and never overwritten. This file is\n"
+        "# regenerated by just-makeit.\n"
         f"include(${{CMAKE_CURRENT_LIST_DIR}}/{hook} OPTIONAL)\n"
     )
 

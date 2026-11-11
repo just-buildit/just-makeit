@@ -1,12 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
-# gh-1368: an unset build type is Release. It has to be decided BEFORE
-# project(), which is where CMake fills in its own default -- and for an
-# MSVC-like compiler (clang-cl) that default is Debug, which defines _DEBUG,
-# which makes pyconfig.h link the debug interpreter's python3X_d.lib. That
-# library ships only with a debug Python, so a bare `cmake -B build` did not
-# link. (A multi-config generator ignores this; the runtime setting below is
-# what makes its Debug link.) `make build` and `jm build` already pass Release;
-# this makes a bare configure agree with them on every platform.
+# Default to a Release build when none is given. This must come before
+# project(): with clang-cl, CMake's own default is Debug, which links against a
+# debug Python library (python3X_d.lib) that a normal Python install lacks.
 if(NOT DEFINED CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE
       Release
@@ -21,6 +16,8 @@ project(
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Optional: compile for this machine's CPU with fast floating point. Binaries
+# built this way may not run on older CPUs.
 option(ENABLE_SIMD
        "Enable SIMD flags (-march=native -ffast-math / /arch:AVX2 /fp:fast)"
        OFF)
@@ -32,53 +29,34 @@ if(ENABLE_SIMD)
   endif()
 endif()
 
-# gh-1368: the MSVC ABI, as clang-cl builds it (cl.exe has no _Complex).
+# Windows builds use clang-cl (MSVC's cl.exe has no C99 _Complex).
 if(WIN32)
-  # The CRT deprecates portable C99 (fopen, strncpy, localtime -> the _s forms;
-  # strdup -> _strdup) on every use, burying the real diagnostics.
-  # _USE_MATH_DEFINES exposes M_PI, which <math.h> hides there by default.
+  # Silence the Windows C runtime's warnings on standard C functions (fopen,
+  # strncpy, strdup, ...), and make <math.h> define M_PI.
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE
                           _USE_MATH_DEFINES)
 endif()
 if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
-  # Without a complex-range relaxation clang lowers `_Complex` multiply and
-  # divide to compiler-rt calls (__mulsc3, __muldc3, ...) for C99 Annex G's
-  # inf/NaN corner cases, and the MSVC link has nothing that defines them:
-  # `undefined symbol: __mulsc3` after every object compiles. This is the
-  # narrowest flag that inlines them; ENABLE_SIMD's /fp:fast implies it.
-  # Spelled /clang: because clang-cl ignores a bare GCC-style flag, and guarded
-  # on the compiler ID because cl.exe rejects /clang: outright. doppler
-  # measured the same wall on the same toolchain.
+  # Compute complex multiply and divide inline. Otherwise clang calls helper
+  # functions (__mulsc3, __muldc3) that the MSVC linker cannot find.
   add_compile_options(/clang:-fcx-limited-range)
 endif()
 
+# Build the Python extension modules. Turn off (-DBUILD_PYTHON=OFF) to build
+# only the C library.
 option(BUILD_PYTHON "Build Python C extensions" ON)
-# gh-1368: a Python extension always uses the RELEASE C runtime (/MD) under
-# MSVC, in every configuration. The debug runtime (/MDd) makes the compiler
-# predefine _DEBUG, and pyconfig.h answers _DEBUG by linking the debug
-# interpreter's python3X_d.lib -- which only a debug Python ships, so a Debug
-# build did not link (measured in Visual Studio 2026 with clang-cl). Debug
-# keeps /Od and full debug info; only the debug CRT's heap checks go, and those
-# need a debug Python anyway. Project-wide rather than per extension: the
-# component cores are linked into the same DLL, and two CRTs in one DLL are two
-# heaps, so a buffer allocated by one and freed by the other corrupts both. Set
-# before any target exists, which is when CMake reads it.
+# On Windows, link every target against the release C runtime, even in Debug
+# builds: the debug runtime pulls in a debug Python library that a normal
+# install lacks. Debug builds keep full debug info and no optimisation.
 if(MSVC AND BUILD_PYTHON)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 if(BUILD_PYTHON)
-  # gh-2610: the IDE configurations jm generates name the project's own .venv
-  # interpreter (gh-814), and Visual Studio configures the moment the folder is
-  # opened -- before a .venv may exist. find_package would then fail as a bare
-  # `Could NOT find Python3`, which says nothing about the cause, and Visual
-  # Studio keeps that failed cache. So an interpreter that was named and is not
-  # there is refused here, with the way out: how to create the .venv when it is
-  # the project's own, and where the name came from when it is not. The folder
-  # holding the .venv exists even when the .venv does not, so it and the source
-  # folder are compared as the folders they are, not as text: each resolved
-  # (REALPATH: `..`, a symlink, a Windows 8.3 short name such as a runner's
-  # RUNNER~1), and without case on Windows, where a drive letter may arrive
-  # either way.
+  # If a Python interpreter was named (CMakePresets.json names the project's
+  # .venv) but does not exist, stop with instructions instead of CMake's bare
+  # "Could NOT find Python3". This happens when an IDE configures the folder
+  # before the .venv is created. Paths are compared after resolving symlinks
+  # and Windows short names, ignoring case on Windows.
   if(Python3_EXECUTABLE
      AND IS_ABSOLUTE "${Python3_EXECUTABLE}"
      AND NOT EXISTS "${Python3_EXECUTABLE}")
@@ -103,8 +81,7 @@ if(BUILD_PYTHON)
           "Python3_EXECUTABLE is ${Python3_EXECUTABLE}, which does not exist. "
           "Point it at an interpreter that does, where it was set: the "
           "configure preset or your CMakeUserPresets.json, or "
-          "-DPython3_EXECUTABLE= on the cmake line (PYTHON= for make). "
-          "(gh-2610)")
+          "-DPython3_EXECUTABLE= on the cmake line (PYTHON= for make).")
     endif()
     if(WIN32)
       set(_jm_venv_help
@@ -123,16 +100,19 @@ if(BUILD_PYTHON)
         "It is the project's own .venv: create that from the project "
         "folder, either way:\n${_jm_venv_help}\n"
         "then configure again (in Visual Studio: Project > Delete Cache and "
-        "Reconfigure). (gh-2610)")
+        "Reconfigure).")
   endif()
+  # The interpreter, its headers for building extensions, and NumPy's headers.
   find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module
                                            NumPy)
 endif()
 
+# Built extension modules are copied here, into the Python package, so the
+# package imports straight from the source tree.
 set(PYTHON_PACKAGE_DIR "${CMAKE_SOURCE_DIR}/src/<<package>>")
 
-# Combined C library — shared + static, no Python dependency. Component OBJECT
-# libraries are wired in via target_sources below.
+# The project's C library, built both shared and static, with no Python
+# dependency. Each component's compiled C is added to both below.
 add_library(<<project_underscore>>_lib SHARED
             native/src/<<project_underscore>>_lib.c)
 add_library(<<project_underscore>>_lib_static STATIC
@@ -142,21 +122,11 @@ foreach(lib_target <<project_underscore>>_lib
   target_include_directories(
     ${lib_target} PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/<<inc_dir>>>
                          $<INSTALL_INTERFACE:include>)
-  # gh-1452: libm is part of this library's LINK INTERFACE, not a private
-  # detail. jm's headers DEFINE -- `step()` is `static inline` by default,
-  # `JM_FORCEINLINE` under --perf -- so a consumer that calls it compiles the
-  # body into its OWN object, and `ld` has not resolved a consumer's undefined
-  # symbol through a dependency's NEEDED since binutils 2.22. PUBLIC puts it in
-  # the exported target's INTERFACE_LINK_LIBRARIES.
-  #
-  # Two spellings on purpose, and neither is the bare name `m`. The build
-  # interface is the resolved PATH, which no target named `m` can shadow
-  # (gh-1305). The install interface is the linker FLAG `-lm`: a path from THIS
-  # machine is wrong on the consumer's, and the bare name is worse than it
-  # looks -- CMake resolves it against the PRODUCER's targets while writing the
-  # export, so `jm module m` made it the Python module ("requires target m that
-  # is not in any export set"). A `-`-prefixed item is never a target name.
-  # Empty where there is no libm (Windows), so it guards itself.
+  # Programs that use this library also link the math library (libm): the
+  # headers contain inline functions that call it. In this build that is libm's
+  # full path; once installed it is the flag -lm, since a path from this
+  # machine would be wrong on another. Skipped where there is no separate libm
+  # (Windows).
   if(JM_MATH_LIBRARY)
     target_link_libraries(
       ${lib_target} PUBLIC $<BUILD_INTERFACE:${JM_MATH_LIBRARY}>
@@ -164,6 +134,7 @@ foreach(lib_target <<project_underscore>>_lib
   endif()
 endforeach()
 
+# Lets `ctest` run the C tests each component registers with add_test().
 enable_testing()
 
 # ── Components (add_subdirectory lines appended here by just-makeit)
@@ -173,20 +144,19 @@ enable_testing()
 # ─────────────
 
 # ── Install ──────────────────────────────────────────────────────────────────
-# gh-1589: jm renders everything from the line above down to "End install" on
-# every `apply`, so each packaging fix reaches this project. Put install rules
-# of your own below that line, or in a file you include() from there.
+# How `cmake --install` installs the C library for other projects to use: the
+# libraries, headers, a CMake package (find_package) and a pkg-config file.
+# just-makeit rewrites this section, down to "End install", on every `apply`;
+# put install rules of your own after that line.
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-# gh-1582: the ABI version. The shared library installs as lib<name>.so.X.Y.Z
-# with the soname lib<name>.so.<ABI> and a lib<name>.so link, so a release that
-# breaks the ABI installs BESIDE the old library instead of over it, and a
-# program linked against the old one keeps loading it. Under 0.x every minor
-# release may break (semver), so the ABI is major.minor there and major from
-# 1.0 on -- the rule find_package's version file below applies too. macOS takes
-# SOVERSION as the dylib's compatibility_version; a Windows DLL ignores it.
+# ABI version: which releases are binary compatible. The shared library is
+# installed as lib<name>.so.X.Y.Z with a lib<name>.so.<ABI> link, so an
+# incompatible release installs beside the old one, and programs built against
+# the old one keep working. Before 1.0 any minor release may break
+# compatibility (semver), so the ABI is X.Y; from 1.0 it is X.
 if(PROJECT_VERSION_MAJOR EQUAL 0)
   set(JM_ABI_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
   set(JM_VERSION_COMPATIBILITY SameMinorVersion)
@@ -195,14 +165,10 @@ else()
   set(JM_VERSION_COMPATIBILITY SameMajorVersion)
 endif()
 
-# gh-1594: on macOS the installed library names itself by its absolute path, as
-# Homebrew's and MacPorts' do. CMake's default install name is
-# @rpath/lib<name>.dylib, which only a program carrying an LC_RPATH can load:
-# find_package consumers get one from CMake, but a program linked by
-# pkg-config, a Makefile or Xcode does not, and dyld refuses to start it.
-# $<INSTALL_PREFIX> is the prefix the install step uses, so `cmake --install
-# --prefix B` is honoured as the .pc's prefix is; it needs CMake 3.17, and 3.16
-# names the configured prefix. No effect off Apple platforms.
+# macOS: the installed library records its absolute install path, as Homebrew's
+# do, so any program linked against it can find it at run time. (CMake's
+# default, @rpath, works only for programs that set an rpath.) Uses the prefix
+# given to `cmake --install --prefix` (CMake 3.17+).
 if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
   set(JM_INSTALL_NAME_DIR "${CMAKE_INSTALL_LIBDIR}")
 elseif(CMAKE_VERSION VERSION_LESS 3.17)
@@ -211,20 +177,11 @@ else()
   set(JM_INSTALL_NAME_DIR "$<INSTALL_PREFIX>/${CMAKE_INSTALL_LIBDIR}")
 endif()
 
-# gh-1869: an installed shared library finds the libraries it needs itself. A
-# program's RUNPATH reaches only the program's DIRECT dependencies (glibc and
-# FreeBSD; `-rpath` writes RUNPATH on every current distro but RHEL), so a
-# library needing another in the same non-system prefix failed to load -- and
-# GNU ld, resolving that NEEDED at link time the same way, failed to link a
-# program that named only the first. `$ORIGIN`, literal and FIRST (Fedora's
-# check-rpaths accepts it only there; lintian exempts it), finds the libraries
-# installed beside this one wherever the prefix is moved. The link path adds
-# the directory of each dependency outside the compiler's implicit link
-# directories, so one in another prefix is found too; a build into /usr adds
-# nothing. Defaults of CMake's own variables, so a packager's
-# -DCMAKE_INSTALL_RPATH=... or -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF still
-# wins. ELF only: Apple's libraries name themselves absolutely (gh-1594), and
-# Windows has no rpath.
+# Linux and other ELF systems: the installed shared library searches its own
+# directory ($ORIGIN) for the libraries it depends on, plus the directory of
+# any dependency outside the system paths, so it loads even when installed to a
+# non-standard prefix. Setting -DCMAKE_INSTALL_RPATH or
+# -DCMAKE_INSTALL_RPATH_USE_LINK_PATH yourself overrides this.
 if(NOT APPLE
    AND NOT WIN32
    AND NOT CYGWIN)
@@ -240,20 +197,17 @@ if(NOT APPLE
   endif()
 endif()
 
-# gh-1600: every library this project installs, one row each as `<target
-# stem>:<exported name>` -- lib<<project_underscore>> first, then each
-# [project.libraries.<name>] -- and every per-library packaging rule below runs
-# over this one list, so an additional library gets the soname, install name,
-# export, components and .pc lib<<project_underscore>> gets, from the same
-# lines.
+# Every library this project installs, as `<target stem>:<exported name>`:
+# lib<<project_underscore>> first, then each [project.libraries] entry. The
+# packaging rules below loop over this list, so every library is installed the
+# same way.
 set(JM_LIBRARIES "<<project_underscore>>:<<project_underscore>>")
 # ── Libraries: [project.libraries] (gh-1600) ─────────────────────────────────
 # ── End libraries ────────────────────────────────────────────────────────────
 
-# gh-1599: what the installed headers need of every consumer, from `[project]
-# public_link_libs` / `public_defines` (set in the external-deps block).
-# PUBLIC, so the exported targets carry it; both are flags, so one spelling
-# serves the build and the install interface alike.
+# Link libraries and compile definitions that every user of this library needs,
+# from [project] public_link_libs and public_defines. PUBLIC passes them on to
+# anything that links the library, installed or not.
 foreach(jm_lib <<project_underscore>>_lib <<project_underscore>>_lib_static)
   if(JM_PUBLIC_LINK_LIBS)
     target_link_libraries(${jm_lib} PUBLIC ${JM_PUBLIC_LINK_LIBS})
@@ -267,14 +221,12 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
   string(REPLACE ":" ";" _jm_fields "${jm_row}")
   list(GET _jm_fields 0 _jm_lib)
   list(GET _jm_fields 1 _jm_export)
-  # gh-1581: the names a consumer writes, as cmake-packages(7) shows them:
-  # `find_package(<pkg>)` then `target_link_libraries(app <pkg>::<pkg>)`, the
-  # static library `<pkg>::<pkg>-static`; an additional library is
-  # `<pkg>::<name>` / `<pkg>::<name>-static`. Only the EXPORTED names differ;
-  # inside this build the targets are <stem>_lib and <stem>_lib_static.
-  # gh-1368: a DLL exports only what is marked, and jm marks nothing, so every
-  # symbol is exported (an ELF shared library's default); and a static library
-  # sharing the shared one's OUTPUT_NAME collides on Windows as <name>.lib.
+  # File name, version, and the target name other projects link after
+  # find_package(): <<project_underscore>>::<<project_underscore>>, plus
+  # -static for the static library; an additional library is
+  # <<project_underscore>>::<name>. On Windows, export every function from the
+  # DLL (as Linux does by default), and give the static library its own name so
+  # its .lib does not clash with the DLL's.
   set_target_properties(
     ${_jm_lib}_lib
     PROPERTIES OUTPUT_NAME ${_jm_lib}
@@ -299,15 +251,10 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
   install(
     TARGETS ${_jm_lib}_lib ${_jm_lib}_lib_static
     EXPORT <<project_underscore>>-targets
-    # RUNTIME is where Windows puts a .dll (gh-1368): without it the DLL was
-    # never installed, and a consumer linked against an import library whose
-    # DLL was not there to load.
-    # gh-1601: install components, the runtime/-dev split a distribution
-    # package is built from (`cmake --install --component runtime|dev`). The
-    # shared library a program loads is `runtime`; everything a BUILD needs --
-    # headers, the static library, the unversioned lib<name>.so link, the
-    # CMake package and the .pc -- is `dev`. A plain `cmake --install`
-    # installs both.
+    # Two install components, as Linux packages split them: `runtime` is the
+    # shared library (a Windows .dll goes to bin/); `dev` is everything needed
+    # to build against it. `cmake --install --component runtime` installs one;
+    # a plain `cmake --install` installs both.
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
             COMPONENT runtime
@@ -315,6 +262,7 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT dev)
 endforeach()
 
+# The public headers. pyex_common.h is for the Python extensions only.
 install(
   DIRECTORY ${CMAKE_SOURCE_DIR}/<<inc_dir>>/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
@@ -323,6 +271,8 @@ install(
   PATTERN "*.h"
   PATTERN "pyex_common.h" EXCLUDE)
 
+# The CMake package that find_package(<<project_underscore>>) reads: the
+# exported targets, a config file, and a version file.
 install(
   EXPORT <<project_underscore>>-targets
   FILE <<project_underscore>>-targets.cmake
@@ -335,8 +285,8 @@ configure_package_config_file(
   "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config.cmake"
   INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>)
 
-# gh-1582: SameMinorVersion under 0.x, where a minor release may break; see
-# JM_ABI_VERSION above.
+# Which versions satisfy a find_package version request; the same rule as the
+# ABI version above.
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-config-version.cmake"
   VERSION ${PROJECT_VERSION}
@@ -349,39 +299,23 @@ install(
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/<<project_underscore>>
   COMPONENT dev)
 
-# gh-1582: the build tree is a package too. The config and version files above
-# are written into it already; exporting the targets beside them lets a sibling
-# build use this one without installing it: `cmake
-# -D<<project_underscore>>_DIR=<this build dir>`.
+# Lets another project use this build without installing it: cmake
+# -D<<project_underscore>>_DIR=<this build dir>
 export(
   EXPORT <<project_underscore>>-targets
   FILE "${CMAKE_CURRENT_BINARY_DIR}/<<project_underscore>>-targets.cmake"
   NAMESPACE <<project_underscore>>::)
 
-# gh-1582: the .pc names where its files were ACTUALLY installed, as an
-# absolute prefix, and that is decided at INSTALL time -- `cmake --install
-# --prefix B` chooses the prefix then, and a configure-time prefix named one
-# where nothing was installed. DESTDIR is not part of it: a staged tree names
-# its real target, which is what a distribution package needs. Relocation is
-# the consumer's side of pkg-config: a moved tree is read with `pkg-config
-# --define-prefix`, a staged one with PKG_CONFIG_SYSROOT_DIR. An absolute
-# prefix is also what lets pkg-config drop -I/-L for its system dirs under
-# /usr, which it does only for a path spelled literally.
-#
-# A libdir or includedir given as an absolute path (GNUInstallDirs under Nix or
-# Guix) is where the files are whatever the prefix, so it is written as itself,
-# never as `${exec_prefix}//abs`; a relative one follows the prefix. gh-1452:
-# libm is in the library's link interface (see its PUBLIC link above), so the
-# .pc says so in `Libs:` rather than `Libs.private`: it is needed to link a
-# CONSUMER, whose own object compiles jm's inline step().
+# The pkg-config file (lib<name>.pc), for builds that use pkg-config rather
+# than CMake. Its prefix is filled in at install time, so it names wherever
+# `cmake --install --prefix` actually put the files. libm and the public link
+# libraries go on its `Libs:` line, because programs using this library need
+# them too (see the PUBLIC link above).
 if(JM_MATH_LIBRARY)
   set(JM_PC_LIBM " -lm")
 else()
   set(JM_PC_LIBM "")
 endif()
-# gh-1599: the .pc face of `public_link_libs` / `public_defines` -- `Libs:` for
-# the same reason as -lm, and the definitions on the `.pc`'s own `Cflags:`
-# (pc(5) has no private Cflags).
 foreach(jm_flag IN LISTS JM_PUBLIC_LINK_LIBS)
   string(APPEND JM_PC_LIBM " ${jm_flag}")
 endforeach()
@@ -397,13 +331,9 @@ set(JM_PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
 if(IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
   set(JM_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
 endif()
-# gh-1582: the optional fields, each rendered only when it has something to
-# say, so no `.pc` carries an empty `URL:` or a blank line for an absent one.
-# The template puts this slot at the START of its `Version:` line and each
-# field ends its own line, so an empty slot leaves nothing behind. (A slot on a
-# line of its own cannot: configure_file ends every output line with a newline,
-# so an empty one is a blank line.) Requires.private / Libs.private are the
-# complete lines the external-deps block above sets.
+# Optional .pc fields, each written only when it has a value: the project URL,
+# and the Requires.private / Libs.private lines for external dependencies (set
+# in the external-deps block).
 set(JM_PC_EXTRA_FIELDS "")
 if(NOT PROJECT_HOMEPAGE_URL STREQUAL "")
   string(APPEND JM_PC_EXTRA_FIELDS "URL: ${PROJECT_HOMEPAGE_URL}\n")
@@ -414,11 +344,9 @@ endif()
 if(NOT "${JM_PC_LIBS_PRIVATE}" STREQUAL "")
   string(APPEND JM_PC_EXTRA_FIELDS "${JM_PC_LIBS_PRIVATE}\n")
 endif()
-# gh-1600: one .pc per library, from the one template.
-# lib<<project_underscore>>'s carries the dependencies and flags computed
-# above; an additional library's says `Requires: <<project_underscore>>`, which
-# hands a consumer all of those, and adds only itself -- pc(5)'s pattern for a
-# library built on another.
+# One .pc per library, from cmake/<<project_underscore>>.pc.in. An additional
+# library's .pc requires lib<<project_underscore>>'s, which carries the
+# dependencies and flags.
 foreach(jm_row IN LISTS JM_LIBRARIES)
   string(REPLACE ":" ";" _jm_fields "${jm_row}")
   list(GET _jm_fields 0 _jm_lib)
@@ -437,15 +365,9 @@ foreach(jm_row IN LISTS JM_LIBRARIES)
   endif()
   configure_file(cmake/<<project_underscore>>.pc.in ${_jm_lib}.pc.configured
                  @ONLY)
-  # Runs at install time, before the install(FILES) below copies its result:
-  # install rules run in the order they are declared, in one script, so the
-  # path set by the first rule is seen by the second. The bracket argument is
-  # not expanded here, so ${CMAKE_INSTALL_PREFIX} is the one the install step
-  # has. The configured path does not depend on the configuration, so a
-  # multi-config generator installs the same. The written file is removed
-  # first: a `sudo cmake --install` leaves it owned by root, and the next
-  # install as the user (a stage, a DESTDIR, a second prefix) could not rewrite
-  # it -- but may unlink it, as the build directory is the user's.
+  # At install time, write the real install prefix into the .pc, then install
+  # it. The old file is removed first, in case an earlier `sudo cmake
+  # --install` left it owned by root.
   install(CODE "set(JM_PC_FILE \"${CMAKE_CURRENT_BINARY_DIR}/${_jm_lib}.pc\")"
           COMPONENT dev)
   install(
