@@ -774,18 +774,64 @@ def _expand_templates(cfg: dict) -> None:
         _refuse(errors)
 
 
-def _strip_private(value):
-    """*value* without ``_``-prefixed keys, recursively: runtime state that
-    `load` or a command attaches (``_doc_blocks``, ``_group``) is not part of
-    what the manifest declares."""
+def _names_its_keys(path: tuple) -> bool:
+    """Whether every key of the table at *path* is a NAME the author chose.
+
+    The top level names components, ``[module]`` names modules, and a
+    module's ``reexports`` table names the submodules it re-exports from
+    (gh-2608: doppler's ``_cic_design``). Any of these may start with ``_``.
+    Everywhere else a ``_`` key is runtime state (:func:`is_runtime_key`).
+
+    >>> _names_its_keys(()), _names_its_keys(("module", "m", "reexports"))
+    (True, True)
+    >>> _names_its_keys(("fir",))
+    False
+    """
+    return (
+        path in ((), ("module",))
+        or len(path) == 3
+        and path[0] == "module"
+        and path[2] == "reexports"
+    )
+
+
+def is_runtime_key(path: tuple, key: object) -> bool:
+    """Whether *key*, in the table at *path*, is runtime state, not manifest.
+
+    A key beginning ``_`` inside a table is state that `load` or a command
+    attaches (``_doc_blocks``, ``_group``, ``_template``,
+    ``_version_deferred``) and no writer persists. A key that is a NAME
+    (:func:`_names_its_keys`) is the author's whatever it starts with.
+
+    The one answer every reader and writer of the manifest asks --
+    :func:`_strip_private`, :func:`_declared` (so :func:`_dump`) and the
+    layout-preserving :func:`_sync` -- so they cannot disagree about a key:
+    `_sync` once dropped a ``_cic_design`` reexport that `_dump` kept
+    (gh-2608).
+
+    >>> is_runtime_key(("fir",), "_doc_blocks")
+    True
+    >>> is_runtime_key(("module", "wfm", "reexports"), "_cic_design")
+    False
+    >>> is_runtime_key((), "_x")
+    False
+    """
+    return str(key).startswith("_") and not _names_its_keys(path)
+
+
+def _strip_private(value, path: tuple = ()):
+    """*value*, the table at *path*, without its runtime keys
+    (:func:`is_runtime_key`), recursively: runtime state that `load` or a
+    command attaches (``_doc_blocks``, ``_group``) is not part of what the
+    manifest declares."""
     if isinstance(value, dict):
         return {
-            k: _strip_private(v)
+            k: _strip_private(v, path + (k,))
             for k, v in value.items()
-            if not str(k).startswith("_")
+            if not is_runtime_key(path, k)
         }
     if isinstance(value, list):
-        return [_strip_private(v) for v in value]
+        return [_strip_private(v, path) for v in value]
     return value
 
 
@@ -812,7 +858,7 @@ def _without_template_expansion(cfg: dict) -> dict:
             cur = cfg.get(iid)
             if cur is None or cur.get(TEMPLATE_ORIGIN_KEY) != name:
                 continue
-            if _strip_private(cur) != _strip_private(comp):
+            if _strip_private(cur, (iid,)) != _strip_private(comp, (iid,)):
                 errors.append(
                     f"`{iid}` is an instance of [template.{name}], and this"
                     " command changed it. Make the change on the template, or"
@@ -1399,7 +1445,7 @@ def _row_id(row) -> "str | None":
     return str(name) if isinstance(name, str) else None
 
 
-def _sync_rows(parent, cur, rows: list, _tk) -> bool:
+def _sync_rows(parent, cur, rows: list, _tk, path: tuple = ()) -> bool:
     """Update the table array *cur* to *rows* row by row (gh-1701).
 
     *parent* is the table holding *cur*. Returns False, having changed
@@ -1451,7 +1497,7 @@ def _sync_rows(parent, cur, rows: list, _tk) -> bool:
                 it.update(row)
                 cur.insert(i, it)
             elif cur[i] != row:
-                _sync(cur[i], row, _tk)
+                _sync(cur[i], row, _tk, path)
         return True
 
     _claim_header_comments(parent, cur)
@@ -1467,7 +1513,7 @@ def _sync_rows(parent, cur, rows: list, _tk) -> bool:
             else:
                 cur.append(fresh)
         elif cur[i] != row:
-            _sync(cur[i], row, _tk)
+            _sync(cur[i], row, _tk, path)
     if len(cur) and cur[len(cur) - 1] is not last:
         # The array ends on a different row now: the text that followed the
         # old last row introduces the next section, so it follows the new
@@ -1476,7 +1522,7 @@ def _sync_rows(parent, cur, rows: list, _tk) -> bool:
     return True
 
 
-def _sync_in_place(parent, cur, value, _tk) -> bool:
+def _sync_in_place(parent, cur, value, _tk, path: tuple = ()) -> bool:
     """Sync *value* into *parent*'s existing item *cur* without replacing it.
 
     True when done. A sub-table recurses through `_sync`, and a table array
@@ -1492,16 +1538,16 @@ def _sync_in_place(parent, cur, value, _tk) -> bool:
             _is_rows(v) for v in value.values()
         ):
             return False
-        _sync(cur, value, _tk)
+        _sync(cur, value, _tk, path)
         return True
     if _is_rows(value) and (
         isinstance(cur, AoT) or (isinstance(cur, Array) and len(cur))
     ):
-        return _sync_rows(parent, cur, value, _tk)
+        return _sync_rows(parent, cur, value, _tk, path)
     return False
 
 
-def _sync(tbl, new_data: dict, _tk) -> None:
+def _sync(tbl, new_data: dict, _tk, path: tuple = ()) -> None:
     """Update `tbl` in place to match `new_data`, touching only what changed.
 
     Skipping unchanged keys is load-bearing, and specifically for *layout*
@@ -1536,9 +1582,12 @@ def _sync(tbl, new_data: dict, _tk) -> None:
     discarded for free by only emitting keys it recognised — a sync has to skip
     them deliberately or tomlkit raises ConvertError:
 
-    - **Underscore-prefixed**: transient in-memory state, not manifest data.
+    - **Runtime keys** (:func:`is_runtime_key`, asked of the table at
+      *path*): transient in-memory state, not manifest data.
       ``_object._regenerate_module`` stashes ``_doc_blocks`` (parsed DoxyBlock
-      objects) on the cfg for the render chain.
+      objects) on the cfg for the render chain. A ``_`` key that is a name
+      -- a ``reexports`` submodule such as ``_cic_design`` -- is written
+      (gh-2608).
     - **None-valued**: TOML has no null, so None means "absent". Filtering it
       here lets the trailing delete-loop remove the key, which is the right
       semantics — an unset value should leave no trace in the file.
@@ -1546,14 +1595,14 @@ def _sync(tbl, new_data: dict, _tk) -> None:
     new_data = {
         k: v
         for k, v in new_data.items()
-        if not k.startswith("_") and v is not None
+        if not is_runtime_key(path, k) and v is not None
     }
     for k, v in new_data.items():
         # Unchanged → leave the parsed item, and its comments, exactly as
         # authored. tomlkit items compare equal to the plain values they wrap.
         if k in tbl and tbl[k] == v:
             continue
-        if k in tbl and _sync_in_place(tbl, tbl[k], v, _tk):
+        if k in tbl and _sync_in_place(tbl, tbl[k], v, _tk, path + (k,)):
             continue
         _set_key(tbl, k, v, _tk)
     for k in list(tbl.keys()):
@@ -1843,7 +1892,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
     if new_proj:
         if "project" not in doc:
             doc.add("project", _tk.table())
-        _sync(doc["project"], new_proj, _tk)
+        _sync(doc["project"], new_proj, _tk, ("project",))
     elif "project" in doc:
         del doc["project"]
 
@@ -1857,7 +1906,7 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
         for mod, data in new_mod.items():
             if mod not in mod_tbl:
                 mod_tbl.add(mod, _tk.table())
-            _sync(mod_tbl[mod], data, _tk)
+            _sync(mod_tbl[mod], data, _tk, ("module", mod))
         for mod in list(mod_tbl.keys()):
             if mod not in new_mod:
                 del mod_tbl[mod]
@@ -1887,13 +1936,13 @@ def _write_doc(path: Path, cfg: dict, include_list: list[str] | None) -> None:
             if comp in doc and doc[comp] == data:
                 continue
             if comp not in doc or not _sync_in_place(
-                doc, doc[comp], data, _tk
+                doc, doc[comp], data, _tk, (comp,)
             ):
                 doc[comp] = _tk_value(data, _tk)
             continue
         if comp not in doc:
             doc.add(comp, _tk.table())
-        _sync(doc[comp], data, _tk)
+        _sync(doc[comp], data, _tk, (comp,))
     for k in list(doc.keys()):
         if k not in ("project", "module", "include") and k not in new_comps:
             del doc[k]
@@ -3675,6 +3724,30 @@ def extra_include_dirs(cfg: dict, module: str) -> list[str]:
     """
     v = cfg.get("module", {}).get(module, {}).get("extra_include_dirs", [])
     return list(v) if isinstance(v, (list, tuple)) else []
+
+
+#: gh-2608: jm's record, written only by :func:`record_applied`, of the
+#: ``reexports`` submodules whose ``from .<sub> import ...`` statement the
+#: last `apply` rendered into a module's ``__init__.py``. Nothing in the
+#: statement itself tells jm's from an author's (gh-342), so this record is
+#: what lets `apply` drop the import of a key that was renamed or removed.
+APPLIED_REEXPORTS = "applied_reexports"
+
+
+def applied_reexports(cfg: dict, module: str) -> "list[str]":
+    """The submodules *module*'s last `apply` re-exported from (gh-2608).
+
+    Empty when the record is absent -- a project not applied since the
+    record existed, whose older lines are therefore never touched.
+
+    >>> applied_reexports({"module": {"m": {"applied_reexports": ["a"]}}},
+    ...                   "m")
+    ['a']
+    >>> applied_reexports({"module": {"m": {}}}, "m")
+    []
+    """
+    raw = cfg.get("module", {}).get(module, {}).get(APPLIED_REEXPORTS, [])
+    return [str(s) for s in raw] if isinstance(raw, list) else []
 
 
 def module_reexports(cfg: dict, module: str) -> dict[str, list[str]]:
@@ -7692,7 +7765,13 @@ def record_applied(root: Path, cfg: dict) -> "list[str]":
     - ``[module.X] applied_objects`` beside it: the members placed in that
       package, under ``nested`` only -- where a member's source directory is
       its module's, not the flat ``native/src/<name>`` -- so a member
-      declared since is not taken as placed (`_incpath.placed`).
+      declared since is not taken as placed (`_incpath.placed`);
+    - ``[module.X] applied_reexports`` (:data:`APPLIED_REEXPORTS`), in
+      every layout: the ``reexports`` submodules whose import this `apply`
+      rendered into the module's ``__init__.py``, removed when there are
+      none. A later `apply` drops the import of a submodule on this record
+      that the manifest no longer declares (gh-2608) -- the record, not the
+      line's shape, is the proof the line is jm's.
 
     Surgical line edits, as :func:`stamp_jm_version` makes, so nothing
     else in any file changes. Called by a full `apply` after its last
@@ -7727,6 +7806,7 @@ def record_applied(root: Path, cfg: dict) -> "list[str]":
                 INC.APPLIED_OBJECTS,
                 sorted(module_objects(cfg, mod)) if nested else None,
             ),
+            (APPLIED_REEXPORTS, sorted(module_reexports(cfg, mod)) or None),
         )
         quoted = _re.escape(mod) if "." not in mod else None
         header = (
@@ -7743,9 +7823,10 @@ def record_applied(root: Path, cfg: dict) -> "list[str]":
                 key,
                 want,
                 spelled=f"module.{_toml_key(mod)}",
-                after=INC.APPLIED_PACKAGE
-                if key == INC.APPLIED_OBJECTS
-                else None,
+                after={
+                    INC.APPLIED_OBJECTS: INC.APPLIED_PACKAGE,
+                    APPLIED_REEXPORTS: INC.APPLIED_OBJECTS,
+                }.get(key),
             )
             if want is None:
                 table.pop(key, None)
@@ -9068,8 +9149,9 @@ def _declared(value: object, path: tuple = ()) -> object:
     - a key beginning ``_`` inside a table: state a command attached at run
       time (``_doc_blocks``, ``_group``, ``_template``,
       ``_version_deferred``), never authored. Not a NAME the author chose:
-      a component or a module may be called ``_x``, and is written. This is
-      the line the layout-preserving writer (`_sync`) draws too;
+      a component, a module or a ``reexports`` submodule may be called
+      ``_x``, and is written. :func:`is_runtime_key` draws the line, for the
+      layout-preserving writer (`_sync`) too (gh-2608);
     - a None value: TOML has no null, and every reader takes None as absent;
     - a row carrying `GROUP_ORIGIN_KEY`: `load` expanded it from an
       ``[[<obj>.init_groups]]`` row, which is what persists (gh-999). A list
@@ -9085,10 +9167,9 @@ def _declared(value: object, path: tuple = ()) -> object:
     {'_x': {}}
     """
     if isinstance(value, dict):
-        named = not path or path == ("module",)
         out = {}
         for key, item in value.items():
-            if item is None or (str(key).startswith("_") and not named):
+            if item is None or is_runtime_key(path, key):
                 continue
             if isinstance(item, (list, tuple)):
                 kept = [
@@ -9191,15 +9272,16 @@ _MODULE_TAIL = (
     "composer", "json", "serializers", "settings",
 )  # fmt: skip
 _KIND_MODULE_HEAD = (
-    "applied_package", "applied_objects", "no_generate", "kind", "backing",
-    "capsule_name", "package", "header",
+    "applied_package", "applied_objects", "applied_reexports",
+    "no_generate", "kind", "backing", "capsule_name", "package", "header",
 )  # fmt: skip
 #: ``[module.X]`` by kind; the rest of the kind's vocabulary follows sorted,
 #: as gh-1229 wrote it. A plain module has no vocabulary in `_keys`.
 _MODULE_ORDER: "dict[str, tuple[str, ...]]" = {
     # gh-2459: `applied_package` / `applied_objects` are jm's record,
     # written first by `record_applied`, so a later save leaves them be.
-    "": ("applied_package", "applied_objects", "no_generate",
+    "": ("applied_package", "applied_objects", "applied_reexports",
+         "no_generate",
          "functions_in_core", "objects", "package")
     + _MODULE_TAIL,
     **{

@@ -1344,8 +1344,11 @@ def _splice_init_py(
 
     text = init_py.read_text(encoding="utf-8")
     # Read in either form: gh-2514 writes a long re-export wrapped.
-    have = _import_re(component).search(text)
-    if have and Component in _parse_import_names(have.group(0)):
+    # Any statement from the component, not only the first (gh-2616).
+    if any(
+        Component in _parse_import_names(have.group(0))
+        for have in _import_re(component).finditer(text)
+    ):
         return False
     import_line = f"from .{component} import {Component}\n"
 
