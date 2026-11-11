@@ -134,6 +134,12 @@ PLACES = {
         {"name": "i", "type": "int16_t"},
         lambda r: _obj(records=[{"name": "iq_t", "fields": [r]}]),
     ),
+    # gh-2606: a top-level row, so its `doc` round-trips like any key. The
+    # object is there for `migrate-to-fragments`, which needs one to move.
+    "enum": (
+        {"name": "mode", "values": ["a"]},
+        lambda r: {**_obj(), "enum": [r]},
+    ),
     "extra_method": (
         {"name": "peek", "fn": "o_peek"},
         lambda r: _obj(extra_methods=[r]),
