@@ -84,8 +84,6 @@ yet, [getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#gettin
     . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     ```
 
-    If `jm` is not found in a new shell, run `jbx update-path` once.
-
 === "pip"
 
     ```sh
