@@ -106,7 +106,9 @@ $funcs0 += 'Get-Leftover'
 $vars0 += 'funcs0', 'vars0', 'log', 'left'
 
 # -- first run: installs ------------------------------------------------------
-$log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 3>&1 | Out-String
+# -Width: Windows PowerShell 5.1 wraps Out-String at the console width,
+# which splits a long line the asserts below look for.
+$log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 3>&1 | Out-String -Width 4096
 Write-Information $log
 $left = @(Get-Leftover -Funcs $funcs0 -Vars $vars0)
 Assert-That ($left.Count -eq 0) "iex left nothing behind (got: $($left -join ', '))"
@@ -152,7 +154,7 @@ $vars1 = @(Get-Variable -Scope Script | ForEach-Object { $_.Name }) +
     'vars1', 'stamp'
 $stamp = @(Get-ChildItem -LiteralPath $venv, $localBin -Recurse -File |
         ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" })
-$log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 | Out-String
+$log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 | Out-String -Width 4096
 Write-Information $log
 Assert-That ($log -match 'already current') "a second run says already current (got '$log')"
 $stamp2 = @(Get-ChildItem -LiteralPath $venv, $localBin -Recurse -File |
@@ -173,7 +175,7 @@ $vars2 = @(Get-Variable -Scope Script | ForEach-Object { $_.Name }) +
 $env:PATH = (@($env:PATH -split [regex]::Escape($sep) |
             Where-Object { $_ -ne $bin }) -join $sep)
 $block = [scriptblock]::Create((Get-Content -Raw -LiteralPath $script))
-$log = . $block 6>&1 | Out-String
+$log = . $block 6>&1 | Out-String -Width 4096
 Write-Information $log
 Assert-That ($log -match 'already current') 'a dot-sourced script block runs the install (already current)'
 $jm = Get-Command jm -ErrorAction SilentlyContinue | Select-Object -First 1
