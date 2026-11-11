@@ -205,7 +205,11 @@ function Get-JmPythonVersion {
         when it does not run.
     #>
     param([Parameter(Mandatory)][string[]]$Command)
-    $probe = 'import sys; print("%d.%d" % sys.version_info[:2])'
+    # No double quote in it: Windows PowerShell 5.1 passes an embedded "
+    # to a native program unescaped, so Python would read print(%d.%d ...)
+    # and every Python would look absent. The same holds for every
+    # argument this file hands a native command.
+    $probe = 'import sys; print(''%d.%d'' % sys.version_info[:2])'
     # A path that does not exist is not a command at all: PowerShell
     # throws rather than setting an exit code.
     try {
