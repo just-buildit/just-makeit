@@ -20,7 +20,10 @@ GATE:
 * text that would end the literal -- a triple quote, a backslash, a final
   quote -- in a ``doc`` or a property's header ``@brief`` still gives a
   ``.pyi`` that parses, and the docstring reads back as the text
-  (``_docstring.summary_docstring``, shared by both);
+  (``_docstring.summary_docstring``, shared by both). The peer layouts are
+  held to the triple quote and an unsafe close: a manifest property
+  ``doc`` (``authored_docstring``), the getter method's numpy docstring
+  (``render_numpy_doc``) and the class docstring (``class_docstring``);
 * the key is recognised by ``_keys`` (a misspelling is reported), and
   ``jm script``, which replays the ``[[enum]]`` rows verbatim, carries it.
   ``tests/test_gh2045_dump_keeps_every_key.py`` holds the manifest writer to
@@ -225,3 +228,37 @@ def test_a_property_brief_that_would_end_the_literal_still_parses(
     assert run_cli("apply", cwd=root).returncode == 0
     docs = _attr_docs(root / "src" / "proj" / "eng.pyi")
     assert docs["Eng.mode"] == text.strip()
+
+
+@pytest.mark.parametrize(
+    "text", [t for t in HOSTILE if "tmp" not in t], ids=["triple", "q", "bs"]
+)
+def test_an_authored_property_doc_that_would_end_the_literal_still_parses(
+    tmp_path, text
+):
+    # A manifest `doc` is laid out as written (`authored_docstring`, gh-1493),
+    # where a backslash inside the text is left for the author's doctest, so
+    # the escape-sequence case is not one of these.
+    root = _project(tmp_path, module=False, doc=None)
+    r = run_cli(
+        "property", "eng", "gain", "--type", "double", "--doc", text,
+        cwd=root,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    docs = _attr_docs(root / "src" / "proj" / "eng.pyi")
+    assert docs["Eng.gain"].rstrip("\\") == text.rstrip("\\")
+
+
+def test_a_class_brief_holding_a_triple_quote_still_parses(tmp_path):
+    # The class docstring's multi-line layout (`class_docstring`): the
+    # create() `@brief` is its summary, above its Parameters section.
+    root = _project(tmp_path, module=False, doc=None)
+    hdr = root / "native" / "inc" / "proj" / "eng" / "eng_core.h"
+    src = hdr.read_text()
+    old = "@brief Create a eng instance."
+    assert src.count(old) == 1
+    hdr.write_text(src.replace(old, "@brief " + HOSTILE[0]))
+    assert run_cli("apply", cwd=root).returncode == 0
+    tree = ast.parse((root / "src" / "proj" / "eng.pyi").read_text())
+    (cls,) = [n for n in tree.body if isinstance(n, ast.ClassDef)]
+    assert (ast.get_docstring(cls) or "").startswith(HOSTILE[0])
