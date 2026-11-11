@@ -73,21 +73,31 @@ if(BUILD_PYTHON)
   # `Could NOT find Python3`, which says nothing about the cause, and Visual
   # Studio keeps that failed cache. So an interpreter that was named and is not
   # there is refused here, with the way out: how to create the .venv when it is
-  # the project's own, and where the name came from when it is not. Compared
-  # normalised, slashes and `..` resolved, and without case on Windows, where a
-  # drive letter may arrive either way.
+  # the project's own, and where the name came from when it is not. The folder
+  # holding the .venv exists even when the .venv does not, so it and the source
+  # folder are compared as the folders they are, not as text: each resolved
+  # (REALPATH: `..`, a symlink, a Windows 8.3 short name such as a runner's
+  # RUNNER~1), and without case on Windows, where a drive letter may arrive
+  # either way.
   if(Python3_EXECUTABLE
      AND IS_ABSOLUTE "${Python3_EXECUTABLE}"
      AND NOT EXISTS "${Python3_EXECUTABLE}")
     file(TO_CMAKE_PATH "${Python3_EXECUTABLE}" _jm_py)
-    get_filename_component(_jm_py "${_jm_py}" ABSOLUTE)
-    set(_jm_venv "${CMAKE_SOURCE_DIR}/.venv/")
-    if(WIN32)
-      string(TOLOWER "${_jm_py}" _jm_py)
-      string(TOLOWER "${_jm_venv}" _jm_venv)
+    set(_jm_own FALSE)
+    string(FIND "${_jm_py}" "/.venv/" _jm_at REVERSE)
+    if(NOT _jm_at EQUAL -1)
+      string(SUBSTRING "${_jm_py}" 0 ${_jm_at} _jm_root)
+      get_filename_component(_jm_root "${_jm_root}" REALPATH)
+      get_filename_component(_jm_src "${CMAKE_SOURCE_DIR}" REALPATH)
+      if(WIN32)
+        string(TOLOWER "${_jm_root}" _jm_root)
+        string(TOLOWER "${_jm_src}" _jm_src)
+      endif()
+      if(_jm_root STREQUAL _jm_src)
+        set(_jm_own TRUE)
+      endif()
     endif()
-    string(FIND "${_jm_py}" "${_jm_venv}" _jm_at)
-    if(NOT _jm_at EQUAL 0)
+    if(NOT _jm_own)
       message(
         FATAL_ERROR
           "Python3_EXECUTABLE is ${Python3_EXECUTABLE}, which does not exist. "

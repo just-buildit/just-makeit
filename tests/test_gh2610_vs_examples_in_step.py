@@ -133,8 +133,11 @@ def test_the_cmake_refusal_gives_both_routes():
             assert line in text, line
 
 
-def _configure(tmp_path: Path, python: "str") -> str:
-    """Configure a fresh scaffold naming *python*; what CMake said."""
+def _configure(tmp_path: Path, python: str, src: Path | None = None) -> str:
+    """Configure a fresh scaffold naming *python*; what CMake said.
+
+    *src* is the spelling of the project folder CMake is given, the
+    scaffold itself by default."""
     cmake = shutil.which("cmake")
     assert cmake, "cmake is needed: `make test` runs where it is"
     r = run_cli("new", "rv", "--object", "g", cwd=tmp_path)
@@ -143,7 +146,7 @@ def _configure(tmp_path: Path, python: "str") -> str:
         [
             cmake,
             "-S",
-            str(tmp_path / "rv"),
+            str(src or tmp_path / "rv"),
             "-B",
             str(tmp_path / "b"),
             f"-DPython3_EXECUTABLE={python}",
@@ -174,6 +177,25 @@ def test_a_missing_venv_is_refused_at_configure(tmp_path, rel):
     when the folder is opened first. Spelled through ``..`` too: the
     comparison is of the normalised path."""
     said = _configure(tmp_path, (tmp_path / "rv").as_posix() + "/" + rel)
+    for words in _VENV_WORDS:
+        assert words in said, (words, said)
+
+
+@pytest.mark.parametrize("via", ["python", "source"])
+def test_a_missing_venv_is_known_by_another_spelling(tmp_path, via):
+    """The project folder spelled two ways, one on each side: a CI
+    runner's temp folder arrives as the 8.3 ``RUNNER~1`` in the preset's
+    interpreter and long in the source folder, and that was called "not
+    the project's .venv". A symlink is the same two-spellings case
+    anywhere, so it holds the comparison to the folders, not the text."""
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path / "rv", target_is_directory=True)
+    if via == "python":
+        said = _configure(tmp_path, alias.as_posix() + "/.venv/bin/python")
+    else:
+        said = _configure(
+            tmp_path, (tmp_path / "rv").as_posix() + "/.venv/bin/python", alias
+        )
     for words in _VENV_WORDS:
         assert words in said, (words, said)
 
