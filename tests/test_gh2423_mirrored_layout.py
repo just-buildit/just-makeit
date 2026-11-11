@@ -390,13 +390,15 @@ target_include_directories(
   bench_fir_core PRIVATE ${CMAKE_SOURCE_DIR}/native/inc
                                    ${CMAKE_SOURCE_DIR}/native/benchmarks)
 """
-_FLAT_MODULE = """add_executable(test_util_core
+_FLAT_MODULE = """# The C unit test; `ctest` runs it.
+add_executable(test_util_core
     ${CMAKE_SOURCE_DIR}/native/tests/test_util_core.c)
 target_link_libraries(test_util_core PRIVATE util_core ${JM_MATH_LIBRARY})
 target_include_directories(test_util_core
     PRIVATE ${CMAKE_SOURCE_DIR}/native/inc)
 add_test(NAME test_util_core COMMAND test_util_core)
 
+# The C benchmark; built, but not run by ctest.
 add_executable(bench_util_core
     ${CMAKE_SOURCE_DIR}/native/benchmarks/bench_util_core.c)
 target_link_libraries(bench_util_core PRIVATE util_core ${JM_MATH_LIBRARY})
