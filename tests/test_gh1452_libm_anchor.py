@@ -26,8 +26,13 @@ def test_the_rendered_root_resolves_libm_before_linking_it():
     t = R.CMAKE_LISTS_TOP
     assert "find_library(JM_MATH_LIBRARY m)" in t
     assert t.index("project(") < t.index("find_library(JM_MATH_LIBRARY")
+    # Right after the project-wide settings it is anchored on, so before
+    # the combined library that links it.
+    assert t.index(R._TOP_LIBM_ANCHOR) < t.index(
+        "find_library(JM_MATH_LIBRARY"
+    )
     assert t.index("find_library(JM_MATH_LIBRARY") < t.index(
-        R._TOP_LIBM_ANCHOR
+        "add_library(<<project_underscore>>_lib SHARED"
     )
 
 

@@ -81,7 +81,7 @@ def _platform_asks(root: Path, *, win32: bool, msvc: bool, cid: str):
     """(definitions, options) the root's platform blocks add, as CMake reads
     them with these platform variables."""
     top = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    start = top.index("if(WIN32)\n  # The CRT")
+    start = top.index("if(WIN32)\n  # Silence")
     end = top.index('option(BUILD_PYTHON "Build Python C extensions" ON)')
     script = root / "probe.cmake"
     script.write_text(

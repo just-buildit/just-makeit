@@ -1,15 +1,15 @@
 @PACKAGE_INIT@
 
-# gh-1572: the packages whose targets the exported libraries link, from
-# `[project] find_packages` / `pkg_modules`; empty when there are none.
+# Find the packages this library depends on ([project] find_packages and
+# pkg_modules), so their targets exist before ours are loaded.
 @JM_FIND_DEPENDENCIES@
 
+# The library targets this package provides.
 include("${CMAKE_CURRENT_LIST_DIR}/<<project_underscore>>-targets.cmake")
 
-# gh-1600: a library a project installs besides lib<<project_underscore>> is a
-# COMPONENT of the package -- `find_package(<<project_underscore>> REQUIRED
-# COMPONENTS <name>)` -- found when its target was built and exported here,
-# which a library declared for other platforms is not.
+# Each additional library is a component of the package:
+# find_package(<<project_underscore>> REQUIRED COMPONENTS <name>). A component
+# is found if its library was built for this platform.
 foreach(_jm_comp IN LISTS <<project_underscore>>_FIND_COMPONENTS)
   if(TARGET <<project_underscore>>::${_jm_comp})
     set(<<project_underscore>>_${_jm_comp}_FOUND TRUE)
