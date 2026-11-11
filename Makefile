@@ -39,10 +39,12 @@ CHANGELOG_CODE_PATHS = src/just_makeit
 # and hangs `ci-image-check` off lint, so a PR moving bootstrap.toml or the
 # Dockerfile cannot merge on the old image. jm's own copy of all three
 # (gh-1797) is gone: one implementation, in canonical.
+# ubuntu:22.04 is the Consumer smoke legs' freedesktop pkg-config 0.29 and
+# CMake floor (gh-2625); docker/ci-extra.sh bakes that CMake into it.
 # GATE: the pinned CI image was built from this tree's image sources.
 HAS_CI_IMAGE   = 1
 CI_IMAGE_REPO  = ghcr.io/just-buildit/jm-ci
-CI_IMAGE_BASES = ubuntu:24.04
+CI_IMAGE_BASES = ubuntu:24.04 ubuntu:22.04
 CI_IMAGE_GROUPS = dev
 
 # `make pr-watch PR=<n>` (gh-1818): the standard's target, and the flag vendors
