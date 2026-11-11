@@ -663,6 +663,8 @@ _SHARED_MODULE_KEYS = frozenset(
         # (`_config.record_applied`).
         "applied_package",
         "applied_objects",
+        # gh-2608: and the reexports submodules its `__init__.py` imports.
+        "applied_reexports",
         "header",
         "depends_on",
         "extra_link_libs",
