@@ -1,5 +1,87 @@
 ## [Unreleased]
 
+## [0.127.0] — 2026-11-10
+
+### Added
+
+- **A bundled example walks a Visual Studio user through Windows**
+    (gh-2593). `jm example visual_studio` and its page in the docs gallery go
+    from `jm new` in PowerShell to a passing test run: create the `.venv`,
+    *File > Open > Folder*, pick **Release (clang-cl)**, *Build All*, then
+    Test Explorer and the Python suite, each IDE action next to the
+    `cmake --preset` / `cmake --build --preset` / `ctest --preset` line it
+    maps to. The example's test runs the PowerShell lines the page shows, so
+    the Windows clang-cl CI job now drives the IDE's path, and it checks
+    every preset name and the toolbar label against the generated
+    `CMakePresets.json`. `docs/windows.md` links to it.
+
+### Changed
+
+- **The `accumulator` example declares an `int32_t` param, so the Windows
+    examples job runs an `int32_t` parse at its range edges** (gh-2280).
+    gh-2269 moved `int32_t` arguments from a parse through C `long` to one
+    through `long long`, so the refusal reads "out of range for int32_t
+    [lo, hi]" whatever the platform's `long` is. Only a test of the type
+    table held that, and no bundled example passed an out-of-range
+    `int32_t`, so no LLP64 (Windows, 32-bit `long`) build ever ran it.
+    `AccCf64.add_int(k)` now takes `--param "k:int32_t"`. The example's test
+    reads back `INT32_MIN`, `INT32_MAX` and in-range values exactly, and
+    requires `2**31` and `-2**31 - 1` to raise the range-check message, on
+    every leg that builds the examples, the Windows clang-cl job included.
+    The README teaches the range check, and the method's header doctest
+    shows it.
+
+### Fixed
+
+- **Two jm libraries' headers compile together on Windows** (gh-1570). On
+    the MSVC ABI `clib_common.h` defines `static inline` complex shims
+    (`jm_cabsf` and the rest) under each package's own include guard, so a
+    consumer including two installed jm packages defined every shim twice
+    and failed to compile. Each shim is now guarded by itself
+    (`JM_SHIM_<NAME>`, and stands down when the C99 name is already
+    remapped), with the remap that routes the C99 name to it, so any mix of
+    packages -- built by different jm versions too -- defines each shim
+    exactly once. A package built before this release must be included
+    first. Found by running gh-1583's side-by-side consumer test on the
+    clang-cl leg, which now runs every project-environment test.
+
+- **A generated benchmark builds warning-clean under clang-cl** (gh-2294).
+    `jm_bench.h` called `fopen` and `localtime`. The Windows UCRT
+    deprecates both in favour of their `_s` forms, and clang-cl warns about
+    them by default, so a bench built with `-Werror` on Windows failed in
+    the shared header rather than in anything the author wrote. On Windows
+    the header now calls `fopen_s` and `localtime_s`; every other platform
+    is unchanged. jm's own compiled tests found this the first time they
+    ran under clang-cl.
+
+- **`upgrade`, `build` and `bench` print project paths with forward
+    slashes on every platform** (gh-2294). Eight messages printed a path
+    relative to the project the way the OS spells it, so on Windows
+    `jm upgrade` listed `native\src\nco\nco_core.c`. That disagreed with
+    every other path jm prints and with what the manifest records. They
+    now print `native/src/nco/nco_core.c` everywhere.
+
+- **The bundled examples run jm the way the test suite does** (gh-2597).
+    Four in-process runners had grown, and only the suite's cleared jm's
+    manifest cache before a command (gh-2095) and captured output at the
+    file descriptor (gh-1374); in the `enum_constants` and `stale_project`
+    examples a cmake, ctest or pytest child's output went past the capture.
+    `just_makeit._example.run_cli` is now the one runner, the examples call
+    it through `run_jm`, the suite's `run_cli` adapts it, and a test refuses
+    `main()` called anywhere else.
+
+- **A generated project's `bootstrap.toml` installs the Windows toolchain**
+    (gh-2598). It had no Windows table, so on Windows `make install-deps`
+    installed nothing, and `docs/windows.md`'s prerequisites existed only as
+    prose. It now carries a `[dev.winget]` table: the Visual Studio Build
+    Tools with the *Desktop development with C++* workload and the *C++
+    Clang Compiler for Windows* component (`vs_requires`). `install-deps`
+    asks `vswhere` for an instance with both and adds whatever is missing.
+    `bootstrap.toml` is create-only, so an existing project gets the table
+    by copying it from a fresh `jm new`. jm's own `bootstrap.toml` drops
+    `[dev.msys2]`, the retired MinGW toolchain, for the same table plus
+    make, uv and Git.
+
 ## [0.126.1] — 2026-11-09
 
 ### Fixed
