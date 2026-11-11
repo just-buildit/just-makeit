@@ -27,10 +27,19 @@
       3. Installs just-makeit into it with that venv's own `python -m pip`,
          unless the version there is already the latest: then nothing is
          downloaded or written ("already current").
-      4. Puts the venv's Scripts folder FIRST on this session's PATH, so
-         `jm` works the moment the script ends.
-      5. Runs `jm --version` through that PATH, to prove it.
-      6. Reports whether clang-cl and cmake are on PATH, which building a
+      4. Copies the venv's console-script launchers (jm.exe,
+         just-makeit.exe, ...: every one just-makeit declares, read from
+         its entry points) into %USERPROFILE%\.local\bin, beside jbx. A
+         pip launcher carries its venv python's absolute path, as a uv
+         tool's does, so a copy runs from anywhere. A file there that is
+         not a just-makeit launcher is never replaced: it is named, and
+         the rest are copied.
+      5. Puts the venv's Scripts folder FIRST on this session's PATH, then
+         that folder, so `jm` works the moment the script ends; and when
+         the folder is not on your user Path, says that `jbx update-path`
+         keeps it there for new windows.
+      6. Runs `jm --version` through that PATH, to prove it.
+      7. Reports whether clang-cl and cmake are on PATH, which building a
          generated project needs. A missing one is a warning, not a
          failure: jm itself works without them. A Developer PowerShell for
          VS has both; jm does not install a compiler.
@@ -42,9 +51,10 @@
     one, and makes uv warn that the active environment is not the
     project's. Only PATH is touched, so neither happens.
 
-    Session only, as install.sh is: no profile and no user PATH is edited.
-    In a new PowerShell window, run the same one-liner again to get `jm`
-    back; with jm already current it only sets PATH, in a second or two.
+    This script edits no profile and no user Path itself: `jbx
+    update-path` does that, once. Without it, run the same line again in a
+    new window to get `jm` back; with jm already current it only sets
+    PATH, in a second or two.
 
     Safe to `iex`, and to dot-source as a script block (how jbx runs it,
     so the PATH change reaches the caller): nothing here calls `exit`, its
@@ -66,6 +76,8 @@
       JM_INSTALL_FROM  what to install instead of just-makeit from PyPI:
                        a wheel file, as CI does to test its own build
       JM_PYTHON        the Python to create the venv with; skips the search
+      JM_BIN_DIR       where the launchers are copied
+                       (default %USERPROFILE%\.local\bin; tests)
 
     install.sh's --check has no twin: `iex` has no exit status to carry a
     verdict in.
@@ -323,6 +335,106 @@ function Add-JmPath {
     $env:PATH = (@($Dir) + $rest) -join $sep
 }
 
+function Get-JmBinDir {
+    <#
+    .SYNOPSIS
+        Where the launchers go: JM_BIN_DIR, else ~\.local\bin, the
+        folder jbx's installers put jbx in.
+    #>
+    if ($env:JM_BIN_DIR) { return $env:JM_BIN_DIR }
+    Join-Path (Join-Path $HOME '.local') 'bin'
+}
+
+function Get-JmScriptName {
+    <#
+    .SYNOPSIS
+        The console scripts the venv's just-makeit declares, by name.
+    .DESCRIPTION
+        Read from the installed distribution's entry points, so a command
+        added to pyproject.toml is copied with no edit here. No double
+        quote in the probe (see Get-JmPythonVersion).
+    #>
+    param([Parameter(Mandatory)][string]$Python)
+    $probe = 'from importlib.metadata import distribution as d; ' +
+        "print(chr(10).join(e.name for e in d('$JmPackage').entry_points " +
+        "if e.group == 'console_scripts'))"
+    @(Invoke-JmQuiet -Command @($Python) -Arguments @('-c', $probe) |
+            ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+}
+
+function Test-JmLauncher {
+    <#
+    .SYNOPSIS
+        True when Path is a just-makeit launcher: a file jm put there.
+    .DESCRIPTION
+        A pip launcher holds the script it runs, `from just_makeit... import
+        main`, as plain text (an .exe appends it uncompressed; a POSIX
+        script is that text), so the bytes name the package. Anything else
+        is the user's, and is never replaced.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    [Text.Encoding]::ASCII.GetString($bytes).Contains('just_makeit.')
+}
+
+function Copy-JmLauncher {
+    <#
+    .SYNOPSIS
+        Copy each console-script launcher from the venv into Dir; the
+        names it refused.
+    .DESCRIPTION
+        A launcher already identical is left untouched, so a re-run writes
+        nothing; one jm wrote earlier is replaced; any other file of that
+        name is left as it is and named.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Venv,
+        [Parameter(Mandatory)][string]$Dir
+    )
+    $ext = if (Test-JmWindows) { '.exe' } else { '' }
+    $names = @(Get-JmScriptName -Python (Get-JmVenvPython -Venv $Venv))
+    $copied = 0
+    foreach ($name in $names) {
+        $src = Join-Path (Get-JmVenvBin -Venv $Venv) "$name$ext"
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }
+        if (-not (Test-Path -LiteralPath $Dir)) {
+            New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+        }
+        $dest = Join-Path $Dir "$name$ext"
+        if (Test-Path -LiteralPath $dest) {
+            if (-not (Test-JmLauncher -Path $dest)) {
+                Write-Warning "$dest is not a launcher jm made; left as it is"
+                $name
+                continue
+            }
+            $a = [Convert]::ToBase64String([IO.File]::ReadAllBytes($src))
+            $b = [Convert]::ToBase64String([IO.File]::ReadAllBytes($dest))
+            if ($a -eq $b) { $copied++; continue }
+        }
+        Copy-Item -LiteralPath $src -Destination $dest -Force
+        $copied++
+    }
+    Write-Information "  ok  $copied launcher(s) in $Dir"
+}
+
+function Test-JmOnUserPath {
+    <#
+    .SYNOPSIS
+        True when Dir is on the user Path new windows start with. Off
+        Windows there is no such thing, and the answer is this session's.
+    #>
+    param([Parameter(Mandatory)][string]$Dir)
+    $path = $env:PATH
+    if (Test-JmWindows) {
+        $path = [Environment]::GetEnvironmentVariable('Path', 'User')
+    }
+    $want = $Dir.TrimEnd('\', '/')
+    $sep = [regex]::Escape([IO.Path]::PathSeparator)
+    $hits = @([string]$path -split $sep |
+            Where-Object { $_ -and $_.TrimEnd('\', '/') -eq $want })
+    $hits.Count -gt 0
+}
+
 function Write-JmToolchain {
     <#
     .SYNOPSIS
@@ -423,7 +535,11 @@ function Install-JustMakeit {
         Write-Information "  ok  just-makeit $installed in $venv"
     }
 
-    # -- 4. PATH, and the proof ---------------------------------------------
+    # -- 4. The launchers, PATH, and the proof -----------------------------
+    $local = Get-JmBinDir
+    $refused = @(Copy-JmLauncher -Venv $venv -Dir $local)
+    # Venv first: a refused name in $local must not shadow the venv's jm.
+    Add-JmPath -Dir $local
     Add-JmPath -Dir $bin
     $jm = Find-JmCommand -Name jm
     $ours = $jm -and $jm.Source.StartsWith($bin,
@@ -447,8 +563,18 @@ function Install-JustMakeit {
     Write-Information ''
     Write-Information '    jm new my_project --object my_object'
     Write-Information ''
-    Write-Information '  In a new window, run the same line again to put'
-    Write-Information '  jm back on PATH (nothing is downloaded when current).'
+    if ($refused.Count -gt 0) {
+        Write-Information ("  $($refused -join ', ') not copied to $local " +
+            '(see the warning above).')
+    }
+    if (-not (Test-JmOnUserPath -Dir $local)) {
+        Write-Information "  $local is not on your user Path, so new windows"
+        Write-Information '  will not find jm. To keep it, run once:'
+        Write-Information ''
+        Write-Information '    jbx update-path'
+        Write-Information ''
+        Write-Information '  or run the install line again in each new window.'
+    }
     Write-Information ''
 }
 
@@ -467,8 +593,11 @@ try {
     # A pipeline, not foreach: a loop variable would be left behind too.
     'Test-JmWindows', 'Invoke-JmQuiet', 'Find-JmCommand', 'Get-JmVenvDir',
     'Get-JmVenvBin', 'Get-JmVenvPython', 'Get-JmPythonCandidate',
-    'Get-JmPythonVersion', 'Test-JmPythonFloor', 'Find-JmPython', 'Get-JmInstalledVersion',
-    'Get-JmTargetVersion', 'Add-JmPath', 'Write-JmToolchain',
+    'Get-JmPythonVersion', 'Test-JmPythonFloor', 'Find-JmPython',
+    'Get-JmInstalledVersion', 'Get-JmTargetVersion', 'Add-JmPath',
+    'Get-JmBinDir',
+    'Get-JmScriptName', 'Test-JmLauncher', 'Copy-JmLauncher',
+    'Test-JmOnUserPath', 'Write-JmToolchain',
     'Install-JustMakeit' | ForEach-Object {
         Remove-Item -Path "Function:\$_" -ErrorAction SilentlyContinue
     }

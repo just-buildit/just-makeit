@@ -69,7 +69,9 @@ yet, [getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#gettin
 
     ```sh
     jbx just-makeit:install
-        ```
+    ```
+
+    If `jm` is not found in a new shell, run `jbx update-path` once.
 
     On Linux and macOS jbx runs the curl installer as a child, so it links
     `jm` into `~/.local/bin`, beside jbx, and says so if that directory is
@@ -81,6 +83,8 @@ yet, [getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#gettin
     ```sh
     . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     ```
+
+    If `jm` is not found in a new shell, run `jbx update-path` once.
 
 === "pip"
 

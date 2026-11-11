@@ -19,6 +19,8 @@ Linux and macOS ([getting jbx](https://just-buildit.github.io/just-bashit/just-r
 jbx just-makeit:install
 ```
 
+If `jm` is not found in a new shell, run `jbx update-path` once.
+
 From PowerShell, jbx runs jm's Windows installer, `install.ps1`, in the window
 itself. Without jbx, run that installer directly:
 
@@ -27,8 +29,10 @@ irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
 ```
 
 Either way it installs just-makeit into a venv of its own,
-`%LOCALAPPDATA%\just-makeit\venv`, and puts that venv's `Scripts` folder first
-on this window's `PATH`, so `jm` works at once. Then it reports whether
+`%LOCALAPPDATA%\just-makeit\venv`, copies its launchers (`jm.exe`,
+`just-makeit.exe`, ...) into `%USERPROFILE%\.local\bin` beside jbx, never
+over a file it did not put there, and puts both folders on this window's
+`PATH`, so `jm` works at once. Then it reports whether
 clang-cl and cmake are on `PATH`, which a build needs: a warning, not a
 failure, since jm itself runs without them, and a Developer PowerShell for VS
 has both. It finds Python through the `py` launcher, then `python` on `PATH`,
@@ -36,10 +40,11 @@ then `uv python find`.
 
 The venv is put on `PATH`, never activated. A project makes its own `.venv`
 (below), and an activated venv sets `VIRTUAL_ENV`, which makes `py` run that
-venv's Python and makes uv warn that it is not the project's. Nothing outside
-the window changes either: no profile and no user `PATH` is edited, as with
-the Linux and macOS installer. In a new window, run the same line again; when
-jm is current it downloads nothing and only sets `PATH`.
+venv's Python and makes uv warn that it is not the project's. The installer
+edits no profile and no user `PATH` itself; when `%USERPROFILE%\.local\bin`
+is not on your user `PATH` it says so, and `jbx update-path` puts it there
+once, for every new window. Without jbx, run the install line again in a new
+window; when jm is current it downloads nothing and only sets `PATH`.
 
 Options are environment variables, since `irm | iex` passes no arguments:
 `$env:JM_VENV` picks the venv, `$env:JM_FORCE = '1'` rebuilds it, and

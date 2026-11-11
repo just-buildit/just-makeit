@@ -50,6 +50,8 @@ With jbx, the recommended way on every platform
 jbx just-makeit:install
 ```
 
+If `jm` is not found in a new shell, run `jbx update-path` once.
+
 Or with the curl installer, sourced, which also activates the venv
 in this shell:
 

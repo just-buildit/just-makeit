@@ -30,6 +30,8 @@ ______________________________________________________________________
 jbx just-makeit:install
 ```
 
+If `jm` is not found in a new shell, run `jbx update-path` once.
+
 On Linux and macOS jbx runs `install.sh` (below) as a child, so it links
 `jm` and jm's other commands into `~/.local/bin`, beside jbx, and says so if
 that directory is not on your `PATH`. From Windows PowerShell,

@@ -54,22 +54,47 @@ def published(tmp_path_factory) -> Path:
     return out
 
 
-def _aliases(site: Path) -> dict:
-    """``[aliases]`` of the published ``aliases.toml``."""
+def _alias_tables(site: Path) -> "dict[str, dict]":
+    """Every alias table of the published ``aliases.toml``, by shell.
+
+    ``[aliases]`` is what jbx reads from bash; ``[aliases.ps1]`` (TOML: a
+    table nested in it) what it reads from PowerShell (just-bashit#235).
+    Returned as ``{"sh": {...}, "ps1": {...}}``, each name -> URL.
+    """
     f = site / "aliases.toml"
     assert f.is_file(), "the publish recipe ships no aliases.toml"
     with f.open("rb") as fh:
-        return C.tomllib.load(fh)["aliases"]
+        top = C.tomllib.load(fh)["aliases"]
+    tables = {"sh": {k: v for k, v in top.items() if isinstance(v, str)}}
+    for shell, table in top.items():
+        if isinstance(table, dict):
+            tables[shell] = table
+    return tables
+
+
+def _aliases(site: Path) -> dict:
+    """``[aliases]`` of the published ``aliases.toml``: bash's names."""
+    return _alias_tables(site)["sh"]
 
 
 def test_install_deps_is_aliased(published):
     assert "install-deps" in _aliases(published)
 
 
+def test_powershell_install_is_aliased(published):
+    assert "install" in _alias_tables(published).get("ps1", {})
+
+
 def test_every_alias_targets_a_file_the_site_ships(published):
+    """Every table, bash's and PowerShell's: registration-free."""
     base = _site_url()
     bad = []
-    for name, url in sorted(_aliases(published).items()):
+    rows = [
+        (f"[{shell}] {name}", url)
+        for shell, table in sorted(_alias_tables(published).items())
+        for name, url in sorted(table.items())
+    ]
+    for name, url in rows:
         if urlparse(url).scheme != "https" or not url.startswith(base + "/"):
             bad.append(f"{name}: {url!r} is not an https URL under {base}/")
             continue
@@ -142,13 +167,14 @@ def test_every_jbx_just_makeit_name_resolves(published):
     the published site answers each, in each shell it is shown in."""
     want = _jbx_names()
     assert want.get("install") == {".sh", ".ps1"}, want
-    aliases = _aliases(published)
+    tables = _alias_tables(published)
+    aliased = {".sh": tables["sh"], ".ps1": tables.get("ps1", {})}
     bad = [
         f"jbx just-makeit:{name} needs {name}{ext}, which is not shipped"
         for name, exts in sorted(want.items())
         for ext in sorted(exts)
         if not (published / f"{name}{ext}").is_file()
-        and not (ext == ".sh" and name in aliases)
+        and name not in aliased[ext]
     ]
     assert not bad, "\n".join(bad)
 
