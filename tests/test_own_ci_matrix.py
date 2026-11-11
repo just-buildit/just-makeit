@@ -1062,3 +1062,50 @@ class TestTheExamplesBuildOnTheNewestPython:
             ]
             assert pins == ["${{ matrix.python-version }}"], (job, pins)
             assert job in jobs["ci-passed"]["needs"], job
+
+
+def _locked_numpy_wheels() -> "list[str]":
+    """Every numpy wheel filename uv.lock records, across its versions."""
+    from just_makeit import _config as C
+
+    with open(ROOT / "uv.lock", "rb") as fh:
+        lock = C.tomllib.load(fh)
+    found = [
+        w["url"].rsplit("/", 1)[-1]
+        for p in lock.get("package", [])
+        if p.get("name") == "numpy"
+        for w in p.get("wheels", [])
+    ]
+    if not found:
+        raise AssertionError("uv.lock records no numpy wheel at all")
+    return found
+
+
+@pytest.mark.parametrize("plat", ["win_amd64", "manylinux"])
+def test_every_declared_python_has_a_locked_numpy_wheel(plat: str) -> None:
+    """gh-2626: the examples' env installs numpy from uv.lock. With no
+    wheel for a Python (numpy 2.5.1 had none for 3.15) uv built the
+    sdist: on Windows meson died on Git's GNU link.exe, elsewhere it passed
+    slowly on gcc. pyproject's `[tool.uv] no-build-package` turns that into
+    "no wheel" at install; this says so before CI does, for every
+    classifier Python on the platforms its newest examples legs run."""
+    wheels = _locked_numpy_wheels()
+    missing = [
+        py
+        for py in sorted(_classifiers(), key=_key)
+        for tag in ["cp" + py.replace(".", "")]
+        if not any(f"-{tag}-{tag}-" in w and plat in w for w in wheels)
+    ]
+    assert not missing, (
+        f"uv.lock's numpy has no {plat} wheel for {missing}: re-lock with "
+        "`uv lock --upgrade-package numpy` once numpy publishes one"
+    )
+
+
+def test_numpy_is_never_built_from_source() -> None:
+    """The refusal the test above anticipates, in the project's config."""
+    from just_makeit import _config as C
+
+    with open(PYPROJECT, "rb") as fh:
+        uv = C.tomllib.load(fh).get("tool", {}).get("uv", {})
+    assert "numpy" in uv.get("no-build-package", []), uv
