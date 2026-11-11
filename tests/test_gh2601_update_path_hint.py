@@ -29,8 +29,13 @@ from _installers import JBX_INSTALL_LINE, ROOT, UPDATE_PATH_HINT
 NOT_PAGES = re.compile(r"^(CHANGELOG\.md|changelog\.d/)")
 
 _FENCE = re.compile(
-    r"^(?P<ind> *)```[^\n]*\n(?P<body>.*?)^(?P=ind)```\n", re.M | re.S
+    r"^(?P<ind> *)```(?P<info>[^\n]*)\n(?P<body>.*?)^(?P=ind)```\n",
+    re.M | re.S,
 )
+
+#: An example step's embed, ```` ```{01_scaffold.ps1}``` ````: assemble.py
+#: puts that file's text in the block.
+_EMBED = re.compile(r"^\{([^}]+)\}$")
 
 
 def _pages() -> "list[Path]":
@@ -44,13 +49,28 @@ def _pages() -> "list[Path]":
     return [ROOT / f for f in out if not NOT_PAGES.match(f)]
 
 
-def _blocks_missing_the_hint(text: str) -> "list[int]":
+def _body(m: "re.Match", where: Path) -> str:
+    """A block's text as the reader sees it: an embed is its file's."""
+    embed = _EMBED.match(m.group("info").strip())
+    if embed and (where / embed.group(1)).is_file():
+        return (where / embed.group(1)).read_text(encoding="utf-8")
+    return m.group("body")
+
+
+def _install_blocks(text: str, where: Path) -> "list[re.Match]":
+    """The fenced blocks holding the install line, as a reader copies it."""
+    return [
+        m
+        for m in _FENCE.finditer(text)
+        if JBX_INSTALL_LINE
+        in [ln.strip() for ln in _body(m, where).splitlines()]
+    ]
+
+
+def _blocks_missing_the_hint(text: str, where: Path) -> "list[int]":
     """Line numbers of install-line blocks not followed by the hint."""
     bad = []
-    for m in _FENCE.finditer(text):
-        lines = [ln.strip() for ln in m.group("body").splitlines()]
-        if JBX_INSTALL_LINE not in lines:
-            continue
+    for m in _install_blocks(text, where):
         after = text[m.end() :].lstrip("\n")
         if not after.startswith(m.group("ind") + UPDATE_PATH_HINT):
             bad.append(text[: m.start()].count("\n") + 1)
@@ -73,8 +93,17 @@ def test_every_install_line_block_is_followed_by_the_hint():
     for page in _pages():
         text = page.read_text(encoding="utf-8")
         blocks += text.count(JBX_INSTALL_LINE)
-        for line in _blocks_missing_the_hint(text):
+        for line in _blocks_missing_the_hint(text, page.parent):
             bad.append(f"{page.relative_to(ROOT)}:{line}")
+        # And only there: a stray copy after another block (the curl
+        # installer's, say) tells a reader without jbx to run jbx.
+        hints = text.count(UPDATE_PATH_HINT)
+        owned = len(_install_blocks(text, page.parent))
+        if hints > owned:
+            bad.append(
+                f"{page.relative_to(ROOT)}: {hints} copies of the sentence"
+                f" for {owned} install block(s)"
+            )
     assert blocks >= 10, blocks
     assert not bad, (
         f"these blocks show `{JBX_INSTALL_LINE}` without the next paragraph"
