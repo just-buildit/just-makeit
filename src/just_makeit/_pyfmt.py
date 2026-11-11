@@ -52,7 +52,7 @@ from . import _config as C
 from . import _fmtprobe
 from ._docstring import (
     STUB_TARGET_WIDTH,
-    summary_docstring,
+    summary_literal,
     wrap_summary,
 )
 
@@ -196,7 +196,7 @@ def reflow_oneline_docstring(
     m = _ONELINE_DOC_RE.match(line)
     if not m or '"""' in m["body"]:
         return [line]
-    block = summary_docstring(m["body"], indent=len(m["indent"]), width=width)
+    block = summary_literal(m["body"], indent=len(m["indent"]), width=width)
     if m["raw"]:  # keep the r-prefix on the reopened delimiter
         block[0] = block[0].replace('"""', 'r"""', 1)
     return block

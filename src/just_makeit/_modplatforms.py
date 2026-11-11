@@ -214,7 +214,15 @@ def _block_re(leaf: str) -> "re.Pattern[str]":
 
 
 def _block(leaf: str, names: "list[str]", chosen: "tuple[str, ...]") -> str:
-    from ._object import _fmt_all, _fmt_from_import
+    from ._object import _fmt_all, _fmt_from_import, is_public
+
+    # gh-2607: a private name is imported but never listed; a block of
+    # nothing but private names has no `__all__ +=` to write at all.
+    listed = (
+        f"\n{_fmt_all(names, '    ', '+=')}\n"
+        if any(is_public(n) for n in names)
+        else ""
+    )
 
     # Double quotes, as a project's formatter would write them; a string it
     # rewrites is drift on every apply.
@@ -230,8 +238,7 @@ def _block(leaf: str, names: "list[str]", chosen: "tuple[str, ...]") -> str:
         f"{_fmt_from_import(leaf, names, '    ')}\n"
         # The blank line is the formatter's (ruff puts one after an import in
         # a nested block); writing it here makes `ruff format` a no-op.
-        f"\n"
-        f"{_fmt_all(names, '    ', '+=')}\n"
+        f"{listed}"
     )
 
 

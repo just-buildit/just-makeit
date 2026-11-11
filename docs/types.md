@@ -620,6 +620,32 @@ under one name, and its package re-exports it with the module's types, so
 does (gh-2372). The `.pyi` declares the attribute as `tuple[str, ...]` or
 `dict[int, str]`.
 
+Each published attribute carries a docstring in the `.pyi`, so a
+documentation tool such as mkdocstrings lists it (it hides an attribute
+that has none). Write it with the `[[enum]]` row's `doc` key:
+
+```toml
+[[enum]]
+name = "eng_state"
+values = ["searching", "refining", "tracking"]
+doc = "Tracking-loop state code -> name, as Eng.state reports it."
+```
+
+```python
+ENG_STATE: tuple[str, ...]
+"""Tracking-loop state code -> name, as Eng.state reports it."""
+```
+
+Without `doc`, jm writes one naming the enum and its shape:
+
+```python
+ENG_STATE: tuple[str, ...]
+"""Names of the eng_state values, indexed by value."""
+```
+
+The runtime value is a plain `tuple` or `dict`, which cannot carry a
+docstring of its own, so the `.pyi` is where it is read from (gh-2606).
+
 A module object publishes only the enums whose tables its binding fragment
 (`<module>_ext_<object>.c`) defines. The fragment is yours, so `apply` does
 not add a table to it when you declare `enum =` on a param it already

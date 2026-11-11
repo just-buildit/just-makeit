@@ -2628,7 +2628,8 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     *real_path*, preserving user content. Returns True if modified."""
     from ._init import _splice_init_py, ensure_dll_preamble
     from ._object import _import_re, _parse_import_names
-    from ._object import sort_reexports, wrap_all
+    from ._object import _PLAIN_ALL_RE, _fmt_all, _parse_all_names
+    from ._object import prune_reexports, sort_reexports, wrap_all
 
     temp_text = temp_path.read_text(encoding="utf-8")
     # Both sides read in either form: gh-2514 writes a long re-export
@@ -2642,6 +2643,24 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     # the gh-2571 sort may move.
     owned = {comp for comp, _ in imports}
     changed = False
+    # gh-2616: and the names each of them imports now. A statement of jm's
+    # importing a name it no longer renders (a changed `class_name`), or a
+    # name twice, is cut back, and a dropped name leaves a plain `__all__`.
+    want: "dict[str, list[str]]" = {}
+    for comp, name in imports:
+        want.setdefault(comp, []).append(name)
+    before = real_path.read_text(encoding="utf-8")
+    pruned, dropped = prune_reexports(before, want)
+    if dropped:
+        am = _PLAIN_ALL_RE.search(pruned)
+        if am:
+            kept = [
+                n for n in _parse_all_names(am.group(1)) if n not in dropped
+            ]
+            pruned = pruned[: am.start()] + _fmt_all(kept) + pruned[am.end() :]
+    if pruned != before:
+        _textio.write_text(real_path, pruned)
+        changed = True
     for comp, Component in imports:
         # A no-op when the line is there already, in either form.
         changed |= _splice_init_py(real_path, comp, Component, owned)
@@ -2672,6 +2691,7 @@ def _merge_module_init_file(
     reexports: dict[str, list[str]] | None = None,
     siblings: list[str] | None = None,
     platforms: "dict[str, tuple[str, ...] | None] | None" = None,
+    stale: "list[str] | None" = None,
 ) -> bool:
     """Run _merge_module_init against *real_path*, using the export list
     parsed out of *temp_path*'s import line. Preserves any user wrapper
@@ -2680,7 +2700,9 @@ def _merge_module_init_file(
     re-exported names regenerate cleanly instead of being hand-edited glue.
     *siblings* (gh-523) are the leaf names of other modules sharing this
     package — their exports are protected from the ``__all__`` rewrite.
-    *platforms* (gh-1463) guards a platform-restricted leaf's import."""
+    *platforms* (gh-1463) guards a platform-restricted leaf's import.
+    *stale* (gh-2608) are the reexports whose import jm rendered and the
+    manifest dropped, removed from the file."""
     from ._object import (
         _leading_docstring,
         _merge_module_docstring,
@@ -2718,6 +2740,7 @@ def _merge_module_init_file(
         reexports,
         siblings=siblings,
         platforms=platforms,
+        stale=stale or (),
     )
     # gh-695: carry the module docstring across too. `[module.X] doc` reached
     # this file only via the template, which apply renders into *temp* and
@@ -3017,6 +3040,11 @@ def _reconciled_object_core_cmake(
     # just before the test executable (matches _inject_object_core_cmake).
     if include_dirs and include_dirs[0] not in new:
         anchor = f"add_executable(test_{comp}_core"
+        # Keep the target's label line with it.
+        from ._render import TEST_LABEL
+
+        if TEST_LABEL + anchor in new:
+            anchor = TEST_LABEL + anchor
         if anchor in new:
             block = (
                 f"target_include_directories({comp}_core PUBLIC\n    "
@@ -3486,6 +3514,7 @@ def _sync_aggregates(
         # below the re-exports survive (the gh#1 contract). The import line is
         # `from .<leaf> import ...`, so merge against the leaf.
         from ._object import package_siblings as _pkg_siblings
+        from ._object import stale_reexports as _stale_reexports
 
         mod_init = root / "src" / pkg / out_pkg / "__init__.py"
         temp_mod_init = temp_root / "src" / pkg / out_pkg / "__init__.py"
@@ -3497,6 +3526,7 @@ def _sync_aggregates(
                 C.module_reexports(cfg, mod),
                 siblings=_pkg_siblings(cfg, mod),
                 platforms=_modplatforms.init_platforms(cfg, mod),
+                stale=_stale_reexports(cfg, mod),
             ):
                 updated.append(mod_init)
         # The rest of the module wiring is pure-generated.

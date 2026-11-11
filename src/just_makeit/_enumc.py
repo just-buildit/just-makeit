@@ -62,6 +62,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from . import _incpath as INC
+from ._docstring import summary_docstring
 
 #: The shared string-enum → index lookup, as C.
 #:
@@ -296,8 +297,9 @@ def publication(
     Each entry is a dict with keys ``enum`` (the ``[[enum]]`` name), ``py``
     (the module attribute, :func:`py_name`), ``table`` (the C array of
     choice strings, :func:`symbols`), ``count`` (its length), ``dense`` (a
-    tuple, else a dict keyed by ``table_c``) and ``consts`` (the C constant
-    array's name, or ``None`` when the enum has none).
+    tuple, else a dict keyed by ``table_c``), ``consts`` (the C constant
+    array's name, or ``None`` when the enum has none) and ``doc`` (the
+    attribute's docstring, :func:`doc_of`).
 
     >>> e = publication(["k"], {"k": ["a", "b"]}, prefix="Acq")[0]
     >>> e["py"], e["table"], e["dense"], e["consts"]
@@ -308,17 +310,56 @@ def publication(
         choices = list((enums or {}).get(name, []))
         consts = constants_of(enums, name)
         _, table = symbols(prefix, name)
+        dense = _is_dense(consts, len(choices))
         out.append(
             {
                 "enum": name,
                 "py": py_name(name),
                 "table": table,
                 "count": len(choices),
-                "dense": _is_dense(consts, len(choices)),
+                "dense": dense,
                 "consts": f"{table}_c" if consts else None,
+                "doc": doc_of(enums, name, dense),
             }
         )
     return out
+
+
+def doc_of(
+    enums: "dict[str, list[str]] | None", name: str, dense: bool
+) -> str:
+    """The docstring of the attribute enum *name* is published under.
+
+    gh-2606. The ``[[enum]]`` row's ``doc`` key when it declares one, read
+    off the registry (``_config.EnumChoices.doc``) as ``constants`` is.
+    Otherwise a generated sentence, so a published table is never
+    undocumented: a documentation tool such as mkdocstrings hides an
+    attribute that has no docstring.
+
+    The sentence is for the reader of an API reference, so it carries no
+    manifest syntax: it names the enum, says how the value is looked up --
+    by position for a tuple, by code for a dict -- and for a dict names
+    the first and last C constants, the codes a C reader knows.
+
+    >>> from just_makeit._config import EnumChoices as E
+    >>> doc_of({"k": E(["a"], doc="Mode code to name.")}, "k", True)
+    'Mode code to name.'
+    >>> print(doc_of({"k": E(["a", "b"])}, "k", True))
+    Names of the k values, indexed by value.
+    >>> print(doc_of({"k": E(["a", "b"], ["K_A", "K_B"])}, "k", False))
+    Names of the k values, keyed by code (K_A .. K_B).
+    """
+    declared = str(getattr((enums or {}).get(name), "doc", "") or "")
+    if declared.strip():
+        return declared.strip()
+    head = f"Names of the {name} values, "
+    if dense:
+        return head + "indexed by value."
+    # Not dense means the enum declares `enumerators` (`_is_dense`), so
+    # there is a first and a last constant to name.
+    consts = constants_of(enums, name) or [""]
+    span = consts[0] if len(consts) == 1 else f"{consts[0]} .. {consts[-1]}"
+    return head + f"keyed by code ({span})."
 
 
 def _defines(mask: str, name: str) -> bool:
@@ -478,21 +519,29 @@ def publish_pyi(entries: "list[dict]") -> str:
     """The ``.pyi`` declarations for the values :func:`publish_c` adds.
 
     A dense enum is ``tuple[str, ...]`` and a constant-bound one
-    ``dict[int, str]``, matching the two shapes. Returns ``""`` for no
-    entries.
+    ``dict[int, str]``, matching the two shapes. Each annotation is followed
+    by its attribute docstring, the entry's ``doc`` (gh-2606) -- how a
+    ``.pyi`` documents a module attribute. Returns ``""`` for no entries.
 
     The template supplies the newline that ends the block, so this returns
     one trailing newline: the blank line before ``@final`` is then the same
     whether or not an enum is published, which the formatter requires.
 
-    >>> publish_pyi(publication(["k"], {"k": ["a"]}))
-    'K: tuple[str, ...]\\n'
+    >>> from just_makeit._config import EnumChoices as E
+    >>> print(publish_pyi(publication(["k"], {"k": E(["a"], doc="Kinds.")})))
+    K: tuple[str, ...]
+    \"\"\"Kinds.\"\"\"
+    <BLANKLINE>
     """
-    lines = [
-        f"{e['py']}: "
-        + ("tuple[str, ...]" if e["dense"] else "dict[int, str]")
-        for e in entries
-    ]
+    lines: list[str] = []
+    for e in entries:
+        lines.append(
+            f"{e['py']}: "
+            + ("tuple[str, ...]" if e["dense"] else "dict[int, str]")
+        )
+        # The one summary-docstring emitter, at module level, so a long
+        # `doc` is wrapped to the column target as a property's is.
+        lines += summary_docstring(e["doc"], indent=0)
     return "\n".join(lines) + "\n" if lines else ""
 
 
