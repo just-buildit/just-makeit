@@ -55,7 +55,7 @@ A venv uv makes has no pip, by design: add packages to it with `uv add` or
 `uv pip install`, not `python -m pip`. Do not run `py -m venv .venv` over an
 existing `.venv` either; that does not add pip to it.
 
-When `.venv` is missing, the configure stops with `Python3_EXECUTABLE is ...\.venv\Scripts\python.exe, which does not exist`, giving both ways to
+When `.venv` is missing, the configure stops with `Python3_EXECUTABLE is .../.venv/Scripts/python.exe, which does not exist`, giving both ways to
 create it (gh-2610). The generated `Makefile` uses the same `.venv` when it
 exists, so `make` and the presets build against one interpreter.
 

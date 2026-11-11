@@ -13,7 +13,7 @@ from a **Developer PowerShell for VS**, which loads that environment:
 ```
 
 Open the folder only once step 3 has made `.venv`. Opened first, the
-configure stops with `Python3_EXECUTABLE is ...\.venv\Scripts\python.exe,
+configure stops with `Python3_EXECUTABLE is .../.venv/Scripts/python.exe,
 which does not exist`, and Visual Studio keeps that failed configure: create
 the `.venv` as in step 3, then **Project > Delete Cache and Reconfigure**.
 
