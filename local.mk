@@ -14,7 +14,7 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 coverage-subprocess-check coverage-shard \
                 gates-index gates-declared-check \
                 doppler-pin-check consumer-smoke install-history-update \
-                ci-test-legs site-files test-compiled
+                ci-test-legs site-files test-compiled release-verify-ci
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -234,6 +234,16 @@ install-history-update: ## Record the root install section's commands for adopt
 # runs every leg. tests/test_own_ci_matrix.py runs it for each event.
 ci-test-legs: ## Print matrix= for ci.yml's test job (MATRIX, TRIM, EVENT, TESTED)
 	@python3 scripts/ci-test-legs.py
+
+# release.yml's verify-ci (gh-2613): wait while main's CI run for SHA is
+# alive, then require $(CI_CHECK_NAME) green on it. REPO, SHA and GH_TOKEN
+# come from the environment; the check name and the CI workflow's file come
+# from the standard's own variables, not restated in the script. The waiting
+# rule and why it has no wall-clock cap: scripts/verify_ci.py's docstring.
+release-verify-ci: ## Wait for main's CI on SHA, then require it green (release)
+	@CI_CHECK_NAME='$(CI_CHECK_NAME)' \
+	 CI_WORKFLOW='$(notdir $(GATES_CI_FILE))' \
+	 python3 scripts/verify_ci.py
 
 # The files the published site carries that the docs build does not make:
 # `install.sh` (what `curl -fsSL <site>/install.sh` fetches) and
