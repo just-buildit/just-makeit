@@ -32,6 +32,16 @@ INSTALL_DEPS = ROOT / "src" / "just_makeit" / "scripts" / "install-deps.sh"
 #: Both, for a check that holds every installer to one rule.
 INSTALLERS = (INSTALL_SH, INSTALL_DEPS)
 
+#: The recommended install line, on every platform (gh-2601).
+JBX_INSTALL_LINE = "jbx just-makeit:install"
+
+#: The sentence that follows it on every page that shows it, word for word:
+#: the one fix when a new shell does not find jm. The pages carry copies;
+#: ``tests/test_gh2601_update_path_hint.py`` holds every copy to this one.
+UPDATE_PATH_HINT = (
+    "If `jm` is not found in a new shell, run `jbx update-path` once."
+)
+
 #: What names a per-manager install function: ``_install_apt`` -> ``apt``.
 INSTALL_PREFIX = "_install_"
 

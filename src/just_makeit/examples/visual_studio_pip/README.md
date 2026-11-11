@@ -50,6 +50,8 @@ cd my_vs
 jm object scale --state factor:double:2.0 --arg-type double --return-type double
 ```
 
+If `jm` is not found in a new shell, run `jbx update-path` once.
+
 The first line installs jm, the same in Windows PowerShell and
 PowerShell 7: from PowerShell,
 [jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
@@ -59,8 +61,7 @@ runs jm's Windows installer,
 `%USERPROFILE%\.local\bin`, and puts both folders on this window's `PATH`,
 so `jm` runs on the next line. It does not activate that venv: the
 project's own `.venv` comes in step 3, and an active venv would change what
-`py` and `uv` pick. If `jm` is not found in a new window, run
-`jbx update-path` once.
+`py` and `uv` pick.
 [Building on Windows](../windows.md#installing-jm) says more.
 
 `scale` is one object with one piece of state, `factor`, and a `step()` that
