@@ -72,12 +72,17 @@ printf '%s\n' "@@status $_snap_status" "@@before" "$_snap_before" \
 
 
 def _source(box: Box, *args: str, python: "str | None" = None):
-    """Source install.sh with *args* from a parent bash on *box*."""
+    """Source install.sh with *args* from a parent bash on *box*.
+
+    The parent is interactive (``-i``), as the terminal the README's
+    one-liner is typed into is: install.sh activates the venv only there,
+    and links jm into ``~/.local/bin`` from any other shell (gh-2601).
+    """
     env = box.env()
     if python is not None:
         env["PYTHON"] = python
     return subprocess.run(
-        [BASH, "-c", _PARENT, "parent", str(INSTALL_SH), *args],
+        [BASH, "-i", "-c", _PARENT, "parent", str(INSTALL_SH), *args],
         cwd=box.root,
         env=env,
         capture_output=True,

@@ -27,7 +27,6 @@ With jbx ([getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#g
 
 ```sh
 jbx just-makeit:install
-source /tmp/jm-venv/bin/activate   # Linux and macOS
 ```
 
 Or with pip:

@@ -5,10 +5,12 @@
 #
 #   . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
 #
-# ── Piped form (venv path printed at the end; activate manually):
+# ── As a child -- `jbx just-makeit:install`, `bash install.sh`, a pipe:
 #
 #   curl -fsSL https://just-buildit.github.io/just-makeit/install.sh | bash
-#   source /tmp/jm-venv/bin/activate
+#
+#   jm and the other commands are symlinked into ~/.local/bin instead of the
+#   venv being activated (an activation would die with the child); see 7.
 #
 # ── Options (append to the command):
 #
@@ -332,30 +334,102 @@ _jm_install() (
     fi
 )
 
-# ── 7. Run, then activate (only works when sourced; print hint otherwise) ─────
+# ── 7. Link jm into ~/.local/bin when this shell is not the user's ────────────
+#
+# Run as a child -- `jbx just-makeit:install` (which sources this file into a
+# throwaway `bash -c`), `bash install.sh`, a pipe -- an activated venv dies
+# with the child, so "activated" would be false. Instead each console script
+# the installed just-makeit declares (read from its entry points, not listed
+# here) is symlinked into ~/.local/bin, the directory jbx's own get-jb.sh
+# installs into, pointing at the venv's bin so a re-run's upgrade is picked
+# up. A name there that is not a symlink into a jm venv is never replaced:
+# it is named, and the rest are linked. jm is called ready only when it was
+# linked AND ~/.local/bin is on PATH; otherwise the line to add is printed.
+# Only an interactive shell that sourced this file activates the venv
+# instead (gh-2601). tests/test_gh2601_install_sh_links.py runs each case.
+_jm_link() (
+    set -euo pipefail
+    local venv bin py names name target dest old linked=0 jm_ok=0
+    venv="$(cd "$1" && pwd)"
+    bin="${HOME}/.local/bin"
+    py="${venv}/bin/python"
+    names=$("$py" -c 'from importlib.metadata import distribution as d
+for e in d("just-makeit").entry_points:
+    if e.group == "console_scripts":
+        print(e.name)' 2>/dev/null || true)
+    local wanted=()
+    for name in $names; do
+        [[ -x "${venv}/bin/${name}" ]] && wanted+=("$name")
+    done
+    if [[ ${#wanted[@]} -eq 0 ]]; then
+        warn "no console scripts found in ${venv}/bin; nothing linked"
+        return 0
+    fi
+    mkdir -p "$bin"
+    for name in "${wanted[@]}"; do
+        target="${venv}/bin/${name}"
+        dest="${bin}/${name}"
+        if [[ -L "$dest" ]]; then
+            old="$(readlink "$dest")"
+            # A link into a jm venv: its directory's python has just-makeit.
+            if [[ "$old" != "$target" ]] && ! "${old%/*}/python" -c \
+                'from importlib.metadata import version; version("just-makeit")' \
+                >/dev/null 2>&1; then
+                warn "${dest} links to ${old}, not a jm venv; left as it is"
+                continue
+            fi
+        elif [[ -e "$dest" ]]; then
+            warn "${dest} exists and is not a link jm made; left as it is"
+            continue
+        fi
+        ln -sfn "$target" "$dest"
+        linked=$((linked + 1))
+        [[ "$name" == jm ]] && jm_ok=1
+    done
+    ok "${linked} command(s) linked into ${bin} (-> ${venv}/bin)"
+    printf '\n'
+    if [[ $jm_ok -eq 0 ]]; then
+        warn "jm was not linked (see above), so it is not ready on PATH."
+        warn "Run it as ${venv}/bin/jm, or move that file and re-run."
+    elif [[ ":${PATH}:" != *":${bin}:"* ]]; then
+        warn "${bin} is not on PATH, so jm is linked but not found yet."
+        warn "Add this line to your shell's rc file (~/.bashrc, ~/.zshrc):"
+        printf '\n    export PATH="$HOME/.local/bin:$PATH"\n\n'
+    else
+        info "jm is linked into ${bin}, on PATH — just-makeit is ready:"
+        printf '\n    jm new my_project --object my_object\n\n'
+    fi
+)
 
-# BASH_SOURCE[0] == "" when piped; differs from $0 when sourced via . <(...)
-if [[ "${BASH_SOURCE[0]:-}" != "${0}" ]]; then
-    _jm_install
-    _jm_status=$?
-    if [[ $_jm_status -eq 0 && $_jm_check -eq 0 ]]; then
+# ── 8. Run, then link or activate ─────────────────────────────────────────────
+
+# `return` succeeds only in a sourced file: `. <(curl ...)` and jbx's
+# `bash -c ". install.sh"` are sourced, `bash install.sh` and a pipe are not.
+_jm_sourced=0
+(return 0 2>/dev/null) && _jm_sourced=1
+
+_jm_install
+_jm_status=$?
+if [[ $_jm_status -eq 0 && $_jm_check -eq 0 ]]; then
+    if [[ $- != *i* ]]; then
+        _jm_link "${_jm_venv}"
+    fi
+    if [[ $_jm_sourced -eq 1 ]]; then
         # shellcheck source=/dev/null
         source "${_jm_venv}/bin/activate"
-        printf '\n'
-        info "Venv activated — just-makeit is ready:"
-        printf '\n    just-makeit new my_project --object my_object\n\n'
-    fi
-    unset -f _tty info ok skip will warn die _spin _detect_mgr _need \
-        _install_apt _install_dnf _install_pacman _install_zypper \
-        _install_apk _install_brew _jm_install
-    unset _jm_check _jm_force _jm_venv _jm_badflag _jm_arg
-    # eval expands the status before the unset runs, so it outlives its name.
-    eval "unset _jm_status; return ${_jm_status}"
-else
-    _jm_install || exit $?
-    if [[ $_jm_check -eq 0 ]]; then
-        printf '\n'
-        info "Done. Activate the venv:"
-        printf '\n    source %s\n\n' "${_jm_venv}/bin/activate"
+        if [[ $- == *i* ]]; then
+            printf '\n'
+            info "Venv activated — just-makeit is ready:"
+            printf '\n    just-makeit new my_project --object my_object\n\n'
+        fi
     fi
 fi
+if [[ $_jm_sourced -eq 1 ]]; then
+    unset -f _tty info ok skip will warn die _spin _detect_mgr _need \
+        _install_apt _install_dnf _install_pacman _install_zypper \
+        _install_apk _install_brew _jm_install _jm_link
+    unset _jm_check _jm_force _jm_venv _jm_badflag _jm_arg _jm_sourced
+    # eval expands the status before the unset runs, so it outlives its name.
+    eval "unset _jm_status; return ${_jm_status}"
+fi
+exit "$_jm_status"
