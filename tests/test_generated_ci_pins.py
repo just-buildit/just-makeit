@@ -27,6 +27,7 @@ from importlib import metadata
 from pathlib import Path
 
 from _jmrun import run_cli
+from _pyfloor import python_floor
 from just_makeit import _config as C
 
 ROOT = Path(__file__).parent.parent
@@ -152,9 +153,7 @@ def test_no_template_carries_a_python_version_literal():
 def test_a_new_project_declares_the_pythons_jm_supports(tmp_path):
     root = _new(tmp_path, ci=False)
     assert _declared(root) == _jm_versions()
-    with (root / "pyproject.toml").open("rb") as f:
-        req = C.tomllib.load(f)["project"]["requires-python"]
-    assert req == metadata.metadata("just-makeit")["Requires-Python"]
+    assert python_floor(root / "pyproject.toml") == python_floor()
 
 
 def test_the_ci_tests_the_projects_classifiers(tmp_path):
