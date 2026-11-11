@@ -48,6 +48,7 @@ import importlib.util
 import json
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 import yaml
@@ -1159,11 +1160,58 @@ def _lock() -> dict:
         return C.tomllib.load(fh)
 
 
-#: The two platforms the newest-Python example legs run on, as a wheel's
-#: platform tag starts and as a marker reads them.
+class _Platform(NamedTuple):
+    """A platform CI installs jm's dev environment on: the wheel platform
+    tags that install there, and the marker values it evaluates with."""
+
+    #: A wheel platform tag (one of a `.`-joined set) that installs here.
+    tag: "re.Pattern[str]"
+    #: The PEP 508 marker variables that differ by platform.
+    env: "dict[str, str]"
+
+
+#: Every platform a CI leg syncs the dev environment on: the `test` legs
+#: (ubuntu-latest, ubuntu-24.04-arm, macos-latest) and the newest-Python
+#: example legs (ubuntu-latest, windows-latest). macOS is here because
+#: watchdog 6.0.0 has no macOS cp315 wheel, which only the macOS `test`
+#: leg found.
 _WHEEL_PLATFORMS = {
-    "win_amd64": {"sys_platform": "win32", "platform_system": "Windows"},
-    "manylinux": {"sys_platform": "linux", "platform_system": "Linux"},
+    "win_amd64": _Platform(
+        re.compile(r"win_amd64"),
+        {
+            "sys_platform": "win32",
+            "platform_system": "Windows",
+            "os_name": "nt",
+            "platform_machine": "AMD64",
+        },
+    ),
+    "manylinux_x86_64": _Platform(
+        re.compile(r"manylinux\w*_x86_64"),
+        {
+            "sys_platform": "linux",
+            "platform_system": "Linux",
+            "os_name": "posix",
+            "platform_machine": "x86_64",
+        },
+    ),
+    "manylinux_aarch64": _Platform(
+        re.compile(r"manylinux\w*_aarch64"),
+        {
+            "sys_platform": "linux",
+            "platform_system": "Linux",
+            "os_name": "posix",
+            "platform_machine": "aarch64",
+        },
+    ),
+    "macosx_arm64": _Platform(
+        re.compile(r"macosx_\w*_(arm64|universal2)"),
+        {
+            "sys_platform": "darwin",
+            "platform_system": "Darwin",
+            "os_name": "posix",
+            "platform_machine": "arm64",
+        },
+    ),
 }
 
 
@@ -1173,9 +1221,7 @@ def _marker_env(py: str, plat: str) -> dict:
         "python_full_version": f"{py}.0",
         "implementation_name": "cpython",
         "platform_python_implementation": "CPython",
-        "os_name": "nt" if plat == "win_amd64" else "posix",
-        "platform_machine": "AMD64" if plat == "win_amd64" else "x86_64",
-        **_WHEEL_PLATFORMS[plat],
+        **_WHEEL_PLATFORMS[plat].env,
     }
 
 
@@ -1187,11 +1233,13 @@ def _holds(marker: "str | None", env: dict) -> bool:
 
 def _fits(wheel: str, py: str, plat: str) -> bool:
     """Whether *wheel* installs on CPython *py* on *plat* (`3.15`,
-    `win_amd64`): its own `cpXY`, an `abi3` built for an older one, or no
+    `win_amd64`, a `_WHEEL_PLATFORMS` key): its own `cpXY`, an `abi3` built for an older one, or no
     ABI at all. Free-threaded (`cp315t`) builds are not the default."""
     pys, abi, platform = wheel[: -len(".whl")].split("-")[-3:]
     xy = py.replace(".", "")
-    if platform != "any" and not platform.startswith(plat):
+    if platform != "any" and not any(
+        _WHEEL_PLATFORMS[plat].tag.fullmatch(t) for t in platform.split(".")
+    ):
         return False
     if abi == "none":
         return any(t in ("py3", f"cp{xy}") for t in pys.split("."))
@@ -1271,7 +1319,7 @@ def _wheel_gaps() -> "tuple[list[str], set]":
 def test_every_compiled_dependency_installs_from_a_wheel() -> None:
     """gh-2626: every locked package that ships compiled code has a wheel
     for every classifier Python on the platforms the newest-Python example
-    legs run (win_amd64, manylinux x86_64). numpy 2.5.1 had none for 3.15,
+    legs run (`_WHEEL_PLATFORMS`). numpy 2.5.1 had none for 3.15,
     so uv built its sdist: on Windows meson died on Git's GNU link.exe,
     elsewhere it passed slowly on gcc. Derived from uv.lock -- the
     packages, their versions per Python, the markers that install them."""
@@ -1300,24 +1348,27 @@ def test_a_compiled_dependency_is_never_built_from_source() -> None:
 
 def test_the_wheel_matcher_is_armed() -> None:
     """`_fits` on the wheel shapes uv.lock carries."""
-    assert _fits("numpy-2.5.4-cp315-cp315-win_amd64.whl", "3.15", "win_amd64")
-    assert not _fits(
-        "numpy-2.5.1-cp314-cp314-win_amd64.whl", "3.15", "win_amd64"
+    win, lin, arm, mac = (
+        "win_amd64",
+        "manylinux_x86_64",
+        "manylinux_aarch64",
+        "macosx_arm64",
     )
-    assert not _fits(
-        "numpy-2.5.4-cp315-cp315t-win_amd64.whl", "3.15", "win_amd64"
-    )
+    assert _fits("numpy-2.5.4-cp315-cp315-win_amd64.whl", "3.15", win)
+    assert not _fits("numpy-2.5.1-cp314-cp314-win_amd64.whl", "3.15", win)
+    assert not _fits("numpy-2.5.4-cp315-cp315t-win_amd64.whl", "3.15", win)
+    assert _fits("z-1-cp310-abi3-manylinux_2_17_x86_64.whl", "3.15", lin)
+    assert not _fits("z-1-cp310-abi3-manylinux_2_17_x86_64.whl", "3.15", arm)
     assert _fits(
-        "zensical-0.0.51-cp310-abi3-manylinux_2_17_x86_64.whl",
+        "y-1-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
         "3.15",
-        "manylinux",
+        arm,
     )
-    assert not _fits(
-        "zensical-0.0.51-cp310-abi3-win_amd64.whl", "3.9", "win_amd64"
-    )
-    assert _fits("ruff-0.15.21-py3-none-win_amd64.whl", "3.15", "win_amd64")
-    assert not _fits(
-        "ruff-0.15.21-py3-none-win_amd64.whl", "3.15", "manylinux"
-    )
-    assert _fits("mypy-2.3.0-py3-none-any.whl", "3.15", "manylinux")
+    assert not _fits("z-1-cp310-abi3-win_amd64.whl", "3.9", win)
+    assert _fits("ruff-1-py3-none-win_amd64.whl", "3.15", win)
+    assert not _fits("ruff-1-py3-none-win_amd64.whl", "3.15", lin)
+    assert _fits("w-1-cp313-cp313-macosx_11_0_arm64.whl", "3.13", mac)
+    assert _fits("w-1-cp313-cp313-macosx_10_13_universal2.whl", "3.13", mac)
+    assert not _fits("w-1-cp313-cp313-macosx_10_13_x86_64.whl", "3.13", mac)
+    assert _fits("mypy-2.3.0-py3-none-any.whl", "3.15", lin)
     assert "numpy" in _compiled() and "packaging" not in _compiled()
