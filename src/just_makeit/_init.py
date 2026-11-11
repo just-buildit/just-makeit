@@ -1338,6 +1338,7 @@ def _splice_init_py(
         _PLAIN_ALL_RE,
         _import_re,
         _parse_import_names,
+        is_public,
         wrap_all,
     )
 
@@ -1366,9 +1367,13 @@ def _splice_init_py(
     # re-emitted, wrapped once it passes the column target (gh-2514); any
     # other is the author's, spliced in place (single- or multi-line). If
     # __all__ is absent entirely, append it.
+    # gh-2607: a private name (`_Engine`) is imported and never listed.
     all_re = re.compile(r"(__all__\s*=\s*\[)(.*?)(\])", re.DOTALL)
     if _PLAIN_ALL_RE.search(text):
+        # Re-emitted through `_fmt_all`, which leaves a private name out.
         text = wrap_all(text, [Component])
+    elif not is_public(Component):
+        pass
     elif all_re.search(text):
 
         def _splice_all(m: re.Match) -> str:
