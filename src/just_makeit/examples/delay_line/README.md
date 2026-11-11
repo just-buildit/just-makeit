@@ -17,10 +17,10 @@ With jbx, the recommended way on every platform
 
 ```sh
 jbx just-makeit:install
-source /tmp/jm-venv/bin/activate   # Linux and macOS
 ```
 
-Or with the curl installer, which also activates the venv:
+Or with the curl installer, sourced, which also activates the venv
+in this shell:
 
 ```sh
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)

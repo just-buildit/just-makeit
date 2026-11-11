@@ -69,13 +69,12 @@ yet, [getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#gettin
 
     ```sh
     jbx just-makeit:install
-    source /tmp/jm-venv/bin/activate   # Linux and macOS
-    ```
+        ```
 
-    On Linux and macOS jbx runs the curl installer in a child process, so
-    the second line activates its venv in your shell. From Windows
-    PowerShell it runs the Windows installer in the window itself, so `jm`
-    is on its `PATH` at once.
+    On Linux and macOS jbx runs the curl installer as a child, so it links
+    `jm` into `~/.local/bin`, beside jbx, and says so if that directory is
+    not on your `PATH`. From Windows PowerShell it runs the Windows
+    installer in the window itself, so `jm` is on its `PATH` at once.
 
 === "curl"
 

@@ -28,11 +28,11 @@ ______________________________________________________________________
 
 ```sh
 jbx just-makeit:install
-source /tmp/jm-venv/bin/activate   # Linux and macOS
 ```
 
-On Linux and macOS jbx runs `install.sh` (below) in a child process, so
-the second line activates its venv in your shell. From Windows PowerShell,
+On Linux and macOS jbx runs `install.sh` (below) as a child, so it links
+`jm` and jm's other commands into `~/.local/bin`, beside jbx, and says so if
+that directory is not on your `PATH`. From Windows PowerShell,
 `jbx just-makeit:install` runs `install.ps1` (below) in the window itself,
 so `jm` is on its `PATH` at once.
 
