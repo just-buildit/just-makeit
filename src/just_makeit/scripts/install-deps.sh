@@ -207,7 +207,7 @@ _install_apt()    {
         install -y cmake gcc pkg-config patchelf
 }
 _install_dnf()    { info "${MGR}"; $SUDO "$MGR" install -y cmake gcc pkgconf-pkg-config patchelf; }
-_install_pacman() { info "pacman"; $SUDO pacman -Sy --noconfirm cmake gcc pkgconf patchelf; }
+_install_pacman() { info "pacman"; $SUDO pacman -Syu --noconfirm --needed cmake gcc pkgconf patchelf; }
 _install_zypper() { info "zypper"; $SUDO zypper install -y cmake gcc pkgconfig patchelf; }
 _install_apk()    { info "apk"; $SUDO apk add --no-cache cmake gcc musl-dev pkgconfig patchelf; }
 _install_brew() {
