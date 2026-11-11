@@ -9005,8 +9005,8 @@ def _toml_multiline_string(value: str) -> str:
         else:
             out.append(ch)
     # A quote is legal on its own; three in a row would close the string.
-    body = "".join(out).replace('"""', '\\"\\"\\"')
-    return '"""\n' + body + '\n"""'
+    body = "".join(out).replace('"""', '\\"\\"\\"')  # not a docstring: TOML
+    return '"""\n' + body + '\n"""'  # not a docstring: a TOML string
 
 
 def _str_assign(key: str, value: str) -> str:

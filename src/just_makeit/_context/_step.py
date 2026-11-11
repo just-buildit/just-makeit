@@ -10,7 +10,10 @@ from .._types import (
     _KIND_PY_ISINSTANCE,
     np_dtype_doctest_lines,
 )
+from ._sample import STEPS_ARRAY_DOC
 from .._docstring import (
+    TRIPLE_QUOTE,
+    docstring_literal,
     STUB_TARGET_WIDTH,
     class_import_line,
     delegator_note,
@@ -1893,47 +1896,58 @@ def make_step_ctx(
             f"out: {T.array_param_annotation(return_type, writable=True)}"
             " | None = None"
             f"{_ctrl_pyi_params}) -> NDArray[{_out_np_full}]:\n"
-            '        """Process a samples array. Returns ndarray, '
-            'or fills out= if supplied."""\n'
+            f"        {docstring_literal(STEPS_ARRAY_DOC)}\n"
         )
 
     if _is_void_arg and is_void_return:
-        _pyi_step_doc = '        """Advance state by one tick (no I/O)."""\n'
+        _pyi_step_doc = f"        {docstring_literal('Advance state by one tick (no I/O).')}\n"
         _pyi_step_self = f"self{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
     elif _is_void_arg:
         _pyi_step_doc = (
-            f'        """Generate one output sample from internal state.\n\n'
-            f"        Returns\n"
-            f"        -------\n"
-            f"        {out_py_hint}\n"
-            f"            Output sample.\n"
-            f'        """\n'
+            "        "
+            + docstring_literal(
+                "Generate one output sample from internal state.\n\n"
+                "        Returns\n"
+                "        -------\n"
+                f"        {out_py_hint}\n"
+                "            Output sample.\n"
+                "        "
+            )
+            + "\n"
         )
         _pyi_step_self = f"self{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
     elif is_void_return:
         _pyi_step_doc = (
-            f'        """Consume one input sample (no output).\n\n'
-            f"        Parameters\n"
-            f"        ----------\n"
-            f"        x : {in_py_hint}\n"
-            f"            Input sample.\n"
-            f'        """\n'
+            "        "
+            + docstring_literal(
+                "Consume one input sample (no output).\n\n"
+                "        Parameters\n"
+                "        ----------\n"
+                f"        x : {in_py_hint}\n"
+                "            Input sample.\n"
+                "        "
+            )
+            + "\n"
         )
         _pyi_step_self = (
             f"self, x: {in_py_hint}{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
         )
     else:
         _pyi_step_doc = (
-            f'        """Process one input sample.\n\n'
-            f"        Parameters\n"
-            f"        ----------\n"
-            f"        x : {in_py_hint}\n"
-            f"            Input sample.\n\n"
-            f"        Returns\n"
-            f"        -------\n"
-            f"        {out_py_hint}\n"
-            f"            Output sample.\n"
-            f'        """\n'
+            "        "
+            + docstring_literal(
+                "Process one input sample.\n\n"
+                "        Parameters\n"
+                "        ----------\n"
+                f"        x : {in_py_hint}\n"
+                "            Input sample.\n\n"
+                "        Returns\n"
+                "        -------\n"
+                f"        {out_py_hint}\n"
+                "            Output sample.\n"
+                "        "
+            )
+            + "\n"
         )
         _pyi_step_self = (
             f"self, x: {in_py_hint}{_ctrl_pyi_params}{_ctrl_pyi_posonly}"
@@ -2009,7 +2023,7 @@ def make_step_ctx(
                 + "\n"
             )
     if _is_authored(_ssb) and pyi_steps:
-        _pyi_steps_sig = pyi_steps.split('"""')[0].rstrip("\n ")
+        _pyi_steps_sig = pyi_steps.split(TRIPLE_QUOTE)[0].rstrip("\n ")
         pyi_steps = (
             f"{_pyi_steps_sig}\n"
             + "\n".join(

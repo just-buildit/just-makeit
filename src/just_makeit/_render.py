@@ -43,8 +43,36 @@ from ._context._diagnostics import (
 _TMPL_DIR = Path(__file__).parent / "templates"
 
 
+class PyTemplate(str):
+    """A Python template whose module docstring carries slots.
+
+    The docstring is cut out at load time into :attr:`doc`, and the
+    template text holds the slot ``<<jm_module_doc>>`` in its place.
+    :func:`render` renders :attr:`doc` with the same context and writes it
+    through `_docstring.docstring_literal`, so a slot's value -- a project
+    name, a path -- reads back as written, quote or backslash included,
+    instead of being pasted between quotes it could close.
+    """
+
+    doc: str
+
+
+#: The first triple-quoted string in a Python template: its module docstring.
+_PY_DOC_RE = re.compile(r"\"\"\"(.*?)\"\"\"", re.DOTALL)
+
+
 def _load(relpath: str) -> str:
-    return (_TMPL_DIR / relpath).read_text(encoding="utf-8")
+    """The template at *relpath*; a :class:`PyTemplate` when it is Python
+    and its module docstring carries a slot."""
+    text = (_TMPL_DIR / relpath).read_text(encoding="utf-8")
+    m = _PY_DOC_RE.search(text) if relpath.endswith((".py", ".pyi")) else None
+    if m is None or "<<" not in m.group(1):
+        return text
+    tmpl = PyTemplate(
+        text[: m.start()] + "<<jm_module_doc>>" + text[m.end() :]
+    )
+    tmpl.doc = m.group(1)
+    return tmpl
 
 
 # ── C headers ────────────────────────────────────────────────────────────────
@@ -790,6 +818,13 @@ def render(template: str, ctx: dict) -> str:
         "jm_array_arg_c": _coerce.TU_HELPERS_C,
         **ctx,
     }
+    doc = getattr(template, "doc", None)
+    if doc is not None:
+        from ._docstring import docstring_literal
+
+        # The module docstring of a `PyTemplate`: its slots filled like any
+        # other, then written by the one docstring writer.
+        ctx = {**ctx, "jm_module_doc": docstring_literal(render(doc, ctx))}
     result = template
     for _ in range(_RENDER_SWEEPS):
         before = result

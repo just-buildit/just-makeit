@@ -36,7 +36,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _incpath as INC
-from ._docstring import STUB_TARGET_WIDTH, example_budget
+from ._docstring import STUB_TARGET_WIDTH, TRIPLE_QUOTE, example_budget
 
 # Where a documented function's examples land in the generated stub. Getting
 # this wrong is not a rounding error: at indent 8 the budget is 71 and at
@@ -280,9 +280,9 @@ def scan_docs(
             if len(line) <= width:
                 continue
             text = line.strip()
-            for q in ('r"""', '"""'):
-                text = text.removeprefix(q)
-            text = text.removesuffix('"""')
+            if text[1:].startswith(TRIPLE_QUOTE) and text[:1] == "r":
+                text = text[1:]
+            text = text.removeprefix(TRIPLE_QUOTE).removesuffix(TRIPLE_QUOTE)
             where = sources.get(text)
             if where is None:
                 continue
