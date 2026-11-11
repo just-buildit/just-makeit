@@ -525,7 +525,13 @@ just-buildit/.github README under "Makefile standard".
 - `ci.yml` — the `test` matrix (ubuntu/macos/ubuntu-arm64 × every Python
     `requires-python` promises) is declared once, as the toolchain job's
     `legs` step `MATRIX`; `make ci-test-legs` keeps the legs each run owes
-    (gh-2125). Windows: the examples, under clang-cl, in a job that feeds
+    (gh-2125). The Pythons themselves are the pyproject classifiers ALONE
+    (gh-2626, `make ci-pythons`): the planner fills every matrix from them
+    and a workflow names one by its place (`oldest`/`middle`/`newest`/
+    `next`), so promoting a Python is adding its classifier;
+    `tests/test_own_ci_matrix.py` refuses a job naming two. The examples
+    build at the middle Python everywhere and the newest on ubuntu and
+    Windows. Windows: the examples, under clang-cl, in a job that feeds
     `CI passed` (see the Windows section).
 - Each tree on `main` is tested once (gh-1801): `changes.yml` asks
     `make ci-tree-tested` whether a push's tree is a merged PR's head that
