@@ -499,6 +499,22 @@ The generated workflow installs the build dependencies and runs the same
 build-and-test the [`test`](#just-makeit-test) target drives locally. The
 dependency step installs numpy, plus pytest if the project enabled `pytest`.
 
+**The Python versions it tests are your `pyproject.toml`'s.** The GitHub
+workflow's `python-version` matrix is rendered from the project's
+`Programming Language :: Python :: 3.N` classifiers, and nowhere else.
+`jm new` writes them, one per version jm itself supports; from then on the
+list is yours. Drop `3.9` from the classifiers and the next `jm apply`
+rewrites the workflow's matrix to match -- that one list and nothing else in
+the file -- while `jm status --check` reports the workflow STALE until it
+does. The workflow stays plain YAML: nothing reads `pyproject.toml` when CI
+runs.
+
+A project without version classifiers (one scaffolded before jm wrote them)
+keeps its `pyproject.toml` as it is -- jm does not write into it -- and its
+CI tests jm's own list; `jm ci` and `jm apply` say so in one line until you
+add the classifiers. A workflow without exactly one `python-version: [...]`
+line is not rewritten.
+
 | Flag              | Description                                                                            |
 | ----------------- | -------------------------------------------------------------------------------------- |
 | `--provider NAME` | `github` (default → `.github/workflows/ci.yml`) or `woodpecker` (→ `.woodpecker.yml`). |

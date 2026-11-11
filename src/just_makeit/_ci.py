@@ -13,6 +13,10 @@ Providers:
 
 The file is written only if absent; pass --force to overwrite an existing
 one (CI configs are commonly hand-tuned, so we don't clobber by default).
+
+The GitHub workflow's ``python-version`` matrix is the project's own
+``pyproject.toml`` classifiers (gh-2629), and every ``jm apply`` rewrites
+that one list to match them -- see `_pythons`.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _pins
+from . import _pythons
 from . import _render as R
 
 # provider -> (render-template attribute on _render, output path)
@@ -64,13 +69,22 @@ def run(root: Path, provider: str = "github", force: bool = False) -> None:
 
     # pytest projects need pytest in CI; unittest-default projects don't.
     pip_deps = f"numpy {_pins.PYTEST_DQ}" if C.is_pytest(cfg) else "numpy"
-    ctx = {"package": C.project_name(cfg), "pip_deps": pip_deps}
+    # gh-2629: the matrix is the project's own pyproject.toml classifiers;
+    # `apply` keeps it equal to them afterwards (`_pythons.sync_ci`).
+    pythons, fallback = _pythons.ci_versions(root)
+    ctx = {
+        "package": C.project_name(cfg),
+        "pip_deps": pip_deps,
+        "python_versions": _pythons.yaml_list(pythons),
+    }
     content = R.render(getattr(R, tmpl_attr), ctx)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     verb = "overwrite" if dest.exists() else "create"
     _textio.write_text(dest, content)
     print(f"  {verb}  {dest}")
+    if fallback and provider == "github":
+        print(f"  note: {_pythons.fallback_note()}")
     print(
         f"Done!  {provider} CI workflow written. It runs `make && make test` "
         f"on every push and PR."
