@@ -230,15 +230,12 @@ def test_a_property_brief_that_would_end_the_literal_still_parses(
     assert docs["Eng.mode"] == text.strip()
 
 
-@pytest.mark.parametrize(
-    "text", [t for t in HOSTILE if "tmp" not in t], ids=["triple", "q", "bs"]
-)
+@pytest.mark.parametrize("text", HOSTILE)
 def test_an_authored_property_doc_that_would_end_the_literal_still_parses(
     tmp_path, text
 ):
-    # A manifest `doc` is laid out as written (`authored_docstring`, gh-1493),
-    # where a backslash inside the text is left for the author's doctest, so
-    # the escape-sequence case is not one of these.
+    # A manifest `doc` is laid out as written (`authored_docstring`,
+    # gh-1493), and reads back as written: a backslash too.
     root = _project(tmp_path, module=False, doc=None)
     r = run_cli(
         "property", "eng", "gain", "--type", "double", "--doc", text,
@@ -246,7 +243,7 @@ def test_an_authored_property_doc_that_would_end_the_literal_still_parses(
     )  # fmt: skip
     assert r.returncode == 0, r.stderr
     docs = _attr_docs(root / "src" / "proj" / "eng.pyi")
-    assert docs["Eng.gain"].rstrip("\\") == text.rstrip("\\")
+    assert docs["Eng.gain"] == text.strip()
 
 
 def test_a_class_brief_holding_a_triple_quote_still_parses(tmp_path):

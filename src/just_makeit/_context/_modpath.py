@@ -148,12 +148,9 @@ def module_m_doc(cfg: dict, module: str) -> str:
 def _py_docstring(text: str) -> str:
     """Render *text* as a safe module-level docstring, with trailing blank line.
 
-    The prose comes from TOML, so it can contain anything -- and two things
-    would otherwise emit a generated file that does not parse: an embedded
-    ``\"\"\"`` closes the docstring early, and a trailing ``"`` abuts the
-    closing delimiter into ``\"\"\"\"``. Both are escaped rather than
-    rejected: refusing an author's apostrophe-heavy sentence would be worse
-    than quoting it.
+    The prose comes from TOML, so it can contain anything: the literal is
+    `_docstring.docstring_literal`'s, whose value is exactly the text --
+    an embedded triple quote, a closing quote or a backslash included.
 
     A doc that ends in a doctest closes on its own line after a blank one
     (gh-2176): a text-mode ``.pyi`` doctest reads an example's expected
@@ -165,14 +162,11 @@ def _py_docstring(text: str) -> str:
     >>> _py_docstring("One.\\n\\n>>> 1 + 1\\n2")
     '\"\"\"One.\\n\\n>>> 1 + 1\\n2\\n\\n\"\"\"\\n\\n'
     """
-    from .._docstring import _ends_in_doctest
+    from .._docstring import _ends_in_doctest, docstring_literal
 
-    body = text.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
     if _ends_in_doctest(text.split("\n")):
-        return f'"""{body}\n\n"""\n\n'
-    if body.endswith('"'):
-        body = body[:-1] + '\\"'
-    return f'"""{body}"""\n\n'
+        text += "\n\n"
+    return docstring_literal(text) + "\n\n"
 
 
 def _c_doc_literal(text: str) -> str:

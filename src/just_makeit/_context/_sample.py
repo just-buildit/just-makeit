@@ -6,7 +6,9 @@ Builds the sample-type portion of the template rendering dict.
 from __future__ import annotations
 
 from .. import _types as T
+from .._docstring import docstring_literal
 from .._report import Refusal
+
 from .._types import (
     _CTYPE_META,
     _NP_ENUM,
@@ -17,6 +19,12 @@ from .._types import (
 )
 from ._types import _py_default  # noqa: F401 – kept for any future callers
 from ._parse import _step_parse_block
+
+#: The ``steps()`` summary of an array-in / array-out object, which both the
+#: plain and the controllable ``steps()`` stub write.
+STEPS_ARRAY_DOC = (
+    "Process a samples array. Returns ndarray, or fills out= if supplied."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -542,13 +550,13 @@ def make_sample_ctx(
         if is_void_return:
             _pyi_steps = (
                 "\n    def steps(self, n: int = 1) -> None:\n"
-                '        """Run n iterations."""\n'
+                f"        {docstring_literal('Run n iterations.')}\n"
             )
         else:
             _pyi_steps = (
                 f"\n    def steps(self, n: int = 1)"
                 f" -> NDArray[{out_np_dtype}]:\n"
-                '        """Generate n output samples."""\n'
+                f"        {docstring_literal('Generate n output samples.')}\n"
             )
         return {
             "arg_ctype": "void",
@@ -760,14 +768,15 @@ def make_sample_ctx(
             f"out: {T.array_param_annotation(return_type, writable=True)}"
             " | None = None) "
             f"-> NDArray[{out_np_dtype}]:\n"
-            '        """Process a samples array. Returns ndarray, '
-            'or fills out= if supplied."""\n'
+            + "        "
+            + docstring_literal(STEPS_ARRAY_DOC)
+            + "\n"
         )
         if not is_void_return
         else (
             f"\n    def steps(self, x: {T.array_param_annotation(arg_type)})"
             " -> None:\n"
-            '        """Process a block of input samples."""\n'
+            f"        {docstring_literal('Process a block of input samples.')}\n"
         ),
         "bench_block_consts": bench_block_consts,
         **dict(

@@ -13,6 +13,8 @@ from .. import _config as C
 from .._report import Refusal
 from .. import _csym as CSYM
 from .._docstring import (
+    docstring_lines,
+    docstring_literal,
     WHY_PARAM_DOC,
     enum_param_desc,
     struct_member_doc,
@@ -155,7 +157,7 @@ def state_accessor_stubs(
         blk = accessor_block(csym, fn, doc_blocks)
         if blk is None:
             _canned = accessor_canned(fn, canned, doc_blocks, csym)
-            return [f'        """{_canned}"""']
+            return ["        " + docstring_literal(_canned)]
         return render_numpy_doc(blk, fn, py_params, ret_ann, indent=8)
 
     stub_groups: list[str] = []
@@ -185,21 +187,32 @@ def state_accessor_stubs(
             "\n".join(
                 [
                     f"    def get_{name}(self) -> NDArray[{py_type}]:",
-                    f'        """Return a copy of {name}'
-                    f' (length {size}, dtype {py_type})."""'
-                    "",
+                    # The blank line was never emitted: kept so.
+                    "        "
+                    + docstring_literal(
+                        f"Return a copy of {name}"
+                        f" (length {size}, dtype {py_type})."
+                    ),
                     f"    def get_{name}_view(self) -> NDArray[{py_type}]:",
-                    f'        """Return a read-only view of {name}.',
-                    "",
-                    "        Backed by the component's internal state buffer.",
-                    "        **Do not use after destroy().**",
-                    '        """',
+                    *docstring_lines(
+                        [
+                            f"Return a read-only view of {name}.",
+                            "",
+                            "        Backed by the component's internal"
+                            " state buffer.",
+                            "        **Do not use after destroy().**",
+                            "        ",
+                        ],
+                        "        ",
+                    ),
                     "",
                     # gh-1724: an input array, spelled by the one helper.
                     f"    def set_{name}(self, value:"
                     f" {T.array_param_annotation(elem_ct)}) -> None:",
-                    f'        """Set {name} from a {py_type}'
-                    f' array of length {size}."""',
+                    "        "
+                    + docstring_literal(
+                        f"Set {name} from a {py_type} array of length {size}."
+                    ),
                 ]
             )
         )
@@ -2739,7 +2752,9 @@ def _reset_docs(
     blk = (doc_blocks or {}).get(f"{csym}_reset")
     canned = "Reset state to post-create defaults."
     if blk is None or not blk.brief:
-        return _build_ml_doc([canned]), f'        """{canned}"""\n'
+        return _build_ml_doc([canned]), (
+            "        " + docstring_literal(canned) + "\n"
+        )
     pyi = "\n".join(render_numpy_doc(blk, "reset", [], "None")) + "\n"
     rt = _build_ml_doc(render_runtime_doc(blk, "reset", [], "None"))
     return rt, pyi
