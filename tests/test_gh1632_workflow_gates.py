@@ -106,11 +106,41 @@ def _on(name: str) -> dict:
     return on
 
 
+def _runs_while_a_pr_is_open(on: dict) -> bool:
+    """Whether a workflow's PR trigger fires while the PR can still merge.
+
+    One that fires only on `closed` (canonical's train-retire.yml: delete a
+    merged train's branches) runs after the merge, so it is not a check the
+    PR could pass red; every other PR trigger is."""
+    for event in ("pull_request", "pull_request_target"):
+        if event not in on:
+            continue
+        types = (
+            (on[event] or {}).get("types")
+            if isinstance(on[event], dict)
+            else None
+        )
+        if not types or set(types) - {"closed"}:
+            return True
+    return False
+
+
+def test_a_closed_only_trigger_is_not_a_pr_check():
+    assert not _runs_while_a_pr_is_open(
+        {"pull_request": {"types": ["closed"]}}
+    )
+    assert _runs_while_a_pr_is_open({"pull_request": None})
+    assert _runs_while_a_pr_is_open(
+        {"pull_request": {"types": ["opened", "closed"]}}
+    )
+    assert _runs_while_a_pr_is_open({"pull_request_target": {"paths": ["x"]}})
+
+
 def test_no_workflow_but_ci_runs_on_a_pull_request():
     pr = {
         wf.name
         for wf in WF.glob("*.yml")
-        if {"pull_request", "pull_request_target"} & set(_on(wf.name))
+        if _runs_while_a_pr_is_open(_on(wf.name))
     }
     assert "ci.yml" in pr, "the walk below must have something to find"
     extra = sorted(pr - {"ci.yml"} - set(_PR_WORKFLOWS_OUTSIDE_CI))
