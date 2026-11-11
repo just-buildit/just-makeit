@@ -1,5 +1,58 @@
 ## [Unreleased]
 
+## [0.127.1] — 2026-11-11
+
+### Changed
+
+- **The Visual Studio example is two: `visual_studio_pip` and
+    `visual_studio_uv`** (gh-2610). `jm example visual_studio` is gone. Its
+    venv step gave two routes at once -- `py -m venv` plus pip, or "with uv,
+    `uv venv` then `uv pip install numpy`" -- and a user who mixed them ended
+    in a uv venv, which has no pip, running a pip line in it. Each page now
+    gives one route: `py -m venv .venv` and then
+    `.venv\Scripts\python -m pip install numpy`, or `uv sync`, which makes
+    `.venv` with numpy and the project installed. Both say to make the venv before opening the folder
+    in Visual Studio, and what the configure says if it was opened first.
+    The Windows clang-cl CI job runs each page's venv lines as written,
+    downloads included; elsewhere the test replaces them with an offline
+    venv and says which lines it replaced, also under any failure. The
+    pages' shared steps are held byte-identical by a test, and
+    `docs/windows.md` gives the same two routes.
+
+### Fixed
+
+- **The generated `Makefile` builds against the project's `.venv`, and
+    installs into one that has no pip** (gh-2610). `make` took the first
+    `python` on `PATH` while the generated `CMakePresets.json` named
+    `.venv` (gh-814), so building one project both ways compiled it for two
+    interpreters. It now uses `.venv` whenever it exists
+    (`.venv/Scripts/python.exe` on Windows, `.venv/bin/python` elsewhere),
+    in both build
+    backends, as `jm build` already did; `PYTHON=` and `JUST_BUILDIT_PYTHON`
+    still win, and with no `.venv` it reads `PATH` as before. Its numpy
+    repair and pytest install ran `$(PYTHON) -m pip install`, which in a
+    venv `uv sync` made ends in `No module named pip`. Both now run pip when
+    the interpreter has it, `uv pip install --python <it>` when it does not,
+    and otherwise stop naming both commands. `jm status` reports an
+    existing project's `Makefile` `OUTDATED` until it takes the new render.
+    The generated `README.md` says which interpreter `make` uses, and points
+    Visual Studio users at creating the `.venv` first.
+
+- **A configure whose `.venv` does not exist says so** (gh-2610). The
+    presets name the project's `.venv` interpreter, and Visual Studio
+    configures as soon as the folder is opened, which can be before the
+    `.venv` exists. That failed as CMake's bare `Could NOT find Python3`, and
+    Visual Studio kept the failed cache. The root `CMakeLists.txt` now stops
+    first when `Python3_EXECUTABLE` names a file that is not there. When
+    that file is in the project's own `.venv`, it says the `.venv` is
+    missing, gives the pip and the `uv sync` way to make it, and says to
+    reconfigure (*Project > Delete Cache and Reconfigure*); any other path,
+    such as one a `CMakeUserPresets.json` sets, it names, with where it can
+    be set.
+    An existing project's root file is the author's outside jm's blocks, so
+    `jm status` reports it as `ROOT CMAKE venv-check` until the check is
+    merged in.
+
 ## [0.127.0] — 2026-11-10
 
 ### Added
