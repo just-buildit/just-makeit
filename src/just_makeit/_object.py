@@ -768,8 +768,8 @@ def drop_reexports(text: str, subs: "Iterable[str]") -> str:
     (:data:`_REEXPORT_RE`, either form) is removed, with its line break, so
     an author's differently spelled import of the same module is left.
 
-    >>> src = ("from .old import a  # noqa: E402\n"
-    ...        "from .new import a  # noqa: E402\n")
+    >>> src = ("from .old import a  # noqa: E402\\n"
+    ...        "from .new import a  # noqa: E402\\n")
     >>> print(drop_reexports(src, ["old"]), end="")
     from .new import a  # noqa: E402
     """
@@ -800,9 +800,9 @@ def prune_reexports(
     Returns the text and the names dropped, which the caller takes out of
     ``__all__``.
 
-    >>> src = ("from .priv import Priv  # noqa: E402\n"
-    ...        "from .priv import _Priv  # noqa: E402\n"
-    ...        "from .priv import _Priv  # noqa: E402\n")
+    >>> src = ("from .priv import Priv  # noqa: E402\\n"
+    ...        "from .priv import _Priv  # noqa: E402\\n"
+    ...        "from .priv import _Priv  # noqa: E402\\n")
     >>> text, dropped = prune_reexports(src, {"priv": ["_Priv"]})
     >>> print(text, end=""); dropped
     from .priv import _Priv  # noqa: E402
