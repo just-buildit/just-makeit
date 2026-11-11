@@ -11,11 +11,16 @@ GATE:
 * an ``[[enum]]`` row's ``doc`` key is the attribute docstring written right
   after its annotation, on both ``.pyi`` generators (a standalone object's
   template and the module stub, ``_stubs``);
-* without ``doc``, the docstring is a generated sentence naming the
-  ``[[enum]]`` and the shape -- a dense tuple, or a dict keyed by the C
-  constants it names -- so no published table is ever undocumented. That is
-  asserted registration-free: EVERY published annotation in every ``.pyi``
-  of the project must be followed by a docstring;
+* without ``doc``, the docstring is a generated sentence for the reader of
+  an API reference -- the enum's name, how a value is looked up, and for a
+  dict the C constants it is keyed by, with no manifest syntax -- so no
+  published table is ever undocumented. That is asserted registration-free:
+  EVERY published annotation in every ``.pyi`` of the project must be
+  followed by a docstring;
+* text that would end the literal -- a triple quote, a backslash, a final
+  quote -- in a ``doc`` or a property's header ``@brief`` still gives a
+  ``.pyi`` that parses, and the docstring reads back as the text
+  (``_docstring.summary_docstring``, shared by both);
 * the key is recognised by ``_keys`` (a misspelling is reported), and
   ``jm script``, which replays the ``[[enum]]`` rows verbatim, carries it.
   ``tests/test_gh2045_dump_keeps_every_key.py`` holds the manifest writer to
@@ -27,6 +32,8 @@ The runtime value is a plain ``tuple`` / ``dict``, which cannot carry a
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 from pathlib import Path
 
@@ -48,7 +55,7 @@ def _enum_rows(doc: str | None) -> str:
     """A dense enum (``eng_state``) and a constant-bound one (``lvl``)."""
     dense = ["[[enum]]", 'name = "eng_state"', 'values = ["idle", "run"]']
     if doc is not None:
-        dense.append(f'doc = "{doc}"')
+        dense.append(f"doc = {json.dumps(doc)}")
     keyed = [
         "[[enum]]",
         'name = "lvl"',
@@ -113,11 +120,10 @@ def test_a_declared_doc_is_the_attribute_docstring(tmp_path, module):
 def test_without_doc_the_docstring_names_the_enum_and_shape(tmp_path, module):
     pub = _published(_project(tmp_path, module=module, doc=None))
     dense, keyed = pub["ENG_STATE"][1], pub["LVL"][1]
-    assert dense.startswith('"""') and dense.endswith('"""'), dense
-    assert "[[enum]] 'eng_state'" in dense and "tuple" in dense, dense
-    assert keyed.startswith('"""') and keyed.endswith('"""'), keyed
-    assert "[[enum]] 'lvl'" in keyed and "dict" in keyed, keyed
-    assert "LVL_LO" in keyed and "LVL_HI" in keyed, keyed
+    assert dense == '"""Names of the eng_state values, indexed by value."""'
+    assert keyed == (
+        '"""Names of the lvl values, keyed by code (LVL_LO .. LVL_HI)."""'
+    )
 
 
 @pytest.mark.parametrize("doc", [DOC, None], ids=["doc", "default"])
@@ -162,3 +168,60 @@ def test_doc_is_a_known_enum_key_and_a_misspelling_is_reported():
     found = [(u.kind, u.key) for u in _keys.unknown_keys(cfg)]
     assert found == [("enum", "docs")]
     assert C.enums(cfg)["a"].doc == "ok"
+
+
+#: Text that ends a docstring literal early unless it is escaped: a triple
+#: quote, a backslash (a lone one before the closer escapes it), a final
+#: quote that merges with the closer.
+HOSTILE = [
+    'Say """hi""" to it.',
+    "Path C:" + chr(92) + "tmp" + chr(92) + "n, not a newline",
+    'Ends in a "quote"',
+    "Ends in a backslash " + chr(92),
+]
+
+
+def _attr_docs(pyi: Path) -> dict[str, str]:
+    """``{name: docstring}`` for each module attribute and each class
+    property in *pyi*, read by ``ast`` -- so the stub must parse."""
+    tree = ast.parse(pyi.read_text())
+    out: dict[str, str] = {}
+    body = list(tree.body)
+    for i, node in enumerate(body):
+        nxt = body[i + 1] if i + 1 < len(body) else None
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and isinstance(nxt, ast.Expr)
+            and isinstance(nxt.value, ast.Constant)
+        ):
+            out[node.target.id] = nxt.value.value
+        if isinstance(node, ast.ClassDef):
+            for fn in node.body:
+                if isinstance(fn, ast.FunctionDef):
+                    doc = ast.get_docstring(fn, clean=False)
+                    out.setdefault(f"{node.name}.{fn.name}", doc or "")
+    return out
+
+
+@pytest.mark.parametrize("text", HOSTILE)
+def test_a_doc_that_would_end_the_literal_still_parses(tmp_path, text):
+    root = _project(tmp_path, module=False, doc=text)
+    docs = _attr_docs(root / "src" / "proj" / "eng.pyi")
+    assert docs["ENG_STATE"] == text.strip()
+    assert run_cli("status", "--check", cwd=root).returncode == 0
+
+
+@pytest.mark.parametrize("text", HOSTILE)
+def test_a_property_brief_that_would_end_the_literal_still_parses(
+    tmp_path, text
+):
+    root = _project(tmp_path, module=False, doc=None)
+    hdr = root / "native" / "inc" / "proj" / "eng" / "eng_core.h"
+    src = hdr.read_text()
+    old = "@brief Get current mode."
+    assert src.count(old) == 1
+    hdr.write_text(src.replace(old, "@brief " + text))
+    assert run_cli("apply", cwd=root).returncode == 0
+    docs = _attr_docs(root / "src" / "proj" / "eng.pyi")
+    assert docs["Eng.mode"] == text.strip()

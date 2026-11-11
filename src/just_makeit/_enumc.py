@@ -332,33 +332,34 @@ def doc_of(
 
     gh-2606. The ``[[enum]]`` row's ``doc`` key when it declares one, read
     off the registry (``_config.EnumChoices.doc``) as ``constants`` is.
-    Otherwise a generated sentence naming the enum and the attribute's
-    shape, so a published table is never undocumented: a documentation
-    tool such as mkdocstrings hides an attribute that has no docstring.
+    Otherwise a generated sentence, so a published table is never
+    undocumented: a documentation tool such as mkdocstrings hides an
+    attribute that has no docstring.
 
-    The C side has no enum type to name -- a binding passes the choice as
-    an ``int`` -- so the sentence names the ``[[enum]]`` the C tables are
-    built from, and, for a code-keyed dict, the C constants it is keyed by.
+    The sentence is for the reader of an API reference, so it carries no
+    manifest syntax: it names the enum, says how the value is looked up --
+    by position for a tuple, by code for a dict -- and for a dict names
+    the first and last C constants, the codes a C reader knows.
 
     >>> from just_makeit._config import EnumChoices as E
     >>> doc_of({"k": E(["a"], doc="Mode code to name.")}, "k", True)
     'Mode code to name.'
     >>> print(doc_of({"k": E(["a", "b"])}, "k", True))
-    Choice names of [[enum]] 'k', indexed by C value (a dense tuple).
-    >>> print(doc_of({"k": E(["a", "b"], ["K_A", "K_B"])}, "k", False)[30:])
-    keyed by C constant K_A .. K_B (a code-keyed dict).
+    Names of the k values, indexed by value.
+    >>> print(doc_of({"k": E(["a", "b"], ["K_A", "K_B"])}, "k", False))
+    Names of the k values, keyed by code (K_A .. K_B).
     """
     declared = str(getattr((enums or {}).get(name), "doc", "") or "")
     if declared.strip():
         return declared.strip()
-    head = f"Choice names of [[enum]] '{name}', "
+    head = f"Names of the {name} values, "
     if dense:
-        return head + "indexed by C value (a dense tuple)."
+        return head + "indexed by value."
     # Not dense means the enum declares `enumerators` (`_is_dense`), so
     # there is a first and a last constant to name.
     consts = constants_of(enums, name) or [""]
     span = consts[0] if len(consts) == 1 else f"{consts[0]} .. {consts[-1]}"
-    return head + f"keyed by C constant {span} (a code-keyed dict)."
+    return head + f"keyed by code ({span})."
 
 
 def _defines(mask: str, name: str) -> bool:
