@@ -63,6 +63,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import _textio
 from ._example import run_jm
 
 _WINDOWS = sys.platform == "win32"
@@ -183,7 +184,7 @@ def _link_numpy(run: _Run, proj: Path, what: str) -> None:
         proj,
     ).strip()
     home = Path(numpy.__file__).resolve().parent.parent
-    (Path(purelib) / "jm_numpy.pth").write_text(f"{home}\n", encoding="utf-8")
+    _textio.write_text(Path(purelib) / "jm_numpy.pth", f"{home}\n")
 
 
 def _require(tool: str) -> str:
