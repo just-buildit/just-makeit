@@ -4919,6 +4919,19 @@ def _apply_manifest(
         root, cfg, [*created, *updated, *frag_doc_updated, *bench_updated]
     )
 
+    # gh-2629: the CI's `python-version` list is the project's pyproject.toml
+    # classifiers, rendered rather than read at run time -- so every apply
+    # rewrites that one list (and nothing else in the workflow) to match.
+    # `status` replays this, so a list behind its classifiers is STALE.
+    from . import _pythons
+
+    if not (honor_status_allow and _status_allowed(cfg, _pythons.CI_REL)):
+        _ci_written, _ci_fallback = _pythons.sync_ci(root)
+        if _ci_written:
+            updated.append(root / _pythons.CI_REL)
+        if _ci_fallback:
+            print(f"  note: {_pythons.fallback_note()}")
+
     # gh-975: a splice whose anchor is gone writes nothing and says
     # "unchanged", which reads exactly like "already correct". Name it, with
     # what was not written and where the line belongs — the alternative jm

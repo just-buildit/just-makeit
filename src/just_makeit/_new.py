@@ -19,6 +19,7 @@ from . import _config as C
 from . import _render as T
 from . import _incpath as INC
 from . import _pins
+from . import _pythons
 
 
 #: The one way a generated Makefile installs a package into ``$(PYTHON)``
@@ -84,6 +85,13 @@ def _make_project_ctx(
         "py_test_cmd_win": cmd_win,
         "py_test_cmd_unix": cmd_unix,
         "py_test_label": "pytest" if pytest_ else "unittest",
+        # gh-2629: a new project starts out supporting what jm supports,
+        # read from jm's own metadata; from then on its pyproject.toml is
+        # the one list, and its CI is rendered from it.
+        "requires_python": _pythons.jm_requires_python(),
+        "python_classifiers": _pythons.classifier_lines(
+            _pythons.jm_supported()
+        ),
     }
 
 
