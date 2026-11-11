@@ -357,7 +357,7 @@ class TestTheBenchReconcilerSeedsItsDeclaration:
         cmake = root / "native/src/solo/CMakeLists.txt"
         # The pre-fix shape: bare `m`, no declaration, no bench target.
         text = cmake.read_text()
-        text = text[text.index("# OBJECT library") :]
+        text = text[text.index("# The component's C code") :]
         text = text[: text.index("add_executable(")]
         cmake.write_text(text.replace(R.LIBM_REF, "m"))
         assert "JM_MATH_LIBRARY" not in cmake.read_text()
