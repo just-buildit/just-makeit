@@ -756,6 +756,83 @@ def _reexport_names(m: "re.Match[str]") -> list[str]:
     return [n.strip().rstrip(",") for n in m.group("body").splitlines()]
 
 
+def drop_reexports(text: str, subs: "Iterable[str]") -> str:
+    """*text* without jm's re-export statement from each submodule in *subs*.
+
+    gh-2608: a ``reexports`` key that was renamed or removed left its
+    ``from .<sub> import ...`` behind, importing a module that no longer
+    exists. The caller names only submodules jm's own record says it
+    rendered (``[module.X] applied_reexports``, :func:`_config.applied_reexports`)
+    and the manifest no longer declares: nothing in the statement tells
+    jm's from an author's (gh-342), the record does. Only jm's exact shape
+    (:data:`_REEXPORT_RE`, either form) is removed, with its line break, so
+    an author's differently spelled import of the same module is left.
+
+    >>> src = ("from .old import a  # noqa: E402\n"
+    ...        "from .new import a  # noqa: E402\n")
+    >>> print(drop_reexports(src, ["old"]), end="")
+    from .new import a  # noqa: E402
+    """
+    subs = set(subs)
+    if not subs:
+        return text
+    for m in reversed(list(_REEXPORT_RE.finditer(text))):
+        if m.group("mod") in subs:
+            end = m.end() + (1 if text.startswith("\n", m.end()) else 0)
+            text = text[: m.start()] + text[end:]
+    return text
+
+
+def prune_reexports(
+    text: str, want: "dict[str, list[str]]"
+) -> "tuple[str, list[str]]":
+    """*text* with jm's re-export statements cut to the names jm renders now.
+
+    gh-2616: the package ``__init__.py`` imports each standalone object as
+    ``from .<comp> import <Class>``, and a changed ``class_name`` left the
+    old statement in place -- importing a class the extension no longer
+    has -- while every `apply` added one more statement for the new name,
+    because only the first ``from .<comp>`` was read. *want* maps each
+    submodule jm renders an import from (the component is in the manifest,
+    so the statement is jm's) to the names it imports now. Every statement
+    in jm's shape (:data:`_REEXPORT_RE`) from such a submodule keeps only
+    those names, each once across the file; one left with none is removed.
+    Returns the text and the names dropped, which the caller takes out of
+    ``__all__``.
+
+    >>> src = ("from .priv import Priv  # noqa: E402\n"
+    ...        "from .priv import _Priv  # noqa: E402\n"
+    ...        "from .priv import _Priv  # noqa: E402\n")
+    >>> text, dropped = prune_reexports(src, {"priv": ["_Priv"]})
+    >>> print(text, end=""); dropped
+    from .priv import _Priv  # noqa: E402
+    ['Priv']
+    """
+    seen: "dict[str, set[str]]" = {}
+    dropped: "list[str]" = []
+    out: "list[str]" = []
+    pos = 0
+    for m in _REEXPORT_RE.finditer(text):
+        mod = m.group("mod")
+        if mod not in want:
+            continue
+        names = _reexport_names(m)
+        done = seen.setdefault(mod, set())
+        keep = [n for n in names if n in want[mod] and n not in done]
+        done |= set(keep)
+        dropped += [n for n in names if n not in want[mod]]
+        if keep == names:
+            continue
+        out.append(text[pos : m.start()])
+        if keep:
+            out.append(_fmt_from_import(mod, keep))
+            pos = m.end()
+        else:
+            pos = m.end() + (1 if text.startswith("\n", m.end()) else 0)
+    out.append(text[pos:])
+    return "".join(out), dropped
+
+
 def sort_reexports(text: str, owned: "Iterable[str]") -> str:
     """*text* with jm's re-export statements in isort order (gh-2571), each
     written in its canonical form (gh-2514).
@@ -992,6 +1069,30 @@ def rewrap_comments(existing: str, rendered: str) -> str:
     return "\n".join(out)
 
 
+def stale_reexports(cfg: dict, module: str) -> "list[str]":
+    """The submodules whose re-export *module*'s ``__init__.py`` should
+    lose (gh-2608).
+
+    Those on jm's record of what it last rendered
+    (:func:`_config.applied_reexports`) that nothing re-exports any more:
+    not a current ``reexports`` key, not the module's own leaf, and not a
+    package sibling's (:func:`package_siblings`), whose line is that
+    module's to keep.
+
+    >>> cfg = {"module": {"m": {"applied_reexports": ["cic", "keep"],
+    ...                         "reexports": {"_cic": ["a"],
+    ...                                       "keep": ["k"]}}}}
+    >>> stale_reexports(cfg, "m")
+    ['cic']
+    """
+    live = {
+        C.module_paths(module).leaf,
+        *C.module_reexports(cfg, module),
+        *package_siblings(cfg, module),
+    }
+    return [s for s in C.applied_reexports(cfg, module) if s not in live]
+
+
 def package_siblings(cfg: dict, module: str) -> list[str]:
     """Leaf names of the other modules whose Python artifacts share
     *module*'s package directory (gh-523).
@@ -1143,6 +1244,7 @@ def _merge_module_init(
     reexports: dict[str, list[str]] | None = None,
     siblings: list[str] | None = None,
     platforms: "dict[str, tuple[str, ...] | None] | None" = None,
+    stale: "Iterable[str]" = (),
 ) -> str:
     """Merge new exports into an existing __init__.py without destroying content.
 
@@ -1156,6 +1258,10 @@ def _merge_module_init(
     ``no_generate`` sibling regenerate cleanly instead of being clobbered.
     Output is single-line canonical, matching jm's existing ``__init__.py``
     glue, so adding the key never reflows a project's other modules.
+
+    *stale* (gh-2608) are submodules jm's record says it last re-exported
+    from and the manifest no longer declares (:func:`stale_reexports`);
+    their statements are dropped (:func:`drop_reexports`).
 
     *platforms* (gh-1463, from :func:`_modplatforms.init_platforms`) maps each
     owned leaf to the platforms its module is built on; the merge below runs
@@ -1206,6 +1312,12 @@ def _merge_module_init(
     <BLANKLINE>
     """
     import_pat = _import_re(module)
+    # gh-2608: first, the import of a reexport jm rendered and the manifest
+    # has since renamed or removed -- at column 0, and its platform guard
+    # (gh-1463), which `guard_init` removes for a leaf mapped to None.
+    stale = list(stale)
+    existing = drop_reexports(existing, stale)
+    platforms = {**{s: None for s in stale}, **(platforms or {})}
     # gh-2571: the submodules whose re-export lines are jm's to sort -- this
     # module's, its declared reexports and its package siblings'.
     owned = {module, *(reexports or {}), *(siblings or [])}
@@ -1316,16 +1428,13 @@ def _merge_module_init(
                 result = result.rstrip("\n") + f"\n{line}\n"
 
     # gh-342: deliberately NO whole-line sweep here. A `from .<sub> import …`
-    # line whose submodule is no longer in the manifest cannot be reliably
-    # distinguished from a hand-written import — the noqa glue marker is not
-    # jm-exclusive (doppler hand-writes it), and a line-based filter shears
-    # the opener off an adjacent multi-line `from .x import ( … )`, leaving an
-    # orphaned body (IndentationError). The reconcile therefore only ever
-    # rewrites the statements it owns (the module's own line and the manifest's
-    # *current* reexport lines, both handled above and multi-line-safe via
-    # _import_re); it never deletes a statement jm cannot prove it generated.
-    # The cost is that a fully-removed reexport sibling leaves a stale line for
-    # the user to delete — strictly better than corrupting hand content.
+    # line whose submodule is no longer in the manifest cannot be told from
+    # a hand-written import by its text -- the noqa glue marker is not
+    # jm-exclusive (doppler hand-writes it), and jm's exact shape is one an
+    # author writes too. The one statement of a dropped reexport that IS
+    # removed is one jm's own record proves it rendered (*stale*, gh-2608,
+    # dropped at the top); a line from before that record is left for the
+    # user to delete, once.
 
     # 3. Upsert __all__ (module exports followed by reexported names). gh-523:
     # a sibling module sharing this package keeps its own entries, in their
