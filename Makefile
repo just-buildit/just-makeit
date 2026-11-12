@@ -523,8 +523,9 @@ DOCS_PREPARE = $(PYTHON) scripts/copy_examples.py
 # only existed in CI. Here it is in the build, so `make docs` and `make
 # docs-serve` produce the real site.
 #
-# `aliases.toml` rides the same line of reasoning (`jbx just-makeit:NAME`
-# fetches it first); both copies are the `site-files` recipe (local.mk).
+# `install.ps1`, the Windows twin (`irm <site>/install.ps1 | iex`), and
+# `aliases.toml` (`jbx just-makeit:NAME` fetches it first) ride the same
+# line of reasoning; every copy is the `site-files` recipe (local.mk).
 #
 # It has to run AFTER the build rather than in DOCS_PREPARE, because the
 # build's `--clean` wipes `site/` first.

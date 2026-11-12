@@ -11,6 +11,12 @@ very recipe ``DOCS_BUILD_CMD`` runs after the zensical build to put
 and reads what it wrote. It needs no zensical, so it runs on every leg of
 the matrix. Registration-free: any alias added later is held to the same
 rule with no edit here.
+
+The same goes for what the pages send a reader to (gh-2601): every
+``jbx just-makeit:NAME`` they show must resolve -- ``NAME.ps1`` where it is
+shown in PowerShell, ``NAME.sh`` (or an alias) elsewhere -- and every
+site-root file they link (``install.sh``, ``install.ps1``) must be shipped,
+as the repo's own copy.
 """
 
 from __future__ import annotations
@@ -48,26 +54,141 @@ def published(tmp_path_factory) -> Path:
     return out
 
 
-def _aliases(site: Path) -> dict:
-    """``[aliases]`` of the published ``aliases.toml``."""
+def _alias_tables(site: Path) -> "dict[str, dict]":
+    """Every alias table of the published ``aliases.toml``, by shell.
+
+    ``[aliases]`` is what jbx reads from bash; ``[aliases.ps1]`` (TOML: a
+    table nested in it) what it reads from PowerShell (just-bashit#235).
+    Returned as ``{"sh": {...}, "ps1": {...}}``, each name -> URL.
+    """
     f = site / "aliases.toml"
     assert f.is_file(), "the publish recipe ships no aliases.toml"
     with f.open("rb") as fh:
-        return C.tomllib.load(fh)["aliases"]
+        top = C.tomllib.load(fh)["aliases"]
+    tables = {"sh": {k: v for k, v in top.items() if isinstance(v, str)}}
+    for shell, table in top.items():
+        if isinstance(table, dict):
+            tables[shell] = table
+    return tables
+
+
+def _aliases(site: Path) -> dict:
+    """``[aliases]`` of the published ``aliases.toml``: bash's names."""
+    return _alias_tables(site)["sh"]
 
 
 def test_install_deps_is_aliased(published):
     assert "install-deps" in _aliases(published)
 
 
+def test_powershell_install_is_aliased(published):
+    assert "install" in _alias_tables(published).get("ps1", {})
+
+
 def test_every_alias_targets_a_file_the_site_ships(published):
+    """Every table, bash's and PowerShell's: registration-free."""
     base = _site_url()
     bad = []
-    for name, url in sorted(_aliases(published).items()):
+    rows = [
+        (f"[{shell}] {name}", url)
+        for shell, table in sorted(_alias_tables(published).items())
+        for name, url in sorted(table.items())
+    ]
+    for name, url in rows:
         if urlparse(url).scheme != "https" or not url.startswith(base + "/"):
             bad.append(f"{name}: {url!r} is not an https URL under {base}/")
             continue
         rel = url[len(base) + 1 :]
         if not rel or not (published / rel).is_file():
             bad.append(f"{name}: {url!r} -> {rel} is not shipped")
+    assert not bad, "\n".join(bad)
+
+
+def _reader_text() -> "list[Path]":
+    """Where a reader is told to fetch a file from the site.
+
+    The README, the hand-written docs (``docs/examples/`` is generated from
+    the examples' steps, and absent until a docs build) and every example's
+    ``.steps/``.
+    """
+    docs = ROOT / "docs"
+    return (
+        [ROOT / "README.md"]
+        + sorted(
+            p
+            for p in docs.rglob("*.md")
+            if p.relative_to(docs).parts[0] != "examples"
+        )
+        + sorted(
+            (ROOT / "src" / "just_makeit" / "examples").glob("*/.steps/*")
+        )
+    )
+
+
+def _site_files_named() -> "dict[str, list[str]]":
+    """``{file: [where]}`` for every site-root file a reader is sent to.
+
+    A page link has no extension and is the zensical build's; a link to a
+    script or a TOML file is one ``make site-files`` must ship.
+    """
+    url = re.compile(re.escape(_site_url()) + r"/([\w.-]+\.(?:sh|ps1|toml))\b")
+    named: "dict[str, list[str]]" = {}
+    for path in _reader_text():
+        for m in url.finditer(path.read_text(encoding="utf-8")):
+            named.setdefault(m.group(1), []).append(
+                path.relative_to(ROOT).as_posix()
+            )
+    return named
+
+
+_JBX_NAME = re.compile(r"\bjbx just-makeit:([\w-]+)")
+_FENCE = re.compile(r"^```(\w*)\n(.*?)^```", re.M | re.S)
+
+
+def _jbx_names() -> "dict[str, set[str]]":
+    """``{NAME: {suffix}}`` for every ``jbx just-makeit:NAME`` a reader runs.
+
+    jbx resolves the name through ``aliases.toml``, then probes the site
+    for ``NAME.sh``; from PowerShell it runs ``NAME.ps1`` (gh-2601). So a
+    name in a ``powershell`` fence needs the ``.ps1``, anywhere else the
+    ``.sh``.
+    """
+    want: "dict[str, set[str]]" = {}
+    for path in _reader_text():
+        for lang, body in _FENCE.findall(path.read_text(encoding="utf-8")):
+            ext = ".ps1" if lang == "powershell" else ".sh"
+            for name in _JBX_NAME.findall(body):
+                want.setdefault(name, set()).add(ext)
+    return want
+
+
+def test_every_jbx_just_makeit_name_resolves(published):
+    """``jbx just-makeit:install`` on both sides, and any name added later:
+    the published site answers each, in each shell it is shown in."""
+    want = _jbx_names()
+    assert want.get("install") == {".sh", ".ps1"}, want
+    tables = _alias_tables(published)
+    aliased = {".sh": tables["sh"], ".ps1": tables.get("ps1", {})}
+    bad = [
+        f"jbx just-makeit:{name} needs {name}{ext}, which is not shipped"
+        for name, exts in sorted(want.items())
+        for ext in sorted(exts)
+        if not (published / f"{name}{ext}").is_file()
+        and name not in aliased[ext]
+    ]
+    assert not bad, "\n".join(bad)
+
+
+def test_every_file_a_reader_fetches_is_shipped(published):
+    """``install.sh``, ``install.ps1`` (gh-2601), and any file named later:
+    each is shipped, and is the repo's own copy byte for byte."""
+    named = _site_files_named()
+    assert {"install.sh", "install.ps1"} <= set(named), named
+    bad = []
+    for name, where in sorted(named.items()):
+        shipped = published / name
+        if not shipped.is_file():
+            bad.append(f"{name} (named in {where[0]}) is not shipped")
+        elif shipped.read_bytes() != (ROOT / name).read_bytes():
+            bad.append(f"{name} is shipped, but is not the repo's {name}")
     assert not bad, "\n".join(bad)

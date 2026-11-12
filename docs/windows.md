@@ -9,6 +9,54 @@ There are two ways in: **PowerShell**, from a terminal, and the **Visual Studio
 IDE**, opening the project folder. Both configure through the same generated
 `CMakePresets.json` (gh-1376), so they build the same thing.
 
+## Installing jm
+
+From PowerShell -- Windows PowerShell 5.1 or PowerShell 7 -- with a
+Python 3.9+ installed, the recommended way is jbx, the same line as on
+Linux and macOS ([getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)):
+
+```powershell
+jbx just-makeit:install
+```
+
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
+
+From PowerShell, jbx runs jm's Windows installer, `install.ps1`, in the window
+itself. Without jbx, run that installer directly:
+
+```powershell
+irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
+```
+
+Either way, run in a project's root (a folder holding `pyproject.toml` or
+`just-makeit.toml`) it installs just-makeit into that project's `.venv` and
+puts the venv's `Scripts` folder on this window's `PATH`. Anywhere else it
+installs into a per-user venv under `%LOCALAPPDATA%`, which survives a
+reboot, copies its launchers (`jm.exe`, `just-makeit.exe`, ...) into
+`%USERPROFILE%\.local\bin` beside jbx, never over a file or folder it did
+not put there, and puts that folder alone on this window's `PATH` -- not
+the venv's own `python.exe` and `pip.exe`. Either way `jm` works at once.
+Then it reports whether
+clang-cl and cmake are on `PATH`, which a build needs: a warning, not a
+failure, since jm itself runs without them, and a Developer PowerShell for VS
+has both. It finds Python through the `py` launcher, then `python` on `PATH`,
+then `uv python find`.
+
+No venv is activated. A project makes its own `.venv` (below), and an activated venv sets `VIRTUAL_ENV`, which makes `py` run that
+venv's Python and makes uv warn that it is not the project's. The installer
+edits no profile and no user `PATH` itself; when `%USERPROFILE%\.local\bin`
+is not on your user `PATH` it says so, and `jbx update-path` puts it there
+once, for every new window. Without jbx, run the install line again in a new
+window; when jm is current it downloads nothing and only sets `PATH`.
+
+Options are environment variables, since `irm | iex` passes no arguments:
+`$env:JM_VENV` picks the venv, `$env:JM_FORCE = '1'` rebuilds it, and
+`$env:JM_INSTALL_FROM` installs a wheel instead of PyPI's release.
+
+`pip install just-makeit` alone is not enough on Windows: pip puts `jm.exe`
+in a Python `Scripts` folder that is usually not on `PATH`, so `jm` is not
+found. From Git Bash, `install.sh` stops and names this line.
+
 ## What you need
 
 - **Visual Studio 2022 or later**, or the standalone **Build Tools**, with the

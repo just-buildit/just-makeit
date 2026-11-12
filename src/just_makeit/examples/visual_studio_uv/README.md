@@ -18,30 +18,53 @@ From a **Developer PowerShell for VS**, which loads the build environment
 clang-cl needs:
 
 ```powershell
-uv tool install just-makeit
+jbx just-makeit:install
 jm example visual_studio_uv
 # visual_studio_uv: PASSED
 ```
 
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
+
 ## Prerequisites
 
 Visual Studio 2022 or later with the *Desktop development with C++*
-workload, clang-cl, and [uv](https://docs.astral.sh/uv/). uv provides the
-Python. The full list, and why the compiler is clang-cl rather than
-`cl.exe`, is in [Building on Windows](../windows.md#what-you-need). Visual
-Studio ships CMake and Ninja, so nothing else is needed.
+workload, clang-cl, and [uv](https://docs.astral.sh/uv/), which provides
+the project's Python. jm's installer needs a Python 3.9+ of its own: the
+`py` launcher's, or one uv installed (`uv python install`), which it finds
+with `uv python find`. The full list, and why the compiler is clang-cl
+rather than `cl.exe`, is in
+[Building on Windows](../windows.md#what-you-need). Visual Studio ships
+CMake and Ninja, so nothing else is needed.
+
+jm is installed with [jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit), jm's recommended install,
+the same line on every platform; step 1 runs it.
 
 ---
 
-## 1. Scaffold a project and a component
+## 1. Install jm, then scaffold a project and a component
 
 From a PowerShell prompt, in the folder that will hold the project:
 
 ```powershell
+jbx just-makeit:install
 jm new my_vs
 cd my_vs
 jm object scale --state factor:double:2.0 --arg-type double --return-type double
 ```
+
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
+
+The first line installs jm, the same in Windows PowerShell and
+PowerShell 7: from PowerShell,
+[jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
+runs jm's Windows installer,
+`install.ps1`, in this window. This folder is not a project's root yet, so
+it installs just-makeit into a per-user venv under `%LOCALAPPDATA%`, copies
+its launchers into `%USERPROFILE%\.local\bin`, and puts that folder on this
+window's `PATH`, so `jm` runs on the next line. It activates no venv: the
+project's own `.venv` comes in step 3, and an active venv would change what
+`py` and `uv` pick.
+[Building on Windows](../windows.md#installing-jm) says more.
 
 `scale` is one object with one piece of state, `factor`, and a `step()` that
 takes and returns a `double`. Its C core is

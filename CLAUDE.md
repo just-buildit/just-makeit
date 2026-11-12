@@ -16,8 +16,9 @@ code stays clean.
 source .venv/bin/activate   # preferred over uv run
 uv tool install .
 
-# Install build deps (cmake, gcc/clang, numpy) into a venv
-jm-install-deps /tmp/jm-venv
+# Install build deps (cmake, gcc/clang, numpy) into a venv; `--help` names
+# the default (a project root's .venv, else a per-user venv, never /tmp)
+jm-install-deps
 
 # Run all tests (CTest + pytest on the bundled examples)
 jm-run-tests

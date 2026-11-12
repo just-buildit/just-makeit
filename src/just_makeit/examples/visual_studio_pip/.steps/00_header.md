@@ -19,10 +19,12 @@ From a **Developer PowerShell for VS**, which loads the build environment
 clang-cl needs:
 
 ```powershell
-py -m pip install just-makeit
+jbx just-makeit:install
 jm example visual_studio_pip
 # visual_studio_pip: PASSED
 ```
+
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
 
 ## Prerequisites
 
@@ -31,3 +33,6 @@ workload, clang-cl, and an x64 Python 3.9+ with the `py` launcher. The full
 list, and why the compiler is clang-cl rather than `cl.exe`, is in
 [Building on Windows](../windows.md#what-you-need). Visual Studio ships
 CMake and Ninja, so nothing else is needed.
+
+jm is installed with [jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit), jm's recommended install,
+the same line on every platform; step 1 runs it.
