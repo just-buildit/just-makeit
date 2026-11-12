@@ -835,7 +835,7 @@ def render(template: str, ctx: dict) -> str:
         # `+`) comes back a plain `str` without its `doc`, and the slot it
         # left would be written into the file as is (the gh-2640 smoke test
         # did this, its version test spliced in before render).
-        raise ValueError(
+        raise TypeError(
             "render: the template holds <<jm_module_doc>> but no docstring;"
             " a str method dropped PyTemplate.doc -- render the template"
             " first, then edit the result"

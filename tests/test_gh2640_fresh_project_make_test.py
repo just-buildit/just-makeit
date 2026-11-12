@@ -274,5 +274,5 @@ def test_a_template_that_lost_its_docstring_is_refused():
     assert isinstance(T.PROJECT_TEST_PY, T.PyTemplate)
     edited = T.PROJECT_TEST_PY.replace("<<version_test>>", "")
     assert not isinstance(edited, T.PyTemplate)
-    with pytest.raises(ValueError, match="dropped PyTemplate.doc"):
+    with pytest.raises(TypeError, match="dropped PyTemplate.doc"):
         T.render(edited, {"package": "p"})
