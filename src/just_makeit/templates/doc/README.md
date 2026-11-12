@@ -4,7 +4,7 @@ TODO: describe your project.
 
 ## Requirements
 
-- Python 3.9+
+- Python <<python_floor>>+
 <<readme_requirements>>
 - NumPy (installed automatically by `make` if missing)
 

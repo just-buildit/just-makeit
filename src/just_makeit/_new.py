@@ -392,6 +392,9 @@ def run(
         # `make docs` to a make-backend project, which has none of them.
         ctx.update(README_BY_BACKEND["make"])
     _write(root / "pyproject.toml", r(T.PYPROJECT_TOML))
+    # gh-2629: the README names the floor the pyproject.toml just written
+    # declares, read back from it -- that file is the one statement of it.
+    ctx["python_floor"] = _pythons.floor(root)
     _write(root / "README.md", r(T.README_MD))
     _write(root / ".gitignore", r(T.GITIGNORE))
     # gh-1641: jm renders LF everywhere (gh-1368), and Git for Windows
