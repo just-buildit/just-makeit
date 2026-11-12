@@ -1,5 +1,149 @@
 ## [Unreleased]
 
+## [0.129.0] — 2026-11-12
+
+### Added
+
+- **jm installs on Windows from PowerShell, and `jbx just-makeit:install`
+    is the recommended install everywhere** (gh-2601). `install.ps1`, the
+    Windows twin of `install.sh`, is published beside it, and
+    `aliases.toml`'s new `[aliases.ps1]` table points jbx's PowerShell
+    side at it. From Windows PowerShell 5.1 or PowerShell 7 it finds a
+    Python 3.9+ (`py`, then `python`, then `uv python find`), installs
+    just-makeit into a per-user venv (or, in a project's root, the
+    project's `.venv`), copies its launchers into `%USERPROFILE%\.local\bin`
+    (never over a file it did not put there), puts that folder on the
+    window's `PATH` without activating any venv, proves `jm --version` runs, and warns when clang-cl or cmake is
+    missing. A re-run with jm current downloads nothing. It holds no `exit`
+    and is safe under `irm | iex` and dot-sourced, which is how jbx runs
+    it. Before this the Windows pages said `py -m pip install just-makeit`
+    or `uv tool install just-makeit`, and neither put `jm` on `PATH` on a
+    fresh machine. `install.sh` and `jm-install-deps` under Git Bash, MSYS2
+    or Cygwin now stop, naming what to run instead, where they used to read
+    the package manager as unknown and check no compiler. Run as a child --
+    `jbx just-makeit:install`, `bash install.sh`, a pipe -- `install.sh`
+    used to say "Venv activated" about a venv that died with the child; it
+    now symlinks every console script just-makeit declares into
+    `~/.local/bin`, never replacing a file it did not make, asks the jbx
+    shell function to put that directory on the caller's `PATH`, and calls
+    jm ready only when the caller will find it. Whenever the directory is
+    not on `PATH`, both installers name `jbx update-path`. The install pages
+    put `jbx just-makeit:install` above the methods they already listed and
+    add the Windows one; the Visual Studio examples run it as their first
+    step.
+
+### Changed
+
+- **The installers' venv survives a reboot, and a project root gets its own**
+    (gh-2601). `install.sh` and `jm-install-deps` put their venv in
+    `/tmp/jm-venv` by default, and `install.sh` then linked
+    `~/.local/bin/jm` into it -- so where `/tmp` is a tmpfs or is cleaned at
+    boot (Arch, Fedora, ...), every new shell after a reboot found a
+    dangling `jm`. Each installer now decides where the venv goes in one
+    function, by one rule: run in a project's root (the directory holds
+    `pyproject.toml` or `just-makeit.toml`), the project's `./.venv`, with
+    nothing linked into `~/.local/bin` and, under jbx, that venv's `bin` put
+    on the caller's `PATH`; anywhere else, a per-user venv under
+    `${XDG_DATA_HOME:-~/.local/share}/just-makeit/` (`install.ps1`: under
+    `%LOCALAPPDATA%`), linked into `~/.local/bin` as before. A path
+    argument, or `JM_VENV`, still wins, and counts as a project's when the
+    directory holding it is a project root. An existing `/tmp/jm-venv` is
+    left alone; a re-run replaces a `~/.local/bin` link into a venv that no
+    longer exists, which is the way back after a reboot. Also: a relative
+    link into a jm venv is no longer refused as foreign; an unwritable jbx
+    reload marker is named instead of reporting jm ready. `install.ps1`
+    no longer puts the venv's `Scripts` folder (its `python.exe`,
+    `pip.exe`) on `PATH`,
+    keeps a working install when the package index cannot be asked,
+    installs a wheel rebuilt at the same version, matches a relative or
+    `/`-separated `JM_VENV` / `JM_BIN_DIR`, and names a folder where a
+    launcher would go instead of failing on it.
+
+- **A generated project's Python versions live in its own `pyproject.toml`**
+    (gh-2629). The CI `jm ci` writes hard-coded its `python-version` matrix
+    in jm's template, and the generated `pyproject.toml` declared no version
+    classifiers, so a project could not drop a Python without hand-editing
+    a workflow `jm ci --force` would put back. `jm new` now writes
+    `Programming Language :: Python :: 3.N` classifiers, and
+    `requires-python`, from jm's own installed metadata, and the README's
+    `Python 3.N+` line from that floor; the GitHub workflow's matrix is the
+    classifiers `requires-python` admits, the Woodpecker image the oldest of
+    them, and every `jm apply` rewrites that one value to match -- a
+    one-line, multi-line or block list, kept in its shape -- so
+    `jm status --check` reports the workflow STALE until it does. A
+    classifier `requires-python` refuses gets no leg, and is named. A
+    workflow whose list jm cannot locate is never written, and is named by
+    `apply` and listed by `jm status` under `CI PYTHONS`. The workflow stays
+    static YAML. A project with no version classifiers keeps its
+    `pyproject.toml` untouched and its CI follows jm's list, with a one-line
+    note saying to add them. jm now depends on `packaging` for the
+    `requires-python` reading (PEP 440 specifiers).
+
+### Fixed
+
+- **A release waits while main's CI is still running** (gh-2613). The
+    release's verify-ci job polled for a fixed 60 minutes, sized against
+    CI's duration but counting its queue time too, so a release cut right
+    after a code merge timed out with CI merely queued: v0.127.1 and both
+    v0.128.0 attempts did, and each spent `make ship`'s one pre-publish
+    recovery. The job now runs the org standard's `release-verify-ci`,
+    which waits as long as the commit's CI run is alive, fails early only
+    when no run appears or one finishes without certifying, and leaves the
+    job's 240-minute timeout as the one cap. `release-watch` reads the
+    same script, so the two no longer disagree about whether CI finished.
+
+- **A generated docstring reads back as its text** (gh-2620). jm writes
+    docstrings around text it was handed, such as a manifest `doc`, a header
+    `@brief` or a template slot, and some forty sites each wrote their own
+    triple quotes. A backslash in that text was read as an escape: a `doc`
+    of `C:\new` read back as a newline, and `\l` was a SyntaxWarning in the
+    generated project. Only the numpy layout knew to write a raw string
+    (gh-652). Most sites escaped nothing, so a triple quote in a handle
+    field's doc or a template slot ended the literal early. Every generated
+    docstring is now written by one function, and its value is exactly the
+    text. A text holding a backslash is written as an `r"""` literal, unless
+    it also holds something a raw literal cannot (a triple quote, a closing
+    quote or backslash, a control character), which is escaped instead.
+    Regenerated stubs whose docstrings hold a backslash change accordingly:
+    run `jm apply`.
+
+- **A PEP 723 app script declares its project's `requires-python`**
+    (gh-2631). The three `jm app --target pep723` templates carried a
+    literal `requires-python = ">=3.9"`, a second copy of the floor that
+    did not follow the project's `pyproject.toml`. The script now takes the
+    project's `[project] requires-python`, and every `jm apply` rewrites it
+    when that changes; a `pyproject.toml` without one gives jm's own floor.
+    No template jm ships names a Python version any more.
+    `jm remove app` reads the script's floor line as jm's, so removing
+    after a floor change and before `apply` still removes an unedited
+    script rather than keeping it as hand-edited.
+
+- **A project straight from `jm new` passes its own `make test`**
+    (gh-2640). With no component yet the project had no Python test, and
+    unittest on Python 3.12+ exits 5 when it runs none, so `make test`
+    failed on a tree nobody had touched. `jm new` now writes
+    `src/<pkg>/tests/test_project.py`, which checks that the package
+    imports and that its new `__version__` -- a literal, annotated or
+    not -- is the manifest's `[project] version`. Both copies follow
+    `jm config version` and are reported by `jm status`. A package that
+    computes `__version__` keeps it, and the test then asks only for a
+    non-empty string. `jm apply` adds the test to an existing project, and
+    a `__version__` line to a package `__init__.py` that binds none. The `--pytest` recipe no longer passes pytest's exit 5
+    (no tests collected): an empty run proves nothing.
+
+- **`jm object project` is refused** (gh-2640). A component is the
+    manifest table of its own name, so one named `project` -- or any other
+    reserved top-level key -- replaced `[project]` with the object's keys
+    and exited 0.
+
+- **jm's installers no longer make a partial upgrade on Arch.** Both
+    `install.sh` and `jm-install-deps` refreshed pacman's databases without
+    upgrading (`-Sy`) and then installed, which Arch does not support: a
+    package from the fresh database can need libraries newer than the ones
+    installed beside it, as openssl 4 did against `libcrypto.so.3` on
+    2026-11-11. They now run `-Syu --noconfirm --needed`, and a test refuses
+    a refresh-without-upgrade in any tracked file.
+
 ## [0.128.0] — 2026-11-11
 
 ### Added
