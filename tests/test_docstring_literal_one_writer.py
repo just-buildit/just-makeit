@@ -18,8 +18,12 @@ GATES:
    spells a triple quote, outside `docstring_literal` and the
    ``TRIPLE_QUOTE`` constant a reader compares against. A literal that is
    not a Python docstring at all says so on its line, ``# not a
-   docstring: <reason>``, and the reason must be given. ``TRIPLE_QUOTE``
-   is never built into text (an f-string, ``+``, ``%``). The scan reads
+   docstring: <reason>``, and the reason must be given. A ``'''`` counts,
+   and so does a triple quote folded from constants (``'"' * 3``,
+   ``chr(34) * 3``, a ``join``). ``TRIPLE_QUOTE`` is only READ: an
+   allow-list (a comparison operand, a search method's needle, ``len``)
+   admits a use, and any other -- an alias, ``+=``, a ``join`` or
+   ``format`` argument, an f-string -- is refused. The scan reads
    the AST, so a formatter's line wrapping cannot hide a site, and the
    gate proves it is armed on a planted writer of each shape.
 2. No template spells a slot inside a docstring: the text such a slot
@@ -112,6 +116,113 @@ def _names_constant(node: ast.AST) -> bool:
     )
 
 
+#: The str methods that only SEARCH for their first argument: handing the
+#: delimiter to one reads text, it cannot build any.
+_SEARCHES = frozenset(
+    {
+        "startswith",
+        "endswith",
+        "split",
+        "rsplit",
+        "partition",
+        "rpartition",
+        "index",
+        "rindex",
+        "find",
+        "rfind",
+        "count",
+        "removeprefix",
+        "removesuffix",
+        "replace",
+    }
+)
+
+
+def _is_read(node: ast.AST, parents: dict) -> bool:
+    """Whether this use of ``TRIPLE_QUOTE`` only READS text: an operand of
+    a comparison (``==``, ``in``, ``not in``), or the needle of a search
+    method -- directly, or as an element of a tuple handed to either.
+
+    An allow-list, not a deny-list of build shapes: any other use (an
+    alias, a ``join`` element, a ``format`` argument, ``+=``) is refused,
+    so a writer spelled a way nobody listed is refused too.
+    """
+    parent = parents.get(id(node))
+    if isinstance(parent, ast.Tuple):
+        node, parent = parent, parents.get(id(parent))
+    if isinstance(parent, ast.Compare):
+        return True
+    if (
+        isinstance(parent, ast.Call)
+        and isinstance(parent.func, ast.Name)
+        and parent.func.id == "len"
+    ):
+        return True
+    if not (
+        isinstance(parent, ast.Call)
+        and isinstance(parent.func, ast.Attribute)
+        and parent.func.attr in _SEARCHES
+        and parent.args
+    ):
+        return False
+    # `replace` builds from its second argument: only the needle reads.
+    if parent.func.attr == "replace":
+        return parent.args[0] is node
+    return any(a is node for a in parent.args)
+
+
+def _fold(node: ast.AST) -> str | None:
+    """The string a small constant expression evaluates to, or None.
+
+    Exact for the shapes it accepts -- a str constant, ``+`` of two, ``*``
+    by a small int constant, ``chr(<int>)``, ``<str>.join`` of a list or
+    tuple of them -- and None for anything else, so it never guesses.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        a, b = _fold(node.left), _fold(node.right)
+        return a + b if a is not None and b is not None else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        for s, k in ((node.left, node.right), (node.right, node.left)):
+            v = _fold(s)
+            if (
+                v is not None
+                and isinstance(k, ast.Constant)
+                and type(k.value) is int
+                and 0 <= k.value <= 64
+            ):
+                return v * k.value
+        return None
+    if not isinstance(node, ast.Call) or node.keywords:
+        return None
+    f = node.func
+    if (
+        isinstance(f, ast.Name)
+        and f.id == "chr"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and type(node.args[0].value) is int
+        and 0 <= node.args[0].value < 0x110000
+    ):
+        return chr(node.args[0].value)
+    if (
+        isinstance(f, ast.Attribute)
+        and f.attr == "join"
+        and len(node.args) == 1
+        and isinstance(node.args[0], (ast.List, ast.Tuple))
+    ):
+        sep = _fold(f.value)
+        parts = [_fold(e) for e in node.args[0].elts]
+        if sep is not None and all(p is not None for p in parts):
+            return sep.join(p for p in parts if p is not None)
+    return None
+
+
+def _triple(s: str) -> bool:
+    return _Q in s or "'" * 3 in s
+
+
 def violations(path: Path, text: str) -> list[str]:
     """Every site in *text* (the module at *path*) spelling a docstring
     literal around the one writer."""
@@ -120,30 +231,36 @@ def violations(path: Path, text: str) -> list[str]:
     docs = _docstring_nodes(tree)
     parents = _parents(tree)
     out: list[str] = []
+
+    def exempt(n: ast.AST) -> bool:
+        if path.name == _WRITER[0] and (
+            _inside(n, parents, _WRITER[1]) or _inside(n, parents, _CONSTANT)
+        ):
+            return True
+        return _marked(lines, n)
+
     for n in ast.walk(tree):
         where = f"{path.name}:{getattr(n, 'lineno', '?')}"
         if (
             isinstance(n, ast.Constant)
             and isinstance(n.value, str)
-            and _Q in n.value
+            and _triple(n.value)
             and id(n) not in docs
         ):
-            if path.name == _WRITER[0] and (
-                _inside(n, parents, _WRITER[1])
-                or _inside(n, parents, _CONSTANT)
-            ):
-                continue
-            if _marked(lines, n):
-                continue
-            out.append(f"{where}: a triple quote spelled outside the writer")
-        if isinstance(n, ast.JoinedStr) and any(
-            isinstance(v, ast.FormattedValue) and _names_constant(v.value)
-            for v in n.values
-        ):
-            out.append(f"{where}: {_CONSTANT} built into an f-string")
-        if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Mod)):
-            if _names_constant(n.left) or _names_constant(n.right):
-                out.append(f"{where}: {_CONSTANT} built into text")
+            if not exempt(n):
+                out.append(
+                    f"{where}: a triple quote spelled outside the writer"
+                )
+        elif isinstance(n, (ast.BinOp, ast.Call)):
+            v = _fold(n)
+            if v is not None and _triple(v) and not exempt(n):
+                out.append(f"{where}: a triple quote folded from constants")
+        if not _names_constant(n) or exempt(n):
+            continue
+        if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load):
+            out.append(f"{where}: {_CONSTANT} rebound")
+        elif not _is_read(n, parents):
+            out.append(f"{where}: {_CONSTANT} used other than to read")
     return out
 
 
@@ -170,6 +287,15 @@ def test_every_exemption_gives_a_reason():
         "x = TRIPLE_QUOTE + doc",
         "x = D.TRIPLE_QUOTE + doc",
         "x = '%s' % TRIPLE_QUOTE",
+        "x = '\"' * 3 + doc",
+        "x = \"'''\" + doc",
+        "x = '\"\"' + '\"'",
+        "x = chr(34) * 3",
+        "x = ''.join([TRIPLE_QUOTE, doc])",
+        "x = '{0}'.format(TRIPLE_QUOTE)",
+        "Q = TRIPLE_QUOTE\nx = Q + doc",
+        "x = TRIPLE_QUOTE\nx += doc",
+        "x = ''.join(['\"\"', '\"'])",
     ],
     ids=[
         "concat",
@@ -179,6 +305,15 @@ def test_every_exemption_gives_a_reason():
         "const-add",
         "attr",
         "mod",
+        "mul",
+        "single-quoted",
+        "split-concat",
+        "chr",
+        "join-name",
+        "format",
+        "alias",
+        "augassign",
+        "join-consts",
     ],
 )
 def test_the_scan_is_armed(planted):
@@ -193,8 +328,30 @@ def test_the_scan_is_armed(planted):
         "ok = TRIPLE_QUOTE in body",
         'x = \'"""\'  # not a docstring: a TOML heredoc',
         'x = re.compile(r\'\\"\\"\\"(.*)\')',
+        "ok = s.lstrip().startswith((TRIPLE_QUOTE, 'r'))",
+        "ok = text[:3] == TRIPLE_QUOTE",
+        "ok = TRIPLE_QUOTE not in body",
+        "head = s.split(TRIPLE_QUOTE)[0]",
+        "t = s.removeprefix(TRIPLE_QUOTE).removesuffix(D.TRIPLE_QUOTE)",
+        "t = s.replace(TRIPLE_QUOTE, 'x')",
+        "from ._docstring import TRIPLE_QUOTE",
+        "start = i + len(TRIPLE_QUOTE)",
     ],
-    ids=["own-doc", "startswith", "in", "marked", "escaped-regex"],
+    ids=[
+        "own-doc",
+        "startswith",
+        "in",
+        "marked",
+        "escaped-regex",
+        "tuple-search",
+        "compare",
+        "not-in",
+        "split",
+        "remove",
+        "replace-needle",
+        "import",
+        "len",
+    ],
 )
 def test_the_scan_lets_through_what_it_allows(allowed):
     assert not violations(Path("_planted.py"), allowed)

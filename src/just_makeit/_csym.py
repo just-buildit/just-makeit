@@ -1548,7 +1548,7 @@ def _toml_string(q: int) -> str:
     C:\
     """
     return (
-        rf"(\"\"\"|'''|\"|')("
+        rf"(\"\"\"|'''|\"|')("  # not a docstring: any Python quote
         rf"(?<=\")(?:\\[\s\S]|(?!\{q})[^\\])*?"
         rf"|(?<=')(?:(?!\{q})[\s\S])*?"
         rf")\{q}"

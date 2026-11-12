@@ -120,15 +120,14 @@ def _swap_pyi_summary(doc: str, brief: str) -> str:
     >>> _swap_pyi_summary(multi, "New.").splitlines()[0] == f"    {q}New."
     True
     """
-    marker = chr(34) * 3
-    i = doc.find(marker)
+    i = doc.find(TRIPLE_QUOTE)
     if i < 0:
         return doc
-    start = i + len(marker)
+    start = i + len(TRIPLE_QUOTE)
     # A one-line docstring ends at the closing marker; a multi-line one ends
     # its summary at the first newline.
     nl = doc.find("\n", start)
-    close = doc.find(marker, start)
+    close = doc.find(TRIPLE_QUOTE, start)
     end = close if (close != -1 and (nl == -1 or close < nl)) else nl
     if end < 0:
         return doc
@@ -159,9 +158,8 @@ def _split_steps_stub_signature(stub: str) -> "str | None":
     >>> _split_steps_stub_signature("nonsense") is None
     True
     """
-    marker = chr(34) * 3
-    if marker in stub:
-        return stub.split(marker)[0].rstrip("\n ")
+    if TRIPLE_QUOTE in stub:
+        return stub.split(TRIPLE_QUOTE)[0].rstrip("\n ")
     body = stub.rstrip()
     if body.endswith(": ..."):
         return body[: -len(" ...")]
@@ -186,12 +184,11 @@ def _steps_stub_summary(stub: str) -> "str | None":
     >>> _steps_stub_summary("    def steps(self) -> int: ...\\n") is None
     True
     """
-    marker = chr(34) * 3
-    i = stub.find(marker)
+    i = stub.find(TRIPLE_QUOTE)
     if i < 0:
         return None
-    start = i + len(marker)
-    close = stub.find(marker, start)
+    start = i + len(TRIPLE_QUOTE)
+    close = stub.find(TRIPLE_QUOTE, start)
     nl = stub.find("\n", start)
     end = close if (close != -1 and (nl == -1 or close < nl)) else nl
     if end < 0:

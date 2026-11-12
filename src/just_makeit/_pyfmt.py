@@ -69,7 +69,7 @@ _HEADER_RE = re.compile(
     r"(?P<tail>\)\s*(?:->.*)?:(?:\s*\.\.\.)?)$"
 )
 
-_TRIPLE = (TRIPLE_QUOTE, "'''")
+_TRIPLE = (TRIPLE_QUOTE, "'''")  # not a docstring: openers a reader seeks
 
 # A complete one-line docstring: `        """Text."""`, optionally raw. Used
 # only on a line already over the target, and only when the body carries no
