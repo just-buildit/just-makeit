@@ -73,21 +73,25 @@ def test_the_step_runs_the_make_target_and_nothing_else():
     assert [s["run"].strip() for s in steps] == ["make -s release-verify-ci"]
 
 
-def test_the_target_receives_jm_s_check_and_workflow_from_the_environment():
+def test_the_target_receives_jm_s_check_and_workflow_from_the_environment(
+    tmp_path,
+):
     """The standard exports CI_CHECK_NAME and CI_WORKFLOW to every recipe,
     rather than spelling them on the script's command line, so the value a
     recipe sees is what the variable holds when it runs. Read from a
     recipe's own environment: a `-n` dry run of the target would show only
-    its command line, which no longer carries them."""
+    its command line, which no longer carries them.
+
+    The probe is a second makefile beside jm's own, not ``--eval``: macOS
+    ships GNU make 3.81, which has no ``--eval``."""
+    probe = tmp_path / "probe.mk"
+    probe.write_text(
+        "jm-env-probe:\n"
+        '\t@printf \'%s|%s\\n\' "$$CI_CHECK_NAME" "$$CI_WORKFLOW"\n',
+        encoding="utf-8",
+    )
     out = subprocess.run(
-        [
-            "make",
-            "-s",
-            "--eval",
-            "jm-env-probe: ; @printf '%s|%s\\n' \"$$CI_CHECK_NAME\""
-            ' "$$CI_WORKFLOW"',
-            "jm-env-probe",
-        ],
+        ["make", "-s", "-f", "Makefile", "-f", str(probe), "jm-env-probe"],
         cwd=ROOT,
         capture_output=True,
         text=True,
