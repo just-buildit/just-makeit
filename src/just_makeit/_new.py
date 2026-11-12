@@ -110,8 +110,12 @@ def _smoke_test_text(root: Path, project: str, render) -> str:
             init.read_text(encoding="utf-8")
         )
     kind = "computed" if binding == _projversion.COMPUTED else "literal"
-    text = T.PROJECT_TEST_PY.replace("<<version_test>>", _VERSION_TESTS[kind])
-    return T.owned_scaffold(render(text), SMOKE_TEST)
+    # Rendered first, then spliced: `PROJECT_TEST_PY` is a `PyTemplate`, and
+    # a `str` method on it would drop the docstring `render` writes.
+    text = render(T.PROJECT_TEST_PY).replace(
+        "<<version_test>>", render(_VERSION_TESTS[kind])
+    )
+    return T.owned_scaffold(text, SMOKE_TEST)
 
 
 def _make_project_ctx(
