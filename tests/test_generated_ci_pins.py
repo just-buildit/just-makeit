@@ -507,3 +507,32 @@ def test_a_pep723_app_without_a_project_floor_takes_jms(tmp_path):
     assert run_cli("apply", cwd=root).returncode == 0
     assert _app_floor(root) == jm_floor
     assert p.read_text(encoding="utf-8") == stripped
+
+
+def test_remove_after_a_floor_change_still_removes_the_app(tmp_path):
+    """Raise the project's floor, then `remove app` before `apply`: the
+    script's only difference from a fresh render is the floor line, which
+    is jm's slot, not an edit -- so it goes. An edit anywhere else still
+    keeps it (gh-2074)."""
+    root = _pep723_project(tmp_path)
+    p = root / "pyproject.toml"
+    jm_floor = metadata.metadata("just-makeit")["Requires-Python"]
+    p.write_text(
+        p.read_text(encoding="utf-8").replace(f'"{jm_floor}"', '">=3.12"', 1),
+        encoding="utf-8",
+    )
+    script = root / "tool.py"
+    assert _app_floor(root) == jm_floor
+    r = run_cli("remove", "app", "tool", "--force", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not script.exists(), "a stale floor read as an author's edit"
+
+    (tmp_path / "edited").mkdir()
+    root = _pep723_project(tmp_path / "edited")
+    script = root / "tool.py"
+    script.write_text(
+        script.read_text(encoding="utf-8") + "# mine\n", encoding="utf-8"
+    )
+    r = run_cli("remove", "app", "tool", "--force", cwd=root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert script.exists(), "an author's edit was removed"

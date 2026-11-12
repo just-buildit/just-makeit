@@ -2438,6 +2438,12 @@ def remove(root: Path, cfg: dict, entry: dict) -> "list[Path]":
     to tell an edit from. Then the target's wiring: a C app's lines in the
     App block, a console app's ``[project.scripts]`` entry.
 
+    A PEP 723 script's ``requires-python`` line is jm's slot, not the
+    author's (gh-2631): the render carries the project's floor NOW, and the
+    file the one `apply` last wrote. Raising the floor and removing before
+    `apply` must not read as an edit, so that line is compared as rendered
+    (:func:`_floor_as_rendered`).
+
     Returns the files kept.
     """
     from ._remove import _rm
@@ -2449,7 +2455,11 @@ def remove(root: Path, cfg: dict, entry: dict) -> "list[Path]":
         if _missing(cfg, entry) is None
         else None
     )
-    if path.is_file() and path.read_text(encoding="utf-8") != rendered:
+    if (
+        path.is_file()
+        and _floor_as_rendered(path.read_text(encoding="utf-8"), rendered)
+        != rendered
+    ):
         kept.append(path)
     else:
         _rm(path)
@@ -2465,6 +2475,34 @@ def remove(root: Path, cfg: dict, entry: dict) -> "list[Path]":
         if _drop_pyproject_script(root, entry["name"]):
             print(f"  update  {root / 'pyproject.toml'}")
     return kept
+
+
+#: A PEP 723 script's floor line, as the three templates spell it.
+_FLOOR_LINE = re.compile(r'^# requires-python = "[^"\n]*"$', re.M)
+
+
+def _floor_as_rendered(text: str, rendered: "str | None") -> str:
+    """*text* with its PEP 723 floor line replaced by *rendered*'s.
+
+    Only when both carry exactly one such line; otherwise *text* as is, so
+    a C or console app, or a script whose floor line the author removed or
+    doubled, is compared byte for byte.
+
+    >>> old = '# /// script\\n# requires-python = ">=3.9"\\nx = 1\\n'
+    >>> new = old.replace(">=3.9", ">=3.12")
+    >>> _floor_as_rendered(old, new) == new
+    True
+    >>> _floor_as_rendered(old + "y = 2\\n", new) == new
+    False
+    >>> _floor_as_rendered("int main;\\n", None)
+    'int main;\\n'
+    """
+    if rendered is None:
+        return text
+    want = _FLOOR_LINE.findall(rendered)
+    if len(want) != 1 or len(_FLOOR_LINE.findall(text)) != 1:
+        return text
+    return _FLOOR_LINE.sub(lambda _m: want[0], text)
 
 
 def _drop_pyproject_script(root: Path, name: str) -> bool:

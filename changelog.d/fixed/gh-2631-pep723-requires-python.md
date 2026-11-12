@@ -5,3 +5,6 @@
     project's `[project] requires-python`, and every `jm apply` rewrites it
     when that changes; a `pyproject.toml` without one gives jm's own floor.
     No template jm ships names a Python version any more.
+    `jm remove app` reads the script's floor line as jm's, so removing
+    after a floor change and before `apply` still removes an unedited
+    script rather than keeping it as hand-edited.
