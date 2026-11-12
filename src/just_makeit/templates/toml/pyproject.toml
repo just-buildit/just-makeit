@@ -7,7 +7,12 @@ name = "<<project>>"
 version = "<<version>>"
 description = "TODO: describe your project."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = "<<requires_python>>"
+# The Python versions this project supports: its CI tests each one, and
+# `jm apply` keeps .github/workflows/ci.yml equal to this list.
+classifiers = [
+<<python_classifiers>>
+]
 dependencies = [
     "numpy",
 ]

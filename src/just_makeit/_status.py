@@ -450,6 +450,15 @@ def run(
             print()
 
     allow_patterns = list(allow) + C.status_allow(cfg)
+    # gh-2629: a CI whose Pythons jm cannot locate (reported below as
+    # CI PYTHONS, and in the JSON).
+    from . import _pythons
+
+    _ci_unlocated = [
+        (p.unlocated, _is_allowed(p.rel, allow_patterns))
+        for p in _pythons.ci_plan(root)
+        if p.unlocated
+    ]
     # gh-830: collected during the walk below.
     managed_paths: list[str] = []
 
@@ -1611,6 +1620,11 @@ def run(
                         {"object": o, "method": n, "c_function": f}
                         for (o, n, f) in inert_cap_entries
                     ],
+                    # gh-2629: a note, so it appears here and in no count.
+                    "ci_pythons_unlocated": [
+                        {"reason": w, "allowed": al}
+                        for (w, al) in _ci_unlocated
+                    ],
                     "ok": ok_count,
                     "drift": drift_count,
                     "dropped_files": n_dropped_files,
@@ -2025,6 +2039,22 @@ def run(
         if root_render is not None:
             _real = _textio.lf((root / "CMakeLists.txt").read_bytes())
             print(_unified_diff(_real, root_render, "CMakeLists.txt"), end="")
+        print()
+
+    # gh-2629: a CI whose Pythons jm cannot locate is a CI the `apply`
+    # replay above never rewrites, so it would never read STALE however far
+    # its list falls behind the classifiers. Printed regardless of --check,
+    # for ROOT CMAKE's reason; not counted, because a workflow that computes
+    # its matrix itself (doppler's `fromJSON`) is a legitimate one.
+    if _ci_unlocated:
+        print(
+            f"CI PYTHONS ({len(_ci_unlocated)}) — a CI whose Python list jm"
+            " cannot keep:"
+        )
+        for why, al in _ci_unlocated:
+            tag = " [status_allow]" if al else ""
+            print(f"  ? {why}{tag}")
+        print("  Not counted.")
         print()
 
     # gh-1589: printed regardless of --check, for ROOT CMAKE's reason.

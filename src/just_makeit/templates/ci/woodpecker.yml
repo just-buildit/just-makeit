@@ -3,7 +3,7 @@ when:
 
 steps:
   test:
-    image: python:3.12-bookworm
+    image: python:<<python_image>>-bookworm
     commands:
       # Retries cover only a request that ERRORS; a stalled mirror never
       # errors, so each request is bounded too.
