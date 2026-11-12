@@ -38,6 +38,13 @@ missing), then numpy and just-makeit into a Python venv
 Append `--check` to report what would change without installing anything, or
 `--force` to reinstall just-makeit even when it is current.
 
+**jbx (`jm` is on your PATH when it returns):**
+
+```sh
+jbx just-makeit:install-deps               # venv at /tmp/jm-venv
+jbx just-makeit:install-deps -- ~/my-venv  # or anywhere else
+```
+
 **pip:**
 
 ```sh

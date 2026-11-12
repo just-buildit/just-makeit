@@ -10,6 +10,10 @@
 #   curl -fsSL https://just-buildit.github.io/just-makeit/install.sh | bash
 #   source /tmp/jm-venv/bin/activate
 #
+# ── Through jbx (jm lands on the calling shell's PATH; see section 7):
+#
+#   jbx just-makeit:install-deps [-- PATH]
+#
 # ── Options (append to the command):
 #
 #   . <(curl -fsSL ...) ~/my-venv     # custom venv path
@@ -326,7 +330,19 @@ _jm_install() (
 if [[ "${BASH_SOURCE[0]:-}" != "${0}" ]]; then
     _jm_install
     _jm_status=$?
-    if [[ $_jm_status -eq 0 && $_jm_check -eq 0 ]]; then
+    if [[ $_jm_status -eq 0 && $_jm_check -eq 0 && -n "${JB_RELOAD_MARKER:-}" ]]; then
+        # Run by `jbx just-makeit:install-deps`, this file is sourced into
+        # jbx's own subshell, so activating here would reach nobody. jbx's
+        # shell function passes JB_RELOAD_MARKER instead and, once this
+        # returns, puts every `path DIR` line in it first on the CALLER's
+        # PATH (just-bashit jbx-shell.sh). Append, never truncate: other
+        # writers may share the file. Absolute, so `-- ./venv` works too.
+        printf 'path %s/bin\n' "$(cd "${_jm_venv}" && pwd)" \
+            >>"${JB_RELOAD_MARKER}"
+        printf '\n'
+        info "just-makeit is ready; jbx puts it on your PATH:"
+        printf '\n    jm new my_project --object my_object\n\n'
+    elif [[ $_jm_status -eq 0 && $_jm_check -eq 0 ]]; then
         # shellcheck source=/dev/null
         source "${_jm_venv}/bin/activate"
         printf '\n'

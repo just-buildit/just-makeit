@@ -69,6 +69,17 @@ Pick a method. Each one gets you `just-makeit` and its build dependencies.
     . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     ```
 
+=== "jbx"
+
+    ```sh
+    jbx just-makeit:install-deps               # venv at /tmp/jm-venv
+    jbx just-makeit:install-deps -- ~/my-venv  # or anywhere else
+    ```
+
+    `jm` is on your PATH when it returns.
+    [Get `jbx`](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
+    with one `curl`.
+
 === "pip"
 
     ```sh
