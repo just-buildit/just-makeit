@@ -25,8 +25,11 @@ workflow to running what it says.
 gh-2179 promoted 3.15 when it went final, and the pre-release leg's expiry
 step named three more places that list the supported Pythons: the
 `pyproject.toml` classifiers and `artifact.yml`'s two pre-publish smoke
-matrices. An error message is a note; the tests here hold all of them to
-the matrix's released Pythons.
+matrices. gh-2626 made the classifiers the ONLY list: the planner fills
+every matrix from them, and a workflow names a Python by its place among
+them (`oldest`, `middle`, `newest`, `next`), never a list of numbers. The
+tests here hold the planner to the classifiers, refuse a job that names
+more than one Python, and hold the example builds to the newest Python.
 
 Every parser below RAISES rather than returning empty. A parser that quietly
 finds nothing makes every assertion in the file vacuously true, which is how a
@@ -45,6 +48,7 @@ import importlib.util
 import json
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 import yaml
@@ -55,6 +59,7 @@ CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 PLANNER = ROOT / "scripts" / "ci-test-legs.py"
 RUNNER = ROOT / "scripts" / "ci-runner.py"
 ARTIFACT_YML = ROOT / ".github" / "workflows" / "artifact.yml"
+WORKFLOWS = ROOT / ".github" / "workflows"
 PYPROJECT = ROOT / "pyproject.toml"
 
 
@@ -101,14 +106,16 @@ def _legs_step() -> dict:
 
 
 def _declared() -> dict:
-    """The declared matrix, decoded from the `legs` step's MATRIX."""
+    """The matrix the `legs` step runs: its MATRIX, on the classifiers'
+    Pythons, as the planner fills it in (gh-2626)."""
     env = _legs_step().get("env") or {}
     try:
-        return json.loads(env["MATRIX"])
+        raw = json.loads(env["MATRIX"])
     except (KeyError, ValueError) as exc:
         raise AssertionError(
             f"the `legs` step has no JSON MATRIX ({exc!r})"
         ) from exc
+    return LEGS.resolve(raw, LEGS.pythons())
 
 
 def _trim() -> "list[str]":
@@ -261,34 +268,42 @@ def _classifiers() -> "set[str]":
 
 
 def _artifact_pys() -> "dict[str, list[str]]":
-    """Each artifact.yml job's FULL `python-version` list, by job.
+    """Each artifact.yml smoke job's FULL Pythons, by job.
 
-    The list sits in an `inputs.quick && '...' || '...'` expression; the
-    full one is the branch after `||`. ci.yml calls the workflow `quick` on
-    a PR, and `release.yml` calls it full before it publishes, so the full
-    list is what the wheel PyPI gets was tried on. `smoke`'s is in the
-    `plan` job's MATRIX, which its runners are picked from.
+    ci.yml calls the workflow `quick` on a PR, and `release.yml` calls it
+    full before it publishes, so the full legs are what the wheel PyPI
+    gets was tried on. Both come from the `legs` job (gh-2626); this holds
+    each job to reading its output.
     """
     jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
-    full = _artifact_pythons(_artifact_matrix(False))
-    out = {"smoke": [str(v) for v in full]}
-    for name, job in jobs.items():
-        matrix = (job.get("strategy") or {}).get("matrix")
-        if not isinstance(matrix, dict):
-            continue
-        expr = matrix.get("python-version")
-        if expr is None:
-            continue
-        m = re.search(r"\|\|\s*'(\[[^']*\])'", str(expr))
-        if not m:
-            raise AssertionError(
-                f"artifact.yml job {name!r}: no full python-version list in "
-                f"{expr!r}"
-            )
-        out[name] = [str(v) for v in json.loads(m.group(1))]
-    if len(out) < 2:
-        raise AssertionError(f"no python-version matrix in {ARTIFACT_YML}")
-    return out
+    win = " ".join(str(jobs["smoke-windows"]["strategy"]["matrix"]).split())
+    assert win == (
+        "${{ fromJSON(inputs.quick && needs.legs.outputs.windows_quick"
+        " || needs.legs.outputs.windows) }}"
+    ), win
+    legs = _artifact_legs()
+    return {
+        "smoke": _artifact_pythons(_artifact_matrix(False)),
+        "smoke-windows": _artifact_pythons(legs["windows"]),
+    }
+
+
+def test_the_planner_reads_the_classifiers(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """gh-2626: the planner's Pythons are the classifiers, read here by an
+    independent parser, and `make ci-pythons` prints exactly them."""
+    want = sorted(_classifiers(), key=_key)
+    assert LEGS.pythons() == want
+    assert LEGS.main(["pythons"]) == 0
+    assert capsys.readouterr().out.split() == want
+
+
+def test_a_matrix_listing_its_own_pythons_is_refused() -> None:
+    """A second list of the supported Pythons is what drifts from the
+    first, so the planner refuses a matrix that brings one."""
+    with pytest.raises(ValueError, match="classifiers alone"):
+        LEGS.resolve({"os": ["x"], "python-version": ["3.9"]}, ["3.9"])
 
 
 def test_the_classifiers_are_the_released_matrix() -> None:
@@ -296,8 +311,7 @@ def test_the_classifiers_are_the_released_matrix() -> None:
 
     Both directions. A classifier the matrix does not run is an untested
     promise; a released Python the matrix runs with no classifier is the
-    half-done promotion the pre-release leg's expiry step asks for, which
-    the step's error message alone could not hold.
+    half-done promotion the pre-release leg's expiry step asks for.
     """
     shipped, tested = _classifiers(), _released_pys()
     assert shipped == tested, (
@@ -358,18 +372,20 @@ class TestWhatEachRunOwes:
     def test_the_pr_legs_are_exactly_the_trimmed_set(self) -> None:
         """gh-2125 + the Linux trim: the PR's legs, written out. Adding a
         leg to the PR set (a wider TRIM edge, a MIDDLE os) fails here until
-        this table is changed on purpose, with the reason in the PR."""
-        _, pys = _axes()
-        floor, newest = min(pys, key=_key), max(pys, key=_key)
-        middle = sorted(pys, key=_key)[len(pys) // 2]
-        assert (floor, middle, newest) == ("3.9", "3.12", "3.15"), pys
+        this table is changed on purpose, with the reason in the PR. The
+        Pythons are the classifiers' places, read by this file's own
+        parser, so promoting one moves the table by itself (gh-2626)."""
+        pys = sorted(_classifiers(), key=_key)
+        floor, newest = pys[0], pys[-1]
+        middle = pys[len(pys) // 2]
+        mac_floor = min(_released(_full(), "macos-latest"), key=_key)
         assert _pairs(_owed("pull_request", "")) == {
             ("ubuntu-latest", floor),
             ("ubuntu-latest", middle),
             ("ubuntu-latest", newest),
             ("ubuntu-24.04-arm", floor),
             ("ubuntu-24.04-arm", newest),
-            ("macos-latest", "3.10"),
+            ("macos-latest", mac_floor),
             ("macos-latest", newest),
         }
         assert len(_owed("pull_request", "")) == 7
@@ -506,7 +522,8 @@ class TestTheParsersAreArmed:
 
     def test_the_axes_are_actually_read(self) -> None:
         oses, pys = _axes()
-        assert "ubuntu-latest" in oses and "3.9" in pys
+        assert "ubuntu-latest" in oses
+        assert pys == sorted(_classifiers(), key=_key) and len(pys) > 1
 
     def test_the_exclude_parser_sees_the_live_one(self) -> None:
         """Pinned to the real entry: if the exclude is removed this fails, and
@@ -542,8 +559,8 @@ class TestTheParsersAreArmed:
         tested = "true" if event == "push" else ""
         for name, value in dict(env, EVENT=event, TESTED=tested).items():
             monkeypatch.setenv(name, str(value))
-        assert LEGS.main() == 0
-        line = capsys.readouterr().out.strip()
+        assert LEGS.main([]) == 0
+        line = capsys.readouterr().out.splitlines()[0]
         assert line.startswith("matrix=")
         got = json.loads(line[len("matrix=") :])["include"]
         assert got == _owed(event, tested) and got
@@ -551,8 +568,8 @@ class TestTheParsersAreArmed:
         monkeypatch.setenv("TRIM", "")
         monkeypatch.setenv("EVENT", "push")
         monkeypatch.setenv("TESTED", "true")
-        LEGS.main()
-        assert capsys.readouterr().out == "matrix=\n"
+        LEGS.main([])
+        assert capsys.readouterr().out.splitlines()[0] == "matrix="
 
 
 # ---------------------------------------------------------------------------
@@ -575,16 +592,37 @@ def _artifact_plan(sid: str) -> dict:
     return _step(jobs["plan"], sid, "artifact.yml's plan job")
 
 
+def _artifact_legs() -> "dict[str, dict]":
+    """What artifact.yml's `legs` job prints, by output name: each
+    LEGS_<NAME> of its step, through the planner, in include form."""
+    jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
+    step = _step(jobs["legs"], "legs", "artifact.yml's legs job")
+    assert step["run"] == 'make -s ci-test-legs >> "$GITHUB_OUTPUT"'
+    out = {
+        k[len("LEGS_") :].lower(): {
+            "include": LEGS.expand(LEGS.resolve(json.loads(v), LEGS.pythons()))
+        }
+        for k, v in (step.get("env") or {}).items()
+        if k.startswith("LEGS_")
+    }
+    assert {"smoke", "quick", "windows", "windows_quick"} <= set(out), out
+    for name in out:
+        assert jobs["legs"]["outputs"][name] == (
+            "${{ steps.legs.outputs.%s }}" % name
+        )
+    return out
+
+
 def _artifact_matrix(quick: bool) -> dict:
     """artifact.yml's smoke legs, in include form, for one value of the
-    `quick` input: the `runners` step's LEGS, `quick && '..' || '..'`."""
-    expr = str(_artifact_plan("runners")["env"]["LEGS"])
-    m = re.fullmatch(
-        r"\$\{\{\s*inputs\.quick\s*&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\}\}",
-        expr.strip(),
-    )
-    assert m, f"artifact.yml's LEGS is not quick && '..' || '..': {expr!r}"
-    return json.loads(m.group(1) if quick else m.group(2))
+    `quick` input: the `runners` step's LEGS, `quick && .. || ..`, each
+    side one of the `legs` job's outputs."""
+    expr = " ".join(str(_artifact_plan("runners")["env"]["LEGS"]).split())
+    assert expr == (
+        "${{ inputs.quick && needs.legs.outputs.quick"
+        " || needs.legs.outputs.smoke }}"
+    ), expr
+    return _artifact_legs()["quick" if quick else "smoke"]
 
 
 def _artifact_pythons(matrix: dict) -> "list[str]":
@@ -613,13 +651,16 @@ def _plan(
             monkeypatch.setenv(name, str(value))
     monkeypatch.setenv("EVENT", event)
     monkeypatch.setenv("TESTED", "")
-    assert LEGS.main() == 0
-    lines = [capsys.readouterr().out.strip()]
-    extra = ((runners or {}).get("env") or {}).get("EXAMPLES")
-    if extra:
-        lines.append(f"examples={extra}")
+    assert LEGS.main([]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # What the runners step hands `make ci-runner`: the outputs its env
+    # reads from the `legs` step (`LEGS`, and `EXAMPLES` when it has it).
+    reads = {str(v): k for k, v in ((runners or {}).get("env") or {}).items()}
+    names = {"matrix"} | {
+        n for n in ("examples",) if "${{ steps.legs.outputs.%s }}" % n in reads
+    }
     out, _ = PICK.pick(
-        lines,
+        [x for x in lines if x.split("=", 1)[0] in names],
         ("runs_on", "os"),
         {
             "GITHUB_EVENT_NAME": event,
@@ -807,9 +848,11 @@ class TestEachMacosLegsRunner:
         self, quick: bool
     ) -> None:
         """Same legs as the static matrix it replaced: quick is one Linux
-        leg; full is every os on every Python (a complete grid, so a
-        promotion cannot reach one os only), the Linux 3.9 leg on
-        ubuntu-24.04 (setup-python has no 3.9 for Ubuntu 26.04)."""
+        leg, at the middle Python; full is every os on every Python (a
+        complete grid, so a promotion cannot reach one os only), the Linux
+        floor leg on ubuntu-24.04 (setup-python has no 3.9 for Ubuntu
+        26.04). The Pythons are the classifiers, read by this file."""
+        pys = sorted(_classifiers(), key=_key)
         m = _artifact_matrix(quick)
         out, _ = PICK.pick(
             ["matrix=" + json.dumps(m)],
@@ -819,20 +862,643 @@ class TestEachMacosLegsRunner:
         legs = json.loads(out[0].partition("=")[2])["include"]
         got = [(x["os"], x["python-version"], x["runs_on"]) for x in legs]
         if quick:
-            assert got == [("ubuntu-latest", "3.12", "ubuntu-latest")]
+            middle = pys[len(pys) // 2]
+            assert got == [("ubuntu-latest", middle, "ubuntu-latest")]
             return
         oses = sorted({x["os"] for x in legs})
-        pys = _artifact_pythons(m)
         assert oses == ["macos-latest", "ubuntu-latest"]
         want = {
             (
                 os_,
                 py,
                 "ubuntu-24.04"
-                if (os_, py) == ("ubuntu-latest", "3.9")
+                if (os_, py) == ("ubuntu-latest", pys[0])
                 else os_,
             )
             for os_ in oses
             for py in pys
         }
         assert set(got) == want and len(got) == len(want)
+
+
+# ---------------------------------------------------------------------------
+# gh-2626: the Pythons are the classifiers alone, and the example builds
+# compile against the newest of them.
+
+#: A Python version as CI spells one: `3.N`, with an optional patch
+#: (`3.12.4`), free-threaded `t`, and pre-release suffix (`3.15.0-alpha.1`,
+#: `3.15rc2`).
+_PY_VERSION = r"3\.\d{1,2}(?:\.\d+)?t?(?:-?(?:alpha|beta|rc|dev|a|b)[\w.]*)?"
+
+#: Any version standing alone, so `v10.3.3`, `ubuntu-24.04` and `@v7.0.1`
+#: are not read as one: the reading of a value whose KEY names Python
+#: (`python-version: 3.12.4`).
+_PY_LITERAL = re.compile(rf"(?<![\w.])({_PY_VERSION})(?![\w.])")
+
+#: A bare `3.N`, no patch or suffix, anywhere: a value whose key does not
+#: name Python still names one this way (a matrix cell, a condition), while
+#: `3.16.3` there is another tool's version (consumer-smoke's cmake).
+_PY_BARE = re.compile(r"(?<![\w.])3\.\d{1,2}(?![\w.])")
+
+#: Any version right after a word that names Python -- `python3.12`,
+#: `uv python install 3.12`, `--python 3.12`, `PYTHON_VERSION=3.12`,
+#: `FROM python:3.12-slim`, `matrix.python-version == '3.12.4'`,
+#: `"python-version": "3.15.0-alpha.1"`. The only reading of shell (a
+#: `run:` script, a Dockerfile line), which spells versions of other things
+#: too (`cmake_minimum_required(VERSION 3.16)`).
+_PY_IN_SHELL = re.compile(
+    r"(?i)(?:\bpy[\w-]*|--python)(?:\s+(?:install|pin|find))?"
+    r"[\s'\"]*(?:==|[:=@])?[\s'\"]*"
+    rf"({_PY_VERSION})(?![\w.])"
+)
+
+
+def _value_pythons(key: object, text: str) -> "list[str]":
+    """The Pythons a YAML value spells: every version when its *key* names
+    Python, else a bare `3.N` or a version right after a Python word."""
+    if isinstance(key, str) and "python" in key.lower():
+        return _PY_LITERAL.findall(text)
+    spans = {}
+    for rx in (_PY_IN_SHELL, _PY_BARE):
+        for m in rx.finditer(text):
+            g = m.lastindex or 0
+            spans[m.span(g)] = m.group(g)
+    return [v for _, v in sorted(spans.items())]
+
+
+#: The CI files that can name a Python: every workflow or action under
+#: `.github` (`.yml` and `.yaml`), and every Dockerfile under `docker/`.
+_CI_YAML = [
+    p
+    for p in sorted((ROOT / ".github").rglob("*"))
+    if p.suffix in (".yml", ".yaml")
+]
+_DOCKERFILES = sorted((ROOT / "docker").glob("*Dockerfile*"))
+
+
+def _python_literals(
+    node: object, path: "tuple" = ()
+) -> "list[tuple[tuple, str]]":
+    """Every Python *node* (a parsed YAML document, or any part of one)
+    spells as a number, with the key path it sits at.
+
+    A `run:` value is shell and is read with `_PY_IN_SHELL`; every other
+    value with :func:`_value_pythons`. An unquoted `3.12` parses as a float, so a
+    number counts too. Comments are gone once the YAML is loaded.
+    """
+    if isinstance(node, dict):
+        out = []
+        for k, v in node.items():
+            if k == "run" and isinstance(v, str):
+                out += [(path + (k,), p) for p in _PY_IN_SHELL.findall(v)]
+            else:
+                out += _python_literals(v, path + (k,))
+        return out
+    if isinstance(node, list):
+        return [
+            hit
+            for i, v in enumerate(node)
+            for hit in _python_literals(v, path + (i,))
+        ]
+    if isinstance(node, (str, float)):
+        key = path[-1] if path else None
+        return [(path, p) for p in _value_pythons(key, str(node))]
+    return []
+
+
+def _named_pythons(node: object) -> "set[str]":
+    """The distinct Pythons :func:`_python_literals` finds in *node*."""
+    return {p for _, p in _python_literals(node)}
+
+
+def _dockerfile_pythons(path: Path) -> "list[tuple[str, str]]":
+    """Each (instruction, Python) a Dockerfile spells, comments aside."""
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("#") or not line.strip():
+            continue
+        word = line.split()[0]
+        out += [(word, p) for p in _PY_IN_SHELL.findall(line)]
+    return out
+
+
+def _workflow_jobs() -> "dict[tuple[str, str], dict]":
+    """Every job of every workflow, by (file, job)."""
+    out = {}
+    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for name, job in (doc.get("jobs") or {}).items():
+            out[(path.name, name)] = job
+    if not out:
+        raise AssertionError(f"no workflow job under {WORKFLOWS}")
+    return out
+
+
+#: The setup actions whose `python-version` input may name one Python.
+_SETUP = ("astral-sh/setup-uv@", "actions/setup-python@")
+
+#: Every Python CI may spell as a number, and why. Anywhere else a Python
+#: is the classifiers' (`make ci-test-legs`, by place: `oldest`, `middle`,
+#: `newest`, `next`), or a leg is singled out by a key the plan gives it
+#: (`verb_gate_full`, `shrink`). Three kinds, nothing else:
+#:
+#: * PIN -- a setup action's `python-version` in a job that runs a TOOL,
+#:   not jm's support: one interpreter to run it on, which moving to a new
+#:   Python changes nothing about. Keyed (file, job, version).
+#: * the `exclude` cell below, which is about ONE interpreter build.
+#: * `_IMAGES`: a container image's base, which is one interpreter too.
+_PINS = {
+    ("ci.yml", "install-deps-smoke", "3.12"): "jm-install-deps on one "
+    "interpreter; the matrix covers the Pythons",
+    ("ci.yml", "coverage-shard", "3.14"): "coverage's numbers are taken on "
+    "one interpreter, so shards and the gate agree",
+    ("ci.yml", "coverage", "3.14"): "the coverage gate, the shards' Python",
+    ("ci.yml", "lint", "3.12"): ">=3.10 for mdformat; lint runs once",
+    ("ci.yml", "bench", "3.12"): "one interpreter, so timings compare",
+    ("ci.yml", "consumer-smoke", "3.12"): "the generated projects' floor "
+    "it installs against",
+    ("ci.yml", "wheel", "3.11"): "builds the pure wheel, as release.yml's "
+    "`build` does",
+    ("ci.yml", "docs", "3.12"): "the docs toolchain, run once",
+    ("docs.yml", "build", "3.12"): "the docs toolchain, run once",
+    ("release.yml", "build", "3.11"): "builds the pure wheel PyPI gets",
+    ("release.yml", "smoke", "3.12"): "the release's install smoke, one "
+    "interpreter; artifact.yml runs every declared Python",
+}
+
+#: The one Python spelled in a matrix: macOS 3.9 is Apple's own
+#: /usr/bin/python3 (3.9.6), unoptimised and 2.2x its siblings, so the leg
+#: is excluded (see the toolchain `legs` step). It is a fact about that
+#: build, not about the floor, so it is not `oldest`;
+#: `test_an_exclude_names_a_real_cell` retires it once 3.9 is dropped.
+_EXCLUDE = ("ci.yml", "toolchain", "3.9")
+
+#: Container images built on a Python base, keyed (file, instruction,
+#: version).
+_IMAGES = {
+    ("Dockerfile.examples-linux", "FROM", "3.12"): "the Codespaces example "
+    "sandbox (docker.yml) is one interpreter a person types into, not a "
+    "support claim; the Linux test and examples legs cover the Pythons",
+}
+
+
+def _stray_pythons() -> "tuple[list[str], set]":
+    """Each Python literal in CI outside the exceptions, and the
+    exceptions used: every key of every workflow and action document --
+    `on:` inputs, top-level `env:`, every job -- `run:` text included,
+    and every Dockerfile."""
+    stray, used = [], set()
+    if not _CI_YAML or not _DOCKERFILES:
+        raise AssertionError("no CI file found to scan")
+    for doc_path in _CI_YAML:
+        f = doc_path.name
+        doc = yaml.safe_load(doc_path.read_text(encoding="utf-8")) or {}
+        for path, py in _python_literals(doc):
+            job = path[1] if path[:1] == ("jobs",) and len(path) > 1 else ""
+            body = (doc.get("jobs") or {}).get(job) or {}
+            rest = path[2:]
+            step = (
+                body["steps"][rest[1]]
+                if rest[:1] == ("steps",) and len(rest) > 1
+                else {}
+            )
+            pin = (
+                rest[2:] == ("with", "python-version")
+                and str(step.get("uses", "")).startswith(_SETUP)
+                and (f, job, py) in _PINS
+            )
+            cell = (
+                (f, job, py) == _EXCLUDE
+                and rest[2:] == ("env", "MATRIX")
+                and {"os": "macos-latest", "python-version": py}
+                in json.loads(step["env"]["MATRIX"]).get("exclude", [])
+            )
+            if pin or cell:
+                used.add((f, job, py))
+            else:
+                where = ".".join(str(p) for p in path)
+                stray.append(f"{f}:{where} = {py}")
+    for doc_path in _DOCKERFILES:
+        for word, py in _dockerfile_pythons(doc_path):
+            key = (doc_path.name, word, py)
+            if key in _IMAGES:
+                used.add(key)
+            else:
+                stray.append(f"{doc_path.name}:{word} = {py}")
+    return stray, used
+
+
+def test_no_ci_file_spells_a_python_but_its_exceptions() -> None:
+    """The rule (gh-2626): the supported Pythons are the pyproject
+    classifiers, and CI spells a Python as a number ONLY where `_PINS`,
+    `_EXCLUDE` or `_IMAGES` says why. A list of them drifts from the
+    classifiers; so does a single one in a leg's condition -- the verb
+    gate's `matrix.python-version == '3.12'` stopped matching the leg a
+    PR runs the moment a promotion moved the middle. Registration-free
+    over every workflow and action document and every Dockerfile; the
+    exceptions are listed, and one nothing uses any more fails too."""
+    stray, used = _stray_pythons()
+    assert not stray, (
+        "these name a Python by number; name it by its place (`oldest`, "
+        "`middle`, `newest`, `next`) or mark the leg with a key the plan "
+        f"gives it: {stray}"
+    )
+    unused = (set(_PINS) | {_EXCLUDE} | set(_IMAGES)) - used
+    assert not unused, f"exceptions nothing uses; delete them: {unused}"
+
+
+def test_the_python_scan_is_armed(tmp_path: Path) -> None:
+    """It sees a pin, a list in each shape a workflow could write one, a
+    lone Python in a condition, a patch or pre-release, one in shell next
+    to a word naming Python, one outside `jobs`, and one in a Dockerfile
+    -- and no other version in shell or an action's own."""
+    assert any(_named_pythons(j) for j in _workflow_jobs().values())
+    for shape in (
+        {"strategy": {"matrix": {"python-version": ["3.9", "3.15"]}}},
+        {
+            "env": {
+                "M": '{"include": [{"python-version": "3.9"}, '
+                '{"python-version": "3.15"}]}'
+            }
+        },
+        {
+            "strategy": {
+                "matrix": {
+                    "include": [
+                        {"python-version": 3.12},
+                        {"python-version": "3.15"},
+                    ]
+                }
+            }
+        },
+    ):
+        assert len(_named_pythons(shape)) == 2, shape
+    cond = {
+        "steps": [{"env": {"X": "${{ matrix.python-version == '3.12' }}"}}]
+    }
+    assert _python_literals(cond) == [(("steps", 0, "env", "X"), "3.12")]
+    for value in ("3.12.4", "3.15.0-alpha.1", "3.15rc2", "3.14t"):
+        assert _named_pythons({"with": {"python-version": value}}) == {value}
+    shell = (
+        "uv sync --python 3.12; uv python install 3.13.1; python3.14 -V; "
+        "PYTHON_VERSION=3.11 x; cmake_minimum_required(VERSION 3.16)"
+    )
+    assert _named_pythons({"run": shell}) == {"3.12", "3.13.1", "3.14", "3.11"}
+    top = {
+        True: {"workflow_dispatch": {"inputs": {"py": {"default": "3.12"}}}}
+    }
+    assert _named_pythons(top) == {"3.12"}
+    assert _named_pythons({"env": {"PY": "3.12"}}) == {"3.12"}
+    assert not _named_pythons(
+        {"uses": "a/b@v10.3.3", "runs-on": "ubuntu-24.04", "cmake": "3.16.3"}
+    )
+    assert _named_pythons(
+        {"env": {"M": '{"python-version": "3.15.0-alpha.1"}'}}
+    ) == {"3.15.0-alpha.1"}
+    assert _named_pythons({"if": "matrix.python-version == '3.12.4'"}) == {
+        "3.12.4"
+    }
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        "# FROM python:3.11\nFROM python:3.12-slim-trixie\n"
+        "RUN cmake --version 3.16\n",
+        encoding="utf-8",
+    )
+    assert _dockerfile_pythons(df) == [("FROM", "3.12")]
+
+
+def _ci_legs(name: str) -> "list[dict]":
+    """The `legs` step's LEGS_<NAME>, as the planner resolves it."""
+    env = _legs_step().get("env") or {}
+    key = f"LEGS_{name.upper()}"
+    assert key in env, f"the `legs` step plans no {key}"
+    return LEGS.expand(LEGS.resolve(json.loads(env[key]), LEGS.pythons()))
+
+
+class TestTheExamplesBuildOnTheNewestPython:
+    """gh-2626: the jobs that build the bundled examples -- generated
+    projects whose C extensions compile against Python's C API -- ran 3.12
+    alone, so no generated extension was ever compiled against the newest
+    Python jm declares. Each now runs it too, derived from the classifiers,
+    so a promotion reaches the examples with no edit to the workflow."""
+
+    #: Each examples job, and the toolchain output it reads its legs from.
+    JOBS = {"examples": "examples", "examples-windows": "examples_windows"}
+
+    def test_linux_and_windows_build_at_the_newest(self) -> None:
+        newest = max(_classifiers(), key=_key)
+        assert ("ubuntu-latest", newest) in _pairs(_ci_legs("examples"))
+        assert ("windows-latest", newest) in _pairs(
+            _ci_legs("examples_windows")
+        )
+
+    def test_every_os_keeps_its_middle_leg(self) -> None:
+        """The legs the examples ran before gh-2626, at the middle
+        Python (3.12 then), are all still there."""
+        pys = sorted(_classifiers(), key=_key)
+        middle = pys[len(pys) // 2]
+        posix = {"ubuntu-latest", "macos-latest", "ubuntu-24.04-arm"}
+        for name, oses in (
+            ("examples", posix),
+            ("examples_windows", {"windows-latest"}),
+        ):
+            assert {(o, middle) for o in oses} <= _pairs(_ci_legs(name))
+
+    def test_every_leg_is_a_declared_python(self) -> None:
+        for name in self.JOBS.values():
+            pys = {p for _, p in _pairs(_ci_legs(name))}
+            assert pys <= _classifiers(), (name, sorted(pys, key=_key))
+
+    def test_gate_a_shrinks_on_one_leg(self) -> None:
+        """Gate A's ratchet may only shrink where it was recorded: one
+        ubuntu-latest leg, not every Python on it."""
+        marked = [x for x in _ci_legs("examples") if x.get("shrink")]
+        assert len(marked) == 1 and marked[0]["os"] == "ubuntu-latest"
+        steps = [
+            s
+            for s in _jobs()["examples"]["steps"]
+            if "JM_GATE_A_SHRINK" in (s.get("env") or {})
+        ]
+        assert len(steps) == 1
+        assert steps[0]["env"]["JM_GATE_A_SHRINK"] == (
+            "${{ matrix.shrink && '1' || '' }}"
+        )
+
+    def test_the_planner_prints_them(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """What `make ci-test-legs` prints is what the tests above read."""
+        for name, value in (_legs_step().get("env") or {}).items():
+            monkeypatch.setenv(name, str(value))
+        monkeypatch.setenv("EVENT", "pull_request")
+        assert LEGS.main([]) == 0
+        lines = dict(
+            x.split("=", 1) for x in capsys.readouterr().out.splitlines()
+        )
+        for out in self.JOBS.values():
+            assert json.loads(lines[out])["include"] == _ci_legs(out)
+
+    def test_each_job_runs_its_planned_legs(self) -> None:
+        jobs = _jobs()
+        tool = jobs["toolchain"]["outputs"]
+        assert tool["examples"] == "${{ steps.runners.outputs.examples }}"
+        assert _runners_step()["env"]["EXAMPLES"] == (
+            "${{ steps.legs.outputs.examples }}"
+        )
+        assert tool["examples_windows"] == (
+            "${{ steps.legs.outputs.examples_windows }}"
+        )
+        for job, out in self.JOBS.items():
+            body = jobs[job]
+            assert "toolchain" in body["needs"], job
+            assert body["strategy"]["matrix"] == (
+                "${{ fromJSON(needs.toolchain.outputs.%s) }}" % out
+            ), job
+            pins = [
+                s["with"]["python-version"]
+                for s in body["steps"]
+                if str(s.get("uses", "")).startswith("astral-sh/setup-uv@")
+            ]
+            assert pins == ["${{ matrix.python-version }}"], (job, pins)
+            assert job in jobs["ci-passed"]["needs"], job
+
+
+def _lock() -> dict:
+    from just_makeit import _config as C
+
+    with open(ROOT / "uv.lock", "rb") as fh:
+        return C.tomllib.load(fh)
+
+
+#: The macOS the `macos-latest` legs run: a wheel built for a newer one
+#: (`macosx_27_0_arm64`) does not load there. From the runner's own log
+#: ("Image: macos-26-arm64", OS 26.7.2, run 43112631880, 2026-11-11); a
+#: test cannot read the runner, so it is this one named value. Raise it
+#: when the image moves.
+_MACOS_RUNNER = (26, 0)
+
+
+class _Platform(NamedTuple):
+    """A platform CI installs jm's dev environment on: the wheel platform
+    tags that install there, and the marker values it evaluates with."""
+
+    #: A wheel platform tag (one of a `.`-joined set) that installs here.
+    tag: "re.Pattern[str]"
+    #: The PEP 508 marker variables that differ by platform.
+    env: "dict[str, str]"
+
+
+#: Every platform a CI leg syncs the dev environment on: the `test` legs
+#: (ubuntu-latest, ubuntu-24.04-arm, macos-latest) and the newest-Python
+#: example legs (ubuntu-latest, windows-latest). macOS is here because
+#: watchdog 6.0.0 has no macOS cp315 wheel, which only the macOS `test`
+#: leg found.
+_WHEEL_PLATFORMS = {
+    "win_amd64": _Platform(
+        re.compile(r"win_amd64"),
+        {
+            "sys_platform": "win32",
+            "platform_system": "Windows",
+            "os_name": "nt",
+            "platform_machine": "AMD64",
+        },
+    ),
+    "manylinux_x86_64": _Platform(
+        re.compile(r"manylinux\w*_x86_64"),
+        {
+            "sys_platform": "linux",
+            "platform_system": "Linux",
+            "os_name": "posix",
+            "platform_machine": "x86_64",
+        },
+    ),
+    "manylinux_aarch64": _Platform(
+        re.compile(r"manylinux\w*_aarch64"),
+        {
+            "sys_platform": "linux",
+            "platform_system": "Linux",
+            "os_name": "posix",
+            "platform_machine": "aarch64",
+        },
+    ),
+    "macosx_arm64": _Platform(
+        re.compile(r"macosx_(\d+)_(\d+)_(?:arm64|universal2)"),
+        {
+            "sys_platform": "darwin",
+            "platform_system": "Darwin",
+            "os_name": "posix",
+            "platform_machine": "arm64",
+        },
+    ),
+}
+
+
+def _marker_env(py: str, plat: str) -> dict:
+    return {
+        "python_version": py,
+        "python_full_version": f"{py}.0",
+        "implementation_name": "cpython",
+        "platform_python_implementation": "CPython",
+        **_WHEEL_PLATFORMS[plat].env,
+    }
+
+
+def _holds(marker: "str | None", env: dict) -> bool:
+    from packaging.markers import Marker
+
+    return marker is None or Marker(marker).evaluate(env)
+
+
+def _platform_ok(plat: str, tag: str) -> bool:
+    """Whether a wheel's platform *tag* loads on *plat*."""
+    m = _WHEEL_PLATFORMS[plat].tag.fullmatch(tag)
+    if not m:
+        return False
+    built = tuple(int(g) for g in m.groups())
+    return not built or built <= _MACOS_RUNNER
+
+
+def _fits(wheel: str, py: str, plat: str) -> bool:
+    """Whether *wheel* installs on CPython *py* on *plat* (`3.15`, and a
+    `_WHEEL_PLATFORMS` key): a platform tag of *plat* (on macOS, built for
+    no newer a macOS than `_MACOS_RUNNER`), then its own `cpXY`, an `abi3`
+    built for an older one, or no ABI at all. Free-threaded (`cp315t`)
+    builds are not the default."""
+    pys, abi, platform = wheel[: -len(".whl")].split("-")[-3:]
+    xy = py.replace(".", "")
+    if platform != "any" and not any(
+        _platform_ok(plat, t) for t in platform.split(".")
+    ):
+        return False
+    if abi == "none":
+        return any(t in ("py3", f"cp{xy}") for t in pys.split("."))
+    if abi.startswith("abi3"):
+        return any(
+            t.startswith("cp") and int(t[2:]) <= int(xy)
+            for t in pys.split(".")
+        )
+    return abi == f"cp{xy}"
+
+
+def _compiled() -> "set[str]":
+    """Every locked package some version of which ships compiled code: a
+    wheel that is not `-none-any` (a platform wheel, even a `py3-none-`
+    binary such as ruff's). Derived from uv.lock, never listed."""
+    return {
+        p["name"]
+        for p in _lock()["package"]
+        for w in p.get("wheels", [])
+        if not w["url"].endswith("-none-any.whl")
+    }
+
+
+def _wanted(name: str, env: dict) -> bool:
+    """Whether anything in uv.lock installs *name* under *env*: some edge
+    into it -- a dependency, an optional or a dev group -- whose marker
+    holds there. One level only; a parent's own marker is its edge's."""
+    for p in _lock()["package"]:
+        edges = list(p.get("dependencies", []))
+        for group in ("optional-dependencies", "dev-dependencies"):
+            for deps in (p.get(group) or {}).values():
+                edges += deps
+        for e in edges:
+            if e["name"] == name and _holds(e.get("marker"), env):
+                return True
+    return False
+
+
+#: Locked versions with no wheel for a declared Python, built from their
+#: sdist there: each a REAL gap, keyed by the version so a re-lock or a
+#: new wheel retires it (the test refuses a stale entry).
+_NO_WHEEL_YET = {
+    ("pyyaml", "6.0.3", "3.15"): "PyYAML publishes no cp315 wheel yet "
+    "(6.0.3 is its latest, 2026-11-11); its sdist builds without a "
+    "compiler, falling back to pure Python (gh-2637)",
+}
+
+
+def _wheel_gaps() -> "tuple[list[str], set]":
+    """Each (package, version, Python, platform) uv.lock would build from
+    an sdist, and the `_NO_WHEEL_YET` entries that explained one."""
+    gaps, used = [], set()
+    pys = sorted(_classifiers(), key=_key)
+    compiled = _compiled()
+    for p in _lock()["package"]:
+        if p["name"] not in compiled:
+            continue
+        wheels = [w["url"].rsplit("/", 1)[-1] for w in p.get("wheels", [])]
+        for py in pys:
+            for plat in _WHEEL_PLATFORMS:
+                env = _marker_env(py, plat)
+                if not _wanted(p["name"], env) or not any(
+                    _holds(m, env)
+                    for m in p.get("resolution-markers") or [None]
+                ):
+                    continue
+                if any(_fits(w, py, plat) for w in wheels):
+                    continue
+                key = (p["name"], p["version"], py)
+                if key in _NO_WHEEL_YET:
+                    used.add(key)
+                else:
+                    gaps.append(f"{p['name']} {p['version']} cp{py} {plat}")
+    return gaps, used
+
+
+def test_every_compiled_dependency_installs_from_a_wheel() -> None:
+    """gh-2626: every locked package that ships compiled code has a wheel
+    for every classifier Python on every platform a CI leg syncs the dev
+    environment on (`_WHEEL_PLATFORMS`). numpy 2.5.1 had none for 3.15,
+    so uv built its sdist: on Windows meson died on Git's GNU link.exe,
+    elsewhere it passed slowly on gcc. Derived from uv.lock -- the
+    packages, their versions per Python, the markers that install them."""
+    gaps, used = _wheel_gaps()
+    assert not gaps, (
+        f"uv.lock would build these from source: {gaps}. Re-lock to a "
+        "version with the wheel (`uv lock --upgrade-package <name>`), or, "
+        "if none exists yet, add it to _NO_WHEEL_YET with its issue"
+    )
+    stale = set(_NO_WHEEL_YET) - used
+    assert not stale, f"_NO_WHEEL_YET entries now covered; delete: {stale}"
+
+
+def test_a_compiled_dependency_is_never_built_from_source() -> None:
+    """The refusal, in the project's config: every compiled package but
+    the `_NO_WHEEL_YET` ones is `no-build-package`, so the next new Python
+    without a wheel fails at install, naming it, not in a compiler. Not
+    `no-build = true`: PyYAML still needs its sdist on 3.15."""
+    from just_makeit import _config as C
+
+    with open(PYPROJECT, "rb") as fh:
+        uv = C.tomllib.load(fh).get("tool", {}).get("uv", {})
+    sdist_ok = {name for name, _, _ in _NO_WHEEL_YET}
+    assert set(uv.get("no-build-package", [])) == _compiled() - sdist_ok, uv
+
+
+def test_the_wheel_matcher_is_armed() -> None:
+    """`_fits` on the wheel shapes uv.lock carries."""
+    win, lin, arm, mac = (
+        "win_amd64",
+        "manylinux_x86_64",
+        "manylinux_aarch64",
+        "macosx_arm64",
+    )
+    assert _fits("numpy-2.5.4-cp315-cp315-win_amd64.whl", "3.15", win)
+    assert not _fits("numpy-2.5.1-cp314-cp314-win_amd64.whl", "3.15", win)
+    assert not _fits("numpy-2.5.4-cp315-cp315t-win_amd64.whl", "3.15", win)
+    assert _fits("z-1-cp310-abi3-manylinux_2_17_x86_64.whl", "3.15", lin)
+    assert not _fits("z-1-cp310-abi3-manylinux_2_17_x86_64.whl", "3.15", arm)
+    assert _fits(
+        "y-1-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+        "3.15",
+        arm,
+    )
+    assert not _fits("z-1-cp310-abi3-win_amd64.whl", "3.9", win)
+    assert _fits("ruff-1-py3-none-win_amd64.whl", "3.15", win)
+    assert not _fits("ruff-1-py3-none-win_amd64.whl", "3.15", lin)
+    assert _fits("w-1-cp313-cp313-macosx_11_0_arm64.whl", "3.13", mac)
+    assert _fits("w-1-cp313-cp313-macosx_10_13_universal2.whl", "3.13", mac)
+    assert not _fits("w-1-cp313-cp313-macosx_10_13_x86_64.whl", "3.13", mac)
+    assert not _fits("w-1-cp313-cp313-macosx_99_0_arm64.whl", "3.13", mac)
+    assert _fits("mypy-2.3.0-py3-none-any.whl", "3.15", lin)
+    assert "numpy" in _compiled() and "packaging" not in _compiled()

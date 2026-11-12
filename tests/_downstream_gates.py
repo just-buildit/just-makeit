@@ -37,7 +37,8 @@ RATCHET_DIR = Path(__file__).parent / "gate_a"
 UPDATE = os.environ.get("JM_GATE_A_UPDATE") == "1"
 #: The shrink half -- "a recorded finding that no longer happens must be
 #: deleted" -- runs where the ratchet was RECORDED: a Linux environment with
-#: doppler, CI's `Examples (ubuntu-latest)` leg. Elsewhere a finding can vanish
+#: doppler, the CI `examples` leg its plan marks `shrink` (ubuntu-latest, at
+#: the middle Python; gh-2626). Elsewhere a finding can vanish
 #: because the environment differs, not because anything was fixed:
 #: without doppler, kitchen_sink scaffolds no `tone`, and its `__init__.py`
 #: -- which exists either way -- is then ruff-clean. "No NEW finding" runs

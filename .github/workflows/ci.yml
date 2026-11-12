@@ -80,6 +80,8 @@ jobs:
       image: ${{ steps.pin.outputs.image }}
       matrix: ${{ steps.runners.outputs.matrix }}
       examples: ${{ steps.runners.outputs.examples }}
+      # Windows is hosted only, so its legs skip ci-runner.
+      examples_windows: ${{ steps.legs.outputs.examples_windows }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -150,12 +152,23 @@ jobs:
       # Revisit if uv gains a managed aarch64-apple-darwin build for 3.9 --
       # then this leg becomes as cheap as the others and should come back.
       #
+      # The Pythons are NOT listed here (gh-2626): MATRIX has no
+      # python-version axis, and `make ci-test-legs` fills it from the
+      # pyproject classifiers, the one declaration (`make ci-pythons` prints
+      # it). Promoting a Python is adding its classifier; every leg below,
+      # the examples' newest-Python legs and artifact.yml's pre-publish legs
+      # follow by themselves. tests/test_own_ci_matrix.py refuses a Python
+      # spelled as a number anywhere but its listed exceptions. A leg a
+      # step singles out carries a key instead (`verb_gate_full`, below;
+      # `shrink` on the examples): the include merges it into that leg.
+      #
       # The next Python, while it is still a PRE-RELEASE, is an `include`:
-      # one leg, on ubuntu-latest, told to uv as its plain "3.N", which uv
-      # resolves to the newest pre-release, marked `"prerelease": true`.
-      # Add it once numpy ships wheels for it (3.15's leg ran from rc2), or
-      # the suite cannot really run. There is none today: 3.15 was promoted
-      # on its final release (gh-2179).
+      # one leg, on ubuntu-latest, `"python-version": "next"` (the newest
+      # classifier's minor plus one), which uv resolves to the newest
+      # pre-release, marked `"prerelease": true`. Add it once numpy ships
+      # wheels for it (3.15's leg ran from rc2), or the suite cannot really
+      # run. There is none today: 3.15 was promoted on its final release
+      # (gh-2179).
       #
       # Allowed to fail, and deliberately not by job-level
       # `continue-on-error`: how a failed job reads through `CI passed`'s
@@ -164,11 +177,21 @@ jobs:
       # success, and a failure is annotated rather than silent.
       #
       # It EXPIRES: the `test` job's first step fails the job for real once
-      # uv hands back a final release, naming the fix -- move "3.N" into
-      # python-version here, and delete the include. A note to revisit it
-      # would be a wish. tests/test_own_ci_matrix.py then refuses the
-      # promotion until the pyproject classifiers and artifact.yml's
-      # pre-publish legs name the same Pythons (gh-2179).
+      # uv hands back a final release, naming the fix -- add its classifier
+      # to pyproject.toml and delete the include. A note to revisit it would
+      # be a wish.
+      #
+      # LEGS_EXAMPLES and LEGS_EXAMPLES_WINDOWS are the `examples` jobs'
+      # legs (gh-2626), each Python named by its place among the
+      # classifiers: every OS at the middle one (3.12's place since the
+      # examples first ran), and ubuntu-latest and windows-latest at the
+      # newest too, which compiles each generated extension against the
+      # newest C API jm declares. On every event, PRs included: the newest
+      # Python is an edge the `test` trim keeps on a PR as well, and it is
+      # where a new Python breaks a generated project. Two jobs more per
+      # run. Not macOS or arm at the newest: the C API is the platform-
+      # neutral half, and those pools are the scarce ones. `shrink` marks
+      # the one leg Gate A's ratchet shrinks on (tests/_downstream_gates.py).
       - name: Which test legs this run owes
         id: legs
         env:
@@ -178,9 +201,19 @@ jobs:
           MIDDLE: ubuntu-latest
           MATRIX: >-
             {"os": ["ubuntu-latest", "macos-latest", "ubuntu-24.04-arm"],
-            "python-version": ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14",
-            "3.15"],
-            "exclude": [{"os": "macos-latest", "python-version": "3.9"}]}
+            "exclude": [{"os": "macos-latest", "python-version": "3.9"}],
+            "include": [{"os": "ubuntu-latest", "python-version": "middle",
+            "verb_gate_full": true}]}
+          LEGS_EXAMPLES: >-
+            {"include": [
+            {"os": "ubuntu-latest", "python-version": "middle", "shrink": true},
+            {"os": "macos-latest", "python-version": "middle"},
+            {"os": "ubuntu-24.04-arm", "python-version": "middle"},
+            {"os": "ubuntu-latest", "python-version": "newest"}]}
+          LEGS_EXAMPLES_WINDOWS: >-
+            {"include": [
+            {"os": "windows-latest", "python-version": "middle"},
+            {"os": "windows-latest", "python-version": "newest"}]}
         run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
 
       # just-buildit.github.io#203: `make ci-runner` gives every leg a
@@ -194,11 +227,10 @@ jobs:
         id: runners
         env:
           LEGS: ${{ steps.legs.outputs.matrix }}
-          # The `examples` legs, planned here so one `make ci-runner` call
-          # shares the self-hosted runners out over both jobs, test first.
-          EXAMPLES: >-
-            {"include": [{"os": "ubuntu-latest"}, {"os": "macos-latest"},
-            {"os": "ubuntu-24.04-arm"}]}
+          # The `examples` legs, planned with the test legs so one `make
+          # ci-runner` call shares the self-hosted runners out over both
+          # jobs, test first.
+          EXAMPLES: ${{ steps.legs.outputs.examples }}
           JB_SELF_HOSTED_MACOS: ${{ vars.JB_SELF_HOSTED_MACOS }}
           JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
           # This repo's jobs already queued for the Mac (`actions: read`).
@@ -283,9 +315,10 @@ jobs:
           case "$v" in
             *" final")
               echo "::error::Python ${v% final} is released. Promote it: add"
-              echo "  \"${{ matrix.python-version }}\" to the python-version"
-              echo "  list in the toolchain job's MATRIX and the pyproject"
-              echo "  classifiers, and delete the prerelease include."
+              echo "  the classifier \"Programming Language :: Python ::"
+              echo "  ${{ matrix.python-version }}\" to pyproject.toml, and"
+              echo "  delete the prerelease include from the toolchain job's"
+              echo "  MATRIX. Every Python list in CI follows the classifiers."
               exit 1 ;;
           esac
 
@@ -346,11 +379,11 @@ jobs:
         # run, about a third of it. The whole of it on every leg added 5-8
         # minutes to a 4-core leg and timed Coverage out at 45.
         # tests/test_gh2057_verb_leaves_what_apply_writes.py refuses this
-        # line going away.
+        # line going away. The leg is the one the `legs` step marks
+        # `verb_gate_full`: ubuntu-latest at the middle Python, which the
+        # PR trim keeps, so it moves with the classifiers (gh-2626).
         env:
-          JM_VERB_GATE_FULL: >-
-            ${{ matrix.os == 'ubuntu-latest'
-            && matrix.python-version == '3.12' && '1' || '' }}
+          JM_VERB_GATE_FULL: ${{ matrix.verb_gate_full && '1' || '' }}
         # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
         # log ending at 99% and NO pytest summary, so there was no way to tell
         # which test died -- only that the job exited 1.
@@ -388,7 +421,7 @@ jobs:
           if-no-files-found: ignore
 
   examples:
-    name: Examples (${{ matrix.os }})
+    name: Examples (${{ matrix.os }}, ${{ matrix.python-version }})
     needs: [changes, toolchain]
     if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     # Planned with the test legs (the toolchain job's `legs` step).
@@ -413,9 +446,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      # The leg's Python, from the classifiers (the toolchain job's `legs`
+      # step): every example's extension compiles against its C API.
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install just-makeit
         run: make tool-install
@@ -449,9 +484,10 @@ jobs:
 
       - name: Run example tests
         # gh-1443 Gate A's shrink half runs on the leg its ratchet was
-        # recorded on (see tests/_downstream_gates.py, SHRINK).
+        # recorded on (see tests/_downstream_gates.py, SHRINK): the one the
+        # `legs` step marks `shrink`.
         env:
-          JM_GATE_A_SHRINK: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          JM_GATE_A_SHRINK: ${{ matrix.shrink && '1' || '' }}
           # gh-1377: a doppler that cannot be fetched fails the run instead
           # of silently skipping nco_tone's build and kitchen_sink's `tone`.
           JM_REQUIRE_DOPPLER: "1"
@@ -467,11 +503,16 @@ jobs:
     # BINDING -- it feeds `CI passed` -- because a Windows job that can go red
     # without blocking anything is the shape that left docker red on main for
     # 14 runs. clang-cl, not cl.exe: MSVC's own compiler has no `_Complex`.
-    name: Examples (windows-latest, clang-cl)
-    needs: changes
+    name: Examples (windows-latest, clang-cl, ${{ matrix.python-version }})
+    needs: [changes, toolchain]
     if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: windows-latest
     timeout-minutes: 30
+    # Its Pythons, from the classifiers (the toolchain job's `legs` step,
+    # gh-2626): the middle one and the newest.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.toolchain.outputs.examples_windows) }}
     defaults:
       run:
         shell: bash
@@ -497,7 +538,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install just-makeit
         run: |
