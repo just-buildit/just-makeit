@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.9"
+# requires-python = "<<requires_python>>"
 # dependencies = ["<<project>>==<<version>>"]
 # ///
 """<<project>> — <<name>>: multi-command CLI (PEP 723).

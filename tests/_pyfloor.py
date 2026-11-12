@@ -23,8 +23,11 @@ PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 KEY = "requires-python"
 
 
-def python_floor() -> "tuple[int, ...]":
+def python_floor(pyproject: "Path | None" = None) -> "tuple[int, ...]":
     """`requires-python = ">=3.9"` in jm's `pyproject.toml`, as ``(3, 9)``.
+
+    *pyproject* reads another file's floor the same way -- a project jm
+    generated, whose floor is copied from jm's (gh-2629).
 
     A tuple of ints, so it compares with ``sys.version_info[:2]`` and with
     another version tuple directly; ``".".join(map(str, ...))`` spells it.
@@ -42,8 +45,9 @@ def python_floor() -> "tuple[int, ...]":
     >>> len(floor) >= 2 and all(isinstance(p, int) for p in floor)
     True
     """
-    for line in PYPROJECT.read_text(encoding="utf-8").splitlines():
+    path = PYPROJECT if pyproject is None else pyproject
+    for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith(KEY):
             ver = line.split(">=")[1].strip().strip('"').strip("'")
             return tuple(int(p) for p in ver.split("."))
-    raise AssertionError(f"no `{KEY}` line in {PYPROJECT}")
+    raise AssertionError(f"no `{KEY}` line in {path}")

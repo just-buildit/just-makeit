@@ -168,6 +168,11 @@ The `# /// script` block names your package as a dependency, so `uv run`
 needs it published (or on a local index). Use `--target console` during
 development.
 
+Its `requires-python` is your `pyproject.toml`'s `[project] requires-python`, so the script asks for the interpreters your package
+supports; raise the floor there and the next `jm apply` rewrites the
+script to match (`jm status --check` reports it STALE until then). A
+`pyproject.toml` without one gives the script jm's own floor.
+
 ______________________________________________________________________
 
 ## Function CLIs (`--function`)

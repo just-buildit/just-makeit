@@ -13,6 +13,10 @@ Providers:
 
 The file is written only if absent; pass --force to overwrite an existing
 one (CI configs are commonly hand-tuned, so we don't clobber by default).
+
+The GitHub workflow's ``python-version`` matrix is the project's own
+``pyproject.toml`` classifiers (gh-2629), and every ``jm apply`` rewrites
+that one list to match them -- see `_pythons`.
 """
 
 from __future__ import annotations
@@ -24,12 +28,13 @@ from pathlib import Path
 
 from . import _config as C
 from . import _pins
+from . import _pythons
 from . import _render as R
 
 # provider -> (render-template attribute on _render, output path)
 _PROVIDERS: dict[str, tuple[str, str]] = {
-    "github": ("CI_GITHUB", ".github/workflows/ci.yml"),
-    "woodpecker": ("CI_WOODPECKER", ".woodpecker.yml"),
+    "github": ("CI_GITHUB", _pythons.CI_REL),
+    "woodpecker": ("CI_WOODPECKER", _pythons.WOODPECKER_REL),
 }
 
 
@@ -64,13 +69,26 @@ def run(root: Path, provider: str = "github", force: bool = False) -> None:
 
     # pytest projects need pytest in CI; unittest-default projects don't.
     pip_deps = f"numpy {_pins.PYTEST_DQ}" if C.is_pytest(cfg) else "numpy"
-    ctx = {"package": C.project_name(cfg), "pip_deps": pip_deps}
+    # gh-2629: the matrix is the project's own pyproject.toml classifiers
+    # that its requires-python admits, and the Woodpecker image the oldest
+    # of them; `apply` keeps both equal to them (`_pythons.sync_ci`).
+    pythons = _pythons.ci_versions(root)
+    ctx = {
+        "package": C.project_name(cfg),
+        "pip_deps": pip_deps,
+        "python_versions": _pythons.yaml_list(pythons.versions),
+        "python_image": pythons.versions[0] if pythons.versions else "3",
+    }
     content = R.render(getattr(R, tmpl_attr), ctx)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     verb = "overwrite" if dest.exists() else "create"
     _textio.write_text(dest, content)
     print(f"  {verb}  {dest}")
+    if pythons.fallback:
+        print(f"  note: {_pythons.fallback_note()}")
+    if pythons.refused:
+        print(f"  note: {_pythons.refused_note(pythons.refused)}")
     print(
         f"Done!  {provider} CI workflow written. It runs `make && make test` "
         f"on every push and PR."

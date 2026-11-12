@@ -17,6 +17,10 @@ dependencies = [
     # tomllib is stdlib only on 3.11+; pull the tomli backport on 3.9/3.10 so
     # just-makeit stays runnable down to the 3.9 floor (tomlkit needs >=3.9).
     "tomli>=2.0.0; python_version < '3.11'",
+    # gh-2629: a generated project's CI legs are its classifiers that its
+    # `requires-python` admits -- PEP 440 specifier evaluation, which is
+    # packaging's, not jm's to reimplement.
+    "packaging>=22",
 ]
 keywords = [
     "c-extension", "cmake", "pep517", "build-backend", "scaffolding",
