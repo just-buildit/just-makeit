@@ -830,6 +830,16 @@ def render(template: str, ctx: dict) -> str:
         **ctx,
     }
     doc = getattr(template, "doc", None)
+    if doc is None and "<<jm_module_doc>>" in template:
+        # A `PyTemplate` passed through a `str` method (`.replace`, a slice,
+        # `+`) comes back a plain `str` without its `doc`, and the slot it
+        # left would be written into the file as is (the gh-2640 smoke test
+        # did this, its version test spliced in before render).
+        raise ValueError(
+            "render: the template holds <<jm_module_doc>> but no docstring;"
+            " a str method dropped PyTemplate.doc -- render the template"
+            " first, then edit the result"
+        )
     if doc is not None:
         from ._docstring import docstring_literal
 

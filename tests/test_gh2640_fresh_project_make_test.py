@@ -262,3 +262,17 @@ def test_a_component_cannot_take_a_reserved_key(tmp_path, name):
     assert "reserved top-level key" in r.stderr, r.stderr
     assert (root / C.FILENAME).read_text("utf-8") == before
     assert not (root / "src" / "p" / f"{name}.pyi").exists()
+
+
+def test_a_template_that_lost_its_docstring_is_refused():
+    """A `PyTemplate` edited by a `str` method before `render` is a plain
+    `str` holding ``<<jm_module_doc>>`` and no docstring to fill it with.
+    The smoke test did exactly that and shipped the slot into the file;
+    `render` now refuses it, so the next such edit fails where it is made."""
+    from just_makeit import _render as T
+
+    assert isinstance(T.PROJECT_TEST_PY, T.PyTemplate)
+    edited = T.PROJECT_TEST_PY.replace("<<version_test>>", "")
+    assert not isinstance(edited, T.PyTemplate)
+    with pytest.raises(ValueError, match="dropped PyTemplate.doc"):
+        T.render(edited, {"package": "p"})
