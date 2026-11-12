@@ -163,6 +163,16 @@ dev = [
 # packages with a platform wheel, held to it -- and the lock to a wheel per
 # classifier Python -- by tests/test_own_ci_matrix.py. Not `no-build =
 # true`: pyyaml has no cp315 wheel yet and builds from its sdist (gh-2637).
+#
+# The test checks a wheel exists on the platforms CI syncs on (win_amd64,
+# manylinux x86_64 and aarch64, macOS arm64). Elsewhere -- an Intel Mac,
+# musl, Windows arm64 -- the refusal applies all the same, unchecked: a
+# package with no wheel there fails to install rather than compiling. That
+# is deliberate. It is the same "no wheel yet" a contributor would
+# otherwise meet as a compiler error, it touches only jm's own dev
+# environment (this table is not package metadata), and the remedy is the
+# same: a lock with a wheel, or, locally, that package dropped from this
+# list.
 [tool.uv]
 no-build-package = [
     "ast-serialize",

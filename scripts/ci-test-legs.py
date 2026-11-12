@@ -172,6 +172,19 @@ def pythons(path: Path = PYPROJECT) -> "List[str]":
     return sorted(found, key=lambda v: _version({"python-version": v}))
 
 
+def middle_of(ranked: "List[Any]") -> Any:
+    """The middle of *ranked* (sorted oldest first): index ``len // 2``.
+
+    The one definition of "the middle Python", for the ``middle`` token
+    (over the classifiers) and the ``MIDDLE`` trim (over one OS's released
+    legs). They are the same Python on an OS that runs every declared one,
+    as ubuntu-latest does; the verb gate's leg is marked by the token and
+    kept by the trim, and tests/test_gh2057_verb_leaves_what_apply_writes.py
+    fails if the two ever part.
+    """
+    return ranked[len(ranked) // 2]
+
+
 def _place(token: str, pys: "List[str]") -> str:
     """The Python *token* names among *pys*; any other value as it is."""
     if token not in TOKENS:
@@ -181,7 +194,7 @@ def _place(token: str, pys: "List[str]") -> str:
         return f"{major}.{int(minor) + 1}"
     return {
         "oldest": pys[0],
-        "middle": pys[len(pys) // 2],
+        "middle": middle_of(pys),
         "newest": pys[-1],
     }[token]
 
@@ -283,8 +296,7 @@ def trimmed(
     The edges are that OS's oldest and newest released Python among
     *legs*, so they move with the matrix: promoting a Python makes it the
     new newest, and raising the floor moves the oldest. An OS also in
-    *middle* keeps the Python at index ``len // 2`` of its sorted released
-    Pythons as well. A ``prerelease``
+    *middle* keeps its released Pythons' :func:`middle_of` as well. A ``prerelease``
     leg is never trimmed and never an edge.
     """
     out = []
@@ -295,8 +307,7 @@ def trimmed(
         edges = {_version(min(mine, key=_version))}
         edges.add(_version(max(mine, key=_version)))
         if name in middle:
-            ranked = sorted(mine, key=_version)
-            edges.add(_version(ranked[len(ranked) // 2]))
+            edges.add(_version(middle_of(sorted(mine, key=_version))))
         out += [x for x in mine if _version(x) not in edges]
     return out
 
