@@ -80,7 +80,7 @@ from just_makeit import _createonly as CO
 from just_makeit._upgrade import MIGRATIONS, AppRows
 from test_cli_dispatch import _dispatched_commands
 from test_gh1648_exports_run_on_windows import CI_YML, _job_block
-from test_own_ci_matrix import _axes
+from test_own_ci_matrix import _axes, _owed
 
 
 # ── Shapes ───────────────────────────────────────────────────────────────────
@@ -1477,11 +1477,15 @@ def test_the_whole_matrix_has_an_execution_home():
                   suite, re.S)  # fmt: skip
     assert m, f"the `make test` step sets no {FULL_ENV}"
     expr = " ".join(m.group(1).split())
-    assert expr.endswith("&& '1' || '' }}"), expr
+    assert expr == "${{ matrix.verb_gate_full && '1' || '' }}", expr
+    # The leg the `legs` step marks: exactly one, and one a PR runs, so the
+    # whole matrix gates every PR (gh-2626: marked, never a literal Python).
+    pr = _owed("pull_request", "")
+    marked = [x for x in pr if x.get("verb_gate_full")]
+    assert len(marked) == 1, marked
     os_axis, py_axis = _axes()
-    leg = dict(re.findall(r"matrix\.([\w-]+) == '([^']+)'", expr))
-    assert leg.get("os") in os_axis, expr
-    assert leg.get("python-version") in py_axis, expr
+    assert marked[0]["os"] in os_axis
+    assert marked[0]["python-version"] in py_axis
 
 
 def test_every_ratchet_entry_names_a_run_and_an_issue():

@@ -14,7 +14,7 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 coverage-subprocess-check coverage-shard \
                 gates-index gates-declared-check \
                 doppler-pin-check consumer-smoke install-history-update \
-                ci-test-legs site-files test-compiled
+                ci-test-legs ci-pythons site-files test-compiled
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -232,8 +232,15 @@ install-history-update: ## Record the root install section's commands for adopt
 # runs each TRIM os at its oldest and newest Python only; the push that lands
 # a PR whose tree it tested runs exactly what that PR trimmed; anything else
 # runs every leg. tests/test_own_ci_matrix.py runs it for each event.
-ci-test-legs: ## Print matrix= for ci.yml's test job (MATRIX, TRIM, EVENT, TESTED)
+# gh-2626: no workflow lists a Python. The planner fills each matrix from the
+# pyproject classifiers, the one declaration, and prints every LEGS_<NAME>
+# (the examples' legs, artifact.yml's smoke legs) with each Python named by
+# its place among them; `ci-pythons` prints the list itself.
+ci-test-legs: ## Print a CI run's legs (MATRIX, TRIM, EVENT, TESTED, LEGS_*)
 	@python3 scripts/ci-test-legs.py
+
+ci-pythons: ## Print the Pythons jm supports (the pyproject classifiers)
+	@python3 scripts/ci-test-legs.py pythons
 
 # The files the published site carries that the docs build does not make:
 # `install.sh` (what `curl -fsSL <site>/install.sh` fetches) and

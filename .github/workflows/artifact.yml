@@ -43,14 +43,69 @@ on:
         required: false
 
 jobs:
-  # just-buildit.github.io#203: the `smoke` legs, planned. MATRIX is the
-  # declaration (`quick` is ci.yml's per-PR leg; outside a workflow_call the
-  # input is null, which reads as the full matrix); `make ci-test-legs`
-  # expands it (no TRIM, so every leg), and `make ci-runner` gives each leg
-  # a `runs_on`: the org's self-hosted macOS runner while one is idle and
-  # this repo opted in (JB_SELF_HOSTED_MACOS), its hosted label otherwise.
+  # gh-2626: the smoke legs on the Pythons jm declares. They are listed
+  # nowhere here: `make ci-test-legs` reads the pyproject classifiers and
+  # prints each LEGS_<NAME> as `<name>=`, every Python named by its place
+  # among them (`oldest`, `middle`, `newest`), so promoting a Python is
+  # adding its classifier. A job of its own, not a step of `plan`: there
+  # self-hosted-check allows only a plain checkout ahead of `make
+  # ci-runner`, since this workflow is also reached by workflow_call and
+  # workflow_run.
+  #
+  # `quick` is ci.yml's per-PR leg, one per job. `smoke` (POSIX) runs every
+  # declared Python on every os; `windows` the bounds and the middle --
+  # every leg there is a full Windows build, so all of them would be that
+  # many times the cost for the part of the matrix it adds nothing to.
+  #
+  # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has
+  # no 3.9 build ("The version '3.9' with architecture 'x64' was not
+  # found for Ubuntu 26.04"): the v0.109.0 release failed before publish
+  # on this one leg. `requires-python` still promises its floor, so the
+  # floor's Linux leg runs on the newest image that ships it (its
+  # `runs_on`), keyed on `oldest` rather than a number. Every other leg
+  # follows its `os`.
+  legs:
+    name: Plan smoke Pythons
+    if: >
+      inputs.wheel-artifact != '' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      smoke: ${{ steps.legs.outputs.smoke }}
+      quick: ${{ steps.legs.outputs.quick }}
+      windows: ${{ steps.legs.outputs.windows }}
+      windows_quick: ${{ steps.legs.outputs.windows_quick }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Which Python each smoke leg runs
+        id: legs
+        env:
+          LEGS_SMOKE: >-
+            {"os": ["ubuntu-latest", "macos-latest"],
+            "include": [{"os": "ubuntu-latest", "python-version": "oldest",
+            "runs_on": "ubuntu-24.04"}]}
+          LEGS_QUICK: >-
+            {"include": [{"os": "ubuntu-latest", "python-version": "middle"}]}
+          LEGS_WINDOWS: >-
+            {"include": [
+            {"os": "windows-latest", "python-version": "oldest"},
+            {"os": "windows-latest", "python-version": "middle"},
+            {"os": "windows-latest", "python-version": "newest"}]}
+          LEGS_WINDOWS_QUICK: >-
+            {"include": [{"os": "windows-latest", "python-version": "middle"}]}
+        run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
+
+  # just-buildit.github.io#203: which runner each smoke leg gets. `make
+  # ci-runner` gives each leg of `legs` a `runs_on`: the org's self-hosted
+  # macOS runner while one is idle and this repo opted in
+  # (JB_SELF_HOSTED_MACOS), its hosted label otherwise.
   plan:
     name: Plan smoke legs
+    needs: legs
     if: >
       inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
@@ -64,42 +119,18 @@ jobs:
       matrix: ${{ steps.runners.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7.0.1
-      # The smoke legs, in include form, and which runner each gets. ONE
-      # step and no planner run before it: this workflow is also reached by
-      # workflow_call and workflow_run, where self-hosted-check allows only
-      # a plain checkout ahead of `make ci-runner` (an earlier step could
-      # bring in a fork's Makefile). `quick` is ci.yml's per-PR leg; outside
-      # a workflow_call the input is null, which reads as the full matrix.
-      #
-      # ubuntu-latest rolled to Ubuntu 26.04, where actions/setup-python has
-      # no 3.9 build ("The version '3.9' with architecture 'x64' was not
-      # found for Ubuntu 26.04"): the v0.109.0 release failed before publish
-      # on this one leg. `requires-python = ">=3.9"` still promises 3.9, so
-      # its Linux leg stays, on the newest image that ships it (its
-      # `runs_on`). Every other leg follows its `os`. Every os runs every
-      # Python: tests/test_own_ci_matrix.py holds the grid complete.
+      # ONE step and no planner run before it: this workflow is also
+      # reached by workflow_call and workflow_run, where self-hosted-check
+      # allows only a plain checkout ahead of `make ci-runner` (an earlier
+      # step could bring in a fork's Makefile). `quick` is ci.yml's per-PR
+      # leg; outside a workflow_call the input is null, which reads as the
+      # full matrix.
       - name: Which runner each smoke leg gets
         id: runners
         env:
           LEGS: >-
-            ${{ inputs.quick
-            && '{"include": [{"os": "ubuntu-latest", "python-version": "3.12"}]}'
-            || '{"include": [
-            {"os": "ubuntu-latest", "python-version": "3.9", "runs_on": "ubuntu-24.04"},
-            {"os": "ubuntu-latest", "python-version": "3.10"},
-            {"os": "ubuntu-latest", "python-version": "3.11"},
-            {"os": "ubuntu-latest", "python-version": "3.12"},
-            {"os": "ubuntu-latest", "python-version": "3.13"},
-            {"os": "ubuntu-latest", "python-version": "3.14"},
-            {"os": "ubuntu-latest", "python-version": "3.15"},
-            {"os": "macos-latest", "python-version": "3.9"},
-            {"os": "macos-latest", "python-version": "3.10"},
-            {"os": "macos-latest", "python-version": "3.11"},
-            {"os": "macos-latest", "python-version": "3.12"},
-            {"os": "macos-latest", "python-version": "3.13"},
-            {"os": "macos-latest", "python-version": "3.14"},
-            {"os": "macos-latest", "python-version": "3.15"}
-            ]}' }}
+            ${{ inputs.quick && needs.legs.outputs.quick
+            || needs.legs.outputs.smoke }}
           JB_SELF_HOSTED_MACOS: ${{ vars.JB_SELF_HOSTED_MACOS }}
           JB_RUNNER_READ_TOKEN: ${{ secrets.JB_RUNNER_READ_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -786,6 +817,7 @@ jobs:
   # exported nothing.
   smoke-windows:
     name: Smoke test (windows-latest, clang-cl, py${{ matrix.python-version }})
+    needs: legs
     if: >
       inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
@@ -794,11 +826,11 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        # The bounds jm supports plus the middle: every leg is a full Windows
-        # build, so the POSIX job's six versions would be six times the cost
-        # for the part of the matrix this job adds nothing to.
-        python-version: ${{ fromJSON(inputs.quick && '["3.12"]' || '["3.9", "3.12", "3.15"]') }}
+      # The bounds jm supports plus the middle, from the classifiers (the
+      # `legs` job, which says why only those).
+      matrix: >-
+        ${{ fromJSON(inputs.quick && needs.legs.outputs.windows_quick
+        || needs.legs.outputs.windows) }}
     defaults:
       run:
         shell: bash
