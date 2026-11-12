@@ -28,7 +28,9 @@
 # alone calls another: the two layouts a program's own rpath cannot reach.
 #
 # CONSUMER_CMAKE_VERSION=3.16.3 runs everything with Kitware's release binary
-#   of that version: the floor every generated project declares.
+#   of that version: the floor every generated project declares. The CI image
+#   bakes it into /opt/cmake-<v> (docker/ci-extra.sh, gh-2625), so CI fetches
+#   nothing; anywhere else it is downloaded into WORK.
 
 set -euo pipefail
 
@@ -65,14 +67,23 @@ CC=${CC:-cc}
 
 # ── the toolchain ────────────────────────────────────────────────────────────
 if [[ -n ${CONSUMER_CMAKE_VERSION:-} ]]; then
-    [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] \
-        || die "CONSUMER_CMAKE_VERSION needs Linux x86_64 (Kitware's binary)"
     v=$CONSUMER_CMAKE_VERSION
-    say "CMake $v from Kitware's release"
-    curl -fsSL --retry 3 \
-        "https://github.com/Kitware/CMake/releases/download/v$v/cmake-$v-Linux-x86_64.tar.gz" \
-        | tar -xz -C "$WORK"
-    PATH="$WORK/cmake-$v-Linux-x86_64/bin:$PATH"
+    if [[ -x /opt/cmake-$v/bin/cmake ]]; then
+        say "CMake $v baked into the CI image (/opt/cmake-$v)"
+        PATH="/opt/cmake-$v/bin:$PATH"
+    elif [[ -f /etc/ci-image-fingerprint ]]; then
+        # Inside the CI image nothing is fetched live (gh-2625): a missing
+        # floor is an image built without it, not a download to retry.
+        die "CMake $v is not in this CI image: docker/ci-extra.sh bakes it"
+    else
+        [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] \
+            || die "CONSUMER_CMAKE_VERSION needs Linux x86_64 (Kitware's binary)"
+        say "CMake $v from Kitware's release"
+        curl -fsSL --retry 3 \
+            "https://github.com/Kitware/CMake/releases/download/v$v/cmake-$v-Linux-x86_64.tar.gz" \
+            | tar -xz -C "$WORK"
+        PATH="$WORK/cmake-$v-Linux-x86_64/bin:$PATH"
+    fi
     [[ $(cmake --version | head -1) == "cmake version $v" ]] \
         || die "wanted CMake $v, got: $(cmake --version | head -1)"
 fi

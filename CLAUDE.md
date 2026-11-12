@@ -576,5 +576,10 @@ just-buildit/.github README under "Makefile standard".
     commits its own pin on push, and `make ci-image-check` (in `lint`)
     refuses one that did not. `make help`'s CI-image section has the targets.
     `ci.yml`'s Linux `test` and `examples` legs run in that image as uid
-    1001 and install nothing live (`tests/test_ci_legs_in_image.py`); the
-    product-install jobs stay on bare runners, since that is what they test.
+    1001 and install nothing live (`tests/test_ci_legs_in_image.py`), and so
+    do the Linux `Consumer smoke` legs, as root (they install to
+    `/usr/local`), in the 24.04 image or the 22.04 one (`CI_IMAGE_2204`,
+    pkg-config 0.29 and the CMake 3.16.3 floor that `docker/ci-extra.sh`
+    bakes in, gh-2625). The jobs that install live on bare runners, because
+    installing is what they test: `install-deps-smoke` (`jm-install-deps`)
+    and Artifact smoke's `Install build deps via generated bootstrap.toml`.
