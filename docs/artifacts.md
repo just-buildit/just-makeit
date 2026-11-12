@@ -54,6 +54,9 @@ mylib/
 ├── src/
 │   └── mylib/
 │       ├── __init__.py
+│       ├── tests/
+│       │   ├── __init__.py
+│       │   └── test_project.py     # the package imports, at the manifest version
 │       └── dsp/
 │           ├── __init__.py         # from .dsp import compute
 │           └── dsp.pyi             # type stub for dsp.so
@@ -115,7 +118,8 @@ mylib/
 │       │   └── bench_engine.py     # Python benchmark
 │       └── tests/
 │           ├── __init__.py
-│           └── test_engine.py      # unittest (runs under pytest too)
+│           ├── test_engine.py      # unittest (runs under pytest too)
+│           └── test_project.py     # the package imports, at the manifest version
 ├── CMakeLists.txt
 ├── .clang-tidy                 # clang-tidy config; `make tidy` runs it
 ├── CMakePresets.json           # IDE configure presets (see Building on Windows)
@@ -176,6 +180,9 @@ mylib/
 ├── src/
 │   └── mylib/
 │       ├── __init__.py
+│       ├── tests/
+│       │   ├── __init__.py
+│       │   └── test_project.py     # the package imports, at the manifest version
 │       └── dsp/
 │           ├── __init__.py         # from .dsp import Filt
 │           ├── dsp.pyi             # type stub for dsp.so
@@ -257,6 +264,9 @@ mylib/
 ├── src/
 │   └── mylib/
 │       ├── __init__.py
+│       ├── tests/
+│       │   ├── __init__.py
+│       │   └── test_project.py     # the package imports, at the manifest version
 │       └── dsp/
 │           ├── __init__.py         # from .dsp import Fir, Biquad
 │           ├── dsp.pyi             # one stub for both types
@@ -347,6 +357,9 @@ mylib/
 ├── src/
 │   └── mylib/
 │       ├── __init__.py
+│       ├── tests/
+│       │   ├── __init__.py
+│       │   └── test_project.py     # the package imports, at the manifest version
 │       ├── dsp/
 │       │   ├── __init__.py         # from .dsp import Fir
 │       │   ├── dsp.pyi

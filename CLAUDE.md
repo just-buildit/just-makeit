@@ -186,6 +186,9 @@ A scaffolded project contains:
 - `native/tests/test_<comp>_core.c` — CTest smoke test
 - `src/<pkg>/<comp>.pyi` — type stub (regenerated on every mutation)
 - `src/<pkg>/tests/test_<comp>.py` — pytest integration test
+- `src/<pkg>/tests/test_project.py` — written by `jm new` itself: the package
+    imports at the manifest version, so a project with no component still runs
+    a test (gh-2640)
 - `CMakeLists.txt` + `Makefile` — build system
 - `just-makeit.toml` — single source of truth for all component metadata
 

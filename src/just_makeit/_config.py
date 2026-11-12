@@ -2706,6 +2706,18 @@ def validate_name(name: str, kind: str) -> str | None:
     ``None``. *kind* is the noun the user sees: ``"object"``, ``"property"``,
     ``"method"``, ``"function"``, ``"project"``, ``"component"``."""
     if valid_identifier(name):
+        # gh-2640: a component is a top-level manifest table, so one named
+        # for a reserved section IS that section -- `jm object project`
+        # replaced `[project]` with the object's keys and exited 0. It is
+        # also what keeps a component's `test_<name>.py` off the project's
+        # own `test_project.py` (`_new.SMOKE_TEST`).
+        if kind in ("object", "component") and name in NOT_COMPONENTS:
+            return (
+                f"'{name}' is not a valid {kind} name.\n"
+                f"`{name}` is a reserved top-level key of {FILENAME}, and "
+                "every component is the table of its own name. Choose "
+                "another name."
+            )
         return None
     # gh-784: "lowercase" was the false word. `str.isalnum()` is case-blind,
     # and uppercase is load-bearing — a view's class name is legitimately

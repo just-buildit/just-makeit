@@ -411,7 +411,8 @@ class TestTheBuildRuns:
         assert built.returncode == 0, built.stdout + built.stderr
         ran = run_cli("test", cwd=root)
         assert ran.returncode == 0, ran.stdout + ran.stderr
-        assert "1 passed" in ran.stdout + ran.stderr
+        # The contract test, and the project's own (gh-2640).
+        assert "2 passed" in ran.stdout + ran.stderr
 
     def test_a_check_return_function_builds_and_its_contract_passes(
         self, tmp_path: Path

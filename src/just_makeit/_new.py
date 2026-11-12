@@ -48,6 +48,72 @@ PY_INSTALL = (
 )
 
 
+#: gh-2640: the project's own test, written with the project. Without it a
+#: project with no component yet ran an empty suite, which unittest on
+#: Python 3.12+ exits 5 for -- `make test` failed on a tree nobody had
+#: touched. It checks that the package imports at the manifest's version.
+#:
+#: Named for the one top-level manifest table no component can take
+#: (`_config.validate_name` refuses a component called ``project``), so no
+#: component's ``test_<name>.py`` can land on it; the functions-only contract
+#: test is ``test_<module>_functions.py`` in the module's own package.
+SMOKE_TEST = "test_project.py"
+
+
+def smoke_test_rel(pkg: str) -> str:
+    """The smoke test's project-relative path.
+
+    >>> smoke_test_rel("demo")
+    'src/demo/tests/test_project.py'
+    """
+    return f"src/{pkg}/tests/{SMOKE_TEST}"
+
+
+#: The smoke test's version check, by how the package's ``__init__.py``
+#: declares ``__version__`` (`_projversion.version_binding`). A literal --
+#: the one jm writes, and the one `jm config version` keeps in step -- is
+#: held to the manifest. A computed one (``importlib.metadata``, a
+#: ``_version.py``, a ``try`` fallback) is the package's own answer: a dev
+#: build's ``0.2.1.dev3+g...`` is right and the manifest's ``0.2.0`` is not
+#: what it should equal, so it is held only to being a version at all.
+_VERSION_TESTS = {
+    "literal": (
+        "    def test_version_is_the_manifest_version(self):\n"
+        "        self.assertEqual(<<package>>.__version__, MANIFEST_VERSION)\n"
+    ),
+    "computed": (
+        "    def test_version_is_a_nonempty_string(self):\n"
+        '        """`__init__.py` computes `__version__`, so the package, not\n'
+        '        the manifest, says what it is: here, that it says one."""\n'
+        "        self.assertIsInstance(<<package>>.__version__, str)\n"
+        "        self.assertTrue(<<package>>.__version__)\n"
+    ),
+}
+
+
+def _smoke_test_text(root: Path, project: str, render) -> str:
+    """The smoke test for the project at *root*, born owned.
+
+    Its version check follows the package ``__init__.py`` of the REAL
+    project -- in `apply`'s replay that is not *root*, which is a scratch
+    tree (`_init._real_root`). With no ``__init__.py`` yet, or one binding
+    no ``__version__``, it is the literal check: `jm new` writes a literal,
+    and `apply` adds one to a file that binds none.
+    """
+    from . import _projversion
+    from ._init import _real_root
+
+    init = _real_root(root) / "src" / project / "__init__.py"
+    binding = None
+    if init.is_file():
+        binding = _projversion.version_binding(
+            init.read_text(encoding="utf-8")
+        )
+    kind = "computed" if binding == _projversion.COMPUTED else "literal"
+    text = T.PROJECT_TEST_PY.replace("<<version_test>>", _VERSION_TESTS[kind])
+    return T.owned_scaffold(render(text), SMOKE_TEST)
+
+
 def _make_project_ctx(
     project: str,
     version: str = "0.1.0",
@@ -62,8 +128,11 @@ def _make_project_ctx(
             '\t@$(PYTHON) -c "import pytest" 2>/dev/null || '
             f'$(PYTHON) -c "$(PY_INSTALL)" {_pins.PYTEST_SHELL}\n'
         )
-        cmd_win = "$(PYTHON) -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)\""
-        cmd_unix = "$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret"
+        # gh-2640: pytest's exit 5 (no tests collected) is a failure, as
+        # unittest's is: every project carries `SMOKE_TEST`, so an empty run
+        # means the tests are gone, and passing it would prove nothing.
+        cmd_win = "$(PYTHON) -m pytest src/ -v"
+        cmd_unix = "$(PYTHON) -m pytest src/ -v"
     else:
         ensure_win = ""
         ensure_unix = ""
@@ -502,6 +571,11 @@ def run(
     _write(root / "bootstrap.toml", r(T.BOOTSTRAP_TOML))
     if build_system == "cmake":
         _write_project_wiring(root, project, cfg)
+    # gh-2640: born owned, like each component's scaffolded test (gh-1489):
+    # `apply` renders it whole while the token is there, so it follows the
+    # manifest's version, and deleting the token makes it the author's.
+    _write(root / "src" / project / "tests" / "__init__.py", T.TESTS_INIT_PY)
+    _write(root / smoke_test_rel(project), _smoke_test_text(root, project, r))
     print()
 
     if object_names:

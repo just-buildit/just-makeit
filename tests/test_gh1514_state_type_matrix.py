@@ -148,7 +148,7 @@ def test_every_accepted_type_builds_and_passes_both_faces(matrix) -> None:
                 r"^\s+def test_\w+\(", p.read_text(encoding="utf-8"), re.M
             )
         )
-        for name in accepted
+        for name in [*accepted, "project"]  # gh-2640: the project's own
         for p in root.glob(f"src/mx/**/tests/test_{name}.py")
     )
     assert defined >= 3 * len(accepted), defined
