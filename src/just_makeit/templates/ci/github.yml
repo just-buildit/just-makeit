@@ -13,8 +13,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
-        # The project's pyproject.toml classifiers; `jm apply` keeps
-        # this list equal to them.
+        # The project's pyproject.toml classifiers that its
+        # requires-python admits; `jm apply` keeps this list equal to them.
         python-version: <<python_versions>>
 
     steps:
