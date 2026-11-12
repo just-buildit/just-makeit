@@ -30,6 +30,7 @@ import os
 import shutil
 import subprocess
 import sys
+from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 
 import pytest
@@ -232,14 +233,35 @@ def _poison(root: Path) -> None:
     c.write_text(text)
 
 
+def _built_extensions(root: Path) -> list[Path]:
+    """Every compiled extension the build placed under ``src/``."""
+    return [
+        p
+        for p in (root / "src").rglob("*")
+        if p.is_file() and p.name.endswith(tuple(EXTENSION_SUFFIXES))
+    ]
+
+
 def _build(root: Path, target: str, clean: bool = False) -> None:
     """Configure and build *target*. ``clean`` discards the build tree first:
     a rebuild after an edit made moments after the last build is not
     reliable where make compares mtimes to the second (macOS ships make
     3.81), and a stale extension would still park, so the second half of
-    a build-edit-build test starts clean."""
+    a build-edit-build test starts clean.
+
+    Clean means the extension too, not only ``build/``: the generated
+    CMake links each extension straight into the package under ``src/``,
+    so a rebuild that kept it would overwrite the old file in place, and
+    a probe on a self-hosted macOS VM once loaded the old one (gh-2647).
+    Deleting it first makes the second build create a new file."""
     if clean:
         shutil.rmtree(root / "build", ignore_errors=True)
+        exts = _built_extensions(root)
+        # A clean rebuild follows a build: none found means the layout
+        # moved and this would silently keep the old file again.
+        assert exts, f"no built extension under {root / 'src'}"
+        for ext in exts:
+            ext.unlink()
     for cmd in (
         ["cmake", "-S", str(root), "-B", str(root / "build")],
         ["cmake", "--build", str(root / "build"), "--target", target],
