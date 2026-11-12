@@ -19,6 +19,7 @@ from . import _config as C
 from . import _render as T
 from . import _incpath as INC
 from . import _pins
+from ._docstring import docstring_literal
 from . import _pythons
 
 
@@ -83,8 +84,12 @@ _VERSION_TESTS = {
     ),
     "computed": (
         "    def test_version_is_a_nonempty_string(self):\n"
-        '        """`__init__.py` computes `__version__`, so the package, not\n'
-        '        the manifest, says what it is: here, that it says one."""\n'
+        "        "
+        + docstring_literal(
+            "`__init__.py` computes `__version__`, so the package, not\n"
+            "        the manifest, says what it is: here, that it says one."
+        )
+        + "\n"
         "        self.assertIsInstance(<<package>>.__version__, str)\n"
         "        self.assertTrue(<<package>>.__version__)\n"
     ),
