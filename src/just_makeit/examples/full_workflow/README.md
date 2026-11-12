@@ -32,8 +32,27 @@ just-makeit example full_workflow
 
 ## Prerequisites
 
+With jbx, the recommended way on every platform
+([getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)):
+
+```sh
+jbx just-makeit:install
+```
+
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
+
+Or with the curl installer, sourced, which also activates the venv
+in this shell:
+
 ```sh
 . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
+```
+
+On Windows, from PowerShell without jbx (see
+[Building on Windows](../windows.md)):
+
+```powershell
+irm https://just-buildit.github.io/just-makeit/install.ps1 | iex
 ```
 
 Install the tooling for the pytest styles, coverage and docs:

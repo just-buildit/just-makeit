@@ -48,7 +48,7 @@ RUN python -m pip install --no-cache-dir /src
 # ── Install build deps (cmake, gcc, pkg-config) ───────────────────────────────
 # Requires the just-makeit CLI on PATH (installed above), so this stays
 # sequenced after the /src install — its own work (apt installs + a
-# separate /tmp/jm-venv pulling numpy/just-makeit from PyPI) never reads
+# separate per-user venv pulling numpy/just-makeit from PyPI) never reads
 # /src, but invoking it via the CLI ties its cache to /src's cache.
 #
 # (No C++ stdlib needed: doppler >= 0.14.0 ships doppler::doppler-static

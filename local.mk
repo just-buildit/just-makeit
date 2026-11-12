@@ -243,15 +243,17 @@ ci-pythons: ## Print the Pythons jm supports (the pyproject classifiers)
 	@python3 scripts/ci-test-legs.py pythons
 
 # The files the published site carries that the docs build does not make:
-# `install.sh` (what `curl -fsSL <site>/install.sh` fetches) and
-# `aliases.toml` (what `jbx just-makeit:NAME` reads first). It is the ONE
+# `install.sh` (what `curl -fsSL <site>/install.sh` fetches), its Windows
+# twin `install.ps1` (what `irm <site>/install.ps1 | iex` fetches, gh-2601)
+# and `aliases.toml` (what `jbx just-makeit:NAME` reads first). It is the ONE
 # recipe `DOCS_BUILD_CMD` runs after the zensical build, and the one
 # tests/test_aliases_toml_published.py runs into a temporary SITE_FILES_DIR,
 # so the test reads what the real build copies and needs no zensical.
 SITE_FILES_DIR ?= site
-site-files: ## Copy install.sh and aliases.toml into SITE_FILES_DIR (default site/)
+site-files: ## Copy install.sh, install.ps1 and aliases.toml into SITE_FILES_DIR (default site/)
 	mkdir -p $(SITE_FILES_DIR)
 	cp install.sh $(SITE_FILES_DIR)/install.sh
+	cp install.ps1 $(SITE_FILES_DIR)/install.ps1
 	cp aliases.toml $(SITE_FILES_DIR)/aliases.toml
 
 # gh-2294: every test that compiles C through tests/_cbuild.py, the one
