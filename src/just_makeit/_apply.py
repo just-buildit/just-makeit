@@ -2677,6 +2677,16 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     # gh-2514: and a plain `__all__` that grew past the column target,
     # wrapped.
     fixed = wrap_all(sort_reexports(ensure_dll_preamble(cur), owned))
+    # gh-2640: and a `__version__`, which the project's smoke test holds to
+    # the manifest. Added only to a file that names none at all: a package
+    # that computes its own (`importlib.metadata`) keeps it, and a literal
+    # that disagrees is `_projversion`'s to report, never this merge's to
+    # rewrite. The replay's line is the one `jm new` writes today.
+    from ._projversion import _INIT_PY_RE
+
+    want_version = _INIT_PY_RE.search(temp_text)
+    if want_version and "__version__" not in fixed:
+        fixed = f"{fixed.rstrip()}\n\n{want_version.group(0)}\n"
     if fixed != cur:
         _textio.write_text(real_path, fixed)
         print(f"  update  {real_path}")

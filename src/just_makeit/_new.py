@@ -47,6 +47,27 @@ PY_INSTALL = (
 )
 
 
+#: gh-2640: the project's own test, written with the project. Without it a
+#: project with no component yet ran an empty suite, which unittest on
+#: Python 3.12+ exits 5 for -- `make test` failed on a tree nobody had
+#: touched. It checks that the package imports at the manifest's version.
+#:
+#: Named for the one top-level manifest table no component can take
+#: (`_config.validate_name` refuses a component called ``project``), so no
+#: component's ``test_<name>.py`` can land on it; the functions-only contract
+#: test is ``test_<module>_functions.py`` in the module's own package.
+SMOKE_TEST = "test_project.py"
+
+
+def smoke_test_rel(pkg: str) -> str:
+    """The smoke test's project-relative path.
+
+    >>> smoke_test_rel("demo")
+    'src/demo/tests/test_project.py'
+    """
+    return f"src/{pkg}/tests/{SMOKE_TEST}"
+
+
 def _make_project_ctx(
     project: str,
     version: str = "0.1.0",
@@ -61,8 +82,11 @@ def _make_project_ctx(
             '\t@$(PYTHON) -c "import pytest" 2>/dev/null || '
             f'$(PYTHON) -c "$(PY_INSTALL)" {_pins.PYTEST_SHELL}\n'
         )
-        cmd_win = "$(PYTHON) -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','src/','-v']); sys.exit(0 if r.returncode in(0,5) else r.returncode)\""
-        cmd_unix = "$(PYTHON) -m pytest src/ -v; ret=$$?; \\\n\t\t[ $$ret -eq 0 ] || [ $$ret -eq 5 ] || exit $$ret"
+        # gh-2640: pytest's exit 5 (no tests collected) is a failure, as
+        # unittest's is: every project carries `SMOKE_TEST`, so an empty run
+        # means the tests are gone, and passing it would prove nothing.
+        cmd_win = "$(PYTHON) -m pytest src/ -v"
+        cmd_unix = "$(PYTHON) -m pytest src/ -v"
     else:
         ensure_win = ""
         ensure_unix = ""
@@ -491,6 +515,14 @@ def run(
     _write(root / "bootstrap.toml", r(T.BOOTSTRAP_TOML))
     if build_system == "cmake":
         _write_project_wiring(root, project, cfg)
+    # gh-2640: born owned, like each component's scaffolded test (gh-1489):
+    # `apply` renders it whole while the token is there, so it follows the
+    # manifest's version, and deleting the token makes it the author's.
+    _write(root / "src" / project / "tests" / "__init__.py", T.TESTS_INIT_PY)
+    _write(
+        root / smoke_test_rel(project),
+        T.owned_scaffold(r(T.PROJECT_TEST_PY), SMOKE_TEST),
+    )
     print()
 
     if object_names:

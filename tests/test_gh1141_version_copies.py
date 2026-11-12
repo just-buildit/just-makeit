@@ -169,7 +169,7 @@ class TestStatus:
     def test_it_names_the_section_and_the_summary(self, project: Path) -> None:
         _bump(project)
         out = _cli("status", cwd=project)
-        assert "VERSION (5)" in out.stdout, out.stdout
+        assert "VERSION (7)" in out.stdout, out.stdout
         assert "version-drift (!)" in out.stdout, out.stdout
 
     def test_status_allow_suppresses_per_file(self, project: Path) -> None:
@@ -186,8 +186,8 @@ class TestStatus:
             encoding="utf-8",
         )
         out = _cli("status", cwd=project)
-        assert "VERSION (3)" in out.stdout, out.stdout
-        assert "Doxyfile" not in out.stdout.split("VERSION (3)")[1][:400]
+        assert "VERSION (5)" in out.stdout, out.stdout
+        assert "Doxyfile" not in out.stdout.split("VERSION (5)")[1][:400]
 
 
 class TestEveryTemplateIsClassified:
@@ -210,6 +210,10 @@ class TestEveryTemplateIsClassified:
     #: Create-only, and therefore `_projversion`'s to report.
     CHECKED = {
         "c/src/lib_stub.c",
+        "py/package_init.py",
+        "py/package_init_minimal.py",
+        # Rewritten by `apply` only while owned, so checked (gh-2640).
+        "py/project_test.py",
         "cmake/CMakeLists_top.cmake",
         "doc/Doxyfile",
         "toml/bootstrap.toml",
