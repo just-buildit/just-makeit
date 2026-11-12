@@ -9,11 +9,7 @@ its own ``test_<component>.py`` beside this one.
 import unittest
 
 import <<package>>
-
-#: ``[project] version`` in just-makeit.toml. ``jm config version`` rewrites
-#: this line together with ``__version__`` in the package's ``__init__.py``.
-MANIFEST_VERSION = "<<version>>"
-
+<<version_const>>
 
 class TestProject(unittest.TestCase):
 <<version_test>>
