@@ -52,6 +52,7 @@ from ._context._parse import capsule_annotation
 from ._context._types import _py_default
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    docstring_literal,
     EnumAnn,
     enum_param_desc,
     CLASS_INDENT,
@@ -195,6 +196,13 @@ def _title(name: str) -> str:
 
 _HAND_MARKER = "# jm:hand"
 _MANUAL_STUB_PLACEHOLDER = "<<MANUAL_STUB>>"
+
+#: The docstring of a `manual_stub` member's placeholder, which both stub
+#: generators write (the object template's and the module stub's).
+MANUAL_STUB_DOC = (
+    f"{_MANUAL_STUB_PLACEHOLDER} hand-write this signature/docstring in the"
+    " .pyi — jm preserves it verbatim on future regens."
+)
 
 
 def _node_span(text: str, node: ast.AST) -> tuple[int, int]:
@@ -1965,7 +1973,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
-                f'        """{_va_doc}"""',
+                "        " + docstring_literal(_va_doc),
             ]
             continue
         if m.get("manual_stub"):
@@ -1976,9 +1984,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             lines += [
                 "",
                 f"    def {m_name}(self, *args: Any, **kwargs: Any) -> Any:",
-                f'        """{_MANUAL_STUB_PLACEHOLDER} hand-write this'
-                " signature/docstring in the .pyi — jm preserves it"
-                ' verbatim on future regens."""',
+                "        " + docstring_literal(MANUAL_STUB_DOC),
             ]
             continue
         # codec-pack method (gh-554): the SAME renderer the standalone stub
@@ -2641,7 +2647,7 @@ def _fn_stub(fn: dict, block=None, enums: "dict | None" = None) -> str:
 #: name, so a name that appears only in prose does not pull in an import
 #: that ruff would then call unused -- the opposite failure, on the same
 #: line of code.
-_DOCSTRING_RE = _re.compile(r'"""(?:.|\n)*?"""')
+_DOCSTRING_RE = _re.compile(r"\"\"\"(?:.|\n)*?\"\"\"")
 
 
 def _uses_any(body: str) -> bool:
