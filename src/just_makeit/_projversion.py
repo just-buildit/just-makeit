@@ -198,14 +198,14 @@ def version_binding(text: str) -> "str | None":
     Read from the syntax tree, never the text: a docstring that mentions
     ``__version__`` binds nothing.
 
-    >>> version_binding("'Exposes __version__ to callers.'\n") is None
+    >>> version_binding("'Exposes __version__ to callers.'\\n") is None
     True
-    >>> version_binding('__version__: str = "1.0"\n')
+    >>> version_binding('__version__: str = "1.0"\\n')
     'literal'
-    >>> version_binding('try:\n    __version__ = v()\nexcept E:\n'
-    ...                 '    __version__ = "unknown"\n')
+    >>> version_binding('try:\\n    __version__ = v()\\nexcept E:\\n'
+    ...                 '    __version__ = "unknown"\\n')
     'computed'
-    >>> version_binding("from ._version import __version__\n")
+    >>> version_binding("from ._version import __version__\\n")
     'computed'
     """
     try:
