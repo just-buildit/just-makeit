@@ -62,6 +62,7 @@ belongs to, never on the bare number.
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -114,12 +115,120 @@ _TOML_KEY_RE = re.compile(
 
 
 #: ``__version__ = "x.y.z"`` at column 1 of the package ``__init__.py``
-#: (gh-2640). An indented or computed one -- ``importlib.metadata``'s, under
-#: a ``try`` -- is not a copy this module reads or writes.
+#: (gh-2640), annotated or not (``__version__: str = "x.y.z"``). An indented
+#: or computed one -- ``importlib.metadata``'s, under a ``try`` -- is not a
+#: copy this module reads or writes; :func:`version_binding` says which.
 _INIT_PY_RE = re.compile(
-    r"""^__version__[ \t]*=[ \t]*(?P<q>["'])(?P<ver>[^"'\\\n]*)(?P=q)""",
+    r"""^__version__(?:[ \t]*:[^=\n]*)?[ \t]*=[ \t]*"""
+    r"""(?P<q>["'])(?P<ver>[^"'\\\n]*)(?P=q)""",
     re.M,
 )
+
+#: What :func:`version_binding` answers.
+LITERAL = "literal"
+COMPUTED = "computed"
+
+
+def _bindings(body: "list[ast.stmt]") -> "list[ast.stmt]":
+    """The module-level statements in *body* that bind ``__version__``.
+
+    Module level includes a top-level ``try`` / ``if`` / ``with`` -- the
+    ``importlib.metadata`` idiom binds it in a ``try`` and its ``except`` --
+    and excludes a function or class body, whose names are not the module's.
+    A module ``__getattr__`` counts: it may serve ``__version__`` on demand,
+    and a literal added beside it would shadow whatever it returns.
+    """
+    out: "list[ast.stmt]" = []
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == "__getattr__":
+                out.append(node)
+            continue
+        if isinstance(node, ast.ClassDef):
+            continue
+        if isinstance(node, ast.Assign):
+            names = [
+                n
+                for t in node.targets
+                for n in ast.walk(t)
+                if isinstance(n, ast.Name)
+            ]
+            if any(n.id == "__version__" for n in names):
+                out.append(node)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == "__version__"
+            ):
+                out.append(node)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            if any(
+                (a.asname or a.name.split(".")[0]) == "__version__"
+                for a in node.names
+            ):
+                out.append(node)
+        for field in ("body", "orelse", "finalbody", "handlers"):
+            inner = getattr(node, field, None)
+            if isinstance(inner, list) and inner:
+                for h in inner:
+                    if isinstance(h, ast.ExceptHandler):
+                        out += _bindings(h.body)
+                if not isinstance(inner[0], ast.ExceptHandler):
+                    out += _bindings(inner)
+    return out
+
+
+def version_binding(text: str) -> "str | None":
+    """How a package ``__init__.py`` declares ``__version__`` (gh-2640).
+
+    The one reading `apply` and the project's smoke test both act on:
+
+    - ``None``: nothing binds it, so `apply` adds a literal;
+    - :data:`LITERAL`: exactly one binding, a plain module-level string
+      that :data:`_INIT_PY_RE` locates -- the copy `drift` reports and
+      `sync` writes, so the smoke test holds it to the manifest;
+    - :data:`COMPUTED`: any other binding -- ``importlib.metadata``, a
+      ``_version.py`` import, a ``try`` fallback, a module ``__getattr__``
+      -- whose value only the package knows, so the smoke test asserts a
+      non-empty string, and nothing here writes it.
+
+    A file that does not parse is :data:`COMPUTED`: jm adds nothing to it,
+    and the import fails the test on its own.
+
+    Read from the syntax tree, never the text: a docstring that mentions
+    ``__version__`` binds nothing.
+
+    >>> version_binding("'Exposes __version__ to callers.'\n") is None
+    True
+    >>> version_binding('__version__: str = "1.0"\n')
+    'literal'
+    >>> version_binding('try:\n    __version__ = v()\nexcept E:\n'
+    ...                 '    __version__ = "unknown"\n')
+    'computed'
+    >>> version_binding("from ._version import __version__\n")
+    'computed'
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return COMPUTED
+    found = _bindings(tree.body)
+    if not found:
+        return None
+    only = found[0]
+    value = getattr(only, "value", None)
+    if (
+        len(found) == 1
+        and only in tree.body
+        and isinstance(only, (ast.Assign, ast.AnnAssign))
+        and (not isinstance(only, ast.Assign) or len(only.targets) == 1)
+        and isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+        and _regex_span(_INIT_PY_RE)(text) is not None
+    ):
+        return LITERAL
+    return COMPUTED
+
 
 #: ``MANIFEST_VERSION = "x.y.z"`` in the project's smoke test (gh-2640): the
 #: value the test holds ``__version__`` to.

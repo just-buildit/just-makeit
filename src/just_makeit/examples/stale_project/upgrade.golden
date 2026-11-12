@@ -121,7 +121,6 @@ warning: this project was last generated with just-makeit 0.33.14, but you are r
          Install the matching version (uvx --from 'just-makeit==0.33.14' just-makeit …) or re-apply with the current CLI to move the project forward.
 just-makeit: applying just-makeit.toml
 
-  update  src/stale/__init__.py
   stamp   just-makeit.toml  [project] jm_version = <HEAD>
 
   update  native/src/dsp/dsp_ext_fir.c: docstring(s) rewritten from the header for decimate_max_out, destroy

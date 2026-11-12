@@ -60,13 +60,16 @@ Six of these have more to them:
     first). A project scaffolded before this has no such line, and those
     files stay yours.
 - **The project's own test**, `src/<pkg>/tests/test_project.py`, is
-    written by `jm new` and owned the same way. It checks that the package
-    imports and that its `__version__` is the manifest's
-    `[project] version`, so `make test` runs a real test before any
-    component exists.
-    `jm config version` rewrites both copies of the version; `jm apply`
-    writes the test into a project that lacks it, and adds a
-    `__version__` line to a package `__init__.py` that names none.
+    written by `jm new` and owned the same way, so `make test` runs a real
+    test before any component exists. It checks that the package imports
+    and states its version. Where `__init__.py` sets `__version__` to a
+    string literal -- what `jm new` writes -- the test holds it to the
+    manifest's `[project] version`, and `jm config version` rewrites both.
+    Where the package computes it (`importlib.metadata`, a `_version.py`,
+    a `try` fallback), the test asks only for a non-empty string: a dev
+    build's version is the package's answer. `jm apply` writes the test
+    into a project that lacks it, and adds a `__version__` line to an
+    `__init__.py` that binds none.
 
 ## The loop
 

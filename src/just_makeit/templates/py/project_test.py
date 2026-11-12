@@ -1,4 +1,4 @@
-"""The <<package>> package as a whole: it imports, at the manifest's version.
+"""The <<package>> package as a whole: it imports, and states its version.
 
 just-makeit writes this test with the project, so ``make test`` runs at least
 one test before any component exists -- an empty suite passes and proves
@@ -16,5 +16,4 @@ MANIFEST_VERSION = "<<version>>"
 
 
 class TestProject(unittest.TestCase):
-    def test_version_is_the_manifest_version(self):
-        self.assertEqual(<<package>>.__version__, MANIFEST_VERSION)
+<<version_test>>
