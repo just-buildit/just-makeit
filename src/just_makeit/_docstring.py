@@ -40,7 +40,7 @@ def extract_doctests(text: str) -> list[str]:
     """
     out: list[str] = []
     # Triple-double-quoted docstrings (what the stub generator emits).
-    for m in re.finditer(r'"""(.*?)"""', text, re.DOTALL):
+    for m in re.finditer(r"\"\"\"(.*?)\"\"\"", text, re.DOTALL):
         body = m.group(1)
         if ">>>" in body:
             out.append(body)
@@ -2458,17 +2458,16 @@ def authored_docstring(lines: "Sequence[str]", indent: int) -> "list[str]":
     ['', '    \"\"\"']
     """
     pad = " " * indent
-    # gh-2606: text that would end the literal early is escaped, so the stub
-    # parses. Only those spellings: a backslash elsewhere is left as the
-    # author wrote it, since an authored doctest may rely on it.
-    lines = [_unclosing(ln, backslashes=False) for ln in lines]
     if len(lines) == 1:
-        return [f'{pad}"""{_closable(lines[0])}"""']
-    return (
-        [f'{pad}"""{lines[0]}']
-        + [f"{pad}{ln}" if ln else "" for ln in lines[1:]]
-        + ([""] if _ends_in_doctest(lines) else [])
-        + [f'{pad}"""']
+        return [pad + docstring_literal(lines[0])]
+    return docstring_lines(
+        [
+            lines[0],
+            *(f"{pad}{ln}" if ln else "" for ln in lines[1:]),
+            *([""] if _ends_in_doctest(lines) else []),
+            pad,
+        ],
+        pad,
     )
 
 
@@ -2670,48 +2669,86 @@ def _leave_room_for_the_closer(lines: list[str], budget: int) -> list[str]:
     return lines
 
 
-def _unclosing(text: str, *, backslashes: bool = True) -> str:
-    r"""*text* with every triple quote escaped, so it cannot end a literal.
+#: The delimiter a generated docstring opens and closes with. A reader that
+#: looks for one spells it through this name; a WRITER never does -- it calls
+#: :func:`docstring_literal`, the one place a docstring literal is spelled
+#: (tests/test_docstring_literal_one_writer.py refuses any other).
+TRIPLE_QUOTE = '"""'
 
-    gh-2606. A docstring jm writes is a ``\"\"\"...\"\"\"`` literal around
-    text it was handed -- a manifest ``doc``, a header ``@brief`` -- and a
-    triple quote inside that text closed the literal, leaving a ``.pyi``
-    that does not parse. With *backslashes* each backslash is doubled
-    first, so the docstring reads back as exactly *text*; without, a
-    backslash is left as written (an authored text whose doctest relies on
-    it).
+#: Characters a source file cannot hold as written: a raw literal would
+#: change them (a CR is read as a newline), so they force the escaped form.
+_DOC_CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
-    >>> q = chr(34) * 3
-    >>> print(_unclosing("say " + q + "hi" + q + " a\\b"))
-    say \"\"\"hi\"\"\" a\\b
+
+def docstring_literal(content: str) -> str:
+    r"""The Python literal whose value is exactly *content*.
+
+    The one writer of a generated docstring's delimiters. Every layout --
+    one-line or multi-line, a summary, a numpy block, an authored ``doc`` --
+    builds the text it wants the docstring to READ BACK as (continuation
+    lines already indented, the closer's indent as the last line) and hands
+    it here, so no text can end the literal early or come out changed.
+
+    The rule, in order:
+
+    1. Nothing to escape -- no backslash, no triple quote, no closing
+       quote, no control character: the plain literal, byte-identical to
+       what every layout wrote before.
+    2. A backslash, and the raw form can hold the text (no triple quote, no
+       closing quote, no unpaired closing backslash, no control character):
+       a raw literal, so the markup reads as written (gh-652: ``\log`` in a
+       ``:math:`` role, a ``C:\tmp`` path, a doctest's ``"\n"``).
+    3. Otherwise the escaped literal: each backslash doubled, a control
+       character as ``\xNN``, a triple quote as three escaped quotes, a
+       closing quote escaped.
+
+    Examples
+    --------
+    >>> import ast
+    >>> q, b = chr(34), chr(92)
+    >>> for text in ["Plain.", "C:" + b + "tmp", q * 3 + "x" + q * 3,
+    ...              "ends " + q, "ends " + b, "a" + b + "l " + q * 3]:
+    ...     lit = docstring_literal(text)
+    ...     assert ast.literal_eval(lit) == text, (text, lit)
+    >>> docstring_literal("Plain.") == q * 3 + "Plain." + q * 3
+    True
+    >>> docstring_literal("C:" + b + "tmp")[:2]
+    'r"'
     """
-    if backslashes:
-        text = text.replace("\\", "\\\\")
-    return text.replace('"""', '\\"\\"\\"')
-
-
-def _closable(body: str) -> str:
-    r"""*body* (a literal body) safe directly before the closing quotes.
-
-    gh-2606. A final unescaped ``"`` would merge with the closing triple
-    quote, and a final unpaired backslash would escape its first quote;
-    either is escaped. A quote or backslash is escaped exactly when an even
-    number of backslashes precedes it.
-
-    >>> print(_closable('a "b"'))
-    a "b\"
-    >>> print(_closable("a\\"))
-    a\\
-    """
+    trail = len(content) - len(content.rstrip("\\"))
+    plain = (
+        '"""' not in content
+        and not content.endswith('"')
+        and trail % 2 == 0
+        and not _DOC_CTRL.search(content)
+    )
+    if plain and "\\" not in content:
+        return '"""' + content + '"""'
+    if plain:
+        return 'r"""' + content + '"""'
+    body = content.replace("\\", "\\\\")
+    body = _DOC_CTRL.sub(lambda m: f"\\x{ord(m.group()):02x}", body)
+    body = body.replace('"""', '\\"\\"\\"')
     if body.endswith('"'):
+        # Escaped already when an odd run of backslashes precedes it.
         run = len(body[:-1]) - len(body[:-1].rstrip("\\"))
         if run % 2 == 0:
             body = body[:-1] + '\\"'
-    else:
-        run = len(body) - len(body.rstrip("\\"))
-        if run % 2:
-            body += "\\"
-    return body
+    return '"""' + body + '"""'
+
+
+def docstring_lines(content: "Sequence[str]", pad: str) -> "list[str]":
+    """:func:`docstring_literal` as the physical lines of a ``.pyi``.
+
+    *content* is the docstring's lines as they READ BACK: the first is the
+    text after the opener, each later one already carries its indent (a
+    blank stays blank), and a closer on a line of its own is the last line,
+    *pad* alone. The opener gets *pad*.
+
+    >>> docstring_lines(["One.", "", "    Two.", "    "], "    ")[0]
+    '    \"\"\"One.'
+    """
+    return (pad + docstring_literal("\n".join(content))).split("\n")
 
 
 def summary_docstring(
@@ -2756,38 +2793,15 @@ def summary_docstring(
     >>> block[-1]
     '    \"\"\"'
     """
-    # gh-2606: the text as a literal body, so a triple quote, a backslash
-    # or a closing quote reads back as written instead of ending the
-    # docstring.
-    return summary_literal(
-        _closable(_unclosing(text.strip())), indent=indent, width=width
-    )
-
-
-def summary_literal(
-    text: str, indent: int = 8, width: int = STUB_TARGET_WIDTH
-) -> list[str]:
-    """:func:`summary_docstring` for *text* that is already a literal body.
-
-    gh-2606. The layout half: what ``_pyfmt`` reflows is a docstring read
-    off a stub, whose escapes are already spelled, and escaping it again
-    would double every backslash.
-
-    >>> b = chr(92)
-    >>> summary_literal("a" + b + "nb", indent=0)[0][3:-3] == "a" + b + "nb"
-    True
-    >>> summary_docstring("a" + b + "nb", indent=0)[0][3:-3] == "a" + b * 2 + "nb"
-    True
-    """
     pad = " " * indent
     budget = width - indent
-    if len(text) <= budget - 6:  # room for both delimiters on the one line
-        return [f'{pad}"""{text}"""']
+    text = text.strip()
+    one = pad + docstring_literal(text)
+    if len(one) <= width:
+        return [one]
     lines = _leave_room_for_the_closer(wrap_summary(text, budget), budget)
-    return (
-        [f'{pad}"""{lines[0]}']
-        + [f"{pad}{ln}" for ln in lines[1:]]
-        + [f'{pad}"""']
+    return docstring_lines(
+        [lines[0], *(f"{pad}{ln}" for ln in lines[1:]), pad], pad
     )
 
 
@@ -2913,7 +2927,7 @@ def class_docstring(
         return summary_docstring(summary, indent=CLASS_INDENT)
 
     head = list(authored) or wrap_summary(summary, CLASS_DOC_WIDTH)
-    lines = [f'{pad}"""{head[0]}']
+    lines = [head[0]]
     lines += [f"{pad}{ln}" if ln else "" for ln in head[1:]]
     lines += [""]
 
@@ -2958,26 +2972,7 @@ def class_docstring(
             lines += [""]
 
     lines += list(trailer)
-    lines.append(f'{pad}"""')
-    return _escape_inner(lines, pad)
-
-
-def _escape_inner(block: "list[str]", pad: str) -> "list[str]":
-    """*block* (opener and closer on lines of their own or the first) with
-    every triple quote in its text escaped, so the text cannot end it.
-
-    gh-2606. For the multi-line layouts, whose closer sits on a line of its
-    own, so only a triple quote inside the text can end the literal early.
-    A backslash is left as written: these layouts emit an ``r`` docstring
-    when the text holds one (gh-652).
-    """
-    first, rest = block[0], block[1:-1]
-    cut = first.index('"""') + 3
-    return (
-        [first[:cut] + _unclosing(first[cut:], backslashes=False)]
-        + [_unclosing(ln, backslashes=False) for ln in rest]
-        + [block[-1]]
-    )
+    return docstring_lines([*lines, pad], pad)
 
 
 def example_budget(indent: int, width: int = STUB_TARGET_WIDTH) -> int:
@@ -3197,7 +3192,7 @@ def render_numpy_doc(
         and not authored_doc
         and not param_docs
     ):
-        return [f'{pad}"""{name_summary(name)}"""']
+        return [pad + docstring_literal(name_summary(name))]
 
     lines, examples = _numpy_sections(
         block,
@@ -3241,11 +3236,10 @@ def render_numpy_doc(
         and not examples
         and len(lines) == 1
     ):
-        one = _closable(_unclosing(lines[0], backslashes=False))
-        return [f'{pad}"""{one}"""']
+        return [pad + docstring_literal(lines[0])]
 
-    quote = 'r"""' if needs_raw_string(lines + examples) else '"""'
-    out = [f"{pad}{quote}{lines[0]}"]
+    # gh-652's raw literal for a backslash is `docstring_literal`'s rule.
+    out = [lines[0]]
     # Blank separators must stay genuinely blank: `pad` on an empty line is
     # trailing whitespace, which is what one of the two pre-gh-651 renderers
     # used to emit (eight spaces) and the other did not.
@@ -3261,8 +3255,7 @@ def render_numpy_doc(
     # `authored_docstring` applies too.
     if examples or _ends_in_doctest(lines):
         out.append("")
-    out.append(f'{pad}"""')
-    return _escape_inner(out, pad)
+    return docstring_lines([*out, pad], pad)
 
 
 # gh-652: where each quarantined Doxygen block tag lands in numpy's standard.
@@ -3395,29 +3388,6 @@ def _map_math(text: str) -> str:
 def _clean(text: str) -> str:
     """Inline-marker strip plus math mapping, applied to every parsed field."""
     return _map_math(_strip_doxy_inline(text))
-
-
-def needs_raw_string(lines: list[str]) -> bool:
-    """True when a rendered docstring must be emitted as ``r\"\"\"``.
-
-    A backslash reaching a ``.pyi``'s plain triple-quoted string is an invalid
-    escape sequence — ``\\l`` in ``:math:`20\\log_{10}(g)``` is the common case
-    once ``@f$`` maps through. That is a ``SyntaxWarning`` on 3.12+ **in the
-    generated project**, not in jm, and jm supports 3.9 through 3.14, so it
-    would be visible to downstream users long before it became an error.
-
-    Emitting the stub docstring raw is the fix that also preserves the markup
-    for a docs build; escaping the backslash would render ``\\\\log``. Only
-    docstrings that actually contain a backslash change, so this is invisible
-    everywhere else.
-
-    A raw string cannot end in a backslash, so a trailing one disqualifies —
-    the caller escapes instead, which is correct because a docstring ending in
-    a lone backslash has no markup meaning to preserve.
-    """
-    if not any("\\" in ln for ln in lines):
-        return False
-    return not lines[-1].rstrip().endswith("\\")
 
 
 def _tag_sections(block: DoxyBlock) -> tuple[dict[str, list[str]], list[str]]:

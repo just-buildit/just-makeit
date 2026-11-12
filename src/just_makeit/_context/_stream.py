@@ -25,6 +25,7 @@ key's value.
 
 from __future__ import annotations
 
+from .._docstring import docstring_literal
 from .._types import _CTYPE_META
 
 # Keys consumed by templates/c/src/component_ext.c and templates/py/
@@ -340,13 +341,17 @@ static PyObject *
         pyi_stream_typing = ", AsyncIterator, Callable, Iterator"
         pyi_async_methods = (
             f"\n    def __aiter__(self) -> AsyncIterator[{nd}]:\n"
-            f'        """Async-iterate output blocks (default block size).\n'
-            f"\n"
-            f"        ``stream(...)`` is also an async iterator, so\n"
-            f"        ``async for blk in obj.stream(n): ...`` works too — each\n"
-            f"        producer step runs in the running loop's default"
-            f" executor.\n"
-            f'        """\n'
+            + "        "
+            + docstring_literal(
+                "Async-iterate output blocks (default block size).\n"
+                "\n"
+                "        ``stream(...)`` is also an async iterator, so\n"
+                "        ``async for blk in obj.stream(n): ...`` works too — each\n"
+                "        producer step runs in the running loop's default"
+                " executor.\n"
+                "        "
+            )
+            + "\n"
         )
 
     pyi_stream_methods = (
@@ -357,31 +362,38 @@ static PyObject *
         f"        count: int | None = None,\n"
         f"        on_block: Callable[[{nd}], None] | None = None,\n"
         f"    ) -> Iterator[{nd}]:\n"
-        f'        """Yield output blocks, driving ``{name}`` block by block.\n'
-        f"\n"
-        f"        Parameters\n"
-        f"        ----------\n"
-        f"        block : int\n"
-        f"            Producer argument for each step (block / sample count).\n"
-        f"        count : int or None\n"
-        f"            Stop after this many blocks; ``None`` streams until the\n"
-        f"            producer drains (or forever, for an inexhaustible"
-        f" source).\n"
-        f"        on_block : callable or None\n"
-        f"            Invoked as ``on_block(block)`` after each block is\n"
-        f"            yielded and consumed — the seam for pacing,"
-        f" back-pressure,\n"
-        f"            progress, or tee-to-sink.\n"
-        f"\n"
-        f"        Yields\n"
-        f"        ------\n"
-        f"        {nd}\n"
-        f"            One output block per iteration.\n"
-        f'        """\n'
-        f"\n"
+        + "        "
+        + docstring_literal(
+            f"Yield output blocks, driving ``{name}`` block by block.\n"
+            "\n"
+            f"        Parameters\n"
+            f"        ----------\n"
+            f"        block : int\n"
+            f"            Producer argument for each step (block / sample count).\n"
+            f"        count : int or None\n"
+            f"            Stop after this many blocks; ``None`` streams until the\n"
+            f"            producer drains (or forever, for an inexhaustible"
+            f" source).\n"
+            f"        on_block : callable or None\n"
+            f"            Invoked as ``on_block(block)`` after each block is\n"
+            f"            yielded and consumed — the seam for pacing,"
+            f" back-pressure,\n"
+            f"            progress, or tee-to-sink.\n"
+            f"\n"
+            f"        Yields\n"
+            f"        ------\n"
+            f"        {nd}\n"
+            f"            One output block per iteration.\n"
+            "        "
+        )
+        + "\n"
+        "\n"
         f"    def __iter__(self) -> Iterator[{nd}]:\n"
-        f'        """Iterate output blocks using the default block size."""\n'
-        f"{pyi_async_methods}"
+        "        "
+        + docstring_literal(
+            "Iterate output blocks using the default block size."
+        )
+        + f"\n{pyi_async_methods}"
     )
 
     return {

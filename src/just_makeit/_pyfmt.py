@@ -40,6 +40,7 @@ What is deliberately *not* touched
 
 from __future__ import annotations
 
+import ast
 import io
 import re
 import shutil
@@ -52,7 +53,8 @@ from . import _config as C
 from . import _fmtprobe
 from ._docstring import (
     STUB_TARGET_WIDTH,
-    summary_literal,
+    TRIPLE_QUOTE,
+    summary_docstring,
     wrap_summary,
 )
 
@@ -67,20 +69,20 @@ _HEADER_RE = re.compile(
     r"(?P<tail>\)\s*(?:->.*)?:(?:\s*\.\.\.)?)$"
 )
 
-_TRIPLE = ('"""', "'''")
+_TRIPLE = (TRIPLE_QUOTE, "'''")  # not a docstring: openers a reader seeks
 
 # A complete one-line docstring: `        """Text."""`, optionally raw. Used
 # only on a line already over the target, and only when the body carries no
 # further triple-quote, so there is nothing to mis-split.
 _ONELINE_DOC_RE = re.compile(
-    r'^(?P<indent>[ ]*)(?P<raw>r?)"""(?P<body>.*)"""$'
+    r"^(?P<indent>[ ]*)(?P<lit>(?P<raw>r?)\"\"\"(?P<body>.*)\"\"\")$"
 )
 
 
 # A docstring's opening line with text on it: `    """Summary...`. The body
 # must carry no second triple-quote, or the docstring closed on the same line
 # and `reflow_oneline_docstring` owns it instead.
-_DOC_OPEN_RE = re.compile(r'^(?P<indent>[ ]*)(?P<raw>r?)"""(?P<body>.+)$')
+_DOC_OPEN_RE = re.compile(r"^(?P<indent>[ ]*)(?P<raw>r?)\"\"\"(?P<body>.+)$")
 
 
 def _split_top_level(body: str) -> list[str]:
@@ -194,12 +196,16 @@ def reflow_oneline_docstring(
     if len(line) <= width:
         return [line]
     m = _ONELINE_DOC_RE.match(line)
-    if not m or '"""' in m["body"]:
+    if not m or TRIPLE_QUOTE in m["body"]:
         return [line]
-    block = summary_literal(m["body"], indent=len(m["indent"]), width=width)
-    if m["raw"]:  # keep the r-prefix on the reopened delimiter
-        block[0] = block[0].replace('"""', 'r"""', 1)
-    return block
+    # The literal's VALUE, re-encoded by the one docstring writer: its
+    # escapes are then neither doubled nor dropped, and an `r` prefix comes
+    # back exactly when the text still needs one.
+    try:
+        text = ast.literal_eval(m["lit"])
+    except (SyntaxError, ValueError):
+        return [line]
+    return summary_docstring(text, indent=len(m["indent"]), width=width)
 
 
 def reflow_docstring_open(
@@ -235,11 +241,13 @@ def reflow_docstring_open(
     if len(line) <= width:
         return [line]
     m = _DOC_OPEN_RE.match(line)
-    if not m or '"""' in m["body"]:
+    if not m or TRIPLE_QUOTE in m["body"]:
         return [line]
     indent = m["indent"]
     wrapped = wrap_summary(m["body"].rstrip(), width - len(indent))
-    return [f'{indent}{m["raw"]}"""{wrapped[0]}'] + [
+    # The opener is the line's own, prefix and all: this rewraps source
+    # text inside a literal that is already written, never a new one.
+    return [line[: m.start("body")] + wrapped[0]] + [
         f"{indent}{w}" for w in wrapped[1:]
     ]
 

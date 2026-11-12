@@ -53,7 +53,7 @@ from . import _render as R
 from . import _stubs
 from . import _textio
 from . import _types as T
-from ._docstring import STUB_TARGET_WIDTH, class_import_path
+from ._docstring import STUB_TARGET_WIDTH, class_import_path, docstring_literal
 
 #: Function flags that change the Python call's shape or its result, so a
 #: contract written for the plain form would not describe this wrapper.
@@ -329,13 +329,17 @@ def render(import_path: str, leaf: str, functions: list[dict]) -> str:
     head += "\n"
     body = (
         f"class Test{_class_name(leaf)}Functions(unittest.TestCase):\n"
-        f'    """Contract smoke test for the module-level functions (gh-2127).\n'
-        "\n"
-        "    Each wrapper is called with arguments derived from its declared\n"
-        "    parameters. The test asserts the call succeeds and the result has\n"
-        "    the declared return type. It asserts no values: the bodies are the\n"
-        "    author's, and their documented cases are the header's ``@code``\n"
-        '    examples.\n    """\n\n'
+        + "    "
+        + docstring_literal(
+            "Contract smoke test for the module-level functions (gh-2127).\n"
+            "\n"
+            "    Each wrapper is called with arguments derived from its declared\n"
+            "    parameters. The test asserts the call succeeds and the result has\n"
+            "    the declared return type. It asserts no values: the bodies are the\n"
+            "    author's, and their documented cases are the header's ``@code``\n"
+            "    examples.\n    "
+        )
+        + "\n\n"
     )
     return head + body + "\n".join(cases)
 

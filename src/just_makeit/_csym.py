@@ -46,6 +46,7 @@ import re
 from pathlib import Path
 
 from . import _incpath as INC
+from ._docstring import TRIPLE_QUOTE
 
 #: The template slots whose value depends on the project's symbol stem.
 #: `render()` refuses a template that uses one when its context lacks it --
@@ -1547,7 +1548,7 @@ def _toml_string(q: int) -> str:
     C:\
     """
     return (
-        rf"(\"\"\"|'''|\"|')("
+        rf"(\"\"\"|'''|\"|')("  # not a docstring: any Python quote
         rf"(?<=\")(?:\\[\s\S]|(?!\{q})[^\\])*?"
         rf"|(?<=')(?:(?!\{q})[\s\S])*?"
         rf")\{q}"
@@ -1645,7 +1646,7 @@ def respell_value(text: str, a: int, b: int, respell) -> str:
     new = respell(c)
     if new == c:
         return raw
-    multiline = text[a - 3 : a] == '"""'
+    multiline = text[a - 3 : a] == TRIPLE_QUOTE
     edits = []
     ops = difflib.SequenceMatcher(None, c, new, autojunk=False).get_opcodes()
     for tag, i1, i2, j1, j2 in ops:

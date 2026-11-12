@@ -56,7 +56,7 @@ from . import _render as R
 from . import _report
 from . import _types as T
 from ._context._diagnostics import WHY_C_ARG, WHY_DECL, WHY_LOCAL
-from ._docstring import class_import_path
+from ._docstring import TRIPLE_QUOTE, class_import_path
 from ._object import _fmt_from_import
 from ._pyfmt import call_lines, str_kwarg_lines
 from ._init import _to_title
@@ -2220,7 +2220,7 @@ def _wrap_summary(text: str) -> str:
     from ._pyfmt import reflow_docstring_open
 
     lines = text.split("\n")
-    at = next(i for i, ln in enumerate(lines) if ln.startswith('"""'))
+    at = next(i for i, ln in enumerate(lines) if ln.startswith(TRIPLE_QUOTE))
     lines[at : at + 1] = reflow_docstring_open(lines[at])
     return "\n".join(lines)
 

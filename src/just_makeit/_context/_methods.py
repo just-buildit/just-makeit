@@ -36,6 +36,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    docstring_literal,
     EnumAnn,
     method_doc,
     name_summary,
@@ -2522,12 +2523,14 @@ def make_methods_ctx(
             # hand-owned: the splice still carries a written stub over it.
             if name in _extra_names:
                 continue
+            from .._stubs import MANUAL_STUB_DOC
+
             pyi_lines.append(
                 f"    def {name}(self, *args: Any, **kwargs: Any)"
                 f" -> Any:\n"
-                f'        """<<MANUAL_STUB>> hand-write this signature/'
-                f"docstring in the .pyi — jm preserves it verbatim on"
-                f' future regens."""\n'
+                + "        "
+                + docstring_literal(MANUAL_STUB_DOC)
+                + "\n"
             )
             continue
 
