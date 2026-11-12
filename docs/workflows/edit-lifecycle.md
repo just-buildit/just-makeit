@@ -23,7 +23,7 @@ edits in `_core.c` included (gh-1867).
 
 The full tree, with every file tagged: [Project layout](layout-and-api.md#project-layout-full).
 
-Five of these have more to them:
+Six of these have more to them:
 
 - **The root `CMakeLists.txt`** keeps your targets, so a later jm's fix to
     the part of the template outside its marked blocks never reaches it.
@@ -59,6 +59,17 @@ Five of these have more to them:
     `apply` replaces the file (`status --check` shows the difference
     first). A project scaffolded before this has no such line, and those
     files stay yours.
+- **The project's own test**, `src/<pkg>/tests/test_project.py`, is
+    written by `jm new` and owned the same way, so `make test` runs a real
+    test before any component exists. It checks that the package imports
+    and states its version. Where `__init__.py` sets `__version__` to a
+    string literal -- what `jm new` writes -- the test holds it to the
+    manifest's `[project] version`, and `jm config version` rewrites both.
+    Where the package computes it (`importlib.metadata`, a `_version.py`,
+    a `try` fallback), the test asks only for a non-empty string: a dev
+    build's version is the package's answer. `jm apply` writes the test
+    into a project that lacks it, and adds a `__version__` line to an
+    `__init__.py` that binds none.
 
 ## The loop
 

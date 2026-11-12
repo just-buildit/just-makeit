@@ -1,21 +1,29 @@
 """_projversion.py — the generated copies of ``[project] version``.
 
-gh-1141. Six generated artefacts carry the project's version, all six rendered
-from `_config.project_version` at scaffold time. Exactly **one** of them is
-maintained afterwards: the PEP 723 app script, which is regenerated glue and
-so picks up a bump on the next `apply`. The other five are create-only, and a
-bump reaches none of them:
+gh-1141. Eight generated artefacts carry the project's version, all eight
+rendered from `_config.project_version` at scaffold time. Two of them are
+maintained afterwards: the PEP 723 app script, which is regenerated glue, and
+the project's smoke test while it carries jm's ownership token (gh-2640) --
+both pick up a bump on the next `apply`. The other six are create-only, or
+merged without their value being touched, and a bump reaches none of them:
 
-===========================================  ==========================
-file                                          after a bump + ``jm apply``
-===========================================  ==========================
-``<name>.py`` (a ``--target pep723`` app)     rewritten
-``pyproject.toml``                            unchanged
-``bootstrap.toml``                            unchanged
-``CMakeLists.txt`` (``project(... VERSION)``) unchanged
-``Doxyfile`` (``PROJECT_NUMBER``)             unchanged
-``native/src/<pkg>_lib.c`` (``<pkg>_version``) unchanged
-===========================================  ==========================
+=============================================  ==========================
+file                                            after a bump + ``jm apply``
+=============================================  ==========================
+``<name>.py`` (a ``--target pep723`` app)       rewritten
+``src/<pkg>/tests/test_project.py``             rewritten while owned
+``pyproject.toml``                              unchanged
+``bootstrap.toml``                              unchanged
+``CMakeLists.txt`` (``project(... VERSION)``)   unchanged
+``Doxyfile`` (``PROJECT_NUMBER``)               unchanged
+``native/src/<pkg>_lib.c`` (``<pkg>_version``)  unchanged
+``src/<pkg>/__init__.py`` (``__version__``)     unchanged
+=============================================  ==========================
+
+The smoke test is in the table `drift` reads all the same: once its author
+deletes the token, `apply` leaves it alone and it is a create-only copy like
+the rest. Its job is to hold ``__version__`` to the manifest at runtime, so
+`sync` writes both, or a `jm config version` would turn `make test` red.
 
 The last row is the one with teeth. ``<pkg>_version()`` is a **C API** — a
 consumer links the library and asks it what version it is, and is told the
@@ -47,13 +55,14 @@ write replaces the captured value, never the line around it.
 
 The two TOML files are located through a parser rather than a regex alone,
 because ``^version = `` matches under any table and a ``[tool.*]`` section
-carrying one would be reported as the project's. The other three have no
-parser worth the dependency and are anchored tightly instead — each on the
-key or the function it belongs to, never on the bare number.
+carrying one would be reported as the project's. The other five are
+anchored tightly instead — each on the key, the name or the function it
+belongs to, never on the bare number.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -62,6 +71,7 @@ from typing import Callable, NamedTuple
 from . import _config as C
 from . import _incpath as INC
 from . import _textio
+from ._new import smoke_test_rel
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -100,6 +110,130 @@ _DOXY_RE = re.compile(r"^PROJECT_NUMBER\s*=\s*(?P<ver>\S+)", re.M)
 #: is ``[project]``'s.
 _TOML_KEY_RE = re.compile(
     r"""^[ \t]*version[ \t]*=[ \t]*(?P<q>["'])(?P<ver>[^"'\\\n]*)(?P=q)""",
+    re.M,
+)
+
+
+#: ``__version__ = "x.y.z"`` at column 1 of the package ``__init__.py``
+#: (gh-2640), annotated or not (``__version__: str = "x.y.z"``). An indented
+#: or computed one -- ``importlib.metadata``'s, under a ``try`` -- is not a
+#: copy this module reads or writes; :func:`version_binding` says which.
+_INIT_PY_RE = re.compile(
+    r"""^__version__(?:[ \t]*:[^=\n]*)?[ \t]*=[ \t]*"""
+    r"""(?P<q>["'])(?P<ver>[^"'\\\n]*)(?P=q)""",
+    re.M,
+)
+
+#: What :func:`version_binding` answers.
+LITERAL = "literal"
+COMPUTED = "computed"
+
+
+def _bindings(body: "list[ast.stmt]") -> "list[ast.stmt]":
+    """The module-level statements in *body* that bind ``__version__``.
+
+    Module level includes a top-level ``try`` / ``if`` / ``with`` -- the
+    ``importlib.metadata`` idiom binds it in a ``try`` and its ``except`` --
+    and excludes a function or class body, whose names are not the module's.
+    A module ``__getattr__`` counts: it may serve ``__version__`` on demand,
+    and a literal added beside it would shadow whatever it returns.
+    """
+    out: "list[ast.stmt]" = []
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == "__getattr__":
+                out.append(node)
+            continue
+        if isinstance(node, ast.ClassDef):
+            continue
+        if isinstance(node, ast.Assign):
+            names = [
+                n
+                for t in node.targets
+                for n in ast.walk(t)
+                if isinstance(n, ast.Name)
+            ]
+            if any(n.id == "__version__" for n in names):
+                out.append(node)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == "__version__"
+            ):
+                out.append(node)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            if any(
+                (a.asname or a.name.split(".")[0]) == "__version__"
+                for a in node.names
+            ):
+                out.append(node)
+        for field in ("body", "orelse", "finalbody", "handlers"):
+            inner = getattr(node, field, None)
+            if isinstance(inner, list) and inner:
+                for h in inner:
+                    if isinstance(h, ast.ExceptHandler):
+                        out += _bindings(h.body)
+                if not isinstance(inner[0], ast.ExceptHandler):
+                    out += _bindings(inner)
+    return out
+
+
+def version_binding(text: str) -> "str | None":
+    """How a package ``__init__.py`` declares ``__version__`` (gh-2640).
+
+    The one reading `apply` and the project's smoke test both act on:
+
+    - ``None``: nothing binds it, so `apply` adds a literal;
+    - :data:`LITERAL`: exactly one binding, a plain module-level string
+      that :data:`_INIT_PY_RE` locates -- the copy `drift` reports and
+      `sync` writes, so the smoke test holds it to the manifest;
+    - :data:`COMPUTED`: any other binding -- ``importlib.metadata``, a
+      ``_version.py`` import, a ``try`` fallback, a module ``__getattr__``
+      -- whose value only the package knows, so the smoke test asserts a
+      non-empty string, and nothing here writes it.
+
+    A file that does not parse is :data:`COMPUTED`: jm adds nothing to it,
+    and the import fails the test on its own.
+
+    Read from the syntax tree, never the text: a docstring that mentions
+    ``__version__`` binds nothing.
+
+    >>> version_binding("'Exposes __version__ to callers.'\\n") is None
+    True
+    >>> version_binding('__version__: str = "1.0"\\n')
+    'literal'
+    >>> version_binding('try:\\n    __version__ = v()\\nexcept E:\\n'
+    ...                 '    __version__ = "unknown"\\n')
+    'computed'
+    >>> version_binding("from ._version import __version__\\n")
+    'computed'
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return COMPUTED
+    found = _bindings(tree.body)
+    if not found:
+        return None
+    only = found[0]
+    value = getattr(only, "value", None)
+    if (
+        len(found) == 1
+        and only in tree.body
+        and isinstance(only, (ast.Assign, ast.AnnAssign))
+        and (not isinstance(only, ast.Assign) or len(only.targets) == 1)
+        and isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+        and _regex_span(_INIT_PY_RE)(text) is not None
+    ):
+        return LITERAL
+    return COMPUTED
+
+
+#: ``MANIFEST_VERSION = "x.y.z"`` in the project's smoke test (gh-2640): the
+#: value the test holds ``__version__`` to.
+_SMOKE_TEST_RE = re.compile(
+    r"""^MANIFEST_VERSION[ \t]*=[ \t]*(?P<q>["'])(?P<ver>[^"'\\\n]*)(?P=q)""",
     re.M,
 )
 
@@ -213,6 +347,16 @@ def _slots(cfg: dict) -> "list[_Slot]":
             INC.lib_c_rel(pkg),
             f"{pkg}_version()",
             _regex_span(_lib_c_re(pkg)),
+        ),
+        _Slot(
+            f"src/{pkg}/__init__.py",
+            "__version__",
+            _regex_span(_INIT_PY_RE),
+        ),
+        _Slot(
+            smoke_test_rel(pkg),
+            "MANIFEST_VERSION",
+            _regex_span(_SMOKE_TEST_RE),
         ),
     ]
 

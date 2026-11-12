@@ -2677,9 +2677,21 @@ def _merge_pkg_init(real_path: Path, temp_path: Path) -> bool:
     # gh-2514: and a plain `__all__` that grew past the column target,
     # wrapped.
     fixed = wrap_all(sort_reexports(ensure_dll_preamble(cur), owned))
+    # gh-2640: and a `__version__`, which the project's smoke test reads.
+    # Added only to a file that binds none -- read from its syntax tree, so
+    # a docstring mentioning the name is not a binding. A package that
+    # computes its own keeps it, and a literal that disagrees is
+    # `_projversion`'s to report, never this merge's to rewrite. The
+    # replay's line is the one `jm new` writes today.
+    from ._projversion import _INIT_PY_RE, version_binding
+
+    want_version = _INIT_PY_RE.search(temp_text)
+    if want_version and version_binding(fixed) is None:
+        fixed = f"{fixed.rstrip()}\n\n{want_version.group(0)}\n"
     if fixed != cur:
+        # Reported once, by `apply`'s summary of the bytes each write
+        # leaves (gh-1474), which the caller feeds this file to.
         _textio.write_text(real_path, fixed)
-        print(f"  update  {real_path}")
         changed = True
     return changed
 

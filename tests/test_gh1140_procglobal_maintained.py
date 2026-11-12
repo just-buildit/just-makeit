@@ -236,6 +236,7 @@ YOURS = {
     "src/pgdemo/own/tests/__init__.py",
     "src/pgdemo/own/tests/test_flag.py",
     "src/pgdemo/tests/__init__.py",
+    "src/pgdemo/tests/test_project.py",
     "src/pgdemo/tests/test_solo.py",
 }
 

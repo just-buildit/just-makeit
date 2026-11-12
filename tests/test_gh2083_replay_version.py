@@ -30,6 +30,8 @@ COPIES = (
     "CMakeLists.txt",
     "Doxyfile",
     "native/src/vp_lib.c",
+    "src/vp/__init__.py",
+    "src/vp/tests/test_project.py",
 )
 
 OLD = "0.1.0"
