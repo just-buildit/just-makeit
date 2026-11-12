@@ -56,8 +56,10 @@ jobs:
       checks: read
       contents: read
 
-  # gh-1796: the image the Linux legs run in, the CI_IMAGE_2404 that
-  # .github/ci-images.env pins (the org standard's HAS_CI_IMAGE). That the
+  # gh-1796: the images the Linux legs run in, the CI_IMAGE_<key> that
+  # .github/ci-images.env pins (the org standard's HAS_CI_IMAGE): 2404 for
+  # every leg, 2204 for the Consumer smoke legs that test 22.04's
+  # pkg-config 0.29 and the CMake floor (gh-2625). That the
   # pin was built from this tree is `make ci-image-check`, which `lint`
   # runs; this job only hands the reference to the legs. gh-2125: and which
   # `test` legs this run owes, from the matrix declared in its `legs` step.
@@ -77,7 +79,8 @@ jobs:
       contents: read
       actions: read
     outputs:
-      image: ${{ steps.pin.outputs.image }}
+      image: ${{ steps.pin.outputs.image_2404 }}
+      image_2204: ${{ steps.pin.outputs.image_2204 }}
       matrix: ${{ steps.runners.outputs.matrix }}
       examples: ${{ steps.runners.outputs.examples }}
       # Windows is hosted only, so its legs skip ci-runner.
@@ -90,9 +93,11 @@ jobs:
       # missing key fails here, by name.
       - id: pin
         run: |
-          ref=$(sed -n 's/^CI_IMAGE_2404=//p' .github/ci-images.env)
-          test -n "$ref" || { echo "no CI_IMAGE_2404 in .github/ci-images.env"; exit 1; }
-          echo "image=$ref" >> "$GITHUB_OUTPUT"
+          for k in 2404 2204; do
+            ref=$(sed -n "s/^CI_IMAGE_$k=//p" .github/ci-images.env)
+            test -n "$ref" || { echo "no CI_IMAGE_$k in .github/ci-images.env"; exit 1; }
+            echo "image_$k=$ref" >> "$GITHUB_OUTPUT"
+          done
 
       # The `test` matrix, declared once: MATRIX is a GitHub matrix, and
       # `make ci-test-legs` (scripts/ci-test-legs.py) expands it and keeps
@@ -821,25 +826,50 @@ jobs:
   # gh-1590, the acceptance test for epic gh-1584: jm packages installed to
   # the DEFAULT prefix with the documented commands, then consumed by the
   # official pkg-config and CMake instructions with no hints at all. Only a
-  # throwaway runner can install to /usr/local, so this lives here and not in
-  # the unit suite, which checks the same metadata under temp prefixes.
+  # throwaway machine can install to /usr/local, so this lives here and not
+  # in the unit suite, which checks the same metadata under temp prefixes.
   consumer-smoke:
     name: Consumer smoke (${{ matrix.name }})
-    needs: changes
+    needs: [changes, toolchain]
     if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
+    # gh-2625: a Linux leg runs in a pinned CI image (`image`, a pin key)
+    # that already holds cmake, pkg-config and the compilers: they are this
+    # test's prerequisites, not its subject, and installing them live from
+    # Ubuntu's mirrors let one mirror outage fail every leg on every PR. The
+    # macOS leg names no image and runs on the runner, on Homebrew.
+    #
+    # As root, the container's default, not the test legs' uid 1001: the
+    # default-prefix step installs to /usr/local and runs ldconfig, and the
+    # image's `ci` user has no sudo rights. A container is as throwaway as
+    # the runner it replaces, and no suite gate runs here to skip as root.
+    container:
+      image: >-
+        ${{ matrix.image == '2404' && needs.toolchain.outputs.image
+        || matrix.image == '2204' && needs.toolchain.outputs.image_2204
+        || '' }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: ubuntu-latest, os: ubuntu-latest }
-          - { name: ubuntu-24.04-arm, os: ubuntu-24.04-arm }
+          - { name: ubuntu-latest, os: ubuntu-latest, image: "2404" }
+          # The 24.04 image is a multi-arch index: this pulls its arm64 half.
+          - { name: ubuntu-24.04-arm, os: ubuntu-24.04-arm, image: "2404" }
           - { name: macos-latest, os: macos-latest }
           # freedesktop pkg-config 0.29, where 24.04 has pkgconf.
-          - { name: "ubuntu-22.04, pkg-config 0.29", os: ubuntu-22.04 }
-          # The floor every generated project declares.
-          - { name: "CMake 3.16.3", os: ubuntu-22.04, cmake: "3.16.3" }
+          - name: "ubuntu-22.04, pkg-config 0.29"
+            os: ubuntu-latest
+            image: "2204"
+          # The floor every generated project declares, baked into the 22.04
+          # image by docker/ci-extra.sh (amd64 only, as Kitware ships it).
+          - name: "CMake 3.16.3"
+            os: ubuntu-latest
+            image: "2204"
+            cmake: "3.16.3"
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -851,15 +881,7 @@ jobs:
       - name: Install just-makeit
         run: make tool-install
 
-      - name: Install system deps (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          # Retries cover only a request that ERRORS; a stalled mirror never
-          # errors, so each request is bounded too (gh-1792).
-          sudo apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          make install-deps-dev
-
+      # Linux has no install step: the image holds the dev group (gh-2625).
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
         run: make install-deps-dev
