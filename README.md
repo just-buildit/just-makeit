@@ -5,6 +5,8 @@
 [![CI](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/ci.yml)
 [![Docs](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml/badge.svg)](https://github.com/just-buildit/just-makeit/actions/workflows/docs.yml)
 [![codecov](https://codecov.io/gh/just-buildit/just-makeit/graph/badge.svg?token=29J7ACUITR)](https://codecov.io/gh/just-buildit/just-makeit)
+[![PyPI](https://img.shields.io/pypi/v/just-makeit?logo=pypi&logoColor=white)](https://pypi.org/project/just-makeit/)
+[![Python](https://img.shields.io/pypi/pyversions/just-makeit?logo=python&logoColor=white)](https://pypi.org/project/just-makeit/)
 [![C99](https://img.shields.io/badge/C-99-informational?logo=c&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
 [![C++11](https://img.shields.io/badge/C%2B%2B-11-informational?logo=cplusplus&logoColor=white)](https://just-buildit.github.io/just-makeit/c-library/)
 [![MSVC ABI](https://img.shields.io/badge/MSVC_ABI-clang--cl-informational?logo=windows&logoColor=white)](https://just-buildit.github.io/just-makeit/windows/)
