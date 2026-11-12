@@ -1,9 +1,11 @@
 """gh-2601: every page showing ``jbx just-makeit:install`` says what to do
 when a new shell does not find jm.
 
-The recommended install links jm into ``~/.local/bin`` (Linux, macOS) or
-copies its launchers there (Windows). A new shell finds it only once that
-directory is on PATH, which ``jbx update-path`` makes permanent. So every
+Run in a project's root, the recommended install puts jm in that
+project's ``.venv``; anywhere else it links jm into ``~/.local/bin`` (Linux,
+macOS) or copies its launchers there (Windows). A new shell finds it only
+once that directory is on PATH, which ``jbx update-path`` makes permanent.
+So every
 code block a reader copies the install line from is followed, as the next
 paragraph at the block's own indentation (inside a tab, too), by the one
 sentence that says so: `_installers.UPDATE_PATH_HINT`, held word for word.

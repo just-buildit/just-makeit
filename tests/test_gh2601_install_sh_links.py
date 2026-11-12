@@ -101,11 +101,11 @@ def _jm_venv(where: Path) -> Path:
 class Machine:
     """A HOME, a jm venv and the stubs install.sh probes, under *root*."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, venv: "Path | None" = None):
         self.home = root / "home"
         self.home.mkdir()
         self.bin = self.home / ".local" / "bin"
-        self.venv = _jm_venv(root / "venv")
+        self.venv = _jm_venv(venv or root / "venv")
         self.stubs = root / "stubs"
         self.stubs.mkdir()
         for tool in PROBED:
@@ -118,6 +118,7 @@ class Machine:
         path: str = "",
         interactive: bool = False,
         extra: "dict[str, str] | None" = None,
+        cwd: "Path | None" = None,
     ):
         """Run bash *argv* as the user would, *path* before the stubs'."""
         env = {
@@ -132,7 +133,7 @@ class Machine:
         flags = ["-i"] if interactive else []
         res = subprocess.run(
             [BASH, *flags, *argv],
-            cwd=self.home,
+            cwd=cwd or self.home,
             env=env,
             capture_output=True,
             text=True,
@@ -160,7 +161,7 @@ def test_a_child_run_links_every_console_script(tmp_path):
     for name in SCRIPTS:
         link = m.bin / name
         assert link.is_symlink(), f"{name} not linked:\n{res.said}"
-        assert Path(os.readlink(link)) == m.venv / "bin" / name
+        assert Path(os.readlink(link)) == m.venv.resolve() / "bin" / name
     assert "Venv activated" not in res.said, res.said
     # The link itself runs jm under a PATH of only that directory and the
     # system's: nothing else -- no venv activation -- is needed. Run by
@@ -253,7 +254,7 @@ def test_a_link_into_another_jm_venv_is_moved_here(tmp_path):
     (m.bin / "jm").symlink_to(other / "bin" / "jm")
     res = m.child()
     assert res.returncode == 0, res.said
-    assert Path(os.readlink(m.bin / "jm")) == m.venv / "bin" / "jm"
+    assert Path(os.readlink(m.bin / "jm")) == m.venv.resolve() / "bin" / "jm"
 
 
 def test_jbx_shape_links_and_does_not_claim_activation(tmp_path):
@@ -278,3 +279,134 @@ def test_an_interactive_source_activates_and_links_nothing(tmp_path):
     assert f"VE={m.venv}" in res.stdout, res.said
     assert "Venv activated" in res.said, res.said
     assert not m.bin.exists(), "an interactive source linked commands"
+
+
+def test_a_relative_venv_is_written_absolute(tmp_path):
+    # Carried from #2639: `install.sh ./venv` names the venv relative to
+    # the cwd, and a link holding that relative path would resolve against
+    # ~/.local/bin instead. Every link is absolute, into the venv.
+    m = Machine(tmp_path)
+    res = m.run(str(INSTALL_SH), "--", "./venv", cwd=tmp_path)
+    assert res.returncode == 0, res.said
+    target = os.readlink(m.bin / "jm")
+    assert Path(target).is_absolute(), target
+    assert Path(target) == m.venv.resolve() / "bin" / "jm"
+
+
+def test_cdpath_adds_no_line_to_the_venv(tmp_path):
+    # An exported CDPATH makes `cd` print the directory it entered; read
+    # through $(...) that became a second line of the venv's path.
+    m = Machine(tmp_path)
+    res = m.run(
+        str(INSTALL_SH), "venv", cwd=tmp_path, extra={"CDPATH": str(tmp_path)}
+    )
+    assert res.returncode == 0, res.said
+    assert Path(os.readlink(m.bin / "jm")) == m.venv.resolve() / "bin" / "jm"
+
+
+def test_a_link_into_a_venv_that_is_gone_is_replaced(tmp_path):
+    # The recovery path: a reboot emptied the /tmp the old default venv
+    # lived in, so ~/.local/bin/jm dangles. A re-run must replace it, not
+    # refuse it as "not a jm venv" because its python no longer runs.
+    m = Machine(tmp_path)
+    m.bin.mkdir(parents=True)
+    gone = tmp_path / "gone" / "jm-venv" / "bin" / "jm"
+    (m.bin / "jm").symlink_to(gone)
+    res = m.child()
+    assert res.returncode == 0, res.said
+    assert Path(os.readlink(m.bin / "jm")) == m.venv.resolve() / "bin" / "jm"
+    assert "left as it is" not in res.said, res.said
+
+
+def test_a_dangling_link_of_another_shape_is_left_alone(tmp_path):
+    # Only a link of jm's own shape, <venv>/bin/<name>, is taken back: a
+    # dangling link the user made to some other name is still theirs.
+    m = Machine(tmp_path)
+    m.bin.mkdir(parents=True)
+    theirs = tmp_path / "gone" / "my-jm-wrapper"
+    (m.bin / "jm").symlink_to(theirs)
+    res = m.child(path=str(m.bin))
+    assert res.returncode == 0, res.said
+    assert os.readlink(m.bin / "jm") == str(theirs)
+    assert "left as it is" in res.said, res.said
+
+
+def test_a_relative_link_into_a_jm_venv_is_moved_here(tmp_path):
+    # A relative link target is relative to ~/.local/bin, not to the cwd
+    # install.sh runs in; read against the cwd, jm's own link was refused.
+    m = Machine(tmp_path)
+    other = _jm_venv(tmp_path / "older-venv")
+    m.bin.mkdir(parents=True)
+    (m.bin / "jm").symlink_to(os.path.relpath(other / "bin" / "jm", m.bin))
+    res = m.child()
+    assert res.returncode == 0, res.said
+    assert Path(os.readlink(m.bin / "jm")) == m.venv.resolve() / "bin" / "jm"
+
+
+def test_an_unwritable_marker_is_named_and_not_claimed(tmp_path):
+    m = Machine(tmp_path)
+    marker = tmp_path / "no-such-dir" / "marker"
+    res = m.child(
+        extra={"JB_CALLER_APPLIES": "1", "JB_RELOAD_MARKER": str(marker)}
+    )
+    assert res.returncode == 0, res.said
+    assert "could not write jbx's reload marker" in res.said, res.said
+    assert "is ready" not in res.said, res.said
+    assert "is not on PATH" in res.said, res.said
+
+
+def test_the_default_venv_is_the_persistent_one_and_links_into_it(tmp_path):
+    # No path given, outside a project: the per-user venv under the XDG
+    # data directory, and every link resolves into it.
+    home = tmp_path / "home"
+    m = Machine(
+        tmp_path, venv=home / ".local" / "share" / "just-makeit" / "venv"
+    )
+    res = m.run(str(INSTALL_SH), cwd=tmp_path)
+    assert res.returncode == 0, res.said
+    for name in SCRIPTS:
+        assert (m.bin / name).resolve() == (m.venv / "bin" / name).resolve()
+
+
+def _project(tmp_path: Path, manifest: str) -> "tuple[Machine, Path]":
+    """A Machine whose venv is the .venv of a project root holding *manifest*."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / manifest).write_text("", encoding="utf-8")
+    return Machine(tmp_path, venv=proj / ".venv"), proj
+
+
+@pytest.mark.parametrize("manifest", ["pyproject.toml", "just-makeit.toml"])
+def test_in_a_project_root_the_projects_venv_and_no_link(tmp_path, manifest):
+    m, proj = _project(tmp_path, manifest)
+    res = m.run(str(INSTALL_SH), cwd=proj)
+    assert res.returncode == 0, res.said
+    assert not m.bin.exists(), "a project install linked into ~/.local/bin"
+    assert f"{m.venv.resolve()}/bin/activate" in res.said, res.said
+    assert "jbx update-path" not in res.said, res.said
+
+
+def test_in_a_project_root_jbx_puts_its_venv_on_path(tmp_path):
+    m, proj = _project(tmp_path, "pyproject.toml")
+    marker = tmp_path / "marker"
+    res = m.run(
+        "-c",
+        f'. "{INSTALL_SH}" "$@"',
+        "--",
+        cwd=proj,
+        extra={"JB_CALLER_APPLIES": "1", "JB_RELOAD_MARKER": str(marker)},
+    )
+    assert res.returncode == 0, res.said
+    assert marker.read_text(encoding="utf-8") == (
+        f"path {m.venv.resolve()}/bin\n"
+    )
+    assert not m.bin.exists(), res.said
+    assert "just-makeit is ready" in res.said, res.said
+
+
+def test_an_explicit_venv_in_a_project_root_is_the_projects(tmp_path):
+    # The rule for a path argument: the directory holding the venv decides.
+    m, _ = _project(tmp_path, "pyproject.toml")
+    res = m.child()
+    assert res.returncode == 0, res.said
+    assert not m.bin.exists(), res.said

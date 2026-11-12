@@ -39,7 +39,7 @@ With jbx, the recommended way on every platform
 jbx just-makeit:install
 ```
 
-If `jm` is not found in a new shell, run `jbx update-path` once.
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
 
 Or with the curl installer, sourced, which also activates the venv
 in this shell:

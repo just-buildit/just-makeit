@@ -13,17 +13,26 @@
     the single dist\just_makeit-*.whl, which the job builds with `make
     wheel`), into a scratch venv (JM_VENV), then proves:
 
-      - `jm` resolves to an Application inside that venv, and
+      - `jm` resolves to the launcher copied into the bin folder, and
         `jm --version` runs and exits 0 -- in THIS session, which is the
         property a pip or uv tool install did not give (#2601);
-      - the venv's Scripts folder is first on PATH, and VIRTUAL_ENV is
-        still unset: the venv is on PATH, never activated;
+      - that folder is first on PATH, the venv's Scripts folder (its
+        python.exe, pip.exe) is not on it at all, and VIRTUAL_ENV is
+        still unset: nothing is activated;
+      - a folder where a launcher would go is named and left, not fatal;
       - `iex` left no function and no variable behind, by a before/after
         diff of the session, so a helper added later is held too;
       - a second run is a no-op: it says "already current" and writes
         nothing to the venv, and PATH holds the folder once;
       - run as jbx runs it -- the file's text dot-sourced as a script
         block -- it installs too, and its PATH change reaches the caller;
+      - a relative JM_VENV and JM_BIN_DIR, spelled with / and a trailing
+        separator, are the same folders: already current, no throw;
+      - a wheel rebuilt at the same version is installed, not "already
+        current"; an index that cannot be asked keeps a working install;
+      - in a project root, the default venv is the project's .venv, and
+        nothing is copied into the bin folder;
+      - the per-user default is never under the temp folder;
       - a Python below the floor is refused naming the floor, and the
         session is left as it was (the floor itself is held to
         pyproject.toml by tests/test_gh2601_install_ps1.py).
@@ -70,6 +79,9 @@ $env:JM_BIN_DIR = $localBin
 New-Item -ItemType Directory -Path $localBin | Out-Null
 $foreign = Join-Path $localBin "just-makeit$ext"
 Set-Content -LiteralPath $foreign -Value 'the user''s own' -Encoding ASCII
+# And one is a folder: ReadAllBytes on it used to throw and end the install.
+$folder = Join-Path $localBin "jm-run-tests$ext"
+New-Item -ItemType Directory -Path $folder | Out-Null
 
 # jbx refuses a script holding an `exit` (it would close the window) or a
 # parse error, so neither may appear -- read by the parser, not a grep, so
@@ -116,14 +128,17 @@ Assert-That ($left.Count -eq 0) "iex left nothing behind (got: $($left -join ', 
 $jm = Get-Command jm -ErrorAction SilentlyContinue | Select-Object -First 1
 Assert-That ([bool]$jm) 'jm resolves in this session'
 Assert-That ($jm.CommandType -eq 'Application') "jm is an Application (got $($jm.CommandType))"
-Assert-That ($jm.Source.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase)) "jm is the venv's ($($jm.Source) under $bin)"
+Assert-That ((Split-Path -Parent $jm.Source) -eq $localBin) "jm is the copied launcher ($($jm.Source) in $localBin)"
 $ver = jm --version
 Assert-That ($LASTEXITCODE -eq 0) "jm --version exits 0 (got $LASTEXITCODE)"
 Write-Information "    jm --version: $ver"
 $want = ($wheels[0].Name -split '-')[1]
 Assert-That ("$ver".Trim() -eq $want) "jm --version is the wheel's $want (got '$ver')"
-Assert-That (($env:PATH -split [regex]::Escape($sep))[0] -eq $bin) 'the venv Scripts folder is first on PATH'
-Assert-That (-not (Test-Path Env:VIRTUAL_ENV)) 'VIRTUAL_ENV is unset: the venv is on PATH, not activated'
+Assert-That (($env:PATH -split [regex]::Escape($sep))[0] -eq $localBin) 'the bin folder is first on PATH'
+Assert-That (@($env:PATH -split [regex]::Escape($sep) | Where-Object { $_ -eq $bin }).Count -eq 0) 'the venv Scripts folder is not on PATH: its python and pip stay off it'
+Assert-That (-not (Test-Path Env:VIRTUAL_ENV)) 'VIRTUAL_ENV is unset: nothing is activated'
+Assert-That (Test-Path -LiteralPath $folder -PathType Container) 'a folder where a launcher would go is left as it was'
+Assert-That ($log -match [regex]::Escape("$folder is not a launcher jm made")) 'and the run names it'
 
 # Every launcher the venv's just-makeit declares is copied, byte for byte,
 # except the name that was already the user's, which is named and kept.
@@ -134,7 +149,7 @@ $names = @(& $py -c ("from importlib.metadata import distribution as d; " +
 Assert-That ($names -contains 'jm') "the venv declares jm (got $($names -join ', '))"
 foreach ($n in $names) {
     $copy = Join-Path $localBin "$n$ext"
-    if ($n -eq 'just-makeit') { continue }
+    if ($n -eq 'just-makeit' -or $n -eq 'jm-run-tests') { continue }
     $same = (Test-Path -LiteralPath $copy) -and
         ([Convert]::ToBase64String([IO.File]::ReadAllBytes($copy)) -eq
         [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $bin "$n$ext"))))
@@ -161,27 +176,104 @@ $stamp2 = @(Get-ChildItem -LiteralPath $venv, $localBin -Recurse -File |
         ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" })
 $changed = @(Compare-Object $stamp $stamp2)
 Assert-That ($changed.Count -eq 0) "a second run writes nothing in the venv or the launchers (changed: $(($changed | ForEach-Object { $_.InputObject }) -join '; '))"
-$copies = @($env:PATH -split [regex]::Escape($sep) | Where-Object { $_ -eq $bin })
-Assert-That ($copies.Count -eq 1) "PATH holds the venv once after two runs (got $($copies.Count))"
+$copies = @($env:PATH -split [regex]::Escape($sep) | Where-Object { $_ -eq $localBin })
+Assert-That ($copies.Count -eq 1) "PATH holds the bin folder once after two runs (got $($copies.Count))"
 $left = @(Get-Leftover -Funcs $funcs0 -Vars ($vars1 + 'stamp2', 'changed', 'copies'))
 Assert-That ($left.Count -eq 0) "the second run left nothing behind (got: $($left -join ', '))"
 
 # -- third run: as jbx runs it, a dot-sourced script block ----------------------
 # jbx's PowerShell function runs install.ps1's text dot-sourced, so the PATH
-# change reaches its caller. With the venv taken off PATH first, jm must
-# resolve again afterwards, and the run must leave nothing behind.
+# change reaches its caller. With the bin folder taken off PATH first, jm
+# must resolve again afterwards, and the run must leave nothing behind.
 $vars2 = @(Get-Variable -Scope Script | ForEach-Object { $_.Name }) +
     'vars2', 'block'
 $env:PATH = (@($env:PATH -split [regex]::Escape($sep) |
-            Where-Object { $_ -ne $bin }) -join $sep)
+            Where-Object { $_ -ne $localBin }) -join $sep)
 $block = [scriptblock]::Create((Get-Content -Raw -LiteralPath $script))
 $log = . $block 6>&1 | Out-String -Width 4096
 Write-Information $log
 Assert-That ($log -match 'already current') 'a dot-sourced script block runs the install (already current)'
 $jm = Get-Command jm -ErrorAction SilentlyContinue | Select-Object -First 1
-Assert-That ($jm -and $jm.Source.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase)) 'its PATH change reaches the caller: jm resolves to the venv again'
+Assert-That ($jm -and (Split-Path -Parent $jm.Source) -eq $localBin) 'its PATH change reaches the caller: jm resolves to the bin folder again'
 $left = @(Get-Leftover -Funcs $funcs0 -Vars $vars2)
 Assert-That ($left.Count -eq 0) "the dot-sourced run left nothing behind (got: $($left -join ', '))"
+
+# -- relative JM_VENV / JM_BIN_DIR, / separators, trailing separator --------
+# Get-Command reports a normalized path; the folders as spelled must still
+# be recognized as the same, or the proof throws after a good install.
+Push-Location -LiteralPath $work
+$env:JM_VENV = 'venv/'
+$env:JM_BIN_DIR = 'bin/'
+$threw = ''
+try { $log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 | Out-String -Width 4096 } catch { $threw = "$_" }
+$env:JM_VENV = $venv
+$env:JM_BIN_DIR = $localBin
+Pop-Location
+Assert-That ($threw -eq '') "relative, /-separated, trailing-separator folders do not throw (got '$threw')"
+Assert-That ($log -match 'already current') 'and name the same venv: already current'
+
+# -- an index that cannot be asked keeps a working install -------------------
+# No wheel, so the target is PyPI's latest, asked of an index that refuses
+# at once: pip index versions yields nothing, as offline or an old pip does.
+$fromWheel = $env:JM_INSTALL_FROM
+Remove-Item Env:JM_INSTALL_FROM
+$env:PIP_INDEX_URL = 'http://127.0.0.1:9/simple'
+$env:PIP_RETRIES = '0'
+$env:PIP_TIMEOUT = '2'
+$stamp = @(Get-ChildItem -LiteralPath $venv -Recurse -File |
+        ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" })
+$threw = ''
+try { $log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 3>&1 | Out-String -Width 4096 } catch { $threw = "$_" }
+Remove-Item Env:PIP_INDEX_URL, Env:PIP_RETRIES, Env:PIP_TIMEOUT
+$env:JM_INSTALL_FROM = $fromWheel
+Write-Information $log
+Assert-That ($threw -eq '') "with no answer from the index the run does not throw (got '$threw')"
+Assert-That ($log -match 'keeping') "it keeps the working install, saying so (got '$log')"
+$stamp2 = @(Get-ChildItem -LiteralPath $venv -Recurse -File |
+        ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" })
+Assert-That (@(Compare-Object $stamp $stamp2).Count -eq 0) 'and writes nothing in the venv'
+
+# -- a wheel rebuilt at the same version is installed ------------------------
+# Same file name and version, different bytes (a zip comment): new code as
+# far as the installer can tell, so it must not be "already current".
+$rebuiltDir = Join-Path $work 'rebuilt'
+New-Item -ItemType Directory -Path $rebuiltDir | Out-Null
+$rebuilt = Join-Path $rebuiltDir $wheels[0].Name
+Copy-Item -LiteralPath $wheels[0].FullName -Destination $rebuilt
+& $py -c "import sys, zipfile; z = zipfile.ZipFile(sys.argv[1], 'a'); z.comment = b'rebuilt'; z.close()" $rebuilt
+Assert-That ($LASTEXITCODE -eq 0) 'a rebuilt wheel is made'
+$env:JM_INSTALL_FROM = $rebuilt
+$log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 | Out-String -Width 4096
+$env:JM_INSTALL_FROM = $fromWheel
+Write-Information $log
+Assert-That ($log -notmatch 'already current') "a rebuilt wheel at the same version is installed (got '$log')"
+$recorded = (Get-Content -Raw -LiteralPath (Join-Path $venv 'just-makeit-wheel.sha256')).Trim()
+Assert-That ($recorded -eq (Get-FileHash -Algorithm SHA256 -LiteralPath $rebuilt).Hash) 'the venv records the rebuilt wheel'
+
+# -- in a project root: the project's .venv, nothing copied ------------------
+$proj = Join-Path $work 'proj'
+New-Item -ItemType Directory -Path $proj | Out-Null
+Set-Content -LiteralPath (Join-Path $proj 'pyproject.toml') -Value '' -Encoding ASCII
+$projBin = Join-Path $work 'proj-bin'
+$env:JM_BIN_DIR = $projBin
+Remove-Item Env:JM_VENV
+Push-Location -LiteralPath $proj
+try {
+    $log = Get-Content -Raw -LiteralPath $script | Invoke-Expression 6>&1 | Out-String -Width 4096
+} finally {
+    Pop-Location
+    $env:JM_VENV = $venv
+    $env:JM_BIN_DIR = $localBin
+}
+Write-Information $log
+$projScripts = Join-Path (Join-Path $proj '.venv') $(if ($onWindows) { 'Scripts' } else { 'bin' })
+Assert-That (Test-Path -LiteralPath (Join-Path $projScripts "jm$ext") -PathType Leaf) "in a project root jm is installed into its .venv ($projScripts)"
+Assert-That (-not (Test-Path -LiteralPath $projBin)) 'and nothing is copied into the bin folder'
+$jm = Get-Command jm -ErrorAction SilentlyContinue | Select-Object -First 1
+Assert-That ($jm -and (Split-Path -Parent $jm.Source) -eq $projScripts) "jm resolves into the project's venv (got '$(if ($jm) { $jm.Source })')"
+Assert-That ($log -notmatch 'jbx update-path') 'and no update-path hint is printed'
+$env:PATH = (@($env:PATH -split [regex]::Escape($sep) |
+            Where-Object { $_ -ne $projScripts }) -join $sep)
 
 # -- below the floor: refused, naming it ----------------------------------------
 # The floor is read from install.ps1 itself, dot-sourced with
@@ -191,6 +283,17 @@ $JmInstallDefineOnly = $true
 . $script
 Remove-Variable -Name JmInstallDefineOnly
 $floor = [version]$JmPyFloor
+# The per-user default, asked outside any project: never the temp folder.
+Push-Location -LiteralPath $work
+Remove-Item Env:JM_VENV
+$default = (Get-JmVenvDir).Path
+$env:JM_VENV = $venv
+Pop-Location
+$tmp = [IO.Path]::GetTempPath().TrimEnd('\', '/')
+Assert-That (-not $default.StartsWith($tmp, [StringComparison]::OrdinalIgnoreCase)) "the default venv $default is not under the temp folder $tmp"
+if ($onWindows) {
+    Assert-That ($default.StartsWith($env:LOCALAPPDATA, [StringComparison]::OrdinalIgnoreCase)) "the default venv is under LOCALAPPDATA ($default)"
+}
 Assert-That (Test-JmPythonFloor -Version $floor) "Test-JmPythonFloor accepts the floor $floor"
 $below = [version]"$($floor.Major).$($floor.Minor - 1)"
 Assert-That (-not (Test-JmPythonFloor -Version $below)) "Test-JmPythonFloor refuses $below"

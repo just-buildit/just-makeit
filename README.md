@@ -30,18 +30,21 @@ ______________________________________________________________________
 jbx just-makeit:install
 ```
 
-If `jm` is not found in a new shell, run `jbx update-path` once.
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
 
-On Linux and macOS jbx runs `install.sh` (below) as a child, so it links
-`jm` and jm's other commands into `~/.local/bin`, beside jbx, and says so if
-that directory is not on your `PATH`. From Windows PowerShell,
-`jbx just-makeit:install` runs `install.ps1` (below) in the window itself,
-so `jm` is on its `PATH` at once.
+A project's root is a directory holding `pyproject.toml` or
+`just-makeit.toml`; there `jm` lives in the project's own venv, on your
+`PATH` whenever that venv is, and jbx puts it on this shell's `PATH` at once.
+Anywhere else jm goes into a per-user venv that survives a reboot, and on
+Linux and macOS `install.sh` (below) links `jm` and jm's other commands into
+`~/.local/bin`, beside jbx, saying so if that directory is not on your
+`PATH`. From Windows PowerShell, `jbx just-makeit:install` runs `install.ps1`
+(below) in the window itself, so `jm` is on its `PATH` at once.
 
 **Other ways.** `install-deps` installs cmake, a C compiler, pkg-config and,
 on Linux, patchelf through your system package manager (only when one of
-them is missing), then numpy and just-makeit into a Python venv
-(default `/tmp/jm-venv`, or pass your own path). Run
+them is missing), then numpy and just-makeit into a Python venv, chosen by
+the same rule (or pass your own path). Run
 `just-makeit install-deps --help` for the full reference.
 
 **curl (auto-installs dependencies, creates and activates venv):**

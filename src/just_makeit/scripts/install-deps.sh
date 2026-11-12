@@ -25,7 +25,11 @@ ${C_YELLOW}USAGE${C_RESET}
 
 ${C_YELLOW}ARGUMENTS${C_RESET}
   ${C_BOLD}VENV_DIR${C_RESET}    Path for the Python virtual environment.
-              Default: ${C_DIM}/tmp/jm-venv${C_RESET}
+              Default: in a project root (the current directory holds
+              pyproject.toml or just-makeit.toml) its ${C_DIM}.venv${C_RESET};
+              anywhere else the per-user venv under
+              ${C_DIM}\${XDG_DATA_HOME:-~/.local/share}/just-makeit/${C_RESET}.
+              Never a temporary directory: a reboot may empty it.
 
 ${C_YELLOW}OPTIONS${C_RESET}
   ${C_BOLD}--check${C_RESET}     Report what is installed/missing and make no changes.
@@ -40,6 +44,7 @@ ${C_YELLOW}WHAT IT INSTALLS${C_RESET}
     numpy and just-makeit.
 
 ${C_YELLOW}ENVIRONMENT${C_RESET}
+  ${C_BOLD}JM_VENV${C_RESET}         The venv, when no VENV_DIR is given.
   ${C_BOLD}SYSTEM_PYTHON${C_RESET}   Interpreter used to create the venv. Default: ${C_DIM}python3${C_RESET}
   ${C_BOLD}NO_COLOR${C_RESET}        Set to any value to disable colored output.
 
@@ -48,7 +53,7 @@ ${C_YELLOW}EXIT STATUS${C_RESET}
   ${C_BOLD}1${C_RESET}   --check found missing dependencies, or an install step failed.
 
 ${C_YELLOW}EXAMPLES${C_RESET}
-  ${C_DIM}# default venv at /tmp/jm-venv${C_RESET}
+  ${C_DIM}# the default venv (see VENV_DIR)${C_RESET}
   just-makeit install-deps
   ${C_DIM}# custom venv path${C_RESET}
   just-makeit install-deps ~/my-venv
@@ -62,7 +67,7 @@ EOF
 }
 
 CHECK=0
-VENV_DIR="/tmp/jm-venv"
+VENV_DIR=""
 SYSTEM_PYTHON="${SYSTEM_PYTHON:-python3}"
 
 for arg in "$@"; do
@@ -73,6 +78,32 @@ for arg in "$@"; do
         *)          VENV_DIR="$arg" ;;
     esac
 done
+
+# Where the venv goes: install.sh's rule, a byte-identical copy of its
+# `_jm_where` (install.sh is fetched alone and cannot share it);
+# tests/test_gh2601_venv_survives.py holds the copies to each other. A
+# project's venv and a per-user one are installed alike here: nothing is
+# linked into ~/.local/bin, since this runs from a jm already on PATH.
+_jm_where() {
+    local venv="${1:-${JM_VENV:-}}" dir
+    if [[ -z "$venv" ]]; then
+        if [[ -f pyproject.toml || -f just-makeit.toml ]]; then
+            venv=".venv"
+        else
+            venv="${XDG_DATA_HOME:-${HOME}/.local/share}/just-makeit/venv"
+        fi
+    fi
+    [[ "$venv" == /* ]] || venv="${PWD%/}/${venv}"
+    while [[ "$venv" == ?*/ ]]; do venv="${venv%/}"; done
+    dir="${venv%/*}"
+    if [[ -f "${dir:-/}/pyproject.toml" || -f "${dir:-/}/just-makeit.toml" ]]
+    then
+        printf 'project %s\n' "$venv"
+    else
+        printf 'user %s\n' "$venv"
+    fi
+}
+read -r _ VENV_DIR < <(_jm_where "$VENV_DIR")
 
 info()  { printf '%s==> %s%s\n' "$C_BLUE" "$*" "$C_RESET"; }
 ok()    { printf '%s    ok%s  %s\n' "$C_GREEN" "$C_RESET" "$*"; }

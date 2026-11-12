@@ -20,31 +20,43 @@
          `python3` on PATH, else the one `uv python find` reports when uv
          is installed. The first that runs and is new enough is used;
          below the floor the run stops naming the version to install.
-      2. Creates a venv for jm, or reuses the one a previous run made:
-         $env:LOCALAPPDATA\just-makeit\venv. Not install.sh's /tmp/jm-venv:
-         Windows' temp folder is cleaned behind your back, and this venv is
-         the jm you will come back to.
+      2. Creates a venv for jm, or reuses the one a previous run made
+         (Get-JmVenvDir decides where, once). Run in a project root -- this
+         folder holds pyproject.toml or just-makeit.toml -- it is that
+         project's .venv. Anywhere else it is the per-user
+         $env:LOCALAPPDATA\just-makeit\venv. Never the temp folder:
+         Windows cleans it behind your back, and this venv is the jm you
+         will come back to. JM_VENV wins over both; it counts as a
+         project's when the folder holding it is a project root.
       3. Installs just-makeit into it with that venv's own `python -m pip`,
-         unless the version there is already the latest: then nothing is
-         downloaded or written ("already current").
-      4. Copies the venv's console-script launchers (jm.exe,
+         unless what is there is already current: then nothing is
+         downloaded or written ("already current"). Current is the latest
+         version on the index -- or, when the index cannot be asked
+         (offline, an old pip), the working install, with a warning -- or,
+         from JM_INSTALL_FROM, that very wheel file (by its hash), so a
+         wheel rebuilt at the same version is installed.
+      4. Per-user venv: copies its console-script launchers (jm.exe,
          just-makeit.exe, ...: every one just-makeit declares, read from
          its entry points) into %USERPROFILE%\.local\bin, beside jbx. A
          pip launcher carries its venv python's absolute path, as a uv
-         tool's does, so a copy runs from anywhere. A file there that is
-         not a just-makeit launcher is never replaced: it is named, and
-         the rest are copied.
-      5. Puts the venv's Scripts folder FIRST on this session's PATH, then
-         that folder, so `jm` works the moment the script ends; and when
-         the folder is not on your user Path, says that `jbx update-path`
-         keeps it there for new windows.
+         tool's does, so a copy runs from anywhere. A file or folder there
+         that is not a just-makeit launcher is never replaced: it is
+         named, and the rest are copied. A project's venv: nothing is
+         copied, so jm lives and goes with the project.
+      5. Puts that one folder -- %USERPROFILE%\.local\bin, or the
+         project venv's Scripts -- FIRST on this session's PATH, so `jm`
+         works the moment the script ends; and, for the per-user venv,
+         when the folder is not on your user Path, says that `jbx
+         update-path` keeps it there for new windows. The per-user venv's
+         Scripts folder is never put on PATH: its python.exe and pip.exe
+         would shadow yours.
       6. Runs `jm --version` through that PATH, to prove it.
       7. Reports whether clang-cl and cmake are on PATH, which building a
          generated project needs. A missing one is a warning, not a
          failure: jm itself works without them. A Developer PowerShell for
          VS has both; jm does not install a compiler.
 
-    Why the venv is put on PATH and NOT activated. A generated project
+    Why jm is put on PATH and no venv is activated. A generated project
     makes its own `.venv` (`py -m venv .venv`, or `uv sync`), and the
     build is pointed at that one. An activated venv sets VIRTUAL_ENV,
     which makes `py` run the activated venv's Python instead of choosing
@@ -70,8 +82,7 @@
     Options are environment variables, since `irm | iex` passes no
     arguments:
 
-      JM_VENV          the venv to install into
-                       (default $env:LOCALAPPDATA\just-makeit\venv)
+      JM_VENV          the venv to install into (default: see step 2)
       JM_FORCE         1 rebuilds the venv and reinstalls even when current
       JM_INSTALL_FROM  what to install instead of just-makeit from PyPI:
                        a wheel file, as CI does to test its own build
@@ -150,16 +161,81 @@ function Find-JmCommand {
         Select-Object -First 1
 }
 
+function Get-JmFullPath {
+    <#
+    .SYNOPSIS
+        Path made absolute against this session's location, normalized:
+        separators made the platform's, `..` folded, no trailing separator.
+    .DESCRIPTION
+        Combine, not Join-Path: a rooted Path stays itself. The session's
+        location, not the process's current directory, which PowerShell
+        does not move on Set-Location and GetFullPath alone would read.
+    .EXAMPLE
+        Get-JmFullPath -Path 'venv/'
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $here = (Get-Location).ProviderPath
+    $full = [IO.Path]::GetFullPath([IO.Path]::Combine($here, $Path))
+    $root = [IO.Path]::GetPathRoot($full)
+    if ($full.Length -gt $root.Length) { $full = $full.TrimEnd('\', '/') }
+    $full
+}
+
+function Test-JmSamePath {
+    <#
+    .SYNOPSIS
+        True when two paths name one location, however each is spelled.
+    #>
+    param([Parameter(Mandatory)][string]$A, [Parameter(Mandatory)][string]$B)
+    [string]::Equals((Get-JmFullPath -Path $A), (Get-JmFullPath -Path $B),
+        [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-JmProjectRoot {
+    <#
+    .SYNOPSIS
+        True when Dir holds pyproject.toml or just-makeit.toml.
+    #>
+    param([Parameter(Mandatory)][string]$Dir)
+    foreach ($f in 'pyproject.toml', 'just-makeit.toml') {
+        if (Test-Path -LiteralPath (Join-Path $Dir $f) -PathType Leaf) {
+            return $true
+        }
+    }
+    $false
+}
+
 function Get-JmVenvDir {
     <#
     .SYNOPSIS
-        Where the venv goes: JM_VENV, else LOCALAPPDATA\just-makeit\venv
-        (the XDG data directory off Windows).
+        Where the venv goes, and whether it is a project's: the one place
+        that is decided, as @{ Path; Project }, Path absolute.
+    .DESCRIPTION
+        JM_VENV when set. Otherwise, in a project root (this location holds
+        pyproject.toml or just-makeit.toml) the project's .venv; anywhere
+        else the per-user venv, LOCALAPPDATA\just-makeit\venv (off
+        Windows, under XDG_DATA_HOME or ~/.local/share). Never the temp
+        folder, which Windows cleans behind your back. A venv is a
+        project's when the folder holding it is a project root -- the
+        default and JM_VENV alike. install.sh's _jm_where states the same
+        rule.
     #>
-    if ($env:JM_VENV) { return $env:JM_VENV }
-    $base = $env:LOCALAPPDATA
-    if (-not $base) { $base = Join-Path $HOME '.local/share' }
-    Join-Path (Join-Path $base 'just-makeit') 'venv'
+    $venv = $env:JM_VENV
+    if (-not $venv) {
+        if (Test-JmProjectRoot -Dir (Get-Location).ProviderPath) {
+            $venv = '.venv'
+        } else {
+            $base = $env:LOCALAPPDATA
+            if (-not $base) { $base = $env:XDG_DATA_HOME }
+            if (-not $base) { $base = Join-Path $HOME '.local/share' }
+            $venv = Join-Path (Join-Path $base 'just-makeit') 'venv'
+        }
+    }
+    $venv = Get-JmFullPath -Path $venv
+    [pscustomobject]@{
+        Path    = $venv
+        Project = Test-JmProjectRoot -Dir (Split-Path -Parent $venv)
+    }
 }
 
 function Get-JmVenvBin {
@@ -373,6 +449,9 @@ function Test-JmLauncher {
         is the user's, and is never replaced.
     #>
     param([Parameter(Mandatory)][string]$Path)
+    # A folder or a junction to one is not a launcher, and ReadAllBytes
+    # would throw on it and end the install.
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     $bytes = [IO.File]::ReadAllBytes($Path)
     [Text.Encoding]::ASCII.GetString($bytes).Contains('just_makeit.')
 }
@@ -473,7 +552,8 @@ function Install-JustMakeit {
     $ErrorActionPreference = 'Stop'
     $InformationPreference = 'Continue'
 
-    $venv = Get-JmVenvDir
+    $where = Get-JmVenvDir
+    $venv = $where.Path
     $venvPy = Get-JmVenvPython -Venv $venv
     $bin = Get-JmVenvBin -Venv $venv
     $from = $env:JM_INSTALL_FROM
@@ -485,13 +565,34 @@ function Install-JustMakeit {
     Write-Information "  ok  Python $($py.Version) ($($py.Command -join ' '))"
 
     # -- 2. Is the venv's just-makeit already current? ------------------------
+    # From a wheel, the version alone cannot say: a wheel rebuilt at the
+    # same version is new code. So the hash of the wheel last installed is
+    # kept in the venv, and current means that very file. From PyPI, an
+    # index that cannot be asked (offline, a pip older than 21.2) keeps a
+    # working install rather than reinstalling -- and failing -- each run.
     $installed = $null
     $current = $false
+    $stamp = Join-Path $venv 'just-makeit-wheel.sha256'
+    $hash = if ($from) {
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $from).Hash
+    }
     if (-not $force) {
         $installed = Get-JmInstalledVersion -Python $venvPy
         if ($installed) {
             $target = Get-JmTargetVersion -From $from -Python $venvPy
-            $current = $installed -eq $target
+            if ($from) {
+                $was = if (Test-Path -LiteralPath $stamp -PathType Leaf) {
+                    (Get-Content -Raw -LiteralPath $stamp).Trim()
+                }
+                $current = $installed -eq $target -and $was -eq $hash
+            } elseif ($target) {
+                $current = $installed -eq $target
+            } else {
+                Write-Warning ('could not ask the package index for the ' +
+                    "latest just-makeit; keeping $installed. Set " +
+                    "`$env:JM_FORCE = '1' to reinstall.")
+                $current = $true
+            }
         }
     }
 
@@ -519,6 +620,12 @@ function Install-JustMakeit {
         $pipArgs = @('-m', 'pip', 'install', '--quiet', '--upgrade',
             '--disable-pip-version-check')
         if ($force) { $pipArgs += '--force-reinstall' }
+        elseif ($from -and $installed -and
+            $installed -eq (Get-JmTargetVersion -From $from)) {
+            # pip skips a version already installed; this wheel is new code
+            # at that version. Its dependencies are the same version's.
+            $pipArgs += '--force-reinstall', '--no-deps'
+        }
         & $venvPy @pipArgs $spec
         if ($LASTEXITCODE -ne 0) {
             throw ("install.ps1: pip could not install $spec into $venv " +
@@ -533,19 +640,39 @@ function Install-JustMakeit {
                 "from $venv. Re-run with `$env:JM_FORCE = '1' to rebuild it.")
         }
         Write-Information "  ok  just-makeit $installed in $venv"
+        if ($from) {
+            Set-Content -LiteralPath $stamp -Value $hash -Encoding ASCII
+        } elseif (Test-Path -LiteralPath $stamp) {
+            Remove-Item -LiteralPath $stamp
+        }
     }
 
     # -- 4. The launchers, PATH, and the proof -----------------------------
-    $local = Get-JmBinDir
-    $refused = @(Copy-JmLauncher -Venv $venv -Dir $local)
-    # Venv first: a refused name in $local must not shadow the venv's jm.
+    # A project's venv: its Scripts folder goes on this session's PATH and
+    # nothing is copied out of it, so jm lives and goes with the project.
+    # Otherwise the launchers are copied to ~\.local\bin and only that
+    # folder goes on PATH: the venv's own python.exe and pip.exe stay off
+    # it. A refused jm is named, not worked around.
+    $refused = @()
+    if ($where.Project) {
+        $local = $bin
+    } else {
+        $local = Get-JmFullPath -Path (Get-JmBinDir)
+        $refused = @(Copy-JmLauncher -Venv $venv -Dir $local)
+    }
     Add-JmPath -Dir $local
-    Add-JmPath -Dir $bin
+    if ($refused -contains 'jm') {
+        Write-Warning ("jm was not copied (see above), so it is not on " +
+            "PATH. Run it as $(Join-Path $bin 'jm'), or move that file " +
+            'and re-run the install line.')
+        Write-JmToolchain
+        return
+    }
     $jm = Find-JmCommand -Name jm
-    $ours = $jm -and $jm.Source.StartsWith($bin,
-        [StringComparison]::OrdinalIgnoreCase)
+    $ours = $jm -and (Test-JmSamePath -A (Split-Path -Parent $jm.Source) `
+            -B $local)
     if (-not $ours) {
-        throw ("install.ps1: $bin is first on PATH but `jm` resolves to " +
+        throw ("install.ps1: $local is first on PATH but `jm` resolves to " +
             "'$(if ($jm) { $jm.Source })'. Look for a jm earlier on PATH.")
     }
     $said = @(Invoke-JmQuiet -Command @($jm.Source) -Arguments @('--version'))
@@ -563,6 +690,14 @@ function Install-JustMakeit {
     Write-Information ''
     Write-Information '    jm new my_project --object my_object'
     Write-Information ''
+    if ($where.Project) {
+        Write-Information "  jm is installed in this project's venv, $venv;"
+        Write-Information '  it is on PATH whenever that venv is active:'
+        Write-Information ''
+        Write-Information "    & '$(Join-Path $bin 'Activate.ps1')'"
+        Write-Information ''
+        return
+    }
     if ($refused.Count -gt 0) {
         Write-Information ("  $($refused -join ', ') not copied to $local " +
             '(see the warning above).')
@@ -591,7 +726,8 @@ try {
     # `irm | iex` runs in the caller's scope: leave nothing behind but PATH,
     # as install.sh unsets its helpers.
     # A pipeline, not foreach: a loop variable would be left behind too.
-    'Test-JmWindows', 'Invoke-JmQuiet', 'Find-JmCommand', 'Get-JmVenvDir',
+    'Test-JmWindows', 'Invoke-JmQuiet', 'Find-JmCommand', 'Get-JmFullPath',
+    'Test-JmSamePath', 'Test-JmProjectRoot', 'Get-JmVenvDir',
     'Get-JmVenvBin', 'Get-JmVenvPython', 'Get-JmPythonCandidate',
     'Get-JmPythonVersion', 'Test-JmPythonFloor', 'Find-JmPython',
     'Get-JmInstalledVersion', 'Get-JmTargetVersion', 'Add-JmPath',

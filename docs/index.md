@@ -71,12 +71,16 @@ yet, [getting jbx](https://just-buildit.github.io/just-bashit/just-runit/#gettin
     jbx just-makeit:install
     ```
 
-    If `jm` is not found in a new shell, run `jbx update-path` once.
+    Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
 
-    On Linux and macOS jbx runs the curl installer as a child, so it links
-    `jm` into `~/.local/bin`, beside jbx, and says so if that directory is
-    not on your `PATH`. From Windows PowerShell it runs the Windows
-    installer in the window itself, so `jm` is on its `PATH` at once.
+    A project's root is a directory holding `pyproject.toml` or
+    `just-makeit.toml`: there `jm` lives in the project's venv, and jbx puts
+    it on this shell's `PATH` at once. Anywhere else it goes into a per-user
+    venv that survives a reboot; on Linux and macOS jbx runs the curl
+    installer, which links `jm` into `~/.local/bin`, beside jbx, and says so
+    if that directory is not on your `PATH`. From Windows PowerShell it runs
+    the Windows installer in the window itself, so `jm` is on its `PATH` at
+    once.
 
 === "curl"
 
@@ -129,8 +133,8 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     {g}ok{/g}  C compiler (/usr/bin/gcc)  (already installed)
     {g}ok{/g}  pkg-config (/usr/bin/pkg-config)  (already installed)
     {g}ok{/g}  patchelf (/usr/bin/patchelf)  (already installed)
-  {y}-->{/y}   just-makeit  (/tmp/jm-venv)
-{b}==>{/b} Setting up venv at /tmp/jm-venv {g}✓{/g}
+  {y}-->{/y}   just-makeit  (~/.local/share/just-makeit/venv)
+{b}==>{/b} Setting up venv at ~/.local/share/just-makeit/venv {g}✓{/g}
     {g}ok{/g}  numpy 2.4.6
     {g}ok{/g}  just-makeit {jm_version}
 
@@ -146,9 +150,11 @@ $ . <(curl -fsSL https://just-buildit.github.io/just-makeit/install.sh)
     package manager (only when one of them is missing),
     then numpy and just-makeit into a Python venv. The curl installer does the
     same, and also activates the venv in your shell; `just-makeit install-deps`
-    prints the `source <venv>/bin/activate` line to run. The venv is created at
-    `/tmp/jm-venv` by default. To put it elsewhere, append the path to any of the
-    commands above — e.g. `. <(curl -fsSL …/install.sh) ~/my-venv`. Both take
+    prints the `source <venv>/bin/activate` line to run. In a project's root
+    the venv is that project's `.venv`; anywhere else it is a per-user venv
+    that survives a reboot (`just-makeit install-deps --help` names it). To
+    put it elsewhere, append the path to any of the commands above — e.g.
+    `. <(curl -fsSL …/install.sh) ~/my-venv`. Both take
     `--check` to report what is missing without installing anything; the curl
     installer also takes `--force` to reinstall just-makeit.
 

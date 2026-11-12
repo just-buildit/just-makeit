@@ -24,7 +24,7 @@ jm example visual_studio_pip
 # visual_studio_pip: PASSED
 ```
 
-If `jm` is not found in a new shell, run `jbx update-path` once.
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
 
 ## Prerequisites
 
@@ -50,16 +50,16 @@ cd my_vs
 jm object scale --state factor:double:2.0 --arg-type double --return-type double
 ```
 
-If `jm` is not found in a new shell, run `jbx update-path` once.
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
 
 The first line installs jm, the same in Windows PowerShell and
 PowerShell 7: from PowerShell,
 [jbx](https://just-buildit.github.io/just-bashit/just-runit/#getting-just-runit)
 runs jm's Windows installer,
-`install.ps1`, in this window. It installs just-makeit into its own venv,
-`%LOCALAPPDATA%\just-makeit\venv`, copies its launchers into
-`%USERPROFILE%\.local\bin`, and puts both folders on this window's `PATH`,
-so `jm` runs on the next line. It does not activate that venv: the
+`install.ps1`, in this window. This folder is not a project's root yet, so
+it installs just-makeit into a per-user venv under `%LOCALAPPDATA%`, copies
+its launchers into `%USERPROFILE%\.local\bin`, and puts that folder on this
+window's `PATH`, so `jm` runs on the next line. It activates no venv: the
 project's own `.venv` comes in step 3, and an active venv would change what
 `py` and `uv` pick.
 [Building on Windows](../windows.md#installing-jm) says more.

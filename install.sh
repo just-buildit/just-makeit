@@ -12,6 +12,19 @@
 #   jm and the other commands are symlinked into ~/.local/bin instead of the
 #   venv being activated (an activation would die with the child); see 7.
 #
+# ── Where the venv goes (`_jm_where`, the one place this is decided)
+#
+#   In a project root -- the current directory holds pyproject.toml or
+#   just-makeit.toml -- into that project's ./.venv, and nothing is linked
+#   into ~/.local/bin: jm is on PATH whenever the project's venv is.
+#   Anywhere else, into the per-user venv under
+#   ${XDG_DATA_HOME:-~/.local/share}/just-makeit/, linked into
+#   ~/.local/bin. Never a temporary directory: the venv is the jm you come
+#   back to, and a link into a /tmp that a reboot emptied finds nothing.
+#   A path argument, else $JM_VENV, wins; such a venv is a project's when
+#   the directory holding it is a project root, and a per-user one
+#   otherwise.
+#
 # ── Options (append to the command):
 #
 #   . <(curl -fsSL ...) ~/my-venv     # custom venv path
@@ -34,7 +47,7 @@
 
 _jm_check=0
 _jm_force=0
-_jm_venv="/tmp/jm-venv"
+_jm_venv=""
 _jm_badflag=""
 
 for _jm_arg in "$@"; do
@@ -46,6 +59,34 @@ for _jm_arg in "$@"; do
         *)       _jm_venv="$_jm_arg" ;;
     esac
 done
+
+# ── Where the venv goes ───────────────────────────────────────────────────────
+#
+# Prints `project VENV` or `user VENV`, VENV absolute (not resolved): the
+# rule the header states, decided here once. install-deps.sh carries a
+# byte-identical copy (this file is fetched alone and cannot source it);
+# tests/test_gh2601_venv_survives.py holds the copies to each other and
+# runs both: no default is ever under a temporary directory.
+_jm_where() {
+    local venv="${1:-${JM_VENV:-}}" dir
+    if [[ -z "$venv" ]]; then
+        if [[ -f pyproject.toml || -f just-makeit.toml ]]; then
+            venv=".venv"
+        else
+            venv="${XDG_DATA_HOME:-${HOME}/.local/share}/just-makeit/venv"
+        fi
+    fi
+    [[ "$venv" == /* ]] || venv="${PWD%/}/${venv}"
+    while [[ "$venv" == ?*/ ]]; do venv="${venv%/}"; done
+    dir="${venv%/*}"
+    if [[ -f "${dir:-/}/pyproject.toml" || -f "${dir:-/}/just-makeit.toml" ]]
+    then
+        printf 'project %s\n' "$venv"
+    else
+        printf 'user %s\n' "$venv"
+    fi
+}
+read -r _jm_mode _jm_venv < <(_jm_where "$_jm_venv")
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
 
@@ -354,7 +395,10 @@ _jm_install() (
 _jm_link() (
     set -euo pipefail
     local venv bin py names name target dest old linked=0 jm_ok=0
-    venv="$(cd "$1" && pwd)"
+    # Absolute and physical, so every link resolves from any cwd. -P and
+    # the redirect: an exported CDPATH makes `cd` print the directory,
+    # which would become a second line of the path.
+    venv="$(cd -P -- "$1" >/dev/null && pwd -P)"
     bin="${HOME}/.local/bin"
     py="${venv}/bin/python"
     names=$("$py" -c 'from importlib.metadata import distribution as d
@@ -375,10 +419,17 @@ for e in d("just-makeit").entry_points:
         dest="${bin}/${name}"
         if [[ -L "$dest" ]]; then
             old="$(readlink "$dest")"
-            # A link into a jm venv: its directory's python has just-makeit.
+            # A relative target is relative to the link's own directory,
+            # not to this script's cwd.
+            [[ "$old" == /* ]] || old="${bin}/${old}"
+            # Replaced when it is this link already, or a link into a jm
+            # venv (its directory's python has just-makeit), or a link of
+            # jm's shape (<venv>/bin/<name>) whose venv is gone: the
+            # recovery path after a reboot emptied a temporary venv.
             if [[ "$old" != "$target" ]] && ! "${old%/*}/python" -c \
                 'from importlib.metadata import version; version("just-makeit")' \
-                >/dev/null 2>&1; then
+                >/dev/null 2>&1 \
+                && ! [[ ! -e "$old" && "$old" == */bin/"$name" ]]; then
                 warn "${dest} links to ${old}, not a jm venv; left as it is"
                 continue
             fi
@@ -398,13 +449,7 @@ for e in d("just-makeit").entry_points:
         return 0
     fi
     local applied=0
-    # Under the jbx shell function, a `path DIR` line in its reload marker
-    # puts DIR on the CALLER's PATH when this script exits (just-bashit's
-    # handshake), so jm works there at once.
-    if [[ "${JB_CALLER_APPLIES:-}" == 1 && -n "${JB_RELOAD_MARKER:-}" ]]; then
-        printf 'path %s\n' "$bin" >>"$JB_RELOAD_MARKER"
-        applied=1
-    fi
+    _jm_mark "$bin" && applied=1
     if [[ ":${PATH}:" == *":${bin}:"* ]]; then
         info "jm is linked into ${bin}, on PATH — just-makeit is ready:"
         printf '\n    jm new my_project --object my_object\n\n'
@@ -423,6 +468,45 @@ for e in d("just-makeit").entry_points:
     printf '\n    export PATH="$HOME/.local/bin:$PATH"\n\n'
 )
 
+# ── 7b. In a project root: the project's venv, nothing linked ─────────────────
+#
+# The venv is the project's own .venv, so jm is on PATH exactly when that
+# venv is: nothing goes into ~/.local/bin, where it would outlive the
+# project, and no `jbx update-path` hint is printed. Under jbx, the venv's
+# bin goes on the caller's PATH through the marker.
+_jm_project() (
+    set -euo pipefail
+    local venv
+    venv="$(cd -P -- "$1" >/dev/null && pwd -P)"
+    printf '\n'
+    info "jm is installed in this project's venv, ${venv};"
+    info "it is on PATH whenever that venv is active:"
+    printf '\n    source %s/bin/activate\n\n' "$venv"
+    if _jm_mark "${venv}/bin"; then
+        info "jbx puts ${venv}/bin on this shell's PATH when this install"
+        info "exits — just-makeit is ready:"
+        printf '\n    jm new my_project --object my_object\n\n'
+    fi
+)
+
+# Under the jbx shell function -- just-bashit's jbx-shell.sh exports
+# JB_CALLER_APPLIES=1 and JB_RELOAD_MARKER for the script it runs -- a
+# `path DIR` line appended to the marker puts DIR first on the CALLER's
+# PATH when this script exits. Appended, never truncated: more than one
+# writer may share the file. Succeeds only when the line was written; an
+# unwritable marker is named, so jm is never claimed ready on a PATH it
+# will not reach.
+_jm_mark() {
+    [[ "${JB_CALLER_APPLIES:-}" == 1 && -n "${JB_RELOAD_MARKER:-}" ]] \
+        || return 1
+    if printf 'path %s\n' "$1" 2>/dev/null >>"$JB_RELOAD_MARKER"; then
+        return 0
+    fi
+    warn "could not write jbx's reload marker ${JB_RELOAD_MARKER};"
+    warn "$1 is not put on this shell's PATH."
+    return 1
+}
+
 # ── 8. Run, then link or activate ─────────────────────────────────────────────
 
 # `return` succeeds only in a sourced file: `. <(curl ...)` and jbx's
@@ -433,7 +517,9 @@ _jm_sourced=0
 _jm_install
 _jm_status=$?
 if [[ $_jm_status -eq 0 && $_jm_check -eq 0 ]]; then
-    if [[ $- != *i* ]]; then
+    if [[ $- != *i* && $_jm_mode == project ]]; then
+        _jm_project "${_jm_venv}"
+    elif [[ $- != *i* ]]; then
         _jm_link "${_jm_venv}"
     fi
     if [[ $_jm_sourced -eq 1 ]]; then
@@ -449,8 +535,10 @@ fi
 if [[ $_jm_sourced -eq 1 ]]; then
     unset -f _tty info ok skip will warn die _spin _detect_mgr _need \
         _install_apt _install_dnf _install_pacman _install_zypper \
-        _install_apk _install_brew _jm_install _jm_link
-    unset _jm_check _jm_force _jm_venv _jm_badflag _jm_arg _jm_sourced
+        _install_apk _install_brew _jm_install _jm_link _jm_where \
+        _jm_project _jm_mark
+    unset _jm_check _jm_force _jm_venv _jm_badflag _jm_arg _jm_sourced \
+        _jm_mode
     # eval expands the status before the unset runs, so it outlives its name.
     eval "unset _jm_status; return ${_jm_status}"
 fi

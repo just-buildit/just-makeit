@@ -24,7 +24,7 @@ jm example visual_studio_pip
 # visual_studio_pip: PASSED
 ```
 
-If `jm` is not found in a new shell, run `jbx update-path` once.
+Run in a project's root, it installs into that project's `.venv`; anywhere else, if `jm` is not found in a new shell, run `jbx update-path` once.
 
 ## Prerequisites
 

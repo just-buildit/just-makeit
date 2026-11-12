@@ -4,10 +4,10 @@
     `aliases.toml`'s new `[aliases.ps1]` table points jbx's PowerShell
     side at it. From Windows PowerShell 5.1 or PowerShell 7 it finds a
     Python 3.9+ (`py`, then `python`, then `uv python find`), installs
-    just-makeit into `%LOCALAPPDATA%\just-makeit\venv`, copies its
-    launchers into `%USERPROFILE%\.local\bin` (never over a file it did not
-    put there), puts both on the window's `PATH` without activating the
-    venv, proves `jm --version` runs, and warns when clang-cl or cmake is
+    just-makeit into a per-user venv (or, in a project's root, the
+    project's `.venv`), copies its launchers into `%USERPROFILE%\.local\bin`
+    (never over a file it did not put there), puts that folder on the
+    window's `PATH` without activating any venv, proves `jm --version` runs, and warns when clang-cl or cmake is
     missing. A re-run with jm current downloads nothing. It holds no `exit`
     and is safe under `irm | iex` and dot-sourced, which is how jbx runs
     it. Before this the Windows pages said `py -m pip install just-makeit`

@@ -1272,12 +1272,14 @@ ______________________________________________________________________
 
 Install the build dependencies: cmake, a C compiler, pkg-config and, on Linux,
 patchelf through the system package manager when one of them is missing, then
-numpy and just-makeit into a Python venv at `path` (default `/tmp/jm-venv`).
-It prints the `source <path>/bin/activate` line to run. See
-[Get it](../index.md#get-it).
+numpy and just-makeit into a Python venv at `path`. Without one, the venv is
+the project's `.venv` when run in a project's root (a directory holding
+`pyproject.toml` or `just-makeit.toml`), and a per-user venv that survives a
+reboot anywhere else; `--help` names it. It prints the
+`source <path>/bin/activate` line to run. See [Get it](../index.md#get-it).
 
 ```sh
-just-makeit install-deps             # venv at /tmp/jm-venv
+just-makeit install-deps             # the default venv, as above
 just-makeit install-deps ~/my-venv   # venv elsewhere
 just-makeit install-deps --check     # report what is missing; install nothing
 ```
