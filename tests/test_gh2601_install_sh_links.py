@@ -288,20 +288,9 @@ def test_a_relative_venv_is_written_absolute(tmp_path):
     m = Machine(tmp_path)
     res = m.run(str(INSTALL_SH), "--", "./venv", cwd=tmp_path)
     assert res.returncode == 0, res.said
+    # Compared as text: Path() would fold a `./` the link still holds.
     target = os.readlink(m.bin / "jm")
-    assert Path(target).is_absolute(), target
-    assert Path(target) == m.venv.resolve() / "bin" / "jm"
-
-
-def test_cdpath_adds_no_line_to_the_venv(tmp_path):
-    # An exported CDPATH makes `cd` print the directory it entered; read
-    # through $(...) that became a second line of the venv's path.
-    m = Machine(tmp_path)
-    res = m.run(
-        str(INSTALL_SH), "venv", cwd=tmp_path, extra={"CDPATH": str(tmp_path)}
-    )
-    assert res.returncode == 0, res.said
-    assert Path(os.readlink(m.bin / "jm")) == m.venv.resolve() / "bin" / "jm"
+    assert target == str(m.venv.resolve() / "bin" / "jm"), target
 
 
 def test_a_link_into_a_venv_that_is_gone_is_replaced(tmp_path):
@@ -337,8 +326,17 @@ def test_a_relative_link_into_a_jm_venv_is_moved_here(tmp_path):
     m = Machine(tmp_path)
     other = _jm_venv(tmp_path / "older-venv")
     m.bin.mkdir(parents=True)
-    (m.bin / "jm").symlink_to(os.path.relpath(other / "bin" / "jm", m.bin))
-    res = m.child()
+    rel = os.path.relpath(other / "bin" / "jm", m.bin)
+    (m.bin / "jm").symlink_to(rel)
+    # A cwd from which the same relative path names something that is
+    # there but is NOT a jm venv, so a cwd-relative reading refuses it.
+    cwd = m.home / "a" / "b" / "c"
+    cwd.mkdir(parents=True)
+    decoy = (cwd / rel).parent
+    decoy.mkdir(parents=True)
+    _stub(decoy / "jm", "echo decoy")
+    _stub(decoy / "python", "exit 1")
+    res = m.run(str(INSTALL_SH), str(m.venv), cwd=cwd)
     assert res.returncode == 0, res.said
     assert Path(os.readlink(m.bin / "jm")) == m.venv.resolve() / "bin" / "jm"
 

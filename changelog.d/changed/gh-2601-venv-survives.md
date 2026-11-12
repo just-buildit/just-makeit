@@ -15,9 +15,9 @@
     left alone; a re-run replaces a `~/.local/bin` link into a venv that no
     longer exists, which is the way back after a reboot. Also: a relative
     link into a jm venv is no longer refused as foreign; an unwritable jbx
-    reload marker is named instead of reporting jm ready; an exported
-    `CDPATH` no longer corrupts the venv path. `install.ps1` no longer puts
-    the venv's `Scripts` folder (its `python.exe`, `pip.exe`) on `PATH`,
+    reload marker is named instead of reporting jm ready. `install.ps1`
+    no longer puts the venv's `Scripts` folder (its `python.exe`,
+    `pip.exe`) on `PATH`,
     keeps a working install when the package index cannot be asked,
     installs a wheel rebuilt at the same version, matches a relative or
     `/`-separated `JM_VENV` / `JM_BIN_DIR`, and names a folder where a

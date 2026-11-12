@@ -395,9 +395,11 @@ _jm_install() (
 _jm_link() (
     set -euo pipefail
     local venv bin py names name target dest old linked=0 jm_ok=0
-    # Absolute and physical, so every link resolves from any cwd. -P and
-    # the redirect: an exported CDPATH makes `cd` print the directory,
-    # which would become a second line of the path.
+    # Absolute and physical, so every link resolves from any cwd. The
+    # redirect: an exported CDPATH makes `cd` print the directory it found,
+    # which would become a second line of the path. (_jm_where already
+    # hands an absolute path, which CDPATH never searches; this keeps the
+    # function right on its own.)
     venv="$(cd -P -- "$1" >/dev/null && pwd -P)"
     bin="${HOME}/.local/bin"
     py="${venv}/bin/python"
