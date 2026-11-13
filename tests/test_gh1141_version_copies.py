@@ -212,7 +212,8 @@ class TestEveryTemplateIsClassified:
         "c/src/lib_stub.c",
         "py/package_init.py",
         "py/package_init_minimal.py",
-        # Rewritten by `apply` only while owned, so checked (gh-2640).
+        # Rewritten by `apply` only while owned, so checked (gh-2640). Its
+        # version arrives through `<<version_const>>`.
         "py/project_test.py",
         "cmake/CMakeLists_top.cmake",
         "doc/Doxyfile",
@@ -220,17 +221,27 @@ class TestEveryTemplateIsClassified:
         "toml/pyproject.toml",
     }
 
+    #: What puts a version into a rendered template. ``<<version_const>>``
+    #: is a slot `_new` fills with a ``<<version>>`` constant for a literal
+    #: version and with nothing for a computed one (gh-2640), so the
+    #: template still stamps a version without spelling ``<<version>>``.
+    STAMPS = ("<<version>>", "<<cmake_version>>", "<<version_const>>")
+
     def test_no_template_stamps_a_version_unclassified(self) -> None:
         stamping = {
             p.relative_to(TEMPLATES).as_posix()
             for p in TEMPLATES.rglob("*")
             if p.is_file()
-            and any(
-                s in p.read_text(encoding="utf-8")
-                for s in ("<<version>>", "<<cmake_version>>")
-            )
+            and any(s in p.read_text(encoding="utf-8") for s in self.STAMPS)
         }
         assert stamping == self.EXEMPT | self.CHECKED
+
+    def test_the_version_const_slot_carries_the_version(self) -> None:
+        # `STAMPS` counts `<<version_const>>` as a version only because the
+        # literal fill spells `<<version>>`; if it stops, so does this.
+        from just_makeit import _new
+
+        assert "<<version>>" in _new._VERSION_CONSTS["literal"]
 
 
 class TestConfigVersionWritesEveryCopy:
