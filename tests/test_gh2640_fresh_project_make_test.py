@@ -228,6 +228,21 @@ def test_a_computed_version_is_the_packages_answer(tmp_path, case):
     assert "test_version_is_a_nonempty_string" in out, out
     assert _tests_run(out) == 1, out
 
+    # No test reads the manifest's version here, so none is written: a
+    # dead `MANIFEST_VERSION` is still a version site, and a bump made by
+    # the project's own release tooling left it stale to `status --check`.
+    smoke = (pkg / "tests" / "test_project.py").read_text("utf-8")
+    assert "MANIFEST_VERSION" not in smoke, smoke
+    manifest = root / "just-makeit.toml"
+    before = manifest.read_text("utf-8")
+    bumped = before.replace('version = "0.1.0"', 'version = "0.2.0"', 1)
+    assert bumped != before, before
+    manifest.write_text(bumped, encoding="utf-8")
+    status = run_cli("status", "--check", cwd=root)
+    assert "test_project.py" not in status.stdout + status.stderr, (
+        status.stdout + status.stderr
+    )
+
 
 def test_an_annotated_literal_is_a_copy_jm_keeps(tmp_path):
     """``__version__: str = ...`` is the literal case: `status` reports it

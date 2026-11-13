@@ -77,6 +77,23 @@ def smoke_test_rel(pkg: str) -> str:
 #: ``_version.py``, a ``try`` fallback) is the package's own answer: a dev
 #: build's ``0.2.1.dev3+g...`` is right and the manifest's ``0.2.0`` is not
 #: what it should equal, so it is held only to being a version at all.
+#: The constant a literal check reads, and nothing for a computed one: a
+#: ``MANIFEST_VERSION`` no test reads is still a version site
+#: (`_projversion`), so a bump made outside ``jm config version`` -- a
+#: project's own release tooling -- left it stale to ``status --check``
+#: while proving nothing (doppler, on adopting 0.129.0).
+_VERSION_CONSTS = {
+    "literal": (
+        "\n"
+        "#: ``[project] version`` in just-makeit.toml. ``jm config version``"
+        " rewrites\n"
+        "#: this line together with ``__version__`` in the package's"
+        " ``__init__.py``.\n"
+        'MANIFEST_VERSION = "<<version>>"\n'
+    ),
+    "computed": "",
+}
+
 _VERSION_TESTS = {
     "literal": (
         "    def test_version_is_the_manifest_version(self):\n"
@@ -117,8 +134,10 @@ def _smoke_test_text(root: Path, project: str, render) -> str:
     kind = "computed" if binding == _projversion.COMPUTED else "literal"
     # Rendered first, then spliced: `PROJECT_TEST_PY` is a `PyTemplate`, and
     # a `str` method on it would drop the docstring `render` writes.
-    text = render(T.PROJECT_TEST_PY).replace(
-        "<<version_test>>", render(_VERSION_TESTS[kind])
+    text = (
+        render(T.PROJECT_TEST_PY)
+        .replace("<<version_const>>", render(_VERSION_CONSTS[kind]))
+        .replace("<<version_test>>", render(_VERSION_TESTS[kind]))
     )
     return T.owned_scaffold(text, SMOKE_TEST)
 
