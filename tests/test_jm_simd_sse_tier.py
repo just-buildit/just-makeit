@@ -15,11 +15,11 @@ exact, so the comparison is equality, not a tolerance.
 from __future__ import annotations
 
 import platform
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 HEADER_DIR = (
     Path(__file__).parent.parent
@@ -66,12 +66,9 @@ int main(void)
 """
 
 
-def _cc() -> str | None:
-    return shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
-
-
 pytestmark = pytest.mark.skipif(
-    platform.machine().lower() not in ("x86_64", "amd64") or _cc() is None,
+    platform.machine().lower() not in ("x86_64", "amd64")
+    or default_cc() is None,
     reason="the SSE2 tier is x86-64's; needs a C compiler",
 )
 
@@ -82,7 +79,7 @@ def _run(tmp_path: Path, flags: list[str]) -> list[int]:
     src.write_text(PROGRAM)
     subprocess.run(
         [
-            _cc(),
+            default_cc(),
             "-O2",
             *flags,
             "-I",
