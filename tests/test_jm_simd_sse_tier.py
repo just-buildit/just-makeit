@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _compilers import default_cc
+import _cbuild
 
 HEADER_DIR = (
     Path(__file__).parent.parent
@@ -68,28 +68,21 @@ int main(void)
 
 pytestmark = pytest.mark.skipif(
     platform.machine().lower() not in ("x86_64", "amd64")
-    or default_cc() is None,
+    or _cbuild.compiler_for() is None,
     reason="the SSE2 tier is x86-64's; needs a C compiler",
 )
 
 
 def _run(tmp_path: Path, flags: list[str]) -> list[int]:
     src = tmp_path / "t.c"
-    exe = tmp_path / "t"
     src.write_text(PROGRAM)
-    subprocess.run(
-        [
-            default_cc(),
-            "-O2",
-            *flags,
-            "-I",
-            str(HEADER_DIR),
-            str(src),
-            "-o",
-            str(exe),
-        ],
-        check=True,
-    )
+    exe = _cbuild.build(
+        "exe",
+        [src],
+        _cbuild.output(tmp_path, "t", "exe"),
+        flags=["-O2", *flags],
+        includes=[HEADER_DIR],
+    ).path
     out = subprocess.run(
         [str(exe)], check=True, capture_output=True, text=True
     )
