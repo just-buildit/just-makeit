@@ -94,8 +94,9 @@ JM_DEFINE_STEPS(fn, state_t, sample_t, LENGTH, BATCH, CHUNK)
 
 **What gets generated:**
 
-- Whenever a SIMD tier is active (AVX-512, AVX2, or NEON on aarch64 — see
-    the tier table below): fills a stack-resident scratch buffer
+- Whenever a SIMD tier is active (AVX-512, AVX2, SSE2 on any x86-64, or
+    NEON on aarch64 — see the tier table below): fills a stack-resident
+    scratch buffer
     (L1-resident, `LENGTH + CHUNK` samples), calls `fn##_step_batch()` in
     strides of `BATCH`, then falls through to the scalar tail via
     `fn##_step()`.
@@ -112,10 +113,9 @@ Convention: `state->delay[0..LENGTH-1]` is the delay line, `delay[0]` = newest.
     `state->delay[...]` in a loop that happens to run zero iterations when
     `LENGTH` is `0` — the member still has to exist for the translation unit
     to compile. A single-element placeholder field (e.g. `float delay[1]`)
-    is enough. This is easy to miss on **aarch64**, where NEON is
-    unconditionally active (unlike AVX2/AVX-512, which only turn on under
-    explicit compiler flags) — a `LENGTH=0` object that always compiled
-    fine on x86 can fail to build on aarch64 until you add the placeholder.
+    is enough. A SIMD tier is active on every x86-64 build (SSE2) and every
+    aarch64 build (NEON), so a `LENGTH=0` object without the placeholder
+    does not build on either.
 
 ### Controllable fields — `JM_DEFINE_STEPS_EX`
 
@@ -200,6 +200,7 @@ Included automatically by `jm_perf.h`; can also be included standalone.
 | AVX-512F   | 16                  | `__m512`      | `__m512d`     |
 | AVX2 + FMA | 8                   | `__m256`      | `__m256d`     |
 | NEON       | 4                   | `float32x4_t` | `float64x2_t` |
+| SSE2       | 4                   | `__m128`      | `__m128d`     |
 | Scalar     | 1                   | `float`       | `double`      |
 
 `JM_SIMD_WIDTH_F64` is half of `JM_SIMD_WIDTH_F32` on every SIMD tier; both
@@ -210,6 +211,13 @@ require explicit compiler flags (`-march=native` or similar) to turn on,
 NEON is part of the mandatory ARMv8-A baseline, so this tier is **always**
 active on aarch64 Linux/macOS, opt-in or not. 32-bit ARM is out of scope
 (no double-precision NEON there).
+
+SSE2 is the same on x86: part of every x86-64 baseline, so a portable
+build (no `-march`, or `-march=x86-64-v2`) runs four float lanes instead of
+one, and AVX2 + FMA still wins when the flags allow it. SSE has no fused
+multiply-add, so on this tier `JM_FMA_F32` is a multiply then an add,
+rounded twice: a result can differ from the AVX2 tier's, or from the scalar
+tier's, in the last place.
 
 ### Operation macros
 
