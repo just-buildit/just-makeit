@@ -67,9 +67,8 @@ int main(void)
 
 
 pytestmark = pytest.mark.skipif(
-    platform.machine().lower() not in ("x86_64", "amd64")
-    or _cbuild.compiler_for() is None,
-    reason="the SSE2 tier is x86-64's; needs a C compiler",
+    platform.machine().lower() not in ("x86_64", "amd64"),
+    reason="the SSE2 tier needs an x86-64 machine",
 )
 
 

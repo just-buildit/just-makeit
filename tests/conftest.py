@@ -366,6 +366,9 @@ _ALLOWED_SKIPS = (
     "got empty parameter set",
     # Hardware. No install fixes this.
     "AVX-512 not available",
+    # jm_simd.h's SSE2 tier is compiled and run, so it needs an x86-64
+    # machine; aarch64 has its own tier (NEON) and no way to run this one.
+    "the SSE2 tier needs an x86-64 machine",
     # A different linker, not a missing one: macOS is Apple ld, and the
     # test asserts a GNU ld/lld flag SPELLING. No install changes which
     # linker the platform has.
