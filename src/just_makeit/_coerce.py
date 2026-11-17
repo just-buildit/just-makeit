@@ -1553,7 +1553,7 @@ def defaulted_array_acq(
     got_var: str,
     elements_per_sample: int = 1,
 ) -> str:
-    """Acquire a defaulted array param only when the caller passed one.
+    r"""Acquire a defaulted array param only when the caller passed one.
 
     gh-2657: the contract an init-param's ``default = "[]"`` has had since
     gh-611, now on a method or module function too -- an omitted or ``None``
@@ -1586,14 +1586,13 @@ def defaulted_array_acq(
     --------
     >>> print(defaulted_array_acq(
     ...     "xs", "xs_obj", "xs_arr", "const float",
-    ...     "    PyArrayObject *xs_got = jm_array_arg(xs_obj, NPY_FLOAT32,"
-    ...     " NPY_ARRAY_C_CONTIGUOUS, \"xs\");\n"
+    ...     "    PyArrayObject *xs_got = acquire(xs_obj);\n"
     ...     "    if (!xs_got) { return NULL; }", "xs_got"))
         PyArrayObject *xs_arr = NULL;
         const float *xs = NULL;
         size_t xs_len = 0;
         if (xs_obj && xs_obj != Py_None) {
-            PyArrayObject *xs_got = jm_array_arg(xs_obj, NPY_FLOAT32, NPY_ARRAY_C_CONTIGUOUS, "xs");
+            PyArrayObject *xs_got = acquire(xs_obj);
             if (!xs_got) { return NULL; }
             xs_arr = xs_got;
             xs = (const float *)PyArray_DATA(xs_arr);
