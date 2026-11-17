@@ -9,8 +9,8 @@ numpy-style Python docstrings.
 Two responsibilities:
 
 1. :func:`extract_doc_blocks` — map each declared C function name in a header
-   to the raw ``/** ... */`` block that immediately precedes it. Shared by
-   ``apply`` (which re-derives on every run) and ``bind``.
+   to the raw ``/** ... */`` block nearest above it (see ``_DOC_GAP``).
+   Shared by ``apply`` (which re-derives on every run) and ``bind``.
 2. :func:`parse_doxygen_block` — turn one raw block into a structured
    :class:`DoxyBlock` (summary, body, params, return), tolerant of partial or
    malformed tags. Returns ``None`` when the block carries no real content
@@ -459,10 +459,55 @@ _DECL_NAME_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
+# What may sit BETWEEN a doc comment and the declaration it documents
+# (gh-2653). Doxygen's rule, and the one place jm states it: whitespace,
+# ORDINARY comments and preprocessor directives are skipped; anything else
+# ends the binding. Every doc binder concatenates this string rather than restating it,
+# so the function binders and the struct binder cannot disagree.
+#
+# Before, only whitespace was skipped. A preprocessor line was tolerated by
+# accident -- the declaration match swallowed it -- and an ordinary comment
+# was not tolerated at all, so this header, made includable from C++, lost
+# its docstring with no message and turned doppler's drift-check red:
+#
+#     /** @brief Square-clip a complex sample. */
+#     #ifdef __cplusplus
+#       /* From C++ this calls the out-of-line copy. */
+#       float _Complex dp_square_clip (float _Complex y, float lin);
+#     #else
+#
+# Each alternative is one whole item, and they begin with distinct characters
+# (whitespace, `/*`, `//`, `#`), so the repetition cannot split one item into
+# two. That matters: Python 3.9 has no atomic groups, and an ambiguous gap
+# would backtrack exponentially on a header where the binding then fails.
+#
+# - An ordinary block comment is `/*` NOT followed by `*` or `!`; `/**/` is
+#   the one `/**` spelling that is ordinary (it is empty), so it is listed.
+# - An ordinary line comment is `//` not followed by `!` or by exactly one
+#   more `/`. A `////` ruler is allowed through: it is not documentation
+#   (see `_RULER_ONLY_RE`). The `(?=\n|\Z)` pins the comment to the end of
+#   its line, so a `#` inside it can never be re-read as a directive.
+# - A directive runs to the end of its line, with backslash continuations.
+#   `#define` is NOT skipped: a macro is a documentable entity in its own
+#   right, so Doxygen gives the block to the macro and the function after it
+#   gets nothing. Skipping it would hand a macro's docs to that function --
+#   which is what the old incidental tolerance did.
+#
+# A doc comment (`/**`, `/*!`, `///`, `//!`) is none of these, so a SECOND
+# doc block still ends the binding and the nearest block wins (gh-666).
+_DOC_GAP = (
+    r"(?:\s"
+    r"|/\*(?![*!])(?:(?!\*/)[\s\S])*\*/"
+    r"|/\*\*/"
+    r"|//(?!!|/(?!/))[^\n]*(?=\n|\Z)"
+    r"|\#(?![ \t]*define\b)(?:[^\n\\]|\\[\s\S])*(?=\n|\Z)"
+    r")*"
+)
+
 # A SINGLE comment block (the inner pattern forbids ``*/`` so it can't bridge
 # across an intervening block — e.g. the file-level ``@file`` header) that is
-# immediately followed by a function declaration *or* an inline definition
-# (whitespace only between; the decl must not itself start a comment). The
+# followed by a function declaration *or* an inline definition, with only a
+# `_DOC_GAP` between (the decl must not itself start a comment). The
 # trailing `[;{]` matches a prototype's `;` or an inline body's opening `{`
 # (gh-385); the `(…)` requirement before it keeps `typedef struct { … }` and
 # other brace blocks without a parameter list from matching.
@@ -487,11 +532,22 @@ _DECL_NAME_RE = re.compile(
 # declaration by whitespace alone was therefore extracted as that function's
 # block, so `int taps; /**< Number of filter taps. */` above a declaration gave
 # it the brief `< Number of filter taps.` — the stray `<` reaching both faces.
-_DECL_TAIL = r"(?P<decl>[^;{}/*\s][^;{}/]*?\([^;{}/]*\)\s*[;{])"
+#
+# The decl's first character also excludes `#` (gh-2653): a directive is the
+# gap's to skip or to stop at, never the start of a declaration. That is what
+# makes `#define` end the binding instead of being swallowed into the decl.
+_DECL_TAIL = r"(?P<decl>[^;{}/*\s#][^;{}/]*?\([^;{}/]*\)\s*[;{])"
+_DOC_BLOCK = r"(?P<raw>/\*[*!](?!<)(?:(?!\*/)[\s\S])*?\*/)"
 _BLOCK_THEN_DECL_RE = re.compile(
-    r"(?P<raw>/\*[*!](?!<)(?:(?!\*/)[\s\S])*?\*/)\s*" + _DECL_TAIL,
+    _DOC_BLOCK + _DOC_GAP + _DECL_TAIL,
     re.DOTALL,
 )
+
+# A doc block and the gap after it, with nothing required to follow: its end
+# is where the documented construct must begin. The struct binder looks a
+# definition's start up in these ends (gh-2653), so it skips exactly what
+# the function binders skip.
+_BLOCK_THEN_GAP_RE = re.compile(_DOC_BLOCK + _DOC_GAP, re.DOTALL)
 
 # The line-comment spelling of the same thing: a run of `///` or `//!` lines
 # immediately above a declaration. `(?!<)` again excludes the trailing
@@ -501,7 +557,7 @@ _BLOCK_THEN_DECL_RE = re.compile(
 # A run is consecutive lines with no blank between them, matching how Doxygen
 # reads them; the run then binds to the declaration the same way a block does.
 _LINE_RUN_THEN_DECL_RE = re.compile(
-    r"(?P<raw>(?:^[ \t]*//[/!](?!<)[^\n]*\n)+)\s*" + _DECL_TAIL,
+    r"(?P<raw>(?:^[ \t]*//[/!](?!<)[^\n]*\n)+)" + _DOC_GAP + _DECL_TAIL,
     re.MULTILINE | re.DOTALL,
 )
 
@@ -521,11 +577,15 @@ def _decl_name(decl: str) -> str | None:
 
 
 def extract_doc_blocks(header_text: str) -> dict[str, str]:
-    """Map each documented C function name to its raw ``/** ... */`` block.
+    r"""Map each documented C function name to its raw ``/** ... */`` block.
 
-    Only declarations *immediately* preceded by a doc block are included
-    (separated by whitespace only). The raw block text retains the
-    ``/** ... */`` delimiters so callers can hand it straight to
+    A declaration is documented by the NEAREST doc comment above it, the
+    way Doxygen binds one. Between the two, whitespace, ordinary (non-doc)
+    comments and preprocessor directives other than ``#define`` are skipped
+    (``_DOC_GAP``, gh-2653); anything else -- a second doc comment, a
+    ``#define``, another declaration -- ends the binding, and the
+    declaration is left out. The raw block text retains the ``/** ... */``
+    delimiters so callers can hand it straight to
     :func:`parse_doxygen_block`.
 
     Parameters
@@ -537,6 +597,27 @@ def extract_doc_blocks(header_text: str) -> dict[str, str]:
     -------
     dict
         ``{c_function_name: raw_block_including_delimiters}``.
+
+    Examples
+    --------
+    An ordinary comment and a C++ guard between the block and the
+    prototype do not break the binding -- the header shape gh-2653 reported:
+
+    >>> h = (
+    ...     "/** @brief Clip. */\n"
+    ...     "#ifdef __cplusplus\n"
+    ...     "  /* From C++ this calls the out-of-line copy. */\n"
+    ...     "  float clip (float y);\n"
+    ...     "#endif\n"
+    ... )
+    >>> extract_doc_blocks(h)
+    {'clip': '/** @brief Clip. */'}
+
+    A ``#define`` is documentable itself, so the block is the macro's and
+    the function after it is undocumented:
+
+    >>> extract_doc_blocks("/** @brief Max. */\n#define M 1\nint f(void);")
+    {}
     """
     out: dict[str, str] = {}
     for pattern in (_BLOCK_THEN_DECL_RE, _LINE_RUN_THEN_DECL_RE):
@@ -1095,17 +1176,19 @@ def extract_struct_doc_blocks(header_text: str) -> "dict[str, str]":
     {'clip_t': '/** @brief One clip. */'}
     """
     out: dict[str, str] = {}
+    # Where each doc block's binding reach ends: the block, then the same
+    # `_DOC_GAP` the function binders skip (gh-2653), so an ordinary
+    # comment or a `#if` between a block and its struct no longer drops
+    # the struct's doc either. A struct starting exactly there is the one
+    # the block documents -- Doxygen binds the nearest preceding block.
+    # `_DOC_BLOCK` already refuses a `/**<` trailing member doc.
+    bound = {
+        m.end(): m.group("raw")
+        for m in _BLOCK_THEN_GAP_RE.finditer(header_text)
+    }
     for names, start, _body in _struct_bodies(header_text):
-        # The comment that ends where the definition starts, whitespace
-        # between -- Doxygen binds the nearest preceding block. A `/**<`
-        # opener is a trailing member doc of the line above, never this
-        # struct's, as in `_BLOCK_THEN_DECL_RE`.
-        head = header_text[:start].rstrip()
-        if not head.endswith("*/"):
-            continue
-        i = head.rfind("/*", 0, len(head) - 2)
-        raw = head[i:]
-        if i < 0 or raw[:3] not in ("/**", "/*!") or raw[:4] == "/**<":
+        raw = bound.get(start)
+        if raw is None:
             continue
         for name in names:
             out.setdefault(name, raw)
