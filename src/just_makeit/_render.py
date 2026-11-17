@@ -1525,6 +1525,8 @@ def _build_params_parse(
     arr_acq: list[str] = []  # array acquisition lines (after ParseTuple)
     call_args: list[str] = []  # final C args to pass
     arr_names: list[str] = []  # arr variable names for Py_DECREF cleanup
+    # gh-2657: the defaulted arrays among them, which may still be NULL.
+    nullable_arrs: set[str] = set()
     # gh-353: borrowed path PyBytes (from PyUnicode_FSConverter). DECREF'd only
     # AFTER the C call (the C side copies the string during the call — gh-219
     # UAF), and on every pre-call error path before returning NULL.
@@ -1572,9 +1574,10 @@ def _build_params_parse(
             _edflt = p.get("default") or ""
             decl_lines.append(f'    const char *{pname} = "{_edflt}";')
             addr_exprs.append(f"&{pname}")
-            prior = "".join(f" Py_DECREF({a});" for a in arr_names) + "".join(
-                f" {_coerce.path_release(n)}" for n in path_names
-            )
+            prior = "".join(
+                f" {_coerce.array_release(a, a in nullable_arrs)}"
+                for a in arr_names
+            ) + "".join(f" {_coerce.path_release(n)}" for n in path_names)
             # gh-1026: one emitter, so the refusal a caller meets does not
             # depend on which surface the enum was declared on. This site is
             # the one the issue names: it said only `invalid sample_type
@@ -1600,8 +1603,14 @@ def _build_params_parse(
             # Build error path: decref all arrays + path objects (gh-353)
             # acquired so far.
             prior_decrefs = "".join(
-                f" Py_DECREF({a});" for a in arr_names
+                f" {_coerce.array_release(a, a in nullable_arrs)}"
+                for a in arr_names
             ) + "".join(f" {_coerce.path_release(n)}" for n in path_names)
+            # gh-2657: as _context/_parse.py's branch -- a defaulted array is
+            # acquired inside a branch, into `got`, only when it was passed.
+            defaulted = _coerce.defaulted_array(p)
+            acq_var = f"{pname}_got" if defaulted else arr_var
+            acq_start = len(arr_acq)
             is_out = param_writable(p)
             npy_flags = (
                 "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE"
@@ -1623,10 +1632,10 @@ def _build_params_parse(
                     ).rstrip("\n")
                 )
             arr_acq.append(
-                f"    PyArrayObject *{arr_var} = (PyArrayObject *)"
+                f"    PyArrayObject *{acq_var} = (PyArrayObject *)"
                 f"\n"
                 f"        {_coerce.array_arg(obj_var, npy_enum, npy_flags, pname, _coerce.str_hint(p))};\n"
-                f"    if (!{arr_var}) {{{prior_decrefs} return NULL; }}"
+                f"    if (!{acq_var}) {{{prior_decrefs} return NULL; }}"
             )
             # gh-805 §C: the module-function copy of _context/_parse.py's
             # branch. Both call the one emitter rather than each spelling the
@@ -1637,16 +1646,30 @@ def _build_params_parse(
             if _rank:
                 arr_acq.append(
                     _coerce.array_rank_guard(
-                        pname, arr_var, _rank, prior_decrefs.strip()
+                        pname, acq_var, _rank, prior_decrefs.strip()
                     ).rstrip("\n")
                 )
-            arr_acq.append(
-                f"    {const_qual}{elem_disp} *{pname} = "
-                f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
-                + _coerce.array_len_c(
-                    pname, arr_var, _coerce.elements_per_sample(p)
+            if defaulted:
+                arr_acq[acq_start:] = [
+                    _coerce.defaulted_array_acq(
+                        pname,
+                        obj_var,
+                        arr_var,
+                        f"{const_qual}{elem_disp}",
+                        "\n".join(arr_acq[acq_start:]),
+                        acq_var,
+                        _coerce.elements_per_sample(p),
+                    )
+                ]
+                nullable_arrs.add(arr_var)
+            else:
+                arr_acq.append(
+                    f"    {const_qual}{elem_disp} *{pname} = "
+                    f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
+                    + _coerce.array_len_c(
+                        pname, arr_var, _coerce.elements_per_sample(p)
+                    )
                 )
-            )
             arr_names.append(arr_var)
             call_args.extend([pname, f"{pname}_len"])
         elif p.get("capsule"):
@@ -1752,9 +1775,10 @@ def _build_params_parse(
     )
     # The final cleanup (emitted by callers AFTER the C call): array DECREFs +
     # path XDECREFs (gh-353 — the C side has copied the string by now).
-    cleanup = "".join(f"    Py_DECREF({a});\n" for a in arr_names) + "".join(
-        f"    {_coerce.path_release(n)}\n" for n in path_names
-    )
+    cleanup = "".join(
+        f"    {_coerce.array_release(a, a in nullable_arrs)}\n"
+        for a in arr_names
+    ) + "".join(f"    {_coerce.path_release(n)}\n" for n in path_names)
     return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 

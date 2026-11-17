@@ -199,7 +199,9 @@ def _stub_params(
                     # gh-1724: the one helper. gh-1733: an `out` / `mutable`
                     # array takes only a writable ndarray, never a byte buffer.
                     T.array_param_annotation(pt, writable=T.param_writable(p)),
-                    "",
+                    # gh-2657: omittable, so the signature says so -- `...`,
+                    # gh-611's spelling for the constructor's defaulted array.
+                    " = ..." if _coerce.defaulted_array(p) else "",
                 )
             )
         elif p.get("enum"):

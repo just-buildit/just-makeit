@@ -1873,6 +1873,33 @@ frees (gh-2272), so a released kernel must return in bounded time. On a
 `varargs` or `manual_stub` method, whose CPython function is yours, it is
 refused: release the GIL in that function (gh-2259).
 
+#### A defaulted param (gh-240, gh-2657)
+
+A param with a `default` is optional, and every param after it must have one
+too. A scalar's default is its C literal, and an enum param's is its choice
+string. An array param takes only `default = "[]"`. Omitted, or passed
+`None`, the array reaches the kernel as `NULL` with length `0`, the same
+contract as an init-param's:
+
+```toml
+[[thing.methods]]
+name        = "put"
+arg_type    = "void"
+return_type = "int"
+params = [
+    { name = "n",  type = "uint32_t" },
+    { name = "xs", type = "float _Complex[]", default = "[]" },
+]
+```
+
+```python
+thing.put(1)          # xs == NULL, xs_len == 0
+thing.put(1, xs)      # the array, as passed
+```
+
+jm refuses any other array default at load, and any default on a `path` or
+`bytes` param, which no face can render.
+
 #### Capsule-typed params (gh-432)
 
 A param may carry `capsule = "<name>"` (and optionally
@@ -2076,6 +2103,10 @@ One entry per `just-makeit function` call.
 | `why`                                               | bool                          | `--why`: the C function takes a trailing `const char **why` (gh-1706)                                                                 |
 | `status_errors`                                     | array                         | `--status-error`: status → exception table (gh-1614)                                                                                  |
 | `impl`, `impl_file`, `replace`                      | string / table                | A body `jm apply` re-stamps — as for an [object](#component-lifecycle-impl-bodies)                                                    |
+
+A param's `default` reads as it does on a method. An array param takes only
+`default = "[]"`, and when omitted it reaches the function as `NULL` with
+length `0`. See [A defaulted param](#a-defaulted-param-gh-240-gh-2657).
 
 ______________________________________________________________________
 

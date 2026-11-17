@@ -1054,6 +1054,8 @@ def _build_params_parse(
     arr_acq: list[str] = []  # array acquisition lines (after ParseTuple)
     call_args: list[str] = []  # final C args to pass
     arr_names: list[str] = []  # arr variable names for Py_DECREF cleanup
+    # gh-2657: the defaulted arrays among them, which may still be NULL.
+    nullable_arrs: set[str] = set()
     # gh-1272: borrowed `PyBytes` from `PyUnicode_FSConverter`, released AFTER
     # the C call has copied the string. A method's borrow outlives the parse
     # block -- unlike an array's, which `arr_acq` owns -- so it goes in the
@@ -1172,7 +1174,16 @@ def _build_params_parse(
             addr_exprs.append(f"&{obj_var}")
 
             # Build error path: decref all arrays acquired so far.
-            prior_decrefs = "".join(f" Py_DECREF({a});" for a in arr_names)
+            prior_decrefs = "".join(
+                f" {_coerce.array_release(a, a in nullable_arrs)}"
+                for a in arr_names
+            )
+            # gh-2657: a defaulted array is acquired inside a branch, into
+            # `got`, and published to `arr_var` only when the caller passed
+            # one; every line below names `acq_var`.
+            defaulted = _coerce.defaulted_array(p)
+            acq_var = f"{pname}_got" if defaulted else arr_var
+            acq_start = len(arr_acq)
             is_out = param_writable(p)
             npy_flags = (
                 "NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE"
@@ -1197,7 +1208,8 @@ def _build_params_parse(
                     npy_enum=npy_enum,
                     dtype_fn=f"{sid_prefix}_{pname}" if _rec else "",
                     obj_var=obj_var,
-                    arr_var=arr_var,
+                    arr_var=acq_var,
+                    label=pname,
                     flags=npy_flags,
                     fail=f"{prior_decrefs} return NULL;".strip(),
                     # gh-1426 B: an `out` param already has its own exact
@@ -1215,16 +1227,30 @@ def _build_params_parse(
             if _rank:
                 arr_acq.append(
                     _coerce.array_rank_guard(
-                        pname, arr_var, _rank, prior_decrefs.strip()
+                        pname, acq_var, _rank, prior_decrefs.strip()
                     ).rstrip("\n")
                 )
-            arr_acq.append(
-                f"    {const_qual}{elem_disp} *{pname} = "
-                f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
-                + _coerce.array_len_c(
-                    pname, arr_var, _coerce.elements_per_sample(p)
+            if defaulted:
+                arr_acq[acq_start:] = [
+                    _coerce.defaulted_array_acq(
+                        pname,
+                        obj_var,
+                        arr_var,
+                        f"{const_qual}{elem_disp}",
+                        "\n".join(arr_acq[acq_start:]),
+                        acq_var,
+                        _coerce.elements_per_sample(p),
+                    )
+                ]
+                nullable_arrs.add(arr_var)
+            else:
+                arr_acq.append(
+                    f"    {const_qual}{elem_disp} *{pname} = "
+                    f"({const_qual}{elem_disp} *)PyArray_DATA({arr_var});\n"
+                    + _coerce.array_len_c(
+                        pname, arr_var, _coerce.elements_per_sample(p)
+                    )
                 )
-            )
             arr_names.append(arr_var)
             call_args.extend([pname, f"{pname}_len"])
         elif p.get("capsule"):
@@ -1321,9 +1347,10 @@ def _build_params_parse(
     # caller emits after the C call has copied the string (gh-219's rule) and
     # on every error path after the parse. `Py_XDECREF` is NULL-safe, so it is
     # correct even where `PyUnicode_FSConverter` never ran.
-    cleanup = "".join(f"    Py_DECREF({a});\n" for a in arr_names) + "".join(
-        f"    {_coerce.path_release(n)}\n" for n in path_names
-    )
+    cleanup = "".join(
+        f"    {_coerce.array_release(a, a in nullable_arrs)}\n"
+        for a in arr_names
+    ) + "".join(f"    {_coerce.path_release(n)}\n" for n in path_names)
     return "\n".join(lines) + "\n", ", ".join(call_args), cleanup
 
 

@@ -6206,10 +6206,58 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
         for pm in entry.get(key, []) or []:
             err = _declared_type_error(
                 pm, f"{what}: {noun} {pm.get('name', '?')!r}"
+            ) or _param_default_error(
+                pm, f"{what}: {noun} {pm.get('name', '?')!r}"
             )
             if err:
                 errors.append(err)
     return errors
+
+
+def _param_default_error(entry: dict, what: str) -> str:
+    """Refuse a param ``default`` the binding has no way to honour (gh-2657).
+
+    An array param takes only ``default = "[]"``: omitted, or passed as
+    ``None``, it reaches the C call as ``NULL`` with length ``0`` -- the
+    contract an init-param's has had since gh-611. Any other value
+    (``"[1, 2]"``, ``"NULL"``) names an array jm would have to build, and
+    rendering it as ``[]`` would silently disagree with the manifest.
+
+    A ``path`` or ``bytes`` param takes none: the stub and docstring have no
+    Python spelling for one, and before this the renderer raised a bare
+    ``KeyError`` naming only the type.
+
+    Examples
+    --------
+    >>> _param_default_error(
+    ...     {"name": "xs", "type": "float[]", "default": "[]"}, "w")
+    ''
+    >>> _param_default_error(
+    ...     {"name": "xs", "type": "float[]", "default": "[1]"}, "w"
+    ... ).splitlines()[0]
+    'w declares default = \'[1]\'; an array param takes only default = "[]".'
+    >>> _param_default_error(
+    ...     {"name": "p", "type": "path", "default": "NULL"}, "w"
+    ... ).splitlines()[0]
+    "w is a 'path' param and cannot declare a default."
+    """
+    dflt = str(entry.get("default") or "").strip()
+    ctype = str(entry.get("type", ""))
+    if not dflt or any(entry.get(k) for k in _FOREIGN_TYPE_KEYS):
+        return ""
+    if ctype.endswith("[]") and dflt != "[]":
+        return (
+            f"{what} declares default = {dflt!r}; an array param takes only"
+            ' default = "[]".\n'
+            "  Omitted or passed as None, it then reaches the C call as NULL"
+            " with length 0."
+        )
+    if ctype in _T.PSEUDO_TYPES:
+        return (
+            f"{what} is a {ctype!r} param and cannot declare a default.\n"
+            "  Drop `default`, so the caller always passes one."
+        )
+    return ""
 
 
 def _declared_type_error(entry: dict, what: str) -> str:
