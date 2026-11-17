@@ -15,6 +15,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from _compilers import NO_AVX512, has_avx512f
 from _jmrun import run_cli
 
 STEPS = (
@@ -297,13 +298,6 @@ def _scaffold_perf(tmp_path_factory):
     return root
 
 
-def _has_avx512() -> bool:
-    cpuinfo = Path("/proc/cpuinfo")
-    return cpuinfo.exists() and "avx512f" in cpuinfo.read_text(
-        encoding="utf-8"
-    )
-
-
 class TestStep7PerfScalar:
     """Scalar-path correctness — always runs, no AVX-512 required."""
 
@@ -343,8 +337,8 @@ class TestStep7PerfSIMD:
 
     @pytest.fixture(scope="class")
     def installed_simd(self, tmp_path_factory):
-        if not _has_avx512():
-            pytest.skip("AVX-512 not available on this host")
+        if not has_avx512f():
+            pytest.skip(NO_AVX512)
 
         root = _scaffold_perf(tmp_path_factory)
 

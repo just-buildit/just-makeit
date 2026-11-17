@@ -260,3 +260,29 @@ WINDOWS_CONSUMER_GAP = (
 #: install stood in for by POSIX directory permissions. Each use names its
 #: subject after the prefix.
 POSIX_ONLY = "POSIX-only subject:"
+
+#: The skip reason when the host cannot run AVX-512 code, which
+#: ``tests/conftest.py`` allows: the silicon is absent, and no install adds
+#: it.
+NO_AVX512 = "AVX-512 not available on this host"
+
+
+def has_avx512f() -> bool:
+    """Whether this host's CPU runs AVX-512F code (``-mavx512f`` output).
+
+    Read from ``/proc/cpuinfo``, so it answers only on Linux; elsewhere it
+    is False and an AVX-512 test skips with `NO_AVX512`. A false negative
+    costs a skip, never a crash: running an ``-mavx512f`` binary to find out
+    would die with SIGILL on a CPU without it.
+
+    Two files asked this, ``test_example_fir_filter.py`` and the SIMD tier
+    test (gh-2656); one now.
+
+    >>> isinstance(has_avx512f(), bool)
+    True
+    """
+    cpuinfo = "/proc/cpuinfo"
+    if not os.path.exists(cpuinfo):
+        return False
+    with open(cpuinfo, encoding="utf-8") as f:
+        return "avx512f" in f.read()
