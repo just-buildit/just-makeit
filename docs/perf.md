@@ -107,15 +107,16 @@ You optionally write `step_batch()` for SIMD. `JM_DEFINE_STEPS` owns the rest.
 
 Convention: `state->delay[0..LENGTH-1]` is the delay line, `delay[0]` = newest.
 
-!!! warning "`state->delay` must exist even for a stateless object (`LENGTH=0`)"
+!!! note "A stateless object (`LENGTH = 0`) needs no `delay` member"
 
-    Whenever a SIMD tier is active, the generated `steps()` references
-    `state->delay[...]` in a loop that happens to run zero iterations when
-    `LENGTH` is `0` — the member still has to exist for the translation unit
-    to compile. A single-element placeholder field (e.g. `float delay[1]`)
-    is enough. A SIMD tier is active on every x86-64 build (SSE2) and every
-    aarch64 build (NEON), so a `LENGTH=0` object without the placeholder
-    does not build on either.
+    Spell `LENGTH` as `0`, or as a macro that expands to `0`, and
+    `JM_DEFINE_STEPS` emits no history copy, so `steps()` never names
+    `state->delay`. The preprocessor can only match that token, not
+    evaluate an expression: `(0)`, `0u` or `TAPS - 1` with `TAPS` 1 is
+    treated as a real length and still names `state->delay` whenever a SIMD
+    tier is active, which is every x86-64 build (SSE2) and every aarch64
+    build (NEON). Spell it `0`, or keep a one-element placeholder field
+    (`float delay[1]`).
 
 ### Controllable fields — `JM_DEFINE_STEPS_EX`
 
