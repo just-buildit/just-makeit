@@ -419,7 +419,17 @@ def run(args: list[str]) -> None:
                 print(
                     f"error: --param type '{ptype}' is not a supported type.\n"
                     f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
-                    f'Array syntax: name:type[]  e.g. ctrl:"float _Complex[]"',
+                    f'Array syntax: name:type[]  e.g. ctrl:"float _Complex[]"'
+                    # gh-2652: a method param's enum is manifest-only until
+                    # gh-2665 gives `jm method --param` jm function's form.
+                    + T.enum_spelling_hint(
+                        ptype,
+                        "the manifest (a method's --param has no enum form"
+                        " yet):\n  in its [[<obj>.methods]] params, then"
+                        " `just-makeit apply`:"
+                        f'\n  {{ name = "{pname}", type = "int", '
+                        'enum = "<enum>" }',
+                    ),
                     file=sys.stderr,
                 )
                 sys.exit(1)
