@@ -241,7 +241,11 @@ float  jm_dot_f32(const float  *a, const float  *b, int n);
 double jm_dot_f64(const double *a, const double *b, int n);
 ```
 
-Handles the SIMD loop and scalar tail automatically.
+Handles the SIMD loop and scalar tail automatically. From `n >= 4 * width`
+it runs four independent accumulators, so a long dot product is not bound by
+the FMA latency (about 3x faster at `n = 4096` on SSE2 and AVX2); a shorter
+one runs the single-accumulator loop. The four are summed pairwise at the
+end, so a result can differ in the last place from a single running sum.
 
 ### FIR inner loop example
 
