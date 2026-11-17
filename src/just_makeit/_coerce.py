@@ -1505,6 +1505,119 @@ def array_len_c(pname: str, arr_var: str, elements_per_sample: int = 1) -> str:
     )
 
 
+def defaulted_array(param: dict) -> bool:
+    """Whether a method or function array param may be omitted (gh-2657).
+
+    ``default = "[]"`` is the only default an array param takes (refused
+    otherwise at load, ``_config._param_default_error``), and it makes the
+    argument optional: the format joins the ``|`` group, so an omitted
+    argument leaves its ``<p>_obj`` local ``NULL``. The binding must then
+    not acquire it, which is what :func:`defaulted_array_acq` emits.
+
+    Examples
+    --------
+    >>> defaulted_array({"name": "xs", "type": "float[]", "default": "[]"})
+    True
+    >>> defaulted_array({"name": "xs", "type": "float[]"})
+    False
+    >>> defaulted_array({"name": "k", "type": "int", "default": "0"})
+    False
+    """
+    return str(param.get("type", "")).endswith("[]") and bool(
+        str(param.get("default") or "").strip()
+    )
+
+
+def array_release(arr_var: str, nullable: bool = False) -> str:
+    """The release of an acquired array local, NULL-safe when it may be unset.
+
+    A defaulted array (:func:`defaulted_array`) the caller omitted is never
+    acquired, so its local is still ``NULL`` on every path that releases it
+    -- the error exits after it and the cleanup after the C call.
+    ``Py_DECREF(NULL)`` is the crash; ``Py_XDECREF`` is the release.
+
+    Examples
+    --------
+    >>> array_release("x_arr"), array_release("x_arr", nullable=True)
+    ('Py_DECREF(x_arr);', 'Py_XDECREF(x_arr);')
+    """
+    return f"Py_{'X' if nullable else ''}DECREF({arr_var});"
+
+
+def defaulted_array_acq(
+    pname: str,
+    obj_var: str,
+    arr_var: str,
+    ptr_type: str,
+    acquire: str,
+    got_var: str,
+    elements_per_sample: int = 1,
+) -> str:
+    """Acquire a defaulted array param only when the caller passed one.
+
+    gh-2657: the contract an init-param's ``default = "[]"`` has had since
+    gh-611, now on a method or module function too -- an omitted or ``None``
+    argument reaches the C call as ``NULL`` with length ``0``. Before this
+    the acquisition ran unconditionally and handed ``PyArray_FromAny`` the
+    ``NULL`` object, a segfault on the first call that omitted it.
+
+    The three locals the call reads are declared unset at the top level, so
+    every later line names them whichever way the branch went; *acquire*
+    is the face's own acquisition (dtype guard, conversion, rank guard),
+    run inside the branch into *got_var*, then published to them.
+
+    Parameters
+    ----------
+    pname : str
+        The parameter; the C call reads ``<pname>`` and ``<pname>_len``.
+    obj_var, arr_var : str
+        The parsed object and the array local every release names.
+    ptr_type : str
+        The data pointer's type, ``const``-qualified as the face spells it.
+    acquire : str
+        Lines that leave a new reference in *got_var*, one indent deep;
+        they are indented one more level here.
+    got_var : str
+        The local *acquire* declares and fills.
+    elements_per_sample : int
+        The interleave divisor :func:`array_count_c` applies.
+
+    Examples
+    --------
+    >>> print(defaulted_array_acq(
+    ...     "xs", "xs_obj", "xs_arr", "const float",
+    ...     "    PyArrayObject *xs_got = jm_array_arg(xs_obj, NPY_FLOAT32,"
+    ...     " NPY_ARRAY_C_CONTIGUOUS, \"xs\");\n"
+    ...     "    if (!xs_got) { return NULL; }", "xs_got"))
+        PyArrayObject *xs_arr = NULL;
+        const float *xs = NULL;
+        size_t xs_len = 0;
+        if (xs_obj && xs_obj != Py_None) {
+            PyArrayObject *xs_got = jm_array_arg(xs_obj, NPY_FLOAT32, NPY_ARRAY_C_CONTIGUOUS, "xs");
+            if (!xs_got) { return NULL; }
+            xs_arr = xs_got;
+            xs = (const float *)PyArray_DATA(xs_arr);
+            xs_len = (size_t)PyArray_SIZE(xs_arr);
+        }
+    """
+    inner = "\n".join(
+        f"    {ln}" if ln.strip() else ln
+        for ln in acquire.rstrip("\n").split("\n")
+    )
+    return (
+        f"    PyArrayObject *{arr_var} = NULL;\n"
+        f"    {ptr_type} *{pname} = NULL;\n"
+        f"    size_t {pname}_len = 0;\n"
+        f"    if ({obj_var} && {obj_var} != Py_None) {{\n"
+        f"{inner}\n"
+        f"        {arr_var} = {got_var};\n"
+        f"        {pname} = ({ptr_type} *)PyArray_DATA({arr_var});\n"
+        f"        {pname}_len = "
+        f"{array_count_c(arr_var, elements_per_sample)};\n"
+        f"    }}"
+    )
+
+
 def output_size_c(
     var: str,
     size_expr: str,
