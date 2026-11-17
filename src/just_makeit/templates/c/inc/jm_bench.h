@@ -135,7 +135,7 @@ typedef struct {
  * may record any number of rows. It was a fixed array of 32, and
  * jm_bench_add returned without a word once it was full: a 39-row benchmark
  * printed all 39 rows, exited 0 and wrote a JSON holding 32. `= {0}` is
- * still the whole initialisation -- NULL, 0, 0 is an empty bench. */
+ * still the whole initialization -- NULL, 0, 0 is an empty bench. */
 typedef struct {
     jm_bench_entry_t *entries; /* `count` rows, room for `cap` */
     int count;
@@ -335,7 +335,7 @@ jm_bench_write_json(jm_bench_t *b, const char *component)
 {
     char fname[256];
     snprintf(fname, sizeof(fname), "bench_%s_core.json", component);
-    /* gh-2294: the UCRT deprecates fopen and localtime in favour of their
+    /* gh-2294: the UCRT deprecates fopen and localtime in favor of their
      * _s forms, a warning on by default under clang-cl; -Werror made it an
      * error, and every Windows bench built that way failed. */
     FILE *fp = NULL;
