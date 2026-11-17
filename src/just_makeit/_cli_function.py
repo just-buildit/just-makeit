@@ -139,7 +139,12 @@ def run(args: list[str]) -> None:
                     f"error: {tok} type '{ptype}' is not a supported type.\n"
                     f"Supported scalar: {', '.join(sorted(T._CTYPE_META))}\n"
                     f"Array syntax: name:type[]"
-                    f'  e.g. ctrl:"float _Complex[]"',
+                    f'  e.g. ctrl:"float _Complex[]"'
+                    # gh-2652: `enum:` is taken above, so what reaches here
+                    # is an inline list, which a function cannot spell.
+                    + T.enum_spelling_hint(
+                        ptype, f"--param {pname}:enum:<enum>"
+                    ),
                     file=sys.stderr,
                 )
                 sys.exit(1)

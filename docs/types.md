@@ -696,12 +696,12 @@ An enum reaches the generated code by two different spellings, and they are
 not interchangeable — the same declaration in the wrong place is either
 inert or an error:
 
-| Where                 | Spelling                           |
-| --------------------- | ---------------------------------- |
-| method param          | `type = "int"` + `enum = "<name>"` |
-| module-function param | `type = "int"` + `enum = "<name>"` |
-| object property       | `type = "int"` + `enum = "<name>"` |
-| **init_param**        | `type = "enum:<name>"`             |
+| Where                 | Spelling                                                                        |
+| --------------------- | ------------------------------------------------------------------------------- |
+| method param          | `type = "int"` + `enum = "<name>"`                                              |
+| module-function param | `type = "int"` + `enum = "<name>"`                                              |
+| object property       | `type = "int"` + `enum = "<name>"` (`jm property --type enum:<name>` writes it) |
+| **init_param**        | `type = "enum:<name>"`                                                          |
 
 The `enum` key keeps the enum's **name**, so the generated C indexes the
 `[[enum]]` SSOT table directly. The init_param form flattens to

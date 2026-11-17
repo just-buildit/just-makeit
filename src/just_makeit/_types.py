@@ -2029,6 +2029,86 @@ def enum_ref_name(ptype: str) -> str:
     return ptype[len("enum:") :]
 
 
+def enum_spelling_hint(ctype: str, use: str) -> str:
+    r"""The line a type refusal appends when the refused type is an enum.
+
+    gh-2652. An enum reaches jm by two spellings that are not
+    interchangeable: an init_param writes it in ``type`` (``enum:<name>``
+    or an inline ``string_enum:a,b``), while a property, a method param
+    and a module-function param write ``type = "int"`` plus a separate
+    ``enum = "<name>"`` key (docs/types.md, "Enum params: which spelling
+    goes where"). An author who reaches for the init_param spelling one
+    table over was refused with a list of scalar types and nothing to act
+    on -- doppler fell back to an int property that way. Every refusal on
+    a ``--type``-like surface therefore asks this one function, so the
+    surfaces cannot drift into naming different routes, or none.
+
+    The hint says two things. For an inline ``string_enum:`` list it
+    first gives the top-level ``[[enum]]`` table to declare, with the
+    refused choices already filled in, because every non-init_param
+    surface decodes through a *named* enum and an inline list has no
+    spelling there. Then it gives *use*: the surface's own spelling, with
+    the enum's name substituted where *use* writes ``<enum>``.
+
+    Parameters
+    ----------
+    ctype : str
+        The type spelling that was refused. Recognised as an enum when it
+        is an ``enum:<name>`` reference, a ``string_enum:a,b`` list, or the
+        bare word ``enum`` / ``string_enum`` -- what a ``name:type:default``
+        split leaves when the author wrote ``k:enum:win``.
+    use : str
+        How the refusing surface spells an enum, e.g.
+        ``"--type enum:<enum>"``. Every ``<enum>`` in it is replaced by the
+        enum's name when the refused type carries one, and left as the
+        placeholder otherwise.
+
+    Returns
+    -------
+    str
+        ``""`` when *ctype* is not an enum spelling, so a caller appends
+        it unconditionally; otherwise the hint, starting with a newline.
+
+    Examples
+    --------
+    >>> enum_spelling_hint("double", "--type enum:<enum>")
+    ''
+    >>> print(enum_spelling_hint("enum:win", "--type enum:<enum>"))
+    <BLANKLINE>
+    For an enum, use: --type enum:win
+    >>> print(enum_spelling_hint("string_enum:hann,flat", "--enum <enum>"))
+    <BLANKLINE>
+    An inline string_enum: list has no spelling here; declare a top-level
+    [[enum]] in just-makeit.toml and name it:
+      [[enum]]
+      name = "<enum>"
+      values = ["hann", "flat"]
+    For an enum, use: --enum <enum>
+    >>> enum_spelling_hint("enum", "x").endswith("use: x")
+    True
+    """
+    bare = ctype in ("enum", "string_enum")
+    if not (bare or is_enum_ref(ctype) or is_string_enum_type(ctype)):
+        return ""
+    name = enum_ref_name(ctype) if is_enum_ref(ctype) else ""
+    declare = ""
+    if is_string_enum_type(ctype) or ctype == "string_enum":
+        choices = (
+            string_enum_choices(ctype) if is_string_enum_type(ctype) else []
+        )
+        values = ", ".join(f'"{c}"' for c in choices if c) or "..."
+        declare = (
+            "\nAn inline string_enum: list has no spelling here; declare a "
+            "top-level\n[[enum]] in just-makeit.toml and name it:\n"
+            '  [[enum]]\n  name = "<enum>"\n'
+            f"  values = [{values}]"
+        )
+    return (
+        f"{declare}\nFor an enum, use: "
+        f"{use.replace('<enum>', name or '<enum>')}"
+    )
+
+
 # gh-543: the container property kinds. A property whose `type` is one of
 # these is backed by an iteration protocol the core implements (count/key/value
 # accessors) rather than by a scalar C value, so it never reaches _CTYPE_META.
@@ -2263,10 +2343,18 @@ def state_type_error(name: str, ctype: str) -> str | None:
     if is_valid_type(ctype):
         return None
     legal = ", ".join(sorted(set(_CTYPE_META) - set(_STATE_REFUSED)))
+    # gh-2652: a state field holding an enum is its C int; the string is
+    # a property's (or an init_param's) presentation of it.
     return (
         f"unsupported type '{ctype}' for state field '{name}'.\n"
         f"State types: {legal}\n"
         f"Array syntax: type[N]  e.g. float[64]"
+        + enum_spelling_hint(
+            ctype,
+            f"--state {name}:int (a state field keeps the enum's C int),\n"
+            f"  then read it as the name with\n"
+            f"  just-makeit property <obj> {name} --field --type enum:<enum>",
+        )
     )
 
 

@@ -43,6 +43,77 @@ from ._init import (
 )
 
 
+#: How a property spells an enum, for `T.enum_spelling_hint` (gh-2652): the
+#: command-line sugar, its canonical flags, and the manifest row both write.
+ENUM_PROPERTY_USE = (
+    "--type enum:<enum>\n"
+    "  (the same as --type int --enum <enum>; in the manifest,\n"
+    '  type = "int" and enum = "<enum>" on the [[<obj>.properties]] row)'
+)
+
+
+def enum_type_flag(ctype: str, enum: str) -> "tuple[str, str]":
+    """Rewrite ``--type enum:<name>`` to ``--type int --enum <name>``.
+
+    gh-2652. An init_param spells an enum in its type (``enum:<name>``); a
+    property spells it ``type = "int"`` plus ``enum = "<name>"`` (gh-519),
+    because the generated getter indexes the named ``[[enum]]`` table and
+    the C side keeps the int. doppler wrote the init_param spelling on
+    ``jm property`` -- the reasonable guess, one table over -- and was
+    refused. This makes that spelling a command-line synonym for the
+    property's own: it is resolved here, once, before `run` sees anything,
+    so the property code path, the manifest row it writes and what
+    ``jm script`` replays are exactly those of ``--type int --enum
+    <name>``. The manifest keeps the canonical form; a hand-written
+    ``type = "enum:<name>"`` row is still refused by `run`, naming that
+    form (gh-2664 tracks accepting it there too).
+
+    Parameters
+    ----------
+    ctype : str
+        The ``--type`` value as given.
+    enum : str
+        The ``--enum`` value as given, ``""`` when absent.
+
+    Returns
+    -------
+    tuple of str
+        ``(ctype, enum)`` to hand to `run`. Unchanged unless *ctype* is a
+        non-empty ``enum:<name>`` reference. An empty ``enum:`` is left
+        alone, so `run` refuses it with the hint naming the forms.
+
+    Raises
+    ------
+    SystemExit
+        When ``--enum`` names a different enum than the ``enum:`` type --
+        the two flags would each claim the property, and silently picking
+        one is the foot-gun.
+
+    Examples
+    --------
+    >>> enum_type_flag("enum:win", "")
+    ('int', 'win')
+    >>> enum_type_flag("enum:win", "win")
+    ('int', 'win')
+    >>> enum_type_flag("double", "")
+    ('double', '')
+    >>> enum_type_flag("enum:", "")
+    ('enum:', '')
+    """
+    if not T.is_enum_ref(ctype) or not T.enum_ref_name(ctype):
+        return ctype, enum
+    name = T.enum_ref_name(ctype)
+    if enum and enum != name:
+        print(
+            f"error: --type '{ctype}' and --enum '{enum}' name two "
+            f"different enums.\nGive one: --type enum:{name} is the same "
+            f"as --type int --enum {name}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return "int", name
+
+
 def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
     """Each setter whose C status the generated binding would throw away.
 
@@ -449,8 +520,13 @@ def run(
         supported = ", ".join(
             sorted(T._CTYPE_META) + list(T.CONTAINER_KINDS) + [T.JSON_KIND]
         )
+        # gh-2652: an enum spelling names the property form that works.
+        # `--type enum:<name>` itself never gets here from the command line
+        # (`enum_type_flag` rewrote it); from `jm apply` it is a manifest
+        # row, so both spellings are given.
         print(
-            f"error: unsupported --type '{ctype}'.\nSupported: {supported}",
+            f"error: unsupported --type '{ctype}'.\nSupported: {supported}"
+            + T.enum_spelling_hint(ctype, ENUM_PROPERTY_USE),
             file=sys.stderr,
         )
         sys.exit(1)

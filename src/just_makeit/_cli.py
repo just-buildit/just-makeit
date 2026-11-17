@@ -336,7 +336,8 @@ Commands:
 
   property <obj> <name> [OPTIONS]  Add a Python property to an object.
     --module name               Module the object lives in.
-    --type TYPE                 C type of the property value.
+    --type TYPE                 C type of the property value. enum:<name>
+                                is the same as --type int --enum <name>.
     --writable                  Generate a setter in addition to the getter.
     --field                     Back property with a struct field (no getter C fn).
     --buf-field name            Back property with a buffer field (ndarray view).
@@ -1345,6 +1346,9 @@ def _main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        # gh-2652: `--type enum:<name>` is the init_param spelling; rewrite
+        # it to the property's own before anything else reads either flag.
+        ctype, enum = _property.enum_type_flag(ctype, enum)
 
         _property.run(
             Path.cwd(),
