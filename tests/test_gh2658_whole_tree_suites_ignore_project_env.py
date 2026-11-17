@@ -45,16 +45,21 @@ def _make(*args: str) -> str:
     return r.stdout
 
 
-def _project_env_tests() -> list[str]:
-    files = _make(
-        "--eval=_gh2658: ; @echo $(PROJECT_ENV_TESTS)", "_gh2658"
-    ).split()
+def _project_env_tests(tmp_path: Path) -> list[str]:
+    # A second makefile, not `--eval`: macOS ships GNU make 3.81, which has
+    # no `--eval`, and this ran only on Linux before it reached that leg.
+    printer = tmp_path / "print.mk"
+    printer.write_text(
+        "_gh2658:\n\t@echo $(PROJECT_ENV_TESTS)\n", encoding="utf-8"
+    )
+    files = _make("-f", "Makefile", "-f", str(printer), "_gh2658").split()
     assert "tests/test_gh1724_array_stub_mypy.py" in files, files
     return files
 
 
 @pytest.mark.parametrize("target", SUITES)
-def test_the_suite_ignores_every_project_env_test(target):
+def test_the_suite_ignores_every_project_env_test(target, tmp_path):
+    expected = _project_env_tests(tmp_path)
     printed = _make("-n", *target.split())
     runs = [
         ln
@@ -63,7 +68,5 @@ def test_the_suite_ignores_every_project_env_test(target):
     ]
     assert runs, f"`make -n {target}` runs no whole-tree pytest:\n{printed}"
     for run in runs:
-        missing = [
-            f for f in _project_env_tests() if f"--ignore={f}" not in run
-        ]
+        missing = [f for f in expected if f"--ignore={f}" not in run]
         assert not missing, f"`make {target}` collects {missing}:\n{run}"
