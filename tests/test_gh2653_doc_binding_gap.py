@@ -26,6 +26,9 @@ overshoot:
 - a second DOC comment (the nearest block wins, gh-666);
 - a ``#define``, which is documentable itself. The old incidental tolerance
   handed a macro's block to the function after it; that was a bug too.
+
+A linkage-spec opener, ``extern "C" {``, is skipped as well: Doxygen ignores
+it when binding, and it is the other half of the same C++-includable shape.
 """
 
 from __future__ import annotations
@@ -112,7 +115,17 @@ _SKIPPED = {
     "continued_directive": "#if defined(A) \\\n    || defined(B)\n",
     "cxx_guard_then_comment": "#ifdef __cplusplus\n// for C++\n",
     "nested_conditionals": "#ifdef A\n#ifndef B\n/* x */\n",
+    "extern_c_opener": 'extern "C" {\n',
+    "extern_c_guarded": (
+        '#ifdef __cplusplus\nextern "C" {\n#endif\n/* C linkage */\n'
+    ),
 }
+
+
+def test_extern_c_declaration_is_not_skipped() -> None:
+    """`extern "C"` without a brace is part of the declaration it starts."""
+    src = '/** @brief Doc. */\nextern "C" int f(int x);\n'
+    assert _brief(src, "f") == "Doc."
 
 
 @pytest.mark.parametrize("gap", sorted(_SKIPPED))

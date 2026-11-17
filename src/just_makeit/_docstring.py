@@ -477,7 +477,7 @@ _DECL_NAME_RE = re.compile(
 #     #else
 #
 # Each alternative is one whole item, and they begin with distinct characters
-# (whitespace, `/*`, `//`, `#`), so the repetition cannot split one item into
+# (whitespace, `/*`, `//`, `#`, `extern`), so the repetition cannot split one item into
 # two. That matters: Python 3.9 has no atomic groups, and an ambiguous gap
 # would backtrack exponentially on a header where the binding then fails.
 #
@@ -492,6 +492,11 @@ _DECL_NAME_RE = re.compile(
 #   right, so Doxygen gives the block to the macro and the function after it
 #   gets nothing. Skipping it would hand a macro's docs to that function --
 #   which is what the old incidental tolerance did.
+# - A linkage-spec opener, `extern "C" {`, is skipped: Doxygen ignores it
+#   when binding a doc to the declaration after it, and it is the C++
+#   half of the same "includable from C++" shape. The braced form only --
+#   `extern "C" int f(void);` is a declaration and the decl match keeps it.
+#   The `#ifdef __cplusplus` guard around it is a directive, already above.
 #
 # A doc comment (`/**`, `/*!`, `///`, `//!`) is none of these, so a SECOND
 # doc block still ends the binding and the nearest block wins (gh-666).
@@ -501,6 +506,7 @@ _DOC_GAP = (
     r"|/\*\*/"
     r"|//(?!!|/(?!/))[^\n]*(?=\n|\Z)"
     r"|\#(?![ \t]*define\b)(?:[^\n\\]|\\[\s\S])*(?=\n|\Z)"
+    r'|extern[ \t]*"C"\s*\{'
     r")*"
 )
 
