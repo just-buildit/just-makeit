@@ -6215,7 +6215,7 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
 
 
 def _param_default_error(entry: dict, what: str) -> str:
-    """Refuse a param ``default`` the binding has no way to honour (gh-2657).
+    r"""Refuse a param ``default`` the binding has no way to honour (gh-2657).
 
     An array param takes only ``default = "[]"``: omitted, or passed as
     ``None``, it reaches the C call as ``NULL`` with length ``0`` -- the
