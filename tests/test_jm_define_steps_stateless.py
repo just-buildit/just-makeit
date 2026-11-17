@@ -149,15 +149,19 @@ def _headers(root: Path) -> Path:
     root.mkdir()
     owner = {"project": {"name": "p", "schema": "7"}}
     ctx = {"package": "p", **INC.ctx_slots(owner)}
-    (root / "jm_perf.h").write_text(R.render(R.JM_PERF_H, ctx))
-    (root / "jm_simd.h").write_text(R.render(R.JM_SIMD_H, ctx))
+    (root / "jm_perf.h").write_text(
+        R.render(R.JM_PERF_H, ctx), encoding="utf-8"
+    )
+    (root / "jm_simd.h").write_text(
+        R.render(R.JM_SIMD_H, ctx), encoding="utf-8"
+    )
     return root
 
 
 def test_stateless_steps_need_no_delay_member(tmp_path: Path) -> None:
     inc = _headers(tmp_path / "inc")
     src = tmp_path / "t.c"
-    src.write_text(PROGRAM)
+    src.write_text(PROGRAM, encoding="utf-8")
     exe = _cbuild.build(
         "exe",
         [src],
