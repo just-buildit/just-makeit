@@ -27,6 +27,11 @@ def parse_state_flag(
         )
         sys.exit(1)
     name, ctype = parts[0], parts[1]
+    # gh-2652: `k:enum:win` split the enum's name off into the default
+    # slot. A state field has no enum type, so this is refused below either
+    # way; rejoining it lets the refusal name the enum the author meant.
+    if ctype in ("enum", "string_enum") and len(parts) == 3:
+        ctype = f"{ctype}:{parts[2]}"
     # gh-1514: the same answer apply's make_state_ctx gives a manifest entry.
     why = T.state_type_error(name, ctype)
     if why is not None:

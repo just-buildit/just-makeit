@@ -1211,6 +1211,18 @@ ValueError: invalid file_type 'nope' (choices: raw, wav, blue)
 The stub types it as `Literal["raw", "wav", "blue"]`, so a typo is caught by
 mypy rather than at runtime.
 
+On the command line, `--type enum:<name>` is the same property as
+`--type int --enum <name>`, the spelling an init-param uses (gh-2652). The
+manifest row it writes is the canonical one above:
+
+```sh
+just-makeit property reader file_type --field --type enum:ftype
+```
+
+An inline `--type string_enum:a,b` is refused with the `[[enum]]` to
+declare, since a property decodes through a named enum (gh-2664 tracks
+both an inline list and a manifest row spelled `type = "enum:<name>"`).
+
 Two things worth knowing:
 
 - **The value is range-checked.** If the C side holds an index the table
