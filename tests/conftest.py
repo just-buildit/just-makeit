@@ -357,6 +357,7 @@ from just_makeit._pyfmt import flatten_signatures  # noqa: E402,F401
 from _compilers import (  # noqa: E402
     ASAN_NO_PRELOAD_MACOS,
     ASAN_NO_PRELOAD_WINDOWS,
+    NO_AVX512,
     POSIX_ONLY,
     WINDOWS_CONSUMER_GAP,
 )
@@ -365,10 +366,12 @@ _ALLOWED_SKIPS = (
     # A ratchet with nothing left to hold. It shrinks to empty by design.
     "got empty parameter set",
     # Hardware. No install fixes this.
-    "AVX-512 not available",
-    # jm_simd.h's SSE2 tier is compiled and run, so it needs an x86-64
-    # machine; aarch64 has its own tier (NEON) and no way to run this one.
-    "the SSE2 tier needs an x86-64 machine",
+    NO_AVX512,
+    # jm_simd.h's tiers are compiled and run, so each needs the machine
+    # it targets: an x86-64 one for SSE2 and AVX2, an aarch64 one for NEON.
+    # No install runs one architecture's tier on the other.
+    "tier needs an x86-64 machine",
+    "tier needs an aarch64 machine",
     # A different linker, not a missing one: macOS is Apple ld, and the
     # test asserts a GNU ld/lld flag SPELLING. No install changes which
     # linker the platform has.

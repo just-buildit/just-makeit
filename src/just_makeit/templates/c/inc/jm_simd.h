@@ -251,18 +251,50 @@ typedef double JM_VEC_F64;
 
 #endif /* SIMD tier */
 
-/* ── Dot product: SIMD-vectorised + scalar tail ───────────────────────── */
+/* ── Dot product: four accumulators, one-vector loop, scalar tail ──────
+ *
+ * Why four accumulators: with one, every multiply-add waits for the
+ * previous one's add to finish, so a long dot product runs at the FMA (or,
+ * on SSE2, the add) LATENCY -- about four cycles a vector -- while the core
+ * can start one or two a cycle. Four independent chains keep that many in
+ * flight; they are combined once, pairwise, after the main loop (gh-2656:
+ * at n = 4096, about four times faster on NEON and three on SSE2/AVX2).
+ *
+ * The order of work:
+ *   1. n >= 4 * width: the four-accumulator loop, four vectors an
+ *      iteration, then acc = (acc + acc1) + (acc2 + acc3).
+ *   2. The one-vector loop over what is left: fewer than four vectors, or
+ *      all of n when n < 4 * width. A short dot runs only this, the old
+ *      single-accumulator code, so it pays nothing for the wide loop.
+ *   3. The scalar tail, fewer than one vector.
+ *
+ * Step 1 associates the sum differently, so a result can differ from the
+ * single-accumulator one in the last place. The scalar tier (width 1) runs
+ * the same code: four scalar chains, then the one-element loop, and an
+ * empty tail. */
 
 static inline float jm_dot_f32(
         const float  * JM_RESTRICT a,
         const float  * JM_RESTRICT b, int n)
 {
+    const int w = JM_SIMD_WIDTH_F32;
     JM_VEC_F32 acc = JM_ZERO_F32();
     int i = 0;
-#if JM_SIMD_WIDTH_F32 > 1
-    for (; i <= n - JM_SIMD_WIDTH_F32; i += JM_SIMD_WIDTH_F32)
+    if (n >= 4 * w) {
+        JM_VEC_F32 acc1 = JM_ZERO_F32();
+        JM_VEC_F32 acc2 = JM_ZERO_F32();
+        JM_VEC_F32 acc3 = JM_ZERO_F32();
+        for (; i <= n - 4 * w; i += 4 * w) {
+            const float *x = a + i, *y = b + i;
+            JM_FMA_F32(acc,  JM_LOAD_F32(x),         JM_LOAD_F32(y));
+            JM_FMA_F32(acc1, JM_LOAD_F32(x + w),     JM_LOAD_F32(y + w));
+            JM_FMA_F32(acc2, JM_LOAD_F32(x + 2 * w), JM_LOAD_F32(y + 2 * w));
+            JM_FMA_F32(acc3, JM_LOAD_F32(x + 3 * w), JM_LOAD_F32(y + 3 * w));
+        }
+        acc = JM_ADD_F32(JM_ADD_F32(acc, acc1), JM_ADD_F32(acc2, acc3));
+    }
+    for (; i <= n - w; i += w)
         JM_FMA_F32(acc, JM_LOAD_F32(a + i), JM_LOAD_F32(b + i));
-#endif
     float s = JM_HSUM_F32(acc);
     for (; i < n; i++) s += a[i] * b[i];
     return s;
@@ -272,12 +304,24 @@ static inline double jm_dot_f64(
         const double * JM_RESTRICT a,
         const double * JM_RESTRICT b, int n)
 {
+    const int w = JM_SIMD_WIDTH_F64;
     JM_VEC_F64 acc = JM_ZERO_F64();
     int i = 0;
-#if JM_SIMD_WIDTH_F64 > 1
-    for (; i <= n - JM_SIMD_WIDTH_F64; i += JM_SIMD_WIDTH_F64)
+    if (n >= 4 * w) {
+        JM_VEC_F64 acc1 = JM_ZERO_F64();
+        JM_VEC_F64 acc2 = JM_ZERO_F64();
+        JM_VEC_F64 acc3 = JM_ZERO_F64();
+        for (; i <= n - 4 * w; i += 4 * w) {
+            const double *x = a + i, *y = b + i;
+            JM_FMA_F64(acc,  JM_LOAD_F64(x),         JM_LOAD_F64(y));
+            JM_FMA_F64(acc1, JM_LOAD_F64(x + w),     JM_LOAD_F64(y + w));
+            JM_FMA_F64(acc2, JM_LOAD_F64(x + 2 * w), JM_LOAD_F64(y + 2 * w));
+            JM_FMA_F64(acc3, JM_LOAD_F64(x + 3 * w), JM_LOAD_F64(y + 3 * w));
+        }
+        acc = JM_ADD_F64(JM_ADD_F64(acc, acc1), JM_ADD_F64(acc2, acc3));
+    }
+    for (; i <= n - w; i += w)
         JM_FMA_F64(acc, JM_LOAD_F64(a + i), JM_LOAD_F64(b + i));
-#endif
     double s = JM_HSUM_F64(acc);
     for (; i < n; i++) s += a[i] * b[i];
     return s;
