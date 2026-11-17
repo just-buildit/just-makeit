@@ -138,13 +138,13 @@ class TestApplyMaterialize:
         cmake = tmp_path / "native" / "src" / "ddc_fn" / "CMakeLists.txt"
         pyi = tmp_path / "src" / "proj" / "ddc_fn" / "ddc_fn.pyi"
         assert ext.exists() and cmake.exists() and pyi.exists()
-        assert "PyInit_ddc_fn" in ext.read_text()
-        assert 'include "ddc/ddc_core.h"' in ext.read_text()
+        assert "PyInit_ddc_fn" in ext.read_text(encoding="utf-8")
+        assert 'include "ddc/ddc_core.h"' in ext.read_text(encoding="utf-8")
 
     def test_top_cmake_wires_add_subdirectory(self, tmp_path):
         _project_with_capsule(tmp_path)
         apply_run(tmp_path)
-        top = (tmp_path / "CMakeLists.txt").read_text()
+        top = (tmp_path / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/ddc_fn)" in top
 
     def test_package_override_places_pyi_in_sibling(self, tmp_path):
@@ -206,7 +206,7 @@ class TestApplyMaterialize:
 class TestManifestRoundTrip:
     def test_capsule_keys_survive_dump(self, tmp_path):
         _project_with_capsule(tmp_path, package="ddc")
-        text = (tmp_path / "just-makeit.toml").read_text()
+        text = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
         assert 'kind = "capsule"' in text
         assert 'package = "ddc"' in text
         assert 'header = "ddc/ddc_core.h"' in text

@@ -81,17 +81,23 @@ def _ctor_calls(text: str) -> set:
 class TestOwned:
     def test_a_fresh_scaffold_carries_the_token(self, tmp_path, module):
         root = _project(tmp_path, module=module)
-        first = _test_path(root, module).read_text().splitlines()[0]
+        first = (
+            _test_path(root, module)
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
         assert first == TOKEN
 
     def test_a_new_init_param_reaches_the_test(self, tmp_path, module):
         """The issue's symptom: the test kept calling the old constructor."""
         root = _project(tmp_path, module=module)
-        before = _ctor_calls(_test_path(root, module).read_text())
+        before = _ctor_calls(
+            _test_path(root, module).read_text(encoding="utf-8")
+        )
         _add_init_param(root)
         r = run_cli("apply", cwd=root)
         assert r.returncode == 0, r.stderr
-        after = _test_path(root, module).read_text()
+        after = _test_path(root, module).read_text(encoding="utf-8")
         assert after.splitlines()[0] == TOKEN
         assert "G(level=3)" in after, after
         assert _ctor_calls(after) != before
@@ -111,7 +117,9 @@ class TestOwned:
         root = _project(tmp_path, module=module)
         assert run_cli("status", "--check", cwd=root).returncode == 0
         path = _test_path(root, module)
-        path.write_text(path.read_text() + "\n# drift\n")
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8"
+        )
         assert run_cli("status", "--check", cwd=root).returncode != 0
         r = run_cli("status", cwd=root)
         assert re.search(
@@ -121,12 +129,12 @@ class TestOwned:
     def test_deleting_the_token_hands_it_over(self, tmp_path, module):
         root = _project(tmp_path, module=module)
         path = _test_path(root, module)
-        mine = path.read_text().replace(TOKEN + "\n", "", 1)
+        mine = path.read_text(encoding="utf-8").replace(TOKEN + "\n", "", 1)
         mine += "\n\ndef test_mine():\n    assert True\n"
-        path.write_text(mine)
+        path.write_text(mine, encoding="utf-8")
         _add_init_param(root)
         assert run_cli("apply", cwd=root).returncode == 0
-        assert path.read_text() == mine
+        assert path.read_text(encoding="utf-8") == mine
         # A module object's header is not reconciled (gh-627), so `--check`
         # also reports a CTOR finding there; only the test file is asked.
         assert "tests/test_g.py" not in run_cli("status", cwd=root).stdout
@@ -137,7 +145,7 @@ class TestOwned:
         suite caught it)."""
         root = _project(tmp_path, module=module)
         path = _test_path(root, module)
-        assert "def test_reset" in path.read_text()
+        assert "def test_reset" in path.read_text(encoding="utf-8")
         frag = root / "objects" / "g.toml"
         target = frag if frag.is_file() else root / "just-makeit.toml"
         text = target.read_text(encoding="utf-8")
@@ -147,7 +155,7 @@ class TestOwned:
         )
         r = run_cli("apply", cwd=root)
         assert r.returncode == 0, r.stderr
-        assert "def test_reset" not in path.read_text()
+        assert "def test_reset" not in path.read_text(encoding="utf-8")
 
 
 def test_an_untokened_test_is_never_written(tmp_path):
@@ -155,13 +163,13 @@ def test_an_untokened_test_is_never_written(tmp_path):
     exactly as it is whatever the constructor does."""
     root = _project(tmp_path)
     path = _test_path(root, False)
-    old = path.read_text().replace(
+    old = path.read_text(encoding="utf-8").replace(
         TOKEN + "\n", "", 1
     )  # what jm <= 0.87 wrote
-    path.write_text(old)
+    path.write_text(old, encoding="utf-8")
     _add_init_param(root)
     assert run_cli("apply", cwd=root).returncode == 0
-    assert path.read_text() == old
+    assert path.read_text(encoding="utf-8") == old
 
 
 def test_a_neighbours_token_does_not_count(tmp_path):
@@ -169,11 +177,13 @@ def test_a_neighbours_token_does_not_count(tmp_path):
     that jm rendered THIS file, the same rule as a copied fragment."""
     root = _project(tmp_path)
     path = _test_path(root, False)
-    copied = path.read_text().replace(TOKEN, "# jm:generated test_h.py", 1)
-    path.write_text(copied)
+    copied = path.read_text(encoding="utf-8").replace(
+        TOKEN, "# jm:generated test_h.py", 1
+    )
+    path.write_text(copied, encoding="utf-8")
     _add_init_param(root)
     assert run_cli("apply", cwd=root).returncode == 0
-    assert path.read_text() == copied
+    assert path.read_text(encoding="utf-8") == copied
 
 
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")

@@ -164,12 +164,15 @@ class TestTheRatchet:
             (
                 "test_dropped",
                 lambda root: (root / "tests/test_dropped.py").write_text(
-                    _gate("drop this.").replace("GATE:", "XXXX:")
+                    _gate("drop this.").replace("GATE:", "XXXX:"),
+                    encoding="utf-8",
                 ),
             ),
             (
                 "Makefile:a make target holds this.",
-                lambda root: (root / "Makefile").write_text("all:\n"),
+                lambda root: (root / "Makefile").write_text(
+                    "all:\n", encoding="utf-8"
+                ),
             ),
         ],
         ids=["file-deleted", "line-dropped", "makefile-gate"],
@@ -202,7 +205,7 @@ class TestTheRatchet:
         self._on(
             repo,
             lambda root: (root / "tests/test_new.py").write_text(
-                _gate("do it.")
+                _gate("do it."), encoding="utf-8"
             ),
         )
         assert GI.check(repo.root, "main") == 0
@@ -216,7 +219,7 @@ class TestTheRatchet:
             repo.branch(
                 name,
                 lambda root, n=name: (root / f"tests/{n}.py").write_text(
-                    _gate(f"{n} holds.")
+                    _gate(f"{n} holds."), encoding="utf-8"
                 ),
             )
         for order in (

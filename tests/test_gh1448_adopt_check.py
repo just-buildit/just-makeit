@@ -109,9 +109,10 @@ class TestTheThreeStates:
         proj = _project(tmp_path)
         frag = proj / FRAG
         frag.write_text(
-            frag.read_text()
+            frag.read_text(encoding="utf-8")
             + "\nstatic PyObject *\nBlkObj_mine(PyObject *s)\n"
-            "{\n    return NULL;\n}\n"
+            "{\n    return NULL;\n}\n",
+            encoding="utf-8",
         )
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 1, r.stdout
@@ -123,7 +124,7 @@ class TestTheThreeStates:
         codegen change -- gh-1447's finding -- so it asks."""
         proj = _project(tmp_path)
         frag = proj / FRAG
-        s = frag.read_text()
+        s = frag.read_text(encoding="utf-8")
         s2 = re.sub(
             r"if \(PyArray_SetBaseObject\(([^;]*?)\) < 0\) \{[^}]*\}",
             r"PyArray_SetBaseObject(\1);",
@@ -132,7 +133,7 @@ class TestTheThreeStates:
             flags=re.S,
         )
         assert s2 != s, "fixture no longer contains the checked call"
-        frag.write_text(s2)
+        frag.write_text(s2, encoding="utf-8")
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 1, r.stdout
         assert "needs acknowledgement" in r.stdout, r.stdout
@@ -147,9 +148,10 @@ class TestTheThreeStates:
     def test_an_already_generated_fragment_is_not_re_reported(self, tmp_path):
         proj = _project(tmp_path)
         frag_toml = proj / "objects" / "blk.toml"
-        s = frag_toml.read_text()
+        s = frag_toml.read_text(encoding="utf-8")
         frag_toml.write_text(
-            s.replace("[blk]", '[blk]\nfragment = "generated"', 1)
+            s.replace("[blk]", '[blk]\nfragment = "generated"', 1),
+            encoding="utf-8",
         )
         # The KEY alone is not a flip -- "about to be adopted" and "adopted
         # last month" carry the same key. The ownership token an owned
@@ -185,9 +187,10 @@ class TestAViewGoesWithItsParent:
             p.name for p in (proj / "native" / "src" / "dsp").iterdir()
         )
         view_frag.write_text(
-            view_frag.read_text()
+            view_frag.read_text(encoding="utf-8")
             + "\nstatic PyObject *\nPeekObj_mine(PyObject *s)\n"
-            "{\n    return NULL;\n}\n"
+            "{\n    return NULL;\n}\n",
+            encoding="utf-8",
         )
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 1, r.stdout
@@ -246,13 +249,14 @@ class TestLayoutIsNotADifference:
         """End to end, with the project's own formatter in play."""
         proj = _project(tmp_path)
         (proj / ".clang-format").write_text(
-            "BasedOnStyle: GNU\nColumnLimit: 79\n"
+            "BasedOnStyle: GNU\nColumnLimit: 79\n", encoding="utf-8"
         )
         cfg = proj / "just-makeit.toml"
         cfg.write_text(
-            cfg.read_text().replace(
+            cfg.read_text(encoding="utf-8").replace(
                 "[project]", '[project]\nc_style = "clang-format"', 1
-            )
+            ),
+            encoding="utf-8",
         )
         assert run_cli("apply", cwd=proj).returncode == 0
         r = run_cli("adopt", "--check", cwd=proj)
@@ -300,7 +304,7 @@ class TestABindingAheadRefuses:
         """
         proj = _project(tmp_path)
         frag = proj / FRAG
-        s = frag.read_text()
+        s = frag.read_text(encoding="utf-8")
         # Give the BINDING an optional argument the manifest never declared
         # -- doppler's `Resampler.execute_ctrl` ("OO|O" vs "OO").
         assert '"O&' in s or '"O' in s, s[:200]
@@ -316,7 +320,7 @@ class TestABindingAheadRefuses:
                 1,
             )
         assert s2 != s, "fixture no longer parses keywords the expected way"
-        frag.write_text(s2)
+        frag.write_text(s2, encoding="utf-8")
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 1, r.stdout
         assert "REFUSES" in r.stdout, r.stdout
@@ -422,14 +426,18 @@ class TestARefusalDominatesItsSiblings:
         # The parent's fragment merely DIFFERS...
         parent = proj / FRAG
         parent.write_text(
-            parent.read_text().replace("return NULL;", "return NULL ;", 1)
+            parent.read_text(encoding="utf-8").replace(
+                "return NULL;", "return NULL ;", 1
+            ),
+            encoding="utf-8",
         )
         # ...while the view's fragment has a unit only it has.
         view = proj / "native" / "src" / "dsp" / "dsp_ext_peek.c"
         view.write_text(
-            view.read_text()
+            view.read_text(encoding="utf-8")
             + "\nstatic PyObject *\nPeekObj_mine(PyObject *s)\n"
-            "{\n    return NULL;\n}\n"
+            "{\n    return NULL;\n}\n",
+            encoding="utf-8",
         )
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 1, r.stdout

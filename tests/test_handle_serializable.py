@@ -49,11 +49,13 @@ def _project(root: Path, *, serializable: bool) -> None:
 
 
 def _ext(root: Path) -> str:
-    return (root / "native/src/ringbuf/ringbuf_ext.c").read_text()
+    return (root / "native/src/ringbuf/ringbuf_ext.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def _pyi(root: Path) -> str:
-    return (root / "src/proj/ringbuf/ringbuf.pyi").read_text()
+    return (root / "src/proj/ringbuf/ringbuf.pyi").read_text(encoding="utf-8")
 
 
 def test_serializable_handle_emits_triplet(tmp_path):
@@ -100,6 +102,6 @@ def test_serializable_handle_apply_idempotent(tmp_path):
 def test_serializable_flag_survives_manifest_roundtrip(tmp_path):
     _project(tmp_path, serializable=True)
     assert C.is_serializable(C.load(tmp_path), "ringbuf")
-    assert (
-        'serializable = "true"' in (tmp_path / "just-makeit.toml").read_text()
-    )
+    assert 'serializable = "true"' in (
+        tmp_path / "just-makeit.toml"
+    ).read_text(encoding="utf-8")

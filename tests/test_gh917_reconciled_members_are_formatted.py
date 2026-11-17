@@ -90,7 +90,7 @@ class TestTheGlob:
             "dsp_ext_fir_extra.c",
             "dsp_core.c",
         ):
-            (src / name).write_text("/* x */\n")
+            (src / name).write_text("/* x */\n", encoding="utf-8")
         return src
 
     def test_a_per_object_fragment_is_included(self, tmp_path):
@@ -150,7 +150,7 @@ class TestApplyFormatsWhatItWrote:
                 destroy={"name": "close"},
             )
         fmt = root / "fake_formatter.py"
-        fmt.write_text(_GNU_ISH)
+        fmt.write_text(_GNU_ISH, encoding="utf-8")
         cfg = C.load(root)
         cfg["project"]["c_format_command"] = [sys.executable, str(fmt)]
         C.save(root, cfg)
@@ -284,7 +284,7 @@ class TestScope:
                 root, "fir", None, arg_type="float", return_type="float"
             )
         fmt = root / "fake_formatter.py"
-        fmt.write_text(_GNU_ISH)
+        fmt.write_text(_GNU_ISH, encoding="utf-8")
         cfg = C.load(root)
         cfg["project"]["c_format_command"] = [sys.executable, str(fmt)]
         core = root / "native/src/fir/fir_core.c"
@@ -315,5 +315,5 @@ def test_both_shapes_reach_the_formatter(tmp_path, name):
     """Aggregator and fragment, so widening cannot silently drop the old one."""
     src = tmp_path / "native" / "src" / "dsp"
     src.mkdir(parents=True)
-    (src / name).write_text("/* x */\n")
+    (src / name).write_text("/* x */\n", encoding="utf-8")
     assert [p.name for p in _cfmt._generated_c_files(tmp_path)] == [name]

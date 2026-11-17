@@ -16,7 +16,7 @@ class TestProjectPython:
         venv_bin = tmp_path / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
         py = venv_bin / "python"
-        py.write_text("#!/usr/bin/env python3")
+        py.write_text("#!/usr/bin/env python3", encoding="utf-8")
         py.chmod(0o755)
         assert B._project_python(tmp_path) == str(py)
 
@@ -27,7 +27,7 @@ class TestFindBenchBinary:
 
     def test_finds_binary_at_canonical_path(self, tmp_path):
         stem = "bench_fir_core"
-        (tmp_path / stem).write_text("")
+        (tmp_path / stem).write_text("", encoding="utf-8")
         (tmp_path / stem).chmod(0o755)
         result = B._find_bench_binary(tmp_path, "fir")
         assert result == tmp_path / stem
@@ -36,7 +36,7 @@ class TestFindBenchBinary:
         nested = tmp_path / "some" / "deep" / "dir"
         nested.mkdir(parents=True)
         binary = nested / "bench_nco_core"
-        binary.write_text("")
+        binary.write_text("", encoding="utf-8")
         result = B._find_bench_binary(tmp_path, "nco")
         assert result == binary
 

@@ -145,7 +145,7 @@ def _project(tmp_path: Path, *, real_kernels: bool) -> Path:
         # A header-only component's kernels live in the HEADER, which is
         # the half the stub check was reading from the wrong file.
         hdr = proj / INC_ROOT / "r" / "r_core.h"
-        s = hdr.read_text()
+        s = hdr.read_text(encoding="utf-8")
         i = s.index("r_read(r_state_t *state")
         o = s.index("{", i)
         c = s.index("\n}", o)
@@ -154,7 +154,7 @@ def _project(tmp_path: Path, *, real_kernels: bool) -> Path:
             "    if (n > 64) return NULL;\n"
             "    return buf;" + s[c:]
         )
-        hdr.write_text(s)
+        hdr.write_text(s, encoding="utf-8")
     assert run_cli("apply", cwd=proj).returncode == 0
     return proj
 
@@ -172,7 +172,7 @@ class TestTheFileCanActuallyRun:
 
     def test_the_import_is_the_one_the_sibling_uses(self, tmp_path):
         proj = _project(tmp_path, real_kernels=True)
-        src = _invariants(proj).read_text()
+        src = _invariants(proj).read_text(encoding="utf-8")
         assert "from q.m import R" in src
         # The spelling that raised ImportError in doppler.
         assert "from q import R" not in src
@@ -180,7 +180,7 @@ class TestTheFileCanActuallyRun:
     def test_no_name_is_used_without_being_bound(self, tmp_path):
         """`_ELEM_DTYPE` was used twice and assigned never (F821)."""
         proj = _project(tmp_path, real_kernels=True)
-        src = _invariants(proj).read_text()
+        src = _invariants(proj).read_text(encoding="utf-8")
         # `_ELEM_DTYPE` is fine to USE -- it was never fine to use
         # UNBOUND, which is what F821 said and what this asserts.
         assert _undefined_names(src) == set(), _undefined_names(src)
@@ -198,14 +198,18 @@ class TestTheFileCanActuallyRun:
         own, so a disagreement with the compiler's layout goes red here.
         """
         proj = _project(tmp_path, real_kernels=True)
-        src = _invariants(proj).read_text()
+        src = _invariants(proj).read_text(encoding="utf-8")
         assert "_ELEM_DTYPE = np.dtype([" in src
         # ...and it is BOUND, which is the whole of the original defect.
         assert _undefined_names(src) == set()
 
     def test_it_parses_and_compiles(self, tmp_path):
         proj = _project(tmp_path, real_kernels=True)
-        compile(_invariants(proj).read_text(), "test_r_invariants.py", "exec")
+        compile(
+            _invariants(proj).read_text(encoding="utf-8"),
+            "test_r_invariants.py",
+            "exec",
+        )
 
 
 class TestItIsFormatterClean:
@@ -264,7 +268,7 @@ class TestItIsFormatterClean:
         enough to state outright and then it is armed everywhere.
         """
         proj = _project(tmp_path, real_kernels=True)
-        lines = _invariants(proj).read_text().split("\n")
+        lines = _invariants(proj).read_text(encoding="utf-8").split("\n")
         last_import = max(
             n
             for n, ln in enumerate(lines)
@@ -292,7 +296,7 @@ class TestItSaysWhatItCanFromDayOne:
         which is the coverage this file exists to give on day one.
         """
         proj = _project(tmp_path, real_kernels=False)
-        src = _invariants(proj).read_text()
+        src = _invariants(proj).read_text(encoding="utf-8")
         assert "def test_write_speaks_iq_t" in src
         # The ROUND TRIP still waits for a real reader: a borrowing stub
         # returns NULL, so it would be red on a project nobody has

@@ -478,7 +478,11 @@ def test_load_dump_load_in_both_layouts(
             if C.load(central) != want:
                 bad.append(f"central: {key} = <{label}>")
             _migrate.run(src)
-            assert (src / "just-makeit.toml").read_text().startswith("include")
+            assert (
+                (src / "just-makeit.toml")
+                .read_text(encoding="utf-8")
+                .startswith("include")
+            )
             # gh-2437: migrating CUTS the manifest, so it changes no value
             # -- not even `_dump`'s heredoc newline. The fragment layout's
             # `_dump` is a new fragment's writer: drop them and save.

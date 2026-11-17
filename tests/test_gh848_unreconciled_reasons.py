@@ -102,7 +102,10 @@ def test_a_hand_written_body_is_author_owned(tmp_path):
     root = tmp_path / "p"
     frag = _project(root)
     frag.write_text(
-        frag.read_text().replace("PyObject", "PyObject /* mine */", 1)
+        frag.read_text(encoding="utf-8").replace(
+            "PyObject", "PyObject /* mine */", 1
+        ),
+        encoding="utf-8",
     )
     apply_run(root)
 
@@ -126,7 +129,10 @@ def test_author_owned_paths_stay_listed(tmp_path):
     root = tmp_path / "p"
     frag = _project(root)
     frag.write_text(
-        frag.read_text().replace("PyObject", "PyObject /* mine */", 1)
+        frag.read_text(encoding="utf-8").replace(
+            "PyObject", "PyObject /* mine */", 1
+        ),
+        encoding="utf-8",
     )
     apply_run(root)
 
@@ -148,7 +154,10 @@ def test_both_kinds_are_separated_in_one_report(tmp_path):
 
     # One object's fragment is hand-edited; the other's manifest moves.
     frag.write_text(
-        frag.read_text().replace("PyObject", "PyObject /* mine */", 1)
+        frag.read_text(encoding="utf-8").replace(
+            "PyObject", "PyObject /* mine */", 1
+        ),
+        encoding="utf-8",
     )
     cfg = C.load(root)
     for meth in cfg["v"]["methods"]:

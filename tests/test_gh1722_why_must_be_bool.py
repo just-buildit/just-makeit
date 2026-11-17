@@ -63,8 +63,9 @@ def test_a_json_why_naming_a_function_is_refused(tmp_path):
     proj = _project(tmp_path)
     m = _manifest(proj)
     m.write_text(
-        m.read_text()
-        + '\n[module.m.json]\nfrom_json_why = "dp_from_json_why"\n'
+        m.read_text(encoding="utf-8")
+        + '\n[module.m.json]\nfrom_json_why = "dp_from_json_why"\n',
+        encoding="utf-8",
     )
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 1, _out(r)
@@ -77,9 +78,12 @@ def test_a_function_why_that_is_not_a_bool_is_refused(tmp_path):
     proj = _project(tmp_path)
     _function(proj, "--why")
     m = _manifest(proj)
-    text = m.read_text()
+    text = m.read_text(encoding="utf-8")
     assert re.search(r"^why = true$", text, re.M), text
-    m.write_text(re.sub(r"^why = true$", 'why = "yes"', text, flags=re.M))
+    m.write_text(
+        re.sub(r"^why = true$", 'why = "yes"', text, flags=re.M),
+        encoding="utf-8",
+    )
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 1, _out(r)
     assert "fb: why = 'yes' must be true or false" in _out(r)
@@ -98,24 +102,26 @@ def test_the_injected_why_line_says_what_jm_means(tmp_path):
     proj = _project(tmp_path)
     _function(proj)
     hdr = next((proj / "native" / "inc").rglob("m_core.h"))
-    src = hdr.read_text()
+    src = hdr.read_text(encoding="utf-8")
     decl = re.search(r"^int\s+fb\s*\(size_t n\);$", src, re.M)
     assert decl, src
     hdr.write_text(
         src[: decl.start()]
         + "/**\n * @brief Count the bits in a spec.\n *\n"
         + " * @param n  How many to count.\n */\n"
-        + src[decl.start() :]
+        + src[decl.start() :],
+        encoding="utf-8",
     )
     m = _manifest(proj)
-    text = m.read_text()
+    text = m.read_text(encoding="utf-8")
     m.write_text(
-        re.sub(r'^(name = "fb")$', r"\1\nwhy = true", text, flags=re.M)
+        re.sub(r'^(name = "fb")$', r"\1\nwhy = true", text, flags=re.M),
+        encoding="utf-8",
     )
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, _out(r)
 
-    block = hdr.read_text()
+    block = hdr.read_text(encoding="utf-8")
     assert "const char **why" in block, block
     assert " * @param n  How many to count." in block, block
     assert (

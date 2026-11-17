@@ -199,7 +199,9 @@ def _collocated_with_dep(dest):
 def test_collocated_composed_dep_links_test_bench_and_so(tmp_path):
     dest = tmp_path / "p"
     _collocated_with_dep(dest)
-    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text()
+    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     # additive: the composed sibling core is on the object's OWN test/bench/core
     # (so test_ddc_core resolves lo_* symbols ddc_core.c calls) AND the .so.
     assert "lo_core" in _link_block(cmake, "test_ddc_core")
@@ -213,7 +215,9 @@ def test_collocated_dep_survives_apply(tmp_path):
     dest = tmp_path / "p"
     _collocated_with_dep(dest)
     _silent(apply_run, dest)
-    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text()
+    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert "<<" not in cmake and ">>" not in cmake
     assert "lo_core" in _link_block(cmake, "test_ddc_core")
     assert "lo_core" in _link_block(cmake, "bench_ddc_core")
@@ -238,7 +242,9 @@ def test_collocated_no_dep_has_no_object_core_link(tmp_path):
         arg_type="float",
         return_type="float",
     )
-    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text()
+    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert "target_link_libraries(ddc_core PUBLIC" not in cmake
     assert "PRIVATE ddc_core ${JM_MATH_LIBRARY}" in _link_block(
         cmake, "test_ddc_core"
@@ -256,7 +262,7 @@ def test_collocated_composed_dep_builds_e2e(tmp_path):
     # Make the collocated core actually compose the sibling.
     h = dest / INC_ROOT / "ddc/ddc_core.h"
     h.write_text(
-        h.read_text()
+        h.read_text(encoding="utf-8")
         .replace(
             "#include <stddef.h>",
             '#include <stddef.h>\n#include "lo/lo_core.h"',
@@ -265,7 +271,8 @@ def test_collocated_composed_dep_builds_e2e(tmp_path):
         .replace(
             "return (float)x;",
             "return (float)x + lo_get_g((const lo_state_t *)0);",
-        )
+        ),
+        encoding="utf-8",
     )
     cfg = subprocess.run(
         ["cmake", "-S", str(dest), "-B", str(dest / "build")],
@@ -315,7 +322,9 @@ def test_collocated_dedup_dep_and_extra_lib(tmp_path):
     cfg["module"]["ddc"]["extra_link_libs"] = ["lo_core"]  # also lists the dep
     C.save(dest, cfg)
     _silent(apply_run, dest)
-    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text()
+    cmake = (dest / "native/src/ddc/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert _link_block(cmake, "test_ddc_core").count("lo_core") == 1
     assert _link_block(cmake, "ddc_core PUBLIC").count("lo_core") == 1
 
@@ -364,18 +373,18 @@ def test_apply_reconciles_added_dep_on_existing_object(tmp_path):
     dest = tmp_path / "p"
     _measure_module(dest)
     cmake = dest / "native/src/tone/CMakeLists.txt"
-    assert "extra_core" not in cmake.read_text()
+    assert "extra_core" not in cmake.read_text(encoding="utf-8")
     _set_depends_on(dest, "tone", ["base", "extra"])
     _silent(apply_run, dest)
-    text = cmake.read_text()
+    text = cmake.read_text(encoding="utf-8")
     for target in ("tone_core PUBLIC", "test_tone_core", "bench_tone_core"):
         block = _link_block(text, target)
         assert "base_core" in block, target
         assert "extra_core" in block, target
     # idempotent — a second apply changes nothing.
-    before = cmake.read_text()
+    before = cmake.read_text(encoding="utf-8")
     _silent(apply_run, dest)
-    assert cmake.read_text() == before
+    assert cmake.read_text(encoding="utf-8") == before
 
 
 def test_apply_reconciles_removed_dep_on_existing_object(tmp_path):
@@ -386,7 +395,9 @@ def test_apply_reconciles_removed_dep_on_existing_object(tmp_path):
     # Now drop `extra` back out — the stale link line must be reconciled away.
     _set_depends_on(dest, "tone", ["base"])
     _silent(apply_run, dest)
-    text = (dest / "native/src/tone/CMakeLists.txt").read_text()
+    text = (dest / "native/src/tone/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert "extra_core" not in text
     assert "base_core" in _link_block(text, "test_tone_core")
 
@@ -398,13 +409,14 @@ def test_apply_reconcile_preserves_external_block(tmp_path):
     _measure_module(dest)
     cmake = dest / "native/src/tone/CMakeLists.txt"
     cmake.write_text(
-        cmake.read_text().rstrip() + "\n\nif(DOPPLER_C_LIB)\n"
+        cmake.read_text(encoding="utf-8").rstrip() + "\n\nif(DOPPLER_C_LIB)\n"
         "  target_link_libraries(tone_core PUBLIC ${DOPPLER_C_LIB})\n"
-        "endif()\n"
+        "endif()\n",
+        encoding="utf-8",
     )
     _set_depends_on(dest, "tone", ["base", "extra"])
     _silent(apply_run, dest)
-    text = cmake.read_text()
+    text = cmake.read_text(encoding="utf-8")
     assert "extra_core" in text  # dep reconciled
     assert "if(DOPPLER_C_LIB)" in text  # external block preserved
 
@@ -420,7 +432,9 @@ def test_apply_reconcile_preserves_component_include_dirs(tmp_path):
     ]
     C.save(dest, cfg)
     _silent(apply_run, dest)
-    text = (dest / "native/src/tone/CMakeLists.txt").read_text()
+    text = (dest / "native/src/tone/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert "extra_core" in text
     assert "${CMAKE_SOURCE_DIR}/vendor" in text
 
@@ -435,10 +449,9 @@ def test_status_check_flags_stale_object_depends_on(tmp_path):
     # Manifest gains a dep but the per-object CMakeLists is left stale.
     _set_depends_on(dest, "tone", ["base", "extra"])
     cfg_only = C.load(dest)  # no apply — disk file still base-only
-    assert (
-        "extra_core"
-        not in (dest / "native/src/tone/CMakeLists.txt").read_text()
-    )
+    assert "extra_core" not in (
+        dest / "native/src/tone/CMakeLists.txt"
+    ).read_text(encoding="utf-8")
     assert C.depends_on(cfg_only, "tone") == ["base", "extra"]
     changed = _silent(_status.run, dest, check=True)
     assert changed > 0  # drift detected
@@ -476,7 +489,7 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
     # tone_core.c now composes extra's symbol.
     h = dest / INC_ROOT / "tone/tone_core.h"
     h.write_text(
-        h.read_text()
+        h.read_text(encoding="utf-8")
         .replace(
             "#include <stddef.h>",
             '#include <stddef.h>\n#include "extra/extra_core.h"',
@@ -485,7 +498,8 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
         .replace(
             "return (float)x;",
             "return (float)x + extra_get_g((const extra_state_t *)0);",
-        )
+        ),
+        encoding="utf-8",
     )
     # Declare the dependency *after the fact* — the gh-271 scenario.
     _set_depends_on(dest, "tone", ["extra"])
@@ -552,7 +566,9 @@ def _module_with_hand_owned_fft(dest):
             arg_type="float",
             return_type="float",
         )
-    (dest / "native/src/fft/CMakeLists.txt").write_text(_HAND_OWNED_FFT)
+    (dest / "native/src/fft/CMakeLists.txt").write_text(
+        _HAND_OWNED_FFT, encoding="utf-8"
+    )
 
 
 def test_apply_preserves_hand_owned_object_cmake(tmp_path):
@@ -560,9 +576,9 @@ def test_apply_preserves_hand_owned_object_cmake(tmp_path):
     _module_with_hand_owned_fft(dest)
     _silent(apply_run, dest)
     # Byte-for-byte intact: vendored sources, source properties, PUBLIC m.
-    assert (
-        dest / "native/src/fft/CMakeLists.txt"
-    ).read_text() == _HAND_OWNED_FFT
+    assert (dest / "native/src/fft/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    ) == _HAND_OWNED_FFT
 
 
 def test_apply_hand_owned_survives_sibling_dep_change(tmp_path):
@@ -572,11 +588,13 @@ def test_apply_hand_owned_survives_sibling_dep_change(tmp_path):
     _module_with_hand_owned_fft(dest)
     _set_depends_on(dest, "tone", ["fft"])
     _silent(apply_run, dest)
-    assert (
-        dest / "native/src/fft/CMakeLists.txt"
-    ).read_text() == _HAND_OWNED_FFT
+    assert (dest / "native/src/fft/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    ) == _HAND_OWNED_FFT
     # ...while the pure-jm sibling is still reconciled.
-    assert "fft_core" in (dest / "native/src/tone/CMakeLists.txt").read_text()
+    assert "fft_core" in (dest / "native/src/tone/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_status_check_clean_for_hand_owned_object_cmake(tmp_path):
@@ -649,7 +667,9 @@ def _chain_module(dest):
 def test_transitive_closure_on_object_link_lines(tmp_path):
     dest = tmp_path / "p"
     _chain_module(dest)
-    det = (dest / "native/src/detector/CMakeLists.txt").read_text()
+    det = (dest / "native/src/detector/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     # detector declared only `corr`, but every link line carries the closure.
     for target in (
         "detector_core PUBLIC",
@@ -665,7 +685,9 @@ def test_transitive_closure_survives_apply(tmp_path):
     dest = tmp_path / "p"
     _chain_module(dest)
     _silent(apply_run, dest)
-    det = (dest / "native/src/detector/CMakeLists.txt").read_text()
+    det = (dest / "native/src/detector/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert "fft_core" in _link_block(det, "test_detector_core")
 
 

@@ -86,7 +86,7 @@ class TestTheUnguardedPaths:
         self, tmp_path, no_tomlkit
     ):
         (tmp_path / C.FILENAME).write_text(
-            '[project]\nname = "p"\nversion = "0.1.0"\n'
+            '[project]\nname = "p"\nversion = "0.1.0"\n', encoding="utf-8"
         )
         C.save(tmp_path, _cfg())
         assert C.load(tmp_path)["codec"] == _cfg()["codec"]
@@ -119,7 +119,7 @@ class TestTheArrayBranch:
             }
         }
         C.save(tmp_path, cfg)
-        text = (tmp_path / C.FILENAME).read_text()
+        text = (tmp_path / C.FILENAME).read_text(encoding="utf-8")
         assert 'c_format_command = ["uvx", "clang-format==22.1.8"]' in text
         assert C.load(tmp_path)["project"]["c_format_command"] == [
             "uvx",
@@ -147,13 +147,13 @@ class TestItDoesNotDisturbWhatItKnows:
         cfg = _cfg()
         cfg["module"] = {"dsp": {"objects": ["fir"]}}
         C.save(tmp_path, cfg)
-        text = (tmp_path / C.FILENAME).read_text()
+        text = (tmp_path / C.FILENAME).read_text(encoding="utf-8")
         assert text.count("[module.dsp]") == 1
         assert text.count("[codec.blue_keyword]") == 1
 
     def test_saving_twice_is_stable(self, tmp_path):
         C.save(tmp_path, _cfg())
-        first = (tmp_path / C.FILENAME).read_text()
+        first = (tmp_path / C.FILENAME).read_text(encoding="utf-8")
         C.save(tmp_path, C.load(tmp_path))
         assert C.load(tmp_path)["codec"] == _cfg()["codec"]
         assert "[codec.blue_keyword]" in first
@@ -199,7 +199,7 @@ objects = ["fir"]
     def migrated(self, request, tmp_path, capsys):
         from just_makeit import _migrate, _split_objects
 
-        (tmp_path / C.FILENAME).write_text(self.MANIFEST)
+        (tmp_path / C.FILENAME).write_text(self.MANIFEST, encoding="utf-8")
         {"migrate": _migrate, "split_objects": _split_objects}[
             request.param
         ].run(tmp_path)
@@ -288,7 +288,9 @@ class TestPresentButWrongFailsClosed:
     def test_the_guarded_path_still_writes_it_faithfully(self, tmp_path):
         """With a file already on disk and tomlkit available, `save` writes
         through tomlkit, as it always has."""
-        (tmp_path / C.FILENAME).write_text('[project]\nname = "p"\n')
+        (tmp_path / C.FILENAME).write_text(
+            '[project]\nname = "p"\n', encoding="utf-8"
+        )
         C.save(tmp_path, {"project": {"name": "p"}, "tuning": {"depth": 4}})
         assert C.load(tmp_path)["tuning"] == {"depth": 4}
 

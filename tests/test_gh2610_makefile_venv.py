@@ -95,7 +95,9 @@ def _venv(proj: Path, sub: str) -> Path:
     """A ``.venv`` interpreter at *sub*; a real one, so make may run it."""
     py = proj / ".venv" / sub
     py.parent.mkdir(parents=True, exist_ok=True)
-    py.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    py.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8"
+    )
     py.chmod(0o755)
     return py
 
@@ -202,24 +204,28 @@ class TestTheInstall:
         log = tmp_path / "pip.log"
         pkg = tmp_path / "stub" / "pip"
         pkg.mkdir(parents=True)
-        (pkg / "__init__.py").write_text("")
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
         (pkg / "__main__.py").write_text(
-            f"import sys; open({str(log)!r}, 'w').write(' '.join(sys.argv[1:]))"
+            f"import sys; open({str(log)!r}, 'w').write(' '.join(sys.argv[1:]))",
+            encoding="utf-8",
         )
         r = self._run(makefile, tmp_path, str(tmp_path), str(pkg.parent))
         assert r.returncode == 0, r.stderr
-        assert log.read_text() == "install --force-reinstall numpy"
+        assert (
+            log.read_text(encoding="utf-8")
+            == "install --force-reinstall numpy"
+        )
 
     def test_without_pip_it_is_uv(self, makefile, tmp_path):
         log = tmp_path / "uv.log"
         bin_ = tmp_path / "bin"
         bin_.mkdir()
         uv = bin_ / "uv"
-        uv.write_text(f'#!/bin/sh\necho "$@" > {log}\n')
+        uv.write_text(f'#!/bin/sh\necho "$@" > {log}\n', encoding="utf-8")
         uv.chmod(0o755)
         r = self._run(makefile, tmp_path, str(bin_))
         assert r.returncode == 0, r.stderr
-        assert log.read_text().split() == [
+        assert log.read_text(encoding="utf-8").split() == [
             "pip",
             "install",
             "--python",

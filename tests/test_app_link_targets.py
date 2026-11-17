@@ -76,7 +76,8 @@ def _calls(root: Path) -> "list[tuple[str, list[str]]]":
     out = []
     for cmake in root.rglob("CMakeLists.txt"):
         text = "\n".join(
-            ln.split("#", 1)[0] for ln in cmake.read_text().splitlines()
+            ln.split("#", 1)[0]
+            for ln in cmake.read_text(encoding="utf-8").splitlines()
         )
         out += [(n, a.split()) for n, a in _CALL.findall(text)]
     return out

@@ -101,7 +101,7 @@ class TestTheCountTravels:
             == 0
         )
 
-        src = (proj / EXT).read_text()
+        src = (proj / EXT).read_text(encoding="utf-8")
         assert "size_t _jm_borrowed;" in src
         # Recorded where the view is BUILT, so nothing re-derives it.
         assert "self->_jm_borrowed = (size_t)(n);" in _wrapper(src, "wait")
@@ -121,7 +121,7 @@ class TestTheCountTravels:
             == 0
         )
 
-        src = (proj / EXT).read_text()
+        src = (proj / EXT).read_text(encoding="utf-8")
         assert src.count("size_t _jm_borrowed;") == 1
         for b in ("wait", "peek"):
             assert "self->_jm_borrowed = (size_t)(n);" in _wrapper(src, b)
@@ -141,7 +141,7 @@ class TestTheCountTravels:
         """
         proj = _ring(tmp_path, "wait", "peek")
         # ...before any release exists, the borrow already records.
-        src = (proj / EXT).read_text()
+        src = (proj / EXT).read_text(encoding="utf-8")
         assert "self->_jm_borrowed = (size_t)(n);" in _wrapper(src, "wait")
         # ...and the DECLARATION is keyed the same way. The two halves are
         # asserted together because a store without a field is not a wrong
@@ -160,7 +160,7 @@ class TestTheCountTravels:
             ).returncode
             == 0
         )
-        src = (proj / EXT).read_text()
+        src = (proj / EXT).read_text(encoding="utf-8")
         for b in ("wait", "peek"):
             assert "self->_jm_borrowed = (size_t)(n);" in _wrapper(src, b)
         assert "n = self->_jm_borrowed;" in _wrapper(src, "consume")
@@ -184,7 +184,7 @@ class TestTheCountTravels:
             ).returncode
             == 0
         )
-        assert "_jm_borrowed" not in (proj / EXT).read_text()
+        assert "_jm_borrowed" not in (proj / EXT).read_text(encoding="utf-8")
 
     def test_the_release_resolves_and_clears(self, tmp_path):
         proj = _ring(tmp_path)
@@ -195,7 +195,7 @@ class TestTheCountTravels:
             == 0
         )
 
-        body = _wrapper((proj / EXT).read_text(), "consume")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "consume")
         # Optional in the PyArg format -- the `|` is what makes `consume()`
         # a legal call at all.
         assert '"|O"' in body
@@ -208,7 +208,7 @@ class TestTheCountTravels:
         proj = _ring(tmp_path)
         assert _release(proj, "wipe", "--releases", "wait").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wipe")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wipe")
         assert "self->_jm_borrowed = 0;" in body
         # Not `PyExc_RuntimeError`: every wrapper carries the
         # destroyed-handle guard, so that would match a sibling.
@@ -229,7 +229,9 @@ class TestBothStubWritersAgree:
             ).returncode
             == 0
         )
-        assert "def consume(self, n: int = ...)" in (proj / PYI).read_text()
+        assert "def consume(self, n: int = ...)" in (proj / PYI).read_text(
+            encoding="utf-8"
+        )
 
     def test_the_module_stub_marks_it_optional(self, tmp_path):
         root = tmp_path / "w"
@@ -286,7 +288,9 @@ class TestBothStubWritersAgree:
             ).returncode
             == 0
         )
-        stub = (proj / "src" / "q" / "buf" / "buf.pyi").read_text()
+        stub = (proj / "src" / "q" / "buf" / "buf.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "def consume(self, n: int = ...)" in stub
 
 
@@ -306,7 +310,7 @@ class TestTheScaffoldStaysGreen:
             ).returncode
             == 0
         )
-        src = (proj / EXT).read_text()
+        src = (proj / EXT).read_text(encoding="utf-8")
         assert "obj.consume(0)" not in src
         assert "obj.consume(1)" in src
 
@@ -320,12 +324,12 @@ class TestTheKeysSurviveAReplay:
             ).returncode
             == 0
         )
-        before = (proj / EXT).read_text()
+        before = (proj / EXT).read_text(encoding="utf-8")
 
         (proj / EXT).unlink()
         r = run_cli("apply", cwd=proj)
         assert r.returncode == 0, r.stderr
-        assert (proj / EXT).read_text() == before
+        assert (proj / EXT).read_text(encoding="utf-8") == before
 
     def test_script_emits_the_release(self, tmp_path):
         """Dropped, the replay rebuilds a REQUIRED count: a different API."""

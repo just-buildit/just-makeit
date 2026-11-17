@@ -136,9 +136,9 @@ class TestWhichConditionsGate:
         old = 'name = "n"\ntype = "size_t"\nrequired = true'
         new = 'name = "n"\ntype = "size_t"\ndefault = "1024"'
         for toml in root.rglob("*.toml"):
-            text = toml.read_text()
+            text = toml.read_text(encoding="utf-8")
             if old in text:
-                toml.write_text(text.replace(old, new))
+                toml.write_text(text.replace(old, new), encoding="utf-8")
                 break
         else:
             raise AssertionError("fixture did not find the init_param block")

@@ -81,7 +81,7 @@ def test_the_cli_is_not_driven_through_a_subprocess(path):
         pytest.skip("names the pattern in order to detect it")
     if path.name in NEEDS_A_CHILD:
         pytest.skip(f"allow-listed: {NEEDS_A_CHILD[path.name]}")
-    assert not _drives_the_cli_in_a_child(path.read_text()), (
+    assert not _drives_the_cli_in_a_child(path.read_text(encoding="utf-8")), (
         f"{path.name} drives jm's CLI in a subprocess. Use "
         "`from _jmrun import run_cli` -- same argv/cwd/stdin isolation, same "
         "returncode/stdout/stderr, and coverage sees it (gh-1374). If it "
@@ -99,7 +99,7 @@ def test_each_allow_listed_file_still_exists_and_still_spawns(name, reason):
     """
     path = TESTS / name
     assert path.exists(), f"{name} is allow-listed but does not exist"
-    assert _drives_the_cli_in_a_child(path.read_text()), (
+    assert _drives_the_cli_in_a_child(path.read_text(encoding="utf-8")), (
         f"{name} no longer spawns the CLI -- drop it from NEEDS_A_CHILD"
     )
     assert reason.strip(), f"{name} must say why"

@@ -80,17 +80,21 @@ class TestStandaloneStub:
         return dest
 
     def test_return_is_ndarray_not_scalar(self, project):
-        pyi = (project / "src" / "dsp" / "rdr.pyi").read_text()
+        pyi = (project / "src" / "dsp" / "rdr.pyi").read_text(encoding="utf-8")
         assert "def read(self, n: int) -> NDArray[np.complex64]:" in pyi
         assert "-> complex:" not in pyi.split("def read")[1][:60]
 
     def test_stub_parses(self, project):
-        ast.parse((project / "src" / "dsp" / "rdr.pyi").read_text())
+        ast.parse(
+            (project / "src" / "dsp" / "rdr.pyi").read_text(encoding="utf-8")
+        )
 
     def test_header_decl_is_present(self, project):
         """The issue's second claim ('no C declaration injected') is stale --
         assert it stays injected, with the `*out` output param."""
-        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
+        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text(
+            encoding="utf-8"
+        )
         assert (
             "rdr_read(rdr_state_t *state, size_t n, float _Complex *out)" in h
         )
@@ -111,11 +115,17 @@ class TestModuleStub:
         return dest
 
     def test_return_is_ndarray_not_scalar(self, project):
-        pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text()
+        pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "def read(self, n: int) -> NDArray[np.complex64]:" in pyi
 
     def test_stub_parses(self, project):
-        ast.parse((project / "src" / "dsp" / "io" / "io.pyi").read_text())
+        ast.parse(
+            (project / "src" / "dsp" / "io" / "io.pyi").read_text(
+                encoding="utf-8"
+            )
+        )
 
 
 class TestBothGeneratorsAgree:
@@ -140,7 +150,7 @@ class TestBothGeneratorsAgree:
         s = tmp_path / "s"
         new_run("s", s, ["rdr"], [("cap", "size_t", "16")], c_prefix=None)
         _add_read_method(s, "rdr", None, out_type=out_type)
-        s_pyi = (s / "src" / "s" / "rdr.pyi").read_text()
+        s_pyi = (s / "src" / "s" / "rdr.pyi").read_text(encoding="utf-8")
 
         # module
         m = tmp_path / "m"
@@ -148,7 +158,7 @@ class TestBothGeneratorsAgree:
         module_run(m, "io", ["rdr"])
         object_run(m, "rdr", module="io", state_vars=[("cap", "size_t", "16")])
         _add_read_method(m, "rdr", "io", out_type=out_type)
-        m_pyi = (m / "src" / "m" / "io" / "io.pyi").read_text()
+        m_pyi = (m / "src" / "m" / "io" / "io.pyi").read_text(encoding="utf-8")
 
         want = f"def read(self, n: int) -> {expected}:"
         assert want in s_pyi, f"standalone: {expected}"
@@ -168,12 +178,12 @@ class TestBuildAndRun:
         )
         _add_read_method(root, "rdr", None)
         core = root / "native" / "src" / "rdr" / "rdr_core.c"
-        body = core.read_text().replace(
+        body = core.read_text(encoding="utf-8").replace(
             "    (void)state; (void)n; (void)out;\n",
             "    (void)state;\n"
             "    for (size_t i = 0; i < n; i++) out[i] = (float)i;\n",
         )
-        core.write_text(body)
+        core.write_text(body, encoding="utf-8")
         build = root / "build"
         cfg = subprocess.run(
             # Pin the extension to the interpreter this test runs, so the

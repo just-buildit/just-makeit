@@ -157,14 +157,16 @@ class TestGeneratedProject:
         assert _FIELD_DOC in _getset(_project(tmp_path))
 
     def test_property_stub_doc(self, tmp_path):
-        pyi = (_project(tmp_path) / "src/demo/osc.pyi").read_text()
+        pyi = (_project(tmp_path) / "src/demo/osc.pyi").read_text(
+            encoding="utf-8"
+        )
         assert f'"""{_FIELD_DOC}"""' in pyi
 
     def test_state_accessor_both_faces(self, tmp_path):
         """`phase` has no property — it surfaces as get_/set_ accessors."""
         root = _project(tmp_path)
-        ext = (root / "native/src/osc/osc_ext.c").read_text()
-        pyi = (root / "src/demo/osc.pyi").read_text()
+        ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
+        pyi = (root / "src/demo/osc.pyi").read_text(encoding="utf-8")
         assert _PHASE_DOC in ext
         assert f'"""{_PHASE_DOC}"""' in pyi
 
@@ -199,5 +201,5 @@ class TestGeneratedProject:
         )
         property_run(root, "osc", "gain", None, "double", False)
         apply_run(root)
-        ext = (root / "native/src/osc/osc_ext.c").read_text()
+        ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
         assert '"Gain.\\n"' in ext

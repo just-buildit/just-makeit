@@ -323,7 +323,9 @@ def test_a_view_without_valid_field_is_not_optional() -> None:
 
 @pytest.mark.parametrize("obj", OBJS)
 def test_the_header_declares_both(built, obj) -> None:
-    h = (built / "native" / "inc" / "rs" / obj / f"{obj}_core.h").read_text()
+    h = (built / "native" / "inc" / "rs" / obj / f"{obj}_core.h").read_text(
+        encoding="utf-8"
+    )
     st = f"rs_{obj}_state_t"
     assert f"int rs_{obj}_get_keep(const {st} *state, int *out);" in h
     assert f"int rs_{obj}_set_keep({st} *state, int val);" in h
@@ -335,8 +337,12 @@ def test_the_cli_declares_and_stubs_the_status_function(fresh) -> None:
     the status function is declared AND given a placeholder body."""
     _ok("property", "o", "v", "--type", "double[]", "--buf-field", "buf",
         "--getter-status", cwd=fresh)  # fmt: skip
-    h = (fresh / "native" / "inc" / "rf" / "o" / "o_core.h").read_text()
-    c = (fresh / "native" / "src" / "o" / "o_core.c").read_text()
+    h = (fresh / "native" / "inc" / "rf" / "o" / "o_core.h").read_text(
+        encoding="utf-8"
+    )
+    c = (fresh / "native" / "src" / "o" / "o_core.c").read_text(
+        encoding="utf-8"
+    )
     assert "int rf_o_v_status(const rf_o_state_t *state);" in h
     assert "\nint\nrf_o_v_status(const rf_o_state_t *state)\n{" in c
 
@@ -351,7 +357,9 @@ def test_apply_declares_both_on_a_module_object(tmp_path) -> None:
     with open(proj / "objects" / "acc.toml", "a", encoding="utf-8") as f:
         f.write(_row("acc"))
     _ok("apply", cwd=proj)
-    h = (proj / "native" / "inc" / "rm" / "acc" / "acc_core.h").read_text()
+    h = (proj / "native" / "inc" / "rm" / "acc" / "acc_core.h").read_text(
+        encoding="utf-8"
+    )
     st = "rm_acc_state_t"
     assert f"int rm_acc_get_keep(const {st} *state, int *out);" in h
     assert f"int rm_acc_last_status(const {st} *state);" in h

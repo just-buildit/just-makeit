@@ -79,7 +79,7 @@ PyMODINIT_FUNC PyInit_logm(void) {{
 }}
 """
     c = tmp / "logm.c"
-    c.write_text(src)
+    c.write_text(src, encoding="utf-8")
     so = cbuild.build(
         "ext",
         [c],

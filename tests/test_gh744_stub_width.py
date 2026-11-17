@@ -171,7 +171,9 @@ class TestGeneratedStubsFitTheTarget:
 
     def test_the_long_prose_actually_reached_the_stub(self, project):
         """Guard the guard: wrapping nothing would also pass the test above."""
-        pyi = (project / "src" / "demo" / "receiver.pyi").read_text()
+        pyi = (project / "src" / "demo" / "receiver.pyi").read_text(
+            encoding="utf-8"
+        )
         flat = " ".join(pyi.split())
         assert "Demodulate a real f32 block" in flat
         assert "the interpolator's phase granularity" in flat
@@ -205,7 +207,9 @@ class TestBothProducersReflow:
         for path in sorted(src.rglob("*.py")):
             if path.name in ("_render.py", "_pyfmt.py"):
                 continue
-            for n, line in enumerate(path.read_text().split("\n"), 1):
+            for n, line in enumerate(
+                path.read_text(encoding="utf-8").split("\n"), 1
+            ):
                 if "COMPONENT_PYI" in line and "render" in line:
                     offenders.append(f"{path.name}:{n}: {line.strip()}")
         assert not offenders, (
@@ -512,7 +516,7 @@ class TestEveryProducerReflows:
             # templates/ holds `<<token>>` placeholder files, not Python.
             if "templates" in path.parts:
                 continue
-            text = path.read_text()
+            text = path.read_text(encoding="utf-8")
             for node in ast.walk(ast.parse(text)):
                 if not isinstance(node, ast.FunctionDef):
                     continue

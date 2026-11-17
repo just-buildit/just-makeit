@@ -166,7 +166,9 @@ class TestTheDeclaration:
 class TestTheGeneratedC:
     def test_the_prototype_takes_the_struct(self, tmp_path):
         proj = _declare(tmp_path)
-        header = (proj / INC_ROOT / "ring" / "ring_core.h").read_text()
+        header = (proj / INC_ROOT / "ring" / "ring_core.h").read_text(
+            encoding="utf-8"
+        )
         assert (
             "size_t ring_write(ring_state_t *state, const iq16_t *x,"
             " size_t x_len);" in header
@@ -174,7 +176,9 @@ class TestTheGeneratedC:
 
     def test_the_binding_builds_and_uses_the_records_descr(self, tmp_path):
         proj = _declare(tmp_path)
-        ext = (proj / "native" / "src" / "ring" / "ring_ext.c").read_text()
+        ext = (proj / "native" / "src" / "ring" / "ring_ext.c").read_text(
+            encoding="utf-8"
+        )
         # Called AND defined -- a call with no definition does not compile,
         # which is how the first cut of this shipped.
         assert ext.count("Ring_write_x_get_dtype") == 2
@@ -185,7 +189,7 @@ class TestTheGeneratedC:
 
     def test_the_stub_annotates_it_like_the_reading_side(self, tmp_path):
         proj = _declare(tmp_path)
-        pyi = (proj / "src" / "p" / "ring.pyi").read_text()
+        pyi = (proj / "src" / "p" / "ring.pyi").read_text(encoding="utf-8")
         assert "def write(self, x: npt.NDArray[Any]) -> int:" in pyi
 
 
@@ -197,11 +201,13 @@ class TestAgainstARealExtension:
         proj = _declare(tmp_path)
         header = proj / INC_ROOT / "ring" / "ring_core.h"
         header.write_text(
-            header.read_text().replace("typedef struct", RECORD_H, 1),
+            header.read_text(encoding="utf-8").replace(
+                "typedef struct", RECORD_H, 1
+            ),
             encoding="utf-8",
         )
         core = proj / "native" / "src" / "ring" / "ring_core.c"
-        text = core.read_text()
+        text = core.read_text(encoding="utf-8")
         stub = "    (void)state; (void)x; (void)x_len;\n    return (size_t)0;"
         assert stub in text, "the scaffolded body moved"
         core.write_text(text.replace(stub, KERNEL, 1), encoding="utf-8")

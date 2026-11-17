@@ -53,7 +53,9 @@ def _set_include(proj: Path, include: str) -> None:
 
 def _link_lines(proj: Path, comp: str) -> "dict[str, str]":
     """Each of comp's three target_link_libraries(...) blocks, whole."""
-    text = (proj / "native/src" / comp / "CMakeLists.txt").read_text()
+    text = (proj / "native/src" / comp / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     out = {}
     for tgt in (f"{comp}_core", f"test_{comp}_core", f"bench_{comp}_core"):
         m = re.search(rf"target_link_libraries\({tgt}\b[^)]*\)", text)

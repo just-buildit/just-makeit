@@ -103,22 +103,28 @@ def _add(root: Path, name: str, **kw) -> None:
 
 
 def _core_h(root: Path) -> str:
-    return (root / INC_ROOT / COMP / f"{COMP}_core.h").read_text()
+    return (root / INC_ROOT / COMP / f"{COMP}_core.h").read_text(
+        encoding="utf-8"
+    )
 
 
 def _core_c(root: Path) -> str:
-    return (root / "native" / "src" / COMP / f"{COMP}_core.c").read_text()
+    return (root / "native" / "src" / COMP / f"{COMP}_core.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def _glue(root: Path) -> str:
     p = root / "native" / "src" / MOD / f"{MOD}_ext_{COMP}.c"
     if not p.exists():
         p = root / "native" / "src" / MOD / f"{MOD}_ext.c"
-    return p.read_text()
+    return p.read_text(encoding="utf-8")
 
 
 def _pyi(root: Path) -> str:
-    return (root / "src" / "proj" / MOD / f"{MOD}.pyi").read_text()
+    return (root / "src" / "proj" / MOD / f"{MOD}.pyi").read_text(
+        encoding="utf-8"
+    )
 
 
 class TestErrorNegativeEmission:

@@ -89,7 +89,7 @@ class TestNogilOnABlockingBorrow:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", "--nogil").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert "Py_BEGIN_ALLOW_THREADS" in body
         assert "Py_END_ALLOW_THREADS" in body
 
@@ -98,7 +98,7 @@ class TestNogilOnABlockingBorrow:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", "--nogil").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         # `_p;` not `*_p;`: the house-style pass reformats the declarator
         # to `float _Complex * _p;`, so an anchor that includes the star
         # matches the EMITTER's spelling rather than the file's.
@@ -112,7 +112,7 @@ class TestNogilOnABlockingBorrow:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert "ALLOW_THREADS" not in body
         assert "_p = ring_wait(" in body
 
@@ -122,7 +122,7 @@ class TestNoneOnEmptyOnABorrow:
         proj = _ring(tmp_path)
         assert _borrow(proj, "peek", "--none-on-empty").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "peek")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "peek")
         assert "Py_RETURN_NONE" in body
         assert "peek failed" not in body
 
@@ -131,16 +131,16 @@ class TestNoneOnEmptyOnABorrow:
         proj = _ring(tmp_path)
         assert _borrow(proj, "peek", "--none-on-empty").returncode == 0
 
-        pyi = (proj / PYI).read_text()
+        pyi = (proj / PYI).read_text(encoding="utf-8")
         assert "def peek(self, n: int) -> NDArray[np.complex64] | None:" in pyi
 
     def test_without_it_a_null_still_raises(self, tmp_path):
         proj = _ring(tmp_path)
         assert _borrow(proj, "peek").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "peek")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "peek")
         assert "peek failed" in body
-        pyi = (proj / PYI).read_text()
+        pyi = (proj / PYI).read_text(encoding="utf-8")
         assert "def peek(self, n: int) -> NDArray[np.complex64]:" in pyi
 
 
@@ -150,10 +150,9 @@ class TestItIsReachableAndReplayable:
         proj = _ring(tmp_path)
         r = _borrow(proj, "peek", "--none-on-empty")
         assert r.returncode == 0, r.stderr
-        assert (
-            "none_on_empty = true"
-            in (proj / "objects" / "ring.toml").read_text()
-        )
+        assert "none_on_empty = true" in (
+            proj / "objects" / "ring.toml"
+        ).read_text(encoding="utf-8")
 
     def test_a_replayed_script_rebuilds_the_same_methods(self, tmp_path):
         """The emitter was missing, so replay produced a DIFFERENT project.
@@ -178,7 +177,7 @@ class TestItIsReachableAndReplayable:
         def _keys(p: Path) -> set:
             return {
                 ln.strip()
-                for ln in p.read_text().splitlines()
+                for ln in p.read_text(encoding="utf-8").splitlines()
                 if ln.strip() and "jm_version" not in ln
             }
 
@@ -232,4 +231,6 @@ def test_the_module_stub_agrees_with_the_standalone_one(tmp_path):
 
     stub = next((proj / "src" / "q").rglob("buf.pyi"), None)
     assert stub is not None, "no module stub was written"
-    assert "-> NDArray[np.complex64] | None:" in stub.read_text()
+    assert "-> NDArray[np.complex64] | None:" in stub.read_text(
+        encoding="utf-8"
+    )

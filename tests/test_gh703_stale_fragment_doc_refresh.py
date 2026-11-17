@@ -280,7 +280,7 @@ class TestRealApply:
     def test_authored_header_reaches_a_fresh_fragment(self, project):
         """Baseline — the generator side was never the bug."""
         _, frag = project
-        assert "Upper threshold, in dB." in frag.read_text()
+        assert "Upper threshold, in dB." in frag.read_text(encoding="utf-8")
 
     def test_a_stale_fragment_is_refreshed(self, project):
         """The reported symptom: tables absent, and apply never restored

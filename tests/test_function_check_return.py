@@ -112,7 +112,7 @@ PyMODINIT_FUNC PyInit_iom(void) {{
 }}
 """
     c = tmp_path / "iom.c"
-    c.write_text(src)
+    c.write_text(src, encoding="utf-8")
     so = cbuild.build(
         "ext",
         [c],

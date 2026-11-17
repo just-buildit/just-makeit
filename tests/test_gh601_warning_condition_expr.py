@@ -178,6 +178,6 @@ class TestTheCrossCheckIsScoped:
 
         root = self._project(tmp_path)
         warning_run(root, "acq", FORWARDER, "under-powered")
-        assert FORWARDER in (root / C.FILENAME).read_text(), (
+        assert FORWARDER in (root / C.FILENAME).read_text(encoding="utf-8"), (
             "a TOML round-trip must not mangle the arrows"
         )

@@ -129,7 +129,7 @@ class TestRoundTrip:
         self, tmp_path
     ):
         save(tmp_path, _cfg())
-        manifest = (tmp_path / "just-makeit.toml").read_text()
+        manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
         # [[enum]] lives in the manifest, not an objects/ fragment.
         assert "[[enum]]" in manifest
         assert not (tmp_path / "objects").exists()

@@ -85,11 +85,13 @@ def _project(tmp_path, *, module=None, declare=True, name="p"):
 def _pyi(root, module=None):
     return (
         root / "src" / "p" / (f"{module}.pyi" if module else "w.pyi")
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
 
 def _fragment(root, module):
-    return (root / "native" / "src" / module / f"{module}_ext_w.c").read_text()
+    return (root / "native" / "src" / module / f"{module}_ext_w.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_the_stub_documents_the_declared_constructor_failure(tmp_path):
@@ -225,10 +227,11 @@ def test_a_hand_written_class_docstring_survives(tmp_path):
         apply_run(root)
     frag = root / "native" / "src" / "m" / "m_ext_w.c"
     frag.write_text(
-        frag.read_text().replace(
+        frag.read_text(encoding="utf-8").replace(
             '.tp_doc       = "W type.\\n",',
             '.tp_doc       = "Hand-written summary.\\n",',
-        )
+        ),
+        encoding="utf-8",
     )
     cfg = C.load(root)
     cfg["w"].update(_ERR)
@@ -236,6 +239,6 @@ def test_a_hand_written_class_docstring_survives(tmp_path):
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(io.StringIO()):
             apply_run(root)
-    assert "Hand-written summary." in frag.read_text(), (
+    assert "Hand-written summary." in frag.read_text(encoding="utf-8"), (
         "the tp_doc reclaim overwrote prose a human wrote"
     )

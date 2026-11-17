@@ -197,7 +197,7 @@ class TestTheManifestKeepsTheDECLARATION:
         _declare(root, "frame.Frame")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        raw = (root / C.FILENAME).read_text()
+        raw = (root / C.FILENAME).read_text(encoding="utf-8")
         assert 'object = "frame.Frame"' in raw
         assert CAP not in raw.split("[[seg.init_params]]")[1]
 
@@ -222,7 +222,7 @@ class TestBothStubProducers:
         _declare(root, "frame.Frame")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        pyi = (root / "src" / "proj" / "seg.pyi").read_text()
+        pyi = (root / "src" / "proj" / "seg.pyi").read_text(encoding="utf-8")
         assert "def __init__(self, frame: Frame) -> None: ..." in pyi
         assert "from .frame import Frame" in pyi
 
@@ -231,7 +231,9 @@ class TestBothStubProducers:
         _declare(root, "frame.Frame")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "frame: Frame" in pyi
 
     def test_a_plain_capsule_param_still_says_object(self, tmp_path):
@@ -251,7 +253,7 @@ class TestBothStubProducers:
         C.save(root, cfg)
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        pyi = (root / "src" / "proj" / "seg.pyi").read_text()
+        pyi = (root / "src" / "proj" / "seg.pyi").read_text(encoding="utf-8")
         assert "frame: object" in pyi
         assert "import Frame" not in pyi
 
@@ -274,7 +276,7 @@ class TestTheImportIsDerivedFromTheSignature:
         root = _project(tmp_path)
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        pyi = (root / "src" / "proj" / "seg.pyi").read_text()
+        pyi = (root / "src" / "proj" / "seg.pyi").read_text(encoding="utf-8")
         assert "import Frame" not in pyi
 
 
@@ -287,7 +289,9 @@ class TestTheGeneratedCIsTheShippedCapsulePath:
         _declare(root, "frame.Frame")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text()
+        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert f'PyCapsule_GetPointer(frame_cap, "{CAP}")' in ext
         assert 'PyObject_GetAttrString(frame_obj, "_capsule")' in ext
         # never the producer's struct
@@ -301,7 +305,9 @@ class TestTheGeneratedCIsTheShippedCapsulePath:
         _declare(root, "frame.Frame")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text()
+        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyObject *_frame_owner;" in ext
         assert "Py_XSETREF(self->_frame_owner, frame_obj);" in ext
         assert "Py_XDECREF(self->_frame_owner);" in ext
@@ -313,7 +319,9 @@ class TestTheGeneratedCIsTheShippedCapsulePath:
         _declare(root, "frame.Frame")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text()
+        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text(
+            encoding="utf-8"
+        )
         assert f'#include "{INC.core_include("frame", root)}"' in core_h
         assert "seg_state_t *seg_create(frame_state_t *frame);" in core_h
 

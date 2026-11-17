@@ -30,7 +30,10 @@ def _bumped_manifest_only(root: Path) -> None:
     not. Done by hand, because `jm config version` would write them too."""
     p = root / "just-makeit.toml"
     text = p.read_text(encoding="utf-8")
-    p.write_text(text.replace(f'version = "{OLD}"', f'version = "{NEW}"', 1))
+    p.write_text(
+        text.replace(f'version = "{OLD}"', f'version = "{NEW}"', 1),
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture

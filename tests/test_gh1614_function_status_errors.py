@@ -390,7 +390,9 @@ def _implement(path: Path, body: str) -> None:
     text = path.read_text(encoding="utf-8")
     start = text.index("{\n", text.index("<<IMPLEMENT")) + 2
     end = text.rindex("}")
-    path.write_text(text[:start] + body.lstrip("\n") + "\n" + text[end:])
+    path.write_text(
+        text[:start] + body.lstrip("\n") + "\n" + text[end:], encoding="utf-8"
+    )
 
 
 def _build(dest: Path) -> None:

@@ -50,7 +50,7 @@ def test_object_core_gets_public_link(tmp_path: Path):
     proj = _two_modules(tmp_path)
     obj_cmake = (
         proj / "native" / "src" / "obj_b" / "CMakeLists.txt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     # PUBLIC link on the OBJECT lib itself (was only on test/bench before).
     assert "target_link_libraries(obj_b_core PUBLIC" in obj_cmake
     assert "obj_a_core" in obj_cmake
@@ -60,7 +60,7 @@ def test_aggregating_module_extension_links_dep(tmp_path: Path):
     proj = _two_modules(tmp_path)
     mod_cmake = (
         proj / "native" / "src" / "modB" / "CMakeLists.txt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     # The Python extension must link obj_a_core directly — CMake does not pull
     # a PUBLIC-linked OBJECT lib's objects transitively through another OBJECT
     # lib into the final .so.
@@ -83,5 +83,5 @@ def test_no_extra_link_libs_no_spurious_core_link(tmp_path: Path):
     )
     obj_cmake = (
         proj / "native" / "src" / "plain" / "CMakeLists.txt"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "target_link_libraries(plain_core PUBLIC" not in obj_cmake

@@ -60,8 +60,10 @@ def _declare(proj, entry):
     (proj / INC_ROOT / "rdr" / "rdr_core.h").unlink()
     _q(apply_run, proj)
     return (
-        (proj / "native" / "src" / "rdr" / "CMakeLists.txt").read_text(),
-        (proj / INC_ROOT / "rdr" / "rdr_core.h").read_text(),
+        (proj / "native" / "src" / "rdr" / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        ),
+        (proj / INC_ROOT / "rdr" / "rdr_core.h").read_text(encoding="utf-8"),
     )
 
 

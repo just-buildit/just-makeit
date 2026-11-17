@@ -94,11 +94,15 @@ def _project(tmp_path, param):
 
 
 def _header(root):
-    return (root / INC_ROOT / "hbdecim/hbdecim_core.h").read_text()
+    return (root / INC_ROOT / "hbdecim/hbdecim_core.h").read_text(
+        encoding="utf-8"
+    )
 
 
 def _ext(root):
-    return (root / "native/src/hbdecim/hbdecim_ext.c").read_text()
+    return (root / "native/src/hbdecim/hbdecim_ext.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_the_length_is_named_and_comes_first(tmp_path):
@@ -126,7 +130,10 @@ def test_the_call_matches_the_prototype(tmp_path):
 def test_it_is_not_a_python_argument(tmp_path):
     """A derived value the caller could get wrong is not an argument."""
     root = _project(tmp_path, _DERIVED)
-    ext, pyi = _ext(root), (root / "src/p/hbdecim.pyi").read_text()
+    ext, pyi = (
+        _ext(root),
+        (root / "src/p/hbdecim.pyi").read_text(encoding="utf-8"),
+    )
     assert '{"h", NULL}' in ext, "num_taps leaked into kwlist"
     assert "num_taps" not in pyi, (
         f"the stub asks the caller for a length jm derives:\n{pyi[:600]}"

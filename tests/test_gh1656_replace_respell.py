@@ -119,7 +119,7 @@ def tree(tmp_path_factory):
     _textio.write_text(root / "legacy" / "hi_body.c", HI_BODY)
     first = run_cli("apply", cwd=root)
     before = _build(root, "before")
-    rendered = (root / SACRED[0]).read_text()
+    rendered = (root / SACRED[0]).read_text(encoding="utf-8")
     FX.set_prefix(root)
     refused = run_cli("apply", cwd=root)
     upgraded = run_cli("upgrade", cwd=root)
@@ -153,9 +153,9 @@ def test_apply_refuses_the_replace_tables_before_the_upgrade(tree):
 def test_the_upgrade_respells_both_sides_of_the_replace_tables(tree):
     root, _first, _before, _refused, upgraded, *_ = tree
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
-    lo = (root / "objects" / "lo.toml").read_text()
+    lo = (root / "objects" / "lo.toml").read_text(encoding="utf-8")
     assert f'replace = {{ "LO_T" = "{P}_lo_state_t" }}' in lo, lo
-    hi = (root / "objects" / "hi.toml").read_text()
+    hi = (root / "objects" / "hi.toml").read_text(encoding="utf-8")
     assert (
         f'"GAIN_OF({P}_hi_state_t, state)" = '
         f'"((const {P}_hi_state_t *)state)->gain"'
@@ -166,10 +166,9 @@ def test_the_tree_rendered_again_from_the_manifest_builds(tree):
     root, *_rest, applied, after = tree
     assert applied.returncode == 0, applied.stdout + applied.stderr
     _ok(after)
-    assert (
-        f"((const {P}_hi_state_t *)state)->gain * x"
-        in (root / SACRED[1]).read_text()
-    )
+    assert f"((const {P}_hi_state_t *)state)->gain * x" in (
+        root / SACRED[1]
+    ).read_text(encoding="utf-8")
 
 
 def test_a_key_over_a_body_the_upgrade_leaves_alone_keeps_its_spelling(

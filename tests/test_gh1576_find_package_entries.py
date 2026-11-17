@@ -90,7 +90,7 @@ def test_both_pc_fields_reach_the_root(project):
     cfg["project"]["pkg_modules"] = ["zlib"]
     C.save(project, cfg)
     assert run_cli("apply", cwd=project).returncode == 0
-    root = (project / "CMakeLists.txt").read_text()
+    root = (project / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "find_package(Doppler REQUIRED)" in root
     assert "find_dependency(Threads)" in root
     assert 'set(JM_PC_REQUIRES_PRIVATE "Requires.private: doppler, zlib")' in (
@@ -98,7 +98,9 @@ def test_both_pc_fields_reach_the_root(project):
     )
     assert 'set(JM_PC_LIBS_PRIVATE "Libs.private: -pthread")' in root
     assert 'set(JM_PC_CFLAGS " -I/opt/hdr/include -DHDR=1")' in root
-    pc_in = next((project / "cmake").glob("*.pc.in")).read_text()
+    pc_in = next((project / "cmake").glob("*.pc.in")).read_text(
+        encoding="utf-8"
+    )
     # gh-1582: both reach the .pc through the one optional-fields slot, which
     # the root assembles from exactly these lines.
     assert "@JM_PC_ROW_FIELDS@" in pc_in
@@ -123,11 +125,13 @@ def test_a_pc_in_without_the_cflags_slot_is_reported_behind(project):
     from just_makeit import _render as R
 
     pc_in = next((project / "cmake").glob("*.pc.in"))
-    s = pc_in.read_text()
+    s = pc_in.read_text(encoding="utf-8")
     assert s.count("@JM_PC_ROW_CFLAGS@") == 1
     head = R.owned_token(pc_in.name) + "\n" + R.OWNED_PACKAGING_NOTE
     assert s.startswith(head)
-    pc_in.write_text(s[len(head) :].replace("@JM_PC_ROW_CFLAGS@", ""))
+    pc_in.write_text(
+        s[len(head) :].replace("@JM_PC_ROW_CFLAGS@", ""), encoding="utf-8"
+    )
     out = run_cli("status", cwd=project).stdout
     block = out[out.index("PACKAGING") :].split("\n\n")[0]
     assert f"cmake/{pc_in.name}" in block, out

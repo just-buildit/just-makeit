@@ -72,10 +72,11 @@ def _array_project(tmp_path, ptype="uint8_t[]"):
 def _predate(frag) -> None:
     """Rewrite *frag* as rendered before gh-1700: a bare PyArray_FROM_OTF."""
     old, n = _CALL_RE.subn(
-        r"(PyArrayObject *)PyArray_FROM_OTF(\1, \2, \3)", frag.read_text()
+        r"(PyArrayObject *)PyArray_FROM_OTF(\1, \2, \3)",
+        frag.read_text(encoding="utf-8"),
     )
     assert n == 1, "fixture no longer renders one jm_array_arg call"
-    frag.write_text(old)
+    frag.write_text(old, encoding="utf-8")
 
 
 def test_a_fragment_predating_jm_array_arg_is_named(tmp_path):
@@ -111,10 +112,12 @@ def test_a_gnu_rewrapped_call_is_still_the_helper(tmp_path):
     proj = _array_project(tmp_path)
     frag = proj.joinpath(*FRAG)
     src, n = re.subn(
-        r"jm_array_arg\(", "jm_array_arg (\n    ", frag.read_text()
+        r"jm_array_arg\(",
+        "jm_array_arg (\n    ",
+        frag.read_text(encoding="utf-8"),
     )
     assert n == 1
-    frag.write_text(src)
+    frag.write_text(src, encoding="utf-8")
     out = _apply(proj)
     assert "no longer matches" not in out, out
 
@@ -127,16 +130,16 @@ def test_the_name_in_a_comment_is_not_the_call(tmp_path):
     old, n = _CALL_RE.subn(
         r"/* was jm_array_arg(w) */ "
         r"(PyArrayObject *)PyArray_FROM_OTF(\1, \2, \3)",
-        frag.read_text(),
+        frag.read_text(encoding="utf-8"),
     )
     assert n == 1
-    frag.write_text(old)
+    frag.write_text(old, encoding="utf-8")
     assert WHY in _apply(proj)
 
 
 def test_a_member_with_no_array_argument_is_silent(tmp_path):
     proj = _project(tmp_path, "--arg-type", "float", "--return-type", "float")
-    src = proj.joinpath(*FRAG).read_text()
+    src = proj.joinpath(*FRAG).read_text(encoding="utf-8")
     assert "jm_array_arg" not in src and "PyArray_FROM_OTF" not in src
     out = _apply(proj)
     assert "no longer matches" not in out, out

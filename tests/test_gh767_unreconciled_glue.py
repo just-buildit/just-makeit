@@ -80,12 +80,15 @@ class TestTheBlindSpot:
         root = tmp_path / "proj"
         frag = _module_project(root)
         frag.write_text(
-            frag.read_text().replace("PyObject", "PyObject /* edited */", 1)
+            frag.read_text(encoding="utf-8").replace(
+                "PyObject", "PyObject /* edited */", 1
+            ),
+            encoding="utf-8",
         )
 
         # apply genuinely does not fix it — that is the premise.
         apply_run(root)
-        assert "/* edited */" in frag.read_text()
+        assert "/* edited */" in frag.read_text(encoding="utf-8")
 
         rc, out = _report(root)
         assert "UNRECONCILED (1)" in out
@@ -99,7 +102,12 @@ class TestTheBlindSpot:
         """
         root = tmp_path / "proj"
         frag = _module_project(root)
-        frag.write_text(frag.read_text().replace("PyObject", "PyObject ", 1))
+        frag.write_text(
+            frag.read_text(encoding="utf-8").replace(
+                "PyObject", "PyObject ", 1
+            ),
+            encoding="utf-8",
+        )
 
         rc, _ = _report(root)
         assert rc == 0
@@ -109,7 +117,12 @@ class TestTheBlindSpot:
         what let 58 of doppler's fragments hide behind "OK — up to date"."""
         root = tmp_path / "proj"
         frag = _module_project(root)
-        frag.write_text(frag.read_text().replace("PyObject", "PyObject ", 1))
+        frag.write_text(
+            frag.read_text(encoding="utf-8").replace(
+                "PyObject", "PyObject ", 1
+            ),
+            encoding="utf-8",
+        )
 
         rc, out = _report(root, check=True)
         assert rc == 0
@@ -120,7 +133,12 @@ class TestTheBlindSpot:
         longer agrees with."""
         root = tmp_path / "proj"
         frag = _module_project(root)
-        frag.write_text(frag.read_text().replace("PyObject", "PyObject ", 1))
+        frag.write_text(
+            frag.read_text(encoding="utf-8").replace(
+                "PyObject", "PyObject ", 1
+            ),
+            encoding="utf-8",
+        )
 
         _, out = _report(root)
         assert "OK — up to date" in out
@@ -129,7 +147,12 @@ class TestTheBlindSpot:
     def test_the_wording_does_not_promise_apply_will_fix_it(self, tmp_path):
         root = tmp_path / "proj"
         frag = _module_project(root)
-        frag.write_text(frag.read_text().replace("PyObject", "PyObject ", 1))
+        frag.write_text(
+            frag.read_text(encoding="utf-8").replace(
+                "PyObject", "PyObject ", 1
+            ),
+            encoding="utf-8",
+        )
 
         _, out = _report(root)
         section = out.split("UNRECONCILED")[1]
@@ -147,7 +170,12 @@ class TestTheBlindSpot:
         """status deletes the fragment from its *scratch* only."""
         root = tmp_path / "proj"
         frag = _module_project(root)
-        frag.write_text(frag.read_text().replace("PyObject", "PyObject ", 1))
+        frag.write_text(
+            frag.read_text(encoding="utf-8").replace(
+                "PyObject", "PyObject ", 1
+            ),
+            encoding="utf-8",
+        )
         before = frag.read_bytes()
 
         _report(root)
@@ -185,7 +213,7 @@ class TestTheCandidateSet:
         root = tmp_path / "proj"
         _module_project(root)
         extra = root / "native" / "src" / "dsp" / "dsp_ext_fir_extra.c"
-        extra.write_text("/* hand-written */\n")
+        extra.write_text("/* hand-written */\n", encoding="utf-8")
 
         found = _status._unreconciled_glue(root, C.load(root))
         assert not any(f.endswith("_extra.c") for f in found)

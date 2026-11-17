@@ -72,7 +72,9 @@ def project(tmp_path_factory) -> Path:
         proj,
     ).stdout.strip()
     numpy_home = Path(numpy.__file__).resolve().parent.parent
-    (Path(purelib) / "jm_numpy.pth").write_text(f"{numpy_home}\n")
+    (Path(purelib) / "jm_numpy.pth").write_text(
+        f"{numpy_home}\n", encoding="utf-8"
+    )
     return proj
 
 
@@ -87,7 +89,9 @@ def test_the_preset_configures_builds_and_tests(project, preset):
     _run(["cmake", "--build", "--preset", preset], project, env)
     _run(["ctest", "--preset", preset], project, env)
 
-    cache = (project / "out" / "build" / preset / "CMakeCache.txt").read_text()
+    cache = (project / "out" / "build" / preset / "CMakeCache.txt").read_text(
+        encoding="utf-8"
+    )
     assert ".venv" in cache.split("Python3_EXECUTABLE:")[1].splitlines()[0]
     assert not (project / "build").exists(), "the preset wrote make's build/"
 

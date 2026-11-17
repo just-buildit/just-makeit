@@ -65,8 +65,8 @@ def _apply(root, toml=None):
     """Apply, optionally after rewriting the manifest; return stderr warnings."""
     if toml is not None:
         m = root / "just-makeit.toml"
-        base = m.read_text().split("\n[[reader.methods]]")[0]
-        m.write_text(base + toml)
+        base = m.read_text(encoding="utf-8").split("\n[[reader.methods]]")[0]
+        m.write_text(base + toml, encoding="utf-8")
     err = io.StringIO()
     with (
         contextlib.redirect_stdout(io.StringIO()),
@@ -85,7 +85,9 @@ def _fragment(root):
 class TestFingerprint:
     def test_flags_and_format_are_captured(self, project):
         _apply(project, SCALAR_METHOD)
-        sigs = _method_signatures(_fragment(project).read_text())
+        sigs = _method_signatures(
+            _fragment(project).read_text(encoding="utf-8")
+        )
         assert "zzz" in sigs
         flags, fmt = sigs["zzz"]
         assert "METH_VARARGS" in flags
@@ -95,7 +97,7 @@ class TestFingerprint:
         """A hand-written implementation must never read as drift."""
         _apply(project, SCALAR_METHOD)
         frag = _fragment(project)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         before = _method_signatures(text)
         hand = text.replace(
             "double y = reader_zzz", "double y = 42.0 * reader_zzz"
@@ -128,9 +130,10 @@ class TestWarning:
         _apply(project, SCALAR_METHOD)
         frag = _fragment(project)
         frag.write_text(
-            frag.read_text().replace(
+            frag.read_text(encoding="utf-8").replace(
                 "double y = reader_zzz", "double y = 42.0 * reader_zzz"
-            )
+            ),
+            encoding="utf-8",
         )
         assert _apply(project) == []
 

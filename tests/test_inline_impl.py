@@ -69,7 +69,8 @@ class TestResolveImpl:
             "float REF_step(state_t *s, float x) {\n"
             "    /* TODO */\n"
             "    return x;\n"
-            "}\n"
+            "}\n",
+            encoding="utf-8",
         )
         section = {
             "impl_file": "ref.c::REF_step",
@@ -95,7 +96,8 @@ class TestResolveImpl:
             "ignored line 1\n"
             "    acc = x * s->gain;\n"
             "    return acc;\n"
-            "ignored line 4\n"
+            "ignored line 4\n",
+            encoding="utf-8",
         )
         section = {"impl_file": "ref.c::2:3"}
         body = _resolve_impl(section, {}, tmp_path, "agc")
@@ -110,7 +112,8 @@ class TestLineRangeExtraction:
     def _ref(self, tmp_path: Path) -> Path:
         ref = tmp_path / "snippet.c"
         ref.write_text(
-            "line one\nline two\nline three\nline four\nline five\n"
+            "line one\nline two\nline three\nline four\nline five\n",
+            encoding="utf-8",
         )
         return ref
 
@@ -129,7 +132,9 @@ class TestLineRangeExtraction:
         from just_makeit._impl import extract
 
         ref = tmp_path / "f.c"
-        ref.write_text("int f(void) {\n    return 7;\n}\nTRAILING\n")
+        ref.write_text(
+            "int f(void) {\n    return 7;\n}\nTRAILING\n", encoding="utf-8"
+        )
         # Range form.
         assert "TRAILING" in extract(ref, "3:4")
         # Function-name form still works.
@@ -207,7 +212,7 @@ default = "1.0f"
 class TestApplyInjectsInlineImpl:
     def test_inline_impl_lands_in_core_h(self, project, tmp_path):
         frag = tmp_path / "scaler.toml"
-        frag.write_text(_OBJECT_FRAGMENT)
+        frag.write_text(_OBJECT_FRAGMENT, encoding="utf-8")
         apply_run(project, fragment=frag)
 
         core_h = (project / INC_ROOT / "scaler" / "scaler_core.h").read_text(
@@ -218,7 +223,7 @@ class TestApplyInjectsInlineImpl:
 
     def test_no_unreplaced_placeholder_remains(self, project, tmp_path):
         frag = tmp_path / "scaler.toml"
-        frag.write_text(_OBJECT_FRAGMENT)
+        frag.write_text(_OBJECT_FRAGMENT, encoding="utf-8")
         apply_run(project, fragment=frag)
         core_h = (project / INC_ROOT / "scaler" / "scaler_core.h").read_text(
             encoding="utf-8"
@@ -232,7 +237,8 @@ class TestApplyMutexAborts:
         bad.write_text(
             '[bad]\narg_type = "float"\nreturn_type = "float"\n'
             'mutable = "false"\nno_state = "false"\nno_step = "false"\n'
-            'impl = "return x;"\nimpl_file = "x.c::y"\n'
+            'impl = "return x;"\nimpl_file = "x.c::y"\n',
+            encoding="utf-8",
         )
         with pytest.raises(SystemExit):
             apply_run(project, fragment=bad)

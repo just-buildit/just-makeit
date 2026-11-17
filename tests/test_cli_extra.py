@@ -90,7 +90,8 @@ class TestWarnSchema:
         (tmp_path / C.FILENAME).write_text(
             '[project]\nname = "proj"\nversion = "0.1.0"\n'
             'build = "cmake"\nperf = "false"\npytest = "false"\n'
-            'schema = "1"\n'
+            'schema = "1"\n',
+            encoding="utf-8",
         )
         _warn_schema()
         err = capsys.readouterr().err
@@ -160,7 +161,8 @@ class TestConfigDispatch:
         (tmp_path / "just-makeit.toml").write_text(
             '[project]\nname = "proj"\nversion = "0.1.0"\n'
             'build = "cmake"\nperf = "false"\npytest = "false"\n'
-            'schema = "6"\n'
+            'schema = "6"\n',
+            encoding="utf-8",
         )
         _main(["config"])
         out = capsys.readouterr().out
@@ -171,7 +173,8 @@ class TestConfigDispatch:
         (tmp_path / "just-makeit.toml").write_text(
             '[project]\nname = "proj"\nversion = "0.1.0"\n'
             'build = "cmake"\nperf = "false"\npytest = "false"\n'
-            'schema = "6"\n'
+            'schema = "6"\n',
+            encoding="utf-8",
         )
         _main(["config", "version", "0.2.0"])
         out = capsys.readouterr().out
@@ -182,7 +185,8 @@ class TestConfigDispatch:
         (tmp_path / "just-makeit.toml").write_text(
             '[project]\nname = "proj"\nversion = "0.1.0"\n'
             'build = "cmake"\nperf = "false"\npytest = "false"\n'
-            'schema = "6"\n'
+            'schema = "6"\n',
+            encoding="utf-8",
         )
         with pytest.raises(SystemExit):
             _main(["config", "badkey", "val"])
@@ -192,7 +196,8 @@ class TestConfigDispatch:
         (tmp_path / "just-makeit.toml").write_text(
             '[project]\nname = "proj"\nversion = "0.1.0"\n'
             'build = "cmake"\nperf = "false"\npytest = "false"\n'
-            'schema = "6"\n'
+            'schema = "6"\n',
+            encoding="utf-8",
         )
         with pytest.raises(SystemExit):
             _main(["config", "version"])
@@ -264,7 +269,8 @@ class TestAddDispatch:
         (tmp_path / "just-makeit.toml").write_text(
             '[project]\nname = "proj"\nversion = "0.1.0"\n'
             'build = "cmake"\nperf = "false"\npytest = "false"\n'
-            'schema = "6"\n'
+            'schema = "6"\n',
+            encoding="utf-8",
         )
         with patch("just_makeit._cli._warn_schema"):
             with pytest.raises(SystemExit):
@@ -296,7 +302,7 @@ class TestAddDispatch:
 class TestApplyExtra:
     def test_apply_with_fragment(self, tmp_path, monkeypatch):
         fragment = tmp_path / "frag.c"
-        fragment.write_text("")
+        fragment.write_text("", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
         with patch("just_makeit._apply.run") as mock:
             with patch("just_makeit._cli._warn_schema"):

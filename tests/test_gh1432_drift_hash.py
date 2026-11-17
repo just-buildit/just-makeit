@@ -92,9 +92,9 @@ def _borrow_with_table(proj: Path) -> None:
 
 def _edit(proj: Path, old: str, new: str) -> None:
     frag = proj / "objects" / "r.toml"
-    s = frag.read_text()
+    s = frag.read_text(encoding="utf-8")
     assert old in s, old
-    frag.write_text(s.replace(old, new, 1))
+    frag.write_text(s.replace(old, new, 1), encoding="utf-8")
 
 
 class TestAnEditedFeatureIsReported:
@@ -116,7 +116,7 @@ class TestAnEditedFeatureIsReported:
         assert "declares C" in out, out
         # The binding really is without it -- the report is not a false
         # alarm about a file that already has the row.
-        assert "case C:" not in (proj / FRAG).read_text()
+        assert "case C:" not in (proj / FRAG).read_text(encoding="utf-8")
 
     def test_strict_added_to_an_existing_method(self, tmp_path):
         proj = _project(tmp_path)
@@ -237,7 +237,7 @@ class TestTheOutGuardIsNotStrict:
         assert run_cli("apply", cwd=proj).returncode == 0
 
         frag = proj / FRAG
-        src = frag.read_text()
+        src = frag.read_text(encoding="utf-8")
         assert "out_obj" in src, "fixture no longer renders an out= guard"
         # An OLD fragment: rendered before gh-581's contiguity half. That
         # is doppler's 15 fragments, reproduced rather than described.
@@ -247,7 +247,7 @@ class TestTheOutGuardIsNotStrict:
             if "PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj)" not in ln
         )
         assert stripped != src
-        frag.write_text(stripped + "\n")
+        frag.write_text(stripped + "\n", encoding="utf-8")
 
         out = (lambda r: r.stdout + r.stderr)(run_cli("apply", cwd=proj))
         # The drift is REAL and must still be reported...
@@ -269,7 +269,9 @@ class TestTheOutGuardIsNotStrict:
         _out_method(proj, "tight", "--strict")
         assert run_cli("apply", cwd=proj).returncode == 0
 
-        feat = _docsync._method_feature_symbols((proj / FRAG).read_text())
+        feat = _docsync._method_feature_symbols(
+            (proj / FRAG).read_text(encoding="utf-8")
+        )
         assert "strict-input" in feat["tight"], feat["tight"]
         assert "strict-input" not in feat["loose"], feat["loose"]
         # Both offer `out=`, so both carry the guard marker.
@@ -291,7 +293,7 @@ class TestTheOutGuardIsNotStrict:
         assert run_cli("apply", cwd=proj).returncode == 0
 
         frag = proj / FRAG
-        src = frag.read_text()
+        src = frag.read_text(encoding="utf-8")
         wrapped = src.replace(
             "PyArray_IS_C_CONTIGUOUS((PyArrayObject *)out_obj)",
             "PyArray_IS_C_CONTIGUOUS(\n                (PyArrayObject *)\n"

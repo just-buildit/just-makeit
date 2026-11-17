@@ -76,11 +76,11 @@ def amp(tmp_path):
 
 class TestCoreSignature:
     def test_header_steps_takes_control_param(self, amp):
-        h = (amp / INC_ROOT / "amp/amp_core.h").read_text()
+        h = (amp / INC_ROOT / "amp/amp_core.h").read_text(encoding="utf-8")
         assert "float          *out, float gain);" in h
 
     def test_impl_steps_takes_control_param(self, amp):
-        c = (amp / "native/src/amp/amp_core.c").read_text()
+        c = (amp / "native/src/amp/amp_core.c").read_text(encoding="utf-8")
         assert "float          *out, float gain)" in c
 
 
@@ -89,27 +89,27 @@ class TestCoreSignature:
 
 class TestExtBinding:
     def test_kwlist_includes_control(self, amp):
-        ext = (amp / "native/src/amp/amp_ext.c").read_text()
+        ext = (amp / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         assert '"x", "out", "gain", NULL' in ext
 
     def test_default_reads_live_state_field(self, amp):
-        ext = (amp / "native/src/amp/amp_ext.c").read_text()
+        ext = (amp / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         assert "float gain = self->handle->gain;" in ext
 
     def test_parses_with_keywords(self, amp):
-        ext = (amp / "native/src/amp/amp_ext.c").read_text()
+        ext = (amp / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         assert "PyArg_ParseTupleAndKeywords(args, kwds," in ext
         assert '"O|Of", kwlist,' in ext
         assert "&x_obj, &out_obj, &gain" in ext
 
     def test_both_call_sites_pass_control(self, amp):
-        ext = (amp / "native/src/amp/amp_ext.c").read_text()
+        ext = (amp / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         # out= path and the freshly-allocated path both thread `gain` through.
         assert ext.count("PyArray_DATA(out_arr), gain)") == 1
         assert "(PyArrayObject *)out), gain)" in ext
 
     def test_methoddef_is_keyword_capable(self, amp):
-        ext = (amp / "native/src/amp/amp_ext.c").read_text()
+        ext = (amp / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         assert (
             '{"steps",    (PyCFunction)(void *)Amp_steps,'
             "    METH_VARARGS | METH_KEYWORDS," in ext
@@ -121,7 +121,7 @@ class TestExtBinding:
 
 class TestStub:
     def test_pyi_exposes_optional_kwarg(self, amp):
-        pyi = (amp / "src/proj/amp.pyi").read_text()
+        pyi = (amp / "src/proj/amp.pyi").read_text(encoding="utf-8")
         assert "gain: float = ..." in pyi
 
 
@@ -210,7 +210,7 @@ class TestModuleStub:
 
 class TestConfig:
     def test_serialized_flag(self, amp):
-        toml = (amp / "just-makeit.toml").read_text()
+        toml = (amp / "just-makeit.toml").read_text(encoding="utf-8")
         assert "controllable = true" in toml
 
     def test_accessor_roundtrip(self, amp):
@@ -280,10 +280,10 @@ def test_controllable_override_e2e(amp):
 
     # Replace the pass-through body with an observable `out = in * gain`.
     core_c = amp / "native/src/amp/amp_core.c"
-    body = core_c.read_text().replace(
+    body = core_c.read_text(encoding="utf-8").replace(
         "out[i] = (float)in[i];", "out[i] = in[i] * gain;"
     )
-    core_c.write_text(body)
+    core_c.write_text(body, encoding="utf-8")
 
     build = amp / "build"
     cfg = subprocess.run(
@@ -365,24 +365,24 @@ def _cmake_build(root):
 
 class TestScalarSignature:
     def test_step_and_steps_take_control(self, scalar):
-        h = (scalar / INC_ROOT / "amp/amp_core.h").read_text()
+        h = (scalar / INC_ROOT / "amp/amp_core.h").read_text(encoding="utf-8")
         # step() inline gains the param; steps() decl gains it too.
         assert "float x, float gain)" in h
         assert "size_t               n, float gain);" in h
 
     def test_step_parses_positional_not_keyword(self, scalar):
-        ext = (scalar / "native/src/amp/amp_ext.c").read_text()
+        ext = (scalar / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         # step() stays positional (PyArg_ParseTuple), default from the field.
         assert "float gain = self->handle->gain;" in ext
         assert 'PyArg_ParseTuple(args, "f|f", &x, &gain)' in ext
 
     def test_steps_is_keyword_capable(self, scalar):
-        ext = (scalar / "native/src/amp/amp_ext.c").read_text()
+        ext = (scalar / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         assert '"x", "out", "gain", NULL' in ext
         assert "PyArg_ParseTupleAndKeywords" in ext
 
     def test_step_methoddef_stays_varargs_only(self, scalar):
-        ext = (scalar / "native/src/amp/amp_ext.c").read_text()
+        ext = (scalar / "native/src/amp/amp_ext.c").read_text(encoding="utf-8")
         # step() never gets METH_KEYWORDS (per-sample hot path).
         assert "(PyCFunction)Amp_step,     METH_VARARGS," in ext
         # steps() does.
@@ -392,7 +392,9 @@ class TestScalarSignature:
         )
 
     def test_pyi_step_positional_only_steps_keyword(self, scalar):
-        pyi = flatten_signatures((scalar / "src/proj/amp.pyi").read_text())
+        pyi = flatten_signatures(
+            (scalar / "src/proj/amp.pyi").read_text(encoding="utf-8")
+        )
         assert (
             "def step(self, x: float, gain: float = ..., /) -> float:" in pyi
         )
@@ -412,7 +414,9 @@ class TestOutUnification:
         init_run(
             root, "plain", arg_type="float", return_type="float"
         )  # no controllable
-        ext = (root / "native/src/plain/plain_ext.c").read_text()
+        ext = (root / "native/src/plain/plain_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArg_ParseTupleAndKeywords" in ext
         assert '{"x", "out", NULL}' in ext
         assert (
@@ -456,7 +460,10 @@ def test_scalar_controllable_e2e(scalar):
     # y = x * gain (the override is observable).
     h = scalar / INC_ROOT / "amp/amp_core.h"
     h.write_text(
-        h.read_text().replace("return (float)x;", "return (float)(x * gain);")
+        h.read_text(encoding="utf-8").replace(
+            "return (float)x;", "return (float)(x * gain);"
+        ),
+        encoding="utf-8",
     )
     _cmake_build(scalar)
     script = (
@@ -510,7 +517,7 @@ class TestGeneratorFlip:
         root = tmp_path / "proj"
         new_run("proj", root, c_prefix=None)
         init_run(root, "osc", arg_type="void", return_type="float")
-        ext = (root / "native/src/osc/osc_ext.c").read_text()
+        ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
         assert "Osc_step(OscObject *self, PyObject *Py_UNUSED" in ext
         assert "(PyCFunction)Osc_step,      METH_NOARGS" in ext or (
             "Osc_step," in ext and "METH_NOARGS" in ext
@@ -519,7 +526,7 @@ class TestGeneratorFlip:
     def test_controllable_generator_flips_to_varargs(self, tmp_path):
         root = tmp_path / "proj"
         _make(root, "osc", "void", "float")
-        ext = (root / "native/src/osc/osc_ext.c").read_text()
+        ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
         # step() now takes args and parses a positional-optional control.
         assert "Osc_step(OscObject *self, PyObject *args)" in ext
         assert 'PyArg_ParseTuple(args, "|f", &gain)' in ext
@@ -608,7 +615,7 @@ class TestPerfMacro:
         root = tmp_path / "proj"
         new_run("proj", root, c_prefix=None)
         init_run(root, "c", arg_type="float", return_type="float", perf=True)
-        perf_h = (root / INC_ROOT / "jm_perf.h").read_text()
+        perf_h = (root / INC_ROOT / "jm_perf.h").read_text(encoding="utf-8")
         assert "JM_DEFINE_STEPS_EX(" in perf_h
         # gh-944: the private layer is JM_EVAL_IMPL now. It was `_JM_EVAL_` —
         # a reserved identifier, which the implementation may define itself.
@@ -649,13 +656,21 @@ def test_perf_controllable_macro_e2e(tmp_path):
     # step() = x * gain
     h = root / INC_ROOT / "c/c_core.h"
     h.write_text(
-        h.read_text().replace("return (float)x;", "return (float)(x * gain);")
+        h.read_text(encoding="utf-8").replace(
+            "return (float)x;", "return (float)(x * gain);"
+        ),
+        encoding="utf-8",
     )
     # Replace the generated plain-loop steps() with the SIMD macro + a batch fn.
     import re
 
     c = root / "native/src/c/c_core.c"
-    body = re.sub(r"void\s+c_steps\(.*?\n\}\n", "", c.read_text(), flags=re.S)
+    body = re.sub(
+        r"void\s+c_steps\(.*?\n\}\n",
+        "",
+        c.read_text(encoding="utf-8"),
+        flags=re.S,
+    )
     body += (
         "\nstatic inline void\n"
         "c_step_batch(c_state_t *state, const float *in, float *out,"
@@ -664,7 +679,7 @@ def test_perf_controllable_macro_e2e(tmp_path):
         "JM_DEFINE_STEPS_EX(c, c_state_t, float, 0, 4, 64,"
         " (, float gain), (, gain))\n"
     )
-    c.write_text(body)
+    c.write_text(body, encoding="utf-8")
     _cmake_build(root)
     script = (
         "import numpy as np\n"

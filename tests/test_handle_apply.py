@@ -185,7 +185,7 @@ class TestApplyMaterialize:
         cmake = d / "CMakeLists.txt"
         pyi = tmp_path / "src" / "proj" / "wfm" / "wfm_writer.pyi"
         assert ext.exists() and cmake.exists() and pyi.exists()
-        src = ext.read_text()
+        src = ext.read_text(encoding="utf-8")
         assert "PyInit_wfm_writer" in src
         assert 'include "wfm/wfm_writer.h"' in src
         # the typed-class face (not free functions)
@@ -194,7 +194,7 @@ class TestApplyMaterialize:
     def test_top_cmake_wires_add_subdirectory(self, tmp_path):
         _project_with_handle(tmp_path)
         apply_run(tmp_path)
-        top = (tmp_path / "CMakeLists.txt").read_text()
+        top = (tmp_path / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/wfm_writer)" in top
 
     def test_package_override_places_pyi_in_sibling(self, tmp_path):
@@ -269,7 +269,7 @@ class TestNonWfmGenericity:
         apply_run(tmp_path)
         ext = (
             tmp_path / "native" / "src" / "ringbuf" / "ringbuf_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "PyInit_ringbuf" in ext
         assert "RingType" in ext
         assert "ringbuf_open" in ext and "ringbuf_stats" in ext
@@ -281,7 +281,7 @@ class TestNonWfmGenericity:
 class TestManifestRoundTrip:
     def test_handle_keys_survive_dump(self, tmp_path):
         _project_with_handle(tmp_path, ring=True)
-        text = (tmp_path / "just-makeit.toml").read_text()
+        text = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
         assert 'kind = "handle"' in text
         assert 'type_name = "Writer"' in text
         # reloads cleanly with the handle readers intact

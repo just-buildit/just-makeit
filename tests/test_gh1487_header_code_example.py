@@ -188,4 +188,4 @@ def test_example_compiles_against_its_header(project, name, tmp_path):
         includes=[project / INC_DIR],
         check=False,
     )
-    assert proc.returncode == 0, tu.read_text() + proc.stderr
+    assert proc.returncode == 0, tu.read_text(encoding="utf-8") + proc.stderr

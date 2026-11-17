@@ -315,7 +315,7 @@ def test_cc_names_the_compiler_as_cmake_reads_it(monkeypatch, tmp_path):
     monkeypatch.delenv("CC", raising=False)
     fallback = _compilers.default_cc()
     exe = tmp_path / ("mycc.exe" if sys.platform == "win32" else "mycc")
-    exe.write_text("")
+    exe.write_text("", encoding="utf-8")
     exe.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("CC", "mycc")

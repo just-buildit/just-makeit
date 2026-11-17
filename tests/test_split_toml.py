@@ -58,7 +58,9 @@ def _add_include(manifest: Path, line: str) -> None:
 class TestLoadResolvesIncludes:
     def test_glob_include_merges_fragment(self, bare_project):
         (bare_project / "objects").mkdir()
-        (bare_project / "objects" / "agc.toml").write_text(_AGC_FRAGMENT)
+        (bare_project / "objects" / "agc.toml").write_text(
+            _AGC_FRAGMENT, encoding="utf-8"
+        )
         _add_include(bare_project / C.FILENAME, 'include = ["objects/*.toml"]')
         cfg = C.load(bare_project)
         assert "agc" in C.components(cfg)
@@ -66,7 +68,9 @@ class TestLoadResolvesIncludes:
 
     def test_explicit_path_include(self, bare_project):
         (bare_project / "fragments").mkdir()
-        (bare_project / "fragments" / "agc.toml").write_text(_AGC_FRAGMENT)
+        (bare_project / "fragments" / "agc.toml").write_text(
+            _AGC_FRAGMENT, encoding="utf-8"
+        )
         _add_include(
             bare_project / C.FILENAME,
             'include = ["fragments/agc.toml"]',
@@ -82,8 +86,12 @@ class TestLoadResolvesIncludes:
 
     def test_duplicate_object_across_fragments_errors(self, bare_project):
         (bare_project / "objects").mkdir()
-        (bare_project / "objects" / "a.toml").write_text(_AGC_FRAGMENT)
-        (bare_project / "objects" / "b.toml").write_text(_AGC_FRAGMENT)
+        (bare_project / "objects" / "a.toml").write_text(
+            _AGC_FRAGMENT, encoding="utf-8"
+        )
+        (bare_project / "objects" / "b.toml").write_text(
+            _AGC_FRAGMENT, encoding="utf-8"
+        )
         _add_include(bare_project / C.FILENAME, 'include = ["objects/*.toml"]')
         with pytest.raises(ValueError, match="agc"):
             C.load(bare_project)
@@ -91,7 +99,7 @@ class TestLoadResolvesIncludes:
     def test_project_in_fragment_errors(self, bare_project):
         (bare_project / "objects").mkdir()
         (bare_project / "objects" / "bad.toml").write_text(
-            '[project]\nname = "x"\nversion = "0.1.0"\n'
+            '[project]\nname = "x"\nversion = "0.1.0"\n', encoding="utf-8"
         )
         _add_include(bare_project / C.FILENAME, 'include = ["objects/*.toml"]')
         with pytest.raises(ValueError, match=r"\[project\]"):
@@ -100,7 +108,9 @@ class TestLoadResolvesIncludes:
     def test_load_manifest_skips_includes(self, bare_project):
         """load_manifest reads the manifest only — no merge."""
         (bare_project / "objects").mkdir()
-        (bare_project / "objects" / "agc.toml").write_text(_AGC_FRAGMENT)
+        (bare_project / "objects" / "agc.toml").write_text(
+            _AGC_FRAGMENT, encoding="utf-8"
+        )
         _add_include(bare_project / C.FILENAME, 'include = ["objects/*.toml"]')
         manifest = C.load_manifest(bare_project)
         assert "agc" not in manifest
@@ -117,7 +127,7 @@ class TestApplyCompose:
         self, bare_project, tmp_path
     ):
         external = tmp_path / "agc.toml"
-        external.write_text(_AGC_FRAGMENT)
+        external.write_text(_AGC_FRAGMENT, encoding="utf-8")
         apply_run(bare_project, fragment=external)
 
         assert (bare_project / "objects" / "agc.toml").exists()
@@ -129,9 +139,9 @@ class TestApplyCompose:
     def test_compose_idempotent_include(self, bare_project, tmp_path):
         """Adding a second fragment doesn't duplicate the include line."""
         e1 = tmp_path / "agc.toml"
-        e1.write_text(_AGC_FRAGMENT)
+        e1.write_text(_AGC_FRAGMENT, encoding="utf-8")
         e2 = tmp_path / "mixer.toml"
-        e2.write_text(_MIXER_FRAGMENT)
+        e2.write_text(_MIXER_FRAGMENT, encoding="utf-8")
         apply_run(bare_project, fragment=e1)
         apply_run(bare_project, fragment=e2)
 
@@ -140,10 +150,10 @@ class TestApplyCompose:
 
     def test_compose_conflict_errors_with_remedy(self, bare_project, tmp_path):
         external = tmp_path / "agc.toml"
-        external.write_text(_AGC_FRAGMENT)
+        external.write_text(_AGC_FRAGMENT, encoding="utf-8")
         apply_run(bare_project, fragment=external)
 
         dup = tmp_path / "agc2.toml"
-        dup.write_text(_AGC_FRAGMENT)
+        dup.write_text(_AGC_FRAGMENT, encoding="utf-8")
         with pytest.raises(SystemExit):
             apply_run(bare_project, fragment=dup)

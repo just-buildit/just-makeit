@@ -49,25 +49,29 @@ class TestAppTargetC:
 
     def test_main_c_includes_component(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
-        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text(
+            encoding="utf-8"
+        )
         assert "engine/engine_core.h" in text
 
     def test_main_c_calls_create_destroy(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
-        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text(
+            encoding="utf-8"
+        )
         assert "engine_create" in text
         assert "engine_destroy" in text
 
     def test_cmake_executable_added(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_executable(dsp_tool" in cmake
         assert "engine_core" in cmake
 
     def test_cmake_idempotent(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
         app_replay(project, load(project))
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert cmake.count("add_executable(dsp_tool") == 1
 
     def test_toml_app_section_persisted(self, project):
@@ -81,7 +85,7 @@ class TestAppTargetC:
         app_run(no_state_project, target="c", name="tool", object_="gen")
         text = (
             no_state_project / "native" / "src" / "app" / "tool.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "gen_create" in text
 
 
@@ -92,18 +96,24 @@ class TestAppTargetConsole:
 
     def test_cli_imports_component(self, project):
         app_run(project, target="console", name="dsp_tool", object_="engine")
-        text = (project / "src" / "proj" / "cli.py").read_text()
+        text = (project / "src" / "proj" / "cli.py").read_text(
+            encoding="utf-8"
+        )
         assert "from . import Engine" in text
 
     def test_cli_has_argparse_flags_for_state(self, project):
         app_run(project, target="console", name="dsp_tool", object_="engine")
-        text = (project / "src" / "proj" / "cli.py").read_text()
+        text = (project / "src" / "proj" / "cli.py").read_text(
+            encoding="utf-8"
+        )
         assert "--gain" in text
         assert "--rate" in text
 
     def test_cli_create_call_uses_args(self, project):
         app_run(project, target="console", name="dsp_tool", object_="engine")
-        text = (project / "src" / "proj" / "cli.py").read_text()
+        text = (project / "src" / "proj" / "cli.py").read_text(
+            encoding="utf-8"
+        )
         assert "gain=args.gain" in text
         assert "rate=args.rate" in text
 
@@ -111,7 +121,9 @@ class TestAppTargetConsole:
         # engine is a scalar step() object → the CLI body is generated, not a
         # <<IMPLEMENT>> stub.
         app_run(project, target="console", name="dsp_tool", object_="engine")
-        text = (project / "src" / "proj" / "cli.py").read_text()
+        text = (project / "src" / "proj" / "cli.py").read_text(
+            encoding="utf-8"
+        )
         assert "<<IMPLEMENT" not in text
         assert "obj.step(x)" in text
 
@@ -128,19 +140,19 @@ class TestAppTargetPep723:
 
     def test_script_has_pep723_block(self, project):
         app_run(project, target="pep723", name="dsp_tool", object_="engine")
-        text = (project / "dsp_tool.py").read_text()
+        text = (project / "dsp_tool.py").read_text(encoding="utf-8")
         assert "# /// script" in text
         assert "dependencies" in text
         assert "proj" in text
 
     def test_script_imports_component(self, project):
         app_run(project, target="pep723", name="dsp_tool", object_="engine")
-        text = (project / "dsp_tool.py").read_text()
+        text = (project / "dsp_tool.py").read_text(encoding="utf-8")
         assert "from proj import Engine" in text
 
     def test_script_has_argparse_flags(self, project):
         app_run(project, target="pep723", name="dsp_tool", object_="engine")
-        text = (project / "dsp_tool.py").read_text()
+        text = (project / "dsp_tool.py").read_text(encoding="utf-8")
         assert "--gain" in text
         assert "--rate" in text
 
@@ -217,7 +229,9 @@ class TestAppGenerationVsFallback:
             object_="engine",
             argc_argv=True,
         )
-        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text()
+        text = (project / "native" / "src" / "app" / "dsp_tool.c").read_text(
+            encoding="utf-8"
+        )
         assert "<<IMPLEMENT" not in text
         assert "(void)argc" not in text
         assert "engine_step(state, x)" in text
@@ -225,7 +239,9 @@ class TestAppGenerationVsFallback:
 
     def test_no_step_default_suppresses_argc_argv(self, no_step_project):
         app_run(no_step_project, target="c", name="t", object_="sink")
-        text = (no_step_project / "native" / "src" / "app" / "t.c").read_text()
+        text = (no_step_project / "native" / "src" / "app" / "t.c").read_text(
+            encoding="utf-8"
+        )
         assert "(void)argc" in text
         assert "if (argc > 1)" not in text
 
@@ -237,7 +253,9 @@ class TestAppGenerationVsFallback:
             object_="sink",
             argc_argv=True,
         )
-        text = (no_step_project / "native" / "src" / "app" / "t.c").read_text()
+        text = (no_step_project / "native" / "src" / "app" / "t.c").read_text(
+            encoding="utf-8"
+        )
         assert "if (argc > 1)" in text
         assert "IMPLEMENT" in text
         assert "(void)argc" not in text
@@ -265,7 +283,7 @@ class TestAppTargetCollision:
     def test_collision_with_module_target(self, tmp_path):
         root = self._module_project(tmp_path)
         app_run(root, target="c", name="wfmgen", object_="synth")
-        cmake = (root / "CMakeLists.txt").read_text()
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         # Distinct exe target, binary preserved via OUTPUT_NAME.
         assert "add_executable(wfmgen_app native/src/app/wfmgen.c)" in cmake
         assert (
@@ -282,7 +300,7 @@ class TestAppTargetCollision:
         # `project` has component "engine"; an app named "engine" collides
         # with engine's own Python ext target.
         app_run(project, target="c", name="engine", object_="engine")
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_executable(engine_app native/src/app/engine.c)" in cmake
         assert (
             "set_target_properties(engine_app PROPERTIES OUTPUT_NAME engine)"
@@ -291,7 +309,7 @@ class TestAppTargetCollision:
 
     def test_no_collision_omits_output_name(self, project):
         app_run(project, target="c", name="dsp_tool", object_="engine")
-        cmake = (project / "CMakeLists.txt").read_text()
+        cmake = (project / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_executable(dsp_tool native/src/app/dsp_tool.c)" in cmake
         # No app-specific OUTPUT_NAME (the top-level lib has its own, unrelated).
         assert "OUTPUT_NAME dsp_tool" not in cmake
@@ -300,7 +318,7 @@ class TestAppTargetCollision:
         root = self._module_project(tmp_path)
         app_run(root, target="c", name="wfmgen", object_="synth")
         app_replay(root, load(root))
-        cmake = (root / "CMakeLists.txt").read_text()
+        cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         # Re-run reuses the same suffixed id — no <name>_app_app, single block.
         assert cmake.count("add_executable(wfmgen_app") == 1
         assert "wfmgen_app_app" not in cmake

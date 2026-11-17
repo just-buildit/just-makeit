@@ -179,7 +179,7 @@ class TestReaders:
 class TestRoundTrip:
     def test_save_load_preserves_composer_module(self, tmp_path):
         save(tmp_path, _cfg())
-        manifest = (tmp_path / "just-makeit.toml").read_text()
+        manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
         assert 'kind = "composer"' in manifest
         assert 'composes = ["wfm_synth"]' in manifest
         assert "sample_type = true" in manifest
@@ -224,7 +224,7 @@ def test_save_load_preserves_source_generates(tmp_path):
         "bridge_fn": "wfm_source_to_synth",
     }
     save(tmp_path, cfg)
-    manifest = (tmp_path / "just-makeit.toml").read_text()
+    manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
     assert "[module.wfm_compose.source.generates]" in manifest
     assert 'generator = "wfm_synth"' in manifest
     assert 'bridge_fn = "wfm_source_to_synth"' in manifest
@@ -258,7 +258,7 @@ def test_save_load_preserves_composer_stream(tmp_path):
     cfg = _cfg()
     cfg["module"]["wfm_compose"]["composer"] = {"stream": True}
     save(tmp_path, cfg)
-    manifest = (tmp_path / "just-makeit.toml").read_text()
+    manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
     assert "[module.wfm_compose.composer]" in manifest
     assert "stream = true" in manifest
 
@@ -276,7 +276,7 @@ def test_save_load_preserves_flat_sources(tmp_path):
     cfg = _cfg()
     cfg["module"]["wfm_compose"]["segment"]["flat_sources"] = True
     save(tmp_path, cfg)
-    manifest = (tmp_path / "just-makeit.toml").read_text()
+    manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
     assert "flat_sources = true" in manifest
 
     cfg2 = load(tmp_path)
@@ -293,7 +293,7 @@ def test_save_load_preserves_to_dict(tmp_path):
     cfg = _cfg()
     cfg["module"]["wfm_compose"]["composer"] = {"to_dict": True}
     save(tmp_path, cfg)
-    manifest = (tmp_path / "just-makeit.toml").read_text()
+    manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
     assert "[module.wfm_compose.composer]" in manifest
     assert "to_dict = true" in manifest
 
@@ -326,7 +326,7 @@ def test_save_load_preserves_computed(tmp_path):
         }
     ]
     save(tmp_path, cfg)
-    manifest = (tmp_path / "just-makeit.toml").read_text()
+    manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
     assert "computed = [" in manifest
     assert 'fn = "wfm_source_n_samples"' in manifest
 

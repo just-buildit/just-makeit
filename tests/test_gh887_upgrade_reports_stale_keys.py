@@ -114,9 +114,9 @@ def test_it_does_not_rewrite_the_manifest(tmp_path):
     pin bump. That is a runtime behaviour change wearing a migration's clothes.
     """
     root = _project(tmp_path / "p", stale=True)
-    before = (root / C.FILENAME).read_text()
+    before = (root / C.FILENAME).read_text(encoding="utf-8")
     _upgrade_out(root)
-    assert (root / C.FILENAME).read_text() == before, (
+    assert (root / C.FILENAME).read_text(encoding="utf-8") == before, (
         "upgrade rewrote the manifest instead of reporting; the replacement "
         "alters what a failing return does and belongs to the author"
     )
@@ -144,7 +144,7 @@ def test_the_owning_fragment_is_named_when_split(tmp_path):
     root = _project(tmp_path / "p", stale=True)
     frag_dir = root / "objects"
     frag_dir.mkdir(exist_ok=True)
-    (frag_dir / "w.toml").write_text("# split fragment\n")
+    (frag_dir / "w.toml").write_text("# split fragment\n", encoding="utf-8")
 
     out = _upgrade_out(root)
     assert "objects/w.toml" in out, (

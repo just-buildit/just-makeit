@@ -47,15 +47,17 @@ class TestCi:
 
     def test_unittest_project_omits_pytest(self, project):
         ci_run(project, provider="github")
-        text = (project / ".github" / "workflows" / "ci.yml").read_text()
+        text = (project / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
         assert "numpy" in text
         assert "pytest" not in text
 
     def test_pytest_project_includes_pytest(self, pytest_project):
         ci_run(pytest_project, provider="github")
-        text = (
-            pytest_project / ".github" / "workflows" / "ci.yml"
-        ).read_text()
+        text = (pytest_project / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
         assert f"numpy {_pins.PYTEST_DQ}" in text
 
     def test_woodpecker_provider(self, project):

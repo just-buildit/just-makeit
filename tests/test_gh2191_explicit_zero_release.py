@@ -147,15 +147,16 @@ class TestBuiltAndRun:
             )
         h = root / INC_ROOT / "ring/ring_core.h"
         h.write_text(
-            h.read_text().replace(
+            h.read_text(encoding="utf-8").replace(
                 "    size_t cap;",
                 "    size_t cap;\n    float _Complex buf[8];\n"
                 "    size_t last;\n    size_t calls;",
                 1,
-            )
+            ),
+            encoding="utf-8",
         )
         c = root / "native/src/ring/ring_core.c"
-        text = c.read_text()
+        text = c.read_text(encoding="utf-8")
         bodies = {
             "ring_wait(ring_state_t *state, size_t n)": cls.WAIT,
             "ring_consume(ring_state_t *state, size_t n)": cls.CONSUME,
@@ -167,7 +168,7 @@ class TestBuiltAndRun:
             j = text.index("\n}\n", i)
             start = text.index("{", i) + 1
             text = text[:start] + "\n" + body + text[j:]
-        c.write_text(text)
+        c.write_text(text, encoding="utf-8")
         for cmd in (
             ["cmake", "-S", str(root), "-B", str(root / "build")],
             ["cmake", "--build", str(root / "build"), "--target", "ring"],
@@ -210,7 +211,8 @@ class TestBuiltAndRun:
             "v = r.wait(5)\n"
             "r.consume(2)\n"
             "assert (r.last(), r.calls()) == (2, 5), (r.last(), r.calls())\n"
-            "print('OK')\n"
+            "print('OK')\n",
+            encoding="utf-8",
         )
         out = subprocess.run(
             [sys.executable, str(probe)],

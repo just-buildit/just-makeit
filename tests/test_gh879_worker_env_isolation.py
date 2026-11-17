@@ -153,7 +153,7 @@ def test_installing_tests_run_the_interpreter_they_installed_into():
     """
     offenders = []
     for path in sorted(Path(__file__).parent.glob("test_*.py")):
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         if '"uv", "pip", "install"' not in text:
             continue
         if "JUST_BUILDIT_PYTHON" not in text:
@@ -253,7 +253,7 @@ def test_worker_installs_are_constrained_to_the_parents_numpy():
         "pull a newer numpy than the parent and split the C-API across the "
         "compile/import boundary"
     )
-    text = Path(constraint).read_text()
+    text = Path(constraint).read_text(encoding="utf-8")
     assert "numpy==" in text, f"constraint file does not pin numpy: {text!r}"
 
     parent = subprocess.run(

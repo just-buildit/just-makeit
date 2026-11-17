@@ -59,10 +59,10 @@ class TestTheSplit:
         capsys.readouterr()
         assert _check(root)[0] == 0, "fixture must start clean"
 
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         row = re.search(r'\n\s*\{\s*"reset".*?\},', text, re.S)
         assert row, "fixture must contain the row it deletes"
-        frag.write_text(text.replace(row.group(0), "", 1))
+        frag.write_text(text.replace(row.group(0), "", 1), encoding="utf-8")
 
         rc, out = _check(root)
         assert rc != 0, "a deleted member must fail --check"
@@ -77,7 +77,13 @@ class TestTheSplit:
         capsys.readouterr()
 
         frag.write_text(
-            re.sub(r"^(\w+) ?\(", r"\1 (", frag.read_text(), flags=re.M)
+            re.sub(
+                r"^(\w+) ?\(",
+                r"\1 (",
+                frag.read_text(encoding="utf-8"),
+                flags=re.M,
+            ),
+            encoding="utf-8",
         )
         rc, out = _check(root)
         assert rc == 0, out

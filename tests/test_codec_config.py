@@ -138,7 +138,7 @@ class TestConfigRoundTrip:
         cfg["codec"] = {"blue_keyword": _BLUE}
         C.save(d, cfg)
 
-        text = (d / "just-makeit.toml").read_text()
+        text = (d / "just-makeit.toml").read_text(encoding="utf-8")
         assert "[codec.blue_keyword]" in text
 
         reloaded = C.load(d)

@@ -239,24 +239,30 @@ class TestProject:
         assert props["annotations"]["py_type"] == "list[dict[str, Any]]"
 
     def test_core_header_declares_the_getter(self, project):
-        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
+        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "char *rdr_get_annotations(const rdr_state_t *state);" in h
 
     def test_core_gains_a_stub_body(self, project):
-        c = (project / "native" / "src" / "rdr" / "rdr_core.c").read_text()
+        c = (project / "native" / "src" / "rdr" / "rdr_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "<<IMPLEMENT: rdr_get_annotations>>" in c
 
     def test_apply_is_idempotent(self, project):
         apply_run(project)
         ext = project / "native" / "src" / "rdr" / "rdr_ext.c"
-        before = ext.read_text()
+        before = ext.read_text(encoding="utf-8")
         apply_run(project)
-        assert ext.read_text() == before
+        assert ext.read_text(encoding="utf-8") == before
 
     def test_stub_parses_and_imports_any(self, project):
         # Through apply's replay too, which must carry py_type (gh-2347).
         apply_run(project)
-        text = (project / "src" / "dsp" / "rdr.pyi").read_text()
+        text = (project / "src" / "dsp" / "rdr.pyi").read_text(
+            encoding="utf-8"
+        )
         ast.parse(text)
         assert "def annotations(self) -> list[dict[str, Any]]:" in text
         assert any(
@@ -275,7 +281,9 @@ class TestManifestPath:
         C.add_property(cfg, "rdr", dict(ANN))
         C.save(dest, cfg)
         apply_run(dest)
-        h = (dest / INC_ROOT / "rdr" / "rdr_core.h").read_text()
+        h = (dest / INC_ROOT / "rdr" / "rdr_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "char *rdr_get_annotations(const rdr_state_t *state);" in h
 
     def test_apply_declares_the_getter_on_a_module_object(self, tmp_path):
@@ -292,11 +300,15 @@ class TestManifestPath:
         C.add_property(cfg, "reader", dict(ANN))
         C.save(dest, cfg)
         apply_run(dest)
-        h = (dest / INC_ROOT / "reader" / "reader_core.h").read_text()
+        h = (dest / INC_ROOT / "reader" / "reader_core.h").read_text(
+            encoding="utf-8"
+        )
         assert (
             "char *reader_get_annotations(const reader_state_t *state);" in h
         )
-        stub = (dest / "src" / "dsp" / "wfm" / "wfm.pyi").read_text()
+        stub = (dest / "src" / "dsp" / "wfm" / "wfm.pyi").read_text(
+            encoding="utf-8"
+        )
         ast.parse(stub)
         assert "def annotations(self) -> list[dict[str, Any]]:" in stub
 
@@ -331,7 +343,7 @@ class TestCli:
         assert props["annotations"]["py_type"] == "list[dict[str, Any]]"
 
     def test_bad_declaration_exits_before_the_manifest(self, fresh):
-        before = (fresh / C.FILENAME).read_text()
+        before = (fresh / C.FILENAME).read_text(encoding="utf-8")
         r = self._cli(
             fresh,
             "property",
@@ -343,7 +355,7 @@ class TestCli:
         )
         assert r.returncode != 0
         assert "read-only" in r.stderr
-        assert (fresh / C.FILENAME).read_text() == before
+        assert (fresh / C.FILENAME).read_text(encoding="utf-8") == before
 
 
 class TestBuildAndRun:

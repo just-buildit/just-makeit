@@ -92,18 +92,22 @@ def test_renamed_key_drops_its_old_import(tmp_path: Path) -> None:
     init = proj / "src" / pkg / "sig" / "__init__.py"
     _set_reexports(proj, "cic_design")
     _jm("apply", cwd=proj)
-    assert "from .cic_design import a  # noqa: E402" in init.read_text()
+    assert "from .cic_design import a  # noqa: E402" in init.read_text(
+        encoding="utf-8"
+    )
     assert C.applied_reexports(C.load(proj), "sig") == ["cic_design"]
 
     _set_reexports(proj, "_cic_design")
-    (proj / "src" / pkg / "sig" / "_cic_design.py").write_text("a = 1\n")
+    (proj / "src" / pkg / "sig" / "_cic_design.py").write_text(
+        "a = 1\n", encoding="utf-8"
+    )
     # The drift reporter sees the stale statement, through its replay.
     r = _jm("status", "--check", cwd=proj, ok=False)
     assert r.returncode != 0
     assert f"src/{pkg}/sig/__init__.py" in r.stdout
 
     _jm("apply", cwd=proj)
-    text = init.read_text()
+    text = init.read_text(encoding="utf-8")
     assert "from .cic_design" not in text, text
     assert "from ._cic_design import a  # noqa: E402" in text
     assert C.applied_reexports(C.load(proj), "sig") == ["_cic_design"]
@@ -127,10 +131,10 @@ def test_a_line_from_before_the_record_is_untouched(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    assert "applied_reexports" not in frag.read_text()
+    assert "applied_reexports" not in frag.read_text(encoding="utf-8")
     _set_reexports(proj, "_cic_design")
     _jm("apply", cwd=proj)
-    text = init.read_text()
+    text = init.read_text(encoding="utf-8")
     assert "from .cic_design import a  # noqa: E402" in text
     assert "from ._cic_design import a  # noqa: E402" in text
 
@@ -186,7 +190,7 @@ def test_a_changed_class_name_converges(tmp_path: Path, new: str) -> None:
     init = proj / "src" / "cn2608" / "__init__.py"
     _jm("apply", cwd=proj)
     _jm("apply", cwd=proj)
-    text = init.read_text()
+    text = init.read_text(encoding="utf-8")
     stmts = re.findall(r"^from \.priv import [^\n]*$", text, re.M)
     assert stmts == [f"from .priv import {new}  # noqa: E402"], text
     assert '"Priv"' not in text, text
@@ -222,20 +226,27 @@ def test_a_reexport_moved_to_a_package_sibling_stays(
     _jm("module", "sink", cwd=proj)
     _jm("object", "snk", "--module", "sink", cwd=proj)
     mods = proj / "modules"
-    with (mods / "sink.toml").open("a") as f:
+    with (mods / "sink.toml").open("a", encoding="utf-8") as f:
         f.write('package = "sig"\n')
-    base = {m: (mods / f"{m}.toml").read_text() for m in ("sig", "sink")}
+    base = {
+        m: (mods / f"{m}.toml").read_text(encoding="utf-8")
+        for m in ("sig", "sink")
+    }
 
     def hold(mod: str) -> None:
         for m, text in base.items():
             extra = f'\n[module.{m}.reexports]\nh = ["a"]\n'
-            (mods / f"{m}.toml").write_text(text + (extra if m == mod else ""))
+            (mods / f"{m}.toml").write_text(
+                text + (extra if m == mod else ""), encoding="utf-8"
+            )
 
     hold(first)
     _jm("apply", cwd=proj)
     hold(then)
     _jm("apply", cwd=proj)
-    text = (proj / "src" / pkg / "sig" / "__init__.py").read_text()
+    text = (proj / "src" / pkg / "sig" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
     assert re.findall(r"^from \.h import a  # noqa: E402$", text, re.M) == [
         "from .h import a  # noqa: E402"
     ], text

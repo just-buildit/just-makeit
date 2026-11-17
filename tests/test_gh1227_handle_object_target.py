@@ -215,7 +215,9 @@ class TestTheGeneratedCIsTheCapsulePath:
         """The regression gh-1234 is about, on the half that CAN be right:
         the prototype names the type the capsule actually carries."""
         root = self._apply(tmp_path)
-        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text()
+        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "seg_state_t *seg_create(wfm_writer_t *w);" in core_h
         spelled = INC.include("wfm/wfm_writer.h", root)
         assert f'#include "{spelled}"' in core_h
@@ -226,13 +228,17 @@ class TestTheGeneratedCIsTheCapsulePath:
         emit an include for a file that is not, or the component stops
         compiling because of a declaration it only referenced."""
         root = self._apply(tmp_path, with_header=False)
-        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text()
+        core_h = (root / INC_ROOT / "seg" / "seg_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "seg_state_t *seg_create(wfm_writer_t *w);" in core_h
         assert "wfm/wfm_writer.h" not in core_h
 
     def test_it_unwraps_by_capsule_name_not_by_struct(self, tmp_path: Path):
         root = self._apply(tmp_path)
-        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text()
+        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert f'PyCapsule_GetPointer(w_cap, "{CAP}")' in ext
         assert 'PyObject_GetAttrString(w_obj, "_capsule")' in ext
         assert "WriterObject" not in ext
@@ -242,7 +248,9 @@ class TestTheGeneratedCIsTheCapsulePath:
         dangles the moment the producer is collected, exactly as for an
         object."""
         root = self._apply(tmp_path)
-        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text()
+        ext = (root / "native" / "src" / "seg" / "seg_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyObject *_w_owner;" in ext
         assert "Py_XSETREF(self->_w_owner, w_obj);" in ext
 
@@ -262,7 +270,7 @@ class TestTheStubNamesAndImportsTheClass:
         _declare(root, "wfm_writer")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(root)
-        pyi = (root / "src" / "proj" / "seg.pyi").read_text()
+        pyi = (root / "src" / "proj" / "seg.pyi").read_text(encoding="utf-8")
         assert "from .wfm import Writer" in pyi
         assert "w: Writer" in pyi
 

@@ -50,12 +50,14 @@ def project(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="module")
 def presets(project) -> dict:
-    return json.loads((project / "CMakePresets.json").read_text())
+    return json.loads(
+        (project / "CMakePresets.json").read_text(encoding="utf-8")
+    )
 
 
 @pytest.fixture(scope="module")
 def makefile(project) -> str:
-    return (project / "Makefile").read_text()
+    return (project / "Makefile").read_text(encoding="utf-8")
 
 
 def _resolve(presets: dict, name: str) -> dict:
@@ -163,7 +165,9 @@ def test_the_preset_tree_is_ignored_and_is_not_build_dir(
     project, presets, makefile
 ):
     build_dir = _make_var(makefile, r"^BUILD_DIR\s*\?=\s*(\S+)")
-    ignored = set((project / ".gitignore").read_text().splitlines())
+    ignored = set(
+        (project / ".gitignore").read_text(encoding="utf-8").splitlines()
+    )
     assert "CMakeUserPresets.json" in ignored
     for p in _visible(presets):
         rel = p["binaryDir"].removeprefix("${sourceDir}/")

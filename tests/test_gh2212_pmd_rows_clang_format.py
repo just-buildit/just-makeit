@@ -48,12 +48,13 @@ _GNU = "BasedOnStyle: GNU\nColumnLimit: 79\nReflowComments: true\n"
 def _format_through_clang(root: Path) -> None:
     """Declare the project's clang-format, then regenerate every binding
     through it: the glue is reformatted as jm writes it."""
-    (root / ".clang-format").write_text(_GNU)
+    (root / ".clang-format").write_text(_GNU, encoding="utf-8")
     cfg = root / "just-makeit.toml"
     cfg.write_text(
-        cfg.read_text().replace(
+        cfg.read_text(encoding="utf-8").replace(
             "[project]", '[project]\nc_style = "clang-format"', 1
-        )
+        ),
+        encoding="utf-8",
     )
     for c in root.rglob("native/src/**/*_ext*.c"):
         c.unlink()

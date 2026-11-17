@@ -45,7 +45,7 @@ def _module_project(root: Path, module: str = "m") -> tuple[Path, Path]:
 def test_absent_prologue_changes_nothing(tmp_path):
     """No file, no include — the hook costs nothing when unused."""
     _, agg = _module_project(tmp_path / "none")
-    assert "_ext_prologue.c" not in agg.read_text()
+    assert "_ext_prologue.c" not in agg.read_text(encoding="utf-8")
 
 
 def test_prologue_is_included_before_every_fragment(tmp_path):
@@ -53,13 +53,14 @@ def test_prologue_is_included_before_every_fragment(tmp_path):
     root = tmp_path / "with"
     ext_dir, agg = _module_project(root)
     (ext_dir / "m_ext_prologue.c").write_text(
-        "/* hand-written */\nstatic int shared_helper(void) { return 1; }\n"
+        "/* hand-written */\nstatic int shared_helper(void) { return 1; }\n",
+        encoding="utf-8",
     )
     # Discovery is by existence at render time, so the aggregator has to be
     # rewritten after the file appears. Adding a third object does that, and
     # also proves the include stays ahead of a fragment added later.
     object_run(root, "c", "m", arg_type="float", return_type="float")
-    text = agg.read_text()
+    text = agg.read_text(encoding="utf-8")
 
     assert '#include "m_ext_prologue.c"' in text, (
         "the prologue exists but is not included:\n" + text
@@ -79,13 +80,15 @@ def test_prologue_is_marked_hand_written(tmp_path):
     """It carries the same never-modified marker as the other two hooks."""
     ext_dir, agg = _module_project(tmp_path / "marked")
     (ext_dir / "m_ext_prologue.c").write_text(
-        "static int h(void){return 1;}\n"
+        "static int h(void){return 1;}\n", encoding="utf-8"
     )
     object_run(
         tmp_path / "marked", "c", "m", arg_type="float", return_type="float"
     )
     line = next(
-        ln for ln in agg.read_text().splitlines() if "m_ext_prologue.c" in ln
+        ln
+        for ln in agg.read_text(encoding="utf-8").splitlines()
+        if "m_ext_prologue.c" in ln
     )
     assert "hand-written" in line, (
         f"the include does not say jm never modifies it: {line!r}"
@@ -103,7 +106,7 @@ def test_dotted_module_uses_the_flat_name(tmp_path):
     ext_dir, agg = _module_project(tmp_path / "dotted", module="dsp.filters")
     assert ext_dir.name == "dsp_filters"
     (ext_dir / "dsp_filters_ext_prologue.c").write_text(
-        "static int h(void){return 1;}\n"
+        "static int h(void){return 1;}\n", encoding="utf-8"
     )
     object_run(
         tmp_path / "dotted",
@@ -112,7 +115,7 @@ def test_dotted_module_uses_the_flat_name(tmp_path):
         arg_type="float",
         return_type="float",
     )
-    text = agg.read_text()
+    text = agg.read_text(encoding="utf-8")
     assert '#include "dsp_filters_ext_prologue.c"' in text, (
         "the dotted module did not pick up its prologue:\n" + text
     )

@@ -30,18 +30,20 @@ from test_gh1734_array_arg_advisory import (
 def test_gnu_formatted_fragments(tmp_path):
     proj = _array_project(tmp_path)
     (proj / ".clang-format").write_text(
-        "BasedOnStyle: GNU\nColumnLimit: 79\nReflowComments: true\n"
+        "BasedOnStyle: GNU\nColumnLimit: 79\nReflowComments: true\n",
+        encoding="utf-8",
     )
     cfg = proj / "just-makeit.toml"
     cfg.write_text(
-        cfg.read_text().replace(
+        cfg.read_text(encoding="utf-8").replace(
             "[project]", '[project]\nc_style = "clang-format"', 1
-        )
+        ),
+        encoding="utf-8",
     )
     frag = proj.joinpath(*FRAG)
     frag.unlink()  # regenerate it in the house style
     assert run_cli("apply", cwd=proj).returncode == 0
-    src = frag.read_text()
+    src = frag.read_text(encoding="utf-8")
     # The fixture must actually produce the layout it claims to test.
     assert "jm_array_arg (" in src, src
 
@@ -52,5 +54,5 @@ def test_gnu_formatted_fragments(tmp_path):
         r"(PyArrayObject *)PyArray_FROM_OTF (\1, \2, \3)", src
     )
     assert n == 1
-    frag.write_text(old)
+    frag.write_text(old, encoding="utf-8")
     assert WHY in _apply(proj)

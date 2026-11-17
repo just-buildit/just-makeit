@@ -78,7 +78,7 @@ def _age_the_fragment(proj: Path) -> Path:
     from an earlier release, which is the whole point.
     """
     frag = proj / "native" / "src" / "dsp" / "dsp_ext_blk.c"
-    s = frag.read_text()
+    s = frag.read_text(encoding="utf-8")
     s2 = re.sub(
         r"if \(PyArray_SetBaseObject\(([^;]*?)\) < 0\) \{[^}]*\}",
         r"PyArray_SetBaseObject(\1);",
@@ -87,7 +87,7 @@ def _age_the_fragment(proj: Path) -> Path:
         flags=re.S,
     )
     assert s2 != s, "fixture no longer contains the checked call"
-    frag.write_text(s2)
+    frag.write_text(s2, encoding="utf-8")
     return frag
 
 

@@ -65,7 +65,9 @@ def _bench_project(tmp_path: Path) -> Path:
     proj = tmp_path / "p"
     interp = proj / ".venv" / "bin" / "python"
     interp.parent.mkdir(parents=True)
-    interp.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    interp.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8"
+    )
     interp.chmod(0o755)
     return proj
 
@@ -73,7 +75,9 @@ def _bench_project(tmp_path: Path) -> Path:
 def _snapshot(proj: Path, tag: str) -> dict:
     """The Python snapshot ``jm bench --tag <tag>`` saved."""
     return json.loads(
-        (proj / "benchmarks" / "history" / f"{tag}.json").read_text()
+        (proj / "benchmarks" / "history" / f"{tag}.json").read_text(
+            encoding="utf-8"
+        )
     )
 
 
@@ -130,10 +134,10 @@ def test_1841_one_slow_file_costs_only_itself(tmp_path):
     (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
     (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
     (proj / "src" / "p" / "tests" / "test_fast_bench.py").write_text(
-        FAST_BENCH
+        FAST_BENCH, encoding="utf-8"
     )
     (proj / "src" / "p" / "tests" / "test_slow_bench.py").write_text(
-        SLOW_BENCH
+        SLOW_BENCH, encoding="utf-8"
     )
     with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
         f.write("\n[project.bench]\ntimeout = 15\n")
@@ -179,7 +183,7 @@ def test_2135_a_fast_and_a_slow_benchmark_in_one_file(tmp_path):
     (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
     (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
     (proj / "src" / "p" / "tests" / "test_mixed_bench.py").write_text(
-        MIXED_BENCH
+        MIXED_BENCH, encoding="utf-8"
     )
     with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
         f.write("\n[project.bench]\ntimeout = 15\n")
@@ -208,7 +212,7 @@ def test_a_bench_file_that_does_not_import_fails_loudly(tmp_path):
     """
     proj = _bench_project(tmp_path)
     broken = proj / "src" / "p" / "benchmarks" / "bench_broken.py"
-    broken.write_text("import no_such_module_for_jm_gate\n")
+    broken.write_text("import no_such_module_for_jm_gate\n", encoding="utf-8")
 
     r = run_cli("bench", "--python-only", cwd=proj)
 
@@ -240,7 +244,7 @@ def test_2135_a_file_slow_to_import_is_named_within_three_budgets(tmp_path):
     (proj / "src" / "p" / "benchmarks" / "bench_g.py").unlink()
     (proj / "src" / "p" / "tests").mkdir(parents=True, exist_ok=True)
     (proj / "src" / "p" / "tests" / "test_import_slow.py").write_text(
-        IMPORT_SLEEP_BENCH
+        IMPORT_SLEEP_BENCH, encoding="utf-8"
     )
     with (proj / "just-makeit.toml").open("a", encoding="utf-8") as f:
         f.write("\n[project.bench]\ntimeout = 8\n")

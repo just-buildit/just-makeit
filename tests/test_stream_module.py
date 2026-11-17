@@ -66,7 +66,7 @@ def _module_with_objects(root, monkeypatch):
 class TestStreamModuleCodegen:
     def test_aggregator_readies_iterator_type(self, tmp_path, monkeypatch):
         root = _module_with_objects(tmp_path / "p", monkeypatch)
-        agg = (root / "native/src/dsp/dsp_ext.c").read_text()
+        agg = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         # The streamable object's iterator type is readied right after its own
         # type, and the plain sibling's is not present at all.
         assert "if (PyType_Ready(&OscType) < 0) return NULL;" in agg
@@ -77,7 +77,9 @@ class TestStreamModuleCodegen:
 
     def test_streamable_object_fragment(self, tmp_path, monkeypatch):
         root = _module_with_objects(tmp_path / "p", monkeypatch)
-        frag = (root / "native/src/dsp/dsp_ext_osc.c").read_text()
+        frag = (root / "native/src/dsp/dsp_ext_osc.c").read_text(
+            encoding="utf-8"
+        )
         assert "} OscStreamIter;" in frag
         assert "Osc_stream" in frag
         assert ".tp_iter      = (getiterfunc)Osc_getiter," in frag
@@ -85,19 +87,21 @@ class TestStreamModuleCodegen:
         assert 'PyObject_CallMethod(it->src, "steps", "n"' in frag
         # Module objects share one <module>.pyi; the stream stubs land under
         # the streamable class.
-        pyi = (root / "src/proj/dsp/dsp.pyi").read_text()
+        pyi = (root / "src/proj/dsp/dsp.pyi").read_text(encoding="utf-8")
         assert "from typing import Callable, Iterator, final" in pyi
         assert "def stream(" in pyi
         assert "def __iter__(self) -> Iterator[NDArray[np.float32]]:" in pyi
 
     def test_plain_sibling_unchanged(self, tmp_path, monkeypatch):
         root = _module_with_objects(tmp_path / "p", monkeypatch)
-        frag = (root / "native/src/dsp/dsp_ext_gainer.c").read_text()
+        frag = (root / "native/src/dsp/dsp_ext_gainer.c").read_text(
+            encoding="utf-8"
+        )
         assert "StreamIter" not in frag
         assert "stream" not in frag
         # In the shared .pyi, the plain sibling's class carries no stream stub
         # (the streamable Osc's does, but that's a different class).
-        pyi = (root / "src/proj/dsp/dsp.pyi").read_text()
+        pyi = (root / "src/proj/dsp/dsp.pyi").read_text(encoding="utf-8")
         gainer_section = pyi[pyi.index("class Gainer:") :]
         assert "stream" not in gainer_section
 
@@ -134,7 +138,7 @@ class TestStreamModuleCodegen:
             variable_output=True,
             multi_output=[],
         )
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         assert 'PyObject_CallMethod(it->src, "run", "n"' in text
         assert 'PyObject_CallMethod(it->src, "steps"' not in text
 

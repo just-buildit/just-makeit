@@ -38,8 +38,10 @@ def _project(tmp_path: Path, table: str) -> Path:
     root = tmp_path / "p"
     util = root / "native" / "src" / "util"
     util.mkdir(parents=True)
-    (util / "util.c").write_text("int p_util(void) { return 1; }\n")
-    (util / "CMakeLists.txt").write_text(_OBJ_CMAKE)
+    (util / "util.c").write_text(
+        "int p_util(void) { return 1; }\n", encoding="utf-8"
+    )
+    (util / "CMakeLists.txt").write_text(_OBJ_CMAKE, encoding="utf-8")
     text = (root / "just-makeit.toml").read_text(encoding="utf-8")
     text = text.replace("[project]\n", '[project]\nc_deps = ["util"]\n', 1)
     (root / "just-makeit.toml").write_text(text + "\n" + table, "utf-8")
@@ -90,8 +92,9 @@ def test_a_core_also_folded_into_lib_pkg_is_refused(tmp_path):
     root = _project(tmp_path, _UTIL)
     cm = root / "CMakeLists.txt"
     cm.write_text(
-        cm.read_text()
-        + "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:util_obj>)\n"
+        cm.read_text(encoding="utf-8")
+        + "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:util_obj>)\n",
+        encoding="utf-8",
     )
     r = run_cli("apply", cwd=root)
     assert r.returncode == 1
@@ -122,8 +125,9 @@ def test_status_check_names_a_core_hand_folded_into_lib_pkg(tmp_path):
     assert run_cli("apply", cwd=root).returncode == 0
     cm = root / "CMakeLists.txt"
     cm.write_text(
-        cm.read_text()
-        + "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:util_obj>)\n"
+        cm.read_text(encoding="utf-8")
+        + "target_sources(p_lib PRIVATE $<TARGET_OBJECTS:util_obj>)\n",
+        encoding="utf-8",
     )
     r = run_cli("status", "--check", cwd=root)
     assert r.returncode == 1, r.stdout + r.stderr
@@ -176,9 +180,10 @@ def test_apply_keeps_an_authors_wiring_under_a_no_generate_module(tmp_path):
     )
     d = root / "native" / "src" / "timing"
     d.mkdir(parents=True)
-    (d / "t.c").write_text("int p_t(void) { return 1; }\n")
+    (d / "t.c").write_text("int p_t(void) { return 1; }\n", encoding="utf-8")
     (d / "CMakeLists.txt").write_text(
-        _OBJ_CMAKE.replace("util_obj", "timing_obj").replace("util.c", "t.c")
+        _OBJ_CMAKE.replace("util_obj", "timing_obj").replace("util.c", "t.c"),
+        encoding="utf-8",
     )
     assert run_cli("apply", cwd=root).returncode == 0
     wiring = "".join(

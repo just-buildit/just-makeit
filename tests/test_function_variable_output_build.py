@@ -103,7 +103,7 @@ PyMODINIT_FUNC PyInit_wfm(void) {{
 }}
 """
     c = tmp / "wfm.c"
-    c.write_text(src)
+    c.write_text(src, encoding="utf-8")
     so = cbuild.build(
         "ext",
         [c],

@@ -86,7 +86,9 @@ def _project(tmp_path, *, exact: bool):
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(io.StringIO()):
             apply_run(root)
-    return root, (root / "native/src/cic/cic_ext.c").read_text()
+    return root, (root / "native/src/cic/cic_ext.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_the_clamp_is_dropped_on_both_paths(tmp_path):

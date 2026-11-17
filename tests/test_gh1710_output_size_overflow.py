@@ -444,7 +444,7 @@ def test_a_fragment_without_the_guard_is_told_what_it_lacks(tmp_path):
     assert run_cli("apply", cwd=proj).returncode == 0
 
     frag = proj / "native" / "src" / "m" / "m_ext_r.c"
-    src = frag.read_text()
+    src = frag.read_text(encoding="utf-8")
     # Rendered before gh-1710: every size guard block removed.
     old, n = re.subn(
         r"\n[ \t]*if \(_\w+_need > [^\n]*\{\n(?:[^\n]*\n)*?[ \t]*\}(?=\n)",
@@ -452,7 +452,7 @@ def test_a_fragment_without_the_guard_is_told_what_it_lacks(tmp_path):
         src,
     )
     assert n, "fixture no longer renders the output-size guard"
-    frag.write_text(old)
+    frag.write_text(old, encoding="utf-8")
 
     out = (lambda r: r.stdout + r.stderr)(run_cli("apply", cwd=proj))
     assert "no longer matches" in out, out

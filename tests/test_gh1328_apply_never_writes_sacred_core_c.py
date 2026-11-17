@@ -144,7 +144,9 @@ class TestThePredicate:
         rendered = (
             "size_t\ncic_decimate(cic_state_t *s)\n{\n    return 0;\n}\n"
         )
-        core_c = (root / "native/src/cic/cic_core.c").read_text()
+        core_c = (root / "native/src/cic/cic_core.c").read_text(
+            encoding="utf-8"
+        )
         assert not missing_core_definitions(
             rendered, core_c, component_core_sources(root, "cic")
         )
@@ -161,7 +163,9 @@ class TestThePredicate:
         """The fix must not blind the feature gh-1294 exists for."""
         root = _project(tmp_path / "p")
         rendered = "void\ncic_nowhere(cic_state_t *s)\n{\n}\n"
-        core_c = (root / "native/src/cic/cic_core.c").read_text()
+        core_c = (root / "native/src/cic/cic_core.c").read_text(
+            encoding="utf-8"
+        )
         assert missing_core_definitions(
             rendered, core_c, component_core_sources(root, "cic")
         ) == ["cic_nowhere"]
@@ -181,7 +185,7 @@ class TestApplyLeavesSacredCoreCAlone:
         header's symbol is what it gained."""
         root = _project(tmp_path / "p")
         _silent(apply_run, root)
-        text = (root / "native/src/cic/cic_core.c").read_text()
+        text = (root / "native/src/cic/cic_core.c").read_text(encoding="utf-8")
         assert "cic_decimate(cic_state_t" not in text, text
 
     def _sacred(self, root: Path) -> dict:
@@ -226,7 +230,9 @@ class TestApplyLeavesSacredCoreCAlone:
         """
         root = _project(tmp_path / "p")
         _silent(apply_run, root)
-        text = (root / "native/src/widget/widget_core.c").read_text()
+        text = (root / "native/src/widget/widget_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "widget_create(" not in text, text
         assert "widget_open(" in text, text
 

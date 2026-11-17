@@ -10,7 +10,7 @@
 # `help`, which is the ghost shape one level up.
 LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 conflict-check \
-                complex-spelling-check code-span-check \
+                complex-spelling-check code-span-check text-encoding-check \
                 coverage-subprocess-check coverage-shard \
                 gates-index gates-declared-check \
                 doppler-pin-check consumer-smoke install-history-update \
@@ -136,6 +136,18 @@ lint: code-span-check
 
 code-span-check: ## Fail on a whitespace run inside a Markdown code span
 	@python3 scripts/check_code_spans.py
+
+# gh-2654: a test wrote an em dash with `Path.write_text(text)`, no
+# `encoding=`, and only the Windows leg -- cp1252 -- failed. ruff's PLW1514
+# sees a call only when it can infer a Path (9 of ~1360 here), so the call
+# shape is read by name; the script's docstring has the measurement. The
+# vendored `.py` files are fixed in canonical, never here, so they are
+# passed as excludes from the one list that names them.
+lint: text-encoding-check
+
+text-encoding-check: ## Fail on text file I/O with no explicit encoding=
+	@python3 scripts/check_text_encoding.py \
+	    $(addprefix --exclude ,$(filter %.py,$(VENDORED_FILES)))
 
 # ADVISORY, and hung off `lint` so it is seen on every PR without gating one.
 # The pin drifts because doppler published, not because of the change being

@@ -183,7 +183,7 @@ PyMODINIT_FUNC PyInit_vom(void) {{
 }}
 """
     c = tmp_path / "vom.c"
-    c.write_text(src)
+    c.write_text(src, encoding="utf-8")
     so = cbuild.build(
         "ext",
         [c],

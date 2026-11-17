@@ -102,7 +102,7 @@ class TestTheRewriteIsAnnounced:
             ["float _Complex gain_scale(gain_state_t *state, double x);"],
             family=None,
         )
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "double x);" in text
         assert "float _Complex x);" not in text
         assert text.count("gain_scale") == 1, "must not duplicate"
@@ -134,7 +134,7 @@ class TestItStaysQuietWhenNothingChanged:
                 "float _Complex x);",
             ),
         )
-        before = path.read_text()
+        before = path.read_text(encoding="utf-8")
         _inject_decls_into_core_h(
             path,
             "gain",
@@ -144,7 +144,7 @@ class TestItStaysQuietWhenNothingChanged:
             ],
             family=None,
         )
-        assert path.read_text() == before
+        assert path.read_text(encoding="utf-8") == before
         assert capsys.readouterr().err == ""
 
     def test_a_brand_new_decl_is_silent(self, tmp_path, capsys):
@@ -162,7 +162,7 @@ class TestItStaysQuietWhenNothingChanged:
         """gh-761's carve-out preserves the author's decl, so there is no
         rewrite to announce."""
         path = _header(tmp_path)
-        before = path.read_text()
+        before = path.read_text(encoding="utf-8")
         _inject_decls_into_core_h(
             path,
             "gain",
@@ -170,7 +170,7 @@ class TestItStaysQuietWhenNothingChanged:
             skip_names=frozenset({"gain_scale"}),
             family=None,
         )
-        assert path.read_text() == before
+        assert path.read_text(encoding="utf-8") == before
         assert capsys.readouterr().err == ""
 
 
@@ -195,7 +195,7 @@ class TestTheReportedReproduction:
             [],
         )
         header = root / INC_ROOT / "gain" / "gain_core.h"
-        original = header.read_text()
+        original = header.read_text(encoding="utf-8")
 
         # Only the *declaration* line — the inline step() definition in the
         # same header is sacred and must not be touched by the fixture, or
@@ -208,13 +208,13 @@ class TestTheReportedReproduction:
         )
         hand = proto.replace("float _Complex x)", "const float _Complex x_in)")
         assert hand != proto, "the hand edit must change the prototype"
-        header.write_text(original.replace(proto, hand, 1))
+        header.write_text(original.replace(proto, hand, 1), encoding="utf-8")
 
         capsys.readouterr()
         apply_run(root)
         out = capsys.readouterr()
 
-        after = header.read_text()
+        after = header.read_text(encoding="utf-8")
         assert hand not in after, (
             "policy unchanged: the prototype is glue and is refreshed"
         )

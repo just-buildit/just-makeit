@@ -60,8 +60,12 @@ def _mk(proj, name="rdr", **kw):
     opts.update(kw)
     _q(object_run, proj, name, None, **opts)
     return (
-        (proj / INC_ROOT / name / f"{name}_core.h").read_text(),
-        (proj / "native" / "src" / name / f"{name}_core.c").read_text(),
+        (proj / INC_ROOT / name / f"{name}_core.h").read_text(
+            encoding="utf-8"
+        ),
+        (proj / "native" / "src" / name / f"{name}_core.c").read_text(
+            encoding="utf-8"
+        ),
     )
 
 
@@ -122,7 +126,9 @@ class TestManifestRoundTrip:
         _mk(proj)
         assert C.is_opaque_state(C.load(proj), "rdr") is True
         _q(apply_run, proj)
-        h = (proj / INC_ROOT / "rdr" / "rdr_core.h").read_text()
+        h = (proj / INC_ROOT / "rdr" / "rdr_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "typedef struct rdr_state rdr_state_t;" in h
 
     def test_key_survives_the_dump_serializer(self, proj):
@@ -145,6 +151,8 @@ class TestPropertiesStayAccessorBacked:
         accessor-backed property is what makes an opaque struct usable."""
         _mk(proj)
         _q(property_run, proj, "rdr", "nsamples", None, "size_t", False)
-        ext = (proj / "native" / "src" / "rdr" / "rdr_ext.c").read_text()
+        ext = (proj / "native" / "src" / "rdr" / "rdr_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "rdr_get_nsamples(self->handle)" in ext
         assert "self->handle->" not in ext

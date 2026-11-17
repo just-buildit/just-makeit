@@ -79,11 +79,12 @@ def _set_execute_format(proj: Path, fmt: str) -> None:
     rather than leaving the fixture unedited.
     """
     frag = proj / FRAG
-    s = frag.read_text()
+    s = frag.read_text(encoding="utf-8")
     old = 'PyArg_ParseTupleAndKeywords(args, kwds, "O|O"'
     assert s.count(old) == 1, "fixture no longer renders execute as O|O"
     frag.write_text(
-        s.replace(old, f'PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}"')
+        s.replace(old, f'PyArg_ParseTupleAndKeywords(args, kwds, "{fmt}"'),
+        encoding="utf-8",
     )
 
 

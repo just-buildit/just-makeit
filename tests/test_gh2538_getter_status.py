@@ -260,7 +260,9 @@ def test_both_doc_faces_document_the_raise(
 
 
 def test_the_header_declares_the_status_getter(built) -> None:
-    h = (built / "native" / "inc" / "rs" / "cor" / "cor_core.h").read_text()
+    h = (built / "native" / "inc" / "rs" / "cor" / "cor_core.h").read_text(
+        encoding="utf-8"
+    )
     assert "int rs_cor_get_eta(const rs_cor_state_t *state, double *out);" in h
     assert "int rs_cor_get_kind(const rs_cor_state_t *state, int *out);" in h
     assert "double rs_cor_get_gain(const rs_cor_state_t *state);" in h
@@ -359,8 +361,12 @@ def test_the_manifest_is_refused_too(fresh) -> None:
 def test_the_cli_declares_and_stubs_the_status_getter(fresh) -> None:
     _ok("property", "o", "p", "--type", "double", "--getter-status",
         cwd=fresh)  # fmt: skip
-    h = (fresh / "native" / "inc" / "rf" / "o" / "o_core.h").read_text()
-    c = (fresh / "native" / "src" / "o" / "o_core.c").read_text()
+    h = (fresh / "native" / "inc" / "rf" / "o" / "o_core.h").read_text(
+        encoding="utf-8"
+    )
+    c = (fresh / "native" / "src" / "o" / "o_core.c").read_text(
+        encoding="utf-8"
+    )
     assert "int rf_o_get_p(const rf_o_state_t *state, double *out);" in h
     assert "\nint\nrf_o_get_p(const rf_o_state_t *state, double *out)\n" in c
 
@@ -379,7 +385,9 @@ def test_apply_declares_the_status_getter_on_a_module_object(tmp_path) -> None:
             "getter_status = true\n"
         )
     _ok("apply", cwd=proj)
-    h = (proj / "native" / "inc" / "rm" / "acc" / "acc_core.h").read_text()
+    h = (proj / "native" / "inc" / "rm" / "acc" / "acc_core.h").read_text(
+        encoding="utf-8"
+    )
     assert "int rm_acc_get_pd(const rm_acc_state_t *state, double *out);" in h
 
 
@@ -418,7 +426,8 @@ def test_bind_reads_a_status_getter_from_the_header(tmp_path) -> None:
         "int comp_get_eta(const comp_state_t *state, double *out);\n"
         "int comp_get_count(const comp_state_t *state);\n"
         "static inline float comp_step(const comp_state_t *state, float x) "
-        "{ return x; }\n"
+        "{ return x; }\n",
+        encoding="utf-8",
     )
     props = {p["name"]: p for p in parse_header(h)["properties"]}
     assert props["eta"] == {

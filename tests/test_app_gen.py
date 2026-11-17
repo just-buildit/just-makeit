@@ -39,8 +39,10 @@ def test_scalar_object_generates_working_faces(tmp_path: Path):
     jm_app(proj, target="c", name="tool", object_="gain")
     jm_app(proj, target="console", name="tool-cli", object_="gain")
 
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
 
     # No stub left behind.
     assert "<<IMPLEMENT" not in c
@@ -66,8 +68,10 @@ def test_extra_flag_reaches_both_parsers_and_roundtrips(tmp_path: Path):
     # gh-2074: each app's flags are its own row's, and a replay keeps them.
     jm_replay(proj, C.load(proj))
 
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
 
     assert "float thr = 0.5;" in c and '"--thr"' in c
     assert "(void)thr;" in c  # extra flag unused by the loop -> warning-safe
@@ -75,21 +79,23 @@ def test_extra_flag_reaches_both_parsers_and_roundtrips(tmp_path: Path):
     # Round-trips through the manifest.
     cfg = C.load(proj)
     assert [a["flags"] for a in C.apps(cfg)] == [thr, thr]
-    assert "[[app.flags]]" in (proj / "just-makeit.toml").read_text()
+    assert "[[app.flags]]" in (proj / "just-makeit.toml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_cmake_block_is_idempotent(tmp_path: Path):
     proj = _scaffold(tmp_path)
     jm_app(proj, target="c", name="tool", object_="gain")
     jm_replay(proj, C.load(proj))
-    cmake = (proj / "CMakeLists.txt").read_text()
+    cmake = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
     assert cmake.count("add_executable(tool") == 1
 
 
 def test_pep723_target_is_generated(tmp_path: Path):
     proj = _scaffold(tmp_path)
     jm_app(proj, target="pep723", name="tool", object_="gain")
-    script = (proj / "tool.py").read_text()
+    script = (proj / "tool.py").read_text(encoding="utf-8")
     assert "# /// script" in script
     assert "from proj import Gain" in script
     assert "obj.step(x)" in script and "<<IMPLEMENT" not in script
@@ -100,8 +106,10 @@ def test_int_flag_uses_checked_parse_and_int_argparse(tmp_path: Path):
     taps = [{"name": "taps", "type": "int32_t", "default": "8"}]
     jm_app(proj, target="c", name="tool", object_="gain", flags=taps)
     jm_app(proj, target="console", name="tool-cli", object_="gain", flags=taps)
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
     assert "int32_t taps = 8;" in c
     # gh-2225: through the checked parser, never a bare strtol cast.
     assert 'jm_cli_int(argv[0], "--taps", argv[++i]' in c
@@ -123,7 +131,9 @@ def test_non_parseable_ctor_uses_default_literal(tmp_path: Path):
         impl_body="return state->g * x;",
     )
     jm_app(proj, target="c", name="tool", object_="mix")
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
     assert "/* c0= */0" in c  # complex ctor flag falls back to default literal
     assert "float g = 1.0f;" in c  # float ctor flag still parsed
 
@@ -139,7 +149,7 @@ def test_no_step_console_falls_back_to_stub(tmp_path: Path):
         no_step=True,
     )
     jm_app(proj, target="console", name="tool", object_="sink")
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
     assert "<<IMPLEMENT" in cli and "sys.exit(0)" in cli
 
 
@@ -156,8 +166,10 @@ def test_blockwise_shape_generates_steps_loop(tmp_path: Path):
     )
     jm_app(proj, target="c", name="tool", object_="bw")
     jm_app(proj, target="console", name="tool-cli", object_="bw")
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
     assert "<<IMPLEMENT" not in c
     assert "bw_steps(state, inbuf, k, outbuf)" in c
     assert "fread(inbuf" in c and "fwrite(outbuf" in c
@@ -178,8 +190,10 @@ def test_consumer_shape_no_output(tmp_path: Path):
     )
     jm_app(proj, target="c", name="tool", object_="cons")
     jm_app(proj, target="console", name="tool-cli", object_="cons")
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
     assert "cons_steps(state, inbuf, k)" in c
     assert "fwrite" not in c and '"--output"' not in c  # no output side
     assert "obj.steps(data)" in cli and "out.tofile" not in cli
@@ -199,8 +213,10 @@ def test_generator_shape_uses_count(tmp_path: Path):
     )
     jm_app(proj, target="c", name="tool", object_="gen")
     jm_app(proj, target="console", name="tool-cli", object_="gen")
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
     assert "gen_steps(state, outbuf, k)" in c
     assert "produced < count" in c and '"--count"' in c
     assert "fread" not in c and '"--input"' not in c  # no input side
@@ -221,9 +237,13 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     )
     jm_app(proj, target="c", name="addtool", function_="addn")
     jm_app(proj, target="console", name="addtool-cli", function_="addn")
-    c = (proj / "native" / "src" / "app" / "addtool.c").read_text()
+    c = (proj / "native" / "src" / "app" / "addtool.c").read_text(
+        encoding="utf-8"
+    )
     # gh-187: a module-function console face lives under its module subpackage.
-    cli = (proj / "src" / "proj" / "mathx" / "cli.py").read_text()
+    cli = (proj / "src" / "proj" / "mathx" / "cli.py").read_text(
+        encoding="utf-8"
+    )
     # C: includes the module core, parses each param, calls + prints result.
     assert "mathx/mathx_core.h" in c
     assert "float a = " in c and '"--a"' in c
@@ -235,7 +255,7 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     assert "required=True" in cli
     assert "result = addn(args.a, args.b)\n    print(result)" in cli
     # CMake links the module core; manifest records the function source.
-    cmake = (proj / "CMakeLists.txt").read_text()
+    cmake = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "add_executable(addtool" in cmake and "mathx_core" in cmake
     app = C.apps(C.load(proj))[0]
     assert app["function"] == "addn" and app["module"] == "mathx"
@@ -254,8 +274,10 @@ def test_command_app_generates_dispatch(tmp_path: Path):
     ]
     jm_app(proj, target="c", name="tool", commands=cmds)
     jm_app(proj, target="console", name="tool-cli", commands=cmds)
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
-    cli = (proj / "src" / "proj" / "cli.py").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
+    cli = (proj / "src" / "proj" / "cli.py").read_text(encoding="utf-8")
     # C: per-command handlers + flag parse + dispatch + usage.
     assert "static int\ncmd_encode(" in c and "static int\ncmd_info(" in c
     assert "int32_t rate = 48000;" in c and '"--rate"' in c
@@ -270,7 +292,9 @@ def test_command_app_generates_dispatch(tmp_path: Path):
     # Manifest round-trips the commands.
     got = C.apps(C.load(proj))[0]["commands"]
     assert [c["name"] for c in got] == ["encode", "info"]
-    assert "[[app.commands]]" in (proj / "just-makeit.toml").read_text()
+    assert "[[app.commands]]" in (proj / "just-makeit.toml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_function_app_rejects_unknown_function(tmp_path: Path):
@@ -293,7 +317,9 @@ def test_no_step_object_falls_back_to_stub(tmp_path: Path):
         no_step=True,
     )
     jm_app(proj, target="c", name="tool", object_="sink")
-    c = (proj / "native" / "src" / "app" / "tool.c").read_text()
+    c = (proj / "native" / "src" / "app" / "tool.c").read_text(
+        encoding="utf-8"
+    )
     # Fallback: stub body, and create() uses the default literal (no undeclared
     # variable), so the file still compiles.
     assert "<<IMPLEMENT" in c
@@ -321,7 +347,7 @@ def test_init_param_ctor_flags(tmp_path: Path):
 
     jm_apply(proj)
     jm_app(proj, target="c", name="gentool", object_="gen")
-    app_c = (proj / "native/src/app/gentool.c").read_text()
+    app_c = (proj / "native/src/app/gentool.c").read_text(encoding="utf-8")
     assert "gen_create(type, fs)" in app_c
     assert "--type" in app_c and "--fs" in app_c
 
@@ -384,7 +410,7 @@ def _gen_proj(tmp_path: Path):
 def test_sample_type_dtype_output_c(tmp_path: Path):
     proj = _gen_proj(tmp_path)
     jm_app(proj, target="c", name="tool", object_="gen")
-    c = (proj / "native/src/app/tool.c").read_text()
+    c = (proj / "native/src/app/tool.c").read_text(encoding="utf-8")
     assert "jm_write_block(out, outbuf, k, sample_type, endian, file_type" in c
     assert "jm_parse_sample_type" in c
     assert "[--sample_type cf32|cf64|ci32|ci16|ci8]" in c
@@ -397,7 +423,7 @@ def test_sample_type_dtype_output_python(tmp_path: Path):
     proj = _gen_proj(tmp_path)
     jm_app(proj, target="console", name="tool-cli", object_="gen")
     jm_app(proj, target="pep723", name="tool", object_="gen")
-    cli = (proj / "src/proj/cli.py").read_text()
+    cli = (proj / "src/proj/cli.py").read_text(encoding="utf-8")
     assert 'choices=["cf32", "cf64", "ci32", "ci16", "ci8"]' in cli
     assert "_a = (_iq * _sc).astype(_dt)" in cli
     import py_compile
@@ -410,7 +436,7 @@ def test_output_axes_c(tmp_path: Path):
     """gh-193 (0.17.0): a cf32 stream gets --file-type/--endian/--record."""
     proj = _gen_proj(tmp_path)
     jm_app(proj, target="c", name="tool", object_="gen")
-    c = (proj / "native/src/app/tool.c").read_text()
+    c = (proj / "native/src/app/tool.c").read_text(encoding="utf-8")
     # flags surface in usage/help
     assert "[--file_type raw|csv]" in c
     assert "[--endian le|be]" in c
@@ -432,7 +458,7 @@ def test_output_axes_python(tmp_path: Path):
     proj = _gen_proj(tmp_path)
     jm_app(proj, target="console", name="tool-cli", object_="gen")
     jm_app(proj, target="pep723", name="tool", object_="gen")
-    cli = (proj / "src/proj/cli.py").read_text()
+    cli = (proj / "src/proj/cli.py").read_text(encoding="utf-8")
     assert 'choices=["raw", "csv"]' in cli
     assert 'choices=["le", "be"]' in cli
     assert '"--record",\n        type=str,' in cli
@@ -449,7 +475,7 @@ def test_output_axes_python(tmp_path: Path):
 def test_c_app_has_help(tmp_path: Path):
     proj = _gen_proj(tmp_path)
     jm_app(proj, target="c", name="tool", object_="gen")
-    c = (proj / "native/src/app/tool.c").read_text()
+    c = (proj / "native/src/app/tool.c").read_text(encoding="utf-8")
     assert '!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")' in c
     assert "fputs(" in c and "return 0;" in c
 
@@ -470,7 +496,7 @@ def test_sample_type_blockwise(tmp_path: Path):
 
     jm_apply(proj)
     jm_app(proj, target="c", name="t", object_="flt")
-    c = (proj / "native/src/app/t.c").read_text()
+    c = (proj / "native/src/app/t.c").read_text(encoding="utf-8")
     assert "jm_write_block(out, outbuf, k, sample_type, endian, file_type" in c
 
 
@@ -492,7 +518,7 @@ def test_no_sample_type_for_real_output(tmp_path: Path):
 
     jm_apply(proj)
     jm_app(proj, target="c", name="t", object_="g")
-    c = (proj / "native/src/app/t.c").read_text()
+    c = (proj / "native/src/app/t.c").read_text(encoding="utf-8")
     assert "jm_convert_block" not in c and "sample_type" not in c
 
 
@@ -553,7 +579,7 @@ def test_object_app_links_depends_on_cores(tmp_path: Path):
 
     jm_apply(proj)
     jm_app(proj, target="c", name="tool", object_="eng")
-    cmake = (proj / "CMakeLists.txt").read_text()
+    cmake = (proj / "CMakeLists.txt").read_text(encoding="utf-8")
     line = next(
         ln for ln in cmake.splitlines() if "target_link_libraries(tool" in ln
     )
@@ -587,11 +613,13 @@ def test_module_object_console_scoped_to_module(tmp_path: Path):
     )
     assert (proj / "src" / "proj" / "wfm" / "cli.py").exists()
     assert not (proj / "src" / "proj" / "cli.py").exists()
-    pyproject = (proj / "pyproject.toml").read_text()
+    pyproject = (proj / "pyproject.toml").read_text(encoding="utf-8")
     assert "proj.wfm.cli:main" in pyproject
     # pep723 imports the class from the module subpackage, not the pkg root.
     jm_app(proj, target="pep723", name="tool", object_="gen", module="wfm")
-    assert "from proj.wfm import Gen" in (proj / "tool.py").read_text()
+    assert "from proj.wfm import Gen" in (proj / "tool.py").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_app_persists_in_manifest_split_layout(tmp_path: Path):
@@ -604,7 +632,9 @@ def test_app_persists_in_manifest_split_layout(tmp_path: Path):
     jm_new("proj", proj)
     mani = proj / "just-makeit.toml"
     mani.write_text(
-        'include = ["objects/*.toml", "modules/*.toml"]\n' + mani.read_text()
+        'include = ["objects/*.toml", "modules/*.toml"]\n'
+        + mani.read_text(encoding="utf-8"),
+        encoding="utf-8",
     )
     jm_module(proj, "wfm")
     jm_object(
@@ -617,8 +647,8 @@ def test_app_persists_in_manifest_split_layout(tmp_path: Path):
     )
     jm_apply(proj)
     jm_app(proj, target="c", object_="gen", module="wfm", name="tool")
-    assert "[[app]]" in mani.read_text()
-    assert 'module = "wfm"' in mani.read_text()
+    assert "[[app]]" in mani.read_text(encoding="utf-8")
+    assert 'module = "wfm"' in mani.read_text(encoding="utf-8")
     assert not (proj / "objects" / "app.toml").exists()
     # survives a reconcile
     jm_apply(proj)

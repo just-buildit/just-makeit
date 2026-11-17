@@ -366,7 +366,9 @@ class TestStandaloneProject:
         assert props["stages"]["value_type"] == "const char *"
 
     def test_core_header_gains_only_the_pure_c_accessors(self, project):
-        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
+        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "size_t rdr_num_keywords(const rdr_state_t *state);" in h
         assert "const char *rdr_stages_value(" in h
         assert "PyObject" not in h
@@ -376,25 +378,32 @@ class TestStandaloneProject:
         standalone object had none, so the PyObject * escape hatch had nowhere
         to live."""
         ext_dir = project / "native" / "src" / "rdr"
-        assert (
-            '#include "rdr_ext_extra.c"'
-            not in (ext_dir / "rdr_ext.c").read_text()
+        assert '#include "rdr_ext_extra.c"' not in (
+            ext_dir / "rdr_ext.c"
+        ).read_text(encoding="utf-8")
+        (ext_dir / "rdr_ext_extra.c").write_text(
+            "/* hand-written */\n", encoding="utf-8"
         )
-        (ext_dir / "rdr_ext_extra.c").write_text("/* hand-written */\n")
         apply_run(project)
-        assert (
-            '#include "rdr_ext_extra.c"' in (ext_dir / "rdr_ext.c").read_text()
-        )
+        assert '#include "rdr_ext_extra.c"' in (
+            ext_dir / "rdr_ext.c"
+        ).read_text(encoding="utf-8")
 
     def test_apply_is_idempotent(self, project):
         apply_run(project)
-        before = (project / "native" / "src" / "rdr" / "rdr_ext.c").read_text()
+        before = (project / "native" / "src" / "rdr" / "rdr_ext.c").read_text(
+            encoding="utf-8"
+        )
         apply_run(project)
-        after = (project / "native" / "src" / "rdr" / "rdr_ext.c").read_text()
+        after = (project / "native" / "src" / "rdr" / "rdr_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert before == after
 
     def test_stub_parses_and_imports_any(self, project):
-        text = (project / "src" / "dsp" / "rdr.pyi").read_text()
+        text = (project / "src" / "dsp" / "rdr.pyi").read_text(
+            encoding="utf-8"
+        )
         ast.parse(text)
         assert "dict[str, Any]" in text
         assert "list[str]" in text
@@ -438,7 +447,9 @@ class TestModuleProject:
     def test_module_stub_imports_any_and_parses(self, project):
         """`_uses_any` re-derives the typing imports independently of the
         property renderer; missing the container case emits a bare `Any`."""
-        text = (project / "src" / "dsp" / "wfm" / "wfm.pyi").read_text()
+        text = (project / "src" / "dsp" / "wfm" / "wfm.pyi").read_text(
+            encoding="utf-8"
+        )
         ast.parse(text)
         assert "from typing import Any" in text
         assert "dict[str, Any]" in text
@@ -461,7 +472,8 @@ class TestModuleProject:
             "{\n"
             "    (void)state;\n"
             "    return PyLong_FromSize_t(i);\n"
-            "}\n"
+            "}\n",
+            encoding="utf-8",
         )
         apply_run(project)
         cc = sysconfig.get_config_var("CC") or "cc"
@@ -770,7 +782,9 @@ class TestCli:
             "double",
         )
         assert r.returncode == 0
-        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text()
+        h = (project / INC_ROOT / "rdr" / "rdr_core.h").read_text(
+            encoding="utf-8"
+        )
         assert (
             "double rdr_gains_value(const rdr_state_t *state, size_t i);" in h
         )

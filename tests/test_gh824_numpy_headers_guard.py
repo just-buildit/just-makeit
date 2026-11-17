@@ -39,7 +39,7 @@ def makefile(tmp_path) -> str:
     root = tmp_path / "proj"
     with contextlib.redirect_stdout(io.StringIO()):
         new_run("proj", root, ["gain"], [("g", "float", "0.0f")])
-    return (root / "Makefile").read_text()
+    return (root / "Makefile").read_text(encoding="utf-8")
 
 
 def _predicate(text: str, name: str) -> str:
@@ -61,7 +61,7 @@ def _run(expr: str, tmp_path: Path, include: str | None):
     stub.mkdir(exist_ok=True)
     target = include if include is not None else str(tmp_path / "gone")
     (stub / "numpy.py").write_text(
-        f"def get_include():\n    return {target!r}\n"
+        f"def get_include():\n    return {target!r}\n", encoding="utf-8"
     )
     return subprocess.run(
         [sys.executable, "-c", expr],
