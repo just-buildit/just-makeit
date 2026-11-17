@@ -265,13 +265,19 @@ def violations(path: Path, text: str) -> list[str]:
 
 
 def test_one_writer_spells_a_docstring_literal():
-    found = [v for p in _modules() for v in violations(p, p.read_text())]
+    found = [
+        v
+        for p in _modules()
+        for v in violations(p, p.read_text(encoding="utf-8"))
+    ]
     assert not found, "\n".join(found)
 
 
 def test_every_exemption_gives_a_reason():
     for p in _modules():
-        for i, line in enumerate(p.read_text().splitlines(), 1):
+        for i, line in enumerate(
+            p.read_text(encoding="utf-8").splitlines(), 1
+        ):
             if "not a docstring" in line and "#" in line:
                 m = _MARK.search(line)
                 assert m and m.group(1).strip(), f"{p.name}:{i}"
@@ -358,7 +364,7 @@ def test_the_scan_lets_through_what_it_allows(allowed):
 
 
 def test_the_scan_reaches_the_writer():
-    text = (SRC / _WRITER[0]).read_text()
+    text = (SRC / _WRITER[0]).read_text(encoding="utf-8")
     assert f"def {_WRITER[1]}(" in text
     assert f"{_CONSTANT} = " in text
 
@@ -396,7 +402,10 @@ def test_no_template_pastes_a_slot_into_a_docstring():
             assert "<<jm_module_doc>>" in loaded, rel
     assert not found, found
     # Armed: the templates this exists for do carry a slot in a docstring.
-    assert any(_template_doc_slots(p.read_text()) for p in _python_templates())
+    assert any(
+        _template_doc_slots(p.read_text(encoding="utf-8"))
+        for p in _python_templates()
+    )
 
 
 def test_the_template_scan_is_armed():

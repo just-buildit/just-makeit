@@ -553,11 +553,11 @@ class TestExtraIncludeDirs:
         apply_run(root)
         cmake_before = (
             root / "native" / "src" / "dsp" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         apply_run(root)
         cmake_after = (
             root / "native" / "src" / "dsp" / "CMakeLists.txt"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert cmake_before == cmake_after
 
     def test_standalone_component_extra_include_dirs(self, tmp_path):

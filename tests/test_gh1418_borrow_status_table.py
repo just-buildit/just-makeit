@@ -99,7 +99,7 @@ class TestTheTableReachesTheBinding:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", *TABLE).returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert "switch (ring_wait_status(self->handle, n))" in body
         # Each row, with its category -- the point of the feature is that
         # these are THREE different exceptions, so asserting one would pass
@@ -117,7 +117,7 @@ class TestTheTableReachesTheBinding:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", *TABLE).returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert '"n exceeds capacity"' in body
         # A row with no message still says WHICH status fired, rather than
         # falling back to the blanket text and losing the finding.
@@ -144,7 +144,7 @@ class TestTheTableReachesTheBinding:
         )
         assert r.returncode == 0, r.stderr
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         # The COUNT param, not the first param and not the state alone.
         assert "ring_wait_status(self->handle, how_many)" in body
 
@@ -152,7 +152,7 @@ class TestTheTableReachesTheBinding:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", *TABLE).returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert body.index("PyErr_CheckSignals") < body.index("switch (")
         assert body.index("if (!_p)") < body.index("PyErr_CheckSignals")
 
@@ -161,7 +161,7 @@ class TestTheTableReachesTheBinding:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", "--nogil").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert "PyErr_CheckSignals" in body
         assert "switch (" not in body
 
@@ -181,7 +181,7 @@ class TestItComposesWithNoneOnEmpty:
         )
         assert r.returncode == 0, r.stderr
 
-        body = _wrapper((proj / EXT).read_text(), "peek")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "peek")
         assert "case RING_CLOSED:" in body
         # Every case returns, so falling out of the switch IS the fallback.
         assert body.index("default: break;") < body.index("Py_RETURN_NONE")
@@ -190,7 +190,7 @@ class TestItComposesWithNoneOnEmpty:
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", *TABLE).returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         tail = body[body.index("default: break;") :]
         assert '"wait failed"' in tail
         assert "Py_RETURN_NONE" not in tail
@@ -217,11 +217,11 @@ class TestTheKeysSurviveAReplay:
     def test_apply_rebuilds_the_same_binding(self, tmp_path):
         proj = _ring(tmp_path)
         assert _borrow(proj, "wait", *TABLE).returncode == 0
-        before = (proj / EXT).read_text()
+        before = (proj / EXT).read_text(encoding="utf-8")
 
         (proj / EXT).unlink()
         assert run_cli("apply", cwd=proj).returncode == 0
-        assert (proj / EXT).read_text() == before
+        assert (proj / EXT).read_text(encoding="utf-8") == before
 
 
 class TestARefusalRatherThanASilentDrop:
@@ -305,6 +305,6 @@ class TestARefusalRatherThanASilentDrop:
     def test_a_refusal_writes_nothing(self, tmp_path):
         """A refused declaration must not leave half a method behind."""
         proj = _ring(tmp_path)
-        before = (proj / TOML).read_text()
+        before = (proj / TOML).read_text(encoding="utf-8")
         assert _borrow(proj, "wait", "--status-fn", "ring_wait_status")
-        assert (proj / TOML).read_text() == before
+        assert (proj / TOML).read_text(encoding="utf-8") == before

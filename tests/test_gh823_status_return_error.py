@@ -54,7 +54,9 @@ def _project(tmp_path: Path, **method_kw) -> Path:
 
 
 def _wrapper(root: Path) -> str:
-    text = (root / "native" / "src" / "cap" / "cap_ext.c").read_text()
+    text = (root / "native" / "src" / "cap" / "cap_ext.c").read_text(
+        encoding="utf-8"
+    )
     i = text.index("Cap_close(")
     return text[i : text.index("\n}", i)]
 

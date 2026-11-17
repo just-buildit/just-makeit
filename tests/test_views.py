@@ -769,7 +769,9 @@ class TestDivergingSurfaces:
         """The behaviour change the two tests above used to forbid."""
         dest = self._module_object_with_view(tmp_path)
         method_run(dest, "acq", "x", None, "void", "void", False, [], view="V")
-        frag = (dest / "native/src/dsp/dsp_ext_v.c").read_text()
+        frag = (dest / "native/src/dsp/dsp_ext_v.c").read_text(
+            encoding="utf-8"
+        )
         assert "V_x" in frag
 
     def test_method_rejects_missing_view(self, tmp_path):

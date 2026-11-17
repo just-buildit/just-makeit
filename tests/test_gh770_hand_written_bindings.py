@@ -96,20 +96,20 @@ def _regen(root):
 
 
 def _plant_added(frag, gnu):
-    text = frag.read_text()
+    text = frag.read_text(encoding="utf-8")
     anchor = "static PyMethodDef Fir_methods[] = {"
     assert anchor in text
     text = text.replace(anchor, HAND_FN + "\n" + anchor, 1)
     text = text.replace(anchor, anchor + "\n" + HAND_ROW, 1)
-    frag.write_text(_gnu(text) if gnu else text)
+    frag.write_text(_gnu(text) if gnu else text, encoding="utf-8")
 
 
 def _plant_edited(frag, gnu):
-    text = frag.read_text()
+    text = frag.read_text(encoding="utf-8")
     anchor = "Fir_step(FirObject *self, PyObject *args)\n{\n"
     assert anchor in text, "probe function missing from the render"
     text = text.replace(anchor, anchor + f"    {EDIT_MARK}\n", 1)
-    frag.write_text(_gnu(text) if gnu else text)
+    frag.write_text(_gnu(text) if gnu else text, encoding="utf-8")
 
 
 def _compile(root):
@@ -148,7 +148,7 @@ class TestTheMatrix:
         root, frag = project
         _plant_added(frag, gnu)
         _regen(root)
-        assert "Fir_hand_added" in frag.read_text()
+        assert "Fir_hand_added" in frag.read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("gnu", [False, True], ids=["jm", "gnu"])
     def test_its_method_row_survives_too(self, project, gnu):
@@ -157,7 +157,7 @@ class TestTheMatrix:
         root, frag = project
         _plant_added(frag, gnu)
         _regen(root)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         assert "Fir_hand_added" in text
         assert '"hand_added"' in text
 
@@ -166,7 +166,7 @@ class TestTheMatrix:
         root, frag = project
         _plant_edited(frag, gnu)
         _regen(root)
-        assert EDIT_MARK in frag.read_text()
+        assert EDIT_MARK in frag.read_text(encoding="utf-8")
 
     def test_the_probe_is_not_an_always_regenerated_function(self, project):
         """Guard. ``_dealloc``/``_init`` are in ``_INFRA_SUFFIXES`` and are
@@ -198,7 +198,7 @@ class TestTheParser:
         """The reason this was invisible: extraction failing returns ``{}``,
         which reads exactly like "this file has nothing to preserve"."""
         root, frag = project
-        gnu_text = _gnu(frag.read_text())
+        gnu_text = _gnu(frag.read_text(encoding="utf-8"))
         assert O._extract_c_function_bodies(gnu_text), (
             "GNU-formatted fragment must not extract to an empty dict — "
             "that is the failure mode, not the absence of one"
@@ -210,7 +210,7 @@ class TestTheCarry:
 
     def test_a_generated_function_is_not_duplicated(self, project):
         root, frag = project
-        existing = frag.read_text()
+        existing = frag.read_text(encoding="utf-8")
         out = D.transplant_hand_written(existing, existing)
         assert out.count("Fir_step(FirObject") == existing.count(
             "Fir_step(FirObject"
@@ -220,16 +220,18 @@ class TestTheCarry:
         root, frag = project
         _plant_added(frag, False)
         _regen(root)
-        assert "HAND-ADDED: exists nowhere else." in frag.read_text()
+        assert "HAND-ADDED: exists nowhere else." in frag.read_text(
+            encoding="utf-8"
+        )
 
     def test_it_is_idempotent(self, project):
         """A second regeneration must not stack a second copy."""
         root, frag = project
         _plant_added(frag, False)
         _regen(root)
-        once = frag.read_text()
+        once = frag.read_text(encoding="utf-8")
         _regen(root)
-        twice = frag.read_text()
+        twice = frag.read_text(encoding="utf-8")
         assert once.count("Fir_hand_added") == twice.count("Fir_hand_added")
         assert once.count('"hand_added"') == twice.count('"hand_added"')
 
@@ -260,10 +262,10 @@ class TestRemovalStillRemoves:
             True,
             [],
         )
-        assert '"tune"' in frag.read_text()
+        assert '"tune"' in frag.read_text(encoding="utf-8")
 
         remove_run(root, "method", "tune", object_name="fir", force=True)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         assert '"tune"' not in text
         assert "Fir_tune" not in text
 
@@ -285,7 +287,7 @@ class TestRemovalStillRemoves:
             [],
         )
         remove_run(root, "method", "tune", object_name="fir", force=True)
-        assert "tune_max_out" not in frag.read_text()
+        assert "tune_max_out" not in frag.read_text(encoding="utf-8")
 
     def test_a_hand_added_member_is_not_collateral(self, project):
         """Removing one member must not take an unrelated hand-written one
@@ -306,7 +308,7 @@ class TestRemovalStillRemoves:
         )
         _plant_added(frag, False)
         remove_run(root, "method", "tune", object_name="fir", force=True)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         assert '"tune"' not in text
         assert "Fir_hand_added" in text
 
@@ -377,8 +379,13 @@ class TestAnUnparseableFragmentIsRefused:
         # signature wrapped across the paren.
         import re as _re
 
-        mangled = _re.sub(r"^(\w+)\(", r"\1\n(", frag.read_text(), flags=_re.M)
-        frag.write_text(mangled)
+        mangled = _re.sub(
+            r"^(\w+)\(",
+            r"\1\n(",
+            frag.read_text(encoding="utf-8"),
+            flags=_re.M,
+        )
+        frag.write_text(mangled, encoding="utf-8")
         before = frag.read_bytes()
 
         _regen(root)
@@ -392,7 +399,13 @@ class TestAnUnparseableFragmentIsRefused:
         import re as _re
 
         frag.write_text(
-            _re.sub(r"^(\w+)\(", r"\1\n(", frag.read_text(), flags=_re.M)
+            _re.sub(
+                r"^(\w+)\(",
+                r"\1\n(",
+                frag.read_text(encoding="utf-8"),
+                flags=_re.M,
+            ),
+            encoding="utf-8",
         )
         _regen(root)
         err = capsys.readouterr().err
@@ -413,7 +426,12 @@ class TestAnUnparseableFragmentIsRefused:
         root, frag = project
         import re as _re
 
-        mangled = _re.sub(r"^(\w+)\(", r"\1\n(", frag.read_text(), flags=_re.M)
+        mangled = _re.sub(
+            r"^(\w+)\(",
+            r"\1\n(",
+            frag.read_text(encoding="utf-8"),
+            flags=_re.M,
+        )
         assert O._extract_c_function_bodies(mangled) == {}
         assert D.binds_functions(mangled)
 
@@ -435,4 +453,4 @@ class TestAnUnparseableFragmentIsRefused:
             [],
         )
         assert frag.read_bytes() != before
-        assert '"tune"' in frag.read_text()
+        assert '"tune"' in frag.read_text(encoding="utf-8")

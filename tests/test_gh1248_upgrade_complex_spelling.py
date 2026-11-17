@@ -62,9 +62,9 @@ def _project(tmp_path: Path) -> Path:
         if path.is_file() and path.suffix in (".c", ".h"):
             if path.name == "clib_common.h":
                 continue
-            t = path.read_text()
+            t = path.read_text(encoding="utf-8")
             if _NEW in t:
-                path.write_text(t.replace(_NEW, _OLD))
+                path.write_text(t.replace(_NEW, _OLD), encoding="utf-8")
     return root
 
 
@@ -88,7 +88,9 @@ def _count(root: Path, needle: str) -> int:
     n = 0
     for path in sorted((root / "native").rglob("*")):
         if path.is_file() and path.suffix in (".c", ".h"):
-            n += _COMMENT.sub("", path.read_text()).count(needle)
+            n += _COMMENT.sub("", path.read_text(encoding="utf-8")).count(
+                needle
+            )
     return n
 
 
@@ -111,9 +113,9 @@ class TestItMigrates:
         in `<comp>_core.h`, which `apply` and `regenerate` both refuse."""
         root = _project(tmp_path)
         header = root / INC_ROOT / "nco" / "nco_core.h"
-        assert _OLD in _COMMENT.sub("", header.read_text())
+        assert _OLD in _COMMENT.sub("", header.read_text(encoding="utf-8"))
         _upgrade_out(root)
-        code = _COMMENT.sub("", header.read_text())
+        code = _COMMENT.sub("", header.read_text(encoding="utf-8"))
         assert _OLD not in code
         assert _NEW in code
 
@@ -140,13 +142,13 @@ class TestItIsSafeToRunTwice:
         root = _project(tmp_path)
         _upgrade_out(root)
         before = {
-            p: p.read_text()
+            p: p.read_text(encoding="utf-8")
             for p in sorted((root / "native").rglob("*"))
             if p.is_file()
         }
         out = _upgrade_out(root)
         after = {
-            p: p.read_text()
+            p: p.read_text(encoding="utf-8")
             for p in sorted((root / "native").rglob("*"))
             if p.is_file()
         }
@@ -170,10 +172,10 @@ def test_clib_common_h_is_left_alone(tmp_path: Path) -> None:
     documented order after verifying it in the reverse one."""
     root = _project(tmp_path)
     clib = root / INC_ROOT / "clib_common.h"
-    before = clib.read_text()
+    before = clib.read_text(encoding="utf-8")
     assert _OLD in before, "the comment should quote the old spelling"
     _upgrade_out(root)
-    assert clib.read_text() == before
+    assert clib.read_text(encoding="utf-8") == before
 
 
 @pytest.mark.skipif(
@@ -200,7 +202,7 @@ def test_a_migrated_project_compiles_from_cxx11(tmp_path: Path) -> None:
     }
     for name, src in orders.items():
         tu = tmp_path / f"{name}.cpp"
-        tu.write_text(src)
+        tu.write_text(src, encoding="utf-8")
         r = cbuild.build(
             "syntax",
             [tu],

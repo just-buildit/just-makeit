@@ -27,17 +27,21 @@ class TestInTheProjectsOwnHouseStyle:
         layout; one short line has nothing to reflow."""
         proj = _project(tmp_path, generated=False)
         (proj / ".clang-format").write_text(
-            "BasedOnStyle: GNU\nColumnLimit: 79\nReflowComments: true\n"
+            "BasedOnStyle: GNU\nColumnLimit: 79\nReflowComments: true\n",
+            encoding="utf-8",
         )
         cfg = proj / "just-makeit.toml"
         cfg.write_text(
-            cfg.read_text().replace(
+            cfg.read_text(encoding="utf-8").replace(
                 "[project]", '[project]\nc_style = "clang-format"', 1
-            )
+            ),
+            encoding="utf-8",
         )
         _key(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
-        assert (proj / FRAG).read_text().splitlines()[0] == TOKEN
+        assert (proj / FRAG).read_text(encoding="utf-8").splitlines()[
+            0
+        ] == TOKEN
         # ...and a second apply is steady state, not a refused adoption.
         assert run_cli("apply", cwd=proj).returncode == 0
         assert run_cli("status", "--check", cwd=proj).returncode == 0

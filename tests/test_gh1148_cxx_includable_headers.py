@@ -149,7 +149,10 @@ class TestEveryGeneratedHeaderIsCxxIncludable:
         failures = []
         for rel in headers:
             src = tmp_path / "probe.cpp"
-            src.write_text(f'#include "{rel}"\nint main() {{ return 0; }}\n')
+            src.write_text(
+                f'#include "{rel}"\nint main() {{ return 0; }}\n',
+                encoding="utf-8",
+            )
             r = cbuild.build(
                 "obj",
                 [src],
@@ -205,7 +208,8 @@ class TestTheAbiSurvivesTheCrossing:
             "                (double)__imag__ y);\n"
             "    cplx_destroy(o);\n"
             "    return 0;\n"
-            "}\n"
+            "}\n",
+            encoding="utf-8",
         )
         core_o = cbuild.build(
             "obj",

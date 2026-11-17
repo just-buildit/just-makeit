@@ -69,7 +69,7 @@ def test_each_face_gets_its_spelling(project):
     cfg["project"]["pkg_modules"] = ["zlib >= 1.2", "fftw3f"]
     C.save(project, cfg)
     assert run_cli("apply", cwd=project).returncode == 0
-    root = (project / "CMakeLists.txt").read_text()
+    root = (project / "CMakeLists.txt").read_text(encoding="utf-8")
     # The root and the installed config's find_dependency block both.
     line = 'pkg_check_modules(ZLIB REQUIRED IMPORTED_TARGET "zlib>=1.2")'
     assert root.count(line) == 2, root

@@ -66,7 +66,9 @@ class TestModuleStubBothDeclared:
         return dest
 
     def test_signature_lists_init_params_not_state(self, project):
-        pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text()
+        pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text(
+            encoding="utf-8"
+        )
         block = _pyi_class_block(pyi, "Rdr")
         assert (
             "def __init__(self, filepath: str | os.PathLike) -> None: ..."
@@ -77,7 +79,9 @@ class TestModuleStubBothDeclared:
 
     def test_signature_agrees_with_docstring(self, project):
         """The two halves of the same stub must name the same parameter."""
-        pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text()
+        pyi = (project / "src" / "dsp" / "io" / "io.pyi").read_text(
+            encoding="utf-8"
+        )
         block = _pyi_class_block(pyi, "Rdr")
         assert "filepath : str | os.PathLike" in block  # docstring Parameters
         assert (  # signature
@@ -87,13 +91,19 @@ class TestModuleStubBothDeclared:
     def test_signature_matches_runtime_ctor(self, project):
         """The C `Rdr_init` parses init_params and calls
         `rdr_create(<init_params>)` -- the stub must match what runs."""
-        c = (project / "native" / "src" / "io" / "io_ext_rdr.c").read_text()
+        c = (project / "native" / "src" / "io" / "io_ext_rdr.c").read_text(
+            encoding="utf-8"
+        )
         assert '{"filepath", NULL}' in c
         assert "rdr_create(PyBytes_AS_STRING(filepath))" in c
         assert '{"cap", NULL}' not in c
 
     def test_stub_parses(self, project):
-        ast.parse((project / "src" / "dsp" / "io" / "io.pyi").read_text())
+        ast.parse(
+            (project / "src" / "dsp" / "io" / "io.pyi").read_text(
+                encoding="utf-8"
+            )
+        )
 
 
 class TestStateOnlyStillWorks:
@@ -111,7 +121,10 @@ class TestStateOnlyStillWorks:
 
     def test_state_vars_are_the_ctor(self, project):
         block = _pyi_class_block(
-            (project / "src" / "dsp" / "io" / "io.pyi").read_text(), "Osc"
+            (project / "src" / "dsp" / "io" / "io.pyi").read_text(
+                encoding="utf-8"
+            ),
+            "Osc",
         )
         # gh-parity: the module face now shows the real default, matching the
         # standalone one. `...` is still emitted when there is no literal
@@ -139,7 +152,10 @@ class TestNoStateInitParamsUnchanged:
 
     def test_ctor_is_init_params(self, project):
         block = _pyi_class_block(
-            (project / "src" / "dsp" / "io" / "io.pyi").read_text(), "Rdr"
+            (project / "src" / "dsp" / "io" / "io.pyi").read_text(
+                encoding="utf-8"
+            ),
+            "Rdr",
         )
         assert (
             "def __init__(self, filepath: str | os.PathLike) -> None: ..."
@@ -163,7 +179,8 @@ class TestStandaloneWasNeverBroken:
         # What matters here is only that the standalone ctor is still
         # state-based and untouched by the module-path reorder.
         block = _pyi_class_block(
-            (project / "src" / "dsp" / "rdr.pyi").read_text(), "Rdr"
+            (project / "src" / "dsp" / "rdr.pyi").read_text(encoding="utf-8"),
+            "Rdr",
         )
         sig = block.split("def __init__")[1].split("\n")[0]
         assert "gain: float" in sig

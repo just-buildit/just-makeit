@@ -239,7 +239,7 @@ class TestSplitObjectsPreservesEnum:
 
     def test_fragment_text_carries_enum(self, project):
         split_run(project)
-        frag = (project / "objects" / "nco.toml").read_text()
+        frag = (project / "objects" / "nco.toml").read_text(encoding="utf-8")
         assert 'enum = "ftype"' in frag
 
 
@@ -278,5 +278,5 @@ class TestSplitObjectsPreservesTheCapsule:
 
     def test_the_fragment_text_carries_it(self, project):
         split_run(project)
-        frag = (project / "objects" / "nco.toml").read_text()
+        frag = (project / "objects" / "nco.toml").read_text(encoding="utf-8")
         assert 'capsule = "dsp.nco.state"' in frag

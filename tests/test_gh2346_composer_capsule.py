@@ -218,7 +218,8 @@ def test_the_getter_compiles_against_the_lend_helper(tmp_path):
         " int destroyed; int lent; } ComposerObject;\n"
         f"{_coerce.CAPSULE_LEND_C}\n{getter}\n"
         "PyObject *probe(ComposerObject *s) "
-        "{ return Composer_get__capsule(s, NULL); }\n"
+        "{ return Composer_get__capsule(s, NULL); }\n",
+        encoding="utf-8",
     )
     cbuild.build(
         "obj",

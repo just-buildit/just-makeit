@@ -41,7 +41,7 @@ def _makefile(tmp_path: Path) -> str:
             arg_type="float",
             return_type="float",
         )
-    return (root / "Makefile").read_text()
+    return (root / "Makefile").read_text(encoding="utf-8")
 
 
 class TestEveryCmakeCallNamesAnInterpreter:

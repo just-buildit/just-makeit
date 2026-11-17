@@ -63,7 +63,9 @@ def _legacy_declare(root, toml_text):
     cannot exist, and the tests would have been pinning the gate's absence.
     """
     path = root / C.FILENAME
-    path.write_text(path.read_text() + toml_text, encoding="utf-8")
+    path.write_text(
+        path.read_text(encoding="utf-8") + toml_text, encoding="utf-8"
+    )
 
 
 def test_the_message_does_not_claim_lowercase():

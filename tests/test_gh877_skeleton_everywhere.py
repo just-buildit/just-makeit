@@ -55,7 +55,7 @@ def _scaffold(root: Path, module: str | None) -> Path:
 
 def _docstring_of(pyi: Path, member: str) -> str:
     """The raw docstring body of ``def <member>`` in *pyi*."""
-    text = pyi.read_text()
+    text = pyi.read_text(encoding="utf-8")
     marker = f"def {member}("
     i = text.index(marker)
     q = chr(34) * 3

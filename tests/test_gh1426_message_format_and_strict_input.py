@@ -97,7 +97,7 @@ class TestAMessageCanNameTheNumbers:
         )
         assert r.returncode == 0, r.stderr
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert "PyErr_Format(PyExc_ValueError" in body
         assert '"wait(%lld) exceeds capacity %lld"' in body
         # The param is a local; the property reads through the getter jm
@@ -157,7 +157,7 @@ class TestAMessageCanNameTheNumbers:
         )
         assert r.returncode == 0, r.stderr
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         # The expression, parenthesised as the getset parenthesises it...
         assert "(long long)(self->handle->cap)" in body
         # ...and NOT a call to a symbol that was never declared.
@@ -171,7 +171,7 @@ class TestAMessageCanNameTheNumbers:
         )
         assert r.returncode == 0, r.stderr
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert 'PyErr_SetString(PyExc_EOFError,\n        "end of stream")' in (
             body
         )
@@ -190,7 +190,7 @@ class TestAMessageCanNameTheNumbers:
         )
         assert r.returncode == 0, r.stderr
 
-        body = _wrapper((proj / EXT).read_text(), "wait")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "wait")
         assert '"the ring is 100%% full at %lld"' in body
         # Exactly one conversion is live: the slot's. Were the `%` left
         # bare, `%` + ` f` would be read as a conversion and the format
@@ -228,12 +228,12 @@ class TestAMessageCanNameTheNumbers:
             ).returncode
             == 0
         )
-        before = (proj / EXT).read_text()
+        before = (proj / EXT).read_text(encoding="utf-8")
 
         (proj / EXT).unlink()
         r = run_cli("apply", cwd=proj)
         assert r.returncode == 0, r.stderr
-        assert (proj / EXT).read_text() == before
+        assert (proj / EXT).read_text(encoding="utf-8") == before
 
     def test_script_replays_the_message_verbatim(self, tmp_path):
         proj = _ring(tmp_path)
@@ -316,7 +316,7 @@ class TestTheModuleShapeDopplerActuallyUses:
 
         frag = (
             proj / "native" / "src" / "buffer" / "buffer_ext_f32b.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert '"wait(%lld) exceeds %lld"' in frag
         assert "(long long)n," in frag
         assert "(long long)f32b_get_capacity(self->handle)" in frag
@@ -340,7 +340,7 @@ class TestAnInputCanBeRefused:
         proj = _ring(tmp_path, prop=False)
         assert self._write(proj, "--strict").returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "write")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "write")
         # Nothing is converted...
         assert "jm_array_arg(" not in body
         # ...the exact dtype is required, naming what it wanted and got...
@@ -360,7 +360,7 @@ class TestAnInputCanBeRefused:
         proj = _ring(tmp_path, prop=False)
         assert self._write(proj).returncode == 0
 
-        body = _wrapper((proj / EXT).read_text(), "write")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "write")
         assert "jm_array_arg(" in body
         assert "PyArray_IS_C_CONTIGUOUS" not in body
 
@@ -382,17 +382,17 @@ class TestAnInputCanBeRefused:
         )
         if r.returncode != 0:  # the param spelling is not the point here
             return
-        body = _wrapper((proj / EXT).read_text(), "fill")
+        body = _wrapper((proj / EXT).read_text(encoding="utf-8"), "fill")
         assert body.count("must be a writable, C-contiguous") <= 1
 
     def test_strict_survives_apply_and_script(self, tmp_path):
         proj = _ring(tmp_path, prop=False)
         assert self._write(proj, "--strict").returncode == 0
-        before = (proj / EXT).read_text()
+        before = (proj / EXT).read_text(encoding="utf-8")
 
         (proj / EXT).unlink()
         assert run_cli("apply", cwd=proj).returncode == 0
-        assert (proj / EXT).read_text() == before
+        assert (proj / EXT).read_text(encoding="utf-8") == before
 
         r = run_cli("script", cwd=proj)
         assert r.returncode == 0, r.stderr

@@ -68,17 +68,19 @@ def project(tmp_path_factory) -> Path:
     ):
         _jm(*args, cwd=proj)
     mods = proj / "modules"
-    with (mods / "sink.toml").open("a") as f:
+    with (mods / "sink.toml").open("a", encoding="utf-8") as f:
         f.write('package = "wfm"\nplatforms = ["linux", "macos"]\n')
-    (mods / "hand.toml").write_text(_HANDLE)
-    with (mods / "wfm.toml").open("a") as f:
+    (mods / "hand.toml").write_text(_HANDLE, encoding="utf-8")
+    with (mods / "wfm.toml").open("a", encoding="utf-8") as f:
         f.write('\n[module.wfm.reexports]\nhand = ["H"]\n')
     _jm("apply", cwd=proj)
     return proj
 
 
 def _init(project: Path) -> str:
-    return (project / "src" / "mp" / "wfm" / "__init__.py").read_text()
+    return (project / "src" / "mp" / "wfm" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
 
 
 # ── CMake: every module kind ─────────────────────────────────────────────────
@@ -147,9 +149,13 @@ def test_a_kind_module_is_guarded_only_when_restricted(kind):
 
 def test_plain_modules_are_guarded_only_when_restricted(project):
     src = project / "native" / "src"
-    assert _GUARD in (src / "sink" / "CMakeLists.txt").read_text()
-    assert _GUARD in (src / "hand" / "CMakeLists.txt").read_text()
-    wfm = (src / "wfm" / "CMakeLists.txt").read_text()
+    assert _GUARD in (src / "sink" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    assert _GUARD in (src / "hand" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    wfm = (src / "wfm" / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "\nif(BUILD_PYTHON)\n" in wfm and "APPLE" not in wfm
 
 
@@ -174,7 +180,9 @@ def _import_wfm(project: Path, tmp_path: Path, platform: str, monkeypatch):
     shutil.copytree(project / "src" / "mp", tree / "mp")
     wfm = tree / "mp" / "wfm"
     for leaf, name in (("wfm", "Gain"), ("sink", "Snk"), ("hand", "H")):
-        (wfm / f"{leaf}.py").write_text(f"class {name}: pass\n")
+        (wfm / f"{leaf}.py").write_text(
+            f"class {name}: pass\n", encoding="utf-8"
+        )
     monkeypatch.syspath_prepend(str(tree))
     monkeypatch.setattr(sys, "platform", platform)
     for key in [k for k in sys.modules if k == "mp" or k.startswith("mp.")]:
@@ -242,14 +250,14 @@ def test_lifting_the_restriction_restores_the_plain_import(tmp_path):
     _jm("module", "m", cwd=proj)
     _jm("object", "o", "--module", "m", cwd=proj)
     frag = proj / "modules" / "m.toml"
-    base = frag.read_text()
-    frag.write_text(base + 'platforms = ["linux"]\n')
+    base = frag.read_text(encoding="utf-8")
+    frag.write_text(base + 'platforms = ["linux"]\n', encoding="utf-8")
     _jm("apply", cwd=proj)
     init = proj / "src" / "lift" / "m" / "__init__.py"
-    assert "# jm:platforms m" in init.read_text()
-    frag.write_text(base)
+    assert "# jm:platforms m" in init.read_text(encoding="utf-8")
+    frag.write_text(base, encoding="utf-8")
     _jm("apply", cwd=proj)
-    text = init.read_text()
+    text = init.read_text(encoding="utf-8")
     assert "jm:platforms" not in text
     assert "\nfrom .m import O  # noqa: E402\n" in text
     assert '__all__ = ["O"]' in text
@@ -263,7 +271,10 @@ def test_a_misspelt_platform_is_refused(project, tmp_path):
     proj = tmp_path / "bad"
     shutil.copytree(project, proj)
     frag = proj / "modules" / "sink.toml"
-    frag.write_text(frag.read_text().replace('"macos"', '"macOS"'))
+    frag.write_text(
+        frag.read_text(encoding="utf-8").replace('"macos"', '"macOS"'),
+        encoding="utf-8",
+    )
     r = run_cli("status", cwd=proj)
     assert r.returncode == 1
     assert 'unknown platform "macOS"' in r.stderr

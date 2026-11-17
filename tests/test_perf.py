@@ -456,17 +456,21 @@ class TestStepStepsFmaConsistency:
         # into an FMA under -ffast-math).
         h = root / INC_ROOT / "c/c_core.h"
         h.write_text(
-            h.read_text().replace(
+            h.read_text(encoding="utf-8").replace(
                 "return (float)x;",
                 "return (float)(x * state->gain + state->bias);",
-            )
+            ),
+            encoding="utf-8",
         )
         # Replace the generated plain-loop steps() with the SIMD macro + a
         # hand-written step_batch using a real fused multiply-add, mirroring
         # the bundled fir_filter example's JM_DEFINE_STEPS + step_batch shape.
         c = root / "native/src/c/c_core.c"
         body = re.sub(
-            r"void\s+c_steps\(.*?\n\}\n", "", c.read_text(), flags=re.S
+            r"void\s+c_steps\(.*?\n\}\n",
+            "",
+            c.read_text(encoding="utf-8"),
+            flags=re.S,
         )
         body += (
             "\n#if JM_SIMD_WIDTH_F32 > 1\n"
@@ -480,7 +484,7 @@ class TestStepStepsFmaConsistency:
             "#endif\n"
             "JM_DEFINE_STEPS(c, c_state_t, float, 0, JM_SIMD_WIDTH_F32, 64)\n"
         )
-        c.write_text(body)
+        c.write_text(body, encoding="utf-8")
 
         build = root / "build"
         cfg = subprocess.run(

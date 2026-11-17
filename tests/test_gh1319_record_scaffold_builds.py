@@ -142,11 +142,12 @@ class TestItStaysQuietWhenTheTypeExists:
             state_vars=[("cap", "size_t", "8")],
         )
         h = root / INC_ROOT / "ring/ring_core.h"
-        t = h.read_text()
+        t = h.read_text(encoding="utf-8")
         cut = t.index("#ifdef __cplusplus")
         h.write_text(
             t[:cut] + "typedef struct { int16_t i; int32_t big; int16_t q; }"
-            " iq_pair_t;\n\n" + t[cut:]
+            " iq_pair_t;\n\n" + t[cut:],
+            encoding="utf-8",
         )
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -178,11 +179,12 @@ class TestItStaysQuietWhenTheTypeExists:
             state_vars=[("cap", "size_t", "8")],
         )
         h = root / INC_ROOT / "ring/ring_core.h"
-        t = h.read_text()
+        t = h.read_text(encoding="utf-8")
         cut = t.index("#ifdef __cplusplus")
         h.write_text(
             t[:cut] + "typedef struct { int16_t i; int32_t big; int16_t q; }"
-            " iq_pair_t;\n\n" + t[cut:]
+            " iq_pair_t;\n\n" + t[cut:],
+            encoding="utf-8",
         )
         _silent(
             method_run,
@@ -199,6 +201,6 @@ class TestItStaysQuietWhenTheTypeExists:
             record_dtype="iq_pair_t",
             result_fields=FIELDS,
         )
-        text = h.read_text()
+        text = h.read_text(encoding="utf-8")
         assert text.count("iq_pair_t;") == 1, text
         assert "int32_t big" in text, "the author's padding was lost"

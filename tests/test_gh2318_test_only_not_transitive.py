@@ -62,7 +62,9 @@ def _project(tmp_path: Path, a_to_x: dict) -> Path:
 
 
 def _cmake(proj: Path, obj: str) -> str:
-    return (proj / "native" / "src" / obj / "CMakeLists.txt").read_text()
+    return (proj / "native" / "src" / obj / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def _public(cmake: str, obj: str) -> str:

@@ -84,7 +84,9 @@ def repo(project: Path) -> Path:
     _git(project, "init", "-q")
     _git(project, "add", "-A")
     _git(project, "commit", "-q", "-m", "init")
-    with (project / ".git" / "info" / "exclude").open("a") as f:
+    with (project / ".git" / "info" / "exclude").open(
+        "a", encoding="utf-8"
+    ) as f:
         f.write("**/.claude/worktrees/\n")
     return project
 
@@ -116,7 +118,7 @@ def test_an_edit_in_the_other_checkout_is_not_stale_here(
     real_run = _apply.run
 
     def run_while_the_other_branch_edits(*args, **kwargs):
-        with other.open("a") as f:
+        with other.open("a", encoding="utf-8") as f:
             f.write("/* the other branch's work */\n")
         return real_run(*args, **kwargs)
 
@@ -146,7 +148,9 @@ def test_a_nested_checkout_is_skipped_without_git(project: Path) -> None:
     # manifest included -- built beside it and moved in.
     elsewhere = project.parent / "elsewhere"
     shutil.copytree(project, elsewhere)
-    (elsewhere / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n")
+    (elsewhere / ".git").write_text(
+        "gitdir: /elsewhere/.git/worktrees/x\n", encoding="utf-8"
+    )
     (project / "vendor").mkdir()
     shutil.move(str(elsewhere), str(project / "vendor" / "other"))
 

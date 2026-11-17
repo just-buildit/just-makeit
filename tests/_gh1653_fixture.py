@@ -100,11 +100,11 @@ def build(where: Path) -> Path:
     _textio.write_text(root / "objects" / "mixer.toml", MIXER_TOML)
     _ok("apply", cwd=root)
     h = next((root / "native" / "inc").rglob("lo_core.h"))
-    text = h.read_text()
+    text = h.read_text(encoding="utf-8")
     at = text.rindex("#ifdef __cplusplus\n}")
     _textio.write_text(h, text[:at] + BATCH_H + text[at:])
     c = root / "native" / "src" / "lo" / "lo_core.c"
-    text = c.read_text()
+    text = c.read_text(encoding="utf-8")
     new = re.sub(
         r"void\s+lo_steps\([^)]*\)\s*\{.*?\n\}", KERNEL, text, flags=re.S
     )
@@ -115,7 +115,7 @@ def build(where: Path) -> Path:
 
 def set_prefix(root: Path) -> None:
     toml = root / C.FILENAME
-    text = toml.read_text()
+    text = toml.read_text(encoding="utf-8")
     _textio.write_text(
         toml,
         text.replace("[project]\n", f'[project]\nc_prefix = "{PREFIX}"\n', 1),

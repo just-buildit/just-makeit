@@ -174,7 +174,7 @@ class TestReaders:
 class TestRoundTrip:
     def test_save_load_preserves_handle_module(self, tmp_path):
         save(tmp_path, _cfg())
-        manifest = (tmp_path / "just-makeit.toml").read_text()
+        manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
         assert 'kind = "handle"' in manifest
         assert 'backing = "wfm_writer"' in manifest
         assert "[[module.wfm_writer.create_args]]" in manifest

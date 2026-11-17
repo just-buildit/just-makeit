@@ -83,7 +83,7 @@ def scaler_project(tmp_path):
     root = tmp_path / "proj"
     new_run("proj", root)
     frag = tmp_path / "scaler.toml"
-    frag.write_text(_OBJECT_FRAGMENT)
+    frag.write_text(_OBJECT_FRAGMENT, encoding="utf-8")
     return root, frag
 
 

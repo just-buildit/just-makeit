@@ -98,7 +98,7 @@ class TestReaders:
 class TestRoundTrip:
     def test_save_load_preserves_capsule_module(self, tmp_path):
         save(tmp_path, _cfg())
-        manifest = (tmp_path / "just-makeit.toml").read_text()
+        manifest = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
         # The capsule keys render; no spurious `objects = []`.
         assert 'kind = "capsule"' in manifest
         assert 'backing = "ddcr"' in manifest

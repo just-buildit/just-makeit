@@ -80,7 +80,7 @@ def _project(tmp_path: Path, *, with_header: bool = True) -> Path:
         if with_header:
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
-            (d / "telemetry.h").write_text(FOREIGN_H)
+            (d / "telemetry.h").write_text(FOREIGN_H, encoding="utf-8")
         object_run(
             root,
             "capture",
@@ -108,15 +108,19 @@ def _project(tmp_path: Path, *, with_header: bool = True) -> Path:
 
 
 def _ext(root: Path) -> str:
-    return (root / "native" / "src" / "capture" / "capture_ext.c").read_text()
+    return (root / "native" / "src" / "capture" / "capture_ext.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def _core_h(root: Path) -> str:
-    return (root / INC_ROOT / "capture" / "capture_core.h").read_text()
+    return (root / INC_ROOT / "capture" / "capture_core.h").read_text(
+        encoding="utf-8"
+    )
 
 
 def _pyi(root: Path) -> str:
-    return (root / "src" / "proj" / "capture.pyi").read_text()
+    return (root / "src" / "proj" / "capture.pyi").read_text(encoding="utf-8")
 
 
 class TestTheCFace:
@@ -266,7 +270,7 @@ class TestDeclaredAfterADefaultedParam:
             new_run("proj", root, c_prefix=None)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
-            (d / "telemetry.h").write_text(FOREIGN_H)
+            (d / "telemetry.h").write_text(FOREIGN_H, encoding="utf-8")
             object_run(
                 root,
                 "capture",
@@ -337,7 +341,7 @@ class TestWithAPathParam:
             new_run("proj", root, c_prefix=None)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
-            (d / "telemetry.h").write_text(FOREIGN_H)
+            (d / "telemetry.h").write_text(FOREIGN_H, encoding="utf-8")
             object_run(
                 root,
                 "rec",
@@ -374,7 +378,9 @@ class TestWithAPathParam:
                     ),
                 ],
             )
-        return (root / "native" / "src" / "rec" / "rec_ext.c").read_text()
+        return (root / "native" / "src" / "rec" / "rec_ext.c").read_text(
+            encoding="utf-8"
+        )
 
     def test_every_capsule_bailout_releases_the_path(self, tmp_path):
         ext = self._ext_of(tmp_path)
@@ -417,7 +423,9 @@ class TestThePythonFace:
         smoke-test seeding must not pretend to — same treatment `path` and
         `bytes` already get."""
         root = _project(tmp_path)
-        smoke = (root / "native" / "tests" / "test_capture_core.c").read_text()
+        smoke = (root / "native" / "tests" / "test_capture_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "capture_create(NULL, 0)" in smoke
         # gh-1502: the header's example passes named locals, the pointer
         # one initialised to NULL rather than a conjured handle.
@@ -540,7 +548,7 @@ class TestItCompilesAndRuns:
             new_run("proj", root, c_prefix=None)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
-            (d / "telemetry.h").write_text(FOREIGN_H)
+            (d / "telemetry.h").write_text(FOREIGN_H, encoding="utf-8")
             # Producer: its state struct is layout-compatible with dp_tlm_t,
             # so reading `tlm->magic` on the far side proves the pointer
             # really crossed rather than merely being non-NULL.
@@ -580,7 +588,7 @@ class TestItCompilesAndRuns:
                 ],
             )
         core = root / "native" / "src" / "capture" / "capture_core.c"
-        s = core.read_text()
+        s = core.read_text(encoding="utf-8")
         old = f"capture_create({PTR}tlm, size_t block_samples)\n{{"
         assert old in s, s[:1200]
         s = s.replace(
@@ -593,7 +601,7 @@ class TestItCompilesAndRuns:
         s = s.replace(
             "    obj->seen = 0;", "    obj->seen = tlm ? tlm->magic : 0;", 1
         )
-        core.write_text(s)
+        core.write_text(s, encoding="utf-8")
         proc = subprocess.run(
             [
                 sys.executable,

@@ -68,9 +68,9 @@ def fake_formatter(tmp_path, monkeypatch):
         root = tmp_path / "proj"
         (root / "bin").mkdir(parents=True, exist_ok=True)
         exe = root / "bin" / "fakefmt"
-        exe.write_text(script)
+        exe.write_text(script, encoding="utf-8")
         exe.chmod(0o755)
-        (root / "marker.txt").write_text("")
+        (root / "marker.txt").write_text("", encoding="utf-8")
         monkeypatch.setenv(
             "PATH", f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}"
         )

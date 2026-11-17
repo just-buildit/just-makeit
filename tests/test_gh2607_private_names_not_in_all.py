@@ -69,11 +69,11 @@ def project(tmp_path_factory) -> Path:
     ):
         _jm(*args, cwd=proj)
     mods = proj / "modules"
-    with (mods / "sink.toml").open("a") as f:
+    with (mods / "sink.toml").open("a", encoding="utf-8") as f:
         # A sibling sharing `sig`'s package, built on two platforms only:
         # its names go in a `# jm:platforms` guard (gh-1463).
         f.write('package = "sig"\nplatforms = ["linux", "macos"]\n')
-    with (mods / "sig.toml").open("a") as f:
+    with (mods / "sig.toml").open("a", encoding="utf-8") as f:
         f.write('\n[module.sig.reexports]\ncic = ["a", "_b"]\n')
     _jm("apply", cwd=proj)
     return proj
@@ -119,7 +119,7 @@ def test_no_private_name_in_any_all(project: Path) -> None:
         assert not leaked, f"{init}: __all__ lists {leaked}"
         # A guard holding only private names writes no `__all__ +=` at all.
         assert not any(s.replace(" ", "").endswith("+=[]") for s in stmts), (
-            f"{init}: an empty `__all__ +=`\n{init.read_text()}"
+            f"{init}: an empty `__all__ +=`\n{init.read_text(encoding='utf-8')}"
         )
         listed |= names
         imported |= imports

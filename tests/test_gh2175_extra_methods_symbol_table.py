@@ -144,9 +144,13 @@ class TestTheTable:
     def test_the_row_cast_is_rendered(self, project):
         """The premise: jm's row puts ``void (`` in the binding, and the
         header has a callback type -- else the next test proves nothing."""
-        frag = (project / "native" / "src" / "m" / "m_ext_o.c").read_text()
+        frag = (project / "native" / "src" / "m" / "m_ext_o.c").read_text(
+            encoding="utf-8"
+        )
         assert re.search(r"\(void \(\*\) ?\(void\)\)O_poke", frag), frag
-        assert "void (*xm_o_cb_t)" in INC.core_h(project, "o").read_text()
+        assert "void (*xm_o_cb_t)" in INC.core_h(project, "o").read_text(
+            encoding="utf-8"
+        )
 
     def test_no_void(self, project):
         assert "void" not in _table(project), _table(project)

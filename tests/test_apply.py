@@ -123,12 +123,14 @@ class TestApplyReconcilesAggregates:
             'return_type = "float _Complex"\nmutable = "false"\n'
             'no_state = "false"\nno_step = "false"\n\n'
             '[[agc.state]]\nname = "gain"\ntype = "float"\n'
-            'default = "1.0f"\n'
+            'default = "1.0f"\n',
+            encoding="utf-8",
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
             'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            + manifest.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
 
         apply_run(proj)
@@ -154,12 +156,14 @@ class TestApplyReconcilesAggregates:
         (proj / "objects" / "agc.toml").write_text(
             '[agc]\narg_type = "float _Complex"\n'
             'return_type = "float _Complex"\nmutable = "false"\n'
-            'no_state = "false"\nno_step = "false"\n'
+            'no_state = "false"\nno_step = "false"\n',
+            encoding="utf-8",
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
             'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            + manifest.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
 
         apply_run(proj)
@@ -177,12 +181,14 @@ class TestApplyReconcilesAggregates:
         (proj / "objects" / "agc.toml").write_text(
             '[agc]\narg_type = "float _Complex"\n'
             'return_type = "float _Complex"\nmutable = "false"\n'
-            'no_state = "false"\nno_step = "false"\n'
+            'no_state = "false"\nno_step = "false"\n',
+            encoding="utf-8",
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
             'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            + manifest.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
 
         apply_run(proj)
@@ -213,12 +219,14 @@ class TestApplyReconcilesAggregates:
         (proj / "objects" / "agc.toml").write_text(
             '[agc]\narg_type = "float _Complex"\n'
             'return_type = "float _Complex"\nmutable = "false"\n'
-            'no_state = "false"\nno_step = "false"\n'
+            'no_state = "false"\nno_step = "false"\n',
+            encoding="utf-8",
         )
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
             'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            + manifest.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
 
         apply_run(proj)
@@ -349,7 +357,7 @@ class TestApplyModuleDirective:
         new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = tmp_path / "counter.toml"
-        frag.write_text(_COUNTER_FRAGMENT)
+        frag.write_text(_COUNTER_FRAGMENT, encoding="utf-8")
 
         apply_run(proj, fragment=frag)
 
@@ -364,7 +372,7 @@ class TestApplyModuleDirective:
         new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = tmp_path / "counter.toml"
-        frag.write_text(_COUNTER_FRAGMENT)
+        frag.write_text(_COUNTER_FRAGMENT, encoding="utf-8")
 
         apply_run(proj, fragment=frag)
 
@@ -388,7 +396,7 @@ class TestApplyModuleDirective:
         new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = tmp_path / "counter.toml"
-        frag.write_text(_COUNTER_FRAGMENT)
+        frag.write_text(_COUNTER_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
 
         import just_makeit._config as C
@@ -406,7 +414,7 @@ class TestApplyModuleDirective:
         new_run("proj", proj, c_prefix=None)
         # No module created — "dsp" doesn't exist in manifest.
         frag = tmp_path / "counter.toml"
-        frag.write_text(_COUNTER_FRAGMENT)
+        frag.write_text(_COUNTER_FRAGMENT, encoding="utf-8")
 
         with pytest.raises(SystemExit):
             apply_run(proj, fragment=frag)
@@ -426,14 +434,15 @@ class TestApplyModuleDirective:
         objects_dir = proj / "objects"
         objects_dir.mkdir()
         dest = objects_dir / "counter.toml"
-        dest.write_text(_COUNTER_FRAGMENT)
+        dest.write_text(_COUNTER_FRAGMENT, encoding="utf-8")
 
         # Wire in the include glob and module membership by hand (as a user
         # who skipped jm apply the first time would do).
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
             'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            + manifest.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
         from just_makeit import _config as C
 
@@ -456,12 +465,13 @@ class TestApplyModuleDirective:
         objects_dir = proj / "objects"
         objects_dir.mkdir()
         dest = objects_dir / "counter.toml"
-        dest.write_text(_COUNTER_FRAGMENT)
+        dest.write_text(_COUNTER_FRAGMENT, encoding="utf-8")
 
         manifest = proj / "just-makeit.toml"
         manifest.write_text(
             'include = ["objects/*.toml"]\n\n'
-            + manifest.read_text(encoding="utf-8")
+            + manifest.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
         from just_makeit import _config as C
 
@@ -690,7 +700,7 @@ class TestMethodReplayArgType:
     def _apply_fragment(self, proj, frag_text):
         new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "frag.toml"
-        frag.write_text(frag_text)
+        frag.write_text(frag_text, encoding="utf-8")
         apply_run(proj, fragment=frag)
         return (proj / INC_ROOT / "drain_obj" / "drain_obj_core.h").read_text(
             encoding="utf-8"
@@ -747,7 +757,7 @@ class TestVariableOutputOutType:
     def _apply(self, proj):
         new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "frag.toml"
-        frag.write_text(_OUT_TYPE_METHODS_FRAGMENT)
+        frag.write_text(_OUT_TYPE_METHODS_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
         header = (proj / INC_ROOT / "lfsr_obj" / "lfsr_obj_core.h").read_text(
             encoding="utf-8"
@@ -808,7 +818,7 @@ class TestCreateResetImpl:
     def _apply(self, proj):
         new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "lfsr.toml"
-        frag.write_text(_CREATE_RESET_IMPL_FRAGMENT)
+        frag.write_text(_CREATE_RESET_IMPL_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
         return (proj / "native" / "src" / "lfsr" / "lfsr_core.c").read_text(
             encoding="utf-8"
@@ -862,7 +872,7 @@ class TestDestroyImpl:
     def _apply(self, proj):
         new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "buf.toml"
-        frag.write_text(_DESTROY_IMPL_FRAGMENT)
+        frag.write_text(_DESTROY_IMPL_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
         return (proj / "native" / "src" / "buf" / "buf_core.c").read_text(
             encoding="utf-8"
@@ -932,12 +942,18 @@ class TestOpaqueState:
     def _apply(self, proj):
         new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "fft.toml"
-        frag.write_text(_OPAQUE_FIELD_FRAGMENT)
+        frag.write_text(_OPAQUE_FIELD_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
         return (
-            (proj / INC_ROOT / "fft" / "fft_core.h").read_text(),
-            (proj / "native" / "src" / "fft" / "fft_core.c").read_text(),
-            (proj / "native" / "src" / "fft" / "fft_ext.c").read_text(),
+            (proj / INC_ROOT / "fft" / "fft_core.h").read_text(
+                encoding="utf-8"
+            ),
+            (proj / "native" / "src" / "fft" / "fft_core.c").read_text(
+                encoding="utf-8"
+            ),
+            (proj / "native" / "src" / "fft" / "fft_ext.c").read_text(
+                encoding="utf-8"
+            ),
         )
 
     def test_opaque_field_in_struct(self, tmp_path):
@@ -1054,12 +1070,18 @@ class TestNoCtorState:
     def _apply(self, proj):
         new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "ring.toml"
-        frag.write_text(_NO_CTOR_FRAGMENT)
+        frag.write_text(_NO_CTOR_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
         return (
-            (proj / INC_ROOT / "ring" / "ring_core.h").read_text(),
-            (proj / "native" / "src" / "ring" / "ring_core.c").read_text(),
-            (proj / "native" / "src" / "ring" / "ring_ext.c").read_text(),
+            (proj / INC_ROOT / "ring" / "ring_core.h").read_text(
+                encoding="utf-8"
+            ),
+            (proj / "native" / "src" / "ring" / "ring_core.c").read_text(
+                encoding="utf-8"
+            ),
+            (proj / "native" / "src" / "ring" / "ring_ext.c").read_text(
+                encoding="utf-8"
+            ),
         )
 
     def test_no_ctor_fields_in_struct(self, tmp_path):
@@ -1110,7 +1132,8 @@ class TestNoCtorState:
         new_run("proj", proj, c_prefix=None)
         frag = proj.parent / "ring2.toml"
         # Same but without create_impl so auto-assignments kick in.
-        frag.write_text("""\
+        frag.write_text(
+            """\
 [ring2]
 arg_type    = "float"
 return_type = "float"
@@ -1125,11 +1148,13 @@ name    = "phase"
 type    = "float"
 default = "0.0f"
 no_ctor = true
-""")
+""",
+            encoding="utf-8",
+        )
         apply_run(proj, fragment=frag)
         core_c = (
             proj / "native" / "src" / "ring2" / "ring2_core.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         # gain is a ctor param — assigned from param
         assert "obj->gain = gain;" in core_c
         # phase is no_ctor — assigned from TOML default, not a param
@@ -1190,12 +1215,14 @@ class TestOpaqueInModule:
         new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = proj.parent / "fft.toml"
-        frag.write_text(_OPAQUE_MODULE_FRAGMENT)
+        frag.write_text(_OPAQUE_MODULE_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
         ext_dir = proj / "native" / "src" / "dsp"
         return (
-            (proj / INC_ROOT / "fft" / "fft_core.h").read_text(),
-            (ext_dir / "dsp_ext_fft.c").read_text(),
+            (proj / INC_ROOT / "fft" / "fft_core.h").read_text(
+                encoding="utf-8"
+            ),
+            (ext_dir / "dsp_ext_fft.c").read_text(encoding="utf-8"),
         )
 
     def test_opaque_field_in_struct(self, tmp_path):
@@ -1224,12 +1251,14 @@ class TestNoCtorInModule:
         new_run("proj", proj, c_prefix=None)
         module_run(proj, "dsp")
         frag = proj.parent / "ticker.toml"
-        frag.write_text(_NO_CTOR_MODULE_FRAGMENT)
+        frag.write_text(_NO_CTOR_MODULE_FRAGMENT, encoding="utf-8")
         apply_run(proj, fragment=frag)
         ext_dir = proj / "native" / "src" / "dsp"
         return (
-            (proj / INC_ROOT / "ticker" / "ticker_core.h").read_text(),
-            (ext_dir / "dsp_ext_ticker.c").read_text(),
+            (proj / INC_ROOT / "ticker" / "ticker_core.h").read_text(
+                encoding="utf-8"
+            ),
+            (ext_dir / "dsp_ext_ticker.c").read_text(encoding="utf-8"),
         )
 
     def test_no_ctor_field_in_struct(self, tmp_path):
@@ -1284,12 +1313,14 @@ class TestApplyModuleFunctionImpl:
         new_run("proj", proj_root, c_prefix=None)
         module_run(proj_root, "io")
         frag = proj_root.parent / "fns.toml"
-        frag.write_text(_FN_IMPL_FRAGMENT)
+        frag.write_text(_FN_IMPL_FRAGMENT, encoding="utf-8")
         apply_run(proj_root, fragment=frag)
         fn_c = (
             proj_root / "native" / "src" / "io" / "q15_to_float.c"
-        ).read_text()
-        core_h = (proj_root / INC_ROOT / "io" / "io_core.h").read_text()
+        ).read_text(encoding="utf-8")
+        core_h = (proj_root / INC_ROOT / "io" / "io_core.h").read_text(
+            encoding="utf-8"
+        )
         return fn_c, core_h
 
     def test_impl_body_in_fn_c(self, tmp_path):
@@ -1305,11 +1336,15 @@ class TestApplyModuleFunctionImpl:
         proj = tmp_path / "proj"
         self._apply(proj)
         fn_c_path = proj / "native" / "src" / "io" / "q15_to_float.c"
-        before_c = fn_c_path.read_text()
-        before_h = (proj / INC_ROOT / "io" / "io_core.h").read_text()
+        before_c = fn_c_path.read_text(encoding="utf-8")
+        before_h = (proj / INC_ROOT / "io" / "io_core.h").read_text(
+            encoding="utf-8"
+        )
         apply_run(proj)
-        assert fn_c_path.read_text() == before_c
-        assert (proj / INC_ROOT / "io" / "io_core.h").read_text() == before_h
+        assert fn_c_path.read_text(encoding="utf-8") == before_c
+        assert (proj / INC_ROOT / "io" / "io_core.h").read_text(
+            encoding="utf-8"
+        ) == before_h
 
 
 class TestApplySacredGlueSplit:

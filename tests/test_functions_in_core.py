@@ -64,7 +64,9 @@ class TestGeneration:
     def test_functions_land_in_core_c(self, tmp_path):
         root = tmp_path / "p"
         _two_fn_module(root, in_core=True)
-        core = (_measure_dir(root) / "measure_core.c").read_text()
+        core = (_measure_dir(root) / "measure_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "min_samples(double rate)" in core
         assert "rec_nfft(int32_t n)" in core
 
@@ -77,7 +79,9 @@ class TestGeneration:
     def test_cmake_lists_only_core(self, tmp_path):
         root = tmp_path / "p"
         _two_fn_module(root, in_core=True)
-        cmake = (_measure_dir(root) / "CMakeLists.txt").read_text()
+        cmake = (_measure_dir(root) / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "add_library(measure_core OBJECT measure_core.c)" in cmake
 
     def test_in_core_function_with_impl_body(self, tmp_path):
@@ -94,7 +98,9 @@ class TestGeneration:
             impl_body="while (b) { int32_t t = b; b = a % b; a = t; }"
             " return a;",
         )
-        core = (_measure_dir(root) / "measure_core.c").read_text()
+        core = (_measure_dir(root) / "measure_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "while (b)" in core and "return a;" in core
         assert not (_measure_dir(root) / "gcd.c").exists()
 
@@ -109,7 +115,9 @@ class TestGeneration:
         _two_fn_module(root, in_core=False)
         cs = {p.name for p in _measure_dir(root).glob("*.c")}
         assert "min_samples.c" in cs and "rec_nfft.c" in cs
-        cmake = (_measure_dir(root) / "CMakeLists.txt").read_text()
+        cmake = (_measure_dir(root) / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "min_samples.c rec_nfft.c" in cmake
         assert C.functions_in_core(C.load(root), "measure") is False
 
@@ -124,7 +132,9 @@ class TestApplyRoundTrip:
         apply_run(root)
         cs = {p.name for p in _measure_dir(root).glob("*.c")}
         assert cs == {"measure_core.c", "measure_ext.c"}
-        cmake = (_measure_dir(root) / "CMakeLists.txt").read_text()
+        cmake = (_measure_dir(root) / "CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "add_library(measure_core OBJECT measure_core.c)" in cmake
 
 
@@ -137,8 +147,10 @@ def test_functions_in_core_builds_with_shared_static(tmp_path):
     _two_fn_module(root, in_core=True)
     core = _measure_dir(root) / "measure_core.c"
     anchor = f'#include "{INC.core_include("measure", root)}"'
-    assert anchor in core.read_text(), "the core no longer includes its header"
-    text = core.read_text().replace(
+    assert anchor in core.read_text(encoding="utf-8"), (
+        "the core no longer includes its header"
+    )
+    text = core.read_text(encoding="utf-8").replace(
         anchor,
         anchor + "\n\n"
         "static int32_t _next_pow2(int32_t n)"
@@ -154,7 +166,7 @@ def test_functions_in_core_builds_with_shared_static(tmp_path):
         "return _next_pow2(n);",
         1,
     )
-    core.write_text(text)
+    core.write_text(text, encoding="utf-8")
     cfg = subprocess.run(
         ["cmake", "-S", str(root), "-B", str(root / "build")],
         capture_output=True,

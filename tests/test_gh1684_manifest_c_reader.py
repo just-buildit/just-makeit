@@ -108,7 +108,7 @@ def tree(tmp_path_factory):
     _textio.write_text(root / "objects" / "hi.toml", HI_TOML)
     first = run_cli("apply", cwd=root)
     before = _build(root, "before")
-    rendered = (root / SACRED[1]).read_text()
+    rendered = (root / SACRED[1]).read_text(encoding="utf-8")
     FX.set_prefix(root)
     refused = run_cli("apply", cwd=root)
     upgraded = run_cli("upgrade", cwd=root)
@@ -141,12 +141,12 @@ def test_apply_refuses_both_shapes_before_the_upgrade(tree):
 def test_the_upgrade_respells_both_and_keeps_the_escapes(tree):
     root, _first, _before, _refused, upgraded, *_ = tree
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
-    lo = (root / "objects" / "lo.toml").read_text()
+    lo = (root / "objects" / "lo.toml").read_text(encoding="utf-8")
     assert (
         r'impl = "return (float)(sizeof(\"ab\") - 3) + '
         f'((const {P}_lo_state_t *)state)->gain * x;"'
     ) in lo, lo
-    hi = (root / "objects" / "hi.toml").read_text()
+    hi = (root / "objects" / "hi.toml").read_text(encoding="utf-8")
     assert f'replace."HI_T" = "{P}_hi_state_t"' in hi, hi
 
 
@@ -154,10 +154,9 @@ def test_the_tree_rendered_again_from_the_manifest_builds(tree):
     root, *_rest, applied, after = tree
     assert applied.returncode == 0, applied.stdout + applied.stderr
     _ok(after)
-    assert (
-        f"((const {P}_hi_state_t *)state)->gain * x"
-        in (root / SACRED[1]).read_text()
-    )
+    assert f"((const {P}_hi_state_t *)state)->gain * x" in (
+        root / SACRED[1]
+    ).read_text(encoding="utf-8")
 
 
 # -- 3. the reader, over the shapes no 3.11+ parser loads ---------------------
@@ -210,7 +209,7 @@ def test_the_complex_respell_freezes_a_key_over_an_unwalked_body(tmp_path):
         'replace = { "(float complex)" = "(float complex)" }\n',
     )
     _upgrade._repair_complex_spelling(tmp_path)
-    got = (tmp_path / "just-makeit.toml").read_text()
+    got = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
     lo, hi = got.split("[hi]")
     assert '"(float complex)" = "(float _Complex)"' in lo, got
     assert '"(float _Complex)" = "(float _Complex)"' in hi, got

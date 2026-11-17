@@ -49,7 +49,9 @@ def _workflow_files() -> list[Path]:
 def test_no_python_process_is_piped_into_grep_q(path):
     offenders = [
         (n, line.strip())
-        for n, line in enumerate(path.read_text().splitlines(), 1)
+        for n, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        )
         if not line.lstrip().startswith("#") and _PIPE_INTO_GREP_Q.search(line)
     ]
     assert not offenders, (

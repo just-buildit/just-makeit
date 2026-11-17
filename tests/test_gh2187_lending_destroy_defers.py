@@ -208,14 +208,15 @@ def _poison(root: Path) -> None:
     """Give ``ring`` its buffer and kernel, and poison its destructor."""
     h = root / INC_ROOT / "ring/ring_core.h"
     h.write_text(
-        h.read_text().replace(
+        h.read_text(encoding="utf-8").replace(
             "    size_t cap;",
             "    size_t cap;\n    float _Complex buf[8];",
             1,
-        )
+        ),
+        encoding="utf-8",
     )
     c = root / "native/src/ring/ring_core.c"
-    text = c.read_text()
+    text = c.read_text(encoding="utf-8")
     i = text.index("ring_wait(ring_state_t *state, size_t n)")
     j = text.index("\n}\n", i)
     body = text.index("{", i) + 1
@@ -230,7 +231,7 @@ def _poison(root: Path) -> None:
     )
     if "#include <string.h>" not in text:
         text = "#include <string.h>\n#include <stdio.h>\n" + text
-    c.write_text(text)
+    c.write_text(text, encoding="utf-8")
 
 
 def _built_extensions(root: Path) -> list[Path]:
@@ -272,7 +273,7 @@ def _build(root: Path, target: str, clean: bool = False) -> None:
 
 def _probe(root: Path, code: str):
     probe = root / "probe.py"
-    probe.write_text(code)
+    probe.write_text(code, encoding="utf-8")
     return subprocess.run(
         [sys.executable, str(probe)],
         capture_output=True,
@@ -410,7 +411,9 @@ def _fragment(root: Path) -> Path:
 
 def _teardown(root: Path) -> dict:
     """``Ring_destroy`` and ``Ring_exit`` as they are on disk."""
-    funcs = _extract_c_function_bodies(_fragment(root).read_text())
+    funcs = _extract_c_function_bodies(
+        _fragment(root).read_text(encoding="utf-8")
+    )
     return {n: funcs[n] for n in ("Ring_destroy", "Ring_exit")}
 
 
@@ -440,7 +443,9 @@ class TestAModuleObjectThatStartsLending:
             "--create-fn", "ring_create_burst")  # fmt: skip
         _jm(root, *_BORROW)
         funcs = _extract_c_function_bodies(
-            (root / "native/src/mod/mod_ext_burst.c").read_text()
+            (root / "native/src/mod/mod_ext_burst.c").read_text(
+                encoding="utf-8"
+            )
         )
         assert all(
             _PARK in funcs[n] for n in ("Burst_destroy", "Burst_exit")
@@ -452,7 +457,7 @@ class TestAModuleObjectThatStartsLending:
         edit, so the teardown is still jm's to re-render."""
         root = _module_ring(tmp_path)
         frag = _fragment(root)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         old = (
             "        ring_destroy(self->handle);\n"
             "        self->handle = NULL;\n"
@@ -463,7 +468,8 @@ class TestAModuleObjectThatStartsLending:
                 old,
                 "        ring_destroy (self->handle);\n"
                 "        self->handle\n            = NULL;\n",
-            )
+            ),
+            encoding="utf-8",
         )
         _jm(root, *_BORROW)
         assert _parks(root) == _BOTH, _teardown(root)
@@ -471,12 +477,14 @@ class TestAModuleObjectThatStartsLending:
     def test_an_edited_teardown_is_kept_and_named(self, tmp_path):
         root = _module_ring(tmp_path)
         frag = _fragment(root)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         head = (
             "Ring_destroy(RingObject *self, PyObject *Py_UNUSED(ignored))\n{\n"
         )
         assert text.count(head) == 1, text
-        frag.write_text(text.replace(head, head + "    (void)self;\n"))
+        frag.write_text(
+            text.replace(head, head + "    (void)self;\n"), encoding="utf-8"
+        )
         _jm(root, *_BORROW)
         kept = _teardown(root)["Ring_destroy"]
         assert "(void)self;" in kept, kept
@@ -493,11 +501,13 @@ class TestAModuleObjectThatStartsLending:
         frees under a live view, so `status --check` fails on it."""
         root = _module_ring(tmp_path)
         frag = _fragment(root)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         head = (
             "Ring_destroy(RingObject *self, PyObject *Py_UNUSED(ignored))\n{\n"
         )
-        frag.write_text(text.replace(head, head + "    (void)self;\n"))
+        frag.write_text(
+            text.replace(head, head + "    (void)self;\n"), encoding="utf-8"
+        )
         _jm(root, *_BORROW)
         r = run_cli("status", "--check", cwd=root)
         assert r.returncode != 0, r.stdout + r.stderr
@@ -509,9 +519,11 @@ class TestAModuleObjectThatStartsLending:
         struct does not declare. The teardown stays; the marker names it."""
         root = _module_ring(tmp_path)
         toml = root / "objects" / "ring.toml"
-        toml.write_text(toml.read_text() + _BORROW_TOML)
+        toml.write_text(
+            toml.read_text(encoding="utf-8") + _BORROW_TOML, encoding="utf-8"
+        )
         said = _jm(root, "apply")
-        text = _fragment(root).read_text()
+        text = _fragment(root).read_text(encoding="utf-8")
         assert _PARK not in text or (f"ring_state_t *{PARK_FIELD};" in text), (
             text
         )
@@ -526,7 +538,7 @@ class TestAModuleObjectThatStopsLending:
         _jm(root, "remove", "method", "wait", "--object", "ring", "--force")
         # Field, dealloc and teardown alike: a teardown left parking names
         # a field the re-rendered struct no longer has.
-        assert PARK_FIELD not in _fragment(root).read_text()
+        assert PARK_FIELD not in _fragment(root).read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(not shutil.which("cmake"), reason="cmake not found")

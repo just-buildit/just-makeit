@@ -62,7 +62,7 @@ def _widen(root: Path) -> None:
     from just_makeit._apply import run as apply_run
 
     h = root / INC_ROOT / "thing" / "thing_core.h"
-    text = h.read_text()
+    text = h.read_text(encoding="utf-8")
     anchor = (
         " * @brief Get current gain.\n * @param state  Must be non-NULL.\n"
     )
@@ -70,7 +70,8 @@ def _widen(root: Path) -> None:
     h.write_text(
         text.replace(
             anchor, anchor + " *\n * @code\n * " + _WIDE + "\n * @endcode\n", 1
-        )
+        ),
+        encoding="utf-8",
     )
     with contextlib.redirect_stdout(io.StringIO()):
         apply_run(root)
@@ -86,9 +87,10 @@ def _status_out(root: Path, **kw) -> tuple[int, str]:
 def _set(root: Path, value: str) -> None:
     p = root / C.FILENAME
     p.write_text(
-        p.read_text().replace(
+        p.read_text(encoding="utf-8").replace(
             "[project]", f'[project]\nstrict_examples = "{value}"', 1
-        )
+        ),
+        encoding="utf-8",
     )
 
 

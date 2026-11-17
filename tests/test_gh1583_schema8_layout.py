@@ -153,8 +153,12 @@ class TestSchema8Scaffold:
         # calls: per-package guards would define them twice in a unit that
         # includes two packages (#1583; version skew is #1606).
         hr = INC.header_root(root)
-        assert "#ifndef JM_PERF_H" in (hr / "jm_perf.h").read_text()
-        assert "#ifndef JM_SIMD_H" in (hr / "jm_simd.h").read_text()
+        assert "#ifndef JM_PERF_H" in (hr / "jm_perf.h").read_text(
+            encoding="utf-8"
+        )
+        assert "#ifndef JM_SIMD_H" in (hr / "jm_simd.h").read_text(
+            encoding="utf-8"
+        )
 
     def test_apply_is_a_fixed_point_in_the_prefixed_layout(self, root):
         r = run_cli("apply", cwd=root)
@@ -173,7 +177,9 @@ class TestSchema7Scaffold:
         inc = root / INC.INC_DIR
         assert not (inc / "alpha").exists()
         assert (inc / "acore" / "acore_core.h").is_file()
-        assert "#ifndef JM_PERF_H" in (inc / "jm_perf.h").read_text()
+        assert "#ifndef JM_PERF_H" in (inc / "jm_perf.h").read_text(
+            encoding="utf-8"
+        )
         assert not any(
             t.startswith("alpha/") for _, t in _native_includes(root)
         )

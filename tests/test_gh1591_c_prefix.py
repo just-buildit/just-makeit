@@ -117,7 +117,9 @@ def _run(root: Path, *args: str) -> None:
 def test_a_name_that_carries_the_prefix_is_not_prefixed_again(tmp_path):
     root = _new(tmp_path, "p", "--c-prefix", "dp", "--object", "dp_tlm")
     _run(root, "apply")
-    h = next((root / "native" / "inc").rglob("dp_tlm_core.h")).read_text()
+    h = next((root / "native" / "inc").rglob("dp_tlm_core.h")).read_text(
+        encoding="utf-8"
+    )
     assert "dp_tlm_state_t *dp_tlm_create(" in h, h
     assert "dp_dp_" not in h and "DP_DP_" not in h
 
@@ -157,15 +159,17 @@ def test_an_existing_tree_that_adds_the_key_is_refused(tmp_path):
     root = _new(tmp_path, "old", "--no-c-prefix", "--object", "fir")
     h = next((root / "native" / "inc").rglob("fir_core.h"))
     h.write_text(
-        h.read_text().replace(
+        h.read_text(encoding="utf-8").replace(
             "typedef struct", "#define FIR_STATE_MAGIC 0xF1\ntypedef struct", 1
-        )
+        ),
+        encoding="utf-8",
     )
     toml = root / "just-makeit.toml"
     toml.write_text(
-        toml.read_text().replace(
+        toml.read_text(encoding="utf-8").replace(
             "[project]\n", '[project]\nc_prefix = "zz"\n', 1
-        )
+        ),
+        encoding="utf-8",
     )
     before = FX.tree(root)
     r = run_cli("apply", cwd=root)
@@ -188,7 +192,9 @@ def test_jm_new_defaults_to_the_package_name(tmp_path):
     """gh-1591 2b: a new project is namespaced from its first file."""
     root = _new(tmp_path, "pkg", "--object", "fir")
     assert C.c_prefix(C.load(root)) == "pkg"
-    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text()
+    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text(
+        encoding="utf-8"
+    )
     assert "pkg_fir_state_t *pkg_fir_create(" in h, h
 
 
@@ -197,8 +203,10 @@ def test_no_c_prefix_is_todays_bare_project(tmp_path):
     made before 2b has -- the same tree, which is what makes it an opt-out
     and not a third spelling."""
     root = _new(tmp_path, "pkg", "--no-c-prefix", "--object", "fir")
-    assert "c_prefix" not in (root / C.FILENAME).read_text()
-    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text()
+    assert "c_prefix" not in (root / C.FILENAME).read_text(encoding="utf-8")
+    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text(
+        encoding="utf-8"
+    )
     assert "fir_state_t *fir_create(" in h and "#ifndef FIR_CORE_H" in h, h
     assert "pkg_fir" not in h
 

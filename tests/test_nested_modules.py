@@ -93,11 +93,15 @@ class TestNestedScaffold:
         jm_new("p", root)
         jm_module(root, "dsp.filters")
         # Flat native dir keyed by cname.
-        ext = (root / "native/src/dsp_filters/dsp_filters_ext.c").read_text()
+        ext = (root / "native/src/dsp_filters/dsp_filters_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyInit_filters(void)" in ext
         assert '.m_name    = "filters"' in ext
         # CMake: target=cname, OUTPUT_NAME=leaf, output dir=pypath.
-        cm = (root / "native/src/dsp_filters/CMakeLists.txt").read_text()
+        cm = (root / "native/src/dsp_filters/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "Python3_add_library(dsp_filters MODULE" in cm
         assert "OUTPUT_NAME filters" in cm
         assert "${PYTHON_PACKAGE_DIR}/dsp/filters" in cm
@@ -106,14 +110,16 @@ class TestNestedScaffold:
         assert (root / "src/p/dsp/filters/__init__.py").exists()
         assert (root / "src/p/dsp/filters/filters.pyi").exists()
         # Top CMake wires the cname dir.
-        top = (root / "CMakeLists.txt").read_text()
+        top = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "add_subdirectory(native/src/dsp_filters)" in top
         # Manifest carries the dotted key as a quoted TOML key (monolith
         # layout writes it into just-makeit.toml; the split layout into
         # modules/dsp_filters.toml — check both).
         frag = root / "modules/dsp_filters.toml"
-        manifest = (root / "just-makeit.toml").read_text()
-        toml_text = manifest + (frag.read_text() if frag.exists() else "")
+        manifest = (root / "just-makeit.toml").read_text(encoding="utf-8")
+        toml_text = manifest + (
+            frag.read_text(encoding="utf-8") if frag.exists() else ""
+        )
         assert '[module."dsp.filters"]' in toml_text
 
     def test_object_in_nested_module(self, tmp_path):
@@ -121,14 +127,18 @@ class TestNestedScaffold:
         # Fragment carries the fully-qualified tp_name.
         frag = (
             root / "native/src/dsp_filters/dsp_filters_ext_fir.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert '.tp_name      = "p.dsp.filters.Fir"' in frag
         # Leaf __init__ imports from the .so basename (leaf).
-        init = (root / "src/p/dsp/filters/__init__.py").read_text()
+        init = (root / "src/p/dsp/filters/__init__.py").read_text(
+            encoding="utf-8"
+        )
         assert "from .filters import Fir" in init
         # Stub + tests land under the nested pypath.
         assert (root / "src/p/dsp/filters/filters.pyi").exists()
-        test = (root / "src/p/dsp/filters/tests/test_fir.py").read_text()
+        test = (root / "src/p/dsp/filters/tests/test_fir.py").read_text(
+            encoding="utf-8"
+        )
         assert "from p.dsp.filters import Fir" in test
 
     def test_split_layout_fragment_filename(self, tmp_path):
@@ -139,7 +149,7 @@ class TestNestedScaffold:
         jm_module(root, "dsp.filters")
         frag = root / "modules/dsp_filters.toml"
         assert frag.exists()
-        assert '[module."dsp.filters"]' in frag.read_text()
+        assert '[module."dsp.filters"]' in frag.read_text(encoding="utf-8")
         assert _status.run(root, check=True) == 0
 
     def test_status_clean(self, tmp_path):
@@ -158,12 +168,14 @@ class TestZeroChurn:
         root = tmp_path / "p"
         jm_new("p", root)
         jm_module(root, "dsp")
-        cm = (root / "native/src/dsp/CMakeLists.txt").read_text()
+        cm = (root / "native/src/dsp/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "OUTPUT_NAME" not in cm
         assert "${PYTHON_PACKAGE_DIR}/dsp\n" in cm or (
             '"${PYTHON_PACKAGE_DIR}/dsp"' in cm
         )
-        ext = (root / "native/src/dsp/dsp_ext.c").read_text()
+        ext = (root / "native/src/dsp/dsp_ext.c").read_text(encoding="utf-8")
         assert "PyInit_dsp(void)" in ext
         # No intermediate package dir for a flat module.
         assert not (root / "src/p/dsp/dsp").exists()

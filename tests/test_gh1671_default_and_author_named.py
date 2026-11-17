@@ -141,7 +141,7 @@ def test_apply_refuses_a_stale_c_default(defaults):
 def test_the_upgrade_respells_a_c_default(defaults):
     root, _f, _b, _r, upgraded, *_ = defaults
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
-    frag = (root / "objects" / "lo.toml").read_text()
+    frag = (root / "objects" / "lo.toml").read_text(encoding="utf-8")
     assert f'default = "sizeof({P}_lo_state_t)"' in frag, frag
 
 
@@ -149,7 +149,9 @@ def test_the_core_rendered_again_from_the_default_builds(defaults):
     root, *_rest, applied, after = defaults
     assert applied.returncode == 0, applied.stdout + applied.stderr
     _ok(after)
-    core = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
+    core = (root / "native" / "src" / "lo" / "lo_core.c").read_text(
+        encoding="utf-8"
+    )
     assert f"state->size = sizeof({P}_lo_state_t);" in core, core
 
 
@@ -210,15 +212,19 @@ def handle(tmp_path_factory):
     _textio.write_text(root / "modules" / "h.toml", HANDLE_TOML)
     first = run_cli("apply", cwd=root)
     FX.set_prefix(root)
-    core = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
+    core = (root / "native" / "src" / "lo" / "lo_core.c").read_text(
+        encoding="utf-8"
+    )
     refused_apply = run_cli("apply", cwd=root)
     refused_upgrade = run_cli("upgrade", cwd=root)
-    core_after = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
+    core_after = (root / "native" / "src" / "lo" / "lo_core.c").read_text(
+        encoding="utf-8"
+    )
     # The author does what the refusal says: spells the names anew.
     frag = root / "modules" / "h.toml"
     _textio.write_text(
         frag,
-        frag.read_text()
+        frag.read_text(encoding="utf-8")
         .replace('"lo_create"', f'"{P}_lo_create"')
         .replace('"lo_destroy"', f'"{P}_lo_destroy"'),
     )
@@ -267,7 +273,7 @@ def test_spelled_anew_the_handle_upgrades_builds_and_tests(handle):
     assert tested is not None and tested.returncode == 0, (
         tested.stdout[-3000:] + tested.stderr[-3000:]
     )
-    frag = (root / "modules" / "h.toml").read_text()
+    frag = (root / "modules" / "h.toml").read_text(encoding="utf-8")
     assert f'handle_type = "{P}_lo_state_t"' in frag, frag
 
 

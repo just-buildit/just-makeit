@@ -53,14 +53,17 @@ def test_the_token_survives_ruff(tmp_path, fixer):
     proj = _project(tmp_path)
     path = _test_path(proj, False)
     _ruff(proj, *fixer)
-    assert path.read_text().splitlines()[0] == TOKEN
+    assert path.read_text(encoding="utf-8").splitlines()[0] == TOKEN
     # gh-1528: the benchmark carries the same token, through the same run.
     bench = proj / "src" / "p" / "benchmarks" / "bench_g.py"
-    assert bench.read_text().splitlines()[0] == "# jm:generated bench_g.py"
+    assert (
+        bench.read_text(encoding="utf-8").splitlines()[0]
+        == "# jm:generated bench_g.py"
+    )
     # ...and the file is still jm's: a new init param reaches it.
     _add_init_param(proj)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stderr
-    after = path.read_text()
+    after = path.read_text(encoding="utf-8")
     assert after.splitlines()[0] == TOKEN
     assert "G(level=3)" in after

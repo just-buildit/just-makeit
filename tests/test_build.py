@@ -66,10 +66,12 @@ class TestCmdDryRun:
 
     def test_lists_c_sources(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='x'", encoding="utf-8"
+        )
         src = tmp_path / "native" / "src" / "foo"
         src.mkdir(parents=True)
-        (src / "foo.c").write_text("int main(){}")
+        (src / "foo.c").write_text("int main(){}", encoding="utf-8")
         with patch("shutil.which", return_value=None):
             B.cmd_dry_run()
         out = capsys.readouterr().out
@@ -77,7 +79,9 @@ class TestCmdDryRun:
 
     def test_no_c_sources_message(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='x'", encoding="utf-8"
+        )
         (tmp_path / "native" / "src").mkdir(parents=True)
         with patch("shutil.which", return_value=None):
             B.cmd_dry_run()
@@ -88,7 +92,9 @@ class TestCmdDryRun:
         self, tmp_path, monkeypatch, capsys
     ):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='x'", encoding="utf-8"
+        )
         with patch("shutil.which", return_value="/usr/bin/cmake"):
             B.cmd_dry_run()
         out = capsys.readouterr().out
@@ -96,7 +102,9 @@ class TestCmdDryRun:
 
     def test_cmake_not_found_message(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='x'", encoding="utf-8"
+        )
         with patch("shutil.which", return_value=None):
             B.cmd_dry_run()
         out = capsys.readouterr().out
@@ -116,7 +124,7 @@ class TestEnsureBuilt:
     def test_skips_configure_when_cache_exists(self, tmp_path):
         build_dir = tmp_path / "build"
         build_dir.mkdir()
-        (build_dir / "CMakeCache.txt").write_text("")
+        (build_dir / "CMakeCache.txt").write_text("", encoding="utf-8")
         with patch.object(B, "_cmake_configure") as mock_cfg:
             with patch.object(B, "_cmake_build") as mock_bld:
                 B._ensure_built(tmp_path, build_dir)

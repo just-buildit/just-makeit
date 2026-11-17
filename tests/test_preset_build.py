@@ -99,9 +99,9 @@ def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
     )
 
     # The element type is stripped everywhere the buffer/param/sizeof renders.
-    core_h = (root / INC_ROOT / "filt/filt_core.h").read_text()
-    core_c = (root / "native/src/filt/filt_core.c").read_text()
-    ext_c = (root / "native/src/filt/filt_ext.c").read_text()
+    core_h = (root / INC_ROOT / "filt/filt_core.h").read_text(encoding="utf-8")
+    core_c = (root / "native/src/filt/filt_core.c").read_text(encoding="utf-8")
+    ext_c = (root / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
     for text in (core_h, core_c, ext_c):
         assert "[] *out" not in text
         assert "sizeof(float _Complex[])" not in text
@@ -387,7 +387,7 @@ def test_find_compiler_takes_the_newest_versioned_name(tmp_path, monkeypatch):
     def put(d, *names, mode=0o755):
         d.mkdir(exist_ok=True)
         for n in names:
-            (d / n).write_text("#!/bin/sh\n")
+            (d / n).write_text("#!/bin/sh\n", encoding="utf-8")
             (d / n).chmod(mode)
         return d
 
@@ -485,7 +485,9 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
     short = sorted(
         f"{f.relative_to(root)}: {m.group().strip()}"
         for f in root.glob("native/src/**/*_ext*.c")
-        for m in re.finditer(r"^\s*\{\s*NULL\s*\}\s*$", f.read_text(), re.M)
+        for m in re.finditer(
+            r"^\s*\{\s*NULL\s*\}\s*$", f.read_text(encoding="utf-8"), re.M
+        )
     )
     assert not short, (
         f"{shape}: a one-field table sentinel (gh-1856); CPython documents"

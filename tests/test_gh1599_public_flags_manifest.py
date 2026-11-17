@@ -69,14 +69,18 @@ def test_the_flags_leave_the_build_when_they_leave_the_manifest(tmp_path):
     )
     assert run_cli("apply", cwd=proj).returncode == 0
     root = proj / "CMakeLists.txt"
-    assert "set(JM_PUBLIC_LINK_LIBS -lxtra)" in root.read_text()
-    assert "set(JM_PUBLIC_DEFINES _GNU_SOURCE)" in root.read_text()
+    assert "set(JM_PUBLIC_LINK_LIBS -lxtra)" in root.read_text(
+        encoding="utf-8"
+    )
+    assert "set(JM_PUBLIC_DEFINES _GNU_SOURCE)" in root.read_text(
+        encoding="utf-8"
+    )
     cfg = C.load(proj)
     del cfg["project"]["public_link_libs"]
     del cfg["project"]["public_defines"]
     C.save(proj, cfg)
     assert run_cli("apply", cwd=proj).returncode == 0
-    text = root.read_text()
+    text = root.read_text(encoding="utf-8")
     assert "-lxtra" not in text and "_GNU_SOURCE" not in text, text
 
 

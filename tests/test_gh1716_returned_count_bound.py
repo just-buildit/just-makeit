@@ -775,9 +775,11 @@ def test_a_fragment_without_the_guard_is_told_what_it_lacks(
     proj = _vo_project(tmp_path, *shape)
     frag = proj.joinpath(*FRAG)
     # Rendered before gh-1716: every returned-count guard removed.
-    old, n = _coerce.RETURNED_COUNT_BLOCK_RE.subn("", frag.read_text())
+    old, n = _coerce.RETURNED_COUNT_BLOCK_RE.subn(
+        "", frag.read_text(encoding="utf-8")
+    )
     assert n == guards, "fixture no longer renders its returned-count guards"
-    frag.write_text(old)
+    frag.write_text(old, encoding="utf-8")
 
     out = _apply_out(proj)
     assert "m_ext_r.c" in out, out
@@ -799,10 +801,10 @@ def test_a_gnu_rewrapped_guard_is_still_the_guard(tmp_path):
     src, n = re.subn(
         r"if \(\(size_t\)\((\w+)\) > \(size_t\)\(",
         r"if ((size_t) (\1)\n        > (size_t) (",
-        frag.read_text(),
+        frag.read_text(encoding="utf-8"),
     )
     assert n == 2
-    frag.write_text(src)
+    frag.write_text(src, encoding="utf-8")
     out = _apply_out(proj)
     assert "no longer matches" not in out, out
 
@@ -812,7 +814,7 @@ def test_a_member_with_no_returned_count_is_silent(tmp_path):
         tmp_path, "--arg-type", "float", "--return-type", "float"
     )
     assert not _coerce.RETURNED_COUNT_GUARD_RE.search(
-        proj.joinpath(*FRAG).read_text()
+        proj.joinpath(*FRAG).read_text(encoding="utf-8")
     )
     out = _apply_out(proj)
     assert "no longer matches" not in out, out

@@ -69,11 +69,11 @@ def _save(root: pathlib.Path, edit) -> str:
         cfg = C.load(root)
         edit(cfg)
         C.save(root, cfg)
-    return (root / C.FILENAME).read_text()
+    return (root / C.FILENAME).read_text(encoding="utf-8")
 
 
 def _project(tmp_path: pathlib.Path, body: str) -> pathlib.Path:
-    (tmp_path / C.FILENAME).write_text(PROJECT + body)
+    (tmp_path / C.FILENAME).write_text(PROJECT + body, encoding="utf-8")
     return tmp_path
 
 
@@ -196,18 +196,18 @@ def test_deleting_the_last_row_keeps_the_next_sections_comment(
 
 def test_an_objects_fragment_keeps_its_comments(tmp_path) -> None:
     (tmp_path / C.FILENAME).write_text(
-        'include = ["objects/*.toml"]\n\n' + PROJECT
+        'include = ["objects/*.toml"]\n\n' + PROJECT, encoding="utf-8"
     )
     (tmp_path / "objects").mkdir()
     frag = tmp_path / "objects" / "eng.toml"
     body = OBJECT.split("# The next section")[0].rstrip("\n") + "\n"
-    frag.write_text(body)
+    frag.write_text(body, encoding="utf-8")
 
     def edit(cfg):
         _methods(cfg).append({"name": "z", "arg_type": "float"})
 
     _save(tmp_path, edit)
-    assert frag.read_text() == body + (
+    assert frag.read_text(encoding="utf-8") == body + (
         '\n[[eng.methods]]\nname = "z"\narg_type = "float"\n'
     )
 
@@ -232,17 +232,17 @@ return_type = "float"
 
 def test_a_modules_fragment_keeps_its_comments(tmp_path) -> None:
     (tmp_path / C.FILENAME).write_text(
-        'include = ["modules/*.toml"]\n\n' + PROJECT
+        'include = ["modules/*.toml"]\n\n' + PROJECT, encoding="utf-8"
     )
     (tmp_path / "modules").mkdir()
     frag = tmp_path / "modules" / "filt.toml"
-    frag.write_text(MODULE)
+    frag.write_text(MODULE, encoding="utf-8")
 
     def edit(cfg):
         cfg["module"]["filt"]["functions"][0]["doc"] = "F."
 
     _save(tmp_path, edit)
-    assert frag.read_text() == MODULE.replace(
+    assert frag.read_text(encoding="utf-8") == MODULE.replace(
         'name = "f"\narg_type = "float"\nreturn_type = "float"\n',
         'name = "f"\narg_type = "float"\nreturn_type = "float"\ndoc = "F."\n',
     )

@@ -203,7 +203,8 @@ def test_the_emitted_setting_code_compiles(tmp_path):
         "typedef struct wfm_compose_state wfm_compose_state_t;\n"
         "void wfm_compose_set_seed_advance(wfm_compose_state_t *s, int m);\n"
         "int wfm_compose_seed_advance(const wfm_compose_state_t *s);\n"
-        "#endif\n"
+        "#endif\n",
+        encoding="utf-8",
     )
     src = tmp_path / "probe.c"
     src.write_text(
@@ -213,7 +214,8 @@ def test_the_emitted_setting_code_compiles(tmp_path):
         "typedef struct { PyObject_HEAD wfm_compose_state_t *state;"
         " int destroyed; } ComposerObject;\n"
         f"{table}\n"
-        f"static PyObject *\n{getter}\n"
+        f"static PyObject *\n{getter}\n",
+        encoding="utf-8",
     )
     r = cbuild.build(
         "obj",

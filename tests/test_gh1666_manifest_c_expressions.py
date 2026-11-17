@@ -88,7 +88,7 @@ def _build(where):
 @pytest.fixture(scope="module")
 def tree(tmp_path_factory):
     root = _build(tmp_path_factory.mktemp("g1666"))
-    before = {rel: (root / rel).read_text() for rel in EXT}
+    before = {rel: (root / rel).read_text(encoding="utf-8") for rel in EXT}
     FX.set_prefix(root)
     refused = run_cli("apply", cwd=root)
     upgraded = run_cli("upgrade", cwd=root)
@@ -119,18 +119,18 @@ def test_apply_refuses_the_expressions_before_the_upgrade(tree):
 def test_the_upgrade_respells_the_manifests_expressions(tree):
     root, _before, _refused, upgraded, _applied = tree
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
-    mod = (root / "modules" / "filt.toml").read_text()
+    mod = (root / "modules" / "filt.toml").read_text(encoding="utf-8")
     assert f'out_size = "{P}_ntaps(n) | 1"' in mod, mod
-    obj = (root / "objects" / "lo.toml").read_text()
+    obj = (root / "objects" / "lo.toml").read_text(encoding="utf-8")
     assert f'expr = "sizeof({P}_lo_state_t)"' in obj, obj
 
 
 def test_apply_renders_the_prefixed_expressions(tree):
     root, _before, _refused, _upgraded, applied = tree
     assert applied.returncode == 0, applied.stdout + applied.stderr
-    filt = (root / EXT[0]).read_text()
+    filt = (root / EXT[0]).read_text(encoding="utf-8")
     assert f"(size_t)({P}_ntaps(n) | 1)" in filt, filt
-    lo = (root / EXT[1]).read_text()
+    lo = (root / EXT[1]).read_text(encoding="utf-8")
     assert f"sizeof({P}_lo_state_t)" in lo, lo
     assert "respelled" not in run_cli("upgrade", cwd=root).stdout
 

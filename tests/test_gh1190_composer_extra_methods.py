@@ -149,7 +149,9 @@ class TestTheHandWrittenFileIsIncludedAndUntouched:
         td = tempfile.TemporaryDirectory()
         root = Path(td.name) / "p"
         root.mkdir()
-        (root / "CMakeLists.txt").write_text("# ── Modules\n")
+        (root / "CMakeLists.txt").write_text(
+            "# ── Modules\n", encoding="utf-8"
+        )
         d = root / "native" / "src" / "wfm_compose"
         d.mkdir(parents=True)
         extra = d / "wfm_compose_ext_extra.c"

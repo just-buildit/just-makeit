@@ -198,14 +198,19 @@ def test_build_and_decode(tmp_path):
     )
     # hand-write the struct + cursor (the user's contract; jm declares neither).
     h = d / INC_ROOT / "gizmo/gizmo_core.h"
-    ht = h.read_text()
+    ht = h.read_text(encoding="utf-8")
     idx = ht.rfind("#endif")
-    h.write_text(ht[:idx] + _STRUCT_AND_CURSOR + "\n" + ht[idx:])
+    h.write_text(
+        ht[:idx] + _STRUCT_AND_CURSOR + "\n" + ht[idx:], encoding="utf-8"
+    )
     core = d / "native/src/gizmo/gizmo_core.c"
     # gh-1303: replace jm's placeholder for the count accessor it declared.
     core.write_text(
-        drop_jm_stubs(core.read_text(), "gizmo_kw_count", "gizmo_kw_tag")
-        + _CURSOR_IMPL
+        drop_jm_stubs(
+            core.read_text(encoding="utf-8"), "gizmo_kw_count", "gizmo_kw_tag"
+        )
+        + _CURSOR_IMPL,
+        encoding="utf-8",
     )
 
     build = d / "build"

@@ -218,7 +218,7 @@ def test_status_return_alone_raises_value_error(built):
 def test_both_doc_faces_say_none_and_name_the_raise(built):
     """The `.pyi` and `help()` describe the binding beside them."""
     root, mod = _built(built)
-    pyi = next(root.rglob("sink.pyi")).read_text()
+    pyi = next(root.rglob("sink.pyi")).read_text(encoding="utf-8")
     for name, exc in (("send", "OSError"), ("push", "ValueError")):
         sig = re.search(rf"def {name}\((.*?)\) -> (.+?):\n", pyi, re.S)
         assert sig is not None, pyi

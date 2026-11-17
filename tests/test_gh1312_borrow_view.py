@@ -131,7 +131,7 @@ class TestEverySetBaseObjectIsChecked:
         root = _every_borrow_shape(tmp_path / "p")
         offenders = []
         for src in sorted(root.rglob("*.c")):
-            for line in _setbase_calls(src.read_text()):
+            for line in _setbase_calls(src.read_text(encoding="utf-8")):
                 if not _is_checked(line):
                     offenders.append(
                         f"{src.relative_to(root)}: {line.strip()}"
@@ -148,7 +148,7 @@ class TestEverySetBaseObjectIsChecked:
         found = [
             line
             for src in root.rglob("*.c")
-            for line in _setbase_calls(src.read_text())
+            for line in _setbase_calls(src.read_text(encoding="utf-8"))
         ]
         assert found, "no PyArray_SetBaseObject anywhere -- gate is inert"
 
@@ -187,7 +187,7 @@ class TestTheTwoPinShapesShareOneEmitter:
 
     def test_the_state_view_is_the_shared_body(self, tmp_path):
         root = _every_borrow_shape(tmp_path / "p")
-        ext = (root / "native/src/o/o_ext.c").read_text()
+        ext = (root / "native/src/o/o_ext.c").read_text(encoding="utf-8")
         expected = borrow_view_c(
             "o_get_taps_view(self->handle)",
             "8",
@@ -241,7 +241,7 @@ class TestTheWriteabilityAsymmetryIsDeliberate:
 
     def test_the_state_view_is_read_only(self, tmp_path):
         root = _every_borrow_shape(tmp_path / "p")
-        ext = (root / "native/src/o/o_ext.c").read_text()
+        ext = (root / "native/src/o/o_ext.c").read_text(encoding="utf-8")
         view = ext[ext.index("O_get_taps_view") :][:1000]
         assert "NPY_ARRAY_WRITEABLE" in view, view
 
@@ -298,7 +298,7 @@ class TestTheEmitterItself:
         import just_makeit._context._state as S
 
         for mod in (M, S):
-            src = Path(mod.__file__).read_text()
+            src = Path(mod.__file__).read_text(encoding="utf-8")
             # The pin-self body must not be spelled out again beside the
             # shared call. `out_arr` is the caller-pinned shape and keeps its
             # own, checked, in-place call.
@@ -330,7 +330,7 @@ class TestTheRecordArrayPredicateHasOneHome:
 
     def _sources(self):
         for rel in self._ASKERS:
-            yield rel, (self._SRC / rel).read_text()
+            yield rel, (self._SRC / rel).read_text(encoding="utf-8")
 
     def test_no_module_spells_the_predicate_inline(self):
         """`record_dtype` conjoined with a variable-output flag, anywhere
@@ -421,20 +421,22 @@ class TestTheBorrowShape:
     def test_the_prototype_returns_a_pointer(self, tmp_path):
         """The kernel lends; it does not fill an out-param."""
         root = self._project(tmp_path / "p")
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         assert "float _Complex *ring_wait(ring_state_t *state, size_t n);" in h
 
     def test_the_stub_returns_a_pointer_too(self, tmp_path):
         """A scalar `return` for a pointer-returning function does not
         compile, and "no foot-guns" means the untouched scaffold builds."""
         root = self._project(tmp_path / "p")
-        core = (root / "native/src/ring/ring_core.c").read_text()
+        core = (root / "native/src/ring/ring_core.c").read_text(
+            encoding="utf-8"
+        )
         body = core[core.index("ring_wait") :][:400]
         assert "return NULL;" in body, body
 
     def test_the_binding_pins_and_is_checked(self, tmp_path):
         root = self._project(tmp_path / "p")
-        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        ext = (root / "native/src/ring/ring_ext.c").read_text(encoding="utf-8")
         wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
         assert (
             borrow_view_c(
@@ -452,7 +454,7 @@ class TestTheBorrowShape:
         """NULL is the author's only failure signal -- there is no count to
         report -- so it always raises, declared `error` or not."""
         root = self._project(tmp_path / "p")
-        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        ext = (root / "native/src/ring/ring_ext.c").read_text(encoding="utf-8")
         wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
         assert "if (!_p)" in wrapper
         assert "PyErr_SetString(PyExc_ValueError" in wrapper, wrapper
@@ -462,13 +464,13 @@ class TestTheBorrowShape:
 
     def test_it_is_read_only_by_default(self, tmp_path):
         root = self._project(tmp_path / "p")
-        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        ext = (root / "native/src/ring/ring_ext.c").read_text(encoding="utf-8")
         wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
         assert "NPY_ARRAY_WRITEABLE" in wrapper
 
     def test_borrow_writeable_opts_out(self, tmp_path):
         root = self._project(tmp_path / "p", borrow_writeable=True)
-        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        ext = (root / "native/src/ring/ring_ext.c").read_text(encoding="utf-8")
         wrapper = _wrapper_of(ext, "Ring_wait(RingObject")
         assert "NPY_ARRAY_WRITEABLE" not in wrapper, wrapper
 
@@ -515,8 +517,8 @@ class TestBothFacesAgree:
         """A borrow returns a VIEW, not one element. Both writers had to be
         taught, and they are peers that have disagreed before."""
         root = self._project(tmp_path / "p")
-        standalone = (root / "src/p/ring.pyi").read_text()
-        module = (root / "src/p/m/m.pyi").read_text()
+        standalone = (root / "src/p/ring.pyi").read_text(encoding="utf-8")
+        module = (root / "src/p/m/m.pyi").read_text(encoding="utf-8")
         want = "def wait(self, n: int) -> NDArray[np.complex64]:"
         assert want in standalone, standalone
         assert want in module, module
@@ -525,14 +527,14 @@ class TestBothFacesAgree:
         """`-> complex` above a body handing back an array is a doc face
         describing a different function than the one it is attached to."""
         root = self._project(tmp_path / "p")
-        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        ext = (root / "native/src/ring/ring_ext.c").read_text(encoding="utf-8")
         assert '"wait(n) -> ndarray' in ext, ext[:200]
 
     def test_the_generated_doctest_is_not_a_scalar(self, tmp_path):
         """It used to assert `obj.wait(0)` -> `0j`: a doctest that is wrong,
         not merely misleading."""
         root = self._project(tmp_path / "p")
-        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        ext = (root / "native/src/ring/ring_ext.c").read_text(encoding="utf-8")
         demo = ext[ext.index('"wait(n) -> ndarray') :][:900]
         assert ">>> y = obj.wait(" in demo, demo
         assert '"    0j' not in demo, demo
@@ -626,18 +628,22 @@ class TestItActuallyBorrows:
         if implement:
             h = root / INC_ROOT / "ring/ring_core.h"
             h.write_text(
-                h.read_text().replace(
+                h.read_text(encoding="utf-8").replace(
                     "    size_t cap;",
                     "    size_t cap;\n    float _Complex buf[8];",
                     1,
-                )
+                ),
+                encoding="utf-8",
             )
             c = root / "native/src/ring/ring_core.c"
-            text = c.read_text()
+            text = c.read_text(encoding="utf-8")
             i = text.index("ring_wait(ring_state_t *state, size_t n)")
             j = text.index("\n}\n", i)
             body_start = text.index("{", i) + 1
-            c.write_text(text[:body_start] + "\n" + cls.KERNEL + text[j:])
+            c.write_text(
+                text[:body_start] + "\n" + cls.KERNEL + text[j:],
+                encoding="utf-8",
+            )
         r = subprocess.run(
             ["cmake", "-S", str(root), "-B", str(root / "build")],
             capture_output=True,
@@ -687,7 +693,8 @@ class TestItActuallyBorrows:
             "    raise SystemExit('oversize did not raise')\n"
             "except ValueError:\n"
             "    pass\n"
-            "print('OK')\n"
+            "print('OK')\n",
+            encoding="utf-8",
         )
         out = subprocess.run(
             [sys.executable, str(probe)],

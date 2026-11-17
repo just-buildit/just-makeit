@@ -88,7 +88,9 @@ def test_the_toolchain_job_reads_keys_the_pin_has():
     for k in keys:
         assert f"CI_IMAGE_{k}" in pinned, (k, pinned)
     # Each key is a base the Makefile builds, so a repin keeps it current.
-    m = re.search(r"^CI_IMAGE_BASES\s*=(.*)$", MAKEFILE.read_text(), re.M)
+    m = re.search(
+        r"^CI_IMAGE_BASES\s*=(.*)$", MAKEFILE.read_text(encoding="utf-8"), re.M
+    )
     assert m, "no CI_IMAGE_BASES in the Makefile"
     built = {re.sub(r"\D", "", b.split(":", 1)[1]) for b in m.group(1).split()}
     assert set(keys) <= built, (keys, built)

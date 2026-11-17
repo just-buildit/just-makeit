@@ -88,7 +88,7 @@ class TestScaffoldWiring:
         # The regex names this project's header tree. A config carrying some
         # other project's layout filters out everything and reports clean,
         # which is how jm's own root copy sat dead for a year.
-        assert "HeaderFilterRegex:" in tidy.read_text()
+        assert "HeaderFilterRegex:" in tidy.read_text(encoding="utf-8")
         assert (root / INC_ROOT).is_dir()
 
     def test_header_filter_covers_every_tree_jm_writes_headers_into(
@@ -134,7 +134,7 @@ class TestScaffoldWiring:
         root = tmp_path / "simple"
         new_run("simple", root, build_system="make")
         assert not (root / ".clang-tidy").exists()
-        assert "tidy:" not in (root / "Makefile").read_text()
+        assert "tidy:" not in (root / "Makefile").read_text(encoding="utf-8")
 
     def test_compile_commands_target_is_phony_and_documented(self):
         """gh-940: no timestamp left to get wrong, and it is reachable."""

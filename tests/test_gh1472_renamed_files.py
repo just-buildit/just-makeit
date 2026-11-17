@@ -40,7 +40,9 @@ def old_project(tmp_path: Path) -> Path:
     )
     assert r.returncode == 0, r.stderr
     new = root / "bootstrap.toml"
-    (root / "jb.toml").write_text(new.read_text() + EDIT)
+    (root / "jb.toml").write_text(
+        new.read_text(encoding="utf-8") + EDIT, encoding="utf-8"
+    )
     new.unlink()
     return root
 
@@ -67,7 +69,9 @@ def test_upgrade_renames_it_and_keeps_the_edits(old_project):
     assert r.returncode == 0, r.stderr
     assert "renamed jb.toml -> bootstrap.toml" in r.stdout
     assert not (old_project / "jb.toml").exists()
-    assert "libfoo-dev" in (old_project / "bootstrap.toml").read_text()
+    assert "libfoo-dev" in (old_project / "bootstrap.toml").read_text(
+        encoding="utf-8"
+    )
 
     again = run_cli("upgrade", cwd=old_project)
     assert "jb.toml" not in again.stdout
@@ -80,11 +84,11 @@ def test_upgrade_leaves_both_alone_when_both_exist(old_project):
     """An older jm already created the new one beside the author's: which
     holds the edits is not jm's to guess."""
     both = old_project / "bootstrap.toml"
-    both.write_text("# jm's default\n")
+    both.write_text("# jm's default\n", encoding="utf-8")
     r = run_cli("upgrade", cwd=old_project)
     assert r.returncode == 0, r.stderr
     assert (old_project / "jb.toml").is_file()
-    assert both.read_text() == "# jm's default\n"
+    assert both.read_text(encoding="utf-8") == "# jm's default\n"
     assert "Merge anything you added to jb.toml into bootstrap.toml" in (
         r.stdout
     )

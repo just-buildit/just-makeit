@@ -210,7 +210,9 @@ def _provision_worker_env() -> None:
     if not site_dirs:  # Windows lays it out flat
         site_dirs = sorted(venv.glob("Lib/site-packages"))
     inherited = "\n".join(_inheritable_paths())
-    (site_dirs[0] / "_jm_inherited.pth").write_text(inherited + "\n")
+    (site_dirs[0] / "_jm_inherited.pth").write_text(
+        inherited + "\n", encoding="utf-8"
+    )
 
     _worker_env_root = root
     bindir = venv / ("Scripts" if os.name == "nt" else "bin")
@@ -241,7 +243,7 @@ def _provision_worker_env() -> None:
         _numpy_version = ""
     if _numpy_version:
         constraint = root / "constraints.txt"
-        constraint.write_text(f"numpy=={_numpy_version}\n")
+        constraint.write_text(f"numpy=={_numpy_version}\n", encoding="utf-8")
         os.environ["UV_CONSTRAINT"] = str(constraint)
     # PATH is deliberately NOT prepended with this venv's bin, though the
     # generated Makefile does fall back to `python3` off PATH. It does not need

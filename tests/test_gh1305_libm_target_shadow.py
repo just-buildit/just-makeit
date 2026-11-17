@@ -173,11 +173,11 @@ def _names_the_shadow(output):
 
 def _unfix(cmake):
     """Put the pre-fix text back: bare `m`, and no declaration."""
-    text = cmake.read_text()
+    text = cmake.read_text(encoding="utf-8")
     assert R.LIBM_REF in text, f"{cmake} has no libm reference to un-fix"
     text = text.replace(R.LIBM_REF, "m")
     text = text.replace("find_library(JM_MATH_LIBRARY m)", "")
-    cmake.write_text(text)
+    cmake.write_text(text, encoding="utf-8")
 
 
 class TestNoGeneratedCMakeLinksABareM:
@@ -187,7 +187,7 @@ class TestNoGeneratedCMakeLinksABareM:
         root = _every_shape(tmp_path / "p")
         offenders = []
         for cmake in sorted(root.rglob("CMakeLists.txt")):
-            for target, args in _link_args(cmake.read_text()):
+            for target, args in _link_args(cmake.read_text(encoding="utf-8")):
                 if "m" in args:
                     offenders.append(
                         f"{cmake.relative_to(root)}: {target} links bare `m`"
@@ -205,7 +205,7 @@ class TestNoGeneratedCMakeLinksABareM:
         targets = {
             t
             for cmake in root.rglob("CMakeLists.txt")
-            for t, _ in _link_args(cmake.read_text())
+            for t, _ in _link_args(cmake.read_text(encoding="utf-8"))
         }
         for expected in (
             "test_solo_core",  # standalone object
@@ -228,7 +228,7 @@ class TestEveryReference:
         root = _every_shape(tmp_path / "p")
         seen = 0
         for cmake in sorted(root.rglob("CMakeLists.txt")):
-            text = cmake.read_text()
+            text = cmake.read_text(encoding="utf-8")
             if R.LIBM_REF not in text:
                 continue
             seen += 1
@@ -356,17 +356,17 @@ class TestTheBenchReconcilerSeedsItsDeclaration:
         )
         cmake = root / "native/src/solo/CMakeLists.txt"
         # The pre-fix shape: bare `m`, no declaration, no bench target.
-        text = cmake.read_text()
+        text = cmake.read_text(encoding="utf-8")
         text = text[text.index("# The component's C code") :]
         text = text[: text.index("add_executable(")]
-        cmake.write_text(text.replace(R.LIBM_REF, "m"))
-        assert "JM_MATH_LIBRARY" not in cmake.read_text()
+        cmake.write_text(text.replace(R.LIBM_REF, "m"), encoding="utf-8")
+        assert "JM_MATH_LIBRARY" not in cmake.read_text(encoding="utf-8")
 
         cfg = C.load(root)
         changed = _reconcile_bench_cmake(root, cfg)
         assert changed, "the reconciler did not touch the file"
 
-        out = cmake.read_text()
+        out = cmake.read_text(encoding="utf-8")
         assert "find_library(JM_MATH_LIBRARY m)" in out
         assert R.LIBM_REF in out[out.index("bench_solo_core") :]
 
@@ -383,10 +383,15 @@ class TestTheBenchReconcilerSeedsItsDeclaration:
             state_vars=[("g", "double", "1.0")],
         )
         cmake = root / "native/src/solo/CMakeLists.txt"
-        text = cmake.read_text()
+        text = cmake.read_text(encoding="utf-8")
         text = text[: text.index("add_executable(bench_solo_core")]
-        cmake.write_text(text)
+        cmake.write_text(text, encoding="utf-8")
         assert text.count("find_library(JM_MATH_LIBRARY m)") == 1
 
         _reconcile_bench_cmake(root, C.load(root))
-        assert cmake.read_text().count("find_library(JM_MATH_LIBRARY m)") == 1
+        assert (
+            cmake.read_text(encoding="utf-8").count(
+                "find_library(JM_MATH_LIBRARY m)"
+            )
+            == 1
+        )

@@ -135,7 +135,7 @@ class TestItDoesNotCrash:
     def test_an_ordinary_component_is_unaffected(self, tmp_path):
         root = _ring(tmp_path / "p", header_only=False)
         _add_method(root)
-        c = (root / "native/src/ring/ring_core.c").read_text()
+        c = (root / "native/src/ring/ring_core.c").read_text(encoding="utf-8")
         assert "ring_wait" in c, c
 
 
@@ -143,10 +143,10 @@ class TestItDoesNotCrash:
 class TestTheBodyGoesIntoTheHeader:
     def test_defined_static_inline(self, tmp_path, module):
         root = _ring(tmp_path / "p", module=module)
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         assert "ring_wait" not in h
         _add_method(root)
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         assert "static inline float _Complex *\nring_wait(" in h, h
 
     def test_no_core_c_is_created(self, tmp_path, module):
@@ -168,7 +168,7 @@ class TestTheBodyGoesIntoTheHeader:
         lands beside the definition."""
         root = _ring(tmp_path / "p", module=module)
         _add_method(root)
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         # gh-1679: the one declaration allowed is a `static inline`
         # prototype above the inline step, which the definition keeps.
         extern = re.findall(
@@ -188,7 +188,7 @@ class TestTheBodyGoesIntoTheHeader:
         for the rest -- which links until someone includes it from C++."""
         root = _ring(tmp_path / "p", module=module)
         _add_method(root)
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         assert h.index("ring_wait(") < h.rindex("#ifdef __cplusplus"), h
 
 
@@ -233,7 +233,7 @@ class TestOneHomeForWhereABodyGoes:
         how it kept the pre-gh-1311 answer. The decision has one home now."""
         src = (
             Path(__file__).parent.parent / "src/just_makeit/_method.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "append_component_body" in src
 
     def test_staticize_is_not_reimplemented(self):
@@ -242,7 +242,7 @@ class TestOneHomeForWhereABodyGoes:
         that wrong differently."""
         init = (
             Path(__file__).parent.parent / "src/just_makeit/_init.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "from ._context._state import staticize" in init
         assert "def staticize" not in init
 

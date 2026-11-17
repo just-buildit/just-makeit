@@ -110,7 +110,7 @@ def _cli(root, header_only):
         ),
     ]
     frag = root / "objects" / "lo.toml"
-    text = frag.read_text()
+    text = frag.read_text(encoding="utf-8")
     _textio.write_text(
         frag, text.replace("[lo]\n", f'[lo]\nimpl = "{IMPL}"\n', 1)
     )
@@ -128,7 +128,7 @@ def test_a_step_calling_a_getter_and_a_method_builds(
     new_run("q", root, c_prefix=None, fragments=True)
     for r in path(root, header_only):
         assert r.returncode == 0, r.stdout + r.stderr
-    h = (root / "native/inc/q/lo/lo_core.h").read_text()
+    h = (root / "native/inc/q/lo/lo_core.h").read_text(encoding="utf-8")
     assert "lo_get_gain(state) * x" in h, h
     for what, rc, out in _build(root):
         assert rc == 0, (what, out)

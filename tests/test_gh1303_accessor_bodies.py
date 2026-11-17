@@ -106,7 +106,9 @@ SHAPES = sorted(_SYMBOLS)
 class TestTheBodyIsScaffolded:
     @pytest.mark.parametrize("shape", SHAPES)
     def test_every_accessor_has_a_marked_stub(self, tmp_path, shape):
-        text = _body_file(_project(tmp_path, shape), shape).read_text()
+        text = _body_file(_project(tmp_path, shape), shape).read_text(
+            encoding="utf-8"
+        )
         for sym in _SYMBOLS[shape]:
             assert f"/* <<IMPLEMENT: {sym}>> */" in text, sym
             assert re.search(
@@ -135,7 +137,9 @@ class TestTheBodyIsScaffolded:
             encoding="utf-8",
         )
         _quiet(property_run, root, "o", "level", None, "double", False)
-        core = (root / "native" / "src" / "o" / "o_core.c").read_text()
+        core = (root / "native" / "src" / "o" / "o_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "o_get_level" not in core
 
 
@@ -165,7 +169,9 @@ class TestTheExistingGateNowCoversIt:
         root = _project(tmp_path, "plain")
         self._strip_getter(root)
         _quiet(apply_run, root)
-        assert "o_get_level(" in _body_file(root, "plain").read_text()
+        assert "o_get_level(" in _body_file(root, "plain").read_text(
+            encoding="utf-8"
+        )
         assert _quiet(_status.run, root, check=True) == 0
 
 

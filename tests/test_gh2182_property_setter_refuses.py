@@ -335,8 +335,12 @@ def test_the_declared_setter_returns_what_the_binding_tests(
     flags = ["--error", "ValueError"] if error else []
     _ok("property", "o", "p", "--type", "double", "--writable", *flags,
         cwd=fresh)  # fmt: skip
-    h = (fresh / "native" / "inc" / "rf" / "o" / "o_core.h").read_text()
-    c = (fresh / "native" / "src" / "o" / "o_core.c").read_text()
+    h = (fresh / "native" / "inc" / "rf" / "o" / "o_core.h").read_text(
+        encoding="utf-8"
+    )
+    c = (fresh / "native" / "src" / "o" / "o_core.c").read_text(
+        encoding="utf-8"
+    )
     assert f"{ret} rf_o_set_p(rf_o_state_t *state, double val);" in h
     assert f"\n{ret}\nrf_o_set_p(rf_o_state_t *state, double val)\n" in c
 

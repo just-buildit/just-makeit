@@ -70,14 +70,15 @@ def _project(tmp_path: Path, *, header_only: bool) -> Path:
 def _declare_dep(proj: Path) -> None:
     """Add `depends_on` to the object, the way the issue's repro does."""
     frag = proj / "objects" / "ring.toml"
-    s = frag.read_text()
+    s = frag.read_text(encoding="utf-8")
     frag.write_text(
         s.replace(
             "[[ring.init_params]]",
             '[[ring.depends_on]]\nname = "dep"\nlink = true\n\n'
             "[[ring.init_params]]",
             1,
-        )
+        ),
+        encoding="utf-8",
     )
 
 
@@ -87,7 +88,7 @@ class TestTheKeywordFollowsTheLibraryKind:
         _declare_dep(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
 
-        cml = (proj / CML).read_text()
+        cml = (proj / CML).read_text(encoding="utf-8")
         assert "add_library(ring_core INTERFACE)" in cml
         # The line CMake refuses. Anchored on the target, because the file
         # has several `PUBLIC` link lines for other targets.
@@ -100,7 +101,7 @@ class TestTheKeywordFollowsTheLibraryKind:
         _declare_dep(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
 
-        cml = (proj / CML).read_text()
+        cml = (proj / CML).read_text(encoding="utf-8")
         assert "add_library(ring_core OBJECT" in cml
         assert "target_link_libraries(ring_core PUBLIC" in cml
 
@@ -116,7 +117,7 @@ class TestTheKeywordFollowsTheLibraryKind:
         _declare_dep(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
 
-        cml = (proj / CML).read_text()
+        cml = (proj / CML).read_text(encoding="utf-8")
         interface_lib = "add_library(ring_core INTERFACE)" in cml
         scope = "INTERFACE" if interface_lib else "PUBLIC"
         for line in cml.splitlines():

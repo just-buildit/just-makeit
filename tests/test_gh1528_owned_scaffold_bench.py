@@ -58,17 +58,21 @@ def _ctor_calls(text: str) -> set:
 class TestOwnedBench:
     def test_a_fresh_scaffold_carries_the_token(self, tmp_path, module):
         root = _project(tmp_path, module=module)
-        first = _bench_path(root, module).read_text().splitlines()[0]
+        first = (
+            _bench_path(root, module)
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
         assert first == TOKEN
 
     def test_a_required_param_reaches_the_bench(self, tmp_path, module):
         root = _project(tmp_path, module=module)
         path = _bench_path(root, module)
-        before = _ctor_calls(path.read_text())
+        before = _ctor_calls(path.read_text(encoding="utf-8"))
         _add_required_param(root)
         r = run_cli("apply", cwd=root)
         assert r.returncode == 0, r.stderr
-        after = path.read_text()
+        after = path.read_text(encoding="utf-8")
         assert after.splitlines()[0] == TOKEN
         calls = _ctor_calls(after)
         assert calls and calls != before, (before, calls)
@@ -88,7 +92,9 @@ class TestOwnedBench:
     def test_status_sees_drift_in_an_owned_bench(self, tmp_path, module):
         root = _project(tmp_path, module=module)
         path = _bench_path(root, module)
-        path.write_text(path.read_text() + "\n# drift\n")
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8"
+        )
         r = run_cli("status", cwd=root)
         assert re.search(
             r"^  ~ src/p/(m/)?benchmarks/bench_g\.py$", r.stdout, re.M
@@ -97,11 +103,14 @@ class TestOwnedBench:
     def test_deleting_the_token_hands_it_over(self, tmp_path, module):
         root = _project(tmp_path, module=module)
         path = _bench_path(root, module)
-        mine = path.read_text().replace(TOKEN + "\n", "", 1) + "\n# mine\n"
-        path.write_text(mine)
+        mine = (
+            path.read_text(encoding="utf-8").replace(TOKEN + "\n", "", 1)
+            + "\n# mine\n"
+        )
+        path.write_text(mine, encoding="utf-8")
         _add_required_param(root)
         assert run_cli("apply", cwd=root).returncode == 0
-        assert path.read_text() == mine
+        assert path.read_text(encoding="utf-8") == mine
 
 
 @pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")

@@ -125,7 +125,7 @@ PyMODINIT_FUNC PyInit_cnt(void) {{
 }}
 """
     c = tmp / "cnt.c"
-    c.write_text(src)
+    c.write_text(src, encoding="utf-8")
     return cbuild.build(
         "ext",
         [c],

@@ -96,7 +96,7 @@ class TestTheDeclarationSuppliesTheColumns:
         r = _read_method(proj, "wait")
         assert r.returncode == 0, r.stderr
 
-        frag = (proj / "objects" / "ring.toml").read_text()
+        frag = (proj / "objects" / "ring.toml").read_text(encoding="utf-8")
         assert 'record_dtype = "iq16_t"' in frag
         # The columns are NOT restated here -- that is the restatement the
         # table removes. Anchored on the key, because the fragment also
@@ -114,7 +114,9 @@ class TestTheDeclarationSuppliesTheColumns:
         _declare_iq16(proj)
         assert _read_method(proj, "wait").returncode == 0
 
-        ext = (proj / "native" / "src" / "ring" / "ring_ext.c").read_text()
+        ext = (proj / "native" / "src" / "ring" / "ring_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert 'Py_BuildValue("[ss]", "i", "q")' in ext
         assert "offsetof(iq16_t, i)" in ext
         assert "offsetof(iq16_t, q)" in ext
@@ -151,7 +153,9 @@ class TestTheOldSpellingStillWorks:
             cwd=proj,
         )
         assert r.returncode == 0, r.stderr
-        ext = (proj / "native" / "src" / "ring" / "ring_ext.c").read_text()
+        ext = (proj / "native" / "src" / "ring" / "ring_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "offsetof(dp_tlm_rec_t, n)" in ext
 
     def test_a_name_with_no_columns_anywhere_is_still_refused(self, tmp_path):
@@ -219,6 +223,8 @@ class TestScriptRoundTrip:
         replay = tmp_path / "replay"
         replay.mkdir()
         replay_script(out.stdout, replay)
-        before = (proj / "objects" / "ring.toml").read_text()
-        after = (replay / "p" / "objects" / "ring.toml").read_text()
+        before = (proj / "objects" / "ring.toml").read_text(encoding="utf-8")
+        after = (replay / "p" / "objects" / "ring.toml").read_text(
+            encoding="utf-8"
+        )
         assert before == after

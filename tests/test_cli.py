@@ -882,7 +882,7 @@ class TestModuleCommandCLI:
         _cli("object", "nco", "--module", "dsp", cwd=dest)
         test_py = dest / "src" / "proj" / "dsp" / "tests" / "test_nco.py"
         assert test_py.exists()
-        text = test_py.read_text()
+        text = test_py.read_text(encoding="utf-8")
         assert "from proj.dsp import Nco" in text
 
     def test_module_object_creates_python_bench(self, tmp_path):
@@ -894,7 +894,7 @@ class TestModuleCommandCLI:
             dest / "src" / "proj" / "dsp" / "benchmarks" / "bench_nco.py"
         )
         assert bench_py.exists()
-        text = bench_py.read_text()
+        text = bench_py.read_text(encoding="utf-8")
         assert "from proj.dsp import Nco" in text
 
     def test_module_object_second_object_gets_own_test(self, tmp_path):

@@ -139,12 +139,14 @@ class TestRenderPack:
 class TestApplyCodegen:
     def test_ext_and_module_pyi(self, tmp_path):
         d = _module_with_codec_method(tmp_path)
-        ext = (d / "native/src/widget/widget_ext_gizmo.c").read_text()
+        ext = (d / "native/src/widget/widget_ext_gizmo.c").read_text(
+            encoding="utf-8"
+        )
         assert "switch (_type)" in ext
         assert "gizmo_add_kw(self->handle" in ext
         assert '"add_kw"' in ext
         pyi = flatten_signatures(
-            (d / "src/proj/widget/widget.pyi").read_text()
+            (d / "src/proj/widget/widget.pyi").read_text(encoding="utf-8")
         )
         assert (
             "def add_kw(self, tag: str, type: str, value: "
@@ -157,7 +159,9 @@ class TestApplyCodegen:
     def test_no_stray_core_stub(self, tmp_path):
         # a codec method has no C core fn — jm must not scaffold one.
         d = _module_with_codec_method(tmp_path)
-        core_h = (d / INC_ROOT / "gizmo/gizmo_core.h").read_text()
+        core_h = (d / INC_ROOT / "gizmo/gizmo_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "gizmo_add_kw" not in core_h
 
     def test_roundtrip_preserves_codec_keys(self, tmp_path):
@@ -196,21 +200,22 @@ def test_build_and_call(tmp_path):
     # hand-write the pure-C sink: declared in the sacred header, implemented in
     # the sacred core. It rejects a too-long buffer so rc->ValueError is live.
     h = d / INC_ROOT / "gizmo/gizmo_core.h"
-    ht = h.read_text()
+    ht = h.read_text(encoding="utf-8")
     idx = ht.rfind("#endif")
     decl = (
         "int gizmo_add_kw(gizmo_state_t *s, const char *tag, char type,\n"
         "                 const void *val, size_t count);\n"
     )
-    h.write_text(ht[:idx] + decl + "\n" + ht[idx:])
+    h.write_text(ht[:idx] + decl + "\n" + ht[idx:], encoding="utf-8")
     core = d / "native/src/gizmo/gizmo_core.c"
     core.write_text(
-        core.read_text()
+        core.read_text(encoding="utf-8")
         + "\n#include <string.h>\n"
         + "int gizmo_add_kw(gizmo_state_t *s, const char *tag, char type,\n"
         + "                 const void *val, size_t count)\n"
         + "{ (void)s; (void)tag; (void)type; (void)val;\n"
-        + "  return count > 100 ? -1 : 0; }\n"
+        + "  return count > 100 ? -1 : 0; }\n",
+        encoding="utf-8",
     )
     build = d / "build"
     for cmd in (

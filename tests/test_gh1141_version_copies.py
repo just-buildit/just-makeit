@@ -49,7 +49,10 @@ def _bump(root: Path, to: str = NEW) -> None:
     p = root / "just-makeit.toml"
     body = p.read_text(encoding="utf-8")
     assert f'version = "{OLD}"' in body
-    p.write_text(body.replace(f'version = "{OLD}"', f'version = "{to}"', 1))
+    p.write_text(
+        body.replace(f'version = "{OLD}"', f'version = "{to}"', 1),
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture

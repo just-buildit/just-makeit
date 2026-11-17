@@ -81,7 +81,7 @@ def _is_prototype(line: str) -> bool:
 
 def test_nothing_from_inside_a_body_is_a_declaration(tmp_path):
     root = _header_only(tmp_path)
-    text = (root / INC_ROOT / "q" / "q_core.h").read_text()
+    text = (root / INC_ROOT / "q" / "q_core.h").read_text(encoding="utf-8")
     # The fixture must have bodies to be misread, or this passes vacuously.
     assert "free(state);" in text and "calloc(" in text
     decls = _core_h_decl_lines(text)

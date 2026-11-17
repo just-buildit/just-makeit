@@ -107,11 +107,15 @@ class TestTheTableIsDerived:
     def test_apply_is_a_no_op_on_a_fresh_project(self, tmp_path):
         root = _project(tmp_path)
         before = {
-            c: _linkcheck.symbols_file(root, c).read_text() for c in ("o", "w")
+            c: _linkcheck.symbols_file(root, c).read_text(encoding="utf-8")
+            for c in ("o", "w")
         }
         _quiet(apply_run, root)
         for c, text in before.items():
-            assert _linkcheck.symbols_file(root, c).read_text() == text
+            assert (
+                _linkcheck.symbols_file(root, c).read_text(encoding="utf-8")
+                == text
+            )
 
     def test_remove_takes_it_with_the_component(self, tmp_path):
         root = _project(tmp_path)

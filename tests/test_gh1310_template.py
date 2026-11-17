@@ -103,22 +103,26 @@ class TestExpansion:
 
     def test_the_artefacts_are_generated_and_status_is_clean(self, tmp_path):
         root = _project(tmp_path)
-        pyi = (root / "src" / "p" / "cvt" / "cvt.pyi").read_text()
+        pyi = (root / "src" / "p" / "cvt" / "cvt.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "class F32ToI16:" in pyi and "class F32ToI8:" in pyi
         assert _quiet(_status.run, root, check=True) == 0
 
 
 class TestNothingIsWrittenPerInstance:
     def _instance_tables(self, root: Path) -> "list[str]":
-        texts = [(root / C.FILENAME).read_text()] + [
-            p.read_text() for p in root.glob("objects/*.toml")
+        texts = [(root / C.FILENAME).read_text(encoding="utf-8")] + [
+            p.read_text(encoding="utf-8") for p in root.glob("objects/*.toml")
         ]
         return [t for t in texts if "[f32_to_i16]" in t or "[f32_to_i8]" in t]
 
     def test_apply_leaves_only_the_template(self, tmp_path):
         root = _project(tmp_path)
         assert self._instance_tables(root) == []
-        assert "[template.f32_to_int]" in (root / C.FILENAME).read_text()
+        assert "[template.f32_to_int]" in (root / C.FILENAME).read_text(
+            encoding="utf-8"
+        )
         assert "f32_to_i16" not in str(C.load_manifest(root).get("module"))
 
     def test_a_verb_on_another_component_keeps_it_folded(self, tmp_path):
@@ -153,7 +157,7 @@ class TestTheClosedParamsList:
         _quiet(new_run, "p", root)
         _quiet(module_run, root, "cvt")
         (root / C.FILENAME).write_text(
-            (root / C.FILENAME).read_text() + bad, "utf-8"
+            (root / C.FILENAME).read_text(encoding="utf-8") + bad, "utf-8"
         )
         with pytest.raises(Refusal) as refused:
             C.load(root)
@@ -165,7 +169,7 @@ class TestTheClosedParamsList:
         _quiet(new_run, "p", root)
         _quiet(module_run, root, "cvt")
         (root / C.FILENAME).write_text(
-            (root / C.FILENAME).read_text() + bad, "utf-8"
+            (root / C.FILENAME).read_text(encoding="utf-8") + bad, "utf-8"
         )
         with pytest.raises(Refusal) as refused:
             C.load(root)
@@ -176,7 +180,7 @@ class TestAnInstanceCannotBeEditedDirectly:
     def test_a_member_verb_refuses_before_writing_c(self, tmp_path):
         root = _project(tmp_path)
         core = root / "native" / "src" / "f32_to_i16" / "f32_to_i16_core.c"
-        before = core.read_text()
+        before = core.read_text(encoding="utf-8")
         with pytest.raises(Refusal):
             _quiet(
                 method_run,
@@ -189,7 +193,7 @@ class TestAnInstanceCannotBeEditedDirectly:
                 False,
                 [],
             )
-        assert core.read_text() == before
+        assert core.read_text(encoding="utf-8") == before
 
     def test_save_refuses_any_other_route(self, tmp_path):
         root = _project(tmp_path)

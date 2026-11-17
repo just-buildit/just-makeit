@@ -141,9 +141,10 @@ class TestItCompiles:
         module_run(root, "wfm")
         object_run(root, "reader", "wfm", state_vars=[("g", "double", "1.0")])
         (root / "just-makeit.toml").write_text(
-            (root / "just-makeit.toml").read_text()
+            (root / "just-makeit.toml").read_text(encoding="utf-8")
             + '\n[[enum]]\nname = "fs_source"\n'
-            'values = ["UNKNOWN", "HEADER", "USER"]\n'
+            'values = ["UNKNOWN", "HEADER", "USER"]\n',
+            encoding="utf-8",
         )
         apply_run(root)
 
@@ -155,14 +156,15 @@ class TestItCompiles:
         # new member into the existing file — so that is what this does.
         obj_toml = root / "objects" / "reader.toml"
         obj_toml.write_text(
-            obj_toml.read_text()
+            obj_toml.read_text(encoding="utf-8")
             + '\n[[reader.properties]]\nname = "fs_source"\n'
-            'type = "int"\nenum = "fs_source"\n'
+            'type = "int"\nenum = "fs_source"\n',
+            encoding="utf-8",
         )
         apply_run(root)
 
         frag = root / "native" / "src" / "wfm" / "wfm_ext_reader.c"
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         assert "_enum_Reader_fs_source[]" in text, "declaration missing"
 
         proc = subprocess.run(

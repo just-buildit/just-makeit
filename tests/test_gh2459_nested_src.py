@@ -1112,7 +1112,10 @@ def test_a_verified_core_with_riders_jm_keeps_still_moves(tmp_path, start):
         "  target_link_libraries(fir_core PUBLIC ${MY_EXTRA_LIB})\n"
         "endif()"
     )
-    cml.write_text(cml.read_text("utf-8").rstrip("\n") + "\n\n" + rider + "\n")
+    cml.write_text(
+        cml.read_text("utf-8").rstrip("\n") + "\n\n" + rider + "\n",
+        encoding="utf-8",
+    )
     _jm(root, "apply")
     assert rider in cml.read_text("utf-8")  # jm keeps it
     _jm(root, "status", "--check")

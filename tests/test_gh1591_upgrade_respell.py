@@ -89,7 +89,9 @@ def _author(root: Path) -> None:
     nested = root / "native" / "examples" / "downstream"
     nested.mkdir()
     (nested / C.FILENAME).write_text('[project]\nname = "ds"\n', "utf-8")
-    (nested / "use.c").write_text("void f(void) { fir_create(1.0, 4); }\n")
+    (nested / "use.c").write_text(
+        "void f(void) { fir_create(1.0, 4); }\n", encoding="utf-8"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -141,9 +143,13 @@ def test_no_derived_symbol_escapes_the_prefix(upgraded):
 def test_the_authors_own_c_is_left_as_written(upgraded):
     roots, _first, _second, _runs = upgraded
     root = roots["std"]
-    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text()
+    h = next((root / "native" / "inc").rglob("fir_core.h")).read_text(
+        encoding="utf-8"
+    )
     assert _AUTHOR_H in h, h
-    c = (root / "native" / "src" / "fir" / "fir_core.c").read_text()
+    c = (root / "native" / "src" / "fir" / "fir_core.c").read_text(
+        encoding="utf-8"
+    )
     for kept in (
         "/* fir_create() is quoted in this comment and must stay */",
         'static const char *fir_note = "fir_create";',
@@ -158,7 +164,9 @@ def test_the_authors_own_c_is_left_as_written(upgraded):
 
 def test_native_examples_are_respelled(upgraded):
     roots, _first, _second, _runs = upgraded
-    demo = (roots["std"] / "native" / "examples" / "demo.c").read_text()
+    demo = (roots["std"] / "native" / "examples" / "demo.c").read_text(
+        encoding="utf-8"
+    )
     assert f"{PREFIX}_fir_state_t *s = {PREFIX}_fir_create(" in demo, demo
     assert f"{PREFIX}_fir_destroy(s)" in demo, demo
 
@@ -166,7 +174,10 @@ def test_native_examples_are_respelled(upgraded):
 def test_a_nested_project_is_not_touched(upgraded):
     roots, _first, _second, _runs = upgraded
     use = roots["std"] / "native" / "examples" / "downstream" / "use.c"
-    assert use.read_text() == "void f(void) { fir_create(1.0, 4); }\n"
+    assert (
+        use.read_text(encoding="utf-8")
+        == "void f(void) { fir_create(1.0, 4); }\n"
+    )
 
 
 def test_the_upgrade_says_what_it_changed(upgraded):

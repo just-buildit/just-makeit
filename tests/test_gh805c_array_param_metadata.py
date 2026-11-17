@@ -63,7 +63,7 @@ def _object_with_param(tmp_path, param):
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(io.StringIO()):
             apply_run(root)
-    return root, (root / "native/src/w/w_ext.c").read_text()
+    return root, (root / "native/src/w/w_ext.c").read_text(encoding="utf-8")
 
 
 def test_rank_emits_the_ndim_guard(tmp_path):

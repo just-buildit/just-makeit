@@ -28,8 +28,8 @@ from just_makeit import _apply
 def _tree(tmp_path: Path) -> Path:
     root = tmp_path / "p"
     (root / "src").mkdir(parents=True)
-    (root / "src" / "a.c").write_text("int a;\n")
-    (root / "src" / "b.c").write_text("int b;\n")
+    (root / "src" / "a.c").write_text("int a;\n", encoding="utf-8")
+    (root / "src" / "b.c").write_text("int b;\n", encoding="utf-8")
     return root
 
 
@@ -37,15 +37,15 @@ def test_a_write_that_ends_where_it_started_is_not_reported(tmp_path):
     root = _tree(tmp_path)
     before = _apply._tree_digests(root)
     # Written, then formatted back -- the gh-917 shape.
-    (root / "src" / "a.c").write_text("int  a;\n")
-    (root / "src" / "a.c").write_text("int a;\n")
+    (root / "src" / "a.c").write_text("int  a;\n", encoding="utf-8")
+    (root / "src" / "a.c").write_text("int a;\n", encoding="utf-8")
     assert _apply._changed_report(root, before, [root / "src" / "a.c"]) == []
 
 
 def test_one_file_named_twice_is_reported_once(tmp_path):
     root = _tree(tmp_path)
     before = _apply._tree_digests(root)
-    (root / "src" / "a.c").write_text("int a = 1;\n")
+    (root / "src" / "a.c").write_text("int a = 1;\n", encoding="utf-8")
     got = _apply._changed_report(
         root, before, [Path("src/a.c"), root / "src" / "a.c"]
     )
@@ -55,8 +55,8 @@ def test_one_file_named_twice_is_reported_once(tmp_path):
 def test_new_and_changed_files_are_reported_project_relative(tmp_path):
     root = _tree(tmp_path)
     before = _apply._tree_digests(root)
-    (root / "src" / "c.c").write_text("int c;\n")
-    (root / "src" / "b.c").write_text("int b = 2;\n")
+    (root / "src" / "c.c").write_text("int c;\n", encoding="utf-8")
+    (root / "src" / "b.c").write_text("int b = 2;\n", encoding="utf-8")
     got = _apply._changed_report(
         root, before, [Path("src/c.c"), root / "src" / "b.c"]
     )
@@ -76,6 +76,6 @@ def test_the_snapshot_does_not_descend_into_a_build_tree(tmp_path):
     root = _tree(tmp_path)
     b = root / "cmake-build-debug"
     b.mkdir()
-    (b / "CMakeCache.txt").write_text("")
+    (b / "CMakeCache.txt").write_text("", encoding="utf-8")
     (b / "big.o").write_bytes(b"\0" * 10)
     assert set(_apply._tree_digests(root)) == {"src/a.c", "src/b.c"}
