@@ -134,26 +134,34 @@ class TestPrevSnapshot:
 
     def test_returns_most_recent_before_tag(self, tmp_path):
         old = {"benchmarks": [{"name": "old"}]}
-        (tmp_path / "20230101T000000Z.json").write_text(json.dumps(old))
+        (tmp_path / "20230101T000000Z.json").write_text(
+            json.dumps(old), encoding="utf-8"
+        )
         result = B._prev_snapshot(tmp_path, "20240101T000000Z", is_c=False)
         assert result is not None
         assert result["benchmarks"][0]["name"] == "old"
 
     def test_skips_newer_snapshots(self, tmp_path):
         data = {"benchmarks": []}
-        (tmp_path / "20250101T000000Z.json").write_text(json.dumps(data))
+        (tmp_path / "20250101T000000Z.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
         result = B._prev_snapshot(tmp_path, "20240101T000000Z", is_c=False)
         assert result is None
 
     def test_c_suffix_not_mixed_with_python(self, tmp_path):
         c_data = {"benchmarks": [{"name": "c"}]}
-        (tmp_path / "20230101T000000Z-c.json").write_text(json.dumps(c_data))
+        (tmp_path / "20230101T000000Z-c.json").write_text(
+            json.dumps(c_data), encoding="utf-8"
+        )
         result = B._prev_snapshot(tmp_path, "20240101T000000Z", is_c=False)
         assert result is None
 
     def test_c_snapshot_found(self, tmp_path):
         c_data = {"benchmarks": [{"name": "c"}]}
-        (tmp_path / "20230101T000000Z-c.json").write_text(json.dumps(c_data))
+        (tmp_path / "20230101T000000Z-c.json").write_text(
+            json.dumps(c_data), encoding="utf-8"
+        )
         result = B._prev_snapshot(tmp_path, "20240101T000000Z", is_c=True)
         assert result is not None
 
@@ -179,7 +187,9 @@ class TestSaveSnapshot:
         B._save_snapshot(
             tmp_path, hdir, "20240101T000000Z", report, is_c=False
         )
-        loaded = json.loads((hdir / "20240101T000000Z.json").read_text())
+        loaded = json.loads(
+            (hdir / "20240101T000000Z.json").read_text(encoding="utf-8")
+        )
         assert loaded["benchmarks"][0]["name"] == "x"
 
 

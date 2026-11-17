@@ -66,7 +66,7 @@ def _project(tmp_path: Path, **kw) -> Path:
 def _ext(root: Path) -> str:
     return (
         root / "native" / "src" / "telemetry" / "telemetry_ext.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
 
 class TestTheGetter:
@@ -128,7 +128,7 @@ class TestTheOtherFaces:
         consuming faces of one pointer read alike."""
         pyi = (
             _project(tmp_path) / "src" / "proj" / "telemetry.pyi"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "def _capsule(self) -> Any:" in pyi
         assert "Any" in pyi.split("class")[0], "Any must be imported"
 
@@ -137,7 +137,9 @@ class TestTheOtherFaces:
         already has, so there is no `telemetry_get__capsule()` for the author
         to implement — declaring one would be a prototype with no definition.
         """
-        h = INC.core_h(_project(tmp_path), "telemetry").read_text()
+        h = INC.core_h(_project(tmp_path), "telemetry").read_text(
+            encoding="utf-8"
+        )
         assert "_capsule" not in h
 
     def test_it_round_trips_through_the_manifest(self, tmp_path):

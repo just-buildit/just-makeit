@@ -160,7 +160,7 @@ def test_the_arguments_take_keywords_and_defaults(built):
 def test_the_stub_names_what_the_binding_takes(built):
     """The `.pyi` signature is the binding's, argument for argument."""
     root, _ = _built(built)
-    pyi = next(root.rglob("gen.pyi")).read_text()
+    pyi = next(root.rglob("gen.pyi")).read_text(encoding="utf-8")
     sig = re.search(r"def fill\((.*?)\) -> (.+?):", pyi, re.S)
     assert sig is not None, pyi
     params = [p.strip() for p in sig.group(1).split(",")]
@@ -199,7 +199,7 @@ def test_a_string_after_the_count_reaches_c(built):
     g = mod.Gen()
     assert g.label(5, "AB").tolist() == [65.0, 66.0]
     assert g.label(1, tag="AB", gain=2.0).tolist() == [130.0]
-    pyi = next(root.rglob("gen.pyi")).read_text()
+    pyi = next(root.rglob("gen.pyi")).read_text(encoding="utf-8")
     assert (
         "def label(self, n: int, tag: str, gain: float = ...) -> NDArray[Any]:"
     ) in pyi, pyi

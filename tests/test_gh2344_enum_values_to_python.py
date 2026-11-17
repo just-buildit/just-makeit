@@ -59,7 +59,10 @@ def _standalone(tmp_path: Path, *, enumerators=None) -> Path:
     assert run_cli("new", "proj", cwd=tmp_path).returncode == 0
     manifest = root / "just-makeit.toml"
     manifest.write_text(
-        manifest.read_text() + "\n" + _enum_block(enumerators=enumerators)
+        manifest.read_text(encoding="utf-8")
+        + "\n"
+        + _enum_block(enumerators=enumerators),
+        encoding="utf-8",
     )
     assert run_cli("object", "eng", "--state", "mode:int:0", cwd=root)
     r = run_cli(
@@ -81,7 +84,10 @@ def _module_with_two_objects(tmp_path: Path) -> Path:
     root = tmp_path / "proj"
     assert run_cli("new", "proj", cwd=tmp_path).returncode == 0
     manifest = root / "just-makeit.toml"
-    manifest.write_text(manifest.read_text() + "\n" + _enum_block())
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "\n" + _enum_block(),
+        encoding="utf-8",
+    )
     assert run_cli("module", "m", cwd=root).returncode == 0
     for obj in ("a", "b"):
         assert run_cli(
@@ -187,24 +193,26 @@ def test_a_module_publishes_a_shared_enum_once(tmp_path):
 
 def test_the_stub_declares_a_dense_enum_as_a_tuple(tmp_path):
     root = _standalone(tmp_path)
-    stub = (root / "src" / "proj" / "eng.pyi").read_text()
+    stub = (root / "src" / "proj" / "eng.pyi").read_text(encoding="utf-8")
     assert f"{ENUM_NAME}: tuple[str, ...]" in stub
 
 
 def test_the_stub_declares_a_non_dense_enum_as_a_dict(tmp_path):
     root = _standalone(tmp_path, enumerators=["0", "2", "4", "6", "8"])
-    stub = (root / "src" / "proj" / "eng.pyi").read_text()
+    stub = (root / "src" / "proj" / "eng.pyi").read_text(encoding="utf-8")
     assert f"{ENUM_NAME}: dict[int, str]" in stub
 
 
 def test_a_module_publishes_one_attribute_for_a_shared_enum(tmp_path):
     """One ``PyModule_AddObject`` for the name, though two objects use it."""
     root = _module_with_two_objects(tmp_path)
-    ext = (root / "native" / "src" / "m" / "m_ext.c").read_text()
+    ext = (root / "native" / "src" / "m" / "m_ext.c").read_text(
+        encoding="utf-8"
+    )
     if not ext:  # pragma: no cover - the path is the module's own
         pytest.fail("module aggregator not written")
     assert ext.count(f'"{ENUM_NAME}"') == 1
-    stub = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+    stub = (root / "src" / "proj" / "m" / "m.pyi").read_text(encoding="utf-8")
     assert stub.count(f"{ENUM_NAME}: tuple[str, ...]") == 1
 
 
@@ -213,11 +221,16 @@ def test_an_enum_nobody_indexes_is_not_published(tmp_path):
     root = tmp_path / "proj"
     assert run_cli("new", "proj", cwd=tmp_path).returncode == 0
     manifest = root / "just-makeit.toml"
-    manifest.write_text(manifest.read_text() + "\n" + _enum_block())
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "\n" + _enum_block(),
+        encoding="utf-8",
+    )
     assert run_cli("object", "eng", "--state", "mode:int:0", cwd=root)
-    stub = (root / "src" / "proj" / "eng.pyi").read_text()
+    stub = (root / "src" / "proj" / "eng.pyi").read_text(encoding="utf-8")
     assert ENUM_NAME not in stub
-    ext = (root / "native" / "src" / "eng" / "eng_ext.c").read_text()
+    ext = (root / "native" / "src" / "eng" / "eng_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert ENUM_NAME not in ext
 
 
@@ -237,7 +250,10 @@ def _late_enum_module(tmp_path: Path) -> Path:
     root = tmp_path / "proj"
     assert run_cli("new", "proj", cwd=tmp_path).returncode == 0
     manifest = root / "just-makeit.toml"
-    manifest.write_text(manifest.read_text() + "\n" + _enum_block())
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "\n" + _enum_block(),
+        encoding="utf-8",
+    )
     assert run_cli("module", "m", cwd=root).returncode == 0
     r = run_cli("object", "a", "--module", "m", cwd=root)
     assert r.returncode == 0, r.stderr
@@ -263,7 +279,9 @@ def _late_enum_module(tmp_path: Path) -> Path:
     C.save(root, cfg)
     r = run_cli("apply", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
-    frag = (root / "native" / "src" / "m" / "m_ext_a.c").read_text()
+    frag = (root / "native" / "src" / "m" / "m_ext_a.c").read_text(
+        encoding="utf-8"
+    )
     assert "_enum_A_eng_state[] =" not in frag, "fixture premise"
     return root
 
@@ -272,9 +290,11 @@ def test_a_table_the_fragment_lacks_is_not_published(tmp_path):
     """The aggregator and the stub publish only what the fragment defines,
     and `status` agrees with what `apply` wrote."""
     root = _late_enum_module(tmp_path)
-    ext = (root / "native" / "src" / "m" / "m_ext.c").read_text()
+    ext = (root / "native" / "src" / "m" / "m_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert ENUM_NAME not in ext, ext
-    stub = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+    stub = (root / "src" / "proj" / "m" / "m.pyi").read_text(encoding="utf-8")
     assert ENUM_NAME not in stub, stub
     r = run_cli("status", "--check", cwd=root)
     # Nothing jm owns is behind: the one finding is the fragment's own
@@ -301,7 +321,11 @@ def _init_names(root: Path) -> tuple[list[str], list[str]]:
     extension, and its ``__all__``, read by executing nothing."""
     import ast
 
-    tree = ast.parse((root / "src" / "proj" / "m" / "__init__.py").read_text())
+    tree = ast.parse(
+        (root / "src" / "proj" / "m" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
+    )
     imported: list[str] = []
     exported: list[str] = []
     for node in tree.body:
@@ -328,15 +352,17 @@ def test_apply_adds_the_enum_to_an_older_re_export(tmp_path):
     `apply`, and `status` then agrees -- the path an adopter takes."""
     root = _module_with_two_objects(tmp_path)
     init = root / "src" / "proj" / "m" / "__init__.py"
-    old = init.read_text().replace(f", {ENUM_NAME}", "")
+    old = init.read_text(encoding="utf-8").replace(f", {ENUM_NAME}", "")
     old = old.replace(f" {ENUM_NAME}, ", " ")
     old = old.replace(f'"{ENUM_NAME}", ', "").replace(f', "{ENUM_NAME}"', "")
-    init.write_text(old)
-    assert ENUM_NAME not in init.read_text(), "fixture premise"
+    init.write_text(old, encoding="utf-8")
+    assert ENUM_NAME not in init.read_text(encoding="utf-8"), "fixture premise"
     r = run_cli("apply", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
     imported, exported = _init_names(root)
-    assert ENUM_NAME in imported and ENUM_NAME in exported, init.read_text()
+    assert ENUM_NAME in imported and ENUM_NAME in exported, init.read_text(
+        encoding="utf-8"
+    )
     r = run_cli("status", "--check", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
 

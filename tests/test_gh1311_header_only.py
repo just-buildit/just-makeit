@@ -117,7 +117,7 @@ class TestNoCoreDotC:
         reads a manifest that never mentioned it."""
         root = _project(tmp_path / "p", fragments=fragments)
         written = "".join(
-            f.read_text()
+            f.read_text(encoding="utf-8")
             for f in list(root.glob("*.toml"))
             + list((root / "objects").glob("*.toml"))
         )
@@ -138,7 +138,7 @@ class TestTheHeaderCarriesDefinitions:
 
     def test_no_dangling_prototype(self, tmp_path):
         root = _project(tmp_path / "p")
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         # Every function the header names must be defined in it.
         for fn in ("ring_create", "ring_destroy", "ring_reset", "ring_steps"):
             assert f"{fn}(" in h, fn
@@ -149,7 +149,7 @@ class TestTheHeaderCarriesDefinitions:
         separate lines and BOTH look like a definition start; prefixing each
         gives `static inline static`, which does not compile."""
         root = _project(tmp_path / "p")
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         assert "static inline static" not in h
         assert "static static" not in h
 
@@ -161,7 +161,7 @@ class TestTheHeaderCarriesDefinitions:
         `(void)name;` line, that line too.
         """
         root = _project(tmp_path / "p")
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         glued = [
             ln
             for ln in h.splitlines()
@@ -187,11 +187,13 @@ class TestTheHeaderHasNoExternalLinkage:
         for n in (1, 2):
             (tmp_path / f"tu{n}.c").write_text(
                 f'#include "{INC.core_include("ring", root)}"\n'
-                f"int tu{n}(void) {{ return (int)sizeof(ring_state_t); }}\n"
+                f"int tu{n}(void) {{ return (int)sizeof(ring_state_t); }}\n",
+                encoding="utf-8",
             )
         (tmp_path / "main.c").write_text(
             "int tu1(void); int tu2(void);\n"
-            "int main(void) { return tu1() + tu2() > 0 ? 0 : 1; }\n"
+            "int main(void) { return tu1() + tu2() > 0 ? 0 : 1; }\n",
+            encoding="utf-8",
         )
         cbuild.build(
             "exe",
@@ -207,13 +209,17 @@ class TestTheHeaderHasNoExternalLinkage:
 class TestTheCoreLibraryIsInterface:
     def test_interface_not_object(self, tmp_path):
         root = _project(tmp_path / "p")
-        cmake = (root / "native/src/ring/CMakeLists.txt").read_text()
+        cmake = (root / "native/src/ring/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "add_library(ring_core INTERFACE)" in cmake, cmake
         assert "add_library(ring_core OBJECT" not in cmake
 
     def test_an_ordinary_component_stays_object(self, tmp_path):
         root = _project(tmp_path / "p", header_only=False)
-        cmake = (root / "native/src/ring/CMakeLists.txt").read_text()
+        cmake = (root / "native/src/ring/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
         assert "add_library(ring_core OBJECT ring_core.c)" in cmake
 
     def test_it_is_not_folded_into_the_combined_library(self, tmp_path):
@@ -225,12 +231,12 @@ class TestTheCoreLibraryIsInterface:
         project is configured, which is how this was found.
         """
         root = _project(tmp_path / "p")
-        top = (root / "CMakeLists.txt").read_text()
+        top = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "$<TARGET_OBJECTS:ring_core>" not in top, top
 
     def test_an_ordinary_component_is_folded_in(self, tmp_path):
         root = _project(tmp_path / "p", header_only=False)
-        top = (root / "CMakeLists.txt").read_text()
+        top = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         assert "$<TARGET_OBJECTS:ring_core>" in top
 
 
@@ -293,7 +299,8 @@ class TestTheUntouchedScaffoldBuildsAndRuns:
             "assert r.get_g() == 3.0\n"
             "r.reset()\n"
             "assert r.get_g() == 1.0\n"
-            "print('OK')\n"
+            "print('OK')\n",
+            encoding="utf-8",
         )
         out = subprocess.run(
             [sys.executable, str(probe)],

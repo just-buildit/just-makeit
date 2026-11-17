@@ -139,8 +139,8 @@ class TestEmittedCCompilesAndUnifies:
     @pytest.fixture
     def built(self, tmp_path: Path):
         cfg = _cfg()
-        (tmp_path / "flag_core.h").write_text(_CORE_H)
-        (tmp_path / "flag_core.c").write_text(_CORE_C)
+        (tmp_path / "flag_core.h").write_text(_CORE_H, encoding="utf-8")
+        (tmp_path / "flag_core.c").write_text(_CORE_C, encoding="utf-8")
         # gh-1134: jm's REAL layout for an object module is
         # `<pkg>/<mod>/<mod>.so` behind a generated re-exporting
         # `__init__.py`, so `pgdemo.own` is that `__init__.py` and
@@ -150,16 +150,18 @@ class TestEmittedCCompilesAndUnifies:
         # every adopting module in a real project failed at import.
         pkg = tmp_path / "pgdemo"
         pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
         (pkg / "own").mkdir()
         (pkg / "own" / "__init__.py").write_text(
-            "from .own import *  # noqa: F401,F403\n"
+            "from .own import *  # noqa: F401,F403\n", encoding="utf-8"
         )
         for leaf in ("own", "hand"):
             rz = _procglobal.rendezvous_c(cfg, leaf)
             assert rz, f"{leaf} emitted no rendezvous"
             src = tmp_path / f"{leaf}.c"
-            src.write_text(_MODULE_C.format(leaf=leaf, rz=rz))
+            src.write_text(
+                _MODULE_C.format(leaf=leaf, rz=rz), encoding="utf-8"
+            )
             # -Werror: the block must be clean C, not merely compilable.
             cbuild.build(
                 "ext",
@@ -213,14 +215,16 @@ class TestEmittedCCompilesAndUnifies:
         """The control. Without this, every assertion above could pass because
         the linker happened to unify the copies rather than because jm's
         rendezvous did anything."""
-        (tmp_path / "flag_core.h").write_text(_CORE_H)
-        (tmp_path / "flag_core.c").write_text(_CORE_C)
+        (tmp_path / "flag_core.h").write_text(_CORE_H, encoding="utf-8")
+        (tmp_path / "flag_core.c").write_text(_CORE_C, encoding="utf-8")
         pkg = tmp_path / "pgdemo"
         pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
         for leaf in ("own", "hand"):
             src = tmp_path / f"{leaf}.c"
-            src.write_text(_MODULE_C.format(leaf=leaf, rz=""))
+            src.write_text(
+                _MODULE_C.format(leaf=leaf, rz=""), encoding="utf-8"
+            )
             cbuild.build(
                 "ext",
                 [src, tmp_path / "flag_core.c"],
@@ -460,11 +464,15 @@ class TestApplyActuallyEmitsIt:
         return root
 
     def test_the_owner_module_publishes(self, project):
-        ext = (project / "native/src/own/own_ext.c").read_text()
+        ext = (project / "native/src/own/own_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyCapsule_New(flag_state_ptr()" in ext
 
     def test_the_adopting_module_adopts(self, project):
-        ext = (project / "native/src/other/other_ext.c").read_text()
+        ext = (project / "native/src/other/other_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "flag_state_adopt(_p)" in ext
         # gh-1134: the EXTENSION module, not the package. `p.own` is the
         # generated re-exporting `__init__.py`, which carries the declared
@@ -474,7 +482,7 @@ class TestApplyActuallyEmitsIt:
     def test_the_contract_header_is_written(self, project):
         h = project / INC_ROOT / "flag/flag_procglobal.h"
         assert h.exists()
-        text = h.read_text()
+        text = h.read_text(encoding="utf-8")
         assert "void *flag_state_ptr(void);" in text
         # It has to tell the author what to write, not just name two symbols.
         assert "g_cur" in text
@@ -501,7 +509,7 @@ class TestApplyActuallyEmitsIt:
             == 0
         )
         assert _cli("apply", cwd=root).returncode == 0
-        ext = (root / "native/src/eng/eng_ext.c").read_text()
+        ext = (root / "native/src/eng/eng_ext.c").read_text(encoding="utf-8")
         # Every binding embeds `jm_capsule_lend` (gh-2328), so a bare
         # `PyCapsule_New` is no longer the rendezvous's alone: ask for its
         # own publish, by the variable it publishes into.
@@ -682,19 +690,19 @@ def test_a_hand_written_binding_can_join_using_only_the_header(tmp_path):
     same state as the generated owner.
     """
     cfg = _cfg()
-    (tmp_path / "flag_core.h").write_text(_CORE_H)
-    (tmp_path / "flag_core.c").write_text(_CORE_C)
+    (tmp_path / "flag_core.h").write_text(_CORE_H, encoding="utf-8")
+    (tmp_path / "flag_core.c").write_text(_CORE_C, encoding="utf-8")
     (tmp_path / "flag_procglobal.h").write_text(
-        _procglobal.render_header(cfg, "flag")
+        _procglobal.render_header(cfg, "flag"), encoding="utf-8"
     )
     pkg = tmp_path / "pgdemo"
     pkg.mkdir()
-    (pkg / "__init__.py").write_text("")
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
     # gh-1134: the real layout, so the hand-written adopter has to
     # resolve the same package/extension distinction a real project does.
     (pkg / "own").mkdir()
     (pkg / "own" / "__init__.py").write_text(
-        "from .own import *  # noqa: F401,F403\n"
+        "from .own import *  # noqa: F401,F403\n", encoding="utf-8"
     )
     sources = {
         "own": _MODULE_C.format(
@@ -704,7 +712,7 @@ def test_a_hand_written_binding_can_join_using_only_the_header(tmp_path):
     }
     for leaf, text in sources.items():
         src = tmp_path / f"{leaf}.c"
-        src.write_text(text)
+        src.write_text(text, encoding="utf-8")
         cbuild.build(
             "ext",
             [src, tmp_path / "flag_core.c"],

@@ -122,7 +122,7 @@ def capsule(tmp_path_factory):
         cwd=root,
     )
     toml = root / "just-makeit.toml"
-    _textio.write_text(toml, toml.read_text() + CAPSULE_TOML)
+    _textio.write_text(toml, toml.read_text(encoding="utf-8") + CAPSULE_TOML)
     first = run_cli("apply", cwd=root)
     before = _build(root, "before")
     FX.set_prefix(root)
@@ -131,7 +131,9 @@ def capsule(tmp_path_factory):
     after = _build(root, "after") if applied.returncode == 0 else []
     status = run_cli("status", cwd=root)
     as_json = run_cli("status", "--json", cwd=root)
-    ext = (root / "native" / "src" / "lo_fn" / "lo_fn_ext.c").read_text()
+    ext = (root / "native" / "src" / "lo_fn" / "lo_fn_ext.c").read_text(
+        encoding="utf-8"
+    )
     return obj, first, before, upgraded, applied, after, status, as_json, ext
 
 

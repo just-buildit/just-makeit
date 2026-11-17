@@ -118,14 +118,16 @@ class TestTheCommandsThatWereMissingIt:
         artifacts, one of them sacred, left carrying the bad name. Rejecting
         after writing would be no better than not rejecting."""
         header = project / INC_ROOT / "thing" / "thing_core.h"
-        before = header.read_text()
-        manifest = (project / C.FILENAME).read_text()
+        before = header.read_text(encoding="utf-8")
+        manifest = (project / C.FILENAME).read_text(encoding="utf-8")
 
         with pytest.raises(SystemExit):
             property_run(project, "thing", BAD, None, "size_t", False)
 
-        assert header.read_text() == before, "the sacred header was touched"
-        assert (project / C.FILENAME).read_text() == manifest
+        assert header.read_text(encoding="utf-8") == before, (
+            "the sacred header was touched"
+        )
+        assert (project / C.FILENAME).read_text(encoding="utf-8") == manifest
         assert BAD not in before
 
 
@@ -145,7 +147,7 @@ class TestTheCommandsThatAlreadyHadIt:
 
     def test_a_valid_name_still_works(self, project, capsys):
         property_run(project, "thing", "level", None, "size_t", False)
-        assert "level" in (project / C.FILENAME).read_text()
+        assert "level" in (project / C.FILENAME).read_text(encoding="utf-8")
 
 
 class TestTheAudit:

@@ -40,7 +40,7 @@ class TestFind:
     def test_returns_path_for_valid_example(self, tmp_path):
         ex = tmp_path / "fir_filter"
         ex.mkdir()
-        (ex / "test.py").write_text("")
+        (ex / "test.py").write_text("", encoding="utf-8")
         with patch.object(E, "_examples_root", return_value=tmp_path):
             assert E._find("fir_filter") == ex
 
@@ -62,7 +62,7 @@ class TestRun:
     def test_runs_test_py_and_exits(self, tmp_path):
         ex = tmp_path / "myex"
         ex.mkdir()
-        (ex / "test.py").write_text("")
+        (ex / "test.py").write_text("", encoding="utf-8")
         with patch.object(E, "_find", return_value=ex):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value.__class__.returncode = 0

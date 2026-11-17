@@ -373,7 +373,7 @@ def test_an_invalid_choice_raises_naming_the_choices(built):
 
 def test_the_built_stub_names_each_choice_str(built):
     root, _ = _built(built)
-    pyi = next(root.rglob("mo.pyi")).read_text()
+    pyi = next(root.rglob("mo.pyi")).read_text(encoding="utf-8")
     for sig in (
         "def set(self, level: str = ...) -> None:",
         "def fill(self, n: int, level: str) -> NDArray[Any]:",

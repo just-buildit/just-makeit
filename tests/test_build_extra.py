@@ -151,7 +151,9 @@ class TestCmdTest:
 class TestCmdDryRunBranches:
     def test_native_src_not_found(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='x'", encoding="utf-8"
+        )
         with patch("shutil.which", return_value=None):
             B.cmd_dry_run()
         out = capsys.readouterr().out
@@ -159,10 +161,12 @@ class TestCmdDryRunBranches:
 
     def test_python_files_listed(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='x'", encoding="utf-8"
+        )
         pkg = tmp_path / "src" / "pkg"
         pkg.mkdir(parents=True)
-        (pkg / "mod.py").write_text("")
+        (pkg / "mod.py").write_text("", encoding="utf-8")
         with patch("shutil.which", return_value=None):
             B.cmd_dry_run()
         out = capsys.readouterr().out
@@ -170,10 +174,12 @@ class TestCmdDryRunBranches:
 
     def test_pyi_files_listed(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname='x'", encoding="utf-8"
+        )
         pkg = tmp_path / "src" / "pkg"
         pkg.mkdir(parents=True)
-        (pkg / "mod.pyi").write_text("")
+        (pkg / "mod.pyi").write_text("", encoding="utf-8")
         with patch("shutil.which", return_value=None):
             B.cmd_dry_run()
         out = capsys.readouterr().out

@@ -101,7 +101,7 @@ class TestApplyMaterialize:
         apply_run(tmp_path)
         for rel in _REL:
             assert (tmp_path / rel).exists(), rel
-        ext = (tmp_path / _REL[0]).read_text()
+        ext = (tmp_path / _REL[0]).read_text(encoding="utf-8")
         # all four types + factories + PyInit, and the backing header include
         for sym in (
             "SynthType",
@@ -112,19 +112,18 @@ class TestApplyMaterialize:
         ):
             assert sym in ext, sym
         assert 'include "wfm/wfm_compose.h"' in ext
-        cm = (tmp_path / _REL[1]).read_text()
+        cm = (tmp_path / _REL[1]).read_text(encoding="utf-8")
         assert "Python3_add_library(wfm_compose MODULE" in cm
         assert '"${PYTHON_PACKAGE_DIR}/wfm"' in cm
-        pyi = (tmp_path / _REL[2]).read_text()
+        pyi = (tmp_path / _REL[2]).read_text(encoding="utf-8")
         assert "class Composer:" in pyi and "def tone(" in pyi
 
     def test_top_cmake_wired(self, tmp_path):
         _project(tmp_path)
         apply_run(tmp_path)
-        assert (
-            "add_subdirectory(native/src/wfm_compose)"
-            in (tmp_path / "CMakeLists.txt").read_text()
-        )
+        assert "add_subdirectory(native/src/wfm_compose)" in (
+            tmp_path / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
 
     def test_idempotent(self, tmp_path):
         _project(tmp_path)
@@ -167,7 +166,7 @@ class TestApplyMaterialize:
 class TestRoundTrip:
     def test_composer_manifest_round_trips(self, tmp_path):
         _project(tmp_path)
-        text = (tmp_path / "just-makeit.toml").read_text()
+        text = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
         assert 'kind = "composer"' in text
         assert "[module.wfm_compose.source]" in text
         assert "[module.wfm_compose.json]" in text

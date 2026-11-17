@@ -164,7 +164,8 @@ class TestParser:
             "static inline double foo_step(foo_state_t *state, double x) {\n"
             "    state->sum += x;\n"
             "    return state->sum;\n"
-            "}\n"
+            "}\n",
+            encoding="utf-8",
         )
         parsed = parse_header(h)
         assert parsed["arg_type"] == "double"
@@ -186,13 +187,16 @@ class TestParseFailures:
 
     def test_missing_state_struct_raises(self, tmp_path):
         bad = tmp_path / "core.h"
-        bad.write_text("/* no state struct here */\n")
+        bad.write_text("/* no state struct here */\n", encoding="utf-8")
         with pytest.raises(ValueError, match="state_t"):
             parse_header(bad)
 
     def test_missing_step_raises(self, tmp_path):
         bad = tmp_path / "core.h"
-        bad.write_text("typedef struct {\n    float gain;\n} foo_state_t;\n")
+        bad.write_text(
+            "typedef struct {\n    float gain;\n} foo_state_t;\n",
+            encoding="utf-8",
+        )
         with pytest.raises(ValueError, match="step"):
             parse_header(bad)
 
@@ -238,7 +242,8 @@ class TestPhase3bParser:
     def test_property_getter_only(self, tmp_path):
         h = tmp_path / "comp_core.h"
         h.write_text(
-            _PROP_HEADER.format(field_type="double", field_name="alpha")
+            _PROP_HEADER.format(field_type="double", field_name="alpha"),
+            encoding="utf-8",
         )
         parsed = parse_header(h)
         # 'alpha' is a state field AND has a getter — state fields must be
@@ -251,7 +256,8 @@ class TestPhase3bParser:
             "typedef struct { float gain; } comp_state_t;\n"
             "size_t comp_get_sample_count(const comp_state_t *state);\n"
             "static inline float comp_step(const comp_state_t *state, float x) "
-            "{ return x; }\n"
+            "{ return x; }\n",
+            encoding="utf-8",
         )
         parsed = parse_header(h)
         # sample_count is not a state field → it becomes a read-only property.
@@ -266,7 +272,8 @@ class TestPhase3bParser:
             "double comp_get_smooth(const comp_state_t *state);\n"
             "void comp_set_smooth(comp_state_t *state, double val);\n"
             "static inline float comp_step(const comp_state_t *state, float x) "
-            "{ return x; }\n"
+            "{ return x; }\n",
+            encoding="utf-8",
         )
         parsed = parse_header(h)
         props = parsed["properties"]
@@ -276,7 +283,7 @@ class TestPhase3bParser:
 
     def test_custom_method_scalar_in_scalar_out(self, tmp_path):
         h = tmp_path / "foo_core.h"
-        h.write_text(_METHOD_HEADER)
+        h.write_text(_METHOD_HEADER, encoding="utf-8")
         parsed = parse_header(h)
         method_names = [m["name"] for m in parsed["methods"]]
         assert "scale" in method_names
@@ -287,14 +294,14 @@ class TestPhase3bParser:
 
     def test_custom_method_void_in(self, tmp_path):
         h = tmp_path / "foo_core.h"
-        h.write_text(_METHOD_HEADER)
+        h.write_text(_METHOD_HEADER, encoding="utf-8")
         parsed = parse_header(h)
         method_names = [m["name"] for m in parsed["methods"]]
         assert "offset" in method_names
 
     def test_lifecycle_verbs_excluded_from_methods(self, tmp_path):
         h = tmp_path / "foo_core.h"
-        h.write_text(_METHOD_HEADER)
+        h.write_text(_METHOD_HEADER, encoding="utf-8")
         parsed = parse_header(h)
         method_names = [m["name"] for m in parsed["methods"]]
         for excluded in ("create", "destroy", "reset", "step", "steps"):
@@ -302,7 +309,7 @@ class TestPhase3bParser:
 
     def test_variable_output_detection(self, tmp_path):
         h = tmp_path / "foo_core.h"
-        h.write_text(_METHOD_HEADER)
+        h.write_text(_METHOD_HEADER, encoding="utf-8")
         parsed = parse_header(h)
         method_names = [m["name"] for m in parsed["methods"]]
         # collect has a _max_out sibling → variable_output=True
@@ -314,7 +321,7 @@ class TestPhase3bParser:
 
     def test_opaque_state_forward_decl(self, tmp_path):
         h = tmp_path / "foo_core.h"
-        h.write_text(_OPAQUE_HEADER)
+        h.write_text(_OPAQUE_HEADER, encoding="utf-8")
         parsed = parse_header(h)
         assert parsed["is_opaque"] is True
         assert parsed["fields"] == []
@@ -322,7 +329,7 @@ class TestPhase3bParser:
 
     def test_opaque_step_still_parsed(self, tmp_path):
         h = tmp_path / "foo_core.h"
-        h.write_text(_OPAQUE_HEADER)
+        h.write_text(_OPAQUE_HEADER, encoding="utf-8")
         parsed = parse_header(h)
         assert parsed["arg_type"] == "float"
         assert parsed["return_type"] == "float"
@@ -333,7 +340,8 @@ class TestPhase3bParser:
             "typedef struct { float gain; } comp_state_t;\n"
             "comp_state_t *comp_create(float gain, float sample_rate);\n"
             "static inline float comp_step(const comp_state_t *state, float x) "
-            "{ return x; }\n"
+            "{ return x; }\n",
+            encoding="utf-8",
         )
         parsed = parse_header(h)
         # gain is a state field; sample_rate is not → init_param

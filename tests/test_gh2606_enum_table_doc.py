@@ -73,7 +73,10 @@ def _project(tmp_path: Path, *, module: bool, doc: str | None) -> Path:
     root = tmp_path / "proj"
     assert run_cli("new", "proj", cwd=tmp_path).returncode == 0
     manifest = root / "just-makeit.toml"
-    manifest.write_text(manifest.read_text() + _enum_rows(doc))
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + _enum_rows(doc),
+        encoding="utf-8",
+    )
     mod = ["--module", "m"] if module else []
     if module:
         assert run_cli("module", "m", cwd=root).returncode == 0
@@ -95,7 +98,7 @@ def _published(root: Path) -> dict[str, tuple[str, str]]:
     or ``""`` when the next line does not open one."""
     out: dict[str, tuple[str, str]] = {}
     for pyi in (root / "src").rglob("*.pyi"):
-        lines = pyi.read_text().splitlines() + [""]
+        lines = pyi.read_text(encoding="utf-8").splitlines() + [""]
         for i, line in enumerate(lines):
             m = _ANNOT.match(line)
             if not m:
@@ -141,12 +144,13 @@ def test_no_published_table_is_undocumented(tmp_path, module, doc):
 def test_the_doc_survives_apply_and_status(tmp_path):
     root = _project(tmp_path, module=False, doc=None)
     manifest = root / "just-makeit.toml"
-    text = manifest.read_text()
+    text = manifest.read_text(encoding="utf-8")
     manifest.write_text(
         text.replace(
             'values = ["idle", "run"]',
             f'values = ["idle", "run"]\ndoc = "{DOC}"',
-        )
+        ),
+        encoding="utf-8",
     )
     assert run_cli("apply", cwd=root).returncode == 0
     assert _published(root)["ENG_STATE"][1] == f'"""{DOC}"""'
@@ -187,7 +191,7 @@ HOSTILE = [
 def _attr_docs(pyi: Path) -> dict[str, str]:
     """``{name: docstring}`` for each module attribute and each class
     property in *pyi*, read by ``ast`` -- so the stub must parse."""
-    tree = ast.parse(pyi.read_text())
+    tree = ast.parse(pyi.read_text(encoding="utf-8"))
     out: dict[str, str] = {}
     body = list(tree.body)
     for i, node in enumerate(body):
@@ -221,10 +225,10 @@ def test_a_property_brief_that_would_end_the_literal_still_parses(
 ):
     root = _project(tmp_path, module=False, doc=None)
     hdr = root / "native" / "inc" / "proj" / "eng" / "eng_core.h"
-    src = hdr.read_text()
+    src = hdr.read_text(encoding="utf-8")
     old = "@brief Get current mode."
     assert src.count(old) == 1
-    hdr.write_text(src.replace(old, "@brief " + text))
+    hdr.write_text(src.replace(old, "@brief " + text), encoding="utf-8")
     assert run_cli("apply", cwd=root).returncode == 0
     docs = _attr_docs(root / "src" / "proj" / "eng.pyi")
     assert docs["Eng.mode"] == text.strip()
@@ -251,11 +255,13 @@ def test_a_class_brief_holding_a_triple_quote_still_parses(tmp_path):
     # create() `@brief` is its summary, above its Parameters section.
     root = _project(tmp_path, module=False, doc=None)
     hdr = root / "native" / "inc" / "proj" / "eng" / "eng_core.h"
-    src = hdr.read_text()
+    src = hdr.read_text(encoding="utf-8")
     old = "@brief Create a eng instance."
     assert src.count(old) == 1
-    hdr.write_text(src.replace(old, "@brief " + HOSTILE[0]))
+    hdr.write_text(src.replace(old, "@brief " + HOSTILE[0]), encoding="utf-8")
     assert run_cli("apply", cwd=root).returncode == 0
-    tree = ast.parse((root / "src" / "proj" / "eng.pyi").read_text())
+    tree = ast.parse(
+        (root / "src" / "proj" / "eng.pyi").read_text(encoding="utf-8")
+    )
     (cls,) = [n for n in tree.body if isinstance(n, ast.ClassDef)]
     assert (ast.get_docstring(cls) or "").startswith(HOSTILE[0])

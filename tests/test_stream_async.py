@@ -66,7 +66,7 @@ def _scaffold_async(root, monkeypatch, *, async_stream=True):
 class TestAsyncCodegen:
     def test_async_glue_and_slots(self, tmp_path, monkeypatch):
         root = _scaffold_async(tmp_path / "p", monkeypatch)
-        ext = (root / "native/src/osc/osc_ext.c").read_text()
+        ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
         assert "OscStreamIter_anext_blocking" in ext
         assert "run_in_executor" in ext
         assert "PyAsyncMethods OscStreamIter_as_async" in ext
@@ -80,7 +80,7 @@ class TestAsyncCodegen:
         cfg = C.load(root)
         assert C.is_async_stream(cfg, "osc") is True
         assert C.is_streamable(cfg, "osc") is True  # implied
-        pyi = (root / "src/proj/osc.pyi").read_text()
+        pyi = (root / "src/proj/osc.pyi").read_text(encoding="utf-8")
         assert (
             "from typing import AsyncIterator, Callable, Iterator, final"
             in pyi
@@ -92,11 +92,11 @@ class TestAsyncCodegen:
     def test_plain_streamable_has_no_async_glue(self, tmp_path, monkeypatch):
         # --streamable without --async-stream stays byte-clean of async code.
         root = _scaffold_async(tmp_path / "p", monkeypatch, async_stream=False)
-        ext = (root / "native/src/osc/osc_ext.c").read_text()
+        ext = (root / "native/src/osc/osc_ext.c").read_text(encoding="utf-8")
         assert "am_anext" not in ext
         assert "tp_as_async" not in ext
         assert "run_in_executor" not in ext
-        pyi = (root / "src/proj/osc.pyi").read_text()
+        pyi = (root / "src/proj/osc.pyi").read_text(encoding="utf-8")
         assert "AsyncIterator" not in pyi
         assert "__aiter__" not in pyi
 
@@ -106,7 +106,10 @@ class TestAsyncRuntime:
     def test_build_and_async_iterate(self, tmp_path, monkeypatch):
         root = _scaffold_async(tmp_path / "p", monkeypatch)
         core_h = root / INC_ROOT / "osc/osc_core.h"
-        core_h.write_text(core_h.read_text().replace(_STEP_STUB, _STEP_BODY))
+        core_h.write_text(
+            core_h.read_text(encoding="utf-8").replace(_STEP_STUB, _STEP_BODY),
+            encoding="utf-8",
+        )
         build = root / "build"
         cfg = subprocess.run(
             ["cmake", "-S", str(root), "-B", str(build)],

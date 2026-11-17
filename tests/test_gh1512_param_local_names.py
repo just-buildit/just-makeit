@@ -167,7 +167,7 @@ def _wrappers(root: Path):
     """Yield ``(function name, declared identifiers)`` for every generated
     wrapper that parses one of the sentinel params."""
     for src in sorted((root / "native" / "src").rglob("*_ext*.c")):
-        for m in _FUNC.finditer(src.read_text()):
+        for m in _FUNC.finditer(src.read_text(encoding="utf-8")):
             name, sig, body = m.groups()
             if f'"{_SCA}"' not in body and f'"{_ARR}"' not in body:
                 continue
@@ -343,9 +343,10 @@ def test_apply_refuses_the_same_declaration(project: Path):
     """A hand-written table reaches the same gate through the replay."""
     toml = project / "objects" / "w.toml"
     toml.write_text(
-        toml.read_text()
+        toml.read_text(encoding="utf-8")
         + '\n[[w.methods]]\nname = "m"\nreturn_type = "double"\n'
-        + '[[w.methods.params]]\nname = "kwds"\ntype = "double"\n'
+        + '[[w.methods.params]]\nname = "kwds"\ntype = "double"\n',
+        encoding="utf-8",
     )
     r = run_cli("apply", cwd=project)
     assert r.returncode == 1, r.stdout
@@ -397,7 +398,7 @@ def test_the_result_local_moves_when_a_param_is_y(project: Path):
         "double",
         cwd=project,
     )
-    ext = (project / "native/src/w/w_ext.c").read_text()
+    ext = (project / "native/src/w/w_ext.c").read_text(encoding="utf-8")
     body = ext[ext.index("\nW_m(") :]
     body = body[: body.index("\n}\n")]
     assert re.search(r"^ {4}double y = 0\.0;$", body, re.M), body

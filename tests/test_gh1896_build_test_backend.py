@@ -131,7 +131,9 @@ def _add_project_venv(proj: Path) -> Path:
     venv_bin = proj / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
     interp = venv_bin / "python"
-    interp.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    interp.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8"
+    )
     interp.chmod(0o755)
     return interp
 

@@ -111,7 +111,7 @@ class TestTheManifestFirstPath:
 
         r = run_cli("apply", cwd=proj)
         assert r.returncode == 0, r.stdout + r.stderr
-        ext = (proj / EXT).read_text()
+        ext = (proj / EXT).read_text(encoding="utf-8")
         # The dtype is built from the compiler's own layout, so these are
         # what prove the DECLARATION reached the generator -- not merely
         # that a file was written.
@@ -124,9 +124,10 @@ class TestTheManifestFirstPath:
         proj = _project_with_record(tmp_path)
         frag = proj / "objects" / "ring.toml"
         frag.write_text(
-            frag.read_text().replace(
+            frag.read_text(encoding="utf-8").replace(
                 'arg_type = "iq16_t[]"', 'arg_type = "nope_t[]"'
-            )
+            ),
+            encoding="utf-8",
         )
         r = run_cli("apply", cwd=proj)
         assert r.returncode == 1
@@ -143,10 +144,10 @@ class TestTheTwoFacesAgree:
         """
         proj = _project_with_record(tmp_path)
         assert run_cli("apply", cwd=proj).returncode == 0
-        from_cli = (proj / PYI).read_text()
+        from_cli = (proj / PYI).read_text(encoding="utf-8")
 
         (proj / PYI).unlink()
         assert run_cli("apply", cwd=proj).returncode == 0
-        from_apply = (proj / PYI).read_text()
+        from_apply = (proj / PYI).read_text(encoding="utf-8")
 
         assert from_cli == from_apply

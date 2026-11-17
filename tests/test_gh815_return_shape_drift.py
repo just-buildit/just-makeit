@@ -63,8 +63,8 @@ def project(tmp_path):
 def _apply(root, toml=None):
     if toml is not None:
         m = root / "just-makeit.toml"
-        base = m.read_text().split("\n[[reader.methods]]")[0]
-        m.write_text(base + toml)
+        base = m.read_text(encoding="utf-8").split("\n[[reader.methods]]")[0]
+        m.write_text(base + toml, encoding="utf-8")
     err = io.StringIO()
     with (
         contextlib.redirect_stdout(io.StringIO()),
@@ -88,7 +88,7 @@ class TestTheReportedDivergence:
     ):
         _apply(project, INT_METHOD)
         frag = _fragment(project)
-        assert "PyLong_FromLong" in frag.read_text()
+        assert "PyLong_FromLong" in frag.read_text(encoding="utf-8")
 
         warnings = _apply(project, STATUS_METHOD)
 
@@ -106,7 +106,7 @@ class TestTheReportedDivergence:
         """
 
         def _wrapper(root):
-            text = _fragment(root).read_text()
+            text = _fragment(root).read_text(encoding="utf-8")
             i = text.index("Reader_install(")
             return text[i : text.index("\n}", i)]
 
@@ -120,9 +120,13 @@ class TestTheReportedDivergence:
         """The two faces disagreeing is the actual defect."""
         _apply(project, INT_METHOD)
         _apply(project, STATUS_METHOD)
-        pyi = (project / "src" / "dsp" / "wfm" / "wfm.pyi").read_text()
+        pyi = (project / "src" / "dsp" / "wfm" / "wfm.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "def install(self) -> None:" in pyi
-        assert "PyLong_FromLong" in _fragment(project).read_text()
+        assert "PyLong_FromLong" in _fragment(project).read_text(
+            encoding="utf-8"
+        )
 
     def test_delete_and_reapply_clears_it(self, project):
         """The documented fix must actually work — and stay quiet after."""
@@ -150,7 +154,7 @@ class TestOnlyTheManifestDirection:
         channel."""
         _apply(project, INT_METHOD)
         frag = _fragment(project)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         hand = text.replace(
             "int y = reader_install(self->handle);",
             "int y = reader_install(self->handle);\n"
@@ -158,17 +162,18 @@ class TestOnlyTheManifestDirection:
             "return NULL; }",
         )
         assert hand != text, "sanity: the edit applied"
-        frag.write_text(hand)
+        frag.write_text(hand, encoding="utf-8")
         assert _apply(project) == []
 
     def test_an_unrelated_body_edit_is_not_drift(self, project):
         _apply(project, INT_METHOD)
         frag = _fragment(project)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         frag.write_text(
             text.replace(
                 "int y = reader_install", "int y = 2 * reader_install"
-            )
+            ),
+            encoding="utf-8",
         )
         assert _apply(project) == []
 
@@ -233,9 +238,11 @@ class TestBothAxesInOneReport:
         """gh-622's axis must keep working — this extends it, not replaces."""
         _apply(project, INT_METHOD)
         frag = _fragment(project)
-        text = frag.read_text()
+        text = frag.read_text(encoding="utf-8")
         # Narrow the row to METH_NOARGS-with-args, a convention change.
-        frag.write_text(text.replace("METH_NOARGS", "METH_VARARGS", 1))
+        frag.write_text(
+            text.replace("METH_NOARGS", "METH_VARARGS", 1), encoding="utf-8"
+        )
         warnings = _apply(project)
         assert warnings and "binding" in warnings[0]
 

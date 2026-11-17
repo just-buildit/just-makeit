@@ -145,7 +145,7 @@ TIERS = [
 
 def _run(tmp_path: Path, flags: list[str]) -> list[str]:
     src = tmp_path / "t.c"
-    src.write_text(PROGRAM)
+    src.write_text(PROGRAM, encoding="utf-8")
     exe = _cbuild.build(
         "exe",
         [src],

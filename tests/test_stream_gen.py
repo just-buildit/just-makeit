@@ -58,7 +58,7 @@ class TestStreamCodegen:
             "float",
             "--streamable",
         )
-        ext = (root / "native/src/wave/wave_ext.c").read_text()
+        ext = (root / "native/src/wave/wave_ext.c").read_text(encoding="utf-8")
         # The iterator type, its iternext, the type-ready guard, the method
         # table entry, and the tp_iter thunk all land.
         assert "} WaveStreamIter;" in ext
@@ -85,7 +85,7 @@ class TestStreamCodegen:
         assert C.is_streamable(cfg, "wave") is True
         # --stream-block implies --streamable and records the default.
         assert C.stream_block_default(cfg, "wave") == 256
-        ext = (root / "native/src/wave/wave_ext.c").read_text()
+        ext = (root / "native/src/wave/wave_ext.c").read_text(encoding="utf-8")
         assert "Py_ssize_t block = 256;" in ext
 
     def test_pyi_exposes_stream_and_iter(self, tmp_path, monkeypatch):
@@ -99,7 +99,7 @@ class TestStreamCodegen:
             "float",
             "--streamable",
         )
-        pyi = (root / "src/proj/wave.pyi").read_text()
+        pyi = (root / "src/proj/wave.pyi").read_text(encoding="utf-8")
         assert "from typing import Callable, Iterator, final" in pyi
         assert "def stream(" in pyi
         assert "on_block: Callable[[NDArray[np.float32]], None] | None" in pyi
@@ -122,7 +122,7 @@ class TestStreamCodegen:
             "--variable-output",
             "--streamable",
         )
-        ext = (root / "native/src/filt/filt_ext.c").read_text()
+        ext = (root / "native/src/filt/filt_ext.c").read_text(encoding="utf-8")
         assert 'PyObject_CallMethod(it->src, "run", "n", it->block)' in ext
 
     def test_non_streamable_emits_no_iterator(self, tmp_path, monkeypatch):
@@ -135,10 +135,10 @@ class TestStreamCodegen:
             "--return-type",
             "float",
         )
-        ext = (root / "native/src/wave/wave_ext.c").read_text()
+        ext = (root / "native/src/wave/wave_ext.c").read_text(encoding="utf-8")
         assert "StreamIter" not in ext
         assert "stream" not in ext
-        pyi = (root / "src/proj/wave.pyi").read_text()
+        pyi = (root / "src/proj/wave.pyi").read_text(encoding="utf-8")
         assert "from typing import final\n" in pyi
         assert "stream" not in pyi
 
@@ -160,13 +160,13 @@ class TestStreamSurvivesRegeneration:
             "--streamable",
         )
         _property.run(root, "wave", "gain", None, "float", True, field=True)
-        assert (
-            "Wave_stream" in (root / "native/src/wave/wave_ext.c").read_text()
-        )
+        assert "Wave_stream" in (
+            root / "native/src/wave/wave_ext.c"
+        ).read_text(encoding="utf-8")
         _apply.run(root)
-        assert (
-            "Wave_stream" in (root / "native/src/wave/wave_ext.c").read_text()
-        )
+        assert "Wave_stream" in (
+            root / "native/src/wave/wave_ext.c"
+        ).read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")

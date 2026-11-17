@@ -67,7 +67,10 @@ def _project(tmp_path, *, enumerators=True, documented=True):
         )
     if documented:
         h = root / INC_ROOT / "fir/fir_core.h"
-        h.write_text(h.read_text().replace("#endif", _ENUM_C, 1))
+        h.write_text(
+            h.read_text(encoding="utf-8").replace("#endif", _ENUM_C, 1),
+            encoding="utf-8",
+        )
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(io.StringIO()):
             apply_run(root)
@@ -75,7 +78,7 @@ def _project(tmp_path, *, enumerators=True, documented=True):
 
 
 def _pyi(root):
-    return (root / "src/p/fir.pyi").read_text()
+    return (root / "src/p/fir.pyi").read_text(encoding="utf-8")
 
 
 def test_the_choices_are_documented_under_the_parameter(tmp_path):
@@ -108,7 +111,7 @@ def test_both_faces_carry_it(tmp_path):
     a declared `create_error` is (gh-805 §F).
     """
     root = _project(tmp_path)
-    ext = (root / "native/src/fir/fir_ext.c").read_text()
+    ext = (root / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
     assert "Lowpass, cutoff at fs/4." in ext, (
         "the stub documents choices that help(Obj) does not"
     )

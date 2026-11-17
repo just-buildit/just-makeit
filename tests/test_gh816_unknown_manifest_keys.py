@@ -250,7 +250,8 @@ class TestWarningEmission:
 
         (tmp_path / C.FILENAME).write_text(
             '[project]\nname = "p"\n\n[meter]\narg_type = "float"\n\n'
-            '[[meter.methods]]\nname = "set_truth"\ncheck_return = true\n'
+            '[[meter.methods]]\nname = "set_truth"\ncheck_return = true\n',
+            encoding="utf-8",
         )
         K._SEEN.clear()
         C.load(tmp_path)
@@ -260,7 +261,8 @@ class TestWarningEmission:
         """gh-257's tolerance is unchanged — warning is not rejecting."""
         (tmp_path / C.FILENAME).write_text(
             '[project]\nname = "p"\n\n[meter]\narg_type = "float"\n\n'
-            '[[meter.methods]]\nname = "set_truth"\ncheck_return = true\n'
+            '[[meter.methods]]\nname = "set_truth"\ncheck_return = true\n',
+            encoding="utf-8",
         )
         cfg = C.load(tmp_path)
         C.save(tmp_path, cfg)

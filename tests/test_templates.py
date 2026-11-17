@@ -802,11 +802,11 @@ class TestInjectDeclsStaticInline:
 
     def test_static_inline_not_redeclared(self, tmp_path):
         path = tmp_path / "foo_core.h"
-        path.write_text(self._header("square_clip"))
+        path.write_text(self._header("square_clip"), encoding="utf-8")
         decls = ["int square_clip(int x);"]
         changed = _inject_decls_into_core_h(path, "foo", decls, family=None)
         assert not changed
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert text.count("square_clip") == 1
 
     def test_jm_forceinline_not_redeclared(self, tmp_path):
@@ -818,25 +818,26 @@ class TestInjectDeclsStaticInline:
             "#endif /* B_CORE_H */\n"
         )
         path = tmp_path / "b_core.h"
-        path.write_text(header)
+        path.write_text(header, encoding="utf-8")
         changed = _inject_decls_into_core_h(
             path, "b", ["float fast_mul(float a, float b);"], family=None
         )
         assert not changed
-        assert path.read_text().count("fast_mul") == 1
+        assert path.read_text(encoding="utf-8").count("fast_mul") == 1
 
     def test_new_extern_decl_still_injected(self, tmp_path):
         path = tmp_path / "c_core.h"
         path.write_text(
             "#ifndef C_H\n#define C_H\n"
             "static inline int existing(int x) { return x; }\n"
-            "#endif /* C_CORE_H */\n"
+            "#endif /* C_CORE_H */\n",
+            encoding="utf-8",
         )
         changed = _inject_decls_into_core_h(
             path, "c", ["void new_fn(int x);"], family=None
         )
         assert changed
-        assert "new_fn" in path.read_text()
+        assert "new_fn" in path.read_text(encoding="utf-8")
 
     def test_non_static_forceinline_not_redeclared(self, tmp_path):
         """gh-468: a module-level header-only function dropped `static` (e.g.
@@ -852,7 +853,7 @@ class TestInjectDeclsStaticInline:
             "#endif /* UTIL_CORE_H */\n"
         )
         path = tmp_path / "util_core.h"
-        path.write_text(header)
+        path.write_text(header, encoding="utf-8")
         changed = _inject_decls_into_core_h(
             path,
             "util",
@@ -860,7 +861,7 @@ class TestInjectDeclsStaticInline:
             family=None,
         )
         assert not changed
-        assert path.read_text().count("square_clip") == 1
+        assert path.read_text(encoding="utf-8").count("square_clip") == 1
 
     def test_non_static_inline_not_redeclared(self, tmp_path):
         """Same as above with the bare `inline` keyword instead of the
@@ -869,13 +870,14 @@ class TestInjectDeclsStaticInline:
         path.write_text(
             "#ifndef D_H\n#define D_H\n"
             "inline int\nbare_inline(int x)\n{\n    return x;\n}\n"
-            "#endif /* D_CORE_H */\n"
+            "#endif /* D_CORE_H */\n",
+            encoding="utf-8",
         )
         changed = _inject_decls_into_core_h(
             path, "d", ["int bare_inline(int x);"], family=None
         )
         assert not changed
-        assert path.read_text().count("bare_inline") == 1
+        assert path.read_text(encoding="utf-8").count("bare_inline") == 1
 
 
 class TestBuiltinResetPyiInStateCtx:

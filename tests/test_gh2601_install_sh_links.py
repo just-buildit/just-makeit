@@ -235,10 +235,18 @@ def test_a_name_jm_did_not_make_is_left_alone(tmp_path, kind):
         mine.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
     else:
         mine.symlink_to("/bin/true")
-    before = os.readlink(mine) if kind != "file" else mine.read_text()
+    before = (
+        os.readlink(mine)
+        if kind != "file"
+        else mine.read_text(encoding="utf-8")
+    )
     res = m.child(path=str(m.bin))
     assert res.returncode == 0, res.said
-    after = os.readlink(mine) if kind != "file" else mine.read_text()
+    after = (
+        os.readlink(mine)
+        if kind != "file"
+        else mine.read_text(encoding="utf-8")
+    )
     assert after == before, f"{mine} was replaced:\n{res.said}"
     assert f"{mine} " in res.said and "left as it is" in res.said, res.said
     assert "just-makeit is ready" not in res.said, res.said

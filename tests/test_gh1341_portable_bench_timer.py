@@ -229,7 +229,7 @@ class TestItStillBuildsAndMeasures:
 
         out = next(exe.parent.glob("bench_fir_core.json"), None)
         assert out, "the benchmark produced no JSON"
-        stats = json.loads(out.read_text())["benchmarks"][0]
+        stats = json.loads(out.read_text(encoding="utf-8"))["benchmarks"][0]
         assert stats["options"]["timer"] == "clock_gettime"
         s = stats["stats"]
         assert s["mean"] > 0, "the timer reported zero elapsed — it is dead"

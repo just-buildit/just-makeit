@@ -39,14 +39,16 @@ def _fake_build_tree(root: Path, rel: str) -> None:
     globs its own sources."""
     b = root / rel
     (b / "CMakeFiles" / "gain.dir").mkdir(parents=True)
-    (b / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\n")
+    (b / "CMakeCache.txt").write_text(
+        "CMAKE_BUILD_TYPE:STRING=Release\n", encoding="utf-8"
+    )
     for i in range(20):
         (b / "CMakeFiles" / "gain.dir" / f"f{i}.c.o").write_bytes(b"\0")
-    (b / "generated.h").write_text("#define X 1\n")
+    (b / "generated.h").write_text("#define X 1\n", encoding="utf-8")
     dep = b / "_deps" / "foo-src"
     dep.mkdir(parents=True)
     (dep / "CMakeLists.txt").write_text(
-        'file(GLOB SRCS "*.c")\nadd_library(foo ${SRCS})\n'
+        'file(GLOB SRCS "*.c")\nadd_library(foo ${SRCS})\n', encoding="utf-8"
     )
 
 

@@ -94,7 +94,9 @@ def test_an_input_byte_array_stays_widened(project, rel):
 
 def test_the_runtime_doc_says_the_same(project):
     """The generated ``__doc__`` is rendered from the same parameter list."""
-    ext = (project / "native" / "src" / "fld" / "fld_ext.c").read_text()
+    ext = (project / "native" / "src" / "fld" / "fld_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert '"o : npt.NDArray[np.uint8]\\n"' in ext
     assert f'"b : {_WIDE}\\n"' in ext
 

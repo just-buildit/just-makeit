@@ -160,26 +160,29 @@ def test_the_emitted_doc_compiles_and_help_shows_it(tmp_path):
     from just_makeit import _render as R
 
     (tmp_path / "clib_common.h").write_text(
-        R.render(R.CLIB_COMMON_H, {"package": "p", "PACKAGE": "P"})
+        R.render(R.CLIB_COMMON_H, {"package": "p", "PACKAGE": "P"}),
+        encoding="utf-8",
     )
     (tmp_path / "b").mkdir()
     (tmp_path / "b" / "b.h").write_text(
         "#ifndef B_H\n#define B_H\ntypedef struct b b_t;\n"
         "b_t *b_open(const char *path);\nvoid b_close(b_t *);\n"
-        "int b_drain(b_t *);\n#endif\n"
+        "int b_drain(b_t *);\n#endif\n",
+        encoding="utf-8",
     )
     (tmp_path / "b.c").write_text(
         '#include "b/b.h"\n#include <stdlib.h>\n'
         "struct b { int x; };\n"
         "b_t *b_open(const char *path) { (void)path; return calloc(1, sizeof(struct b)); }\n"
         "void b_close(b_t *p) { free(p); }\n"
-        "int b_drain(b_t *p) { (void)p; return 0; }\n"
+        "int b_drain(b_t *p) { (void)p; return 0; }\n",
+        encoding="utf-8",
     )
     src = tmp_path / "sink.c"
-    src.write_text(ext)
+    src.write_text(ext, encoding="utf-8")
     pkg = tmp_path / "p"
     pkg.mkdir()
-    (pkg / "__init__.py").write_text("")
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
     cbuild.build(
         "ext",
         [src, tmp_path / "b.c"],

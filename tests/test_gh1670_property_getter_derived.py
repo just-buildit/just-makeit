@@ -86,7 +86,7 @@ def tree(tmp_path_factory):
         cwd=root,
     )
     h = root / HEADER
-    text = h.read_text()
+    text = h.read_text(encoding="utf-8")
     at = text.rindex("#ifdef __cplusplus\n}")
     getter = (
         f"/** @brief {PROSE} */\n"
@@ -94,7 +94,7 @@ def tree(tmp_path_factory):
     )
     _textio.write_text(h, text[:at] + getter + text[at:])
     _ok("apply", cwd=root)
-    before = (root / STUB).read_text()
+    before = (root / STUB).read_text(encoding="utf-8")
     FX.set_prefix(root)
     refused = run_cli("apply", cwd=root)
     upgraded = run_cli("upgrade", cwd=root)
@@ -119,16 +119,16 @@ def test_the_upgrade_respells_the_getter_and_names_it(tree):
     root, _before, _refused, upgraded, _applied = tree
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     assert f"fir_get_num_taps\t{P}_fir_get_num_taps\n" in upgraded.stdout
-    header = (root / HEADER).read_text()
+    header = (root / HEADER).read_text(encoding="utf-8")
     assert f"size_t {P}_fir_get_num_taps(const {P}_fir_state_t" in header
 
 
 def test_the_prose_survives_on_both_faces(tree):
     root, _before, _refused, _upgraded, applied = tree
     assert applied.returncode == 0, applied.stdout + applied.stderr
-    stub = (root / STUB).read_text()
+    stub = (root / STUB).read_text(encoding="utf-8")
     assert _num_taps_doc(stub) == f'"""{PROSE}"""', stub
-    assert PROSE in (root / BINDING).read_text()
+    assert PROSE in (root / BINDING).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

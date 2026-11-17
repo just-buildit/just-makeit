@@ -83,8 +83,12 @@ def test_noise_floor_skips_subthreshold_benchmarks():
 def test_baseline_snapshot_picks_latest(tmp_path):
     hdir = tmp_path / "benchmarks" / "history"
     hdir.mkdir(parents=True)
-    (hdir / "20260101T000000Z.json").write_text(json.dumps(_report(fir=2e-3)))
-    (hdir / "20260201T000000Z.json").write_text(json.dumps(_report(fir=1e-3)))
+    (hdir / "20260101T000000Z.json").write_text(
+        json.dumps(_report(fir=2e-3)), encoding="utf-8"
+    )
+    (hdir / "20260201T000000Z.json").write_text(
+        json.dumps(_report(fir=1e-3)), encoding="utf-8"
+    )
     base = _baseline_snapshot(hdir, is_c=False)
     assert base["benchmarks"][0]["stats"]["mean"] == 1e-3  # the newer one
 
@@ -92,8 +96,12 @@ def test_baseline_snapshot_picks_latest(tmp_path):
 def test_baseline_snapshot_named_tag(tmp_path):
     hdir = tmp_path / "benchmarks" / "history"
     hdir.mkdir(parents=True)
-    (hdir / "v1.json").write_text(json.dumps(_report(fir=2e-3)))
-    (hdir / "v2.json").write_text(json.dumps(_report(fir=1e-3)))
+    (hdir / "v1.json").write_text(
+        json.dumps(_report(fir=2e-3)), encoding="utf-8"
+    )
+    (hdir / "v2.json").write_text(
+        json.dumps(_report(fir=1e-3)), encoding="utf-8"
+    )
     base = _baseline_snapshot(hdir, is_c=False, tag="v1")
     assert base["benchmarks"][0]["stats"]["mean"] == 2e-3
 
@@ -101,8 +109,12 @@ def test_baseline_snapshot_named_tag(tmp_path):
 def test_baseline_snapshot_separates_c_and_python(tmp_path):
     hdir = tmp_path / "benchmarks" / "history"
     hdir.mkdir(parents=True)
-    (hdir / "20260101T000000Z.json").write_text(json.dumps(_report(py=1e-3)))
-    (hdir / "20260101T000000Z-c.json").write_text(json.dumps(_report(c=1e-3)))
+    (hdir / "20260101T000000Z.json").write_text(
+        json.dumps(_report(py=1e-3)), encoding="utf-8"
+    )
+    (hdir / "20260101T000000Z-c.json").write_text(
+        json.dumps(_report(c=1e-3)), encoding="utf-8"
+    )
     py = _baseline_snapshot(hdir, is_c=False)
     cc = _baseline_snapshot(hdir, is_c=True)
     assert py["benchmarks"][0]["name"] == "py"

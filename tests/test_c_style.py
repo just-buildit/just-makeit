@@ -55,7 +55,7 @@ class TestConfigGetter:
         cfg = C.load(tmp_path / "p")
         assert C.c_formatting_on(cfg)
         assert C.c_format_command(cfg) == ["clang-format"]
-        text = (tmp_path / "p" / C.FILENAME).read_text()
+        text = (tmp_path / "p" / C.FILENAME).read_text(encoding="utf-8")
         assert 'c_format_command = ["clang-format"]' in text
 
     def test_the_command_alone_turns_formatting_on(self):
@@ -82,7 +82,7 @@ class TestConfigGetter:
         other list-valued key was written as `"['clang-format']"` and
         reloaded as a string."""
         new_run("p", tmp_path / "p", c_style="clang-format")
-        text = (tmp_path / "p" / C.FILENAME).read_text()
+        text = (tmp_path / "p" / C.FILENAME).read_text(encoding="utf-8")
         assert "\"['clang-format']\"" not in text
 
 
@@ -91,7 +91,7 @@ class TestNewScaffold:
         new_run("p", tmp_path / "p", c_style="clang-format")
         cf = tmp_path / "p" / ".clang-format"
         assert cf.exists()
-        assert "BasedOnStyle: GNU" in cf.read_text()
+        assert "BasedOnStyle: GNU" in cf.read_text(encoding="utf-8")
 
     def test_no_clang_format_without_opt_in(self, tmp_path):
         new_run("p", tmp_path / "p")
@@ -107,7 +107,9 @@ class TestNewScaffold:
             object_names=["widget"],
             c_style="clang-format",
         )
-        ext = (tmp_path / "p" / "native/src/widget/widget_ext.c").read_text()
+        ext = (tmp_path / "p" / "native/src/widget/widget_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Py_TYPE (self)" in ext  # GNU: space before the call paren
         assert "Py_TYPE(self)" not in ext
 
@@ -122,14 +124,18 @@ class TestNewScaffold:
             object_names=["widget"],
             c_style="clang-format",
         )
-        core = (tmp_path / "p" / "native/src/widget/widget_core.c").read_text()
+        core = (tmp_path / "p" / "native/src/widget/widget_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "widget_create(float gain)" in core  # jm's own 4-space style
         assert "widget_create (float gain)" not in core
 
     def test_default_keeps_jm_style(self, tmp_path):
         # Without c_style the canonical 4-space output is preserved verbatim.
         new_run("p", tmp_path / "p", object_names=["widget"])
-        core = (tmp_path / "p" / "native/src/widget/widget_core.c").read_text()
+        core = (tmp_path / "p" / "native/src/widget/widget_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "widget_create(float gain)" in core
         assert "widget_create (float gain)" not in core
 
@@ -141,11 +147,11 @@ class TestFormatProject:
         cfg = C.load(tmp_path / "p")
         before = (
             tmp_path / "p" / "native/src/widget/widget_core.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         _cfmt.format_project(tmp_path / "p", cfg)
-        after = (
-            tmp_path / "p" / "native/src/widget/widget_core.c"
-        ).read_text()
+        after = (tmp_path / "p" / "native/src/widget/widget_core.c").read_text(
+            encoding="utf-8"
+        )
         assert before == after
 
     def test_missing_binary_is_soft_failure(
@@ -203,7 +209,9 @@ class TestPerCommandHook:
             cwd=root,
         )
         assert r.returncode == 0, r.stderr
-        ext = (root / "native/src/widget/widget_ext.c").read_text()
+        ext = (root / "native/src/widget/widget_ext.c").read_text(
+            encoding="utf-8"
+        )
         # GNU style applied to the regenerated binding glue.
         assert "Py_TYPE (self)" in ext
 
@@ -223,7 +231,9 @@ class TestPerCommandHook:
         )
         assert r.returncode == 0, r.stderr
         assert "format" not in r.stdout
-        ext = (root / "native/src/widget/widget_ext.c").read_text()
+        ext = (root / "native/src/widget/widget_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Py_TYPE(self)" in ext
 
 
@@ -282,7 +292,7 @@ class TestConvergence:
                 f"convergence (gh-493)"
             )
         # The binding stayed house-styled through both reconciles.
-        assert "Py_TYPE (self)" in ext.read_text()
+        assert "Py_TYPE (self)" in ext.read_text(encoding="utf-8")
 
     @_cf_only
     def test_status_check_stays_clean_across_apply(self, tmp_path):

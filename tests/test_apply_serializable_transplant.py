@@ -60,12 +60,14 @@ def test_apply_injects_triplet_into_sacred_fragment(tmp_path):
     _silent(apply_run, tmp_path)
     frag = _frag(tmp_path)
     assert frag.exists()
-    assert "state_bytes" not in frag.read_text()  # sacred, no triplet yet
+    assert "state_bytes" not in frag.read_text(
+        encoding="utf-8"
+    )  # sacred, no triplet yet
 
     _make_serializable(tmp_path)
     _silent(apply_run, tmp_path)
 
-    text = frag.read_text()
+    text = frag.read_text(encoding="utf-8")
     # C wrappers calling the hand-written core triplet.
     assert "mix_state_bytes(self->handle)" in text
     assert "mix_get_state(self->handle, PyBytes_AS_STRING(_b))" in text
@@ -84,9 +86,9 @@ def test_transplant_is_idempotent(tmp_path):
     _silent(apply_run, tmp_path)
     _make_serializable(tmp_path)
     _silent(apply_run, tmp_path)
-    once = _frag(tmp_path).read_text()
+    once = _frag(tmp_path).read_text(encoding="utf-8")
     _silent(apply_run, tmp_path)
-    twice = _frag(tmp_path).read_text()
+    twice = _frag(tmp_path).read_text(encoding="utf-8")
     assert once == twice
     # exactly one triplet, not stacked copies (count the wrapper definition).
     assert once.count("Mix_state_bytes(MixObject") == 1
@@ -97,7 +99,7 @@ def test_transplant_preserves_hand_binding(tmp_path):
     _silent(apply_run, tmp_path)
     frag = _frag(tmp_path)
     # A hand-written, non-manifest method row + stub the manifest can't express.
-    orig = frag.read_text()
+    orig = frag.read_text(encoding="utf-8")
     t = orig.replace(
         "{NULL, NULL, 0, NULL}",
         '{"secret", (PyCFunction)Mix_secret, METH_NOARGS, "hand"},\n'
@@ -105,10 +107,10 @@ def test_transplant_preserves_hand_binding(tmp_path):
         1,
     )
     assert t != orig  # the replace landed
-    frag.write_text(t)
+    frag.write_text(t, encoding="utf-8")
     _make_serializable(tmp_path)
     _silent(apply_run, tmp_path)
-    out = frag.read_text()
+    out = frag.read_text(encoding="utf-8")
     assert '"secret"' in out  # hand binding survives
     assert '"state_bytes"' in out  # triplet injected alongside
 

@@ -71,7 +71,7 @@ def test_split_layout_routes_into_the_module_fragment(tmp_path: Path) -> None:
     _is_module_object(root, "m")
     # Written where [module.m] is declared; the manifest grows no copy of
     # it, which `load` would refuse as a module declared twice.
-    assert "extra" in (root / "modules" / "m.toml").read_text()
+    assert "extra" in (root / "modules" / "m.toml").read_text(encoding="utf-8")
     assert "module" not in C.load_manifest(root)
 
 

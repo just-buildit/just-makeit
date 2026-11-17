@@ -123,7 +123,10 @@ def _matrix(tmp: Path) -> Path:
     _cli("object", "biq", "--module", "dsp.filters", cwd=root)
     _cli("module", "rd", cwd=root)
     frag = root / "modules" / "rd.toml"
-    frag.write_text(frag.read_text() + 'package = "dsp"\n')
+    frag.write_text(
+        frag.read_text(encoding="utf-8") + 'package = "dsp"\n',
+        encoding="utf-8",
+    )
     _cli("object", "rdr", "--module", "rd", cwd=root)
     return root
 
@@ -132,7 +135,7 @@ def _tp_names(root: Path) -> set[str]:
     return {
         m
         for c in (root / "native" / "src").rglob("*.c")
-        for m in _TP_NAME.findall(c.read_text())
+        for m in _TP_NAME.findall(c.read_text(encoding="utf-8"))
     }
 
 
@@ -152,7 +155,7 @@ class TestEveryTpNameIsImportable:
         files = {
             c.name
             for c in (matrix / "native" / "src").rglob("*.c")
-            if _TP_NAME.search(c.read_text())
+            if _TP_NAME.search(c.read_text(encoding="utf-8"))
         }
         for want in (
             "gain_ext.c",
@@ -201,8 +204,12 @@ class TestARecordIsQualifiedTheSameWay:
         self._record(root, "gain")
         self._record(root, "fir")
         desc = re.compile(r"PyStructSequence_Desc \w+ = \{\s*\"([^\"]+)\"")
-        gain = (root / "native/src/gain/gain_ext.c").read_text()
-        fir = (root / "native/src/dsp/dsp_ext_fir.c").read_text()
+        gain = (root / "native/src/gain/gain_ext.c").read_text(
+            encoding="utf-8"
+        )
+        fir = (root / "native/src/dsp/dsp_ext_fir.c").read_text(
+            encoding="utf-8"
+        )
         assert desc.findall(gain) == ["demo.gain.ToneMetrics"]
         assert desc.findall(fir) == ["demo.dsp.ToneMetrics"]
 
@@ -272,7 +279,7 @@ def test_every_class_pickles(matrix):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     probe = matrix / "probe_gh1486.py"
-    probe.write_text(_PROBE.format(classes=CLASSES))
+    probe.write_text(_PROBE.format(classes=CLASSES), encoding="utf-8")
     out = subprocess.run(
         [sys.executable, str(probe)],
         capture_output=True,

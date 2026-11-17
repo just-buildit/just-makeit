@@ -55,23 +55,29 @@ def in_module_void(tmp_path):
 
 class TestCoreHeader:
     def test_step_takes_pointer_and_len(self, standalone_void):
-        h = (standalone_void / INC_ROOT / "proc/proc_core.h").read_text()
+        h = (standalone_void / INC_ROOT / "proc/proc_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "const float *x, size_t x_len" in h
 
     def test_step_returns_void(self, standalone_void):
-        h = (standalone_void / INC_ROOT / "proc/proc_core.h").read_text()
+        h = (standalone_void / INC_ROOT / "proc/proc_core.h").read_text(
+            encoding="utf-8"
+        )
         # step signature is "void\nproc_step(...)"
         assert re.search(r"\bvoid\b.*proc_step", h, re.DOTALL)
 
     def test_step_returns_scalar_when_explicit(self, standalone_scalar_return):
         h = (
             standalone_scalar_return / INC_ROOT / "peak/peak_core.h"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "const float *x, size_t x_len" in h
         assert re.search(r"\bfloat\b.*peak_step", h, re.DOTALL)
 
     def test_complex_elem_type(self, in_module_void):
-        h = (in_module_void / INC_ROOT / "sink/sink_core.h").read_text()
+        h = (in_module_void / INC_ROOT / "sink/sink_core.h").read_text(
+            encoding="utf-8"
+        )
         # gh-1246: jm emits the `_Complex` spelling, never the
         # <complex.h> `complex` macro (which does not exist in C++).
         assert "float _Complex" in h
@@ -83,7 +89,9 @@ class TestCoreHeader:
 
 class TestExtC:
     def _ext(self, root, comp):
-        return (root / f"native/src/{comp}/{comp}_ext.c").read_text()
+        return (root / f"native/src/{comp}/{comp}_ext.c").read_text(
+            encoding="utf-8"
+        )
 
     def test_array_from_otf_present(self, standalone_void):
         assert "jm_array_arg(x_obj, NPY_FLOAT," in self._ext(
@@ -115,7 +123,7 @@ class TestExtC:
         # NPY enum lives in the per-object fragment, not the aggregator.
         ext = (
             in_module_void / "native/src/filter/filter_ext_sink.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "NPY_CFLOAT" in ext or "NPY_COMPLEX64" in ext
 
 
@@ -124,13 +132,15 @@ class TestExtC:
 
 class TestPytestFile:
     def test_uses_np_array_as_test_val(self, standalone_void):
-        t = (standalone_void / "src/dsp/tests/test_proc.py").read_text()
+        t = (standalone_void / "src/dsp/tests/test_proc.py").read_text(
+            encoding="utf-8"
+        )
         assert "np.zeros" in t or "np.array" in t or "dtype=np.float32" in t
 
     def test_uses_np_array_scalar_return(self, standalone_scalar_return):
         t = (
             standalone_scalar_return / "src/dsp/tests/test_peak.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "np.zeros" in t or "dtype=np.float32" in t
 
 
@@ -139,15 +149,21 @@ class TestPytestFile:
 
 class TestPyi:
     def test_step_arg_is_ndarray(self, standalone_void):
-        pyi = (standalone_void / "src/dsp/proc.pyi").read_text()
+        pyi = (standalone_void / "src/dsp/proc.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "NDArray" in pyi
 
     def test_step_returns_none(self, standalone_void):
-        pyi = (standalone_void / "src/dsp/proc.pyi").read_text()
+        pyi = (standalone_void / "src/dsp/proc.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "-> None" in pyi
 
     def test_step_returns_float_when_explicit(self, standalone_scalar_return):
-        pyi = (standalone_scalar_return / "src/dsp/peak.pyi").read_text()
+        pyi = (standalone_scalar_return / "src/dsp/peak.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "NDArray" in pyi
 
 
@@ -242,7 +258,7 @@ class TestBlockwise:
         core_c = root / "native/src/filt/filt_core.c"
         assert core_h.exists() and core_c.exists()
         # steps() signature in header; no inline step()
-        h = core_h.read_text()
+        h = core_h.read_text(encoding="utf-8")
         assert "filt_steps" in h
         assert "static inline" not in h  # no inline step() body for blockwise
 
@@ -264,7 +280,7 @@ class TestBlockwise:
             arg_type="float _Complex[]",
             return_type="float _Complex[]",
         )
-        pyi = (root / "src/bw/xform.pyi").read_text()
+        pyi = (root / "src/bw/xform.pyi").read_text(encoding="utf-8")
         assert "NDArray" in pyi
         assert "steps" in pyi
         # No scalar step() in the pyi
@@ -280,7 +296,9 @@ class TestBlockwise:
             arg_type="float _Complex[]",
             return_type="float _Complex[]",
         )
-        h = (root / INC_ROOT / "xform/xform_core.h").read_text()
+        h = (root / INC_ROOT / "xform/xform_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "xform_steps" in h
         # No inline step() function body (the @code comment may reference step
         # but there must be no static inline definition)
@@ -296,7 +314,9 @@ class TestBlockwise:
             arg_type="float _Complex[]",
             return_type="float _Complex[]",
         )
-        ext = (root / "native/src/xform/xform_ext.c").read_text()
+        ext = (root / "native/src/xform/xform_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "PyArray_SimpleNew" in ext
         assert "Xform_steps" in ext
 
@@ -338,7 +358,9 @@ class TestBoolScalarType:
         root = tmp_path / "bp"
         new_run("bp", root)
         object_run(root, "flg", None, arg_type="bool", return_type="bool")
-        core = (root / INC_ROOT / "flg" / "flg_core.h").read_text()
+        core = (root / INC_ROOT / "flg" / "flg_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "bool" in core
 
 
@@ -368,15 +390,21 @@ class TestVariableOutputArrayArg:
         return root
 
     def test_header_decl_is_valid_c(self, proj):
-        h = (proj / INC_ROOT / "widget/widget_core.h").read_text()
+        h = (proj / INC_ROOT / "widget/widget_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "const float _Complex *in, size_t n_in" in h
         assert "[] *" not in h
 
     def test_ext_cast_is_valid_c(self, proj):
-        e = (proj / "native/src/widget/widget_ext.c").read_text()
+        e = (proj / "native/src/widget/widget_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "(const float _Complex *)PyArray_DATA" in e
         assert "[] *" not in e
 
     def test_bench_buffer_is_valid_c(self, proj):
-        b = (proj / "native/benchmarks/bench_widget_core.c").read_text()
+        b = (proj / "native/benchmarks/bench_widget_core.c").read_text(
+            encoding="utf-8"
+        )
         assert "[] *" not in b

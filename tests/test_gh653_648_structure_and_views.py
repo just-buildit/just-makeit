@@ -206,7 +206,9 @@ class TestViewClassDoc:
         text = (
             frag.read_text(encoding="utf-8")
             if frag
-            else (viewed / "native/src/acq/acq_ext.c").read_text()
+            else (viewed / "native/src/acq/acq_ext.c").read_text(
+                encoding="utf-8"
+            )
         )
         assert _VIEW_DOC in text
 

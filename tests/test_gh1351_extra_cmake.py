@@ -131,7 +131,9 @@ class TestTheHookSurvives:
 class TestADroppedStatementIsNamed:
     def _apply_with(self, root: Path, line: str) -> str:
         cml = root / "native" / "src" / "o" / "CMakeLists.txt"
-        cml.write_text(cml.read_text(encoding="utf-8") + line)
+        cml.write_text(
+            cml.read_text(encoding="utf-8") + line, encoding="utf-8"
+        )
         err = io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(err):
             apply_run(root)
@@ -178,12 +180,16 @@ class TestItReachesTheBuild:
             encoding="utf-8",
         )
         core = d / f"{obj}_core.c"
-        core.write_text(core.read_text(encoding="utf-8") + self.GUARD)
+        core.write_text(
+            core.read_text(encoding="utf-8") + self.GUARD, encoding="utf-8"
+        )
         r = _cli("test", cwd=root)
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
 
     def test_without_the_hook_it_does_not(self, tmp_path):
         root = _project(tmp_path)
         core = root / "native" / "src" / "o" / "o_core.c"
-        core.write_text(core.read_text(encoding="utf-8") + self.GUARD)
+        core.write_text(
+            core.read_text(encoding="utf-8") + self.GUARD, encoding="utf-8"
+        )
         assert _cli("test", cwd=root).returncode != 0

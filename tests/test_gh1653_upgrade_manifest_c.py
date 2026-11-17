@@ -48,7 +48,7 @@ def tree(tmp_path_factory):
 
 def test_the_manifests_c_is_respelled(tree):
     root, *_ = tree
-    frag = (root / "objects" / "mixer.toml").read_text()
+    frag = (root / "objects" / "mixer.toml").read_text(encoding="utf-8")
     assert f'type = "{P}_lo_state_t *"' in frag, frag
     assert f"{P}_lo_state_t *lo = {P}_lo_create(2.0f);" in frag, frag
     assert f"{P}_lo_destroy(state->osc);" in frag, frag
@@ -56,15 +56,19 @@ def test_the_manifests_c_is_respelled(tree):
 
 def test_a_comment_inside_an_impl_body_is_left_as_written(tree):
     root, *_ = tree
-    frag = (root / "objects" / "mixer.toml").read_text()
+    frag = (root / "objects" / "mixer.toml").read_text(encoding="utf-8")
     assert "/* lo_create: quoted in a comment */" in frag, frag
 
 
 def test_the_macro_stem_and_step_batch_are_respelled(tree):
     root, *_ = tree
-    c = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
+    c = (root / "native" / "src" / "lo" / "lo_core.c").read_text(
+        encoding="utf-8"
+    )
     assert f"JM_DEFINE_STEPS ({P}_lo, {P}_lo_state_t," in c, c
-    h = next((root / "native" / "inc").rglob("lo_core.h")).read_text()
+    h = next((root / "native" / "inc").rglob("lo_core.h")).read_text(
+        encoding="utf-8"
+    )
     assert f"{P}_lo_step_batch({P}_lo_state_t *state" in h, h
     assert FX.AUTHOR_MACRO in h, h
 
@@ -73,14 +77,18 @@ def test_the_bare_stem_moves_nowhere_else(tree):
     """`lo` alone is also a local, a file stem, a directory, a CMake target
     and a Python module: only the macro argument is the symbol stem."""
     root, *_ = tree
-    frag = (root / "objects" / "mixer.toml").read_text()
+    frag = (root / "objects" / "mixer.toml").read_text(encoding="utf-8")
     assert "obj->osc = lo;" in frag, frag
     assert (root / "native" / "src" / "lo" / "lo_core.c").is_file()
-    c = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
+    c = (root / "native" / "src" / "lo" / "lo_core.c").read_text(
+        encoding="utf-8"
+    )
     assert '#include "q/lo/lo_core.h"' in c, c
-    init = (root / "src" / "q" / "__init__.py").read_text()
+    init = (root / "src" / "q" / "__init__.py").read_text(encoding="utf-8")
     assert "from .lo import Lo" in init, init
-    cm = (root / "native" / "src" / "lo" / "CMakeLists.txt").read_text()
+    cm = (root / "native" / "src" / "lo" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
     assert "add_library(lo_core OBJECT" in cm, cm
 
 
@@ -161,12 +169,14 @@ def test_an_impl_file_function_follows_its_respelled_file(tmp_path):
     assert "objects/lo.toml" in refused.stderr, refused.stderr
     r = run_cli("upgrade", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
-    frag = (root / "objects" / "lo.toml").read_text()
+    frag = (root / "objects" / "lo.toml").read_text(encoding="utf-8")
     assert f'reset_impl_file = "legacy/old.c::{P}_lo_reset"' in frag, frag
     (root / "native" / "src" / "lo" / "lo_core.c").unlink()
     r = run_cli("apply", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
-    c = (root / "native" / "src" / "lo" / "lo_core.c").read_text()
+    c = (root / "native" / "src" / "lo" / "lo_core.c").read_text(
+        encoding="utf-8"
+    )
     assert "state->gain = 2.0f;" in c, c
     assert "respelled" not in run_cli("upgrade", cwd=root).stdout
 

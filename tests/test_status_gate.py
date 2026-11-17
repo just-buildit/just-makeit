@@ -28,7 +28,9 @@ def drifted(tmp_path):
     root = tmp_path / "proj"
     new_run("proj", root, object_names=["widget"])
     pyi = root / "src/proj/widget.pyi"
-    pyi.write_text(pyi.read_text() + "\n# hand drift\n", encoding="utf-8")
+    pyi.write_text(
+        pyi.read_text(encoding="utf-8") + "\n# hand drift\n", encoding="utf-8"
+    )
     return root
 
 

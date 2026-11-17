@@ -87,12 +87,13 @@ def camel_module(tmp_path):
         module_run(root, "resample", [])
     m = root / "just-makeit.toml"
     m.write_text(
-        m.read_text().replace(
+        m.read_text(encoding="utf-8").replace(
             "[module.resample]\nobjects = []",
             '[module.resample]\nobjects = ["HalfbandDecimator"]',
         )
         + '\n[HalfbandDecimator]\nmodule = "resample"\n'
-        'arg_type = "float _Complex"\nreturn_type = "float _Complex"\n'
+        'arg_type = "float _Complex"\nreturn_type = "float _Complex"\n',
+        encoding="utf-8",
     )
     with contextlib.redirect_stdout(io.StringIO()):
         apply_run(root)
@@ -105,12 +106,12 @@ class TestGeneratedProject:
     def test_stub_class_name(self, camel_module):
         pyi = (
             camel_module / "src" / "dsp" / "resample" / "resample.pyi"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert re.findall(r"^class (\w+)", pyi, re.M) == ["HalfbandDecimator"]
 
     def test_c_type_name(self, camel_module):
         c = "\n".join(
-            p.read_text()
+            p.read_text(encoding="utf-8")
             for p in (camel_module / "native" / "src").rglob("*.c")
         )
         assert "resample.HalfbandDecimator" in c
@@ -118,7 +119,7 @@ class TestGeneratedProject:
     def test_package_reexport(self, camel_module):
         init = (
             camel_module / "src" / "dsp" / "resample" / "__init__.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "import HalfbandDecimator" in init
         assert "Halfbanddecimator" not in init
 
@@ -127,5 +128,5 @@ class TestGeneratedProject:
         for p in camel_module.rglob("*"):
             if p.is_file() and p.suffix in {".py", ".pyi", ".c", ".h"}:
                 assert "Halfbanddecimator" not in p.read_text(
-                    errors="ignore"
+                    errors="ignore", encoding="utf-8"
                 ), p

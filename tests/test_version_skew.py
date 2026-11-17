@@ -85,8 +85,9 @@ def test_apply_stamps(tmp_path, monkeypatch):
     cfg = C.load(proj)
     (proj / "just-makeit.toml").write_text(
         (proj / "just-makeit.toml")
-        .read_text()
-        .replace(f'jm_version = "{cfg["project"]["jm_version"]}"\n', "")
+        .read_text(encoding="utf-8")
+        .replace(f'jm_version = "{cfg["project"]["jm_version"]}"\n', ""),
+        encoding="utf-8",
     )
     monkeypatch.setattr(C, "jm_cli_version", lambda: "0.16.0")
     _quiet(jm_apply, proj)
@@ -115,14 +116,19 @@ def test_stamp_insert_path(tmp_path, monkeypatch):
     proj = tmp_path / "p"
     _quiet(jm_new, "p", proj)
     mp = proj / "just-makeit.toml"
-    mp.write_text(re.sub(r'jm_version = ".*"\n', "", mp.read_text()))
+    mp.write_text(
+        re.sub(r'jm_version = ".*"\n', "", mp.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(C, "jm_cli_version", lambda: "0.16.0")
     assert C.stamp_jm_version(proj, C.load(proj)) == "0.16.0"
-    assert 'jm_version = "0.16.0"' in mp.read_text()
+    assert 'jm_version = "0.16.0"' in mp.read_text(encoding="utf-8")
 
 
 def test_stamp_no_project_section(tmp_path, monkeypatch):
-    (tmp_path / "just-makeit.toml").write_text("# no project section\n")
+    (tmp_path / "just-makeit.toml").write_text(
+        "# no project section\n", encoding="utf-8"
+    )
     monkeypatch.setattr(C, "jm_cli_version", lambda: "0.16.0")
     assert C.stamp_jm_version(tmp_path, {"project": {}}) is None
 
@@ -155,7 +161,12 @@ def test_status_warns_on_skew(tmp_path, capsys, monkeypatch):
 
     mp = proj / "just-makeit.toml"
     mp.write_text(
-        re.sub(r'jm_version = ".*"', 'jm_version = "9.9.9"', mp.read_text())
+        re.sub(
+            r'jm_version = ".*"',
+            'jm_version = "9.9.9"',
+            mp.read_text(encoding="utf-8"),
+        ),
+        encoding="utf-8",
     )
     monkeypatch.setattr(C, "jm_cli_version", lambda: "0.16.0")
     _status.run(proj)

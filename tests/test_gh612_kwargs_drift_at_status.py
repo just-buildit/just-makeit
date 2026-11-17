@@ -127,7 +127,7 @@ def _reorder_kwlist(frag: Path) -> None:
     hand-owned edit gh-422 made to `CorrDetector2D` in reverse. Both spellings
     compile and neither adds or drops a member, so nothing else jm checks can
     see it."""
-    text = frag.read_text()
+    text = frag.read_text(encoding="utf-8")
     m = re.search(r"static char \*kwlist\[\] = \{([^}]*)\};", text)
     assert m, "fixture must have a kwlist to reorder"
     names = re.findall(r'"([^"]+)"', m.group(1))
@@ -136,7 +136,7 @@ def _reorder_kwlist(frag: Path) -> None:
         f'"{names[0]}", "{names[1]}"', f'"{names[1]}", "{names[0]}"', 1
     )
     assert swapped != m.group(0), "the swap must actually change the text"
-    frag.write_text(text.replace(m.group(0), swapped, 1))
+    frag.write_text(text.replace(m.group(0), swapped, 1), encoding="utf-8")
 
 
 class TestTheWiring:

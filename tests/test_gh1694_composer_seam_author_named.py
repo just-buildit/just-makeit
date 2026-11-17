@@ -197,7 +197,9 @@ def _project(where: Path, seams: dict) -> Path:
         cwd=root,
     )
     toml = root / C.FILENAME
-    _textio.write_text(toml, toml.read_text() + COMPOSER_TOML.format(**seams))
+    _textio.write_text(
+        toml, toml.read_text(encoding="utf-8") + COMPOSER_TOML.format(**seams)
+    )
     _textio.write_text(
         root / "native" / "src" / "wfm" / "wfm_synth_bridge.c",
         BRIDGE_C.format(P=P, **seams),

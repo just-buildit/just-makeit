@@ -51,7 +51,7 @@ def test_a_cleanup_the_os_refuses_does_not_fail_the_example():
     with scratch_dir() as d:
         locked = Path(d) / "locked"
         locked.mkdir()
-        (locked / "tone.pyd").write_text("x")
+        (locked / "tone.pyd").write_text("x", encoding="utf-8")
         locked.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
         assert (locked / "tone.pyd").exists()

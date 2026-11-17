@@ -153,7 +153,7 @@ class TestTheGeneratedSurfaces:
             new_run("proj", root)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
-            (d / "telemetry.h").write_text(FOREIGN_H)
+            (d / "telemetry.h").write_text(FOREIGN_H, encoding="utf-8")
             object_run(
                 root,
                 "capture",
@@ -165,7 +165,9 @@ class TestTheGeneratedSurfaces:
 
     def test_the_stub_says_none_is_accepted(self, tmp_path):
         root = self._scaffold(tmp_path, nullable=True)
-        pyi = (root / "src" / "proj" / "capture.pyi").read_text()
+        pyi = (root / "src" / "proj" / "capture.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "def __init__(self, tlm: object | None) -> None" in pyi
         # No `= None`: accepting None and being omittable are different
         # axes, and a default the binding does not honour is gh-611.
@@ -173,7 +175,9 @@ class TestTheGeneratedSurfaces:
 
     def test_a_mandatory_handle_keeps_the_bare_annotation(self, tmp_path):
         root = self._scaffold(tmp_path, nullable=False)
-        pyi = (root / "src" / "proj" / "capture.pyi").read_text()
+        pyi = (root / "src" / "proj" / "capture.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "def __init__(self, tlm: object) -> None" in pyi
         # Scoped to the constructor line: `| None` legitimately appears
         # elsewhere in the stub (`__exit__`'s parameters), so a file-wide
@@ -184,12 +188,16 @@ class TestTheGeneratedSurfaces:
         # The author's `create()` has to handle NULL, and the header is where
         # they read its contract.
         root = self._scaffold(tmp_path, nullable=True)
-        h = (root / INC_ROOT / "capture" / "capture_core.h").read_text()
+        h = (root / INC_ROOT / "capture" / "capture_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "May be NULL (Python: None)." in h
 
     def test_a_mandatory_handle_does_not(self, tmp_path):
         root = self._scaffold(tmp_path, nullable=False)
-        h = (root / INC_ROOT / "capture" / "capture_core.h").read_text()
+        h = (root / INC_ROOT / "capture" / "capture_core.h").read_text(
+            encoding="utf-8"
+        )
         # The exact sentence, not the substring: `destroy()`'s own
         # `@param state  May be NULL.` is unrelated and always present.
         assert "May be NULL (Python: None)." not in h
@@ -200,7 +208,7 @@ class TestTheGeneratedSurfaces:
         root = self._scaffold(tmp_path, nullable=True)
         ext = (
             root / "native" / "src" / "capture" / "capture_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "if (tlm_obj != Py_None) {" in ext
         assert "is required and cannot be None" not in ext
         # The constructor's friendly type error survives the nullability —
@@ -211,7 +219,7 @@ class TestTheGeneratedSurfaces:
         root = self._scaffold(tmp_path, nullable=False)
         ext = (
             root / "native" / "src" / "capture" / "capture_ext.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert "tlm_obj == Py_None || tlm_obj == NULL" in ext
         assert "is required and cannot be None" in ext
 
@@ -226,7 +234,7 @@ class TestItCompilesAndRuns:
             new_run("proj", root)
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
-            (d / "telemetry.h").write_text(FOREIGN_H)
+            (d / "telemetry.h").write_text(FOREIGN_H, encoding="utf-8")
             object_run(
                 root, "telemetry", None, state_vars=[("magic", "size_t", "0")]
             )
@@ -247,7 +255,7 @@ class TestItCompilesAndRuns:
                 init_params=[_param(nullable=True, root=root)],
             )
         core = root / "native" / "src" / "capture" / "capture_core.c"
-        s = core.read_text()
+        s = core.read_text(encoding="utf-8")
         old = f"capture_create({PTR}tlm)\n{{"
         assert old in s, s[:1200]
         # `tlm ? … : 0` is the point: a NULL handle is observable as 0
@@ -256,7 +264,7 @@ class TestItCompilesAndRuns:
         s = s.replace(
             "    obj->seen = 0;", "    obj->seen = tlm ? tlm->magic : 0;", 1
         )
-        core.write_text(s)
+        core.write_text(s, encoding="utf-8")
         proc = subprocess.run(
             [
                 sys.executable,
@@ -357,7 +365,7 @@ class TestTheModuleFaceAgreesWithItsBinding:
             module_run(root, "m")
             d = root / INC_ROOT / "telemetry"
             d.mkdir(parents=True)
-            (d / "telemetry.h").write_text(FOREIGN_H)
+            (d / "telemetry.h").write_text(FOREIGN_H, encoding="utf-8")
             object_run(
                 root,
                 "capn",
@@ -374,10 +382,14 @@ class TestTheModuleFaceAgreesWithItsBinding:
 
     def _faces(self, root: Path) -> tuple[list[str], list[str]]:
         """(stub parameter names, kwlist names) — the pair that must agree."""
-        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text(
+            encoding="utf-8"
+        )
         sig = re.search(r"def __init__\(self, (.*?)\) -> None", pyi).group(1)
         stub = [p.split(":")[0].strip() for p in sig.split(", ")]
-        ext = (root / "native" / "src" / "m" / "m_ext_capn.c").read_text()
+        ext = (root / "native" / "src" / "m" / "m_ext_capn.c").read_text(
+            encoding="utf-8"
+        )
         kw = re.search(r"kwlist\[\] = \{(.*?), NULL\}", ext).group(1)
         return stub, [k.strip().strip('"') for k in kw.split(",")]
 
@@ -390,7 +402,9 @@ class TestTheModuleFaceAgreesWithItsBinding:
 
     def test_a_nullable_handle_is_positional_and_annotated(self, tmp_path):
         root = self._module_project(tmp_path, nullable=True)
-        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "def __init__(self, tlm: object | None, n: int = 1024)" in pyi
         # The binding keeps it before the `|`, so a default here would bless
         # a call that raises.
@@ -399,5 +413,7 @@ class TestTheModuleFaceAgreesWithItsBinding:
 
     def test_a_mandatory_handle_is_unchanged(self, tmp_path):
         root = self._module_project(tmp_path, nullable=False)
-        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text()
+        pyi = (root / "src" / "proj" / "m" / "m.pyi").read_text(
+            encoding="utf-8"
+        )
         assert "def __init__(self, tlm: object, n: int = 1024)" in pyi

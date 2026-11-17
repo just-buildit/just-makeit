@@ -172,9 +172,9 @@ class TestItGates:
         # Split-layout puts the section in whichever fragment owns it; find
         # it rather than assuming, so the fixture does not silently no-op.
         for toml in root.rglob("*.toml"):
-            text = toml.read_text()
+            text = toml.read_text(encoding="utf-8")
             if old in text:
-                toml.write_text(text.replace(old, new))
+                toml.write_text(text.replace(old, new), encoding="utf-8")
                 break
         else:
             raise AssertionError("the init_param block was not found")
@@ -202,11 +202,12 @@ class TestItGates:
     def _allowlist(self, project: Path) -> None:
         manifest = project / "just-makeit.toml"
         manifest.write_text(
-            manifest.read_text().replace(
+            manifest.read_text(encoding="utf-8").replace(
                 "[project]",
                 '[project]\nstatus_allow = ["native/src/m/m_ext_thing.c"]',
                 1,
-            )
+            ),
+            encoding="utf-8",
         )
 
     def test_status_allow_exempts_it(self, project):

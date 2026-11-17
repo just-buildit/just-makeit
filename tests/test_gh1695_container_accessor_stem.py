@@ -118,7 +118,9 @@ def _spelled(root: Path, name: str) -> "list[str]":
 
 
 def _placeholders(root: Path) -> int:
-    return (root / CORE_C).read_text().count("/* placeholder */")
+    return (
+        (root / CORE_C).read_text(encoding="utf-8").count("/* placeholder */")
+    )
 
 
 @pytest.fixture(scope="module")
@@ -187,14 +189,17 @@ def test_an_old_spelling_is_refused_not_scaffolded_beside(tmp_path):
     for rel in (HEADER, CORE_C):
         p = root / rel
         _textio.write_text(
-            p, p.read_text().replace(f"{P}_rc_num_stages", "rc_num_stages")
+            p,
+            p.read_text(encoding="utf-8").replace(
+                f"{P}_rc_num_stages", "rc_num_stages"
+            ),
         )
-    before = (root / CORE_C).read_text()
+    before = (root / CORE_C).read_text(encoding="utf-8")
     r = run_cli("apply", cwd=root)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "`rc_num_stages`" in r.stderr, r.stderr
     assert "scaffolded" not in r.stdout, r.stdout
-    assert (root / CORE_C).read_text() == before
+    assert (root / CORE_C).read_text(encoding="utf-8") == before
 
 
 def _cfg(props: list, views: "list | None" = None) -> dict:

@@ -224,7 +224,9 @@ class TestTheWelcomeIsDerivedNotWritten:
         """The docstring is a fallback, never an override."""
         ex = tmp_path / "widget_demo"
         ex.mkdir()
-        (ex / "test.py").write_text('"""End-to-end test: the docstring."""\n')
+        (ex / "test.py").write_text(
+            '"""End-to-end test: the docstring."""\n', encoding="utf-8"
+        )
         (ex / "README.md").write_text(
             "# widget_demo example\n\nThe README sentence.\n", encoding="utf-8"
         )

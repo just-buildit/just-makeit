@@ -115,18 +115,18 @@ def _implement(proj: Path) -> None:
     than a marker, so this is what "the kernel is real" means to jm.
     """
     core = proj / CORE
-    s = core.read_text()
+    s = core.read_text(encoding="utf-8")
     s = s.replace(
         "(void)state; (void)x; (void)x_len;", "state->gain += x_len;"
     )
     s = s.replace("(void)state; (void)n;", "if (n) state->gain += 1;")
-    core.write_text(s)
+    core.write_text(s, encoding="utf-8")
 
 
 class TestTheDeclaration:
     def test_a_scalar_element_is_declarable(self, tmp_path):
         proj = _pair_project(tmp_path)
-        frag = (proj / FRAG).read_text()
+        frag = (proj / FRAG).read_text(encoding="utf-8")
         assert 'name = "sample"' in frag
         assert 'type = "float _Complex"' in frag
 
@@ -157,7 +157,7 @@ class TestBothFacesReadOneDeclaration:
     def test_the_generated_c_uses_the_declared_width(self, tmp_path):
         """The artefact, not the manifest: one declaration, two prototypes."""
         proj = _pair_project(tmp_path)
-        hdr = INC.core_h(proj, "ring").read_text()
+        hdr = INC.core_h(proj, "ring").read_text(encoding="utf-8")
         assert "const float _Complex *x" in hdr  # the writer
         assert "float _Complex *ring_wait" in hdr  # the reader
         # Anchored on the DECLARATOR, not the bare word: the generated
@@ -169,14 +169,14 @@ class TestBothFacesReadOneDeclaration:
 
     def test_the_two_python_faces_agree(self, tmp_path):
         proj = _pair_project(tmp_path)
-        pyi = (proj / PYI).read_text()
+        pyi = (proj / PYI).read_text(encoding="utf-8")
         assert "def write(self, x: npt.NDArray[np.complex64]) -> bool:" in pyi
         assert "def wait(self, n: int) -> NDArray[np.complex64]:" in pyi
 
     def test_the_manifest_keeps_the_name_not_the_width(self, tmp_path):
         """Storing the width would restate the element per member."""
         proj = _pair_project(tmp_path)
-        frag = (proj / FRAG).read_text()
+        frag = (proj / FRAG).read_text(encoding="utf-8")
         assert 'arg_type = "sample[]"' in frag
         assert 'return_type = "sample"' in frag
 
@@ -184,10 +184,10 @@ class TestBothFacesReadOneDeclaration:
         """`apply` replays through `_method.run`, which resolves -- so this
         is where a resolution placed one layer too early shows up."""
         proj = _pair_project(tmp_path)
-        before = (proj / FRAG).read_text()
+        before = (proj / FRAG).read_text(encoding="utf-8")
         r = run_cli("apply", cwd=proj)
         assert r.returncode == 0, r.stdout + r.stderr
-        assert (proj / FRAG).read_text() == before
+        assert (proj / FRAG).read_text(encoding="utf-8") == before
 
     def test_script_replays_a_scalar_element(self, tmp_path):
         """`--type` has no `--field`, so a replay that emitted neither
@@ -203,7 +203,7 @@ class TestTheGeneratedInvariant:
     def test_the_input_face_is_generated(self, tmp_path):
         proj = _pair_project(tmp_path)
         assert run_cli("apply", cwd=proj).returncode == 0
-        inv = (proj / INV).read_text()
+        inv = (proj / INV).read_text(encoding="utf-8")
         assert "def test_write_speaks_sample():" in inv
         assert "np.complex64" in inv
         # The refusal half: a foreign width must not be reinterpreted.
@@ -216,7 +216,7 @@ class TestTheGeneratedInvariant:
         """
         proj = _pair_project(tmp_path)
         assert run_cli("apply", cwd=proj).returncode == 0
-        inv = (proj / INV).read_text()
+        inv = (proj / INV).read_text(encoding="utf-8")
         assert "round_trip" not in inv
         assert "skipif" not in inv
 
@@ -226,7 +226,7 @@ class TestTheGeneratedInvariant:
         _implement(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
 
-        inv = (proj / INV).read_text()
+        inv = (proj / INV).read_text(encoding="utf-8")
         assert "def test_sample_round_trip():" in inv
         assert "assert y.dtype == x.dtype" in inv
         assert "assert y.ndim == x.ndim" in inv
@@ -236,9 +236,9 @@ class TestTheGeneratedInvariant:
         """It must be REWRITTEN, or an existing project never gets it."""
         proj = _pair_project(tmp_path)
         assert run_cli("apply", cwd=proj).returncode == 0
-        (proj / INV).write_text("# clobbered\n")
+        (proj / INV).write_text("# clobbered\n", encoding="utf-8")
         assert run_cli("apply", cwd=proj).returncode == 0
-        assert "clobbered" not in (proj / INV).read_text()
+        assert "clobbered" not in (proj / INV).read_text(encoding="utf-8")
 
     def test_no_file_when_nothing_declares_a_pair(self, tmp_path):
         """A writer with no reader is not a contract, and an empty test

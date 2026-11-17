@@ -242,8 +242,10 @@ class TestGeneratedProject:
     """What the generators actually write into a project."""
 
     def test_runtime_block_matches_the_stub(self, project):
-        ext_c = (project / "native/src/fir/fir_ext.c").read_text()
-        pyi = (project / "src/demo/fir.pyi").read_text()
+        ext_c = (project / "native/src/fir/fir_ext.c").read_text(
+            encoding="utf-8"
+        )
+        pyi = (project / "src/demo/fir.pyi").read_text(encoding="utf-8")
         runtime = _runtime_doc(ext_c, "run")
         stub = _stub_doc(pyi, "run")
         # The runtime literal leads with a signature line the stub does not
@@ -255,7 +257,9 @@ class TestGeneratedProject:
     def test_authored_prose_reaches_the_runtime_face(self, project):
         """The regression itself: @param/@return text in the .so, not just
         the stub."""
-        ext_c = (project / "native/src/fir/fir_ext.c").read_text()
+        ext_c = (project / "native/src/fir/fir_ext.c").read_text(
+            encoding="utf-8"
+        )
         runtime = "\n".join(_runtime_doc(ext_c, "run"))
         assert "Input samples. Any length, including zero." in runtime
         assert "Linear scale applied after the convolution." in runtime
@@ -270,12 +274,16 @@ class TestGeneratedProject:
         block documenting `gain` -- the gh-657 failure shape. gh-2028 gave
         the shape its `out=`, which the line lists as well.
         """
-        ext_c = (project / "native/src/fir/fir_ext.c").read_text()
+        ext_c = (project / "native/src/fir/fir_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert _runtime_doc(ext_c, "run")[0].startswith("run(x, gain, out)")
 
     def test_authored_example_replaces_the_synthesised_demo(self, project):
         """One Examples section, not the author's plus jm's placeholder."""
-        ext_c = (project / "native/src/fir/fir_ext.c").read_text()
+        ext_c = (project / "native/src/fir/fir_ext.c").read_text(
+            encoding="utf-8"
+        )
         runtime = "\n".join(_runtime_doc(ext_c, "run"))
         assert ">>> out = obj.run(x, 1.0)" in runtime
         assert runtime.count("Examples") == 1
@@ -310,8 +318,8 @@ class TestGeneratedProject:
         )
         apply_run(root)
 
-        ext_c = (root / "native/src/win/win_ext.c").read_text()
-        pyi = (root / "src/demo/win/win.pyi").read_text()
+        ext_c = (root / "native/src/win/win_ext.c").read_text(encoding="utf-8")
+        pyi = (root / "src/demo/win/win.pyi").read_text(encoding="utf-8")
         runtime = _runtime_doc(ext_c, "kaiser_window")
         m = re.search(
             r'def kaiser_window\([^\n]*\n    """(.*?)\n    """', pyi, re.S
@@ -346,7 +354,7 @@ class TestGeneratedProject:
             # gh-1888: the window's length is `n`, and says so.
             out_type="double[n]",
         )
-        ext_c = (root / "native/src/win/win_ext.c").read_text()
+        ext_c = (root / "native/src/win/win_ext.c").read_text(encoding="utf-8")
         assert r"\"raised cosine\"" in ext_c, (
             "the manifest doc reached the C literal unescaped; a bare quote "
             "closes the string and the module does not compile"
@@ -368,7 +376,7 @@ class TestGeneratedProject:
             root, "fir", "run", None, "float[]", "float", True, [], params=[]
         )
         apply_run(root)
-        ext_c = (root / "native/src/fir/fir_ext.c").read_text()
+        ext_c = (root / "native/src/fir/fir_ext.c").read_text(encoding="utf-8")
         runtime = "\n".join(_runtime_doc(ext_c, "run"))
         assert ">>> from demo import Fir" in runtime
         # gh-869: the synthesised demo now carries its own `Examples` heading,
@@ -452,8 +460,8 @@ class TestBuiltinStep:
 
     def test_authored_header_reaches_both_faces(self, tmp_path):
         root = _detector(tmp_path, _BUILTIN_DOC)
-        ext_c = (root / "native/src/det/det_ext.c").read_text()
-        pyi = (root / "src/demo/det.pyi").read_text()
+        ext_c = (root / "native/src/det/det_ext.c").read_text(encoding="utf-8")
+        pyi = (root / "src/demo/det.pyi").read_text(encoding="utf-8")
         runtime = _runtime_doc(ext_c, "step")
         stub = _stub_doc(pyi, "step")
         # The runtime leads with a signature line the stub does not need.
@@ -466,7 +474,7 @@ class TestBuiltinStep:
         """The regression: @param/@return/body text in the .so, not just the
         stub."""
         root = _detector(tmp_path, _BUILTIN_DOC)
-        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        ext_c = (root / "native/src/det/det_ext.c").read_text(encoding="utf-8")
         rt = "\n".join(_runtime_doc(ext_c, "step"))
         assert "Parameters" in rt
         assert "Input looks, any length." in rt
@@ -475,7 +483,7 @@ class TestBuiltinStep:
 
     def test_authored_example_replaces_the_synthesised_demo(self, tmp_path):
         root = _detector(tmp_path, _BUILTIN_DOC)
-        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        ext_c = (root / "native/src/det/det_ext.c").read_text(encoding="utf-8")
         rt = "\n".join(_runtime_doc(ext_c, "step"))
         assert rt.count("Examples") == 1
         assert ">>> from demo import Det" not in rt
@@ -488,7 +496,7 @@ class TestBuiltinStep:
         and trip the manifest-drift gate on components nobody documented.
         """
         root = _detector(tmp_path, _BRIEF_ONLY)
-        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        ext_c = (root / "native/src/det/det_ext.c").read_text(encoding="utf-8")
         rt = "\n".join(_runtime_doc(ext_c, "step"))
         assert "Run a block of looks through the detector." in rt
         assert "Parameters" not in rt
@@ -496,7 +504,7 @@ class TestBuiltinStep:
 
     def test_undocumented_keeps_the_canned_text(self, tmp_path):
         root = _detector(tmp_path, None)
-        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        ext_c = (root / "native/src/det/det_ext.c").read_text(encoding="utf-8")
         rt = "\n".join(_runtime_doc(ext_c, "step"))
         assert "Process an input buffer and return a result." in rt
         assert "Parameters" not in rt
@@ -509,5 +517,5 @@ class TestBuiltinReset:
     def test_reset_runtime_is_escaped(self, tmp_path):
         """It was interpolated bare into `"{...}"` -- gh-633's class."""
         root = _detector(tmp_path, None)
-        ext_c = (root / "native/src/det/det_ext.c").read_text()
+        ext_c = (root / "native/src/det/det_ext.c").read_text(encoding="utf-8")
         assert '"Reset state to post-create defaults.\\n"' in ext_c

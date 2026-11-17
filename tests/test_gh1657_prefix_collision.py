@@ -173,7 +173,9 @@ def test_a_colliding_prefix_is_refused_and_nothing_is_written(
     )
     assert changed == [], changed
     # The respell this refusal pre-empts: the wrapper calling itself.
-    assert "return lo_scale (state, x);" in (root / rel).read_text()
+    assert "return lo_scale (state, x);" in (root / rel).read_text(
+        encoding="utf-8"
+    )
 
 
 #: The mirror (gh-1661): the author's OWN function under jm's OLD name, in a
@@ -219,7 +221,7 @@ def test_an_author_function_under_jms_old_name_is_refused(
     assert f"renames that to `{P}_lo_scale`" in r.stderr, r.stderr
     assert "make it `static` under another name" in r.stderr, r.stderr
     assert _unchanged(before, root) == []
-    assert "lo_scale (float x)" in (root / rel).read_text()
+    assert "lo_scale (float x)" in (root / rel).read_text(encoding="utf-8")
 
 
 def test_without_a_prefix_the_same_tree_is_clean(bare, tmp_path):
@@ -252,7 +254,7 @@ def _half_moved(bare: Path, where: Path) -> Path:
         frag,
         text.replace(f'type = "{P}_lo_state_t *"', 'type = "lo_state_t *"'),
     )
-    assert 'type = "lo_state_t *"' in frag.read_text()
+    assert 'type = "lo_state_t *"' in frag.read_text(encoding="utf-8")
     return root
 
 

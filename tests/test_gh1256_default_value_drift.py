@@ -175,9 +175,9 @@ class TestItGates:
         old = 'name = "cn0"\ntype = "double"\ndefault = "50.0"'
         new = 'name = "cn0"\ntype = "double"\ndefault = "0.0"'
         for toml in root.rglob("*.toml"):
-            text = toml.read_text()
+            text = toml.read_text(encoding="utf-8")
             if old in text:
-                toml.write_text(text.replace(old, new))
+                toml.write_text(text.replace(old, new), encoding="utf-8")
                 break
         else:
             raise AssertionError("the init_param block was not found")
@@ -207,4 +207,4 @@ class TestItGates:
         the constructor's own seeded default did not."""
         self._retune_the_default(project)
         frag = project / "native" / "src" / "m" / "m_ext_thing.c"
-        assert "cn0 = 50.0" in frag.read_text()
+        assert "cn0 = 50.0" in frag.read_text(encoding="utf-8")

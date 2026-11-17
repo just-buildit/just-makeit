@@ -53,7 +53,7 @@ def proj(tmp_path):
 
 class TestPassCapacity:
     def test_header_decl_has_capacity(self, proj):
-        h = (proj / INC_ROOT / "ddc/ddc_core.h").read_text()
+        h = (proj / INC_ROOT / "ddc/ddc_core.h").read_text(encoding="utf-8")
         assert (
             "size_t ddc_execute(ddc_state_t *state,"
             " const float _Complex *x, size_t x_len,"
@@ -61,12 +61,12 @@ class TestPassCapacity:
         )
 
     def test_core_c_stub_has_capacity(self, proj):
-        c = (proj / "native/src/ddc/ddc_core.c").read_text()
+        c = (proj / "native/src/ddc/ddc_core.c").read_text(encoding="utf-8")
         assert "float _Complex *out, size_t max_out)" in c
         assert "(void)max_out;" in c
 
     def test_ext_call_passes_capacity(self, proj):
-        e = (proj / "native/src/ddc/ddc_ext.c").read_text()
+        e = (proj / "native/src/ddc/ddc_ext.c").read_text(encoding="utf-8")
         # gh-604: the capacity forwarded is the per-call allocation (_cap),
         # not a struct field — the reuse buffer and its _buf_cap are gone.
         assert "_d0, _cap)" in e
@@ -93,9 +93,13 @@ class TestPassCapacity:
     def test_apply_is_idempotent(self, proj):
         """A 5-arg header from pass_capacity matches what apply generates, so
         a second apply must not re-inject a conflicting 4-arg prototype."""
-        h_before = (proj / INC_ROOT / "ddc/ddc_core.h").read_text()
+        h_before = (proj / INC_ROOT / "ddc/ddc_core.h").read_text(
+            encoding="utf-8"
+        )
         apply_run(proj)
-        h_after = (proj / INC_ROOT / "ddc/ddc_core.h").read_text()
+        h_after = (proj / INC_ROOT / "ddc/ddc_core.h").read_text(
+            encoding="utf-8"
+        )
         assert h_before == h_after
         # exactly one declaration of ddc_execute (no duplicate)
         assert h_after.count("size_t ddc_execute(ddc_state_t *state,") == 1

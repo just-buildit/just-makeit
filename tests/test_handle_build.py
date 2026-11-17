@@ -365,13 +365,14 @@ def _compile_import(
     name must match (not an arbitrary alias)."""
     inc = tmp / INC_ROOT / mod_name
     inc.mkdir(parents=True, exist_ok=True)
-    (inc / f"{mod_name}.h").write_text(header_src)
+    (inc / f"{mod_name}.h").write_text(header_src, encoding="utf-8")
     backing_c = tmp / "native" / "src" / mod_name / f"{mod_name}.c"
     backing_c.write_text(
         backing_src.replace(
             f'#include "{mod_name}/',
             f'#include "{INC.include(mod_name, tmp)}/',
-        )
+        ),
+        encoding="utf-8",
     )
     ext_c = tmp / "native" / "src" / mod_name / f"{mod_name}_ext.c"
     so = cbuild.build(

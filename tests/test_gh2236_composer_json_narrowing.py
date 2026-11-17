@@ -287,7 +287,9 @@ def test_a_value_the_field_cannot_hold_is_refused(tmp_path, monkeypatch):
     C.save(proj, cfg)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
-    ext = (proj / "native" / "src" / "mix" / "mix_ext.c").read_text()
+    ext = (proj / "native" / "src" / "mix" / "mix_ext.c").read_text(
+        encoding="utf-8"
+    )
     assert "_json_ull(" in ext and "_json_ll(" in ext, "not on the wide path"
 
     # Warning-clean, as a downstream building with -Werror needs.

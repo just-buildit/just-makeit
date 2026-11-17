@@ -151,9 +151,11 @@ BASELINE: "dict[str, list[str]]" = {}
 
 def test_the_fixture_rendered_every_module(project):
     for name in ("ring", "ticks", "flaky", "wide"):
-        text = (project / "native/src" / name / f"{name}_ext.c").read_text()
+        text = (project / "native/src" / name / f"{name}_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "closed" in text, name
-    wide = (project / "native/src/wide/wide_ext.c").read_text()
+    wide = (project / "native/src/wide/wide_ext.c").read_text(encoding="utf-8")
     for fn in ("Wide_render", "Wide_blob", "Wide_readn", "Wide_feed"):
         assert fn in wide, fn
 

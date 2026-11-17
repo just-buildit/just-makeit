@@ -85,19 +85,23 @@ class TestDocAddedToAnExistingModule:
 
     def test_doc_reaches_the_package_init(self, tmp_path):
         root = _project(tmp_path)
-        assert not _init_py(root).read_text().startswith('"""')
+        assert not _init_py(root).read_text(encoding="utf-8").startswith('"""')
         _set_doc(root, DOC)
         apply_run(root)
-        assert _init_py(root).read_text().startswith(f'"""{DOC}"""')
+        assert (
+            _init_py(root)
+            .read_text(encoding="utf-8")
+            .startswith(f'"""{DOC}"""')
+        )
 
     def test_apply_is_idempotent(self, tmp_path):
         """Two applies must agree, or the drift gate never settles."""
         root = _project(tmp_path)
         _set_doc(root, DOC)
         apply_run(root)
-        once = _init_py(root).read_text()
+        once = _init_py(root).read_text(encoding="utf-8")
         apply_run(root)
-        assert _init_py(root).read_text() == once
+        assert _init_py(root).read_text(encoding="utf-8") == once
         assert once.count('"""') == 2, "a second docstring was stacked on"
 
     def test_status_check_is_clean_after_apply(self, tmp_path):
@@ -114,7 +118,7 @@ class TestDocAddedToAnExistingModule:
         apply_run(root)
         _set_doc(root, "Rewritten.")
         apply_run(root)
-        text = _init_py(root).read_text()
+        text = _init_py(root).read_text(encoding="utf-8")
         assert text.startswith('"""Rewritten."""')
         assert DOC not in text
 
@@ -123,11 +127,12 @@ class TestDocAddedToAnExistingModule:
         root = _project(tmp_path)
         p = _init_py(root)
         p.write_text(
-            p.read_text() + "\n\nclass Wrapper:\n    pass\n", encoding="utf-8"
+            p.read_text(encoding="utf-8") + "\n\nclass Wrapper:\n    pass\n",
+            encoding="utf-8",
         )
         _set_doc(root, DOC)
         apply_run(root)
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         assert text.startswith(f'"""{DOC}"""')
         assert "class Wrapper:" in text
         assert '__all__ = ["Fir"]' in text
@@ -139,14 +144,16 @@ class TestUndeclaredDoc:
     def test_a_hand_written_docstring_is_not_stripped(self, tmp_path):
         root = _project(tmp_path)
         p = _init_py(root)
-        p.write_text('"""Mine, by hand."""\n\n' + p.read_text(), "utf-8")
+        p.write_text(
+            '"""Mine, by hand."""\n\n' + p.read_text(encoding="utf-8"), "utf-8"
+        )
         apply_run(root)
-        assert p.read_text().startswith('"""Mine, by hand."""')
+        assert p.read_text(encoding="utf-8").startswith('"""Mine, by hand."""')
 
     def test_no_docstring_stays_absent(self, tmp_path):
         root = _project(tmp_path)
         apply_run(root)
-        assert not _init_py(root).read_text().startswith('"""')
+        assert not _init_py(root).read_text(encoding="utf-8").startswith('"""')
 
 
 class TestFreshScaffold:
@@ -154,12 +161,20 @@ class TestFreshScaffold:
 
     def test_doc_at_creation_reaches_the_package(self, tmp_path):
         root = _project(tmp_path, doc=DOC)
-        assert _init_py(root).read_text().startswith(f'"""{DOC}"""')
+        assert (
+            _init_py(root)
+            .read_text(encoding="utf-8")
+            .startswith(f'"""{DOC}"""')
+        )
 
     def test_and_survives_a_later_apply(self, tmp_path):
         root = _project(tmp_path, doc=DOC)
         apply_run(root)
-        assert _init_py(root).read_text().startswith(f'"""{DOC}"""')
+        assert (
+            _init_py(root)
+            .read_text(encoding="utf-8")
+            .startswith(f'"""{DOC}"""')
+        )
 
 
 @pytest.mark.parametrize(
@@ -180,5 +195,5 @@ def test_awkward_prose_still_parses(tmp_path, doc):
     root = _project(tmp_path)
     _set_doc(root, doc.replace("\\", "\\\\").replace('"', '\\"'))
     apply_run(root)
-    text = _init_py(root).read_text()
+    text = _init_py(root).read_text(encoding="utf-8")
     compile(text, "__init__.py", "exec")

@@ -39,7 +39,7 @@ def split_project(tmp_path):
     root = tmp_path / "proj"
     new_run("proj", root)
     fragment = tmp_path / "agc.toml"
-    fragment.write_text(_AGC_FRAGMENT)
+    fragment.write_text(_AGC_FRAGMENT, encoding="utf-8")
     apply_run(root, fragment=fragment)
     return root
 

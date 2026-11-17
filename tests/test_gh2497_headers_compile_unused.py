@@ -82,7 +82,7 @@ def test_each_header_compiles_with_nothing_called(
     for hdr in _headers(project):
         tu = tmp_path / "tu.c"
         rel = hdr.relative_to(project).as_posix()
-        tu.write_text(f'#include "{hdr.name}"\n')
+        tu.write_text(f'#include "{hdr.name}"\n', encoding="utf-8")
         r = cbuild.build(
             "obj",
             [tu],

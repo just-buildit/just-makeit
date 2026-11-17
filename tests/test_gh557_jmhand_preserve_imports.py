@@ -139,9 +139,10 @@ class TestBounded:
         )
         # remove the empty line the "" import left
         pyi.write_text(
-            pyi.read_text().replace(
+            pyi.read_text(encoding="utf-8").replace(
                 "from typing import final\n\n", "from typing import final\n"
-            )
+            ),
+            encoding="utf-8",
         )
         apply_run(dest)
         after = pyi.read_text(encoding="utf-8")

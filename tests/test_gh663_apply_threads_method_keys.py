@@ -77,7 +77,9 @@ class TestApplyRoundTrip:
         frag = root / "native" / "src" / "delay" / "delay_ext.c"
 
         # The CLI path has always worked.
-        assert "(Py_ssize_t)(state->num_taps)" in frag.read_text()
+        assert "(Py_ssize_t)(state->num_taps)" in frag.read_text(
+            encoding="utf-8"
+        )
 
         # Regenerating from the manifest is the flow that lost it.
         frag.unlink()
@@ -92,7 +94,7 @@ class TestApplyRoundTrip:
         frag = root / "native" / "src" / "delay" / "delay_ext.c"
         frag.unlink()
         _apply.run(root)
-        assert "Py_ssize_t n = 1;" in frag.read_text()
+        assert "Py_ssize_t n = 1;" in frag.read_text(encoding="utf-8")
 
 
 class TestReplayForwardsEveryKnownKey:

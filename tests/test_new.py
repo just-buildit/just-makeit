@@ -625,7 +625,7 @@ class TestNewValidation:
     def test_nonempty_dest_fails(self, tmp_path):
         dest = tmp_path / "gain"
         dest.mkdir()
-        (dest / "existing.txt").write_text("data")
+        (dest / "existing.txt").write_text("data", encoding="utf-8")
         with pytest.raises(SystemExit):
             run("gain", dest, c_prefix=None)
 

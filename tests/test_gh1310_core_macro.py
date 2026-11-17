@@ -161,7 +161,7 @@ def _invocations(text: str) -> "list[str]":
 @pytest.mark.parametrize("module", [True, False], ids=["module", "standalone"])
 def test_the_header_declares_and_never_defines(tmp_path, module):
     root = _project(tmp_path, module=module)
-    text = _header(root).read_text()
+    text = _header(root).read_text(encoding="utf-8")
     # An independent oracle for "no body": a function body is the only `{`
     # that follows a `)`. The struct's `{` follows `struct`.
     assert not re.search(r"\)\s*\{", text), text
@@ -179,7 +179,7 @@ def test_the_header_declares_and_never_defines(tmp_path, module):
 def test_each_declaration_keeps_its_doc(tmp_path):
     """The point of declarations over the macro alone: Doxygen and the
     derived Python docstrings read them."""
-    text = _header(_project(tmp_path)).read_text()
+    text = _header(_project(tmp_path)).read_text(encoding="utf-8")
     assert re.search(
         r"\* @brief Process one input sample\.[^/]*\*/\s*\n"
         r"static inline int16_t f32_to_i16_step\(",
@@ -189,12 +189,12 @@ def test_each_declaration_keeps_its_doc(tmp_path):
 
 def test_a_second_apply_changes_nothing(tmp_path):
     root = _project(tmp_path)
-    before = _header(root).read_text()
+    before = _header(root).read_text(encoding="utf-8")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         apply_run(root)
     assert "nothing to do" in out.getvalue()
-    assert _header(root).read_text() == before
+    assert _header(root).read_text(encoding="utf-8") == before
     assert _quiet(_status.run, root, check=True) == 0
 
 
@@ -214,7 +214,7 @@ def test_a_changed_arg_is_drift_and_apply_rewrites_the_line(tmp_path, module):
     _set_sat(root, "32767.0f", "16383.0f")
     assert _quiet(_status.run, root, check=True) != 0
     _quiet(apply_run, root)
-    text = _header(root).read_text()
+    text = _header(root).read_text(encoding="utf-8")
     assert _invocations(text) == [
         "DECLARE_F32_TO_INT (f32_to_i16, int16_t, 16383.0f)"
     ]
@@ -228,11 +228,13 @@ def test_a_changed_type_reaches_the_prototypes(tmp_path):
     root = _project(tmp_path)
     toml = root / C.FILENAME
     toml.write_text(
-        toml.read_text().replace('elem = "int16_t"', 'elem = "int32_t"'),
+        toml.read_text(encoding="utf-8").replace(
+            'elem = "int16_t"', 'elem = "int32_t"'
+        ),
         "utf-8",
     )
     _quiet(apply_run, root)
-    text = _header(root).read_text()
+    text = _header(root).read_text(encoding="utf-8")
     assert "static inline int32_t f32_to_i16_step(" in text
     assert "int32_t *output" in text
     assert "int16_t f32_to_i16_step(" not in text
@@ -243,24 +245,30 @@ def test_a_removed_line_comes_back(tmp_path):
     h = _header(root)
     h.write_text(
         "\n".join(
-            ln for ln in h.read_text().splitlines() if not _invocations(ln)
+            ln
+            for ln in h.read_text(encoding="utf-8").splitlines()
+            if not _invocations(ln)
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
     _quiet(apply_run, root)
-    assert len(_invocations(h.read_text())) == 1
+    assert len(_invocations(h.read_text(encoding="utf-8"))) == 1
 
 
 def test_an_invocation_in_a_comment_is_not_the_line(tmp_path):
     """`@code` examples show the macro; the one jm keeps is in code."""
     root = _project(tmp_path)
     h = _header(root)
-    text = h.read_text()
+    text = h.read_text(encoding="utf-8")
     doc = "/*\nDECLARE_F32_TO_INT (example, int16_t, 1.0f)\n*/\n"
-    h.write_text(text.replace("typedef struct", doc + "typedef struct", 1))
+    h.write_text(
+        text.replace("typedef struct", doc + "typedef struct", 1),
+        encoding="utf-8",
+    )
     _set_sat(root, "32767.0f", "16383.0f")
     _quiet(apply_run, root)
-    after = h.read_text()
+    after = h.read_text(encoding="utf-8")
     assert "DECLARE_F32_TO_INT (example, int16_t, 1.0f)" in after
     assert "DECLARE_F32_TO_INT (f32_to_i16, int16_t, 16383.0f)" in after
 
@@ -268,14 +276,17 @@ def test_an_invocation_in_a_comment_is_not_the_line(tmp_path):
 def test_two_invocations_are_left_alone_and_reported(tmp_path):
     root = _project(tmp_path)
     h = _header(root)
-    line = _invocations(h.read_text())[0]
-    h.write_text(h.read_text().replace(line, f"{line}\n{line}"))
+    line = _invocations(h.read_text(encoding="utf-8"))[0]
+    h.write_text(
+        h.read_text(encoding="utf-8").replace(line, f"{line}\n{line}"),
+        encoding="utf-8",
+    )
     _set_sat(root, "32767.0f", "16383.0f")
     err = io.StringIO()
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(err):
             apply_run(root)
-    assert _invocations(h.read_text()) == [line, line]
+    assert _invocations(h.read_text(encoding="utf-8")) == [line, line]
     assert "invokes DECLARE_F32_TO_INT 2 times" in err.getvalue()
 
 
@@ -289,7 +300,7 @@ def test_a_member_the_template_gains_gets_a_declaration_only(tmp_path):
     root = _project(tmp_path)
     toml = root / C.FILENAME
     toml.write_text(
-        toml.read_text().replace(
+        toml.read_text(encoding="utf-8").replace(
             "[[template.f32_to_int.instances]]",
             "[[template.f32_to_int.properties]]\n"
             'name = "level"\ntype = "double"\n\n'
@@ -299,7 +310,7 @@ def test_a_member_the_template_gains_gets_a_declaration_only(tmp_path):
         "utf-8",
     )
     _quiet(apply_run, root)
-    text = _header(root).read_text()
+    text = _header(root).read_text(encoding="utf-8")
     assert "static inline double f32_to_i16_get_level(" in text
     assert not re.search(r"\)\s*\{", text), text
 
@@ -368,7 +379,7 @@ def test_a_member_the_family_forgets_fails_the_build_by_name(tmp_path):
     root = _project(tmp_path)
     toml = root / C.FILENAME
     toml.write_text(
-        toml.read_text().replace(
+        toml.read_text(encoding="utf-8").replace(
             "[[template.f32_to_int.instances]]",
             "[[template.f32_to_int.properties]]\n"
             'name = "level"\ntype = "double"\n\n'
@@ -390,13 +401,13 @@ def test_an_unclosed_invocation_is_left_alone(tmp_path):
     take the rest of the header with it."""
     root = _project(tmp_path)
     h = _header(root)
-    line = _invocations(h.read_text())[0]
-    broken = h.read_text().replace(line, line.rstrip(")"))
-    h.write_text(broken)
+    line = _invocations(h.read_text(encoding="utf-8"))[0]
+    broken = h.read_text(encoding="utf-8").replace(line, line.rstrip(")"))
+    h.write_text(broken, encoding="utf-8")
     _set_sat(root, "32767.0f", "16383.0f")
     err = io.StringIO()
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.redirect_stderr(err):
             apply_run(root)
-    assert h.read_text() == broken
+    assert h.read_text(encoding="utf-8") == broken
     assert "never closes" in err.getvalue()

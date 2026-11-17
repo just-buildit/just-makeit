@@ -66,7 +66,9 @@ def test_both_templates_are_born_owned(tmp_path):
 
 def test_apply_restores_an_edited_owned_template(tmp_path):
     root = _project(tmp_path)
-    before = {rel: (root / rel).read_text() for rel in (PC, CONFIG)}
+    before = {
+        rel: (root / rel).read_text(encoding="utf-8") for rel in (PC, CONFIG)
+    }
     for rel in (PC, CONFIG):
         with open(root / rel, "a", encoding="utf-8") as f:
             f.write("HAND EDIT\n")
@@ -74,15 +76,15 @@ def test_apply_restores_an_edited_owned_template(tmp_path):
     assert "cmake/p.pc.in" in r.stdout and "STALE" in r.stdout, r.stdout
     assert run_cli("apply", cwd=root).returncode == 0
     for rel in (PC, CONFIG):
-        assert (root / rel).read_text() == before[rel], rel
+        assert (root / rel).read_text(encoding="utf-8") == before[rel], rel
 
 
 def test_a_template_whose_token_was_deleted_is_never_written(tmp_path):
     root = _project(tmp_path)
     _unown(root, PC, edit=lambda s: s + "# mine now\n")
-    mine = (root / PC).read_text()
+    mine = (root / PC).read_text(encoding="utf-8")
     assert run_cli("apply", cwd=root).returncode == 0
-    assert (root / PC).read_text() == mine
+    assert (root / PC).read_text(encoding="utf-8") == mine
 
 
 def test_a_fresh_scaffold_reports_no_packaging(tmp_path):
@@ -130,7 +132,7 @@ def test_adopt_takes_what_loses_nothing_and_refuses_the_rest(tmp_path):
     hand = (root / CONFIG).read_bytes()
     r = run_cli("adopt", "--packaging", cwd=root)
     assert r.returncode == 1, r.stdout
-    pc = (root / PC).read_text()
+    pc = (root / PC).read_text(encoding="utf-8")
     assert pc.startswith("# jm:generated p.pc.in\n"), pc
     assert "@JM_PC_ROW_CFLAGS@" in pc
     assert (root / CONFIG).read_bytes() == hand
@@ -143,7 +145,7 @@ def test_accept_takes_a_refused_template(tmp_path):
     _unown(root, CONFIG, edit=lambda s: s + "set(MY_HAND 1)\n")
     r = run_cli("adopt", "--packaging", "--accept", CONFIG.name, cwd=root)
     assert r.returncode == 0, r.stdout
-    text = (root / CONFIG).read_text()
+    text = (root / CONFIG).read_text(encoding="utf-8")
     assert text.startswith("# jm:generated p-config.cmake.in\n"), text
     assert "MY_HAND" not in text
 

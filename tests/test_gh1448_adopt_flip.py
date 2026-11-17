@@ -61,7 +61,10 @@ def _project(tmp_path: Path, *, generated: bool) -> Path:
     if generated:
         t = proj / "objects" / "blk.toml"
         t.write_text(
-            t.read_text().replace("[blk]", '[blk]\nfragment = "generated"', 1)
+            t.read_text(encoding="utf-8").replace(
+                "[blk]", '[blk]\nfragment = "generated"', 1
+            ),
+            encoding="utf-8",
         )
     assert run_cli("apply", cwd=proj).returncode == 0
     return proj
@@ -70,7 +73,7 @@ def _project(tmp_path: Path, *, generated: bool) -> Path:
 def _age(proj: Path) -> str:
     """Revert one wrapper to the bare call an older jm emitted."""
     frag = proj / FRAG
-    s = frag.read_text()
+    s = frag.read_text(encoding="utf-8")
     aged = re.sub(
         r"if \(PyArray_SetBaseObject\(([^;]*?)\) < 0\) \{[^}]*\}",
         r"PyArray_SetBaseObject(\1);",
@@ -79,7 +82,7 @@ def _age(proj: Path) -> str:
         flags=re.S,
     )
     assert aged != s, "fixture no longer contains the checked call"
-    frag.write_text(aged)
+    frag.write_text(aged, encoding="utf-8")
     return aged
 
 
@@ -90,7 +93,7 @@ class TestSacredIsUnchanged:
         proj = _project(tmp_path, generated=False)
         aged = _age(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
-        assert (proj / FRAG).read_text() == aged
+        assert (proj / FRAG).read_text(encoding="utf-8") == aged
         assert run_cli("status", "--check", cwd=proj).returncode == 0
 
 
@@ -99,7 +102,7 @@ class TestGeneratedReceivesFixes:
         proj = _project(tmp_path, generated=True)
         _age(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
-        src = (proj / FRAG).read_text()
+        src = (proj / FRAG).read_text(encoding="utf-8")
         assert "PyArray_SetBaseObject" in src and "< 0" in src, src[:400]
 
     def test_a_drifted_owned_fragment_is_drift(self, tmp_path):
@@ -122,14 +125,18 @@ class TestItRefusesToDeleteHandWrittenCode:
         proj = _project(tmp_path, generated=False)
         frag = proj / FRAG
         frag.write_text(
-            frag.read_text()
+            frag.read_text(encoding="utf-8")
             + "\nstatic PyObject *\nBlkObj_mine(PyObject *s)\n"
-            "{\n    return NULL;\n}\n"
+            "{\n    return NULL;\n}\n",
+            encoding="utf-8",
         )
-        before = frag.read_text()
+        before = frag.read_text(encoding="utf-8")
         t = proj / "objects" / "blk.toml"
         t.write_text(
-            t.read_text().replace("[blk]", '[blk]\nfragment = "generated"', 1)
+            t.read_text(encoding="utf-8").replace(
+                "[blk]", '[blk]\nfragment = "generated"', 1
+            ),
+            encoding="utf-8",
         )
         r = run_cli("apply", cwd=proj)
         assert r.returncode != 0, r.stdout
@@ -138,7 +145,7 @@ class TestItRefusesToDeleteHandWrittenCode:
         assert "only here: fn:BlkObj_mine" in out, out
         assert "adopt --check" in out, out
         # ...and nothing was written.
-        assert frag.read_text() == before
+        assert frag.read_text(encoding="utf-8") == before
 
 
 TOKEN = "/* jm:generated dsp_ext_blk.c */"
@@ -147,7 +154,10 @@ TOKEN = "/* jm:generated dsp_ext_blk.c */"
 def _key(proj: Path) -> None:
     t = proj / "objects" / "blk.toml"
     t.write_text(
-        t.read_text().replace("[blk]", '[blk]\nfragment = "generated"', 1)
+        t.read_text(encoding="utf-8").replace(
+            "[blk]", '[blk]\nfragment = "generated"', 1
+        ),
+        encoding="utf-8",
     )
 
 
@@ -165,7 +175,7 @@ class TestTheTokenRecordsTheFlip:
         proj = _project(tmp_path, generated=False)
         _key(proj)
         assert run_cli("apply", cwd=proj).returncode == 0
-        src = (proj / FRAG).read_text()
+        src = (proj / FRAG).read_text(encoding="utf-8")
         assert src.splitlines()[0] == TOKEN, src[:200]
         # The sacred promise is false for an owned file, and a header that
         # makes it costs its reader their work.
@@ -176,10 +186,10 @@ class TestTheTokenRecordsTheFlip:
         """The case the first rule missed: steady state must stay
         upgradable, or ownership delivers nothing."""
         proj = _project(tmp_path, generated=True)
-        assert TOKEN in (proj / FRAG).read_text()
+        assert TOKEN in (proj / FRAG).read_text(encoding="utf-8")
         _age(proj)  # what a later jm release changing a wrapper looks like
         assert run_cli("apply", cwd=proj).returncode == 0
-        src = (proj / FRAG).read_text()
+        src = (proj / FRAG).read_text(encoding="utf-8")
         assert "PyArray_SetBaseObject" in src and "< 0" in src
         assert run_cli("status", "--check", cwd=proj).returncode == 0
 
@@ -194,7 +204,7 @@ class TestTheTokenRecordsTheFlip:
         r = run_cli("apply", cwd=proj)
         assert r.returncode != 0, r.stdout
         assert "differs:   fn:BlkObj_execute" in (r.stdout + r.stderr)
-        assert (proj / FRAG).read_text() == aged
+        assert (proj / FRAG).read_text(encoding="utf-8") == aged
 
     def test_a_copied_neighbours_token_does_not_count(self, tmp_path):
         """New objects are made by copying a neighbour. A token naming a
@@ -203,10 +213,10 @@ class TestTheTokenRecordsTheFlip:
         proj = _project(tmp_path, generated=False)
         frag = proj / FRAG
         aged = "/* jm:generated dsp_ext_other.c */\n" + _age(proj)
-        frag.write_text(aged)
+        frag.write_text(aged, encoding="utf-8")
         _key(proj)
         assert run_cli("apply", cwd=proj).returncode != 0
-        assert frag.read_text() == aged
+        assert frag.read_text(encoding="utf-8") == aged
 
     def test_the_header_cannot_make_a_unit_differ(self):
         """If adding the token or the owned prose ever read as a difference,
@@ -229,7 +239,12 @@ class TestUnAdopting:
         does not -- the sacred header's lie, mirrored."""
         proj = _project(tmp_path, generated=True)
         t = proj / "objects" / "blk.toml"
-        t.write_text(t.read_text().replace('fragment = "generated"\n', "", 1))
+        t.write_text(
+            t.read_text(encoding="utf-8").replace(
+                'fragment = "generated"\n', "", 1
+            ),
+            encoding="utf-8",
+        )
         r = run_cli("adopt", "--check", cwd=proj)
         assert r.returncode == 1, r.stdout
         assert "TOKEN WITHOUT KEY" in r.stdout, r.stdout

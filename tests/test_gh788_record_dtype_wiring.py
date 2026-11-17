@@ -91,21 +91,25 @@ def _project(tmp_path: Path, fields=None, **kw) -> Path:
 def _ext(root: Path) -> str:
     return (
         root / "native" / "src" / "telemetry" / "telemetry_ext.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
 
 def _core_h(root: Path) -> str:
-    return (root / INC_ROOT / "telemetry" / "telemetry_core.h").read_text()
+    return (root / INC_ROOT / "telemetry" / "telemetry_core.h").read_text(
+        encoding="utf-8"
+    )
 
 
 def _core_c(root: Path) -> str:
     return (
         root / "native" / "src" / "telemetry" / "telemetry_core.c"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
 
 def _pyi(root: Path) -> str:
-    return (root / "src" / "proj" / "telemetry.pyi").read_text()
+    return (root / "src" / "proj" / "telemetry.pyi").read_text(
+        encoding="utf-8"
+    )
 
 
 class TestTheCFaces:
@@ -543,7 +547,7 @@ class TestTheIncrementalSplice:
     def _frag(self, root: Path) -> str:
         return (
             root / "native" / "src" / "tlm" / "tlm_ext_telemetry.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
 
     def test_the_wrapper_and_its_dtype_block_travel_together(self, tmp_path):
         root = self._spliceable(tmp_path)
@@ -611,16 +615,18 @@ def _implement(root: Path, structs: str, body_subs: list[tuple[str, str]]):
     rather than computed by jm at generate time.
     """
     h = root / INC_ROOT / "telemetry" / "telemetry_core.h"
-    t = h.read_text()
+    t = h.read_text(encoding="utf-8")
     anchor = "/**\n * @brief Telemetry state."
     assert anchor in t
-    h.write_text(t.replace(anchor, structs + "\n" + anchor, 1))
+    h.write_text(
+        t.replace(anchor, structs + "\n" + anchor, 1), encoding="utf-8"
+    )
     c = root / "native" / "src" / "telemetry" / "telemetry_core.c"
-    s = c.read_text()
+    s = c.read_text(encoding="utf-8")
     for old, new in body_subs:
         assert old in s, f"stub shape changed; cannot patch:\n{old}"
         s = s.replace(old, new, 1)
-    c.write_text(s)
+    c.write_text(s, encoding="utf-8")
 
 
 _MAX_OUT_STUB = "    (void)state; (void)n;\n    return 0; /* placeholder */"

@@ -153,8 +153,10 @@ class TestSingleRecordParity:
     """The gh-642 invariant, on the shape gh-642 missed."""
 
     def test_runtime_block_matches_the_stub(self, project):
-        ext_c = (project / "native/src/sync/sync_ext.c").read_text()
-        pyi = (project / "src/demo/sync.pyi").read_text()
+        ext_c = (project / "native/src/sync/sync_ext.c").read_text(
+            encoding="utf-8"
+        )
+        pyi = (project / "src/demo/sync.pyi").read_text(encoding="utf-8")
         runtime = _runtime_doc(ext_c, "find")
         stub = _stub_doc(pyi, "find")
         # The runtime literal leads with a signature line the stub does not
@@ -166,7 +168,9 @@ class TestSingleRecordParity:
 
     def test_authored_example_replaces_the_synthesised_demo(self, project):
         """One Examples section, not the author's plus jm's placeholder."""
-        ext_c = (project / "native/src/sync/sync_ext.c").read_text()
+        ext_c = (project / "native/src/sync/sync_ext.c").read_text(
+            encoding="utf-8"
+        )
         runtime = "\n".join(_runtime_doc(ext_c, "find"))
         assert ">>> hit = obj.find(bits, 2)" in runtime
         assert runtime.count("Examples") == 1
@@ -174,7 +178,9 @@ class TestSingleRecordParity:
 
     def test_authored_prose_reaches_the_runtime_face(self, project):
         """The regression itself: the block in the .so, not just the stub."""
-        ext_c = (project / "native/src/sync/sync_ext.c").read_text()
+        ext_c = (project / "native/src/sync/sync_ext.c").read_text(
+            encoding="utf-8"
+        )
         runtime = "\n".join(_runtime_doc(ext_c, "find"))
         assert "Locate the sync word in a block of bits." in runtime
         assert "Walks every offset once" in runtime
@@ -188,7 +194,9 @@ class TestSingleRecordParity:
         The canned literal this replaced did carry the names, and dropping
         them to gain the block would have traded one omission for another.
         """
-        ext_c = (project / "native/src/sync/sync_ext.c").read_text()
+        ext_c = (project / "native/src/sync/sync_ext.c").read_text(
+            encoding="utf-8"
+        )
         head = _runtime_doc(ext_c, "find")[0]
         assert head == "find(x, max_errors) -> SyncHit record (found, offset)"
 
@@ -205,7 +213,9 @@ class TestSingleRecordParity:
             result_fields=[{"name": "found", "type": "int"}],
             doc="Search the block for the marker.",
         )
-        ext_c = (root / "native/src/sync/sync_ext.c").read_text()
+        ext_c = (root / "native/src/sync/sync_ext.c").read_text(
+            encoding="utf-8"
+        )
         runtime = "\n".join(_runtime_doc(ext_c, "find"))
         assert "Search the block for the marker." in runtime
 
@@ -216,7 +226,9 @@ class TestSingleRecordParity:
         deliberately suppresses this fallback.
         """
         root = _scaffold(tmp_path)
-        ext_c = (root / "native/src/sync/sync_ext.c").read_text()
+        ext_c = (root / "native/src/sync/sync_ext.c").read_text(
+            encoding="utf-8"
+        )
         runtime = "\n".join(_runtime_doc(ext_c, "find"))
         assert ">>> from demo import Sync" in runtime
         assert ">>> rec = obj.find(" in runtime

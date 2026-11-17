@@ -165,17 +165,17 @@ class TestEveryFaceNamesTheRecord:
 
     def test_the_sacred_header_returns_a_record_pointer(self, tmp_path):
         root = _declare(tmp_path / "p")
-        h = (root / INC_ROOT / "ring/ring_core.h").read_text()
+        h = (root / INC_ROOT / "ring/ring_core.h").read_text(encoding="utf-8")
         assert "iq_pair_t *ring_wait(ring_state_t *state, size_t n);" in h, h
 
     def test_the_stub_defines_one(self, tmp_path):
         root = _declare(tmp_path / "p")
-        c = (root / "native/src/ring/ring_core.c").read_text()
+        c = (root / "native/src/ring/ring_core.c").read_text(encoding="utf-8")
         assert "iq_pair_t *\nring_wait(" in c, c
 
     def test_the_binding_builds_a_descr_not_an_enum(self, tmp_path):
         root = _declare(tmp_path / "p")
-        ext = (root / "native/src/ring/ring_ext.c").read_text()
+        ext = (root / "native/src/ring/ring_ext.c").read_text(encoding="utf-8")
         assert "Ring_wait_get_dtype" in ext, ext
         assert "PyArray_NewFromDescr" in ext, ext
         assert "offsetof(iq_pair_t, i)" in ext, ext
@@ -184,7 +184,7 @@ class TestEveryFaceNamesTheRecord:
 
     def test_the_stub_annotates_a_structured_array(self, tmp_path):
         root = _declare(tmp_path / "p")
-        pyi = (root / "src/p/ring.pyi").read_text()
+        pyi = (root / "src/p/ring.pyi").read_text(encoding="utf-8")
         assert "def wait(self, n: int) -> NDArray[Any]:" in pyi, pyi
         assert "np.complex64" not in pyi.split("def wait")[1][:200]
 
@@ -239,14 +239,15 @@ class TestTheLayoutMatchesTheCompiler:
         h = root / INC_ROOT / "ring/ring_core.h"
         common = f'#include "{INC.include("clib_common.h", root)}"'
         h.write_text(
-            h.read_text().replace(
+            h.read_text(encoding="utf-8").replace(
                 common,
                 common + "\n#include <stdint.h>\n\n" + cls.STRUCTS[shape],
                 1,
-            )
+            ),
+            encoding="utf-8",
         )
         c = root / "native/src/ring/ring_core.c"
-        text = c.read_text()
+        text = c.read_text(encoding="utf-8")
         i = text.index("ring_wait(ring_state_t *state, size_t n)")
         body_start = text.index("{", i) + 1
         j = text.index("\n}\n", i)
@@ -259,7 +260,7 @@ class TestTheLayoutMatchesTheCompiler:
             "    }\n"
             "    return buf;"
         )
-        c.write_text(text[:body_start] + kernel + text[j:])
+        c.write_text(text[:body_start] + kernel + text[j:], encoding="utf-8")
         for args in (
             ["cmake", "-S", str(root), "-B", str(root / "build")],
             ["cmake", "--build", str(root / "build"), "--target", "ring"],
@@ -280,7 +281,8 @@ class TestTheLayoutMatchesTheCompiler:
             "int main(void) {\n"
             '    printf("%zu %zu %zu\\n", sizeof(iq_pair_t),\n'
             "        offsetof(iq_pair_t, i), offsetof(iq_pair_t, q));\n"
-            "    return 0;\n}\n"
+            "    return 0;\n}\n",
+            encoding="utf-8",
         )
         exe = cbuild.build(
             "exe",

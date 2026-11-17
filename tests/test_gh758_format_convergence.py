@@ -90,12 +90,12 @@ def _project_with_formatter(root: Path, script: str, body: str) -> dict:
     new_run("proj", root, c_style="clang-format")
     object_run(root, "widget", None, state_vars=[("gain", "double", "1.0")])
     fmt = root / "fake_formatter.py"
-    fmt.write_text(script)
+    fmt.write_text(script, encoding="utf-8")
     cfg = C.load(root)
     cfg["project"]["c_format_command"] = [sys.executable, str(fmt)]
     # The glue file is the only thing _generated_c_files sweeps.
     ext = root / "native" / "src" / "widget" / "widget_ext.c"
-    ext.write_text(body)
+    ext.write_text(body, encoding="utf-8")
     return cfg
 
 
@@ -113,7 +113,7 @@ class TestConvergence:
         ext = root / "native" / "src" / "widget" / "widget_ext.c"
         # Pre-gh-758 this stopped at PASS1 — the value a *second* caller
         # (the CLI hook) would then move to PASS2, which is the whole bug.
-        assert "PASS2" in ext.read_text()
+        assert "PASS2" in ext.read_text(encoding="utf-8")
 
     def test_formatting_an_already_formatted_tree_is_a_no_op(self, tmp_path):
         """The property that makes pass count stop mattering."""
@@ -176,7 +176,7 @@ class TestRealClangFormat:
         """
         root = tmp_path / "proj"
         new_run("proj", root, c_style="clang-format")
-        (root / ".clang-format").write_text(self._STYLE)
+        (root / ".clang-format").write_text(self._STYLE, encoding="utf-8")
         # The module docstring is the trigger: it lands in the aligned
         # PyModuleDef initializer as one long literal for clang-format to
         # split.
@@ -195,7 +195,7 @@ class TestRealClangFormat:
         rather than load-bearing. Either way it should be known, not assumed.
         """
         style = tmp_path / ".clang-format"
-        style.write_text(self._STYLE)
+        style.write_text(self._STYLE, encoding="utf-8")
         src = tmp_path / "m.c"
         src.write_text(
             "static struct PyModuleDef bermodule = {\n"
@@ -204,7 +204,8 @@ class TestRealClangFormat:
             f'    .m_doc     = "{self._DOC}\\n",\n'
             "    .m_size    = -1,\n"
             "    .m_methods = ber_module_methods,\n"
-            "};\n"
+            "};\n",
+            encoding="utf-8",
         )
         argv = ["clang-format", "-i", "--style=file", str(src)]
 
@@ -247,7 +248,7 @@ class TestCwdDependentFormatter:
     def _cfg_with(self, root: Path, script: str) -> dict:
         new_run("proj", root, c_style="clang-format")
         probe = root / "probe.py"
-        probe.write_text(script)
+        probe.write_text(script, encoding="utf-8")
         cfg = C.load(root)
         cfg["project"]["c_format_command"] = [sys.executable, str(probe)]
         return cfg

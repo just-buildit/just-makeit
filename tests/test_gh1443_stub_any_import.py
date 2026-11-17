@@ -110,7 +110,7 @@ def _ring(tmp_path: Path) -> Path:
 class TestAGeneratedStubBindsEveryNameItUses:
     def test_the_record_shape_imports_any(self, tmp_path):
         """The instance: `NDArray[Any]` with no `from typing import Any`."""
-        src = _ring(tmp_path).read_text()
+        src = _ring(tmp_path).read_text(encoding="utf-8")
         assert "NDArray[Any]" in src, "fixture no longer renders Any"
         assert _undefined_names(src) == set(), _undefined_names(src)
 
@@ -137,7 +137,7 @@ class TestAGeneratedStubBindsEveryNameItUses:
             == 0
         )
         assert run_cli("apply", cwd=proj).returncode == 0
-        src = (proj / "src" / "p" / "o.pyi").read_text()
+        src = (proj / "src" / "p" / "o.pyi").read_text(encoding="utf-8")
         assert "Any" not in src, src
         assert _undefined_names(src) == set()
 

@@ -143,7 +143,7 @@ class TestStandaloneFacesAgree:
         root = tmp_path / "proj"
         _project_with_variable_output(root)
         pyi = flatten_signatures(
-            (root / "src" / "proj" / "widget.pyi").read_text()
+            (root / "src" / "proj" / "widget.pyi").read_text(encoding="utf-8")
         )
         assert "def run_max_out(self, x_len: int, /) -> int:" in pyi
 
@@ -156,9 +156,11 @@ class TestStandaloneFacesAgree:
         apply_run(root)
 
         pyi = flatten_signatures(
-            (root / "src" / "proj" / "widget.pyi").read_text()
+            (root / "src" / "proj" / "widget.pyi").read_text(encoding="utf-8")
         )
-        ext = (root / "native" / "src" / "widget" / "widget_ext.c").read_text()
+        ext = (root / "native" / "src" / "widget" / "widget_ext.c").read_text(
+            encoding="utf-8"
+        )
 
         # The stub agrees with the prototype...
         assert "def run_max_out(self) -> int:" in pyi
@@ -199,7 +201,9 @@ class TestModuleAndViewFacesAgree:
         apply_run(root)
 
         pyi = flatten_signatures(
-            (root / "src" / "proj" / "dsp" / "dsp.pyi").read_text()
+            (root / "src" / "proj" / "dsp" / "dsp.pyi").read_text(
+                encoding="utf-8"
+            )
         )
         assert "def run_max_out(self) -> int:" in pyi
         assert "def run_max_out(self, x_len: int)" not in pyi
@@ -220,7 +224,9 @@ class TestModuleAndViewFacesAgree:
         apply_run(root)
 
         pyi = flatten_signatures(
-            (root / "src" / "proj" / "dsp" / "dsp.pyi").read_text()
+            (root / "src" / "proj" / "dsp" / "dsp.pyi").read_text(
+                encoding="utf-8"
+            )
         )
         # Both the parent class and the view.
         assert pyi.count("def run_max_out(self) -> int:") >= 2
@@ -249,10 +255,10 @@ class TestStubAndBindingCannotDisagree:
         apply_run(root)
 
         pyi = flatten_signatures(
-            (root / "src" / "proj" / "widget.pyi").read_text()
+            (root / "src" / "proj" / "widget.pyi").read_text(encoding="utf-8")
         )
         ext = "".join(
-            p.read_text()
+            p.read_text(encoding="utf-8")
             for p in (root / "native" / "src" / "widget").glob("*.c")
         )
         for m in re.finditer(
@@ -312,7 +318,7 @@ class TestTheWrapperCallsTheDeclaredArity:
         import re
 
         ext = "".join(
-            p.read_text()
+            p.read_text(encoding="utf-8")
             for p in (root / "native" / "src" / "widget").glob("*.c")
         )
         # The *_core.c definition matches this shape too; drop anything that
@@ -390,7 +396,9 @@ class TestRegeneratePreservesTheAuthorsPrototype:
 
     def test_the_declaration_survives(self, tmp_path):
         root = self._setup(tmp_path)
-        header = (root / INC_ROOT / "widget" / "widget_core.h").read_text()
+        header = (root / INC_ROOT / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
         decls = [
             ln.strip()
             for ln in header.splitlines()
@@ -415,7 +423,7 @@ class TestRegeneratePreservesTheAuthorsPrototype:
 
         root = self._setup(tmp_path)
         ext = "".join(
-            p.read_text()
+            p.read_text(encoding="utf-8")
             for p in (root / "native" / "src" / "widget").glob("*_ext*.c")
         )
         calls = re.findall(
@@ -448,8 +456,12 @@ class TestRegeneratePreservesTheAuthorsPrototype:
             [],
             params=[("x", "float _Complex[]")],
         )
-        before = (root / INC_ROOT / "widget" / "widget_core.h").read_text()
+        before = (root / INC_ROOT / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
         regenerate_run(root, "widget", force=True)
-        after = (root / INC_ROOT / "widget" / "widget_core.h").read_text()
+        after = (root / INC_ROOT / "widget" / "widget_core.h").read_text(
+            encoding="utf-8"
+        )
         assert "size_t x_len" in after, "the default form was lost"
         assert before == after, "regenerate churned an unmodified header"

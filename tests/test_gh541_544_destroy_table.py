@@ -465,7 +465,12 @@ class TestByteIdenticalWhenUndeclared:
             assert "destroy_" not in re.sub(
                 r"[a-z_]*destroy_(impl|fn|stmt|silent)",
                 "",
-                "".join(m for m in re.findall(r"<<[^>]*>>", path.read_text())),
+                "".join(
+                    m
+                    for m in re.findall(
+                        r"<<[^>]*>>", path.read_text(encoding="utf-8")
+                    )
+                ),
             ), path
 
 

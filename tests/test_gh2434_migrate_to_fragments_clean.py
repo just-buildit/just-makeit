@@ -176,7 +176,9 @@ def reserved(proj: Path) -> Path:
     """*proj* declaring every reserved section, in sync."""
     _ok("app", "--object", "eng", cwd=proj)
     toml = proj / C.FILENAME
-    toml.write_text(toml.read_text() + _SECTIONS)
+    toml.write_text(
+        toml.read_text(encoding="utf-8") + _SECTIONS, encoding="utf-8"
+    )
     _ok("apply", cwd=proj)
     present = set(C.load_manifest(proj))
     # Every reserved section is declared above, so a new one fails here
@@ -269,7 +271,10 @@ def test_the_scan_sees_a_private_copy(tmp_path):
     """The scan above is armed: the shape `_migrate` used to spell is one
     it reports."""
     f = tmp_path / "x.py"
-    f.write_text('c = [k for k in m if k not in ("project", "module")]\n')
+    f.write_text(
+        'c = [k for k in m if k not in ("project", "module")]\n',
+        encoding="utf-8",
+    )
     assert _reserved_tuples(f)
 
 
@@ -298,7 +303,7 @@ def ordered(tmp_path: Path) -> Path:
     ):
         _ok(*args, cwd=root)
     toml = root / C.FILENAME
-    text = toml.read_text()
+    text = toml.read_text(encoding="utf-8")
     for old, new in (
         ("[zdep]\n", '[zdep]\ndepends_on = ["abase", "wobj"]\n'),
         ("[mdep]\n", '[mdep]\ndepends_on = ["abase"]\n'),
@@ -306,8 +311,10 @@ def ordered(tmp_path: Path) -> Path:
     ):
         assert text.count(old) == 1, old
         text = text.replace(old, new)
-    toml.write_text(text)
-    (root / "src" / "p" / "wfm" / "helper.py").write_text("H = 1\n")
+    toml.write_text(text, encoding="utf-8")
+    (root / "src" / "p" / "wfm" / "helper.py").write_text(
+        "H = 1\n", encoding="utf-8"
+    )
     _ok("apply", cwd=root)
     _ok("status", "--check", cwd=root)
     return root
@@ -320,6 +327,8 @@ def test_migrate_leaves_nothing_for_apply(ordered):
     before = _snap(ordered)
     _ok("apply", cwd=ordered)
     assert _snap(ordered) == before
-    init = (ordered / "src" / "p" / "wfm" / "__init__.py").read_text()
+    init = (ordered / "src" / "p" / "wfm" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
     (names,) = re.findall(r"^__all__ = \[(.*)\]$", init, re.M)
     assert '"H"' in names, init

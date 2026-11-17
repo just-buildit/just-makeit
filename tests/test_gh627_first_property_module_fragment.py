@@ -71,17 +71,21 @@ def _project(tmp_path, *, module, seed_property=False):
 
 def _apply(root, toml=PROP):
     m = root / "just-makeit.toml"
-    m.write_text(m.read_text() + toml)
+    m.write_text(m.read_text(encoding="utf-8") + toml, encoding="utf-8")
     with contextlib.redirect_stdout(io.StringIO()):
         apply_run(root)
 
 
 def _fragment(root):
-    return (root / "native" / "src" / "wfm" / "wfm_ext_reader.c").read_text()
+    return (root / "native" / "src" / "wfm" / "wfm_ext_reader.c").read_text(
+        encoding="utf-8"
+    )
 
 
 def _header(root):
-    return (root / INC_ROOT / "reader" / "reader_core.h").read_text()
+    return (root / INC_ROOT / "reader" / "reader_core.h").read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.fixture()
@@ -151,7 +155,9 @@ class TestNoRegression:
         """The standalone path never had this gap; it must keep working."""
         root = _project(tmp_path, module=False)
         _apply(root)
-        ext = (root / "native" / "src" / "reader" / "reader_ext.c").read_text()
+        ext = (root / "native" / "src" / "reader" / "reader_ext.c").read_text(
+            encoding="utf-8"
+        )
         assert "Reader_getprop_thing" in ext
         assert "reader_get_thing" in _header(root)
 
@@ -165,21 +171,21 @@ class TestHeaderInjectionIsNarrow:
 
     def test_existing_prototype_is_never_rewritten(self, first_property):
         hdr = first_property / INC_ROOT / "reader" / "reader_core.h"
-        hand = hdr.read_text().replace(
+        hand = hdr.read_text(encoding="utf-8").replace(
             "int reader_get_thing(const reader_state_t *state);",
             "int reader_get_thing(const reader_state_t *state, size_t n);",
         )
-        hdr.write_text(hand)
+        hdr.write_text(hand, encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(first_property)
-        after = hdr.read_text()
+        after = hdr.read_text(encoding="utf-8")
         assert "size_t n);" in after, "hand-owned signature was rewritten"
         assert after.count("reader_get_thing") == 1, "duplicate prototype"
 
     def test_unrelated_declarations_untouched(self, first_property):
         """Nothing else in the header moves — that was the +44 regression."""
         hdr = first_property / INC_ROOT / "reader" / "reader_core.h"
-        before = hdr.read_text()
+        before = hdr.read_text(encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
             apply_run(first_property)
-        assert hdr.read_text() == before
+        assert hdr.read_text(encoding="utf-8") == before

@@ -137,8 +137,12 @@ class TestEndToEnd:
     def test_both_faces_call_it_optional(self, project):
         """The divergence this unblocks: the binding's `|` and the stub's
         `= ...` must say the same thing about the same parameter."""
-        ext = (project / "native" / "src" / "m" / "m_ext_thing.c").read_text()
-        pyi = (project / "src" / "proj" / "m" / "m.pyi").read_text()
+        ext = (project / "native" / "src" / "m" / "m_ext_thing.c").read_text(
+            encoding="utf-8"
+        )
+        pyi = (project / "src" / "proj" / "m" / "m.pyi").read_text(
+            encoding="utf-8"
+        )
         i = ext.index('kwds, "')
         fmt = ext[i + 7 : ext.index('"', i + 7)]
         assert fmt.startswith("|"), f"tmpl was hoisted before the `|`: {fmt!r}"

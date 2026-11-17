@@ -1590,7 +1590,8 @@ def test_emitted_serializer_include_makes_fn_decl_visible(tmp_path):
     (hdr_dir / "probehdr.h").write_text(
         "#ifndef PROBEHDR_H\n#define PROBEHDR_H\n#include <stddef.h>\n"
         "char *probe_serialize(double fs, const void *segs, size_t n);\n"
-        "#endif\n"
+        "#endif\n",
+        encoding="utf-8",
     )
     # The TU embeds jm's emitted include verbatim, then makes the generated-
     # style str call. -Werror on implicit decls / int->pointer reproduces the bug.
@@ -1600,7 +1601,8 @@ def test_emitted_serializer_include_makes_fn_decl_visible(tmp_path):
         "#include <stddef.h>\n"
         "char *use(double fs, const void *segs, size_t n) {\n"
         "    return probe_serialize(fs, segs, n);\n"
-        "}\n"
+        "}\n",
+        encoding="utf-8",
     )
     obj = cbuild.build(
         "obj",
