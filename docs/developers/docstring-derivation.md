@@ -49,6 +49,13 @@ recognised — the `/** ... */` and `/*! ... */` block forms, and a run of
 member docs on a struct field or enum value (gh-671). When more than one
 comment could bind, the **nearest** one wins, as in Doxygen.
 
+Between a doc comment and the declaration it documents, jm skips what
+Doxygen skips: whitespace, ordinary `/* */` and `//` comments, and
+preprocessor directives, so a C++ guard such as `#ifdef __cplusplus`
+followed by a plain comment and the prototype keeps its docs (gh-2653).
+Two things end the binding instead: a second doc comment, and a
+`#define`, which Doxygen documents as a macro in its own right.
+
 A struct field's doc documents **that struct's** field and no other
 (gh-1300). A property and a state `get_`/`set_` accessor read the
 component's own `<comp>_state_t`; a record field reads the record's own
