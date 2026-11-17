@@ -349,9 +349,14 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
 
 EXAMPLES_IGNORE = $(addprefix --ignore=,$(PROJECT_ENV_TESTS))
 
+# The isolated-env suite: every test but PROJECT_ENV_TESTS, which need the
+# project's dev environment. `test` and `test-fast` both run THIS, so neither
+# can drop the ignore -- `test-fast` was declared beside it without one and
+# failed at collection on the mypy test (gh-2658).
+PYTEST_SUITE      = $(PYTEST) $(PYTEST_PARALLEL) $(EXAMPLES_IGNORE)
 # `test` is the default suite and, in a Python-only repo, IS the Python suite —
 # named once here rather than defined twice.
-TEST_PYTHON_CMD   = $(PYTEST) $(PYTEST_PARALLEL) -v $(EXAMPLES_IGNORE)
+TEST_PYTHON_CMD   = $(PYTEST_SUITE) -v
 # The examples whose GOLDEN records what jm's generated code and drift
 # reports look like to an upgrading project. `test-examples` alone ran
 # them, so an emitter change passed `make test` and went red only in CI:
@@ -361,7 +366,7 @@ GOLDEN_EXAMPLES   = stale_project
 TEST_GOLDENS_CMD  = $(PYTEST_EXAMPLES) tests/test_examples.py -v \
                     -k "$(GOLDEN_EXAMPLES)"
 TEST_CMD          = $(TEST_PYTHON_CMD) && $(TEST_GOLDENS_CMD)
-TEST_FAST_CMD     = $(PYTEST) $(PYTEST_PARALLEL) -x -q
+TEST_FAST_CMD     = $(PYTEST_SUITE) -x -q
 # EXAMPLES_K narrows the run with pytest -k, e.g. to one example while
 # regenerating its golden (see stale_project). Empty = all.
 EXAMPLES_K        ?=
