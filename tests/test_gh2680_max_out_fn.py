@@ -101,6 +101,86 @@ def _docstrings(tree: ast.AST) -> "set[int]":
     return out
 
 
+#: Where a ``_max_out`` suffix may be RECOGNISED, each with its reason.
+#: Keyed ``(module, scope)``: the enclosing function, or the module-level
+#: name the constant is assigned to. Everything else that tests a name for
+#: the suffix -- a regex, ``endswith`` / ``removesuffix`` / ``startswith``
+#: on ``"_max_out"`` -- is refused: which C function is a capacity function
+#: is the manifest's answer (`_config.max_out_symbols`), not its spelling.
+_RECOGNISERS = {
+    # `jm bind` reads a header with no manifest and refuses a component the
+    # manifest declares (gh-2072), so there is no `max_out_fn` it could be
+    # told; the suffix is the only statement a bare header makes.
+    ("_bind.py", "_MAX_OUT_DECL_RE"): "bind has no manifest",
+    # The PyMethodDef ROW names of `<name>_max_out` accessors: the Python
+    # face, which keeps its name whatever the C function is called.
+    ("_docsync.py", "_MAX_OUT_SUFFIX"): "Python accessor names",
+    # A view's member names: `<name>_max_out` is the Python accessor of
+    # `<name>`, so excluding `<name>` excludes it.
+    ("_stubs.py", "view_doc_blocks"): "Python accessor names",
+}
+
+#: A string that reads as a pattern: a regex escape or group.
+_REGEXISH = re.compile(r"\\[wsbd(]|\(\?")
+
+
+def _scopes(tree: ast.AST) -> "dict[int, str]":
+    """Each node's scope name: its enclosing function, else the
+    module-level name its statement assigns."""
+    out: "dict[int, str]" = {}
+
+    def mark(node: ast.AST, scope: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = scope
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = child.name
+            elif scope == "" and isinstance(
+                child, (ast.Assign, ast.AnnAssign)
+            ):
+                tgt = (
+                    child.targets[0]
+                    if isinstance(child, ast.Assign)
+                    else child.target
+                )
+                if isinstance(tgt, ast.Name):
+                    inner = tgt.id
+            out[id(child)] = inner
+            mark(child, inner)
+
+    mark(tree, "")
+    return out
+
+
+def _recognitions(source: str, rel: str) -> "list[str]":
+    """Every suffix-based recognition of a capacity function in *source*:
+    a code string equal to ``"_max_out"``, or a pattern containing it."""
+    tree = ast.parse(source)
+    skip = _docstrings(tree)
+    fstr = {
+        id(v)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.JoinedStr)
+        for v in n.values
+    }
+    scope = _scopes(tree)
+    hits: "list[str]" = []
+    for n in ast.walk(tree):
+        if (
+            not isinstance(n, ast.Constant)
+            or not isinstance(n.value, str)
+            or id(n) in skip
+            or id(n) in fstr
+            or "_max_out" not in n.value
+        ):
+            continue
+        if n.value != "_max_out" and not _REGEXISH.search(n.value):
+            continue
+        if (rel, scope.get(id(n), "")) in _RECOGNISERS:
+            continue
+        hits.append(f"{rel}:{n.lineno} {n.value[:50]!r}")
+    return hits
+
+
 def _owner_nodes(tree: ast.AST, rel: str) -> "set[int]":
     """The nodes inside the owner function, when *rel* is its module."""
     if rel != _OWNER[0]:
@@ -174,6 +254,61 @@ def test_no_module_spells_the_derivation_by_hand() -> None:
     )
 
 
+def test_no_module_recognises_the_suffix() -> None:
+    hits = [
+        h
+        for p in _modules()
+        for h in _recognitions(
+            p.read_text(encoding="utf-8"), p.relative_to(SRC).as_posix()
+        )
+    ]
+    assert not hits, (
+        "ask `_config.max_out_symbols` which names are capacity functions:"
+        "\n" + "\n".join(hits)
+    )
+
+
+def test_every_recogniser_exemption_is_live() -> None:
+    """An exemption whose scope no longer holds a recognition is a hole
+    waiting for the next one; each must still name one."""
+    for (rel, scope), _why in _RECOGNISERS.items():
+        src = (SRC / rel).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        scopes = _scopes(tree)
+        assert any(
+            isinstance(n, ast.Constant)
+            and isinstance(n.value, str)
+            and "_max_out" in n.value
+            and scopes.get(id(n)) == scope
+            for n in ast.walk(tree)
+        ), (rel, scope)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'ok = name.endswith("_max_out")',
+        'x = s.removesuffix("_max_out")',
+        'R = re.compile(r"size_t\\s+(\\w+_max_out)\\s*\\(")',
+        'R = re.compile(r"\\b\\w+_max_out\\s*\\(")',
+    ],
+)
+def test_the_recogniser_scan_sees_each_shape(line: str) -> None:
+    assert _recognitions(line, "_x.py"), line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'x = "exact_max_out"',
+        'msg = "declare a <name>_max_out capacity"',
+        'def f():\n    """A name.endswith("_max_out") in prose."""',
+    ],
+)
+def test_the_recogniser_scan_lets_prose_through(line: str) -> None:
+    assert not _recognitions(line, "_x.py"), line
+
+
 def test_no_template_spells_the_derivation() -> None:
     hits = [
         p.relative_to(SRC).as_posix()
@@ -211,7 +346,6 @@ def test_the_scanner_sees_each_shape(line: str) -> None:
         "x = f\"{m.get('name', '')}_max_out\"",
         'x = f"{wrapper_prefix}_{name}_max_out"',
         'def f():\n    """A {c_fn}_max_out in prose."""',
-        'x = s.removesuffix("_max_out")',
     ],
 )
 def test_the_scanner_lets_the_python_face_through(line: str) -> None:
@@ -272,6 +406,20 @@ name = "k"
 type = "int"
 
 [[ofdm.methods]]
+name = "widen"
+max_out_fn = "rq_ofdm_modulate_max_out"
+arg_type = "float[]"
+return_type = "float"
+variable_output = true
+
+[[ofdm.methods]]
+name = "scale2"
+max_out_fn = "rq_ofdm_bound"
+arg_type = "float[]"
+return_type = "float"
+variable_output = true
+
+[[ofdm.methods]]
 name = "peaks"
 max_out_fn = "rq_ofdm_peak_cap"
 arg_type = "float"
@@ -290,6 +438,13 @@ max_out_fn = "rq_acc_capacity"
 arg_type = "float[]"
 return_type = "float"
 variable_output = true
+
+[[acc.methods]]
+name = "hits"
+max_out_fn = "rq_acc_hit_cap"
+arg_type = "float"
+return_type = "div_t"
+result_fields = [{name = "quot", type = "int"}, {name = "rem", type = "int"}]
 
 [[acc.views]]
 class_name = "AccView"
@@ -313,6 +468,9 @@ DERIVED = (
     "rq_ofdm_peaks_max_out",
     "rq_acc_run_max_out",
     "rq_acc_vrun_max_out",
+    "rq_acc_hits_max_out",
+    "rq_ofdm_widen_max_out",
+    "rq_ofdm_scale2_max_out",
 )
 
 OFDM_H = "native/inc/rq/ofdm/ofdm_core.h"
@@ -667,6 +825,8 @@ print(json.dumps({
     "modulate": o.modulate_max_out(5),
     "checked": o.modulate_checked_max_out(5),
     "scale": o.scale_max_out(),
+    "widen": o.widen_max_out(5),
+    "scale2": o.scale2_max_out(),
     "run": a.run_max_out(5),
     "checked_len": len(o.modulate_checked(x)),
     "scale_len": len(o.scale(x)),
@@ -706,6 +866,14 @@ def test_the_accessors_answer_from_the_named_functions(probe: dict) -> None:
     assert probe["checked"] == 12, probe
     assert probe["scale"] == 11, probe
     assert probe["run"] == 13, probe
+
+
+def test_a_shared_capacity_function_builds(probe: dict) -> None:
+    """Two methods sharing one capacity function at one arity is legal --
+    a named sibling's derived one (`widen`), and one named function
+    (`scale2`) -- and the tree compiles and answers from it."""
+    assert probe["widen"] == 12, probe
+    assert probe["scale2"] == 11, probe
 
 
 def test_the_methods_run(probe: dict) -> None:
@@ -773,6 +941,212 @@ def test_the_cli_refuses_before_writing(tmp_path: Path) -> None:
     assert "max_out_fn" in r.stderr, r.stderr
     after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
     assert after == before
+
+
+# -- review findings ------------------------------------------------------------
+
+#: The method rows the clash cases add to a fresh object `o`.
+_VO_ARRAY = (
+    'arg_type = "float[]"\nreturn_type = "float"\nvariable_output = true'
+)
+_VO_SCALAR = (
+    'arg_type = "void"\nreturn_type = "float"\nvariable_output = true\n'
+    'params = [{name = "k", type = "int"}]'
+)
+_VO_NOCOUNT = (
+    'arg_type = "void"\nreturn_type = "float"\nvariable_output = true\n'
+    "pass_capacity = true\nno_count = true"
+)
+_VO_VOID = 'arg_type = "void"\nreturn_type = "float"\nvariable_output = true'
+
+
+def _o_project(tmp_path: Path) -> Path:
+    _ok("new", "rq", cwd=tmp_path)
+    proj = tmp_path / "rq"
+    _ok("object", "o", cwd=proj)
+    return proj
+
+
+def _add_rows(proj: Path, rows: "list[tuple[str, str, str]]") -> None:
+    frag = proj / "objects" / "o.toml"
+    text = frag.read_text("utf-8")
+    for name, mo, body in rows:
+        mo_line = f'max_out_fn = "{mo}"\n' if mo else ""
+        text += f'\n[[o.methods]]\nname = "{name}"\n{mo_line}{body}\n'
+    frag.write_text(text, "utf-8")
+
+
+@pytest.mark.parametrize(
+    "rows, said",
+    [
+        # the review's repro: a count against the state alone
+        (
+            [("scale", "rq_o_cap", _VO_ARRAY), ("burst", "rq_o_cap", _VO_SCALAR)],
+            ["o.scale()", "o.burst()", "rq_o_cap(state, size_t n_in)",
+             "rq_o_cap(state)"],
+        ),
+        # `no_count` against a count-taking shape
+        (
+            [("gen", "rq_o_cap", _VO_NOCOUNT), ("pull", "rq_o_cap", _VO_VOID)],
+            ["o.gen()", "o.pull()", "rq_o_cap(state)",
+             "rq_o_cap(state, size_t n)"],
+        ),
+        # naming a sibling's DERIVED capacity function at another arity
+        (
+            [("scale", "", _VO_ARRAY),
+             ("burst", "rq_o_scale_max_out", _VO_SCALAR)],
+            ["o.scale()", "o.burst()", "`rq_o_scale_max_out`"],
+        ),
+    ],
+)  # fmt: skip
+def test_one_capacity_function_at_two_arities_is_refused(
+    tmp_path: Path, rows: list, said: "list[str]"
+) -> None:
+    """Review finding 1: the header can declare one arity, so the other
+    call did not compile while ``status --check`` was clean."""
+    proj = _o_project(tmp_path)
+    _add_rows(proj, rows)
+    r = run_cli("status", "--check", cwd=proj)
+    assert r.returncode != 0, r.stdout + r.stderr
+    for s in said:
+        assert s in r.stderr, (s, r.stderr)
+
+
+def test_jm_method_refuses_a_second_arity_before_writing(
+    tmp_path: Path,
+) -> None:
+    proj = _o_project(tmp_path)
+    _ok(
+        "method", "o", "scale", "--arg-type", "float[]", "--return-type",
+        "float", "--variable-output", "--max-out-fn", "rq_o_cap", cwd=proj,
+    )  # fmt: skip
+    before = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    r = run_cli(
+        "method", "o", "burst", "--arg-type", "void", "--return-type",
+        "float", "--variable-output", "--param", "k:int", "--max-out-fn",
+        "rq_o_cap", cwd=proj,
+    )  # fmt: skip
+    assert r.returncode != 0
+    assert "share the capacity function `rq_o_cap`" in r.stderr, r.stderr
+    after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "mo, said",
+    [
+        ("rq_o_scale", "o.scale()'s kernel"),
+        ("rq_o_reset", "built-in `reset`"),
+        ("rq_o_create", "built-in `create`"),
+    ],
+)
+def test_a_capacity_function_named_for_another_member_is_refused(
+    tmp_path: Path, mo: str, said: str
+) -> None:
+    """Review finding 4: one name declared with two types."""
+    proj = _o_project(tmp_path)
+    _add_rows(proj, [("scale", mo, _VO_ARRAY)])
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode != 0
+    assert f"names max_out_fn `{mo}`" in r.stderr, r.stderr
+    assert said in r.stderr, r.stderr
+
+
+ACC_FRAG = "native/src/dsp/dsp_ext_acc.c"
+HIT_DECL = "size_t rq_acc_hit_cap(rq_acc_state_t *state, size_t n_in);"
+HIT_DEF = (
+    "\nsize_t\nrq_acc_hit_cap(rq_acc_state_t *state, size_t n_in)\n"
+    "{\n    (void)state;\n    return n_in;\n}\n"
+)
+
+#: gh-2184's records-capacity GUARD sentence (`_docsync`).
+_RECORDS_WHY = (
+    "does not ask it, so a call returns at most the fixed max_results"
+)
+
+
+def test_an_undeclared_records_capacity_is_said(
+    scaffold: Path, tmp_path: Path
+) -> None:
+    """Review finding 5: an explicit key is never silently inert. A list
+    of records sizes by an author-DECLARED capacity only (gh-2184), named
+    or derived, so jm does not scaffold one; until the header declares
+    it, `status` notes it and `apply` warns."""
+    r = run_cli("status", cwd=scaffold)
+    out = r.stdout + r.stderr
+    assert "rq_acc_hit_cap() is not declared" in out, out
+    assert "acc.hits" in out, out
+    proj = tmp_path / "rq"
+    shutil.copytree(scaffold, proj)
+    r = run_cli("apply", cwd=proj)
+    assert "names max_out_fn `rq_acc_hit_cap`" in r.stdout + r.stderr
+
+
+def test_a_stale_records_fragment_names_the_records_guard(
+    scaffold: Path, tmp_path: Path
+) -> None:
+    """Review finding 2: a module fragment rendered before the named
+    capacity was declared is reported for the records it drops, not as an
+    ndarray's output-size guard -- recognised by the call's local, not a
+    `_max_out` suffix the named function does not carry."""
+    proj = tmp_path / "rq"
+    shutil.copytree(scaffold, proj)
+    h = _read(proj, ACC_H)
+    anchor = "size_t rq_acc_capacity("
+    assert h.count(anchor) == 1, h
+    _write(proj, ACC_H, h.replace(anchor, HIT_DECL + "\n" + anchor))
+    _write(proj, ACC_C, _read(proj, ACC_C) + HIT_DEF)
+    r = run_cli("apply", cwd=proj)
+    out = " ".join((r.stdout + r.stderr).split())
+    assert _RECORDS_WHY in out, out
+    assert "negative dimension" not in out, out
+    assert "rq_acc_hit_cap() is not declared" not in out, out
+
+
+ALIAS_DOC = "A retired alias kept for old callers."
+
+
+def test_a_leftover_alias_does_not_answer_for_a_named_function(
+    authored: Path, tmp_path: Path
+) -> None:
+    """Review finding 3: retiring an alias. The header still declares the
+    derived `rq_acc_run_max_out(state)`, documented; the method names
+    `rq_acc_capacity(state, n_in)`. Both stub writers and the binding read
+    only the named one."""
+    proj = tmp_path / "rq"
+    shutil.copytree(authored, proj)
+    h = _read(proj, ACC_H)
+    anchor = f"/** @brief {ACC_DOC} */"
+    assert h.count(anchor) == 1, h
+    alias = (
+        f"/** @brief {ALIAS_DOC} */\n"
+        "size_t rq_acc_run_max_out(rq_acc_state_t *state);\n"
+    )
+    _write(proj, ACC_H, h.replace(anchor, alias + anchor))
+    _ok("apply", cwd=proj)
+    text = "".join(
+        p.read_text("utf-8")
+        for p in proj.joinpath("src/rq").rglob("*.pyi")
+        if "def run_max_out(" in p.read_text("utf-8")
+    )
+    sig, body = text.split("def run_max_out(")[1].split(":", 1)
+    assert sig.startswith("self, n_in"), sig
+    body = body.split("def ")[0]
+    assert ACC_DOC in body and ALIAS_DOC not in body, body
+    frag = _read(proj, ACC_FRAG)
+    assert "rq_acc_run_max_out" not in frag, frag
+
+
+def test_the_fallback_doc_names_the_c_function(scaffold: Path) -> None:
+    """The nit: jm's fallback names the C function whose header block
+    replaces it, not the Python accessor."""
+    pyi = _read(scaffold, "src/rq/ofdm.pyi")
+    body = " ".join(
+        pyi.split("def scale_max_out(")[1].split("def ")[0].split()
+    )
+    assert "header block on the C function rq_ofdm_bound replaces" in body, (
+        body
+    )
 
 
 def test_the_helper_is_what_the_view_keys_name() -> None:

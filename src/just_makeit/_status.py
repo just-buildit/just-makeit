@@ -557,6 +557,14 @@ def run(
     # arriving at the moment the reader is watching for what changed. `status`
     # is the surface read on purpose, and this is a standing property of the
     # manifest, not an event.
+    # gh-2680: a list of records naming a capacity function its header
+    # does not declare -- a note, like gh-921's, for the same reason: the
+    # fixed buffer it falls back to is safe, and only the opt-in is lost.
+    undeclared_mo_entries: list[tuple[str, str, str]] = [
+        (obj, name, mo)
+        for obj in C.components(cfg)
+        for name, mo in _obj_mod.undeclared_max_out_fn(cfg, root, obj)
+    ]
     inert_cap_entries: list[tuple[str, str, str]] = [
         (obj, name, c_fn)
         for obj in C.components(cfg)
@@ -1615,6 +1623,11 @@ def run(
                     "backings": [
                         {"module": m, "backing": b, "rule": r}
                         for m, b, r in _backings
+                    ],
+                    # gh-2680: a note, so it appears here and in no count.
+                    "undeclared_max_out_fn": [
+                        {"object": o, "method": n, "max_out_fn": f}
+                        for (o, n, f) in undeclared_mo_entries
                     ],
                     # gh-921: a note, so it appears here and in no count.
                     "inert_pass_capacity": [
@@ -2749,6 +2762,20 @@ def run(
     # take the summary out of its "OK — up to date" branch. A note that failed
     # a gate would be a warning, and this one cannot be wrong in the direction
     # that would earn that — see `_object.inert_pass_capacity`.
+    if undeclared_mo_entries and not check:
+        print(
+            f"NOTE ({len(undeclared_mo_entries)}) — a list of records names"
+            " a max_out_fn its header does not declare:"
+        )
+        for obj, name, mo in undeclared_mo_entries:
+            print(f"  . {obj}.{name}: {mo}() is not declared")
+        print(
+            "  Until it is, the method keeps its fixed max_results buffer"
+            " (gh-2184): declare\n  and define it to size each call. Not"
+            " drift. See gh-2680."
+        )
+        print()
+
     if inert_cap_entries and not check:
         print(
             f"NOTE ({len(inert_cap_entries)}) — `pass_capacity` is set but "

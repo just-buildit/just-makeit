@@ -409,6 +409,52 @@ def member_clashes(
             )
             if msg not in out:
                 out.append(msg)
+    out += _max_out_fn_clashes(cfg, comp, st, owner, meths, label)
+    return out
+
+
+def _max_out_fn_clashes(cfg, comp, st, owner, meths, label) -> "list[str]":
+    """Each ``max_out_fn`` (gh-2680) naming a C function another member of
+    *comp* already is: a method's kernel (`_config.method_c_symbol`), a
+    property accessor (*owner*, from `property_c_names`), or a built-in
+    jm emits (`_builtins.builtin_method_names`: create, destroy, reset,
+    step, steps, the state accessors). The capacity function's prototype
+    and that member's are declared under one name with different types,
+    and the tree does not compile."""
+    from . import _config as C
+    from ._builtins import builtin_method_names, is_builtin_symbol
+
+    kernels = {
+        C.method_c_symbol(st, m): label(m, view)
+        for m, view in meths
+        if m.get("name")
+    }
+    builtins = builtin_method_names(
+        C.state_vars(cfg, comp),
+        no_step=C.is_no_step(cfg, comp),
+        no_reset=C.is_no_reset(cfg, comp),
+    )
+    out: list = []
+    for m, view in meths:
+        mo = m.get("max_out_fn")
+        if not mo or not m.get("name"):
+            continue
+        if mo in kernels:
+            other = f"{kernels[mo]}()'s kernel"
+        elif mo in owner:
+            other = f"{owner[mo]}'s accessor (a property)"
+        elif is_builtin_symbol(st, mo, builtins):
+            other = f"{comp}'s built-in `{mo[len(st) + 1 :]}`"
+        else:
+            continue
+        msg = (
+            f"{label(m, view)}() names max_out_fn `{mo}`, which is"
+            f" {other}: the capacity function and it would be declared"
+            f" under one name with different types. Name the capacity"
+            f" function something else."
+        )
+        if msg not in out:
+            out.append(msg)
     return out
 
 

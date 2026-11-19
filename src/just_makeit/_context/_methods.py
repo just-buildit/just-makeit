@@ -1668,6 +1668,7 @@ def _max_out_doc(
         count_param or "",
         int(max_out_const or 0),
         elements_per_sample,
+        c_fn=max_out_fn,
     )
     if blk is not None:
         # gh-1052: through the constructor, which also records that this

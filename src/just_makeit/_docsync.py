@@ -1306,16 +1306,24 @@ def _refusal_values(code: str) -> "set[str]":
     return out
 
 
-#: A list-of-records result sized by its capacity function (gh-2184): a call
-#: to a ``*_max_out`` and the ``PyList_New`` only that shape's wrapper
-#: builds among the ``PyMethodDef`` rows. Both halves, because a
-#: ``variable_output`` wrapper calls its ``_max_out`` too and returns an
-#: ndarray -- a hand-written one that sizes some other way must not be told
-#: about records. Code, not text: read on the masked body, in any layout.
-#: In either order: a body that re-offers its input (gh-2204) creates the
-#: list before the loop that asks the capacity of each call.
+#: A list-of-records result sized by its capacity function (gh-2184): the
+#: capacity CALL assigned to the bound `_records_buffer_c` declares
+#: (``_cap_need = (size_t)(<fn>(...))``, through `_coerce.output_size_c`),
+#: and the ``PyList_New`` only that shape's wrapper builds among the
+#: ``PyMethodDef`` rows. Both halves, because a ``variable_output`` wrapper
+#: asks its capacity too and returns an ndarray -- a hand-written one that
+#: sizes some other way must not be told about records. Code, not text:
+#: read on the masked body, in any layout. In either order: a body that
+#: re-offers its input (gh-2204) creates the list before the loop that asks
+#: the capacity of each call.
+#:
+#: gh-2680: the call is recognised by the local it lands in, never by its
+#: name. A capacity function named with ``max_out_fn`` need not end in
+#: ``_max_out``, and the suffix test read such a wrapper's guard as an
+#: ndarray's ``output-size``.
 _RECORDS_CAPACITY_RE = re.compile(
-    r"^(?=[\s\S]*\b\w+_max_out\s*\()(?=[\s\S]*\bPyList_New\s*\()"
+    r"^(?=[\s\S]*\b_cap_need\s*=\s*\(size_t\)\s*\(\s*\w+\s*\()"
+    r"(?=[\s\S]*\bPyList_New\s*\()"
 )
 
 

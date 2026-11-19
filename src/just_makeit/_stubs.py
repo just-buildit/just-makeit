@@ -2319,9 +2319,16 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # bound name at all (a first scaffold), never to overrule a
             # declaration that exists.
             # gh-2680: both through the one spelling; the fallback is the
-            # name-derived symbol, which a signature override inherits.
+            # name-derived symbol, which a signature override inherits. A
+            # NAMED capacity function has no fallback: the binding calls
+            # it and nothing else, so its stub reads it and nothing else --
+            # a leftover derived alias in the header must not answer.
             _mo_sym = C.method_max_out_symbol(csym, m)
-            _mo_fallback = C.method_max_out_symbol(csym, {"name": m_name})
+            _mo_fallback = (
+                _mo_sym
+                if m.get("max_out_fn")
+                else C.method_max_out_symbol(csym, {"name": m_name})
+            )
             _mo_arity = (doc_blocks or {}).get(
                 max_out_arity_key()
             ) or frozenset()
@@ -2342,6 +2349,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 # gh-1996: the unit the binding answers in, read where the
                 # binding reads it.
                 _outbuf.interleave(m_arg != "void", m_params),
+                c_fn=_mo_sym,
             )
             if _mo_blk is not None:
                 # gh-2343: through the constructor, which also records that

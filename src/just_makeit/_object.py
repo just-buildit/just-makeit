@@ -73,6 +73,7 @@ from ._docstring import (
     declared_max_outs,
     max_out_arity_key,
     max_out_declared_key,
+    max_out_is_declared,
     max_out_is_state_only,
     parse_doxygen_block,
     scan_max_out_arity,
@@ -290,9 +291,9 @@ def _load_doc_blocks(
     # callers (and gh-666's test) read an empty map as "this header says
     # nothing yet". A key whose value is an empty set would make that false
     # while meaning exactly the same thing.
-    # gh-2680: an authored `max_out_fn` need not end in `_max_out`, so
-    # the scans are told the names the manifest gives.
-    _named = C.authored_max_out_fns(manifest, obj)
+    # gh-2680: the scans are told the capacity functions the manifest's
+    # methods resolve to; a named one need not end in `_max_out`.
+    _named = C.max_out_symbols(manifest, obj)
     _arity = scan_max_out_arity(text, _named)
     if _arity:
         out[max_out_arity_key()] = _arity
@@ -370,6 +371,38 @@ def init_param_drift(
             continue
         drift.append((name, dflt, hdr_dflt))
     return drift
+
+
+def undeclared_max_out_fn(
+    cfg: dict, root: Path, obj: str
+) -> "list[tuple[str, str]]":
+    """List-of-records methods whose ``max_out_fn`` the header lacks.
+
+    gh-2680. A list of records sizes its result by a capacity function only
+    when the AUTHOR declares one (gh-2184): jm never declares or stubs it
+    for that shape, derived or named, because a stub's ``return 0`` would
+    size every call's buffer to nothing and drop every record -- the fixed
+    ``max_results`` buffer is the safe answer until the author writes it.
+    That holds for a named function too. What a name adds is a statement:
+    the key says "size by this", so until the header declares it the key is
+    inert, and that is said rather than left silent -- by ``status`` (a
+    note) and by ``apply`` (a warning). Returns ``(method, max_out_fn)``.
+    """
+    from ._record import is_record_list
+
+    rows = [
+        (m, mo)
+        for m, _view in C._capacity_rows(cfg, obj)
+        if is_record_list(m) and (mo := m.get("max_out_fn"))
+    ]
+    if not rows:
+        return []
+    doc_blocks = _load_doc_blocks(root, obj, cfg)
+    return [
+        (m.get("name", "?"), mo)
+        for m, mo in rows
+        if not max_out_is_declared(doc_blocks, mo)
+    ]
 
 
 def inert_pass_capacity(

@@ -1286,24 +1286,23 @@ _MAX_OUT_ARITY_RE = re.compile(
 def _max_out_decls(header_text: str, named: "frozenset[str]"):
     """The capacity-function declarations in *header_text*.
 
-    A derived capacity function ends in ``_max_out``; an authored one
-    (``max_out_fn``, gh-2680) is whatever the manifest names, so *named*
-    lists those. Yields the regex matches: group 1 the name, group 2 the
+    Which names are capacity functions is the manifest's answer, not their
+    spelling: *named* is every symbol the object's methods resolve to
+    (`_config.max_out_symbols`), derived or named with ``max_out_fn``
+    (gh-2680). Yields the regex matches: group 1 the name, group 2 the
     parameter list.
 
     >>> text = "size_t a_max_out(s *x);\\nsize_t a_cap(s *x, size_t n);"
-    >>> [m.group(1) for m in _max_out_decls(text, frozenset())]
-    ['a_max_out']
     >>> [m.group(1) for m in _max_out_decls(text, frozenset({"a_cap"}))]
-    ['a_max_out', 'a_cap']
+    ['a_cap']
     """
     for m in _MAX_OUT_ARITY_RE.finditer(header_text):
-        if m.group(1).endswith("_max_out") or m.group(1) in named:
+        if m.group(1) in named:
             yield m
 
 
 def scan_max_out_arity(
-    header_text: str, named: "frozenset[str]" = frozenset()
+    header_text: str, named: "frozenset[str]"
 ) -> "frozenset[str]":
     """C function names whose ``_max_out`` takes **only** the state pointer.
 
@@ -1321,8 +1320,8 @@ def scan_max_out_arity(
 
     Returns the full C names (``ddcr_execute_max_out``), so a caller looks
     up `_config.method_max_out_symbol`'s answer without re-deriving the
-    spelling. *named* is the manifest's authored ``max_out_fn`` names
-    (gh-2680), which need not end in ``_max_out``.
+    spelling. *named* is the capacity functions the manifest's methods
+    resolve to (`_config.max_out_symbols`, gh-2680).
     """
     out: set[str] = set()
     for m in _max_out_decls(header_text, named):
@@ -1335,7 +1334,7 @@ def scan_max_out_arity(
 
 
 def declared_max_outs(
-    header_text: str, named: "frozenset[str]" = frozenset()
+    header_text: str, named: "frozenset[str]"
 ) -> "frozenset[str]":
     """Every ``*_max_out`` the header declares, whatever its arity (gh-761).
 
@@ -1349,7 +1348,7 @@ def declared_max_outs(
 
 
 def max_out_prototypes(
-    header_text: str, named: "frozenset[str]" = frozenset()
+    header_text: str, named: "frozenset[str]"
 ) -> "dict[str, str]":
     """``{name: full declaration text}`` for every ``*_max_out`` (gh-903).
 

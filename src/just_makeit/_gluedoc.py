@@ -501,6 +501,8 @@ def max_out_method(
     count_param: str = "",
     max_out_const: int = 0,
     elements_per_sample: int = 1,
+    *,
+    c_fn: str = "",
 ) -> GlueMethod:
     """jm's fallback documentation for a ``<name>_max_out`` accessor (gh-684).
 
@@ -566,12 +568,15 @@ def max_out_method(
             "Upper bound on the output length; the actual call may return "
             "fewer."
         )
+    # gh-2680: the C function the binding calls, whose header block this
+    # reads -- not the Python accessor's name.
+    where = f"the C function {c_fn}" if c_fn else "its C function"
     body = [
         f"Size an `out=` buffer with this before calling {name}(), "
         f"or use it to allocate one up front. The bound is this "
         f"object's own: "
         f"what it depends on is a property of the algorithm, so a "
-        f"header block on {name}_max_out() replaces this text."
+        f"header block on {where} replaces this text."
     ]
     if e != 1:
         body.append(

@@ -3232,8 +3232,8 @@ def _refresh_core_h_decls(
     # accessor still gets jm's default, so a fresh project is unchanged.
     from ._docstring import declared_max_outs
 
-    # gh-2680: *max_out_fns*, the capacity functions the manifest names,
-    # are the author's too, whatever their spelling.
+    # gh-2680: *max_out_fns* is every capacity function the manifest's
+    # methods resolve to (`_config.max_out_symbols`), whatever its spelling.
     skip = declared_max_outs(real.read_text(encoding="utf-8"), max_out_fns)
     changed = _inject_decls_into_core_h(
         real, comp, decls, skip_names=skip, family=family
@@ -3579,7 +3579,7 @@ def _sync_aggregates(
             root / rel,
             temp_root / rel,
             mp.cname,
-            max_out_fns=C.authored_max_out_fns(cfg, mp.cname),
+            max_out_fns=C.max_out_symbols(cfg, mp.cname),
         ):
             if root / rel not in updated:
                 updated.append(root / rel)
@@ -4018,7 +4018,7 @@ def _refresh_component_core_h(
         temp_root / rel,
         comp,
         C.core_family(cfg, comp),
-        C.authored_max_out_fns(cfg, comp),
+        C.max_out_symbols(cfg, comp),
     )
     # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each depends_on
     # entry, so opaque fields of a dependency's types compile.
@@ -5143,6 +5143,17 @@ def _apply_manifest(
                 print(f"  {verb:<6}  {rel}")
 
     print()
+    # gh-2680: an explicit key the tree does not honour yet is said, not
+    # left silent -- `status` notes it too.
+    from ._object import undeclared_max_out_fn
+
+    for _comp in C.components(cfg):
+        for _name, _mo in undeclared_max_out_fn(cfg, root, _comp):
+            _report.warn(
+                f"{_comp}.{_name} names max_out_fn `{_mo}`, which its header"
+                " does not declare: the list of records keeps its fixed"
+                " max_results buffer until it is declared and defined."
+            )
     _impl_rels = {_project_rel(root, p) for p in impl_patched}
     _n_created = sum(1 for v, _ in _changed if v == "create")
     _n_impl = sum(1 for v, r in _changed if v == "update" and r in _impl_rels)
