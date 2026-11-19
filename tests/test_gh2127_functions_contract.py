@@ -219,14 +219,8 @@ class TestCaseText:
     @pytest.mark.parametrize(
         "fn, reason",
         [
-            (
-                {
-                    "name": "fill_scalar",
-                    "params": [{"name": "o", "type": "float", "out": True}],
-                    "return_type": "void",
-                },
-                "parameter 'o'",
-            ),
+            # A scalar `out` param was here; since gh-2683 it is the result,
+            # and the contract calls without it (test_gh2683_*).
             (
                 {
                     "name": "name_of",

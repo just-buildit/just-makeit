@@ -397,6 +397,9 @@ Commands:
     --module name               Module to add the function to (required).
     --param name:type           Input parameter; repeatable.
     --out-param name:type[]     Writable output array param (drops const); repeatable.
+    --out-param name:type       Scalar output: C takes `type *name`, Python does
+                                not pass it and gets it back (a tuple for
+                                several). Needs a void return or --check-return.
     --return-type TYPE          Return type (default: void).
     --out-type TYPE[N]          Return a fresh ndarray of TYPE, as long as the
                                 integer param N says ('float[n]'); without [N],

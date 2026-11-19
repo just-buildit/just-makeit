@@ -38,9 +38,10 @@ from ._builtins import require_param_names
 from ._object import _regenerate_module
 from ._report import Refusal
 
-# A function param is ``(name, type)``; ``(name, type, is_out)`` for a writable
-# array output param (``--out-param``), where a truthy third element renders the
-# C binding as a non-const ``T *`` + writable NumPy view (gh-197/#221);
+# A function param is ``(name, type)``; ``(name, type, is_out)`` for an output
+# param (``--out-param``), where a truthy third element renders an array as a
+# non-const ``T *`` + writable NumPy view (gh-197/#221) and a scalar as a
+# ``T *`` the binding passes a local's address to and returns (gh-2683);
 # ``(name, type, is_out, default)`` where a non-empty fourth element makes a
 # scalar param optional with that default (gh-240); or
 # ``(name, type, is_out, default, enum)`` where a non-empty fifth element names
@@ -378,6 +379,23 @@ def run(
     if _status_err:
         print(f"error: {_status_err}", file=sys.stderr)
         sys.exit(1)
+
+    # gh-2683: a scalar `out` param is an output the binding returns, which
+    # only some shapes have room for. Refused here, before any C is written,
+    # by the check `_config.load` and the renderer make.
+    _out_err = T.scalar_out_why_not(
+        {
+            "name": fn_name,
+            "params": rows,
+            "return_type": return_type,
+            "check_return": check_return,
+            "out_type": out_type,
+            "result_fields": result_fields,
+            "variable_output": variable_output,
+        }
+    )
+    if _out_err:
+        raise Refusal(_out_err)
 
     # gh-1888: an output the binding allocates and the C fills blind needs a
     # length the call carries -- an array param's, or the integer param a

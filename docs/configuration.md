@@ -1518,6 +1518,7 @@ guard, so guard anything platform-specific in it yourself.
 | `name`, `return_type`, `doc`                  | `jm function <fn> --module <mod> --return-type T --doc STR`                       | ✅           |
 | `params = [{name, type, out?}]`               | `jm function --param name:T` + `--out-param name:T[]`                             | ✅ (0.13.22) |
 | `params … {mutable = true}`                   | (synonym for `out` — writable array param)                                        | ✅ (0.15.3)  |
+| `params … {type = "int", out = true}`         | `jm function --out-param name:T` — a scalar output, returned to Python            | ✅ (gh-2683) |
 | `params … {str_hint = "..."}`                 | (TOML only) an array refuses a `str`, with this appended                          | ✅ (gh-1756) |
 | `params … {rank = N}`                         | (TOML only) an array of any other rank is refused                                 | ✅ (gh-805)  |
 | `params … {elements_per_sample = N}`          | (TOML only) the C counts samples of N elements                                    | ✅ (gh-805)  |
@@ -1570,6 +1571,53 @@ cannot say how much it wrote, and hunting for a NUL the callee may never have
 written is a read past the end waiting to happen. `char` is deliberately not a
 supported scalar type: `char[]` in a param position is refused with a message
 naming `uint8_t[]` for a byte buffer and this key for text.
+
+#### A function that returns scalar outputs
+
+A **scalar** param with `out = true` is an output the C function writes
+(gh-2683). The prototype takes `T *name`, Python does not pass it, and the
+binding hands back its value: the value itself for one out param, a tuple in
+declared order for several. A lookup that returns a pair, and refuses a key it
+has no row for:
+
+```toml
+[[module.wlan.functions]]
+name         = "rate_from_mbps"
+return_type  = "int"
+check_return = true
+status_errors = [{ status = "MY_NO_RATE", error = "ValueError", message = "no rate" }]
+params = [
+    { name = "mbps",   type = "int" },
+    { name = "n_bpsc", type = "int", out = true, doc = "Bits per subcarrier." },
+    { name = "code",   type = "int", out = true, doc = "Coding rate code." },
+]
+```
+
+```c
+/* MY_NO_RATE is your header's constant for "no row for this rate" */
+int my_project_rate_from_mbps(int mbps, int *n_bpsc, int *code);
+```
+
+```python
+rate_from_mbps(54)    # (6, 3)
+rate_from_mbps(7)     # ValueError: no rate
+```
+
+The stub says so (`def rate_from_mbps(mbps: int) -> tuple[int, int]`), and
+its `Returns` section lists each out param with its `doc`. The binding zeroes
+each out before the call and returns it after, so a kernel that writes none
+returns zeros.
+
+The C return has to go somewhere other than the result, so a scalar out is
+accepted on a `void` function, or with `check_return = true` -- whose `int`
+status raises (through `status_errors` and `why` as usual) before the outs
+are returned. Any other return is refused at load, and so is an out that is
+not a plain integer, real or complex scalar (an enum, `path`, `bytes`, a
+capsule, a string), one with a `default`, and one on a function that also
+allocates an `out_type` / `result_fields` / `variable_output` result. A
+scalar out on a **method** is refused at load: only a module function has the
+binding yet (gh-2685). An array `out` param keeps its meaning, the caller's
+buffer to fill, and the two kinds may be mixed.
 
 ### Counts
 
@@ -2090,20 +2138,20 @@ The nested tables (and the view's `create_error`) are written by
 
 One entry per `just-makeit function` call.
 
-| Key                                                 | Type                          | Notes                                                                                                                                 |
-| --------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                              | string                        | Function name                                                                                                                         |
-| `return_type`                                       | string                        | C return type                                                                                                                         |
-| `doc`                                               | string                        | Python docstring                                                                                                                      |
-| `params`                                            | array of `{name, type, out?}` | Parameters; an array param with `out = true` (or its synonym `mutable = true`) is writable — generated `T *name`, not `const T *name` |
-| `inline`                                            | bool                          | `--inline`                                                                                                                            |
-| `out_type`, `out_size`                              | string                        | `--out-type` / `--out-size`: the element type and length of a fresh output (`out_type = "str"` returns a `str`)                       |
-| `variable_output`                                   | bool                          | `--variable-output`: the function sizes its own output                                                                                |
-| `result_fields`, `max_results`, `max_results_param` | array / int / string          | A list-of-records result                                                                                                              |
-| `check_return`                                      | bool                          | `--check-return`: a non-zero `int` return raises                                                                                      |
-| `why`                                               | bool                          | `--why`: the C function takes a trailing `const char **why` (gh-1706)                                                                 |
-| `status_errors`                                     | array                         | `--status-error`: status → exception table (gh-1614)                                                                                  |
-| `impl`, `impl_file`, `replace`                      | string / table                | A body `jm apply` re-stamps — as for an [object](#component-lifecycle-impl-bodies)                                                    |
+| Key                                                 | Type                          | Notes                                                                                                                                                                                                                                                     |
+| --------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                              | string                        | Function name                                                                                                                                                                                                                                             |
+| `return_type`                                       | string                        | C return type                                                                                                                                                                                                                                             |
+| `doc`                                               | string                        | Python docstring                                                                                                                                                                                                                                          |
+| `params`                                            | array of `{name, type, out?}` | Parameters; an array param with `out = true` (or its synonym `mutable = true`) is writable — generated `T *name`, not `const T *name`; a scalar one is an output the binding returns ([scalar outputs](#a-function-that-returns-scalar-outputs), gh-2683) |
+| `inline`                                            | bool                          | `--inline`                                                                                                                                                                                                                                                |
+| `out_type`, `out_size`                              | string                        | `--out-type` / `--out-size`: the element type and length of a fresh output (`out_type = "str"` returns a `str`)                                                                                                                                           |
+| `variable_output`                                   | bool                          | `--variable-output`: the function sizes its own output                                                                                                                                                                                                    |
+| `result_fields`, `max_results`, `max_results_param` | array / int / string          | A list-of-records result                                                                                                                                                                                                                                  |
+| `check_return`                                      | bool                          | `--check-return`: a non-zero `int` return raises                                                                                                                                                                                                          |
+| `why`                                               | bool                          | `--why`: the C function takes a trailing `const char **why` (gh-1706)                                                                                                                                                                                     |
+| `status_errors`                                     | array                         | `--status-error`: status → exception table (gh-1614)                                                                                                                                                                                                      |
+| `impl`, `impl_file`, `replace`                      | string / table                | A body `jm apply` re-stamps — as for an [object](#component-lifecycle-impl-bodies)                                                                                                                                                                        |
 
 A param's `default` reads as it does on a method. An array param takes only
 `default = "[]"`, and when omitted it reaches the function as `NULL` with
