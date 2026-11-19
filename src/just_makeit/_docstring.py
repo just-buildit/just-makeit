@@ -1291,7 +1291,7 @@ def _max_out_decls(header_text: str, named: "frozenset[str]"):
     lists those. Yields the regex matches: group 1 the name, group 2 the
     parameter list.
 
-    >>> text = "size_t a_max_out(s *x);\nsize_t a_cap(s *x, size_t n);"
+    >>> text = "size_t a_max_out(s *x);\\nsize_t a_cap(s *x, size_t n);"
     >>> [m.group(1) for m in _max_out_decls(text, frozenset())]
     ['a_max_out']
     >>> [m.group(1) for m in _max_out_decls(text, frozenset({"a_cap"}))]
