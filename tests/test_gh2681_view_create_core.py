@@ -352,6 +352,24 @@ class TestMovingAnExistingView:
         status = run_cli("status", "--check", cwd=root)
         assert status.returncode == 0, status.stdout + status.stderr
 
+    def test_a_mention_in_the_parents_prose_is_not_a_copy(
+        self, tmp_path: Path
+    ) -> None:
+        """doppler's headers cross-reference constructors in Doxygen as
+        ``fn()``; only a declaration or a definition is a copy to move."""
+        root = _base(tmp_path / "scr")
+        _declare_in_manifest(root, create_core="acq")
+        corr_h = root / CORR_H
+        text = corr_h.read_text(encoding="utf-8")
+        inc = '#include "scr/clib_common.h"\n'
+        note = f"/* The Acquisition view is built by {FN}(). */\n"
+        corr_h.write_text(text.replace(inc, inc + note), "utf-8")
+        applied = run_cli("apply", cwd=root)
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert _read(root, ACQ_H).count(PROTO) == 1
+        status = run_cli("status", "--check", cwd=root)
+        assert status.returncode == 0, status.stdout + status.stderr
+
     def test_jm_view_refuses_a_stranded_copy(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
