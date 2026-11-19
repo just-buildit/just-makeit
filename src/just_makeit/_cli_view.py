@@ -11,7 +11,8 @@ def run(args: list[str]) -> None:
         print(
             "error: 'view' requires an object name and a view class name.\n"
             "Usage: just-makeit view <obj> <ViewClassName> --module <mod> "
-            "--create-fn <fn> [--init-param ...] [--exclude-property ...]",
+            "--create-fn <fn> [--create-core <obj>] [--init-param ...] "
+            "[--exclude-property ...]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -23,6 +24,7 @@ def run(args: list[str]) -> None:
     class_name = args[1]
     module: str | None = None
     create_fn = ""
+    create_core = ""
     doc = ""
     init_params: list[tuple] = []
     exclude_properties: list[str] = []
@@ -48,6 +50,18 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             create_fn = remaining[i]
+            i += 1
+        elif tok == "--create-core":
+            # gh-2681: the object of the view's module whose core declares
+            # and defines the view's create_fn.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --create-core requires an object name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            create_core = remaining[i]
             i += 1
         elif tok == "--init-param":
             param, i = parse_init_param_flag(remaining, i)
@@ -93,4 +107,5 @@ def run(args: list[str]) -> None:
         exclude_properties=exclude_properties,
         exclude_methods=exclude_methods,
         doc=doc,
+        create_core=create_core,
     )

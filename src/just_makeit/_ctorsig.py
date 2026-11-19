@@ -216,8 +216,14 @@ def _header_text(root: Path, component: str) -> str | None:
         return None
 
 
-def declared_params(root: Path, component: str, create_fn: str) -> str | None:
+def declared_params(
+    root: Path, component: str, create_fn: str, home: str = ""
+) -> str | None:
     """The parameter list ``<comp>_core.h`` declares for *create_fn*.
+
+    *home* is the object whose header declares it when that is not
+    *component*: a view's ``create_core`` (gh-2681). The state type the
+    prototype returns is still *component*'s.
 
     Returns
     -------
@@ -230,7 +236,7 @@ def declared_params(root: Path, component: str, create_fn: str) -> str | None:
     passed, and collapsing the two is how a gate comes to report clean over a
     tree it never looked at — the shape gh-1033 was filed for one module over.
     """
-    text = _header_text(root, component)
+    text = _header_text(root, home or component)
     if text is None:
         return None
     # The declaration jm injects, as it injects it: the state pointer return,
@@ -256,7 +262,8 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
 
     An object's `create()` -- its ``create_fn`` when it declares one -- and
     every view's ``create_fn`` (gh-2552: a view's prototype is injected into
-    the same sacred header, and drifted with no finding).
+    the same sacred header, and drifted with no finding) -- or into its
+    ``create_core``'s header, which is then the one read (gh-2681).
 
     Silent for a component jm cannot render (a manifest shape the context
     builders reject is a different finding, already reported elsewhere) and
@@ -281,20 +288,27 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
             continue
         # `create_name`, not `create_fn`: the context publishes an object's
         # override under that key and never sets `create_fn` (gh-1494).
-        ctors = [(_csym.ctx_create_name(ctx), rendered)]
+        ctors = [(_csym.ctx_create_name(ctx), rendered, comp)]
         for v in C.views(cfg, comp):
             try:
-                ctors.append((v["create_fn"], create_params_of(cfg, comp, v)))
+                ctors.append(
+                    (
+                        v["create_fn"],
+                        create_params_of(cfg, comp, v),
+                        # gh-2681: declared where its core is.
+                        C.view_create_core(cfg, comp, v),
+                    )
+                )
             except Exception:
                 continue  # as above: not this check's finding
-        for create_fn, params in ctors:
-            declared = declared_params(root, comp, create_fn)
+        for create_fn, params, home in ctors:
+            declared = declared_params(root, comp, create_fn, home)
             if declared is None or declared == _norm(params):
                 continue
             out.append(
                 CtorDrift(
                     component=comp,
-                    rel=INC.core_rel(comp, cfg),
+                    rel=INC.core_rel(home, cfg),
                     declared=declared,
                     rendered=_norm(params),
                     csym=_csym.stem(cfg, comp),

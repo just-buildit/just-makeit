@@ -1400,6 +1400,7 @@ struct. `jm script` names the rows in a NOTE, since no flag spells them.
 | -------------------------------------- | ------------------------------------------------------------- | ------------ |
 | `class_name`, `create_fn`              | `jm view <obj> <Class> --module <mod> --create-fn <fn>`       | ✅ (0.31)    |
 | `module`                               | `jm view --module <mod>` naming another object module         | ✅ (gh-2516) |
+| `create_core`                          | `jm view --create-core <object>`: the core owning `create_fn` | ✅ (gh-2681) |
 | `doc = "..."`                          | `jm view --doc "text"`                                        | ✅ (0.31)    |
 | `init_params = [{name, type, ...}]`    | `jm view --init-param name:type[:default]` (repeatable)       | ✅ (0.31)    |
 | `exclude_properties = ["..."]`         | `jm view --exclude-property name` (repeatable)                | ✅ (0.31)    |

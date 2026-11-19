@@ -16,8 +16,15 @@ The view's class may live in another object module than its parent's
 ``module`` key when it differs from the parent's. That module's aggregator
 includes the view's fragment, its stub declares the class, its
 ``__init__.py`` re-exports it and its extension links the parent's core;
-the C core, and the ``create_fn`` stub, stay the parent's.
-``_config.view_module`` is the one answer to where a view lives.
+the parent's C core stays where it is.
+
+The ``create_fn`` stub is the parent's core's too, unless the view names
+``create_core`` (gh-2681): an object of the view's own module, whose core
+then declares and defines the constructor. A general parent is not handed an
+application's constructor that way -- the name in its header, and a call
+into the module that depends on it in its core.
+``_config.view_module`` is the one answer to where a view lives, and
+``_config.view_create_core`` to where its constructor does.
 """
 
 from __future__ import annotations
@@ -31,7 +38,7 @@ from . import _context as Ctx
 from . import _incpath as INC
 from . import _csym as CSYM
 from . import _ctorsig
-from ._init import _inject_decls_into_core_h
+from ._init import _inject_decls_into_core_h, _inject_includes_into_core_h
 from ._method import _append_to_core_c
 from ._object import _regenerate_module
 
@@ -76,6 +83,7 @@ def run(
     create_error: str | None = None,
     create_error_message: str | None = None,
     create_why: bool = False,
+    create_core: str = "",
     from_apply: bool = False,
 ) -> None:
     # gh-625's audit: a view's class name is not just a Python identifier —
@@ -176,6 +184,37 @@ def run(
                 f"init-params; views over such objects are not supported yet."
             )
 
+    # gh-2681: the object whose core owns the constructor. Only an object
+    # of the module the class lives in: that module's extension is the one
+    # that calls it, and what it links (`_libwiring`) is what resolves it.
+    # And only one that already depends on the parent with `link = true`,
+    # which is what includes the parent's header (the state type the
+    # prototype returns) and links the parent's core into its C test.
+    # Naming the parent itself is the default spelled out; it is recorded
+    # as absent, so the manifest has one spelling of it.
+    if create_core == object_name:
+        create_core = ""
+    if create_core:
+        if create_core not in mod_objs:
+            _fail(
+                f"--create-core '{create_core}' is not an object of module "
+                f"'{module}', where view '{class_name}' lives. Known: "
+                f"{sorted(mod_objs)}"
+            )
+        linked = {
+            C.dep_names([d])[0]
+            for d in C.depends_on_raw(cfg, create_core)
+            if isinstance(d, dict) and d.get("link")
+        }
+        if object_name not in linked:
+            _fail(
+                f"--create-core '{create_core}' must depend on the view's "
+                f"parent with a link, so its core sees "
+                f"'{CSYM.stem(cfg, object_name)}_state_t' and links what "
+                f"builds it. Add to [{create_core}]:\n"
+                f'  depends_on = [{{ name = "{object_name}", link = true }}]'
+            )
+
     prop_names = {p["name"] for p in C.properties(cfg, object_name)}
     exclude_properties = list(exclude_properties or [])
     for ep in exclude_properties:
@@ -220,6 +259,8 @@ def run(
     if module != parent_module:
         view_entry["module"] = module
     view_entry["create_fn"] = create_fn
+    if create_core:
+        view_entry["create_core"] = create_core
     if doc:
         view_entry["doc"] = doc
     if ip_dicts:
@@ -246,14 +287,27 @@ def run(
     csym = CSYM.stem(cfg, object_name)
     create_params = create_params_of(cfg, object_name, view_entry)
 
-    core_h = INC.core_h(root, object_name, cfg)
+    # gh-2681: declared and defined by the core that owns it -- the
+    # parent's, or the `create_core` named above, whose header first gains
+    # its depends_on includes (the parent's among them) so the prototype's
+    # state type resolves however far `apply` has got.
+    home = create_core or object_name
+    core_h = INC.core_h(root, home, cfg)
+    if create_core and _inject_includes_into_core_h(
+        core_h,
+        home,
+        C.depends_on(cfg, home),
+        extra=C.param_headers(cfg, home),
+        root=root,
+    ):
+        print(f"  update  {core_h}")
     proto = f"{csym}_state_t *{create_fn}({create_params});"
     if _inject_decls_into_core_h(
-        core_h, object_name, [proto], family=C.core_family(cfg, object_name)
+        core_h, home, [proto], family=C.core_family(cfg, home)
     ):
         print(f"  update  {core_h}")
 
-    core_c = INC.src_path(root, object_name, cfg) / f"{object_name}_core.c"
+    core_c = INC.src_path(root, home, cfg) / f"{home}_core.c"
     if core_c.exists():
         core_text = core_c.read_text(encoding="utf-8")
         # Idempotent: _append_to_core_c blindly appends, so only add the stub

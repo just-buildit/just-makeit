@@ -925,6 +925,9 @@ def _view_flags(v: dict, module: str | None) -> list[str]:
 
     parts.append(_flag("--create-fn", v["create_fn"]))
 
+    if v.get("create_core"):  # gh-2681
+        parts.append(_flag("--create-core", v["create_core"]))
+
     for p in v.get("init_params", []):
         parts.append(_flag("--init-param", _init_param_spec(p)))
 
