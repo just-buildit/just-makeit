@@ -1605,7 +1605,8 @@ def _fn_generatable(fn: dict) -> bool:
     """A function app is generatable when every param is a CLI-parseable scalar
     and the return is a scalar (or void)."""
     for p in fn.get("params", []):
-        if p["type"] not in _C_PARSE:
+        # gh-2683: a scalar out param is a pointer the app has no flag for.
+        if p["type"] not in _C_PARSE or T.param_writable(p):
             return False
     ret = fn.get("return_type", "void")
     return ret == "void" or ret in _C_PARSE

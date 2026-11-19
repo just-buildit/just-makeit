@@ -2514,7 +2514,15 @@ def fn_py_surface(
         signature needs (defaults belong to the signature alone).
     """
     out_type = fn.get("out_type")
-    if fn.get("check_return") and not out_type:
+    # gh-2683: scalar out params ARE the result -- the value for one, a
+    # tuple in declared order for several -- and the caller does not pass
+    # them. `scalar_out_why_not` has refused every shape where the C return
+    # or an allocated output would compete with them.
+    outs = [p for p in fn.get("params", []) if T.param_scalar_out(p)]
+    if outs:
+        anns = [_py(p["type"]) for p in outs]
+        ret = anns[0] if len(anns) == 1 else f"tuple[{', '.join(anns)}]"
+    elif fn.get("check_return") and not out_type:
         # gh-363: the int status is consumed by a raise-on-non-zero; the Python
         # surface is "succeeds or raises", i.e. returns None. With an output
         # (gh-1704) the raise guards the count and the output is still what
@@ -2535,7 +2543,7 @@ def fn_py_surface(
     # (`name: type = <default>`) so type-checkers and readers see the default.
     parts: list[str] = []
     py_params: list[tuple[str, str]] = []
-    for p in fn.get("params", []):
+    for p in T.fn_input_params(fn.get("params", [])):
         # gh-353: a path arg accepts str | os.PathLike (via _py, which now
         # spells it for every surface — gh-623); an enum arg (type "int" with
         # an `enum` name) accepts the choice string.
@@ -2564,6 +2572,50 @@ def fn_py_surface(
             part += f" = {dflt}"
         parts.append(part)
     return ret, py_params, parts
+
+
+def fn_out_returns(fn: dict) -> list[str]:
+    """What a function's ``Returns`` entry says about its out params.
+
+    gh-2683. Both faces -- the ``.pyi`` (`_fn_stub`) and the runtime
+    ``__doc__`` (`_render.make_functions_ctx`) -- hand this to the renderer
+    as its *ret_fields*, so a stub and ``help()`` describe the same result.
+    One out is the result itself, described by its ``doc``; several are a
+    tuple, listed one entry per element in declared order. ``[]`` for a
+    function with none.
+
+    Examples
+    --------
+    >>> fn_out_returns({"params": [
+    ...     {"name": "n", "type": "int", "out": True, "doc": "Count."}]})
+    ['Count.']
+    >>> fn_out_returns({"params": [
+    ...     {"name": "a", "type": "int", "out": True},
+    ...     {"name": "b", "type": "double", "out": True}]})
+    ['A tuple of the out parameters, in order:', '', 'a : int', 'b : float']
+    """
+    from ._docstring import authored_doc_lines
+
+    outs = [p for p in fn.get("params", []) if T.param_scalar_out(p)]
+    if not outs:
+        return []
+    if len(outs) == 1:
+        p = outs[0]
+        return authored_doc_lines(str(p.get("doc") or "")) or [
+            f"The ``{p['name']}`` the C function writes."
+        ]
+    return [
+        "A tuple of the out parameters, in order:",
+        "",
+        *_record.field_entries(
+            [
+                _record.RecordField(
+                    p["name"], p["type"], str(p.get("doc") or "")
+                )
+                for p in outs
+            ]
+        ),
+    ]
 
 
 def _module_fn_blocks(root, module: str) -> dict:
@@ -2631,6 +2683,7 @@ def _fn_stub(fn: dict, block=None, enums: "dict | None" = None) -> str:
             authored_doc=doc,
             param_docs=pdocs,
             indent=4,
+            ret_fields=fn_out_returns(fn),
         )
         return f"{sig}\n" + "\n".join(doc_lines)
     # gh-1493: the manifest `doc` as written. This cut it to its first LINE,

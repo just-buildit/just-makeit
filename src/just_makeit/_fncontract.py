@@ -83,8 +83,10 @@ def _arg(p: dict) -> "str | None":
     any stub kernel. An OUT array takes the same buffer: the binding requires
     the caller to supply a writable array of the element dtype and fills it,
     so a zero buffer is exactly what it expects. A scalar is the type's own
-    "one", which the binding parses for any value. An out scalar has no
-    Python form the binding accepts, so it has no argument here.
+    "one", which the binding parses for any value. An out scalar is not
+    passed at all (gh-2683): the caller reads it back from the result, so
+    :func:`case` never asks for one -- it calls over
+    :func:`_types.fn_input_params`.
     """
     t = p["type"]
     if T.is_array_param_type(t):
@@ -92,8 +94,6 @@ def _arg(p: dict) -> "str | None":
         if meta is None or meta["kind"] not in ("int", "float", "complex"):
             return None
         return f"np.zeros(4, dtype={meta['py_type']})"
-    if p.get("out"):
-        return None
     meta = T._CTYPE_META.get(t)
     if meta is None or meta["kind"] not in ("int", "float", "complex"):
         return None
@@ -145,15 +145,40 @@ def _result(fn: dict) -> "str | None":
     ann = _stubs.fn_py_surface(fn)[0]
     if ann == "None":
         return "self.assertIsNone(result)"
+    # gh-2683: several scalar out params come back as a tuple, one element
+    # per out in declared order, each checked as a lone value would be.
+    if ann.startswith("tuple[") and ann.endswith("]"):
+        elems = ann[len("tuple[") : -1].split(", ")
+        checks = [_is_a(e, f"result[{i}]") for i, e in enumerate(elems)]
+        if any(c is None for c in checks):
+            return None
+        return "\n        ".join(
+            [
+                "self.assertIsInstance(result, tuple)",
+                f"self.assertEqual(len(result), {len(elems)})",
+                *checks,
+            ]
+        )
+    return _is_a(ann, "result")
+
+
+def _is_a(ann: str, expr: str) -> "str | None":
+    """The assertion that *expr* is a value of scalar annotation *ann*.
+
+    >>> _is_a("float", "result[1]")
+    'self.assertIsInstance(result[1], float)'
+    >>> _is_a("NDArray[Any]", "result") is None
+    True
+    """
     if ann == "bool":
-        return "self.assertIsInstance(result, bool)"
+        return f"self.assertIsInstance({expr}, bool)"
     if ann == "int":
         return (
-            "self.assertIsInstance(result, int)\n"
-            "        self.assertNotIsInstance(result, bool)"
+            f"self.assertIsInstance({expr}, int)\n"
+            f"        self.assertNotIsInstance({expr}, bool)"
         )
     if ann in ("float", "complex"):
-        return f"self.assertIsInstance(result, {ann})"
+        return f"self.assertIsInstance({expr}, {ann})"
     return None
 
 
@@ -198,7 +223,7 @@ def _skip_reason(fn: dict) -> "str | None":
     for flag in _SHAPE_FLAGS:
         if fn.get(flag):
             return f"{flag} changes the call's shape: no contract call yet"
-    for p in fn.get("params", []):
+    for p in T.fn_input_params(fn.get("params", [])):
         if _arg(p) is None:
             return (
                 f"parameter {p['name']!r} of type {p['type']!r} has no "
@@ -279,7 +304,11 @@ def case(fn: dict) -> "tuple[str, bool]":
             f"    def test_{name}_contract(self):\n"
             "        pass\n"
         ), False
-    args = [f"{p['name']}={_arg(p)}" for p in fn.get("params", [])]
+    # gh-2683: a scalar out param is the result, not an argument.
+    args = [
+        f"{p['name']}={_arg(p)}"
+        for p in T.fn_input_params(fn.get("params", []))
+    ]
     uses_np = any(
         T.is_array_param_type(p["type"]) for p in fn.get("params", [])
     )
