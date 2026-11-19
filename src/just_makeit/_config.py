@@ -7504,10 +7504,11 @@ def method_max_out_symbol(stem: str, entry: dict) -> str:
 def max_out_fn_why_not(m: dict, what: str) -> str:
     """Why *m*'s ``max_out_fn`` cannot be honoured, or ``""`` (gh-2680).
 
-    Asked by the manifest loader and by ``jm method`` before it writes, so
-    every face refuses the same declarations. Each refusal is a key that
-    would otherwise be stored and then called by nothing, or emitted as a
-    call that does not compile:
+    Asked by the manifest loader, so every command refuses the same
+    declarations -- `jm method` included, which gh-1867's undo leaves the
+    tree untouched for. Each refusal is a key that would otherwise be
+    stored and then called by nothing, or emitted as a call that does not
+    compile:
 
     - the method has no capacity function. Only a ``variable_output``
       method (not a ``borrow``, which lends memory it does not size, nor a

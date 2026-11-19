@@ -2783,21 +2783,6 @@ def run(
     )
     if _consumed_why:
         raise _report.Refusal(_consumed_why)
-    # gh-2680: likewise the loader's `max_out_fn` refusal.
-    _max_out_why = C.max_out_fn_why_not(
-        {
-            "result_fields": result_fields or [],
-            "single": single,
-            "variable_output": variable_output,
-            "record_dtype": record_dtype,
-            "borrow": borrow,
-            "batch": batch,
-            "max_out_fn": max_out_fn,
-        },
-        f"method '{object_name}.{method_name}'",
-    )
-    if _max_out_why:
-        raise _report.Refusal(_max_out_why)
     _restated = _record.restated_columns(
         {
             "name": method_name,
