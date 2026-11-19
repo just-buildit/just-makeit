@@ -1274,15 +1274,37 @@ def struct_member_doc(
 # the seven `make_methods_ctx` call sites and the module stub path.
 _MAX_OUT_KEY = "<max_out_state_only>"
 
-# `size_t <comp>_<verb>_max_out ( <params> );` — the declaration jm emits and
-# the user then implements. Deliberately tolerant of the formatting a project's
-# own clang-format may have applied to it.
+# `size_t <name> ( <params> );` — the declaration jm emits and the user then
+# implements. Deliberately tolerant of the formatting a project's own
+# clang-format may have applied to it. Which names are capacity functions is
+# `_is_max_out`'s question, not the regex's (gh-2680).
 _MAX_OUT_ARITY_RE = re.compile(
-    r"\bsize_t\s+(\w+_max_out)\s*\(([^)]*)\)\s*;", re.MULTILINE
+    r"\bsize_t\s+(\w+)\s*\(([^)]*)\)\s*;", re.MULTILINE
 )
 
 
-def scan_max_out_arity(header_text: str) -> "frozenset[str]":
+def _max_out_decls(header_text: str, named: "frozenset[str]"):
+    """The capacity-function declarations in *header_text*.
+
+    A derived capacity function ends in ``_max_out``; an authored one
+    (``max_out_fn``, gh-2680) is whatever the manifest names, so *named*
+    lists those. Yields the regex matches: group 1 the name, group 2 the
+    parameter list.
+
+    >>> text = "size_t a_max_out(s *x);\nsize_t a_cap(s *x, size_t n);"
+    >>> [m.group(1) for m in _max_out_decls(text, frozenset())]
+    ['a_max_out']
+    >>> [m.group(1) for m in _max_out_decls(text, frozenset({"a_cap"}))]
+    ['a_max_out', 'a_cap']
+    """
+    for m in _MAX_OUT_ARITY_RE.finditer(header_text):
+        if m.group(1).endswith("_max_out") or m.group(1) in named:
+            yield m
+
+
+def scan_max_out_arity(
+    header_text: str, named: "frozenset[str]" = frozenset()
+) -> "frozenset[str]":
     """C function names whose ``_max_out`` takes **only** the state pointer.
 
     gh-761. jm assumed every ``*_max_out`` takes a trailing count (gh-607),
@@ -1297,11 +1319,13 @@ def scan_max_out_arity(header_text: str) -> "frozenset[str]":
     actually written — the manifest records the *method's* shape, which says
     nothing about what its ``_max_out`` sibling needs.
 
-    Returns the full C names (``ddcr_execute_max_out``), so a caller looks up
-    ``f"{component}_{name}_max_out"`` without re-deriving the spelling.
+    Returns the full C names (``ddcr_execute_max_out``), so a caller looks
+    up `_config.method_max_out_symbol`'s answer without re-deriving the
+    spelling. *named* is the manifest's authored ``max_out_fn`` names
+    (gh-2680), which need not end in ``_max_out``.
     """
     out: set[str] = set()
-    for m in _MAX_OUT_ARITY_RE.finditer(header_text):
+    for m in _max_out_decls(header_text, named):
         params = m.group(2)
         # One parameter and no comma → state only. A `void` parameter list
         # cannot occur here (every `_max_out` takes at least the state).
@@ -1310,7 +1334,9 @@ def scan_max_out_arity(header_text: str) -> "frozenset[str]":
     return frozenset(out)
 
 
-def declared_max_outs(header_text: str) -> "frozenset[str]":
+def declared_max_outs(
+    header_text: str, named: "frozenset[str]" = frozenset()
+) -> "frozenset[str]":
     """Every ``*_max_out`` the header declares, whatever its arity (gh-761).
 
     `_apply._refresh_core_h_decls` protects these from being re-declared: the
@@ -1319,12 +1345,12 @@ def declared_max_outs(header_text: str) -> "frozenset[str]":
     the derivation unstable — the next apply would read jm's own rewrite back
     and flip both faces to match it.
     """
-    return frozenset(
-        m.group(1) for m in _MAX_OUT_ARITY_RE.finditer(header_text)
-    )
+    return frozenset(m.group(1) for m in _max_out_decls(header_text, named))
 
 
-def max_out_prototypes(header_text: str) -> "dict[str, str]":
+def max_out_prototypes(
+    header_text: str, named: "frozenset[str]" = frozenset()
+) -> "dict[str, str]":
     """``{name: full declaration text}`` for every ``*_max_out`` (gh-903).
 
     `declared_max_outs` answers "which of these does the author own", which is
@@ -1337,9 +1363,7 @@ def max_out_prototypes(header_text: str) -> "dict[str, str]":
     Returns the matched text verbatim, including the trailing semicolon, so
     restoring is a substitution rather than a re-render.
     """
-    return {
-        m.group(1): m.group(0) for m in _MAX_OUT_ARITY_RE.finditer(header_text)
-    }
+    return {m.group(1): m.group(0) for m in _max_out_decls(header_text, named)}
 
 
 def restore_max_out_prototypes(
@@ -1367,7 +1391,7 @@ def restore_max_out_prototypes(
     changed: list[str] = []
     out = header_text
     for name, decl in saved.items():
-        for m in _MAX_OUT_ARITY_RE.finditer(header_text):
+        for m in _max_out_decls(header_text, frozenset(saved)):
             if m.group(1) != name or m.group(0) == decl:
                 continue
             out = out.replace(m.group(0), decl, 1)

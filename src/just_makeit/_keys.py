@@ -297,6 +297,9 @@ METHOD_KEYS = frozenset(
         "out_type",
         "out_divisor",
         "max_out",
+        # gh-2680: the C capacity function, when it is not the derived
+        # `<fn>_max_out` (`_config.method_max_out_symbol`).
+        "max_out_fn",
         "max_results",
         "result_fields",
         "single",

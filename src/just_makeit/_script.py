@@ -744,6 +744,8 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     # manifest, so a key it does not emit replays as a DIFFERENT project.
     if m.get("fn"):
         parts.append(_flag("--fn", str(m["fn"])))
+    if m.get("max_out_fn"):  # gh-2680
+        parts.append(_flag("--max-out-fn", str(m["max_out_fn"])))
     if m.get("error_negative"):
         parts.append(_bool_flag("--error-negative"))
     # gh-823 Ask D. `status_return` was forwarded by `_apply` and emitted by

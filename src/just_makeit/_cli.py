@@ -211,6 +211,12 @@ Commands:
                                 under its own prefix, or binding a validating
                                 variant (--fn dp_tlm_emit_checked) under the
                                 plain Python name. The Python face is unchanged.
+    --max-out-fn SYMBOL         C capacity function the binding sizes the
+                                output by, when it is not the derived
+                                <fn>_max_out -- e.g. a status twin bound with
+                                --fn dp_x_run_why that shares dp_x_run_max_out.
+                                Called as written; the Python <name>_max_out
+                                keeps its name and reads this function's doc.
     --error-negative            The int return is a VALUE unless it is negative,
                                 in which case it is an error code and the method
                                 raises. Distinct from a status return, where the

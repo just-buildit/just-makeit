@@ -2318,8 +2318,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # fallback applies only when the header knows nothing about the
             # bound name at all (a first scaffold), never to overrule a
             # declaration that exists.
-            _mo_sym = f"{C.method_c_symbol(csym, m)}_max_out"
-            _mo_fallback = f"{csym}_{m_name}_max_out"
+            # gh-2680: both through the one spelling; the fallback is the
+            # name-derived symbol, which a signature override inherits.
+            _mo_sym = C.method_max_out_symbol(csym, m)
+            _mo_fallback = C.method_max_out_symbol(csym, {"name": m_name})
             _mo_arity = (doc_blocks or {}).get(
                 max_out_arity_key()
             ) or frozenset()

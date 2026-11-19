@@ -715,6 +715,11 @@ CASES: "dict[str, dict[str, Case]]" = {
         "fn": _case("method", "o", "m2", "{M}", "--arg-type", "double",
                     "--return-type", "double", "--fn", "o_custom_m2",
                     only=BASE),
+        # gh-2680: a capacity function named apart from the bound one.
+        "max-out-fn": _case(
+            "method", "o", "m2", "{M}", "--arg-type", "float[]",
+            "--return-type", "float", "--variable-output", "--fn",
+            "o_m2_why", "--max-out-fn", "o_m2_cap", only=BASE),
         "varargs": _case("method", "o", "m2", "{M}", "--varargs",
                          only=BASE),
         "manual-stub": _case("method", "o", "m2", "{M}", "--manual-stub",

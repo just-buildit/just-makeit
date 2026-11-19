@@ -743,6 +743,7 @@ def _methods_c_stub_variable(
     count_type: str = DEFAULT_COUNT_TYPE,
     error_sentinel: str = "",
     no_count: bool = False,
+    max_out_fn: str = "",
 ) -> str:
     """Generate _core-level C stubs for a variable-output method.
 
@@ -767,8 +768,13 @@ def _methods_c_stub_variable(
 
     gh-2233: *no_count* drops the void-input shape's ``size_t n`` from the
     kernel and from ``_max_out``, which then take the state alone.
+
+    gh-2680: *max_out_fn* names the capacity function when it is not the
+    derived ``<c_fn>_max_out`` (`_config.method_max_out_symbol`).
     """
-    c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
+    _entry = {"name": name, "fn": c_fn, "max_out_fn": max_out_fn}
+    c_fn = C.method_c_symbol(csym, _entry)
+    mo_fn = C.method_max_out_symbol(csym, _entry)
     ret_disp = _out_elem_disp(return_type, out_type)
     _refuse = _refuse_note(error_sentinel, count_type)
     has_arg = arg_type != "void"
@@ -820,7 +826,7 @@ def _methods_c_stub_variable(
     lines = [
         _max_out_head,
         "size_t",
-        f"{c_fn}_max_out({csym}_state_t *state{moc_decl})",
+        f"{mo_fn}({csym}_state_t *state{moc_decl})",
         "{",
         f"    (void)state;{moc_suppress}",
         _max_out_body,
@@ -1023,7 +1029,7 @@ def impl_default_return(
     count_type: str = "",
     batch: bool = False,
     borrow: bool = False,
-    c_fn: str,
+    max_out_fn: str,
 ) -> str:
     """The ``return`` that completes an ``impl`` body which has none.
 
@@ -1040,7 +1046,9 @@ def impl_default_return(
       kernel (:func:`_max_out_count_param`: ``n``, ``n_in``,
       ``<p>_len``) -- or, for a kernel with none (all-scalar params,
       gh-2233's ``no_count``), the bound the binding sized ``out`` with,
-      ``<fn>_max_out(state)``; cast to *count_type* unless ``size_t``;
+      ``<max_out_fn>(state)`` -- the capacity function,
+      `_config.method_max_out_symbol` (gh-2680); cast to *count_type*
+      unless ``size_t``;
     * a borrow: ``NULL``, which the binding raises on;
     * a batch: nothing, it returns ``void``;
     * any other -- a scalar, ``void``, one record by value (``single``):
@@ -1051,16 +1059,18 @@ def impl_default_return(
 
     Examples
     --------
-    >>> impl_default_return(return_type="rec_t", c_fn="f")
+    >>> impl_default_return(return_type="rec_t", max_out_fn="f_cap")
     'return (rec_t){0};'
-    >>> impl_default_return(return_type="rec_t", record_list=True, c_fn="f")
+    >>> impl_default_return(return_type="rec_t", record_list=True,
+    ...                     max_out_fn="f_cap")
     'return 0;'
     >>> impl_default_return(return_type="float", variable_output=True,
-    ...                     arg_type="float", c_fn="f")
+    ...                     arg_type="float", max_out_fn="f_cap")
     'return n_in;'
     >>> impl_default_return(return_type="float", variable_output=True,
-    ...                     no_count=True, count_type="int", c_fn="f")
-    'return (int)f_max_out(state);'
+    ...                     no_count=True, count_type="int",
+    ...                     max_out_fn="f_cap")
+    'return (int)f_cap(state);'
     """
     if record_list:
         return "return 0;"
@@ -1068,7 +1078,7 @@ def impl_default_return(
         count = _max_out_count_param(arg_type, params, no_count)[1]
         ctype = count_type or DEFAULT_COUNT_TYPE
         cast = "" if ctype == "size_t" else f"({ctype})"
-        return f"return {cast}{count or f'{c_fn}_max_out(state)'};"
+        return f"return {cast}{count or f'{max_out_fn}(state)'};"
     if borrow:
         return "return NULL;"
     if batch:
@@ -1365,6 +1375,46 @@ def record_type_advice(core_h: Path, record_dtype: str, flds) -> str:
     )
 
 
+def _tree_has_symbol(root: Path, component: str, cfg: dict, sym: str) -> bool:
+    """Whether *component*'s ``_core.c`` or ``_core.h`` already has *sym*.
+
+    gh-2680. A definition or declaration at the start of a line (an
+    optional type prefix, then the name and its parenthesis) -- the
+    `already_provides` pattern, so an indented CALL does not count. Asked
+    for an authored ``max_out_fn``, the author's existing capacity function.
+    """
+    pat = re.compile(
+        rf"^(?:[A-Za-z_][A-Za-z0-9_ *]*\s+)?{re.escape(sym)}\s*\(", re.M
+    )
+    for path in (
+        INC.src_path(root, component, cfg) / f"{component}_core.c",
+        INC.core_h(root, component, cfg),
+    ):
+        if path.is_file() and pat.search(path.read_text(encoding="utf-8")):
+            return True
+    return False
+
+
+def _drop_definition(stub: str, sym: str) -> str:
+    """*stub* without its definition of *sym*, and the comment above it.
+
+    gh-2680. A variable-output stub opens with the capacity function's
+    definition -- a comment, ``size_t``, ``<sym>(...)``, a braced body and a
+    blank line (`_methods_c_stub_variable`) -- which this removes whole.
+
+    >>> s = "/* c */\nsize_t\nf_cap(s *x)\n{\n    return 0;\n}\n\nint\nf(void)"
+    >>> _drop_definition(s, "f_cap")
+    'int\nf(void)'
+    """
+    pat = re.compile(
+        rf"(?:^/\*.*?\*/\n)?^size_t\n{re.escape(sym)}\(.*?^\}}\n\n?",
+        re.M | re.S,
+    )
+    out, n = pat.subn("", stub, count=1)
+    assert n == 1, stub
+    return out
+
+
 def _append_to_core_c(
     path: Path, stub: str, c_fn: str = "", provided_by: str = ""
 ) -> None:
@@ -1551,6 +1601,7 @@ def _shape_prototype(
     csym: str,
     count_type: str = DEFAULT_COUNT_TYPE,
     no_count: bool = False,
+    max_out_fn: str = "",
 ) -> str:
     """Return C prototype declaration(s) for a method (no trailing newline).
 
@@ -1574,8 +1625,13 @@ def _shape_prototype(
 
     gh-2233: *no_count* declares the void-input kernel and its ``_max_out``
     without the ``size_t n`` the shape otherwise takes.
+
+    gh-2680: the ``_max_out`` sibling is *max_out_fn* when the method names
+    one, through `_config.method_max_out_symbol`.
     """
-    c_fn = C.method_c_symbol(csym, {"name": name, "fn": c_fn})
+    _entry = {"name": name, "fn": c_fn, "max_out_fn": max_out_fn}
+    c_fn = C.method_c_symbol(csym, _entry)
+    mo_fn = C.method_max_out_symbol(csym, _entry)
     ret_disp = return_type
     has_arg = arg_type != "void"
     multi_output = multi_output or []
@@ -1670,7 +1726,7 @@ def _shape_prototype(
         moc_decl, _ = _max_out_count_param(arg_type, params, no_count)
         return "\n".join(
             [
-                f"size_t {c_fn}_max_out({csym}_state_t *state{moc_decl});",
+                f"size_t {mo_fn}({csym}_state_t *state{moc_decl});",
                 f"{count_type} {c_fn}({csym}_state_t *state"
                 f"{step_param}, {out_disp} *out{extra_params}{cap_param});",
             ]
@@ -1737,6 +1793,9 @@ _SIGNATURE_COERCIONS: dict = {
     # gh-2204: a second C symbol the binding calls after every kernel call,
     # and what decides whether the input is offered once or until it is used.
     "consumed_fn": (str, ""),
+    # gh-2680: the capacity function the binding sizes the output by, a
+    # second C symbol it calls, like `consumed_fn` above.
+    "max_out_fn": (str, ""),
     # gh-1312: all three are part of the CALL -- `borrow` decides whether
     # the kernel lends or fills, `borrow_count` which argument sizes the
     # view, `borrow_writeable` what the caller may do with it. Two objects
@@ -1978,6 +2037,7 @@ def run(
     nogil: bool = False,
     status_return: bool = False,
     fn: str = "",
+    max_out_fn: str = "",
     error_negative: bool = False,
     why: bool = False,
     status_out: bool = False,
@@ -2722,6 +2782,21 @@ def run(
     )
     if _consumed_why:
         raise _report.Refusal(_consumed_why)
+    # gh-2680: likewise the loader's `max_out_fn` refusal.
+    _max_out_why = C.max_out_fn_why_not(
+        {
+            "result_fields": result_fields or [],
+            "single": single,
+            "variable_output": variable_output,
+            "record_dtype": record_dtype,
+            "borrow": borrow,
+            "batch": batch,
+            "max_out_fn": max_out_fn,
+        },
+        f"method '{object_name}.{method_name}'",
+    )
+    if _max_out_why:
+        raise _report.Refusal(_max_out_why)
     _restated = _record.restated_columns(
         {
             "name": method_name,
@@ -2842,6 +2917,13 @@ def run(
     # with `implicit declaration of nco_steps_ovf`, which is jm emitting a
     # call to a function it just decided not to declare.
     _c_fn = C.method_c_symbol(csym, {"name": method_name, "fn": fn})
+    # gh-2680: the capacity function, and -- for an AUTHORED one only --
+    # whether the tree already has it, asked here for the same reason.
+    _mo_entry = {"name": method_name, "fn": fn, "max_out_fn": max_out_fn}
+    _mo_fn = C.method_max_out_symbol(csym, _mo_entry)
+    _mo_provided = bool(max_out_fn) and _tree_has_symbol(
+        root, object_name, cfg, _mo_fn
+    )
     _provided_by = already_provides(
         root,
         object_name,
@@ -2956,7 +3038,13 @@ def run(
                 count_type=count_type or DEFAULT_COUNT_TYPE,
                 error_sentinel=error_sentinel,
                 no_count=no_count,
+                max_out_fn=max_out_fn,
             )
+            # gh-2680: an authored capacity function the tree already
+            # defines is the author's, like an authored `fn`: jm calls it
+            # and writes no second definition of it.
+            if _mo_provided:
+                stub = _drop_definition(stub, _mo_fn)
         else:
             stub = _methods_c_stub_fixed(
                 object_name,
@@ -3004,7 +3092,7 @@ def run(
                     count_type=count_type,
                     batch=bool(batch),
                     borrow=bool(borrow),
-                    c_fn=_c_fn,
+                    max_out_fn=_mo_fn,
                 )
                 if _ret:
                     body = body.rstrip("\n") + "\n" + _ret
@@ -3062,6 +3150,7 @@ def run(
             csym=csym,
             count_type=count_type or DEFAULT_COUNT_TYPE,
             no_count=no_count,
+            max_out_fn=max_out_fn,
             why=why,
             status_out=status_out,
         ).split("\n")
@@ -3143,6 +3232,12 @@ def run(
     # once).
     if _provided_by:
         _vo_skip = _vo_skip | {_c_fn}
+    # gh-2680: an authored capacity function the header already declares
+    # keeps its declaration as written -- its arity is the author's
+    # contract (gh-761), and jm offers nothing new for a symbol it did not
+    # derive.
+    if _mo_provided:
+        _vo_skip = _vo_skip | {_mo_fn}
 
     # 2. Update config  (was step 3)
     method_entry: dict = {
@@ -3207,6 +3302,9 @@ def run(
     # that does not use them.
     if fn:
         method_entry["fn"] = fn
+    # gh-2680: likewise written only when set.
+    if max_out_fn:
+        method_entry["max_out_fn"] = max_out_fn
     if error_negative:
         method_entry["error_negative"] = True
     # gh-2574: written only when set, like `error_negative` above.

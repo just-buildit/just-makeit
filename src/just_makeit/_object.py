@@ -290,7 +290,10 @@ def _load_doc_blocks(
     # callers (and gh-666's test) read an empty map as "this header says
     # nothing yet". A key whose value is an empty set would make that false
     # while meaning exactly the same thing.
-    _arity = scan_max_out_arity(text)
+    # gh-2680: an authored `max_out_fn` need not end in `_max_out`, so
+    # the scans are told the names the manifest gives.
+    _named = C.authored_max_out_fns(manifest, obj)
+    _arity = scan_max_out_arity(text, _named)
     if _arity:
         out[max_out_arity_key()] = _arity
     # gh-2184: and which list-of-records methods' `_max_out` it declares,
@@ -306,12 +309,12 @@ def _load_doc_blocks(
     # state-only, so it is in the arity set already and makes nothing
     # non-empty that was not.
     _lists = {
-        f"{C.method_c_symbol(stem, m)}_max_out"
+        C.method_max_out_symbol(stem, m)
         for m in C.methods(manifest, obj)
         + [m for v in C.views(manifest, obj) for m in C.view_methods(v)]
         if _record.is_record_list(m) or m.get("no_count")
     }
-    _declared = declared_max_outs(text) & _lists
+    _declared = declared_max_outs(text, _named) & _lists
     if _declared:
         out[max_out_declared_key()] = _declared
     # gh-2681: a view whose constructor another object's core owns
@@ -423,7 +426,9 @@ def inert_pass_capacity(
             continue
         name = m.get("name", "")
         c_fn = C.method_c_symbol(CSYM.stem(cfg, obj), m)
-        if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
+        if max_out_is_state_only(
+            doc_blocks, C.method_max_out_symbol(CSYM.stem(cfg, obj), m)
+        ):
             inert.append((name, c_fn))
     return inert
 

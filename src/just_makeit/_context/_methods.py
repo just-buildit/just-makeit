@@ -1002,6 +1002,8 @@ def _bench_method_block(
     # variable names below stay keyed on `name` (they are C identifiers in the
     # generated bench, and `fn` may repeat across methods).
     c_fn: str = C.method_c_symbol(csym, m)
+    # gh-2680: the capacity function, named or derived.
+    mo_fn: str = C.method_max_out_symbol(csym, m)
     # gh-1404: the bench is a PEER of the binding's own type read below --
     # it emits C against the same prototype, so it resolves a declared
     # element the same way. Missed here first, and the generated benchmark
@@ -1141,7 +1143,7 @@ def _bench_method_block(
         # again. Asked once, for the input the timing loop passes, so a
         # kernel that stops at a full buffer is timed over its whole call
         # rather than the fixed buffer's 64 records.
-        rf_heap = max_out_is_declared(doc_blocks, f"{c_fn}_max_out")
+        rf_heap = max_out_is_declared(doc_blocks, mo_fn)
         if rf_heap:
             # The count the kernel is handed: the block input's, else the
             # first array param's, which the loop passes empty; with
@@ -1154,7 +1156,7 @@ def _bench_method_block(
             rf_cap = f"{name}_cap"
             lines += [
                 f"        size_t {rf_cap} ="
-                f" {_max_out_call_c(c_fn, doc_blocks, rf_count, 'obj')};",
+                f" {_max_out_call_c(mo_fn, doc_blocks, rf_count, 'obj')};",
                 f"        {rf_disp} *{name}_results = ({rf_disp} *)malloc("
                 f"({rf_cap} ? {rf_cap} : 1) * sizeof({rf_disp}));",
                 f"        if (!{name}_results) {{"
@@ -1642,9 +1644,8 @@ def _max_out_doc(
     count_param,
     max_out_const,
     block_of,
-    c_fn="",
     *,
-    csym: str,
+    max_out_fn: str,
     elements_per_sample: int = 1,
 ):
     """The doc for ``<name>_max_out``: header block if authored, else jm's.
@@ -1654,14 +1655,14 @@ def _max_out_doc(
     unless the manifest declared the constant -- so the header always wins and
     jm's prose is only the fallback.
 
-    gh-805 §A2: *c_fn* is the method's resolved C symbol, which the header
-    documents. *name* stays the PYTHON face — ``max_out_method`` below renders
-    ``<name>_max_out`` for the reader — so the two are deliberately separate
-    arguments rather than one. Defaults to the derived symbol.
+    gh-805 §A2 / gh-2680: *max_out_fn* is the capacity function's resolved
+    C symbol (`_config.method_max_out_symbol`), whose header block documents
+    the accessor -- the named function's, when the method declares
+    ``max_out_fn``. *name* stays the PYTHON face — ``max_out_method`` below
+    renders ``<name>_max_out`` for the reader — so the two are deliberately
+    separate arguments rather than one.
     """
-    blk = block_of(
-        f"{C.method_c_symbol(csym, {'name': name, 'fn': c_fn})}_max_out"
-    )
+    blk = block_of(max_out_fn)
     gm = max_out_method(
         name,
         count_param or "",
@@ -1789,12 +1790,15 @@ def _max_out_count_param_ctx(
 
 
 def _max_out_call_c(
-    c_fn: str,
+    max_out_fn: str,
     doc_blocks: "dict | None",
     count: "str | None",
     state: str = "self->handle",
 ) -> str:
-    """The ``<c_fn>_max_out(...)`` call a wrapper sizes its output with.
+    """The ``<max_out_fn>(...)`` call a wrapper sizes its output with.
+
+    *max_out_fn* is the capacity function, resolved by
+    `_config.method_max_out_symbol` (gh-2680).
 
     One spelling for every wrapper that asks a method's capacity before
     calling its kernel: the ``variable_output`` shapes (gh-607) and a
@@ -1812,21 +1816,23 @@ def _max_out_call_c(
 
     Examples
     --------
-    >>> _max_out_call_c("h_push", None, "n_in")
+    >>> _max_out_call_c("h_push_max_out", None, "n_in")
     'h_push_max_out(self->handle, n_in)'
-    >>> _max_out_call_c("h_push", None, None)
+    >>> _max_out_call_c("h_push_max_out", None, None)
     'h_push_max_out(self->handle)'
     >>> from .._docstring import max_out_arity_key
     >>> _max_out_call_c(
-    ...     "h_push", {max_out_arity_key(): {"h_push_max_out"}}, "n_in"
+    ...     "h_push_max_out",
+    ...     {max_out_arity_key(): {"h_push_max_out"}},
+    ...     "n_in",
     ... )
     'h_push_max_out(self->handle)'
-    >>> _max_out_call_c("h_push", None, "BENCH_N", "obj")
-    'h_push_max_out(obj, BENCH_N)'
+    >>> _max_out_call_c("h_cap", None, "BENCH_N", "obj")
+    'h_cap(obj, BENCH_N)'
     """
-    state_only = max_out_is_state_only(doc_blocks, f"{c_fn}_max_out")
+    state_only = max_out_is_state_only(doc_blocks, max_out_fn)
     arg = f", {count}" if (count and not state_only) else ""
-    return f"{c_fn}_max_out({state}{arg})"
+    return f"{max_out_fn}({state}{arg})"
 
 
 def _records_consumed_c(
@@ -1935,7 +1941,7 @@ def _records_consumed_c(
 
 def _records_buffer_c(
     ret_disp: str,
-    c_fn: str,
+    max_out_fn: str,
     doc_blocks: "dict | None",
     count: "str | None",
     max_results: int,
@@ -1954,7 +1960,7 @@ def _records_buffer_c(
     Without a declared capacity the buffer is what it always was: a stack
     array of the manifest's ``max_results`` (default 64), byte-identical to
     every wrapper rendered before this. When the header declares
-    ``<c_fn>_max_out`` -- the ``variable_output`` capacity function, same
+    *max_out_fn* -- the ``variable_output`` capacity function, same
     name, same arity rules, called through :func:`_max_out_call_c` -- the
     wrapper asks it, heap-allocates that many records, and hands the kernel
     exactly that capacity. A function that can bound its output then never
@@ -1976,7 +1982,7 @@ def _records_buffer_c(
         returned count with; and the statement that frees ``results``,
         empty for the stack array.
     """
-    if not max_out_is_declared(doc_blocks, f"{c_fn}_max_out"):
+    if not max_out_is_declared(doc_blocks, max_out_fn):
         return (
             f"    {ret_disp} results[{max_results}];\n",
             str(max_results),
@@ -1987,7 +1993,7 @@ def _records_buffer_c(
     return (
         _coerce.output_size_c(
             "_cap",
-            _max_out_call_c(c_fn, doc_blocks, count, state),
+            _max_out_call_c(max_out_fn, doc_blocks, count, state),
             who,
             rel,
             ctype="size_t",
@@ -2133,7 +2139,7 @@ def _capacity_exprs(
 
 
 def _zero_bound_guard(
-    c_fn: str,
+    max_out_fn: str,
     name: str,
     fallback: str,
     cleanup: str = "",
@@ -2200,8 +2206,9 @@ def _zero_bound_guard(
 
     Parameters
     ----------
-    c_fn : str
-        The C symbol, for the ``max_out`` name in the message.
+    max_out_fn : str
+        The capacity function's C symbol (gh-2680), for the message and to
+        recognise *fallback* as its call.
     name : str
         The Python method name, which is what the caller typed.
     fallback : str
@@ -2229,7 +2236,7 @@ def _zero_bound_guard(
     """
     if pass_capacity:
         return ""
-    if "_max_out(" not in fallback:
+    if not fallback.startswith(f"{max_out_fn}("):
         return ""
     return (
         f"    if (!{bound}) {{\n"
@@ -2237,7 +2244,7 @@ def _zero_bound_guard(
         '            "%s() cannot size its output: %s() returned 0, and this '
         "method has no input length to fall back on. Implement it to return "
         'the worst-case count.",\n'
-        f'            "{name}", "{c_fn}_max_out");\n'
+        f'            "{name}", "{max_out_fn}");\n'
         f"        {cleanup}return NULL;\n"
         "    }\n"
     )
@@ -2428,6 +2435,8 @@ def make_methods_ctx(
         # composer fields and handle methods; this is that key reaching one
         # more place, not a new concept.
         c_fn: str = C.method_c_symbol(csym, m)
+        # gh-2680: the capacity function, named or derived.
+        mo_fn: str = C.method_max_out_symbol(csym, m)
         # gh-2327: one owner slot per retained capsule param, released by
         # dealloc after the C state it was lent to is destroyed. `_keep` is
         # placed where the call is known to have succeeded; `_retain.errors`
@@ -2805,14 +2814,14 @@ def make_methods_ctx(
         # is refused here; the manifest half is `_config._no_count_errors`.
         if (
             no_count
-            and max_out_is_declared(doc_blocks, f"{c_fn}_max_out")
-            and not max_out_is_state_only(doc_blocks, f"{c_fn}_max_out")
+            and max_out_is_declared(doc_blocks, mo_fn)
+            and not max_out_is_state_only(doc_blocks, mo_fn)
         ):
             raise Refusal(
                 f"method '{component}.{name}' declares no_count, but its "
-                f"header declares {c_fn}_max_out() with a count. A no_count "
+                f"header declares {mo_fn}() with a count. A no_count "
                 f"method has no count to pass it: declare it as "
-                f"`size_t {c_fn}_max_out({csym}_state_t *state)`."
+                f"`size_t {mo_fn}({csym}_state_t *state)`."
             )
         _vo_out_disp = _vo_out_elem
         _vo_out_meta = _CTYPE_META.get(_vo_out_elem)
@@ -3278,7 +3287,7 @@ def make_methods_ctx(
             # otherwise. jm splices these back into the sacred `_core.h`, so
             # emitting the count form against a state-only implementation
             # rewrites the author's prototype out from under their code.
-            if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
+            if max_out_is_state_only(doc_blocks, mo_fn):
                 _moc_decl = ""
             # gh-2012: the kernel returns its count in `count_type`, which
             # `_method._build_method_prototype` and the `_core.c` stub read
@@ -3292,7 +3301,7 @@ def make_methods_ctx(
                 # alike, so the three agreed with each other and with no stub.
                 _vp_in = "".join(f", {_p}" for _p in c_param_parts(params))
                 decl_lines.append(
-                    f"size_t {c_fn}_max_out"
+                    f"size_t {mo_fn}"
                     f"({csym}_state_t *state{_moc_decl});\n"
                     f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,"
@@ -3304,7 +3313,7 @@ def make_methods_ctx(
                 # array param is not `const`.
                 _vp_parts = c_param_parts(params)
                 decl_lines.append(
-                    f"size_t {c_fn}_max_out"
+                    f"size_t {mo_fn}"
                     f"({csym}_state_t *state{_moc_decl});\n"
                     f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,"
@@ -3315,7 +3324,7 @@ def make_methods_ctx(
                 # gh-2233: `no_count` drops the `size_t n` the shape takes.
                 _n_param = "" if no_count else " size_t n,"
                 decl_lines.append(
-                    f"size_t {c_fn}_max_out"
+                    f"size_t {mo_fn}"
                     f"({csym}_state_t *state{_moc_decl});\n"
                     f"{_count_t} {c_fn}"
                     f"({csym}_state_t *state,{_n_param}"
@@ -3693,7 +3702,7 @@ def make_methods_ctx(
                 _lazy_fallback = (
                     _coerce.array_count_c(f"{_sizing['name']}_arr", _vo_e)
                     if _sizing is not None
-                    else f"{c_fn}_max_out({_st})"
+                    else f"{mo_fn}({_st})"
                 )
                 # gh-607: an all-scalar params shape (no array to size from)
                 # has no count for the kernel to take either — max_out()
@@ -3722,7 +3731,7 @@ def make_methods_ctx(
                 )
                 call_data = f"{_st}, {_VO_BUF_TOKEN}"
                 decref_in = ""
-                _lazy_fallback = f"{c_fn}_max_out({_st})"
+                _lazy_fallback = f"{mo_fn}({_st})"
                 _moc_arg = None
             else:
                 if _enable_out:
@@ -3772,9 +3781,9 @@ def make_methods_ctx(
             # `pass_capacity` keeps its exact allocation. Decided by the key,
             # not the header, so a first render and a re-render agree.
             _moc_state_only = not no_count and max_out_is_state_only(
-                doc_blocks, f"{c_fn}_max_out"
+                doc_blocks, mo_fn
             )
-            _moc_call = _max_out_call_c(c_fn, doc_blocks, _moc_arg, _st)
+            _moc_call = _max_out_call_c(mo_fn, doc_blocks, _moc_arg, _st)
 
             # gh-604: NumPy owns every variable-output result, for one
             # output or many. Each call allocates its arrays at
@@ -4027,7 +4036,7 @@ def make_methods_ctx(
                 )[1]
                 _out_zero = _reindent(
                     _zero_bound_guard(
-                        c_fn,
+                        mo_fn,
                         name,
                         _lazy_fallback,
                         f"Py_DECREF(out_arr); {_decref_early_vo}",
@@ -4194,7 +4203,7 @@ def make_methods_ctx(
                     _moc_state_only,
                 )[0]
                 + _zero_bound_guard(
-                    c_fn,
+                    mo_fn,
                     name,
                     _lazy_fallback,
                     _decref_early_vo,
@@ -4567,7 +4576,7 @@ def make_methods_ctx(
                 # count-taking binding against that is both a compile error
                 # and — where an older jm already wrote the no-arg form — a
                 # stub that disagrees with the binding beside it.
-                if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
+                if max_out_is_state_only(doc_blocks, mo_fn):
                     _pymo_decl, _pymo_name = "", None
                 # gh-1996: the caller passes `len(x)` and allocates `out=`
                 # from the answer, both in elements; the C function takes
@@ -4583,8 +4592,7 @@ def make_methods_ctx(
                             _pymo_name,
                             m.get("max_out", 0),
                             lambda k: (doc_blocks or {}).get(k),
-                            c_fn=c_fn,
-                            csym=csym,
+                            max_out_fn=mo_fn,
                             elements_per_sample=_vo_e,
                         ).c_doc_lines(raises=_host_raises or None)
                     )
@@ -4601,12 +4609,11 @@ def make_methods_ctx(
                         # gh-2380: `n` is converted above, after the guard.
                         + _inflight.recheck(
                             "self",
-                            f"{c_fn}_max_out({_st})",
+                            f"{mo_fn}({_st})",
                             "",
                         )
                         + _max_out_return_c(
-                            f"{c_fn}_max_out({_st},"
-                            f" (size_t){_pymo_name}{_mo_per})",
+                            f"{mo_fn}({_st}, (size_t){_pymo_name}{_mo_per})",
                             _vo_e,
                             f"{_who}.{name}_max_out",
                         )
@@ -4626,8 +4633,7 @@ def make_methods_ctx(
                             "",
                             m.get("max_out", 0),
                             lambda k: (doc_blocks or {}).get(k),
-                            c_fn=c_fn,
-                            csym=csym,
+                            max_out_fn=mo_fn,
                             elements_per_sample=_vo_e,
                         ).c_doc_lines(raises=_host_raises or None)
                     )
@@ -4639,7 +4645,7 @@ def make_methods_ctx(
                         f"{{\n"
                         f"{guard}"
                         + _max_out_return_c(
-                            f"{c_fn}_max_out({_st})",
+                            f"{mo_fn}({_st})",
                             _vo_e,
                             f"{_who}.{name}_max_out",
                         )
@@ -4852,7 +4858,7 @@ def make_methods_ctx(
             ) -> "tuple[str, str, str]":
                 return _records_buffer_c(
                     ret_disp,
-                    c_fn,
+                    mo_fn,
                     doc_blocks,
                     count,
                     max_results,
@@ -5589,7 +5595,7 @@ def make_methods_ctx(
             _stub_moc_decl, _stub_moc_name = _max_out_count_param_ctx(
                 has_arg, has_params, params, no_count
             )
-            if max_out_is_state_only(doc_blocks, f"{c_fn}_max_out"):
+            if max_out_is_state_only(doc_blocks, mo_fn):
                 _stub_moc_decl, _stub_moc_name = "", None
             # gh-684: the header wins; _gluedoc supplies the fallback.
             _mo_doc_lines = _max_out_doc(
@@ -5598,8 +5604,7 @@ def make_methods_ctx(
                 _stub_moc_name,
                 m.get("max_out", 0),
                 lambda k: (doc_blocks or {}).get(k),
-                c_fn=c_fn,
-                csym=csym,
+                max_out_fn=mo_fn,
                 elements_per_sample=_vo_e,
             ).pyi_doc(raises=_host_raises or None)
             _mo_sig = (

@@ -281,7 +281,9 @@ def run(
     if not discard:
         if core_h.exists():
             _h_text = core_h.read_text(encoding="utf-8")
-            preserved_max_out = max_out_prototypes(_h_text)
+            preserved_max_out = max_out_prototypes(
+                _h_text, C.authored_max_out_fns(cfg, component)
+            )
             preserved_h = _extract_c_function_bodies(
                 _h_text, require_static=False
             )
