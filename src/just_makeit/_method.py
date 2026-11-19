@@ -1402,9 +1402,10 @@ def _drop_definition(stub: str, sym: str) -> str:
     definition -- a comment, ``size_t``, ``<sym>(...)``, a braced body and a
     blank line (`_methods_c_stub_variable`) -- which this removes whole.
 
-    >>> s = "/* c */\nsize_t\nf_cap(s *x)\n{\n    return 0;\n}\n\nint\nf(void)"
+    >>> s = ("/* c */\\nsize_t\\nf_cap(s *x)\\n{\\n    return 0;\\n}\\n\\n"
+    ...      "int\\nf(void)")
     >>> _drop_definition(s, "f_cap")
-    'int\nf(void)'
+    'int\\nf(void)'
     """
     pat = re.compile(
         rf"(?:^/\*.*?\*/\n)?^size_t\n{re.escape(sym)}\(.*?^\}}\n\n?",

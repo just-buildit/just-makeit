@@ -1505,6 +1505,7 @@ AUTHOR_NAMED_KEYS = (
     "real_create_fn",
     "status_fn",
     "consumed_fn",
+    "max_out_fn",
     "out_len_fn",
     "count_fn",
     "key_fn",
