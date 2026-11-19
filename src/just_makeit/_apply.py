@@ -594,6 +594,12 @@ def prefix_errors(cfg: dict, temp_root: Path, project_root: Path) -> None:
     # Asked of every project: whether a name collides is the detector's
     # answer alone -- with no prefix nothing is renamed, so nothing can
     # (gh-1661), and a gate can prove it rather than this caller assume it.
+    # gh-2681: a view constructor stranded in its parent's core by a later
+    # `create_core`. Before the collision check, whose advice for it
+    # (rename yours) would point at the wrong copy.
+    from ._view import stranded_ctors
+
+    errors += stranded_ctors(project_root, cfg)
     clash = [] if errors else CSYM.collisions(project_root, temp_root, cfg)
     if CSYM.prefix(cfg) is not None and not errors:
         errors += CSYM.duplicates(temp_root, cfg)
@@ -3909,6 +3915,15 @@ def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
     # gh-1509: the binding calls the serializable triplet the same way, and
     # until then no path declared it in any header.
     want |= _serializable_triplet(cfg, comp)
+    # gh-2681: and every view constructor this core owns -- its own views'
+    # unless they name another `create_core`, and another object's views'
+    # that name this one. Only `jm view` declared them, so a view added by
+    # editing the manifest got a call and a stub but no prototype: an
+    # implicit declaration, an error from gcc 14 / clang 16 on.
+    for parent in C.components(cfg):
+        for v in C.views(cfg, parent):
+            if C.view_create_core(cfg, parent, v) == comp:
+                want.add(v["create_fn"])
     out = []
     for d in _core_h_decl_lines(temp_h.read_text(encoding="utf-8")):
         m = re.search(r"(\w+)\s*\(", d)

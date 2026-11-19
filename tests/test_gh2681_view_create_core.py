@@ -269,3 +269,108 @@ def test_the_view_builds_and_constructs_through_acqs_core(
         "test_the_class_doc_derives_from_acqs_header",
     ):
         assert f"{name} PASSED" in output, output
+
+
+def _declare_in_manifest(root: Path, **extra: str) -> None:
+    """Add the view by editing the manifest, as a project that never runs
+    `jm view` does, rather than through the verb."""
+    m = root / "just-makeit.toml"
+    text = m.read_text(encoding="utf-8")
+    rows = "".join(f'{k} = "{v}"\n' for k, v in extra.items())
+    entry = (
+        '[[corr.views]]\nclass_name = "Acquisition"\nmodule = "acquire"\n'
+        f'create_fn = "{FN}"\n{rows}\n'
+    )
+    assert text.count("[acq]\n") == 1
+    m.write_text(text.replace("[acq]\n", entry + "[acq]\n"), encoding="utf-8")
+
+
+def _drop_stub(core_c: Path, fn: str) -> None:
+    """Delete jm's scaffolded definition of *fn* from *core_c*."""
+    text = core_c.read_text(encoding="utf-8")
+    start = text.index(f"scr_corr_state_t *\n{fn}(")
+    end = text.index("\n}\n", start) + 3
+    core_c.write_text(text[:start] + text[end:], encoding="utf-8")
+
+
+class TestAManifestDeclaredView:
+    """`apply` alone declares the constructor, not only `jm view`: the
+    fragment calls it, so a stub with no prototype is an implicit
+    declaration (an error from gcc 14 and clang 16)."""
+
+    @pytest.mark.parametrize(
+        ("extra", "header", "other"),
+        [({}, CORR_H, ACQ_H), ({"create_core": "acq"}, ACQ_H, CORR_H)],
+        ids=["parent", "create_core"],
+    )
+    def test_apply_declares_and_stubs_it(
+        self, tmp_path: Path, extra: dict, header: str, other: str
+    ) -> None:
+        root = _base(tmp_path / "scr")
+        _declare_in_manifest(root, **extra)
+        applied = run_cli("apply", cwd=root)
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert _read(root, header).count(PROTO) == 1
+        assert FN not in _read(root, other)
+        status = run_cli("status", "--check", cwd=root)
+        assert status.returncode == 0, status.stdout + status.stderr
+
+
+class TestMovingAnExistingView:
+    """A view that gains `create_core` after its constructor was scaffolded
+    into the parent's core -- the migration a project makes."""
+
+    def test_apply_refuses_until_the_parents_copy_moves(
+        self, tmp_path: Path
+    ) -> None:
+        root = _base(tmp_path / "scr")
+        _declare_in_manifest(root)
+        assert run_cli("apply", cwd=root).returncode == 0
+        m = root / "just-makeit.toml"
+        text = m.read_text(encoding="utf-8")
+        row = f'create_fn = "{FN}"\n'
+        m.write_text(
+            text.replace(row, row + 'create_core = "acq"\n'), encoding="utf-8"
+        )
+        refused = run_cli("apply", cwd=root)
+        err = refused.stdout + refused.stderr
+        assert refused.returncode != 0
+        for rel in (CORR_H, CORR_C):
+            assert f"{rel} still names `{FN}`" in err, err
+        assert "Rename yours" not in err
+        assert FN not in _read(root, ACQ_H)
+        # Moved: the parent's copy deleted, `apply` puts it in acq's core.
+        corr_h = root / CORR_H
+        corr_h.write_text(
+            _read(root, CORR_H).replace(PROTO + "\n", ""), encoding="utf-8"
+        )
+        _drop_stub(root / CORR_C, FN)
+        applied = run_cli("apply", cwd=root)
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert _read(root, ACQ_H).count(PROTO) == 1
+        assert _read(root, ACQ_C).count(f"{FN}(") == 1
+        status = run_cli("status", "--check", cwd=root)
+        assert status.returncode == 0, status.stdout + status.stderr
+
+    def test_jm_view_refuses_a_stranded_copy(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = _base(tmp_path / "scr")
+        corr_h = root / CORR_H
+        text = corr_h.read_text(encoding="utf-8")
+        inc = '#include "scr/clib_common.h"\n'
+        corr_h.write_text(text.replace(inc, inc + PROTO + "\n"), "utf-8")
+        with pytest.raises(SystemExit):
+            view_run(
+                root, "corr", "Acquisition", "acquire", FN, create_core="acq"
+            )
+        assert f"{CORR_H} still names `{FN}`" in capsys.readouterr().err
+        assert C.views(C.load(root), "corr") == []
+
+
+def test_removing_the_create_core_object_is_refused(project: Path) -> None:
+    before = _tree(project)
+    out = run_cli("remove", "object", "acq", "--force", cwd=project)
+    assert out.returncode != 0
+    assert "create_core of Acquisition" in out.stdout + out.stderr
+    assert _tree(project) == before

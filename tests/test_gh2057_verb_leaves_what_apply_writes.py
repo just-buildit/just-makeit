@@ -740,6 +740,13 @@ CASES: "dict[str, dict[str, Case]]" = {
         "flags": _case("view", "o", "W", "{M}", "--create-fn",
                        "o_create_w", "--init-param", "rate:double",
                        "--doc", "A view.", needs=("o", "module")),
+        # gh-2681: the parent named is the default spelled out, so it
+        # records nothing; tests/test_gh2681_view_create_core.py moves a
+        # constructor to another object's core, which needs a dependency
+        # no shape here declares.
+        "create-core-parent": _case("view", "o", "W", "{M}", "--create-fn",
+                                    "o_create_w", "--create-core", "o",
+                                    needs=("o", "module")),
         "excludes": _case("view", "o", "W", "{M}", "--create-fn",
                           "o_create_w", "--exclude-property", "lvl",
                           "--exclude-method", "m",
