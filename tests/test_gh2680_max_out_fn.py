@@ -395,6 +395,16 @@ def test_every_recogniser_exemption_is_live() -> None:
         assert _recognitions_with(src, rel, without), (rel, line)
 
 
+@pytest.mark.parametrize("rel", sorted({r for r, _line in _RECOGNISERS}))
+def test_an_exemption_covers_its_line_only(rel: str) -> None:
+    """A second recognition in an exempt module -- even in the same
+    function -- is still refused: exemptions are per line."""
+    src = (SRC / rel).read_text(encoding="utf-8")
+    extra = '\n\ndef _late(n):\n    return n.endswith("_max_out")\n'
+    hits = _recognitions(src + extra, rel)
+    assert len(hits) == 1, hits
+
+
 def _recognitions_with(src: str, rel: str, table: dict) -> "list[str]":
     """`_recognitions` under another exemption table."""
     global _RECOGNISERS
