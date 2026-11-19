@@ -7577,26 +7577,150 @@ def _max_out_fn_errors(cfg: dict) -> "list[str]":
                 why = max_out_fn_why_not(m, f"{where} {m.get('name', '?')!r}")
                 if why:
                     errors.append(why)
+        if not errors:
+            errors += max_out_arity_clashes(cfg, comp)
     return errors
 
 
-def authored_max_out_fns(cfg: dict, component: str) -> "frozenset[str]":
-    """Every ``max_out_fn`` *component*'s methods and views' methods name.
-
-    gh-2680. The header scans that read a capacity function's arity and
-    protect its declaration (`_docstring.scan_max_out_arity` and its peers)
-    recognise a derived name by its ``_max_out`` suffix; an authored name
-    need not carry it, so they are handed these as well.
-
-    >>> cfg = {"o": {"methods": [{"name": "a"},
-    ...                          {"name": "b", "max_out_fn": "o_cap"}]}}
-    >>> sorted(authored_max_out_fns(cfg, "o"))
-    ['o_cap']
-    """
-    rows = list(methods(cfg, component)) + [
-        m for v in views(cfg, component) for m in view_methods(v)
+def _capacity_rows(
+    cfg: dict, component: str
+) -> "list[tuple[dict, str | None]]":
+    """``(method entry, view class or None)`` for every method of
+    *component* that names its own C symbols: its methods, and each view's
+    method that is not an override of one of them (gh-2498: an override
+    carries the parent's symbols, so it adds no capacity of its own)."""
+    rows: "list[tuple[dict, str | None]]" = [
+        (m, None) for m in methods(cfg, component) if isinstance(m, dict)
     ]
-    return frozenset(m["max_out_fn"] for m in rows if m.get("max_out_fn"))
+    for v in views(cfg, component):
+        if not isinstance(v, dict):
+            continue
+        for m in view_methods(v):
+            if isinstance(m, dict) and not is_view_override(cfg, component, m):
+                rows.append((m, v.get("class_name")))
+    return rows
+
+
+def max_out_symbols(cfg: dict, component: str) -> "frozenset[str]":
+    """Every capacity function *component*'s methods resolve to (gh-2680).
+
+    `method_max_out_symbol` over its methods and its views' own methods:
+    the names the header scans (`_docstring.scan_max_out_arity` and its
+    peers) read a declaration under. Handed the names rather than
+    recognising a ``_max_out`` suffix, because a named capacity function
+    need not carry one.
+
+    >>> cfg = {"project": {"name": "p"},
+    ...        "o": {"methods": [{"name": "a"},
+    ...                          {"name": "b", "max_out_fn": "o_cap"}]}}
+    >>> sorted(max_out_symbols(cfg, "o"))
+    ['o_a_max_out', 'o_cap']
+    """
+    from . import _csym
+
+    st = _csym.stem(cfg, component)
+    return frozenset(
+        method_max_out_symbol(st, m)
+        for m, _view in _capacity_rows(cfg, component)
+        if m.get("name")
+    )
+
+
+def max_out_arity(m: dict) -> "str | None":
+    """The parameters a method's binding calls its capacity function with.
+
+    gh-2680. ``"(state, size_t n_in)"``, ``"(state, size_t x_len)"``,
+    ``"(state, size_t n)"`` or ``"(state)"`` for a ``variable_output``
+    method -- gh-607's count, mirroring the kernel's, from the one
+    builder the stub and prototype use (`_method._max_out_count_param`).
+    ``None`` for a method that calls none, and for a list of records,
+    whose call follows whatever the header declares (gh-2184), so any
+    arity serves it.
+
+    >>> max_out_arity({"variable_output": True, "arg_type": "float[]"})
+    '(state, size_t n_in)'
+    >>> max_out_arity({"variable_output": True, "arg_type": "void",
+    ...                "params": [{"name": "k", "type": "int"}]})
+    '(state)'
+    >>> max_out_arity({"arg_type": "float"}) is None
+    True
+    """
+    if not m.get("variable_output") or m.get("borrow") or m.get("batch"):
+        return None
+    from ._method import _max_out_count_param
+
+    decl, _name = _max_out_count_param(
+        str(m.get("arg_type", "void") or "void"),
+        list(m.get("params") or m.get("extra_args") or []),
+        bool(m.get("no_count")),
+    )
+    return f"(state{decl})"
+
+
+def max_out_arity_clashes(
+    cfg: dict,
+    component: str,
+    add_method: "tuple[dict, str | None] | None" = None,
+) -> "list[str]":
+    """Methods sharing one capacity function at different arities.
+
+    gh-2680. ``max_out_fn`` lets two methods of one object name the same
+    capacity function, or one name a sibling's derived ``<sym>_max_out``.
+    That is the point of the key when both call it alike; when one calls
+    it with a count and the other with the state alone, the header can
+    declare only one of them and the other's call does not compile --
+    while ``status --check`` sees nothing wrong. Refused instead, naming
+    both methods and the parameters each would pass.
+
+    *add_method* is the ``(entry, view class or None)`` `jm method` is
+    about to write, which replaces a same-named entry of the same table.
+
+    >>> cfg = {"project": {"name": "p"}, "o": {"methods": [
+    ...     {"name": "a", "variable_output": True, "arg_type": "float[]",
+    ...      "max_out_fn": "o_cap"},
+    ...     {"name": "b", "variable_output": True, "arg_type": "void",
+    ...      "params": [{"name": "k", "type": "int"}],
+    ...      "max_out_fn": "o_cap"}]}}
+    >>> print(max_out_arity_clashes(cfg, "o")[0])  # doctest: +ELLIPSIS
+    o.a() and o.b() share the capacity function `o_cap`, but o.a() calls \
+it as o_cap(state, size_t n_in) and o.b() as o_cap(state)...
+    """
+    from . import _csym
+
+    st = _csym.stem(cfg, component)
+    rows = _capacity_rows(cfg, component)
+    if add_method is not None:
+        entry, view = add_method
+        rows = [
+            r
+            for r in rows
+            if not (r[1] == view and r[0].get("name") == entry.get("name"))
+        ] + [add_method]
+
+    def label(m: dict, view: "str | None") -> str:
+        who = component if view is None else f"{component}'s view {view}"
+        return f"{who}.{m.get('name', '?')}()"
+
+    first: "dict[str, tuple[str, str]]" = {}
+    out: list[str] = []
+    for m, view in rows:
+        arity = max_out_arity(m)
+        if arity is None or not m.get("name"):
+            continue
+        sym = method_max_out_symbol(st, m)
+        if sym not in first:
+            first[sym] = (label(m, view), arity)
+            continue
+        other, other_arity = first[sym]
+        if other_arity != arity:
+            out.append(
+                f"{other} and {label(m, view)} share the capacity function"
+                f" `{sym}`, but {other} calls it as {sym}{other_arity} and"
+                f" {label(m, view)} as {sym}{arity}: the header can declare"
+                " only one. Give one of them its own max_out_fn, or make"
+                " their shapes agree."
+            )
+    return out
 
 
 def varargs_core_c(object_name: str, method_name: str) -> str:

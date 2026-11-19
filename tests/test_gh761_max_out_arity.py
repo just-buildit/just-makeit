@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit._docstring import (  # noqa: E402
     max_out_arity_key,
     max_out_is_state_only,
-    scan_max_out_arity,
+    scan_max_out_arity as _scan_named,
 )
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
@@ -52,17 +52,35 @@ from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._pyfmt import flatten_signatures  # noqa: E402
 
 
+#: gh-2680: the scan is handed the capacity functions the manifest's
+#: methods resolve to (`_config.max_out_symbols`); these are every name
+#: the cases below declare.
+_NAMES = frozenset(
+    {
+        "ddcr_execute_max_out",
+        "ddc_execute_max_out",
+        "fft_execute_max_out",
+        "delay_ptr_max_out",
+        "widget_run_max_out",
+    }
+)
+
+
+def _scan(text: str) -> "frozenset[str]":
+    return _scan_named(text, _NAMES)
+
+
 class TestScanMaxOutArity:
     """The parser, against the shapes a real header actually contains."""
 
     def test_state_only_prototype_is_detected(self):
-        assert scan_max_out_arity(
+        assert _scan(
             "size_t ddcr_execute_max_out(ddcr_state_t *s);"
         ) == frozenset({"ddcr_execute_max_out"})
 
     def test_length_bearing_prototype_is_not(self):
         assert (
-            scan_max_out_arity(
+            _scan(
                 "size_t ddc_execute_max_out(ddc_state_t *state, size_t x_len);"
             )
             == frozenset()
@@ -70,12 +88,12 @@ class TestScanMaxOutArity:
 
     def test_tolerates_a_projects_own_formatting(self):
         """doppler's headers are GNU-formatted; jm's are not."""
-        assert scan_max_out_arity(
+        assert _scan(
             "  size_t  ddcr_execute_max_out (ddcr_state_t *s) ;"
         ) == frozenset({"ddcr_execute_max_out"})
 
     def test_const_qualified_state_is_still_state_only(self):
-        assert scan_max_out_arity(
+        assert _scan(
             "size_t fft_execute_max_out(const fft_state_t *s);"
         ) == frozenset({"fft_execute_max_out"})
 
@@ -85,7 +103,7 @@ class TestScanMaxOutArity:
             "size_t ddcr_execute_max_out(ddcr_state_t *s);\n"
             "size_t delay_ptr_max_out(delay_state_t *s, size_t n);\n"
         )
-        assert scan_max_out_arity(text) == frozenset({"ddcr_execute_max_out"})
+        assert _scan(text) == frozenset({"ddcr_execute_max_out"})
 
     def test_an_undeclared_max_out_is_not_state_only(self):
         """No prototype means no opinion — gh-607's default must survive.
@@ -184,9 +202,7 @@ class TestStandaloneFacesAgree:
         assert "widget_run_max_out(widget_state_t *state)" in h.read_text(
             encoding="utf-8"
         )
-        assert scan_max_out_arity(h.read_text(encoding="utf-8")) == (
-            scan_max_out_arity(before)
-        )
+        assert _scan(h.read_text(encoding="utf-8")) == (_scan(before))
 
 
 class TestModuleAndViewFacesAgree:
