@@ -1325,6 +1325,49 @@ def param_writable(p) -> bool:
     return isinstance(p, dict) and bool(p.get("out") or p.get("mutable"))
 
 
+def param_scalar_out(p) -> bool:
+    """True when a declared SCALAR param is an output the C function writes.
+
+    gh-2683. ``out = true`` (or its synonym ``mutable``, the one question
+    :func:`param_writable` asks) on an array names the caller's buffer; on a
+    scalar it names a value the C function hands BACK: its prototype takes
+    ``T *name``, the binding passes the address of a zeroed local, and
+    Python never passes it -- the value comes back as the result. A module
+    function supports it; a method refuses it at load
+    (`_config.scalar_out_errors`).
+
+    A tuple is the CLI's positional form, whose third slot is the C writers'
+    ``is_out`` flag; only a ``dict`` is a manifest row, so only a row is
+    asked here, exactly as :func:`param_writable` reads it.
+
+    Examples
+    --------
+    >>> param_scalar_out({"name": "n", "type": "int", "out": True})
+    True
+    >>> param_scalar_out({"name": "y", "type": "float[]", "out": True})
+    False
+    >>> param_scalar_out({"name": "n", "type": "int"})
+    False
+    """
+    return param_writable(p) and not is_array_param_type(str(p.get("type")))
+
+
+def fn_input_params(params) -> list:
+    """The params a module function's CALLER passes, in declared order.
+
+    Every param but a scalar out (:func:`param_scalar_out`, gh-2683), which
+    the binding declares itself and returns. The binding's parse, the
+    ``.pyi`` signature and the generated contract test all read this, so a
+    face cannot ask for an argument another face does not take.
+
+    >>> [p["name"] for p in fn_input_params([
+    ...     {"name": "mbps", "type": "int"},
+    ...     {"name": "code", "type": "int", "out": True}])]
+    ['mbps']
+    """
+    return [p for p in params if not param_scalar_out(p)]
+
+
 def c_param_parts(params) -> list[str]:
     """Expand a method/function param list into C parameter declarations.
 

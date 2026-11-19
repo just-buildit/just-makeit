@@ -148,14 +148,9 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            if is_out_flag and not T.is_array_param_type(ptype):
-                print(
-                    f"error: --out-param '{pname}' must be an array type"
-                    f" (got '{ptype}'); --out-param only applies to writable"
-                    f" array params.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+            # gh-2683: a scalar `--out-param` is a value the function writes
+            # back and returns; `_render.scalar_out_why_not`, asked in
+            # `_function.run`, refuses the shapes it cannot be.
             if pdefault and (
                 T.is_array_param_type(ptype)
                 or is_out_flag

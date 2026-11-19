@@ -22,6 +22,8 @@ from ._types import (
     is_array_param_type,
     parse_out_type,
     param_writable,
+    param_scalar_out,
+    fn_input_params,
 )
 from . import _coerce
 from . import _config as C
@@ -345,9 +347,27 @@ def module_fn_smoke_calls(
             # gh-1706: a `why = true` function's trailing `const char **why`
             # is jm's, not a manifest param, so it gets NULL -- "no reason
             # wanted", which the out-param convention allows.
-            args = zeros + (["NULL"] if fn.get("why") else [])
+            # gh-2683: a scalar out takes the address of a zeroed local, as
+            # the binding passes it -- a literal 0 would be a NULL pointer
+            # the kernel writes through.
+            outs = [p for p in params if param_scalar_out(p)]
+            args = [
+                f"&{p['name']}" if param_scalar_out(p) else z
+                for p, z in zip(params, zeros)
+            ] + (["NULL"] if fn.get("why") else [])
             lines.append(f"    /* {name}: verify it runs without crashing */")
-            lines.append(f"    (void){name}({', '.join(args)});")
+            call = f"(void){name}({', '.join(args)});"
+            if outs:
+                lines.append("    {")
+                lines += [
+                    f"        {p['type']} {p['name']} = "
+                    f"{_CTYPE_META[p['type']]['zero']};"
+                    for p in outs
+                ]
+                lines.append(f"        {call}")
+                lines.append("    }")
+            else:
+                lines.append(f"    {call}")
         else:
             lines.append(
                 f"    /* TODO: {name}(...) takes a non-scalar argument jm"
@@ -1087,7 +1107,8 @@ def _fn_c_params(
     optional third element is a bool. Array params ("type[]") expand to
     ``(const elem_t *name, size_t name_len)`` by default; when ``out=True``
     the ``const`` is dropped so the function can write through the pointer
-    (gh-72).
+    (gh-72). A scalar with ``out=True`` becomes ``T *name``: a value the
+    function writes back, which the binding returns (gh-2683).
 
     Returns the parts as a **list**, deliberately (gh-1072). It used to
     return them already joined, with `void` substituted for the empty case —
@@ -1116,7 +1137,10 @@ def _fn_c_params(
             suppress_parts.append(f"(void){n};")
             suppress_parts.append(f"(void){n}_len;")
         else:
-            c_parts.append(f"{t} {n}")
+            # gh-2683: a scalar `out` is a value the function writes back,
+            # so it takes the address the binding passes. It was declared
+            # by value, and bound as an input the caller had to pass.
+            c_parts.append(f"{t} *{n}" if is_out else f"{t} {n}")
             suppress_parts.append(f"(void){n};")
     suppress = "    " + " ".join(suppress_parts) if suppress_parts else ""
     return c_parts, suppress
@@ -1536,7 +1560,16 @@ def _build_params_parse(
         pname = p["name"]
         ptype = p["type"]
 
-        if ptype == "path":
+        if param_scalar_out(p):
+            # gh-2683: an output the C function writes. Python does not pass
+            # it, so it takes no format char, address or kwarg; the binding
+            # declares it zeroed and passes its address. `_outs_return_c`
+            # returns it after the call.
+            decl_lines.append(
+                f"    {ptype} {pname} = {_CTYPE_META[ptype]['zero']};"
+            )
+            call_args.append(f"&{pname}")
+        elif ptype == "path":
             # gh-353: the shared file-handler pattern (_coerce) — a
             # str | os.PathLike coerces with O& + PyUnicode_FSConverter into a
             # borrowed PyBytes; pass PyBytes_AS_STRING to the const char * arg.
@@ -1741,7 +1774,10 @@ def _build_params_parse(
     # the `|` in the PyArg format goes before the first optional param. Optional
     # params must follow all required ones (the PyArg `|` rule == Python's
     # "no required parameter after a defaulted one"); validate and error clearly.
-    fmt_str = _join_fmt_with_optional(fmt_chars, params)
+    # gh-2683: a scalar out param has no format char, so the params paired
+    # with `fmt_chars` (and named in the kwlist) are the caller's alone.
+    in_params = fn_input_params(params)
+    fmt_str = _join_fmt_with_optional(fmt_chars, in_params)
     addr_str = ", ".join(addr_exprs)
     # gh-238: module functions are positional-OR-keyword. Each param name is a
     # kwarg (an array param's kwarg is its object), and the kwlist order matches
@@ -1750,7 +1786,7 @@ def _build_params_parse(
     # the right trade for the (often multi-param) function call site, which is
     # rarely the innermost loop. The per-sample hot path (step/steps) stays
     # positional-only.
-    kwnames = "".join(f'"{p["name"]}", ' for p in params)
+    kwnames = "".join(f'"{p["name"]}", ' for p in in_params)
     # gh-353: a parse failure may have already converted some O& path args (and
     # FSConverter sets the target on success), so XDECREF every path object on
     # the parse-fail path before returning NULL. The multi-statement cleanup is
@@ -1762,17 +1798,24 @@ def _build_params_parse(
         + "".join(f"        {_coerce.path_release(n)}\n" for n in path_names)
         + "        return NULL;\n    }"
     )
-    lines = (
-        [f"    static char *_kwlist[] = {{{kwnames}NULL}};"]
-        + decl_lines
-        + [
+    # gh-2683: a function whose every param is an out has nothing to parse;
+    # its binding is METH_NOARGS (`make_functions_ctx`), so only the out
+    # locals are declared.
+    parse = (
+        [
             f'    if (!PyArg_ParseTupleAndKeywords(args, kwds, "{fmt_str}",',
             f"            _kwlist, {addr_str}))",
             parse_fail,
         ]
-        + conv_lines
-        + arr_acq
+        if in_params
+        else []
     )
+    kwlist = (
+        [f"    static char *_kwlist[] = {{{kwnames}NULL}};"]
+        if in_params
+        else []
+    )
+    lines = kwlist + decl_lines + parse + conv_lines + arr_acq
     # The final cleanup (emitted by callers AFTER the C call): array DECREFs +
     # path XDECREFs (gh-353 — the C side has copied the string by now).
     cleanup = "".join(
@@ -1873,6 +1916,102 @@ def status_errors_why_not(fn: dict) -> str:
     return _borrow.rows_why_not(
         rows, f"function '{name}'", _borrow.message_slots(fn)
     )
+
+
+#: The `_CTYPE_META` kinds a scalar out param may have (gh-2683): a value
+#: the binding declares as a zeroed local and converts with its ``to_py``.
+#: A ``const char *`` is absent on purpose -- the pointer the C would write
+#: has no owner jm could name, so who frees it is not a question jm can
+#: answer for the author.
+_SCALAR_OUT_KINDS = ("int", "float", "complex")
+
+
+def scalar_out_why_not(fn: dict) -> str:
+    """Why a module function's scalar ``out`` params cannot be bound, or ``""``.
+
+    gh-2683. A scalar param with ``out = true`` is an OUTPUT: the prototype
+    takes ``T *name``, Python does not pass it, and the binding returns its
+    value -- alone for one, a tuple in declared order for several. Refused,
+    each at load where the row can still be named:
+
+    - an out param that is not a plain scalar (an enum, a ``path``,
+      ``bytes``, a capsule, a string) or that declares a ``default``: none
+      of them has one value the binding could declare and hand back.
+    - a function that also returns an allocated output (``out_type``,
+      ``result_fields``, ``variable_output``): the Python result is that
+      output, so the out values would have nowhere to go.
+    - a non-void return without ``check_return = true``: the C return
+      would be the Python result as well, and dropping it in silence is
+      gh-1232's failure. ``check_return`` consumes an int status and raises
+      on a non-zero one before the outs are returned.
+
+    Examples
+    --------
+    >>> ok = {"name": "f", "return_type": "int", "check_return": True,
+    ...       "params": [{"name": "n", "type": "int", "out": True}]}
+    >>> scalar_out_why_not(ok)
+    ''
+    >>> bad = dict(ok, check_return=False)
+    >>> scalar_out_why_not(bad).splitlines()[0]
+    "function 'f' declares out param 'n' and returns 'int'."
+    """
+    from ._types import param_scalar_out
+
+    name = str(fn.get("name", "<function>"))
+    outs = [p for p in fn.get("params") or [] if param_scalar_out(p)]
+    if not outs:
+        return ""
+    for p in outs:
+        pname, ptype = p.get("name", "?"), str(p.get("type", ""))
+        meta = _CTYPE_META.get(ptype)
+        what = ""
+        if p.get("enum"):
+            what = "an enum"
+        elif p.get("capsule"):
+            what = "a capsule"
+        elif p.get("default") not in (None, ""):
+            what = "a param with a default"
+        elif meta is None or meta.get("kind") not in _SCALAR_OUT_KINDS:
+            what = f"a {ptype!r} param"
+        if what:
+            return (
+                f"function '{name}' declares out = true on {what} "
+                f"('{pname}').\n"
+                "  A scalar out param is a value the C function writes "
+                "through a pointer and the\n"
+                "  binding returns, so it must be a plain integer, real or "
+                "complex C scalar with\n"
+                "  no default. Declare it as one, or drop out = true."
+            )
+    first = outs[0].get("name", "?")
+    shape = next(
+        (
+            k
+            for k in ("out_type", "result_fields", "variable_output")
+            if fn.get(k)
+        ),
+        "",
+    )
+    if shape:
+        return (
+            f"function '{name}' declares out param '{first}' and {shape}.\n"
+            f"  The Python result is the output {shape} allocates, so the "
+            "out values would\n"
+            "  have nowhere to go. Return them as that output, or drop "
+            "out = true."
+        )
+    ret = str(fn.get("return_type") or "void")
+    if ret != "void" and not fn.get("check_return"):
+        return (
+            f"function '{name}' declares out param '{first}' and returns "
+            f"'{ret}'.\n"
+            "  A function with scalar out params returns them to Python, so "
+            "its C return\n"
+            "  would be dropped. Declare check_return = true to raise on a "
+            "non-zero status,\n"
+            "  or make the function void."
+        )
+    return ""
 
 
 def _out_length_keys(fn: dict) -> dict:
@@ -1994,6 +2133,40 @@ def _check_return_unreadable(fn_name: str, return_type: str) -> str:
     )
 
 
+def _outs_return_c(params: list[dict]) -> str:
+    """The binding's return of a function's scalar out params (gh-2683).
+
+    The value itself for one out, a tuple of them in declared order for
+    several, each converted by its type's ``to_py`` -- the conversion a
+    scalar return already uses. A function with none returns ``None``, which
+    is what every branch that reaches here returned before.
+
+    Examples
+    --------
+    >>> _outs_return_c([{"name": "x", "type": "int"}])
+    '    Py_RETURN_NONE;'
+    >>> print(_outs_return_c([{"name": "n", "type": "int", "out": True}]))
+        return PyLong_FromLong((long)n);
+    """
+    outs = [p for p in params if param_scalar_out(p)]
+    if not outs:
+        return "    Py_RETURN_NONE;"
+    conv = [_CTYPE_META[p["type"]]["to_py"](p["name"]) for p in outs]
+    if len(outs) == 1:
+        return f"    return {conv[0]};"
+    lines = [
+        f"    PyObject *_jm_outs = PyTuple_New({len(outs)});",
+        "    if (!_jm_outs) { return NULL; }",
+    ]
+    for i, c in enumerate(conv):
+        lines += [
+            f"    PyObject *_jm_out{i} = {c};",
+            f"    if (!_jm_out{i}) {{ Py_DECREF(_jm_outs); return NULL; }}",
+            f"    PyTuple_SET_ITEM(_jm_outs, {i}, _jm_out{i});",
+        ]
+    return "\n".join(lines + ["    return _jm_outs;"])
+
+
 def _py_wrapper_for_function(
     fn_name: str,
     params: list[dict],
@@ -2064,12 +2237,32 @@ def _py_wrapper_for_function(
     )
     if _status_err:
         raise Refusal(_status_err)
+    # gh-2683: scalar out params, refused here too for a row that did not
+    # come through `load` (the same check `_config.load` makes).
+    _out_err = scalar_out_why_not(
+        {
+            "name": fn_name,
+            "params": params,
+            "return_type": return_type,
+            "check_return": check_return,
+            "out_type": out_type,
+            "result_fields": result_fields,
+            "variable_output": variable_output,
+        }
+    )
+    if _out_err:
+        raise Refusal(_out_err)
 
     if params:
         parse_block, call_args, cleanup = _build_params_parse(params, enums)
         # Positional-or-keyword (gh-238): the binding takes kwds and parses with
-        # PyArg_ParseTupleAndKeywords. A no-param function stays METH_NOARGS.
-        py_args = "PyObject *args, PyObject *kwds"
+        # PyArg_ParseTupleAndKeywords. A no-param function stays METH_NOARGS,
+        # and so does one whose every param is an out (gh-2683).
+        py_args = (
+            "PyObject *args, PyObject *kwds"
+            if fn_input_params(params)
+            else "PyObject *Py_UNUSED(args)"
+        )
     else:
         parse_block = ""
         call_args = ""
@@ -2335,7 +2528,8 @@ def _py_wrapper_for_function(
             )
             + "        return NULL;\n"
             "    }\n"
-            "    Py_RETURN_NONE;"
+            # gh-2683: the outs, once the status said they were written.
+             + _outs_return_c(params)
         )
     elif ret_meta:
         # Everything in `cleanup` releases something the C call is still
@@ -2365,7 +2559,7 @@ def _py_wrapper_for_function(
         call_line = (
             f"    {c_name}({call_args});" if params else f"    {c_name}();"
         )
-        ret_line = call_line + f"\n{cleanup}    Py_RETURN_NONE;"
+        ret_line = call_line + f"\n{cleanup}" + _outs_return_c(params)
 
     return (
         f"static PyObject *\n"
@@ -2460,7 +2654,7 @@ def make_functions_ctx(
         name_summary,
         render_runtime_doc,
     )
-    from ._stubs import fn_py_surface
+    from ._stubs import fn_out_returns, fn_py_surface
 
     wrappers: list[str] = []
     entries: list[str] = []
@@ -2500,14 +2694,18 @@ def make_functions_ctx(
                     _ret_ann,
                     authored_doc=fn.get("doc", ""),
                     param_docs=_pdocs,
+                    # gh-2683: the out params the result is, as the stub
+                    # beside this names them.
+                    ret_fields=fn_out_returns(fn),
                 )
             )
         # gh-238: a function with params is positional-or-keyword
         # (METH_VARARGS | METH_KEYWORDS); a no-param function stays METH_NOARGS.
         # The kw-capable binding has the 3-arg PyCFunctionWithKeywords signature,
         # so cast it through `(void *)` in the table (jm's convention; silences
-        # -Wcast-function-type).
-        if params:
+        # -Wcast-function-type). A function whose params are all outs takes
+        # no argument, so it is METH_NOARGS too (gh-2683).
+        if fn_input_params(params):
             flags = "METH_VARARGS | METH_KEYWORDS"
             fn_ref = f"(PyCFunction)(void *)_bind_{name}"
         else:

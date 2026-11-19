@@ -330,6 +330,11 @@ def load(root: Path) -> dict:
     consumed_errors = _consumed_fn_errors(cfg)
     if consumed_errors:
         _refuse(consumed_errors)
+    # gh-2683: a scalar `out` param that would be bound as an input, or
+    # returned where the result has no room for it.
+    out_errors = scalar_out_errors(cfg)
+    if out_errors:
+        _refuse(out_errors)
     # gh-2470: a set_state status table with no set_state, or a row the
     # shared validator refuses on every other table face.
     set_state_errors = _set_state_status_errors_errors(cfg)
@@ -724,6 +729,52 @@ def _consumed_fn_errors(cfg: dict) -> "list[str]":
             )
             if why:
                 errors.append(why)
+    return errors
+
+
+def scalar_out_errors(cfg: dict) -> "list[str]":
+    """Every scalar ``out`` param jm would not bind as an output (gh-2683).
+
+    A scalar param with ``out = true`` (or ``mutable``) was bound as an
+    INPUT on every face -- the prototype by value, the caller passing it --
+    so the value the C function was declared to hand back never came back.
+
+    - On a module function it is an output now; the shapes that have no
+      room for one are `_render.scalar_out_why_not`'s, the predicate ``jm
+      function`` and the renderer ask too.
+    - On a method (an object's or a view's) it is refused: only a function
+      supports it, and gh-2685 tracks the method faces.
+
+    Examples
+    --------
+    >>> bad = {"o": {"methods": [{"name": "peek",
+    ...     "params": [{"name": "n", "type": "int", "out": True}]}]}}
+    >>> scalar_out_errors(bad)[0].split(":")[0]
+    "[[o.methods]] 'peek' param 'n'"
+    >>> scalar_out_errors({"o": {"methods": [{"name": "peek"}]}})
+    []
+    """
+    from ._render import scalar_out_why_not
+    from ._types import param_scalar_out
+
+    errors: list[str] = []
+    for mid in modules(cfg):
+        for fn in module_functions(cfg, mid):
+            if isinstance(fn, dict):
+                why = scalar_out_why_not(fn)
+                if why:
+                    errors.append(f"[[module.{mid}.functions]] {why}")
+    for table, m in declared_methods(cfg):
+        for p in m.get("params") or []:
+            if isinstance(p, dict) and param_scalar_out(p):
+                errors.append(
+                    f"[[{table}]] {m.get('name', '?')!r} param "
+                    f"{p.get('name', '?')!r}: out = true on a scalar is "
+                    "supported on a module function only, where the value "
+                    "comes back as the result; a method has no such binding "
+                    "yet (gh-2685). Return it from the method, or drop "
+                    "out = true."
+                )
     return errors
 
 
