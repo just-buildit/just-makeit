@@ -82,7 +82,8 @@ def stranded_ctors(root: Path, cfg: dict) -> "list[str]":
     parent file that still names it, saying which to move.
 
     Read off the real tree: ``apply`` replays into a scratch one, where the
-    parent's core never held it.
+    parent's core never held it. Only a file-scope declaration or definition
+    counts (`_ctorsig.signatures`), so a comment or a call naming it does not.
     """
     out = []
     for parent in C.components(cfg):
@@ -99,7 +100,10 @@ def stranded_ctors(root: Path, cfg: dict) -> "list[str]":
                 if not f.is_file():
                     continue
                 text = f.read_text(encoding="utf-8", errors="replace")
-                if re.search(r"\b" + re.escape(fn) + r"\s*\(", text):
+                # A declaration or definition, never a mention: headers
+                # cross-reference constructors in their Doxygen prose
+                # ("built by fn()"), and that is not a copy to move.
+                if any(s.name == fn for s in _ctorsig.signatures(text)):
                     out.append(
                         f"{f.relative_to(root).as_posix()} still names "
                         f"`{fn}`, the constructor of view "
