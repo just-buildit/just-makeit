@@ -1012,6 +1012,19 @@ def test_one_capacity_function_at_two_arities_is_refused(
         assert s in r.stderr, (s, r.stderr)
 
 
+def test_a_command_that_only_loads_refuses_it(tmp_path: Path) -> None:
+    """The refusal is the loader's: `jm script` replays nothing, and still
+    will not describe a project whose C cannot exist."""
+    proj = _o_project(tmp_path)
+    _add_rows(
+        proj,
+        [("scale", "rq_o_cap", _VO_ARRAY), ("burst", "rq_o_cap", _VO_SCALAR)],
+    )
+    r = run_cli("script", cwd=proj)
+    assert r.returncode != 0, r.stdout
+    assert "share the capacity function `rq_o_cap`" in r.stderr, r.stderr
+
+
 def test_jm_method_refuses_a_second_arity_before_writing(
     tmp_path: Path,
 ) -> None:
@@ -1106,23 +1119,26 @@ def test_a_stale_records_fragment_names_the_records_guard(
 ALIAS_DOC = "A retired alias kept for old callers."
 
 
+@pytest.mark.parametrize("documented", [False, True])
 def test_a_leftover_alias_does_not_answer_for_a_named_function(
-    authored: Path, tmp_path: Path
+    scaffold: Path, tmp_path: Path, documented: bool
 ) -> None:
     """Review finding 3: retiring an alias. The header still declares the
-    derived `rq_acc_run_max_out(state)`, documented; the method names
-    `rq_acc_capacity(state, n_in)`. Both stub writers and the binding read
-    only the named one."""
+    derived `rq_acc_run_max_out(state)`, documented and state-only; the
+    method names `rq_acc_capacity(state, n_in)`, documented or still jm's
+    bare declaration. Both stub writers and the binding read only the
+    named one: its arity, and its doc or jm's -- never the alias's."""
     proj = tmp_path / "rq"
-    shutil.copytree(authored, proj)
+    shutil.copytree(scaffold, proj)
     h = _read(proj, ACC_H)
-    anchor = f"/** @brief {ACC_DOC} */"
+    anchor = "size_t rq_acc_capacity("
     assert h.count(anchor) == 1, h
+    named = f"/** @brief {ACC_DOC} */\n" if documented else ""
     alias = (
         f"/** @brief {ALIAS_DOC} */\n"
         "size_t rq_acc_run_max_out(rq_acc_state_t *state);\n"
     )
-    _write(proj, ACC_H, h.replace(anchor, alias + anchor))
+    _write(proj, ACC_H, h.replace(anchor, alias + named + anchor))
     _ok("apply", cwd=proj)
     text = "".join(
         p.read_text("utf-8")
@@ -1132,7 +1148,8 @@ def test_a_leftover_alias_does_not_answer_for_a_named_function(
     sig, body = text.split("def run_max_out(")[1].split(":", 1)
     assert sig.startswith("self, n_in"), sig
     body = body.split("def ")[0]
-    assert ACC_DOC in body and ALIAS_DOC not in body, body
+    assert ALIAS_DOC not in body, body
+    assert (ACC_DOC in body) is documented, body
     frag = _read(proj, ACC_FRAG)
     assert "rq_acc_run_max_out" not in frag, frag
 
