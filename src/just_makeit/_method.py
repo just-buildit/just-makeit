@@ -2798,28 +2798,6 @@ def run(
     )
     if _max_out_why:
         raise _report.Refusal(_max_out_why)
-    # gh-2680: and the loader's refusal of one capacity function called at
-    # two arities, asked with this method in place of any it replaces.
-    _arity_clash = C.max_out_arity_clashes(
-        cfg,
-        object_name,
-        add_method=(
-            {
-                "name": method_name,
-                "fn": fn,
-                "max_out_fn": max_out_fn,
-                "arg_type": arg_type,
-                "params": params or [],
-                "variable_output": variable_output,
-                "no_count": no_count,
-                "borrow": borrow,
-                "batch": batch,
-            },
-            view or None,
-        ),
-    )
-    if _arity_clash:
-        raise _report.Refusal(_arity_clash[0])
     _restated = _record.restated_columns(
         {
             "name": method_name,

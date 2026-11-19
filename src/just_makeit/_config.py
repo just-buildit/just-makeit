@@ -7657,11 +7657,7 @@ def max_out_arity(m: dict) -> "str | None":
     return f"(state{decl})"
 
 
-def max_out_arity_clashes(
-    cfg: dict,
-    component: str,
-    add_method: "tuple[dict, str | None] | None" = None,
-) -> "list[str]":
+def max_out_arity_clashes(cfg: dict, component: str) -> "list[str]":
     """Methods sharing one capacity function at different arities.
 
     gh-2680. ``max_out_fn`` lets two methods of one object name the same
@@ -7670,10 +7666,9 @@ def max_out_arity_clashes(
     it with a count and the other with the state alone, the header can
     declare only one of them and the other's call does not compile --
     while ``status --check`` sees nothing wrong. Refused instead, naming
-    both methods and the parameters each would pass.
-
-    *add_method* is the ``(entry, view class or None)`` `jm method` is
-    about to write, which replaces a same-named entry of the same table.
+    both methods and the parameters each would pass -- by the loader, so
+    every command refuses it, and `jm method` before anything it wrote
+    persists (gh-1867's undo).
 
     >>> cfg = {"project": {"name": "p"}, "o": {"methods": [
     ...     {"name": "a", "variable_output": True, "arg_type": "float[]",
@@ -7689,13 +7684,6 @@ it as o_cap(state, size_t n_in) and o.b() as o_cap(state)...
 
     st = _csym.stem(cfg, component)
     rows = _capacity_rows(cfg, component)
-    if add_method is not None:
-        entry, view = add_method
-        rows = [
-            r
-            for r in rows
-            if not (r[1] == view and r[0].get("name") == entry.get("name"))
-        ] + [add_method]
 
     def label(m: dict, view: "str | None") -> str:
         who = component if view is None else f"{component}'s view {view}"
