@@ -1,5 +1,64 @@
 ## [Unreleased]
 
+## [0.131.0] — 2026-11-19
+
+### Added
+
+- **`jm property --type enum:<name>` declares an enum-backed property.**
+    The init-param spelling of an enum is now accepted on a property as a
+    synonym for `--type int --enum <name>`: the property reads back as the
+    `[[enum]]` choice string, and the manifest keeps the canonical
+    `type = "int"` + `enum = "<name>"` row, so every file written is the
+    same as the long form's (gh-2652).
+
+### Changed
+
+- **`jm_dot_f32` / `jm_dot_f64` keep four accumulators, so a long dot
+    product is no longer latency-bound** (gh-2656). With one vector
+    accumulator every multiply-add waited on the previous add, at every
+    tier. From `n >= 4 * JM_SIMD_WIDTH` the main loop now runs four
+    independent chains, combined pairwise at the end, then the one-vector
+    loop and the scalar tail; a shorter dot runs the old single-accumulator
+    loop only. Measured at `n = 4096`, `-O2`: about 3x faster on SSE2 and
+    AVX2, 1.4-1.6x on AVX-512, 3.8x on NEON. The sum is associated
+    differently, so a result can differ from the previous release's in the
+    last place, as the SSE2 tier's unfused `JM_FMA` could (gh-2651).
+
+### Fixed
+
+- **A refused enum type names the form that works.** A property's
+    `--type string_enum:a,b`, a manifest property row spelled
+    `type = "enum:<name>"`, an enum `--param` on `jm function` or
+    `jm method`, and an enum `--state` field were each refused with a bare
+    list of scalar types. Each refusal now gives that surface's enum
+    spelling and, for an inline `string_enum:` list, the `[[enum]]` table
+    to declare with its values filled in (gh-2652).
+
+- **An ordinary comment between a Doxygen block and its declaration no
+    longer drops the docstring** (gh-2653). The binder skipped only
+    whitespace, so a header made includable from C++ -- a doc block, then
+    `#ifdef __cplusplus`, a plain `/* ... */` comment and the prototype --
+    rendered its binding and `.pyi` undocumented, and `drift-check` went red
+    with no hint why. jm now binds the way Doxygen does: whitespace, ordinary
+    `/* */` and `//` comments and preprocessor directives are skipped, for
+    functions and structs alike. A second doc comment still ends the
+    binding, and so does a `#define`, which is documentable itself: a
+    macro's block is no longer handed to the function declared after it.
+
+- **Every text file jm reads, and every one its tests and examples read or
+    write, names its encoding** (gh-2654). A `read_text()`, `write_text(s)`
+    or text-mode `open()` with no `encoding=` uses the platform codec,
+    which is cp1252 on Windows: a test writing a header that held an em
+    dash failed only on the Windows leg. 1360 such calls now pass
+    `encoding="utf-8"`, among them jm's own reads of manifests and
+    generated files, which on Windows decoded UTF-8 as cp1252. A new
+    `make lint` gate, `text-encoding-check`, refuses one that omits it.
+
+- **`jm_bench.h` is in American spelling.** Two comments said
+    *initialisation* and *favour*; a project that gates American spelling
+    (codespell's GB-to-US dictionary) failed on the generated header. The
+    rest of the repo follows in gh-2663.
+
 ## [0.130.1] — 2026-11-17
 
 ### Fixed
