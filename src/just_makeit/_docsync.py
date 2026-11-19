@@ -1326,6 +1326,16 @@ _RECORDS_CAPACITY_RE = re.compile(
     r"(?=[\s\S]*\bPyList_New\s*\()"
 )
 
+#: The legacy spelling, a second alternative: a hand-written wrapper that
+#: sizes its list by a derived ``<c>_<m>_max_out(...)`` call into a local of
+#: its own (what this marker read before gh-2680). It can only widen what
+#: is accepted -- a named capacity function is recognised by the local
+#: above, never wrongly missed here -- so a fragment that passed keeps
+#: passing.
+_RECORDS_CAPACITY_LEGACY_RE = re.compile(
+    r"^(?=[\s\S]*\b\w+_max_out\s*\()(?=[\s\S]*\bPyList_New\s*\()"
+)
+
 
 #: Constructs a DECLARED FEATURE puts in a wrapper, which the three axes
 #: above cannot see: `status_errors`, `strict` and `releases` all leave the
@@ -1491,12 +1501,13 @@ _FEATURE_MARKERS = {
     # in the sacred header after the fragment was rendered. Named for its
     # consequence, which is silent: the records past the fixed buffer.
     "records-capacity": _Feature(
-        (_RECORDS_CAPACITY_RE,),
-        "the header declares this method's <name>_max_out capacity and "
-        "this fragment does not ask it, so a call returns at most the "
+        (_RECORDS_CAPACITY_RE, _RECORDS_CAPACITY_LEGACY_RE),
+        "the header declares this method's capacity function and this "
+        "fragment does not ask it, so a call returns at most the "
         "fixed max_results records and drops the rest",
         safety=True,
-        form="<c>_<m>_max_out(...) sizing the PyList_New",
+        form="size_t _cap_need = (size_t)(<capacity fn>(...)) sizing the "
+        "PyList_New",
     ),
     # gh-2204: a manifest declaration -- `consumed_fn`, added to a
     # list-of-records method after its sacred fragment was rendered. Named
