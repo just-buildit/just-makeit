@@ -116,12 +116,23 @@ def _project(base: Path, fragment: str) -> "tuple[Path, str]":
 
 
 @pytest.fixture(scope="module")
-def built(tmp_path_factory):
-    """The module above, applied and compiled, its C tests built."""
-    if _SKIP:
-        pytest.skip(_SKIP)
+def applied(tmp_path_factory):
+    """The module above, applied: every generated file, nothing compiled.
+
+    The text checks read this, so a defect that also breaks the build is
+    named by the check it breaks rather than by the build fixture.
+    """
     dest, err = _project(tmp_path_factory.mktemp("gh2683"), _FRAGMENT)
     assert not err, err
+    return dest
+
+
+@pytest.fixture(scope="module")
+def built(applied):
+    """The applied module, compiled, its C tests built."""
+    if _SKIP:
+        pytest.skip(_SKIP)
+    dest = applied
     build = dest / "build"
     for cmd in (
         [
@@ -189,8 +200,8 @@ def test_the_outs_come_back(built, call, want):
     assert got.startswith(want), got
 
 
-def test_the_stub_says_what_comes_back(built):
-    pyi = (built / "src/p/ops/ops.pyi").read_text("utf-8")
+def test_the_stub_says_what_comes_back(applied):
+    pyi = (applied / "src/p/ops/ops.pyi").read_text("utf-8")
     for sig in (
         "def rate_from_mbps(mbps: int) -> tuple[int, int]:",
         "def half(x: float) -> float:",
@@ -198,26 +209,33 @@ def test_the_stub_says_what_comes_back(built):
         "def unit() -> complex:",
     ):
         assert sig in pyi, pyi
-    # The Returns section names each out by its doc, on both faces.
+    # The Returns section names each out by its doc.
     assert "n_bpsc : int\n            Bits per subcarrier." in pyi, pyi
+
+
+def test_help_says_what_comes_back(built):
+    """The runtime face names each out as the stub does."""
     doc = _py(
         built, "-c", "from p.ops import *; print(rate_from_mbps.__doc__)"
     )
     assert "n_bpsc : int\n        Bits per subcarrier." in doc.stdout, doc
 
 
-def test_the_prototype_takes_the_address(built):
-    hdr = next(built.glob("native/inc/**/ops_core.h")).read_text("utf-8")
+def test_the_prototype_takes_the_address(applied):
+    hdr = next(applied.glob("native/inc/**/ops_core.h")).read_text("utf-8")
     assert "int rate_from_mbps(int mbps, int *n_bpsc, int *code);" in hdr
     assert "void answer(int *a);" in hdr, hdr
 
 
-def test_the_contract_test_calls_without_the_outs(built):
-    test = built / "src/p/ops/tests/test_ops_functions.py"
+def test_the_contract_test_calls_without_the_outs(applied):
+    test = applied / "src/p/ops/tests/test_ops_functions.py"
     text = test.read_text("utf-8")
     assert "result = module.rate_from_mbps(mbps=1)" in text, text
     assert "result = module.answer()" in text, text
     assert "self.assertEqual(len(result), 2)" in text, text
+
+
+def test_the_contract_test_runs(built):
     r = _py(built, "-m", "unittest", "-v", "p.ops.tests.test_ops_functions")
     assert r.returncode == 0, r.stderr
     # Each wrapper the kernel does not refuse runs its contract.
@@ -229,10 +247,13 @@ def test_the_contract_test_calls_without_the_outs(built):
         assert line.endswith("ok"), line
 
 
-def test_the_c_smoke_test_runs(built):
-    smoke = next(built.glob("native/tests/**/test_ops_core.c"))
+def test_the_c_smoke_test_passes_addresses(applied):
+    smoke = next(applied.glob("native/tests/**/test_ops_core.c"))
     text = smoke.read_text("utf-8")
     assert "(void)rate_from_mbps(0, &n_bpsc, &code);" in text, text
+
+
+def test_the_c_smoke_test_runs(built):
     r = subprocess.run(
         ["ctest", "--test-dir", str(built / "build"), "-R", "ops"],
         capture_output=True,
