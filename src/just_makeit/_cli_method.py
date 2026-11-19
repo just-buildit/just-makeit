@@ -61,6 +61,7 @@ def run(args: list[str]) -> None:
     borrow_writeable = False
     # gh-805 §A2 / §B
     fn = ""
+    max_out_fn = ""
     error_negative = False
     status_return = False
     why = False
@@ -253,6 +254,18 @@ def run(args: list[str]) -> None:
                 )
                 sys.exit(1)
             fn = remaining[i]
+            i += 1
+        elif tok == "--max-out-fn":
+            # gh-2680: the capacity function, when it is not the derived
+            # `<fn>_max_out` -- a status twin sharing its plain form's.
+            i += 1
+            if i >= len(remaining):
+                print(
+                    "error: --max-out-fn requires a C function name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            max_out_fn = remaining[i]
             i += 1
         elif tok == "--error-negative":
             error_negative = True
@@ -921,6 +934,7 @@ def run(args: list[str]) -> None:
         short_out=short_out,
         nogil=nogil,
         fn=fn,
+        max_out_fn=max_out_fn,
         error_negative=error_negative,
         status_return=status_return,
         why=why,

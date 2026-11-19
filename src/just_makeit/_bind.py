@@ -310,7 +310,8 @@ def parse_header(path: Path) -> dict:
         _LIFECYCLE_VERBS
         | {f"get_{f}" for f in getters}
         | {f"set_{f}" for f in setters}
-        | {f"{v}_max_out" for v in var_output_verbs}
+        # The VERB's name, read off the header: a Python-face spelling.
+        | {f"{name}_max_out" for name in var_output_verbs}
         | {"steps", "step_batch", "max_out"}
     )
 

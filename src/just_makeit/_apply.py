@@ -1373,6 +1373,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # is how a previous key made `apply` rewrite the sacred _core.h
             # prototype to the wrong shape.
             fn=m.get("fn", ""),
+            max_out_fn=m.get("max_out_fn", ""),  # gh-2680
             error_negative=bool(m.get("error_negative")),
             # gh-2574: named here like every key, or the replay declares
             # the kernel without its trailing `const char **why`.
@@ -3174,7 +3175,11 @@ def _refuse_cmake_that_would_lose(
 
 
 def _refresh_core_h_decls(
-    real: Path, temp: Path, comp: str, family: "C.CoreFamily | None" = None
+    real: Path,
+    temp: Path,
+    comp: str,
+    family: "C.CoreFamily | None" = None,
+    max_out_fns: "frozenset[str]" = frozenset(),
 ) -> bool:
     """Bring the real ``_core.h`` up to date with the manifest, splice-free.
 
@@ -3227,7 +3232,9 @@ def _refresh_core_h_decls(
     # accessor still gets jm's default, so a fresh project is unchanged.
     from ._docstring import declared_max_outs
 
-    skip = declared_max_outs(real.read_text(encoding="utf-8"))
+    # gh-2680: *max_out_fns*, the capacity functions the manifest names,
+    # are the author's too, whatever their spelling.
+    skip = declared_max_outs(real.read_text(encoding="utf-8"), max_out_fns)
     changed = _inject_decls_into_core_h(
         real, comp, decls, skip_names=skip, family=family
     )
@@ -3568,7 +3575,12 @@ def _sync_aggregates(
         # declarations: inject any the manifest implies that are missing,
         # splice-free.
         rel = INC.core_rel(mp.cname, cfg)
-        if _refresh_core_h_decls(root / rel, temp_root / rel, mp.cname):
+        if _refresh_core_h_decls(
+            root / rel,
+            temp_root / rel,
+            mp.cname,
+            max_out_fns=C.authored_max_out_fns(cfg, mp.cname),
+        ):
             if root / rel not in updated:
                 updated.append(root / rel)
         # gh-170: each module object's own _core.h gains its depends_on
@@ -3909,9 +3921,12 @@ def _declared_method_decls(cfg: dict, comp: str, temp_root: Path) -> list[str]:
 
     want: set = set()
     for m in C.methods(cfg, comp):
-        fn = C.method_c_symbol(CSYM.stem(cfg, comp), m)
-        want.add(fn)
-        want.add(f"{fn}_max_out")
+        stem = CSYM.stem(cfg, comp)
+        want.add(C.method_c_symbol(stem, m))
+        # gh-2680: the capacity function the binding calls, the NAMED one
+        # when the method declares `max_out_fn` -- so a header that already
+        # declares it is offered nothing new.
+        want.add(C.method_max_out_symbol(stem, m))
     # gh-1509: the binding calls the serializable triplet the same way, and
     # until then no path declared it in any header.
     want |= _serializable_triplet(cfg, comp)
@@ -3999,7 +4014,11 @@ def _refresh_component_core_h(
     """
     rel = INC.core_rel(comp, cfg)
     changed = _refresh_core_h_decls(
-        root / rel, temp_root / rel, comp, C.core_family(cfg, comp)
+        root / rel,
+        temp_root / rel,
+        comp,
+        C.core_family(cfg, comp),
+        C.authored_max_out_fns(cfg, comp),
     )
     # gh-170: also inject `#include "<dep>/<dep>_core.h"` for each depends_on
     # entry, so opaque fields of a dependency's types compile.

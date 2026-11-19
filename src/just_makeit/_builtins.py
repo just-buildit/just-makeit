@@ -239,6 +239,7 @@ def overridden_builtin_slots(
             record_dtype=m.get("record_dtype", ""),
             borrow=bool(m.get("borrow")),
             csym=ctx["csym"],
+            max_out_fn=m.get("max_out_fn", ""),  # gh-2680
             why=m.get("why") is True,  # gh-2574
             status_out=m.get("status_out") is True,  # gh-2584
         )

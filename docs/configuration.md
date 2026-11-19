@@ -1259,6 +1259,7 @@ way.
 | `name`, `arg_type`, `return_type`      | `jm method <obj> <method> --arg-type T --return-type T`                                                           | ✅                             |
 | `doc = "..."`                          | `jm method --doc "text"`                                                                                          | ✅                             |
 | `fn = "SYMBOL"`                        | `jm method --fn SYMBOL`                                                                                           | ✅ (0.49.0)                    |
+| `max_out_fn = "SYMBOL"`                | `jm method --max-out-fn SYMBOL` (the capacity function, when not the derived `<fn>_max_out`)                      | ✅ (gh-2680)                   |
 | `params = [{name, type}]`              | `jm method --param name:type` (repeatable)                                                                        | ✅                             |
 | `params … {out = true}` (or `mutable`) | `jm method --out-param name:T[]` (writable, repeatable)                                                           | ✅                             |
 | `params … {str_hint = "..."}`          | (TOML only) an array refuses a `str`, with this appended                                                          | ✅ (gh-1756)                   |

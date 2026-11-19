@@ -330,6 +330,10 @@ def load(root: Path) -> dict:
     consumed_errors = _consumed_fn_errors(cfg)
     if consumed_errors:
         _refuse(consumed_errors)
+    # gh-2680: a `max_out_fn` no binding would call, or could not.
+    max_out_errors = _max_out_fn_errors(cfg)
+    if max_out_errors:
+        _refuse(max_out_errors)
     # gh-2683: a scalar `out` param that would be bound as an input, or
     # returned where the result has no room for it.
     out_errors = scalar_out_errors(cfg)
@@ -7369,7 +7373,7 @@ def view_member_doc_keys(cfg: dict, component: str) -> "dict[str, str]":
             has_arg=m.get("arg_type", "void") != "void",
             params=list(m.get("params", []) or m.get("extra_args", [])),
         ):
-            keys[f"{m['name']}_max_out"] = f"{sym}_max_out"
+            keys[f"{m['name']}_max_out"] = method_max_out_symbol(stem, m)
     return keys
 
 
@@ -7463,6 +7467,136 @@ def method_c_symbol(stem: str, entry: dict) -> str:
     'psd_spur_free'
     """
     return entry.get("fn") or f"{stem}_{entry['name']}"
+
+
+def method_max_out_symbol(stem: str, entry: dict) -> str:
+    """The C capacity function a method entry's binding sizes its output by.
+
+    gh-2680. ``max_out_fn`` when declared, else the derived
+    ``<method C symbol>_max_out`` -- the method's resolved symbol
+    (`method_c_symbol`, so an authored ``fn`` carries its own stem) with
+    ``_max_out`` appended. The ONE spelling: the binding's call, both
+    ``.pyi`` writers, the sacred header's prototype, the ``_core.c`` stub,
+    apply's additive header refresh, ``status`` and the doc lookup of the
+    Python ``<method>_max_out`` accessor all ask this, and
+    ``tests/test_gh2680_max_out_fn.py`` refuses a hand-spelled derivation
+    anywhere else.
+
+    An authored ``max_out_fn`` is treated like an authored ``fn``: it is
+    called as written, never prefixed (gh-1591), and no second symbol is
+    derived beside it. The Python accessor keeps its name,
+    ``<method>_max_out``, whatever this answers.
+
+    >>> method_max_out_symbol("psd", {"name": "scan"})
+    'psd_scan_max_out'
+    >>> method_max_out_symbol("psd", {"name": "scan", "fn": "psd_scan_why"})
+    'psd_scan_why_max_out'
+    >>> method_max_out_symbol(
+    ...     "psd",
+    ...     {"name": "scan", "fn": "psd_scan_why",
+    ...      "max_out_fn": "psd_scan_max_out"},
+    ... )
+    'psd_scan_max_out'
+    """
+    return entry.get("max_out_fn") or f"{method_c_symbol(stem, entry)}_max_out"
+
+
+def max_out_fn_why_not(m: dict, what: str) -> str:
+    """Why *m*'s ``max_out_fn`` cannot be honoured, or ``""`` (gh-2680).
+
+    Asked by the manifest loader and by ``jm method`` before it writes, so
+    every face refuses the same declarations. Each refusal is a key that
+    would otherwise be stored and then called by nothing, or emitted as a
+    call that does not compile:
+
+    - the method has no capacity function. Only a ``variable_output``
+      method (not a ``borrow``, which lends memory it does not size, nor a
+      ``batch``, whose output is its input's length) and a list of records
+      (gh-2184) ask one.
+    - the value is not a C identifier: it is emitted as a call.
+
+    Examples
+    --------
+    >>> ok = {"variable_output": True, "max_out_fn": "f_cap"}
+    >>> max_out_fn_why_not(ok, "m")
+    ''
+    >>> "no capacity" in max_out_fn_why_not({"max_out_fn": "f_cap"}, "m")
+    True
+    >>> "C function name" in max_out_fn_why_not(
+    ...     {**ok, "max_out_fn": "1x"}, "m")
+    True
+    """
+    fn = m.get("max_out_fn")
+    if not fn:
+        return ""
+    from . import _record
+    from ._borrow import _is_c_identifier
+
+    sized = (
+        m.get("variable_output") and not m.get("borrow") and not m.get("batch")
+    )
+    if not (sized or _record.is_record_list(m)):
+        return (
+            f"{what}: max_out_fn '{fn}' names the capacity function the "
+            "binding sizes its output by, and this method has no capacity "
+            "to ask: only a variable_output method and a list of records "
+            "call one. Drop max_out_fn."
+        )
+    if not isinstance(fn, str) or not _is_c_identifier(fn):
+        return (
+            f"{what}: max_out_fn {fn!r} is not a C function name; it is "
+            "emitted as a call in the generated binding."
+        )
+    return ""
+
+
+def _max_out_fn_errors(cfg: dict) -> "list[str]":
+    """Every method ``max_out_fn`` no binding would call (gh-2680).
+
+    `max_out_fn_why_not` over an object's methods and its views', the two
+    tables whose methods `make_methods_ctx` renders -- the
+    `_consumed_fn_errors` shape.
+
+    >>> _max_out_fn_errors({"o": {"methods": [{"name": "a",
+    ...                                         "max_out_fn": "c"}]}})[0][:20]
+    "[[o.methods]] 'a': m"
+    """
+    errors: list[str] = []
+    for comp in components(cfg):
+        if not isinstance(cfg[comp], dict):
+            continue
+        rows = [(f"[[{comp}.methods]]", m) for m in methods(cfg, comp)]
+        rows += [
+            (f"[[{comp}.views]] {v.get('class_name', '?')!r} method", m)
+            for v in views(cfg, comp)
+            if isinstance(v, dict)
+            for m in view_methods(v)
+        ]
+        for where, m in rows:
+            if isinstance(m, dict):
+                why = max_out_fn_why_not(m, f"{where} {m.get('name', '?')!r}")
+                if why:
+                    errors.append(why)
+    return errors
+
+
+def authored_max_out_fns(cfg: dict, component: str) -> "frozenset[str]":
+    """Every ``max_out_fn`` *component*'s methods and views' methods name.
+
+    gh-2680. The header scans that read a capacity function's arity and
+    protect its declaration (`_docstring.scan_max_out_arity` and its peers)
+    recognise a derived name by its ``_max_out`` suffix; an authored name
+    need not carry it, so they are handed these as well.
+
+    >>> cfg = {"o": {"methods": [{"name": "a"},
+    ...                          {"name": "b", "max_out_fn": "o_cap"}]}}
+    >>> sorted(authored_max_out_fns(cfg, "o"))
+    ['o_cap']
+    """
+    rows = list(methods(cfg, component)) + [
+        m for v in views(cfg, component) for m in view_methods(v)
+    ]
+    return frozenset(m["max_out_fn"] for m in rows if m.get("max_out_fn"))
 
 
 def varargs_core_c(object_name: str, method_name: str) -> str:
@@ -9390,7 +9524,7 @@ _METHOD_ORDER = (
     "count_name", "out_cols", "nogil", "none_on_empty", "error_on_empty",
     "batch", "multi_output", "extra_args", "params", "out_type",
     "out_divisor", "bench", "max_results", "result_fields", "single",
-    "py_return_type", "max_out", "short_out",
+    "py_return_type", "max_out", "max_out_fn", "short_out",
 )  # fmt: skip
 _PROPERTY_ORDER = (
     "name", "doc", "type", "enum", "writable", "field", "buf_field",

@@ -68,9 +68,11 @@ _SAMPLES = {
 #: table. `jm method` asks the table first. gh-2574: `why` is refused at
 #: load on any method with no refusal for the sentence to be raised by,
 #: and a batch method has none. gh-2584: `status_out` likewise, with no
-#: count refusal for the cause to be read on.
+#: count refusal for the cause to be read on. gh-2680: `max_out_fn`, with
+#: no capacity function for it to name.
 _LOAD_RULES = {
     "consumed_fn",
+    "max_out_fn",
     "no_count",
     "out_cols",
     "short_out",

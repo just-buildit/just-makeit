@@ -87,6 +87,7 @@ from . import _docsync
 from . import _fmtprobe
 from . import _pyfmt
 from . import _stubs
+from . import _csym as CSYM
 from . import _textio
 from . import _incpath as INC
 from ._apply import _SKIP_DIRS
@@ -2754,8 +2755,15 @@ def run(
             "cannot take effect:"
         )
         for obj, name, c_fn in inert_cap_entries:
+            # gh-2680: the capacity function the binding calls, named or
+            # derived, through the one spelling.
+            _mo = next(
+                C.method_max_out_symbol(CSYM.stem(cfg, obj), m)
+                for m in C.methods(cfg, obj)
+                if m.get("name") == name
+            )
             print(
-                f"  . {obj}.{name}: {c_fn}_max_out(state) cannot see the "
+                f"  . {obj}.{name}: {_mo}(state) cannot see the "
                 f"call, so the\n"
                 f"      allocation stays clamped to max(max_out, n)."
             )
