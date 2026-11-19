@@ -418,6 +418,24 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         print(f"error: object '{obj}' not found.", file=sys.stderr)
         sys.exit(1)
     _refuse_what_an_app_names(cfg, f"object '{obj}'", objects={obj})
+    # gh-2681: a view another object owns that this object's core constructs
+    # (`create_core`) would be left calling a function nothing defines, in a
+    # manifest `apply` then refuses. The route is the view's own edit.
+    _built = [
+        f"{v['class_name']} (a view of '{p}')"
+        for p in C.components(cfg)
+        if p != obj
+        for v in C.views(cfg, p)
+        if C.view_create_core(cfg, p, v) == obj
+    ]
+    if _built:
+        print(
+            f"error: object '{obj}' is the create_core of "
+            f"{', '.join(_built)}. Delete those [[<obj>.views]] entries, or "
+            "drop or change their `create_core`, first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     module = C.component_module(cfg, obj)
 
     core_h = INC.core_h(root, obj, cfg)

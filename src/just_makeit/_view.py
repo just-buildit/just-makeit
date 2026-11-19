@@ -70,6 +70,48 @@ def create_params_of(cfg: dict, object_name: str, view: dict) -> str:
     return vctx["create_params"]
 
 
+def stranded_ctors(root: Path, cfg: dict) -> "list[str]":
+    """The view constructors still named where ``create_core`` moved them.
+
+    A view that gains ``create_core`` (gh-2681) after its ``create_fn`` was
+    scaffolded into the parent's core leaves that prototype and stub
+    behind: ``apply`` adds the constructor to the new core, so the function
+    is then defined twice and the link fails -- or, spelled under the new
+    core's stem, ``c_prefix``'s collision check refuses with advice to
+    rename it, when the copy to delete is the parent's. One sentence per
+    parent file that still names it, saying which to move.
+
+    Read off the real tree: ``apply`` replays into a scratch one, where the
+    parent's core never held it.
+    """
+    out = []
+    for parent in C.components(cfg):
+        for v in C.views(cfg, parent):
+            home = C.view_create_core(cfg, parent, v)
+            if home == parent:
+                continue
+            fn = v["create_fn"]
+            files = (
+                INC.core_h(root, parent, cfg),
+                INC.src_path(root, parent, cfg) / f"{parent}_core.c",
+            )
+            for f in files:
+                if not f.is_file():
+                    continue
+                text = f.read_text(encoding="utf-8", errors="replace")
+                if re.search(r"\b" + re.escape(fn) + r"\s*\(", text):
+                    out.append(
+                        f"{f.relative_to(root).as_posix()} still names "
+                        f"`{fn}`, the constructor of view "
+                        f"'{v['class_name']}', which create_core = "
+                        f"{home!r} puts in {home}'s core. Move its "
+                        f"declaration to {home}_core.h and its body to "
+                        f"{home}_core.c (or delete jm's stub), then apply "
+                        "again"
+                    )
+    return out
+
+
 def run(
     root: Path,
     object_name: str,
@@ -214,6 +256,27 @@ def run(
                 f"builds it. Add to [{create_core}]:\n"
                 f'  depends_on = [{{ name = "{object_name}", link = true }}]'
             )
+
+    # gh-2681: a constructor the parent's core still holds, from before
+    # the view named create_core, would be defined twice.
+    _stranded = stranded_ctors(
+        root,
+        {
+            **cfg,
+            object_name: {
+                **cfg.get(object_name, {}),
+                "views": [
+                    {
+                        "class_name": class_name,
+                        "create_fn": create_fn,
+                        "create_core": create_core,
+                    }
+                ],
+            },
+        },
+    )
+    if _stranded:
+        _fail("\n".join(_stranded))
 
     prop_names = {p["name"] for p in C.properties(cfg, object_name)}
     exclude_properties = list(exclude_properties or [])
