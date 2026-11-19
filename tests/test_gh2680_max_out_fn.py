@@ -60,6 +60,10 @@ _OWNER = ("_config.py", "method_max_out_symbol")
 #: ``m_name`` / ``_name``, or the entry's ``name`` key read directly.
 _PY_NAME = re.compile(r"(?:m_|_)?name")
 
+#: What a C symbol stem is spelled from, ahead of a Python name: the
+#: object's stem (``csym`` / ``stem``), a method's resolved symbol.
+_C_STEM = re.compile(r"csym|stem|c_fn|c_symbol|\bsym\b|\bfn\b")
+
 
 def _python_name(node: ast.expr) -> bool:
     """Whether *node* is a method's Python name, by its spelling."""
@@ -116,15 +120,25 @@ def _findings(source: str, rel: str) -> "list[str]":
         if id(n) in skip:
             continue
         if isinstance(n, ast.JoinedStr):
-            for a, b in zip(n.values, n.values[1:]):
-                if (
+            vals = n.values
+            for i, (a, b) in enumerate(zip(vals, vals[1:])):
+                if not (
                     isinstance(a, ast.FormattedValue)
                     and isinstance(b, ast.Constant)
                     and isinstance(b.value, str)
                     and b.value.startswith("_max_out")
-                    and not _python_name(a.value)
                 ):
-                    hits.append(f"{rel}:{n.lineno} {{{ast.unparse(a.value)}}}")
+                    continue
+                # The name right before it, and any C stem in front of
+                # that: ``{csym}_{name}_max_out`` is the derivation too.
+                stems = [
+                    v
+                    for v in vals[:i]
+                    if isinstance(v, ast.FormattedValue)
+                    and _C_STEM.search(ast.unparse(v.value))
+                ]
+                if stems or not _python_name(a.value):
+                    hits.append(f"{rel}:{n.lineno} {ast.unparse(n)[:60]}")
         elif (
             isinstance(n, ast.BinOp)
             and isinstance(n.op, ast.Add)
@@ -180,6 +194,8 @@ def test_no_template_spells_the_derivation() -> None:
         'x = "%s_max_out" % c_fn',
         'x = "{}_max_out".format(c_fn)',
         'x = f"{c_name_fn}_max_out"',
+        'x = f"{csym}_{m_name}_max_out"',
+        'x = f"{CSYM.stem(cfg, o)}_{name}_max_out"',
     ],
 )
 def test_the_scanner_sees_each_shape(line: str) -> None:
@@ -537,6 +553,28 @@ def test_the_binding_follows_the_authored_arity(authored: Path) -> None:
     assert "rq_ofdm_bound(self->handle," not in ext, ext
 
 
+def test_a_module_header_gains_only_the_named_function(
+    scaffold: Path, tmp_path: Path
+) -> None:
+    """A module object's sacred header gains a new method's prototypes
+    additively (gh-1302) -- offered by name, so the named capacity function
+    is declared and no derived one is."""
+    proj = tmp_path / "rq"
+    shutil.copytree(scaffold, proj)
+    frag = proj / "objects" / "acc.toml"
+    frag.write_text(
+        frag.read_text("utf-8")
+        + '\n[[acc.methods]]\nname = "run2"\nmax_out_fn = "rq_acc_cap2"\n'
+        'arg_type = "float[]"\nreturn_type = "float"\n'
+        "variable_output = true\n",
+        "utf-8",
+    )
+    _ok("apply", cwd=proj)
+    h = _read(proj, ACC_H)
+    assert _defs(h, "rq_acc_cap2") == 1, h
+    assert "rq_acc_run2_max_out" not in h, h
+
+
 def test_the_authored_tree_is_clean(authored: Path) -> None:
     r = run_cli("status", "--check", cwd=authored)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -715,9 +753,10 @@ def test_the_loader_refuses_what_nothing_would_call(
         + f'\n[[o.methods]]\nname = "m"\nmax_out_fn = "{name}"\n{extra}\n',
         "utf-8",
     )
-    r = run_cli("apply", cwd=proj)
+    # `status`, which replays no method, so only the loader can refuse.
+    r = run_cli("status", cwd=proj)
     assert r.returncode != 0
-    assert "max_out_fn" in r.stderr, r.stderr
+    assert "[[o.methods]] 'm': max_out_fn" in r.stderr, r.stderr
     assert (said or "C function name") in r.stderr, r.stderr
 
 
