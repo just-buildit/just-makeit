@@ -102,26 +102,70 @@ def _docstrings(tree: ast.AST) -> "set[int]":
 
 
 #: Where a ``_max_out`` suffix may be RECOGNISED, each with its reason.
-#: Keyed ``(module, scope)``: the enclosing function, or the module-level
-#: name the constant is assigned to. Everything else that tests a name for
-#: the suffix -- a regex, ``endswith`` / ``removesuffix`` / ``startswith``
-#: on ``"_max_out"`` -- is refused: which C function is a capacity function
-#: is the manifest's answer (`_config.max_out_symbols`), not its spelling.
+#: Keyed ``(module, source line)``: the exact line the string starts on,
+#: stripped -- so an exemption covers that one string and nothing else in
+#: its function, and moves with it. Everything else that tests a name for
+#: the suffix is refused: which C function is a capacity function is the
+#: manifest's answer (`_config.max_out_symbols`), not its spelling.
 _RECOGNISERS = {
     # `jm bind` reads a header with no manifest and refuses a component the
     # manifest declares (gh-2072), so there is no `max_out_fn` it could be
     # told; the suffix is the only statement a bare header makes.
-    ("_bind.py", "_MAX_OUT_DECL_RE"): "bind has no manifest",
+    (
+        "_bind.py",
+        r'r"size_t\s+(\w+)_(\w+)_max_out\s*\(\s*(?:const\s+)?'
+        r'\w+_state_t\s*\*[^)]*\)\s*;",',
+    ): "bind has no manifest",
     # The PyMethodDef ROW names of `<name>_max_out` accessors: the Python
     # face, which keeps its name whatever the C function is called.
-    ("_docsync.py", "_MAX_OUT_SUFFIX"): "Python accessor names",
+    ("_docsync.py", '_MAX_OUT_SUFFIX = "_max_out"'): "Python accessor names",
     # A view's member names: `<name>_max_out` is the Python accessor of
     # `<name>`, so excluding `<name>` excludes it.
-    ("_stubs.py", "view_doc_blocks"): "Python accessor names",
+    (
+        "_stubs.py",
+        'if name not in gone and name.removesuffix("_max_out") not in gone:',
+    ): "Python accessor names",
+    # The legacy records-capacity spelling (review round 2): a SECOND
+    # alternative beside the `_cap_need` local, so it only widens what a
+    # hand-written fragment may say; a named function is never missed.
+    (
+        "_docsync.py",
+        r'r"^(?=[\s\S]*\b\w+_max_out\s*\()(?=[\s\S]*\bPyList_New\s*\()"',
+    ): "legacy hand-written records fragments",
 }
 
 #: A string that reads as a pattern: a regex escape or group.
 _REGEXISH = re.compile(r"\\[wsbd(]|\(\?")
+
+#: Calls that test or strip a name by its text.
+_STR_TESTS = {
+    "endswith",
+    "startswith",
+    "removesuffix",
+    "removeprefix",
+    "rstrip",
+    "lstrip",
+    "strip",
+    "split",
+    "rsplit",
+    "partition",
+    "rpartition",
+    "find",
+    "rfind",
+    "index",
+    "count",
+    "replace",
+}
+
+
+def _is_recogniser(call: ast.Call) -> bool:
+    """A ``re.*`` call, or a string method that tests or strips text."""
+    f = call.func
+    if not isinstance(f, ast.Attribute):
+        return False
+    if isinstance(f.value, ast.Name) and f.value.id == "re":
+        return True
+    return f.attr in _STR_TESTS
 
 
 def _scopes(tree: ast.AST) -> "dict[int, str]":
@@ -152,30 +196,101 @@ def _scopes(tree: ast.AST) -> "dict[int, str]":
 
 
 def _recognitions(source: str, rel: str) -> "list[str]":
-    """Every suffix-based recognition of a capacity function in *source*:
-    a code string equal to ``"_max_out"``, or a pattern containing it."""
+    """Every suffix-based recognition of a capacity function in *source*.
+
+    A code string -- a plain literal or an f-string's literal part --
+    containing ``_max_out`` that is either
+
+    - ``"_max_out"`` itself (a plain literal), or reads as a pattern
+      (`_REGEXISH`); or
+    - REACHES a recogniser (`_is_recogniser`): an argument of one, or
+      bound to a name that is.
+    """
     tree = ast.parse(source)
+    lines = source.splitlines()
     skip = _docstrings(tree)
+    parent: "dict[int, ast.AST]" = {}
+    for n in ast.walk(tree):
+        for c in ast.iter_child_nodes(n):
+            parent[id(c)] = n
+
+    def in_recogniser_args(node: ast.AST) -> bool:
+        child = node
+        while id(child) in parent:
+            up = parent[id(child)]
+            if isinstance(up, ast.Call) and child is not up.func:
+                if _is_recogniser(up):
+                    return True
+            child = up
+        return False
+
+    # Names bound to something holding a `_max_out` string, and whether
+    # any use of the name reaches a recogniser.
+    def holds(node: ast.AST) -> bool:
+        return any(
+            isinstance(x, ast.Constant)
+            and isinstance(x.value, str)
+            and "_max_out" in x.value
+            for x in ast.walk(node)
+        )
+
+    bound = {
+        t.id
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+        and n.value is not None
+        and holds(n.value)
+        for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+        if isinstance(t, ast.Name)
+    }
+    reaching = {
+        n.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Name) and n.id in bound and in_recogniser_args(n)
+    }
+
+    def binding(node: ast.AST) -> "str | None":
+        child = node
+        while id(child) in parent:
+            up = parent[id(child)]
+            if isinstance(up, (ast.Assign, ast.AnnAssign)):
+                tgts = (
+                    up.targets if isinstance(up, ast.Assign) else [up.target]
+                )
+                for t in tgts:
+                    if isinstance(t, ast.Name):
+                        return t.id
+                return None
+            child = up
+        return None
+
     fstr = {
         id(v)
         for n in ast.walk(tree)
         if isinstance(n, ast.JoinedStr)
         for v in n.values
     }
-    scope = _scopes(tree)
     hits: "list[str]" = []
     for n in ast.walk(tree):
         if (
             not isinstance(n, ast.Constant)
             or not isinstance(n.value, str)
             or id(n) in skip
-            or id(n) in fstr
             or "_max_out" not in n.value
         ):
             continue
-        if n.value != "_max_out" and not _REGEXISH.search(n.value):
+        # An f-string's literal ``_max_out`` after a Python name is the
+        # accessor's spelling (`_findings` holds what precedes it); it is
+        # recognition only as a pattern or when it reaches a recogniser.
+        if not (
+            (n.value == "_max_out" and id(n) not in fstr)
+            or _REGEXISH.search(n.value)
+            or in_recogniser_args(n)
+            or binding(n) in reaching
+        ):
             continue
-        if (rel, scope.get(id(n), "")) in _RECOGNISERS:
+        line = lines[n.lineno - 1].strip() if n.lineno <= len(lines) else ""
+        if (rel, line) in _RECOGNISERS:
             continue
         hits.append(f"{rel}:{n.lineno} {n.value[:50]!r}")
     return hits
@@ -269,19 +384,26 @@ def test_no_module_recognises_the_suffix() -> None:
 
 
 def test_every_recogniser_exemption_is_live() -> None:
-    """An exemption whose scope no longer holds a recognition is a hole
-    waiting for the next one; each must still name one."""
-    for (rel, scope), _why in _RECOGNISERS.items():
+    """An exemption whose line no longer holds a recognition is a hole
+    waiting for the next one; each must still name exactly one line."""
+    for (rel, line), _why in _RECOGNISERS.items():
         src = (SRC / rel).read_text(encoding="utf-8")
-        tree = ast.parse(src)
-        scopes = _scopes(tree)
-        assert any(
-            isinstance(n, ast.Constant)
-            and isinstance(n.value, str)
-            and "_max_out" in n.value
-            and scopes.get(id(n)) == scope
-            for n in ast.walk(tree)
-        ), (rel, scope)
+        found = [ln for ln in src.splitlines() if ln.strip() == line]
+        assert len(found) == 1, (rel, line, len(found))
+        without = dict(_RECOGNISERS)
+        del without[(rel, line)]
+        assert _recognitions_with(src, rel, without), (rel, line)
+
+
+def _recognitions_with(src: str, rel: str, table: dict) -> "list[str]":
+    """`_recognitions` under another exemption table."""
+    global _RECOGNISERS
+    saved = _RECOGNISERS
+    _RECOGNISERS = table
+    try:
+        return _recognitions(src, rel)
+    finally:
+        _RECOGNISERS = saved
 
 
 @pytest.mark.parametrize(
@@ -291,6 +413,15 @@ def test_every_recogniser_exemption_is_live() -> None:
         'x = s.removesuffix("_max_out")',
         'R = re.compile(r"size_t\\s+(\\w+_max_out)\\s*\\(")',
         'R = re.compile(r"\\b\\w+_max_out\\s*\\(")',
+        # review round 2: an f-string pattern, and plain strings that reach
+        # a recogniser without looking like a pattern
+        'R = re.compile(rf"\\b{stem}_\\w+_max_out\\s*\\(")',
+        'R = re.compile(r"_max_out$")',
+        'R = re.compile("[a-z_]+_max_out")',
+        'ok = name.endswith("x_max_out")',
+        'k = s.rstrip("_max_out")',
+        'S = "_cap_max_out"\nok = name.endswith(S)',
+        'ok = bool(re.search("max_out_" + "x_max_out", t))',
     ],
 )
 def test_the_recogniser_scan_sees_each_shape(line: str) -> None:
@@ -302,6 +433,8 @@ def test_the_recogniser_scan_sees_each_shape(line: str) -> None:
     [
         'x = "exact_max_out"',
         'msg = "declare a <name>_max_out capacity"',
+        'msg = f"{name}_max_out() -> int"',
+        'S = "the y_max_out of x"\nprint(S)',
         'def f():\n    """A name.endswith("_max_out") in prose."""',
     ],
 )
@@ -412,6 +545,26 @@ arg_type = "float[]"
 return_type = "float"
 variable_output = true
 
+# review round 2: one capacity function, three count NAMES of one type --
+# `n_in` (modulate), `x_len` (an array param), `n` (a void input).
+[[ofdm.methods]]
+name = "tap"
+max_out_fn = "rq_ofdm_modulate_max_out"
+arg_type = "void"
+return_type = "float"
+variable_output = true
+
+[[ofdm.methods.params]]
+name = "x"
+type = "float[]"
+
+[[ofdm.methods]]
+name = "drain"
+max_out_fn = "rq_ofdm_modulate_max_out"
+arg_type = "void"
+return_type = "float"
+variable_output = true
+
 [[ofdm.methods]]
 name = "scale2"
 max_out_fn = "rq_ofdm_bound"
@@ -471,6 +624,8 @@ DERIVED = (
     "rq_acc_hits_max_out",
     "rq_ofdm_widen_max_out",
     "rq_ofdm_scale2_max_out",
+    "rq_ofdm_tap_max_out",
+    "rq_ofdm_drain_max_out",
 )
 
 OFDM_H = "native/inc/rq/ofdm/ofdm_core.h"
@@ -826,6 +981,8 @@ print(json.dumps({
     "checked": o.modulate_checked_max_out(5),
     "scale": o.scale_max_out(),
     "widen": o.widen_max_out(5),
+    "tap": o.tap_max_out(5),
+    "drain": o.drain_max_out(5),
     "scale2": o.scale2_max_out(),
     "run": a.run_max_out(5),
     "checked_len": len(o.modulate_checked(x)),
@@ -874,6 +1031,15 @@ def test_a_shared_capacity_function_builds(probe: dict) -> None:
     (`scale2`) -- and the tree compiles and answers from it."""
     assert probe["widen"] == 12, probe
     assert probe["scale2"] == 11, probe
+
+
+def test_a_share_across_count_names_builds(probe: dict) -> None:
+    """Review round 2: the arity compared is the parameter TYPES. `tap`
+    (an array param, `x_len`) and `drain` (a void input, `n`) share
+    `modulate`'s `(state, size_t n_in)` capacity function; it builds and
+    each answers from it."""
+    assert probe["tap"] == 12, probe
+    assert probe["drain"] == 12, probe
 
 
 def test_the_methods_run(probe: dict) -> None:
@@ -1025,6 +1191,102 @@ def test_a_command_that_only_loads_refuses_it(tmp_path: Path) -> None:
     assert "share the capacity function `rq_o_cap`" in r.stderr, r.stderr
 
 
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [("a", "rq_o_cap", _VO_ARRAY),
+         ("b", "rq_o_cap",
+          'arg_type = "void"\nreturn_type = "float"\n'
+          'variable_output = true\n'
+          'params = [{name = "x", type = "float[]"}]')],
+        [("a", "rq_o_cap", _VO_ARRAY), ("b", "rq_o_cap", _VO_VOID)],
+    ],
+)  # fmt: skip
+def test_count_names_do_not_decide_the_arity(
+    tmp_path: Path, rows: list
+) -> None:
+    """Review round 2: `n_in`, `x_len` and `n` are one `size_t`; the
+    header's one prototype serves each call, so the share is legal."""
+    proj = _o_project(tmp_path)
+    _add_rows(proj, rows)
+    _ok("apply", cwd=proj)
+    r = run_cli("status", "--check", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.parametrize(
+    "mo, said",
+    [
+        ("rq_o_scale", "o.scale()'s kernel"),
+        ("rq_o_reset", "built-in `reset`"),
+    ],
+)
+def test_jm_method_refuses_a_member_name_before_writing(
+    tmp_path: Path, mo: str, said: str
+) -> None:
+    """Review round 2: `jm method` asks the member clash with the new
+    method's `max_out_fn`, before anything is written -- the loader does
+    not run it, so a later command was the first to refuse."""
+    proj = _o_project(tmp_path)
+    _ok(
+        "method", "o", "scale", "--arg-type", "float[]", "--return-type",
+        "float", "--variable-output", cwd=proj,
+    )  # fmt: skip
+    before = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    r = run_cli(
+        "method", "o", "kern", "--arg-type", "float[]", "--return-type",
+        "float", "--variable-output", "--max-out-fn", mo, cwd=proj,
+    )  # fmt: skip
+    assert r.returncode != 0, r.stdout
+    assert f"names max_out_fn `{mo}`" in r.stderr, r.stderr
+    assert said in r.stderr, r.stderr
+    after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_jm_method_refuses_a_kernel_named_by_a_capacity(
+    tmp_path: Path,
+) -> None:
+    """The other order: a new method whose kernel IS an existing
+    method's named capacity function."""
+    proj = _o_project(tmp_path)
+    _ok(
+        "method", "o", "scale", "--arg-type", "float[]", "--return-type",
+        "float", "--variable-output", "--max-out-fn", "rq_o_kern", cwd=proj,
+    )  # fmt: skip
+    before = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    r = run_cli(
+        "method", "o", "kern", "--arg-type", "double", "--return-type",
+        "double", cwd=proj,
+    )  # fmt: skip
+    assert r.returncode != 0, r.stdout
+    assert "names max_out_fn `rq_o_kern`" in r.stderr, r.stderr
+    after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    assert after == before
+
+
+def test_a_hand_written_records_fragment_is_recognised() -> None:
+    """Review round 2: the records-capacity marker accepts the `_cap_need`
+    local jm writes, for any capacity function, AND the legacy derived
+    call a hand-written fragment sizes its list by."""
+    from just_makeit._docsync import marker
+
+    spellings = marker("records-capacity").spellings
+    legacy = (
+        "size_t cap = rq_o_peaks_max_out(self->handle, n);\n"
+        "PyObject *l = PyList_New(0);"
+    )
+    named = (
+        "size_t _cap_need = (size_t)(rq_o_cap(self->handle, n));\n"
+        "PyObject *l = PyList_New(0);"
+    )
+    ndarray = "size_t cap = rq_o_peaks_max_out(self->handle, n);"
+    for body in (legacy, named):
+        assert any(sp.search(body) for sp in spellings), body
+    assert not any(sp.search(ndarray) for sp in spellings)
+    assert "_cap_need" in marker("records-capacity").form
+
+
 def test_jm_method_refuses_a_second_arity_before_writing(
     tmp_path: Path,
 ) -> None:
@@ -1059,10 +1321,13 @@ def test_a_capacity_function_named_for_another_member_is_refused(
     """Review finding 4: one name declared with two types."""
     proj = _o_project(tmp_path)
     _add_rows(proj, [("scale", mo, _VO_ARRAY)])
-    r = run_cli("apply", cwd=proj)
-    assert r.returncode != 0
-    assert f"names max_out_fn `{mo}`" in r.stderr, r.stderr
-    assert said in r.stderr, r.stderr
+    # Every face that reads a manifest edited by hand: `apply`, and
+    # `status`, whose replay asks `jm method`'s own check.
+    for cmd in (("apply",), ("status", "--check")):
+        r = run_cli(*cmd, cwd=proj)
+        assert r.returncode != 0, cmd
+        assert f"names max_out_fn `{mo}`" in r.stderr, (cmd, r.stderr)
+        assert said in r.stderr, (cmd, r.stderr)
 
 
 ACC_FRAG = "native/src/dsp/dsp_ext_acc.c"

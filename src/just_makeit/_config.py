@@ -7658,6 +7658,18 @@ def max_out_arity(m: dict) -> "str | None":
     return f"(state{decl})"
 
 
+def _param_types(arity: str) -> "tuple[str, ...]":
+    """The parameter types of a `max_out_arity` spelling, names dropped.
+
+    >>> _param_types("(state, size_t n_in)"), _param_types("(state)")
+    (('state', 'size_t'), ('state',))
+    """
+    return tuple(
+        p.strip().rsplit(None, 1)[0] if " " in p.strip() else p.strip()
+        for p in arity.strip("()").split(",")
+    )
+
+
 def max_out_arity_clashes(cfg: dict, component: str) -> "list[str]":
     """Methods sharing one capacity function at different arities.
 
@@ -7701,7 +7713,10 @@ it as o_cap(state, size_t n_in) and o.b() as o_cap(state)...
             first[sym] = (label(m, view), arity)
             continue
         other, other_arity = first[sym]
-        if other_arity != arity:
+        # The parameter TYPES decide whether one prototype serves both
+        # calls; the count's name (`n_in`, `x_len`, `n`) is each method's
+        # own and the header's choice.
+        if _param_types(other_arity) != _param_types(arity):
             out.append(
                 f"{other} and {label(m, view)} share the capacity function"
                 f" `{sym}`, but {other} calls it as {sym}{other_arity} and"

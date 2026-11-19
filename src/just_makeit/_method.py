@@ -2716,7 +2716,12 @@ def run(
     _clash = CSYM.member_clashes(
         cfg,
         object_name,
-        add_method=({"name": method_name, "fn": fn}, view or None),
+        # gh-2680: with its capacity function, which may name another
+        # member's C symbol -- refused here, before anything is written.
+        add_method=(
+            {"name": method_name, "fn": fn, "max_out_fn": max_out_fn},
+            view or None,
+        ),
     )
     if _clash:
         print("error: " + "\n".join(_clash), file=sys.stderr)
