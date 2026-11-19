@@ -209,6 +209,27 @@ def binding_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":
     return [INC.src_path(root, comp, cfg) / f"{comp}_ext.c"]
 
 
+def constructed_here(root: Path, cfg: dict, comp: str) -> "list[Path]":
+    """The fragments of the views whose ``create_fn`` *comp*'s core owns.
+
+    A view naming ``create_core = "<comp>"`` (gh-2681) is constructed by a
+    function *comp*'s header declares, called from a fragment that is its
+    parent's. Only those on disk.
+    """
+    out = []
+    for parent in C.components(cfg):
+        if parent == comp or not C.module_of(cfg, parent):
+            continue
+        # `binding_sources` lists the parent's fragment, then one per view
+        # in manifest order.
+        views = C.views(cfg, parent)
+        frags = binding_sources(root, cfg, parent)[1:]
+        for v, p in zip(views, frags):
+            if C.view_create_core(cfg, parent, v) == comp and p.exists():
+                out.append(p)
+    return out
+
+
 def hook_sources(root: Path, cfg: dict, comp: str) -> "list[Path]":
     """The hand-written hooks beside *comp*'s binding files.
 
@@ -294,6 +315,11 @@ def write(
             for p in hook_sources(binding_root or root, cfg, comp)
             if p.exists()
         ]
+    # gh-2681: and the fragment of every view whose constructor this core
+    # owns (`create_core`), which calls it. Read only: those files are the
+    # view's parent's, so `binding_sources` -- what `regenerate --discard`
+    # deletes for *comp* -- does not list them.
+    srcs += [p for p in constructed_here(binding_root or root, cfg, comp)]
     # Always written, even before a binding exists: the build files name it,
     # and a source they name but cannot find does not configure.
     names = (

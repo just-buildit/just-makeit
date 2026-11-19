@@ -314,6 +314,23 @@ def _load_doc_blocks(
     _declared = declared_max_outs(text) & _lists
     if _declared:
         out[max_out_declared_key()] = _declared
+    # gh-2681: a view whose constructor another object's core owns
+    # (`create_core`) is documented from THAT header -- the one place its
+    # Doxygen can be, since jm declares it nowhere else. Read here, where
+    # every face that documents the view (binding, stub, doc sync, `status
+    # --docs`) loads the parent's blocks, so none can miss it.
+    for _v in C.views(manifest, obj):
+        _home = C.view_create_core(manifest, obj, _v)
+        if _home == obj:
+            continue
+        _hh = INC.core_h(doc_root, _home, tree)
+        if not _hh.exists():
+            continue
+        _vraw = extract_doc_blocks(_hh.read_text(encoding="utf-8"))
+        _vblock = _vraw.get(_v["create_fn"])
+        _vparsed = parse_doxygen_block(_vblock) if _vblock else None
+        if _vparsed is not None:
+            out[_v["create_fn"]] = _vparsed
     return out
 
 

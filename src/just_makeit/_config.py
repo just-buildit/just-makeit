@@ -7100,9 +7100,10 @@ def view_module(cfg: dict, component: str, view: dict) -> str:
     core"; every writer and reader asks it rather than assuming the
     parent's.
 
-    The C core never moves: a view in another module still constructs the
-    parent's ``<stem>_state_t`` through a ``create_fn`` scaffolded into the
-    parent's sacred ``_core.c``. Only the Python class's home changes.
+    The parent's C core never moves: a view in another module still
+    constructs the parent's ``<stem>_state_t``. Its ``create_fn`` is
+    declared and defined by :func:`view_create_core` -- the parent's core
+    unless the view names one of its own module's objects (gh-2681).
 
     >>> cfg = {"module": {"spectral": {"objects": ["corr"]},
     ...                   "acquire": {"objects": []}}}
@@ -7112,6 +7113,30 @@ def view_module(cfg: dict, component: str, view: dict) -> str:
     'acquire'
     """
     return view.get("module") or module_of(cfg, component)
+
+
+def view_create_core(cfg: dict, component: str, view: dict) -> str:
+    """The object whose ``_core`` declares and defines *view*'s
+    ``create_fn`` (gh-2681).
+
+    The view's ``create_core`` key when it names one, else *component*,
+    the parent -- where every view's constructor lived before the key
+    existed, and where one without it still lives. A view in another
+    module (gh-2516) names an object of THAT module, so a general parent
+    is not handed an application's constructor: its header would declare
+    an application name, and its core would call the module that already
+    depends on it. ``jm view`` refuses one that is not an object of the
+    view's module, or that does not ``depends_on`` the parent with
+    ``link = true`` (which is what includes the parent's header and links
+    its core).
+
+    >>> view_create_core({}, "ofdm", {"class_name": "WlanOfdm"})
+    'ofdm'
+    >>> view_create_core({}, "ofdm", {"class_name": "WlanOfdm",
+    ...                               "create_core": "wlan"})
+    'wlan'
+    """
+    return view.get("create_core") or component
 
 
 def module_views(cfg: dict, module: str) -> "list[tuple[str, dict]]":
@@ -9460,7 +9485,8 @@ _KEY_ORDER: "dict[str, tuple[str, ...]]" = {
     "<obj>.records.fields": _FIELD_ORDER,
     "<obj>.extra_methods": ("name", "fn", "flags", "args", "returns", "doc"),
     "<obj>.views": (
-        "class_name", "module", "create_fn", "doc", "init_params",
+        "class_name", "module", "create_fn", "create_core", "doc",
+        "init_params",
         "exclude_properties", "exclude_methods", "create_error",
         "create_error_message", "create_why", "warnings", "methods",
         "properties",

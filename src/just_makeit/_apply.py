@@ -1515,6 +1515,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 create_error=v.get("create_error"),
                 create_error_message=v.get("create_error_message"),
                 create_why=C.view_create_why(v),  # gh-2552
+                create_core=v.get("create_core", ""),  # gh-2681
                 from_apply=True,
             )
             # gh-504: the view's OWN added/overriding members, materialized

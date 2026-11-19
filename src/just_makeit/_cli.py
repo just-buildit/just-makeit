@@ -326,6 +326,10 @@ Commands:
     --create-fn fn              C constructor the view's __init__ calls, e.g.
                                 acq_create_burst (required; must differ from
                                 <obj>_create). Scaffolded as a stub in the core.
+    --create-core object        An object of the view's module whose core
+                                declares and defines --create-fn instead of
+                                the parent's; it must depends_on the parent
+                                with link = true (gh-2681).
     --init-param name:type[:default]  The view's own constructor param;
                                 repeatable. Omit to inherit the parent's.
     --exclude-property name     Parent property to omit from the view;
