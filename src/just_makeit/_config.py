@@ -751,6 +751,10 @@ def scalar_out_errors(cfg: dict) -> "list[str]":
     ...     "params": [{"name": "n", "type": "int", "out": True}]}]}}
     >>> scalar_out_errors(bad)[0].split(":")[0]
     "[[o.methods]] 'peek' param 'n'"
+    >>> m = {"o": {"methods": [{"name": "peek",
+    ...     "params": [{"name": "n", "type": "int", "mutable": True}]}]}}
+    >>> "mutable = true on a scalar" in scalar_out_errors(m)[0]
+    True
     >>> scalar_out_errors({"o": {"methods": [{"name": "peek"}]}})
     []
     """
@@ -767,13 +771,15 @@ def scalar_out_errors(cfg: dict) -> "list[str]":
     for table, m in declared_methods(cfg):
         for p in m.get("params") or []:
             if isinstance(p, dict) and param_scalar_out(p):
+                # The key the row spells: `mutable` asks the same question.
+                key = "out" if p.get("out") else "mutable"
                 errors.append(
                     f"[[{table}]] {m.get('name', '?')!r} param "
-                    f"{p.get('name', '?')!r}: out = true on a scalar is "
+                    f"{p.get('name', '?')!r}: {key} = true on a scalar is "
                     "supported on a module function only, where the value "
                     "comes back as the result; a method has no such binding "
-                    "yet (gh-2685). Return it from the method, or drop "
-                    "out = true."
+                    f"yet (gh-2685). Return it from the method, or drop "
+                    f"{key} = true."
                 )
     return errors
 
