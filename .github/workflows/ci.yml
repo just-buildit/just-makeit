@@ -541,6 +541,21 @@ jobs:
       - name: MSVC developer environment (x64)
         run: scripts/msvc-env.sh x64
 
+      # The image's standalone LLVM (C:\Program Files\LLVM) can lag the
+      # MSVC STL beside it: windows-2025-vs2026 20261116 paired STL 14.52,
+      # which refuses any clang older than 22 (STL1000), with LLVM 20, so
+      # every C++ TU that included <complex> failed. Visual Studio ships
+      # the clang-cl its own STL is built for; put that first on PATH, and
+      # fail here, naming the cause, when it is absent rather than fall
+      # back to a pair that does not build.
+      - name: clang-cl from the Visual Studio that ships the STL
+        run: |
+          llvm="$(cygpath -u "$VCINSTALLDIR")Tools/Llvm/x64/bin"
+          [ -x "$llvm/clang-cl.exe" ] \
+            || { echo "no Visual Studio clang-cl at $llvm" >&2; exit 1; }
+          cygpath -w "$llvm" >> "$GITHUB_PATH"
+          "$llvm/clang-cl.exe" --version
+
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
