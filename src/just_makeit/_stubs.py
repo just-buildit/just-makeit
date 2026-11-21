@@ -1085,17 +1085,27 @@ def _build_class_docstring(
                 )
                 continue
             if ctype.startswith("string_enum:"):
-                py_d = f'"{dflt}"' if dflt else "..."
+                py_d = f'"{dflt}"' if dflt else ""
+            elif ctype in T._CTYPE_META:
+                # gh-2703: a scalar's clause is a method param's (gh-2679),
+                # so a `default_raw` constant -- C the signature can only
+                # call `...` -- is named, as a literal `default` always was.
+                py_d = doc_default(
+                    {
+                        "type": ctype,
+                        "default": dflt,
+                        "default_raw": rest[0] if rest else "",
+                    }
+                )
             else:
-                py_d = _py_default_stub(ctype, dflt)
+                py_d = _py_default_stub(ctype, dflt) if dflt.strip() else ""
             # gh-515: a param with no default carries no ", default …" clause.
             # numpydoc already reads a bare `name : type` as having no default,
             # whereas the trailing `, default ` jm used to emit was neither
             # readable prose nor a literal anyone could copy into a call.
             params.append(
                 ClassParam(
-                    f"{name} : {py_t}"
-                    + (f", default {py_d}" if dflt.strip() else ""),
+                    defaulted_ann(f"{name} : {py_t}", py_d),
                     (_pdesc(name, manifest_doc, False, ctype, rank_note),),
                 )
             )

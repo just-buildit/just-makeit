@@ -208,11 +208,27 @@ def doc_default(param: dict) -> str:
     ''
     >>> doc_default({"name": "a", "type": "int"})
     ''
+
+    gh-2703: an init param's ``default_raw`` (gh-1099) is C by declaration
+    -- the key means "this is C, not a literal" -- so it is named as
+    written, whatever the type, unless a ``default`` outranks it: that is
+    the value the signature states.
+
+    >>> doc_default({"name": "w", "type": "int", "default_raw": "WIN_HANN"})
+    'WIN_HANN'
+    >>> doc_default({"name": "tag", "type": "const char *",
+    ...              "default_raw": "TAG_NONE"})
+    'TAG_NONE'
+    >>> doc_default({"name": "n", "type": "int", "default": "4",
+    ...              "default_raw": "N_MAX"})
+    '4'
     """
     dflt = str(param.get("default") or "").strip()
     ctype = str(param.get("type", ""))
-    if not dflt or param.get("stub_default") or ctype.endswith("[]"):
+    if param.get("stub_default") or ctype.endswith("[]"):
         return ""
+    if not dflt:
+        return str(param.get("default_raw") or "").strip()
     if param.get("enum"):
         return repr(dflt)
     if ctype not in _CTYPE_META:
