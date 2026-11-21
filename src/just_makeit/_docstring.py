@@ -3841,6 +3841,10 @@ class EnumAnn(str):
     It is a ``str`` equal to ``"str"``, so a signature, a comparison or a
     format that reads it as an annotation is unchanged.
 
+    gh-2679: a ``Parameters`` type line also carries the parameter's default
+    (``str, default 'rs'``, :func:`defaulted_ann`). *spelled* is that line,
+    and the choices ride along with it; a signature never gets one.
+
     Examples
     --------
     >>> a = EnumAnn(["le", "be"])
@@ -3850,10 +3854,43 @@ class EnumAnn(str):
 
     choices: "tuple[str, ...]"
 
-    def __new__(cls, choices: "Collection[str]") -> "EnumAnn":
-        obj = super().__new__(cls, "str")
+    def __new__(
+        cls, choices: "Collection[str]", spelled: str = "str"
+    ) -> "EnumAnn":
+        obj = super().__new__(cls, spelled)
         obj.choices = tuple(choices)
         return obj
+
+
+def defaulted_ann(ann: str, default: str) -> str:
+    """A ``Parameters`` type line with the parameter's default appended.
+
+    gh-2679. numpydoc spells an optional parameter's default on its type
+    line -- ``gain : float, default 1.0`` -- and that is how a constructor
+    parameter has always read. A method's and a module function's
+    parameters had no such clause on either docstring face, so a default
+    reached a caller only through the stub signature, and a default the
+    signature cannot spell (a header constant, ``...`` there) reached it
+    nowhere. *default* is the text to show, already spelled for Python or
+    named in C (:func:`~just_makeit._context._types.doc_default`); empty
+    leaves *ann* as it is. An :class:`EnumAnn` keeps its choices.
+
+    Examples
+    --------
+    >>> defaulted_ann("int", "LIMIT_NONE")
+    'int, default LIMIT_NONE'
+    >>> defaulted_ann("float", "")
+    'float'
+    >>> a = defaulted_ann(EnumAnn(["le", "be"]), "'le'")
+    >>> a, a.choices
+    ("str, default 'le'", ('le', 'be'))
+    """
+    if not default:
+        return ann
+    spelled = f"{ann}, default {default}"
+    if isinstance(ann, EnumAnn):
+        return EnumAnn(ann.choices, spelled)
+    return spelled
 
 
 def enum_param_desc(choices: "Collection[str]") -> str:

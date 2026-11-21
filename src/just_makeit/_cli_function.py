@@ -118,8 +118,7 @@ def run(args: list[str]) -> None:
                 continue
             # gh-240: an optional `=default` suffix makes a scalar param
             # omittable (the binding applies the default when the caller leaves
-            # it out). Scoped to plain scalars: arrays, out-params, and complex
-            # (parse_type) scalars stay required.
+            # it out). Scoped to scalars: arrays and out-params stay required.
             pdefault = ""
             if "=" in ptype:
                 ptype, pdefault = ptype.split("=", 1)
@@ -151,11 +150,9 @@ def run(args: list[str]) -> None:
             # gh-2683: a scalar `--out-param` is a value the function writes
             # back and returns; `_render.scalar_out_why_not`, asked in
             # `_function.run`, refuses the shapes it cannot be.
-            if pdefault and (
-                T.is_array_param_type(ptype)
-                or is_out_flag
-                or T._CTYPE_META.get(ptype, {}).get("parse_type")
-            ):
+            # gh-2679: a `parse_type` scalar takes a default, as on
+            # `jm method` -- the shared `scalar_arg_c` seeds it.
+            if pdefault and (T.is_array_param_type(ptype) or is_out_flag):
                 print(
                     f"error: --param default (=...) is only supported on plain"
                     f" scalar params; '{pname}:{ptype}' cannot take a default.",

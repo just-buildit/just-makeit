@@ -177,6 +177,51 @@ def _py_default(ctype: str, default: str) -> str:
     return strip_c_literal_suffix(default) if default.strip() else "..."
 
 
+def doc_default(param: dict) -> str:
+    """What a docstring says a method or function parameter defaults to.
+
+    gh-2679. A scalar parameter's ``default`` may be a literal or a header
+    constant (``LIMIT_NONE``), as a state field's may (gh-1488): every
+    C face compiles against it, and the binding seeds its local with it. The
+    stub signature cannot name a constant and says ``...``; the
+    ``Parameters`` entry is where the caller learns what that is, so it
+    names it in C, as a state field's entry does. A literal is spelled for
+    Python (:func:`_py_default`), an enum's choice is quoted.
+
+    Empty when there is nothing to say: no default, an array's (``[]`` is
+    "omittable", which the signature's ``...`` already says), or a default
+    the binding computes at run time (``stub_default``, gh-1426 A).
+
+    Examples
+    --------
+    >>> doc_default({"name": "limit", "type": "uint32_t",
+    ...              "default": "LIMIT_NONE"})
+    'LIMIT_NONE'
+    >>> doc_default({"name": "mu", "type": "double", "default": "0.5"})
+    '0.5'
+    >>> doc_default({"name": "n", "type": "uint32_t", "default": "7U"})
+    '7'
+    >>> doc_default({"name": "k", "type": "int", "enum": "stage",
+    ...              "default": "rs"})
+    "'rs'"
+    >>> doc_default({"name": "xs", "type": "float[]", "default": "[]"})
+    ''
+    >>> doc_default({"name": "a", "type": "int"})
+    ''
+    """
+    dflt = str(param.get("default") or "").strip()
+    ctype = str(param.get("type", ""))
+    if not dflt or param.get("stub_default") or ctype.endswith("[]"):
+        return ""
+    if param.get("enum"):
+        return repr(dflt)
+    if ctype not in _CTYPE_META:
+        return ""
+    if is_c_only_default(ctype, dflt):
+        return dflt
+    return _py_default(ctype, dflt)
+
+
 def _py_eq(lhs: str, rhs: str) -> str:
     """A generated test's equality assertion, spelled the way ruff accepts.
 

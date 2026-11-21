@@ -23,7 +23,7 @@ from .. import _retain
 from .. import _types as T
 from .._builtins import result_local
 from .._report import Refusal
-from ._types import _py_default
+from ._types import _py_default, doc_default
 from .. import _gluedoc
 from .._types import (
     _CTYPE_META,
@@ -36,6 +36,7 @@ from .._types import (
     c_param_parts,
 )
 from .._docstring import (
+    defaulted_ann,
     docstring_literal,
     EnumAnn,
     method_doc,
@@ -163,8 +164,9 @@ def _stub_params(
     tuple
         ``(signature_parts, doc_params)``. ``signature_parts`` are
         ``"name: annotation"`` strings carrying any default; ``doc_params``
-        are ``(name, annotation)`` pairs with the default stripped, which is
-        the form both docstring renderers take.
+        are ``(name, annotation)`` pairs, which is the form both docstring
+        renderers take, the annotation ending in the default's
+        ``, default <value>`` clause (gh-2679).
 
     Examples
     --------
@@ -172,10 +174,13 @@ def _stub_params(
     (['x: float'], [('x', 'float')])
     >>> _stub_params("void", [{"name": "mu", "type": "double",
     ...                        "default": "0.5"}])
-    (['mu: float = 0.5'], [('mu', 'float')])
+    (['mu: float = 0.5'], [('mu', 'float, default 0.5')])
     >>> _stub_params("void", [{"name": "kind", "type": "int",
     ...                        "enum": "stage", "default": "rs"}])
-    (["kind: str = 'rs'"], [('kind', 'str')])
+    (["kind: str = 'rs'"], [('kind', "str, default 'rs'")])
+    >>> _stub_params("void", [{"name": "limit", "type": "uint32_t",
+    ...                        "default": "LIMIT_NONE"}])
+    (['limit: int = ...'], [('limit', 'int, default LIMIT_NONE')])
     """
     # (name, annotation, signature-only default suffix)
     fields: list[tuple[str, str, str]] = []
@@ -251,9 +256,14 @@ def _stub_params(
                     suffix,
                 )
             )
+    # gh-2679: the docstring's type line names the default the signature
+    # carries -- or, for a header constant, the one it cannot (`...`).
+    dflts = [""] * (len(fields) - len(params)) + [
+        doc_default(p) for p in params
+    ]
     return (
         [f"{n}: {a}{s}" for n, a, s in fields],
-        [(n, a) for n, a, _ in fields],
+        [(n, defaulted_ann(a, d)) for (n, a, _), d in zip(fields, dflts)],
     )
 
 

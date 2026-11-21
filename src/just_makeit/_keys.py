@@ -1142,6 +1142,18 @@ MODULE_KEYS_BY_KIND: dict[str, frozenset] = {
 #: confusions where jm can name the thing the author actually wanted; a key
 #: that is merely misplaced gets the generic message instead.
 HINTS: dict[tuple[str, str], str] = {
+    # gh-2679: a constructor's spelling, reached for on a method parameter
+    # whose default is a header constant. There `default` itself takes the
+    # constant (as a state field's does, gh-1488), and the param stays
+    # optional; `default_raw` did nothing and left it required.
+    **{
+        (_kind, "default_raw"): (
+            "write the C constant as `default` (`default = "
+            '"<C constant>"`): the binding seeds the argument with it, '
+            "the stub says `...` and the docstring names it"
+        )
+        for _kind in ("param", "function param")
+    },
     # gh-1432: found reaching for a way to give a header-only component a
     # dependency. The object-level key is the one that works, and it is also
     # the one that makes jm generate the `process_global` rendezvous -- so a

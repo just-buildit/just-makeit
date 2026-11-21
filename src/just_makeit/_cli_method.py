@@ -454,10 +454,13 @@ def run(args: list[str]) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            if pdefault and (
-                T.is_array_param_type(ptype)
-                or T._CTYPE_META.get(ptype, {}).get("parse_type")
-            ):
+            # gh-2679: a `parse_type` scalar (`uint32_t`, `size_t`, a
+            # complex) takes a default too. This refused it from gh-240,
+            # when its raw local was seeded with the type's zero; the one
+            # tuple-parse slot (`scalar_arg_c`) has seeded it with the
+            # default since gh-432, so the manifest accepted what this flag
+            # refused, and `jm script` printed a replay jm then rejected.
+            if pdefault and T.is_array_param_type(ptype):
                 print(
                     f"error: --param default (=...) is only supported on plain"
                     f" scalar params; '{pname}:{ptype}' cannot take a default.",
