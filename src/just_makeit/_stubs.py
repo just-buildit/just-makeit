@@ -49,9 +49,10 @@ from ._context._diagnostics import optional_ann as _optional_ann
 from ._context._diagnostics import raises_doc as _raises_doc
 from ._context._diagnostics import warns_doc as _warns_doc
 from ._context._parse import capsule_annotation
-from ._context._types import _py_default
+from ._context._types import _py_default, doc_default
 from ._gluedoc import glue_methods, max_out_method as _max_out_method
 from ._docstring import (
+    defaulted_ann,
     docstring_literal,
     EnumAnn,
     enum_param_desc,
@@ -2241,7 +2242,9 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                     p.get("default") or "",
                     writable=T.param_writable(p),
                 )
-            _py_params.append((p["name"], _ann))
+            # gh-2679: the default on the type line, as the peer in
+            # `_context/_methods._stub_params` writes it.
+            _py_params.append((p["name"], defaulted_ann(_ann, doc_default(p))))
         # gh-1042: the binding's own arguments, in the order the signature
         # above appends them. The peer in `_context/_methods` does the same,
         # and this file is the module-aggregated `.pyi` -- so a module object,
@@ -2520,8 +2523,9 @@ def fn_py_surface(
     tuple
         ``(ret_ann, py_params, signature_parts)`` — the return annotation,
         the ``(name, annotation)`` pairs the ``Parameters`` section
-        documents, and the ``"name: ann = default"`` strings the stub
-        signature needs (defaults belong to the signature alone).
+        documents -- a defaulted one's annotation ending in its
+        ``, default <value>`` clause (gh-2679) -- and the
+        ``"name: ann = default"`` strings the stub signature needs.
     """
     out_type = fn.get("out_type")
     # gh-2683: scalar out params ARE the result -- the value for one, a
@@ -2571,7 +2575,9 @@ def fn_py_surface(
             p.get("default") or "",
             writable=T.param_writable(p),
         )
-        py_params.append((p["name"], ann))
+        # gh-2679: the documented default rides on the type line; the
+        # signature below spells the same one, or `...` for a constant.
+        py_params.append((p["name"], defaulted_ann(ann, doc_default(p))))
         part = f"{p['name']}: {ann}"
         if p.get("default") not in (None, ""):
             dflt = (

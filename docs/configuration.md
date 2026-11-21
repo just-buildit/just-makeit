@@ -1950,6 +1950,29 @@ thing.put(1, xs)      # the array, as passed
 jm refuses any other array default at load, and any default on a `path` or
 `bytes` param, which no face can render.
 
+A scalar's `default` may also name a **C constant** the header defines, as a
+state field's may. The binding seeds the argument with it, so it stays
+optional; the stub signature, which cannot spell C, says `...`, and the
+`Parameters` entry of both docstrings names the constant (gh-2679). A
+literal default is named there too, in its Python spelling:
+
+```toml
+[[thing.methods.params]]
+name    = "limit"
+type    = "uint32_t"
+default = "LIMIT_NONE"   # #define LIMIT_NONE 0xFFFFFFFFu in the header
+```
+
+```python
+def put(self, n: int, limit: int = ...) -> int:
+    """...
+    limit : int, default LIMIT_NONE
+    """
+```
+
+`default_raw` is the constructor's key for this and is not read on a method
+or function param; jm's warning says to write the constant as `default`.
+
 #### Capsule-typed params (gh-432)
 
 A param may carry `capsule = "<name>"` (and optionally
