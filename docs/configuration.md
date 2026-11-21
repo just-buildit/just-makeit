@@ -1974,7 +1974,8 @@ def put(self, n: int, limit: int = ...) -> int:
 ```
 
 `default_raw` is the constructor's key for this and is not read on a method
-or function param; jm's warning says to write the constant as `default`.
+or function param (nor on a handle's or capsule's param tables): jm refuses
+the manifest, naming the row and `default = "<C constant>"` (gh-2709).
 
 #### Capsule-typed params (gh-432)
 

@@ -1142,18 +1142,6 @@ MODULE_KEYS_BY_KIND: dict[str, frozenset] = {
 #: confusions where jm can name the thing the author actually wanted; a key
 #: that is merely misplaced gets the generic message instead.
 HINTS: dict[tuple[str, str], str] = {
-    # gh-2679: a constructor's spelling, reached for on a method parameter
-    # whose default is a header constant. There `default` itself takes the
-    # constant (as a state field's does, gh-1488), and the param stays
-    # optional; `default_raw` did nothing and left it required.
-    **{
-        (_kind, "default_raw"): (
-            "write the C constant as `default` (`default = "
-            '"<C constant>"`): the binding seeds the argument with it, '
-            "the stub says `...` and the docstring names it"
-        )
-        for _kind in ("param", "function param")
-    },
     # gh-1432: found reaching for a way to give a header-only component a
     # dependency. The object-level key is the one that works, and it is also
     # the one that makes jm generate the `process_global` rendezvous -- so a
@@ -1531,7 +1519,11 @@ def _check_kind_module(
             ):
                 for item in row.get(nested, []) or []:
                     if isinstance(item, dict):
-                        found += _check(nvocab, f"{where}.{nested}", item)
+                        found += _check(
+                            nvocab,
+                            f"{where}.{nested}({item.get('name', '?')})",
+                            item,
+                        )
     return found
 
 
@@ -1561,7 +1553,7 @@ def unknown_keys(cfg: dict) -> list:
     # objects" — it already excludes `app`, `enum` and `codec`, which a
     # hand-rolled reserved-name list here silently missed, reporting every
     # `[app]` key as an unknown object key.
-    from ._config import components
+    from ._config import components, declared_methods
 
     own = project_field_keys(cfg)
     found: list = []
@@ -1605,8 +1597,13 @@ def unknown_keys(cfg: dict) -> list:
                 found += _check(
                     "record field", f"{where}({f.get('name', '?')})", f
                 )
-        for entry in _entries(section, "methods"):
-            where = f"{name}.{entry.get('name', '?')}"
+        # gh-2709: an object's methods and its views' (gh-504), through the
+        # one walk the load-time param checks share. A view's method rows
+        # were walked by nothing, so a key on one -- or on its params --
+        # was accepted and did nothing, in silence.
+        for table, entry in declared_methods({name: section}):
+            owner = table.removesuffix(".methods")
+            where = f"{owner}.{entry.get('name', '?')}"
             found += _check("method", where, entry)
             for p in _entries(entry, "params") + _entries(entry, "extra_args"):
                 found += _check("param", f"{where}({p.get('name', '?')})", p)
@@ -1656,6 +1653,64 @@ def unknown_keys(cfg: dict) -> list:
                     "function param", f"{where}({p.get('name', '?')})", p
                 )
     return found
+
+
+#: The constructor's spelling of a default that jm passes through as C
+#: (gh-1099), valid on an init-param and nowhere else.
+DEFAULT_RAW = "default_raw"
+
+#: gh-2709: every parameter table on which ``default_raw`` means nothing
+#: while ``default`` is the spelling that works -- a vocabulary that names a
+#: parameter (``... param`` / ``... arg``), takes ``default`` and lacks
+#: ``default_raw``. Derived, so a new parameter table is covered by being
+#: registered in :data:`KIND_KEYS`: an object's or view's method params, a
+#: module function's, a handle's create args, a kind method's args and a kind
+#: factory's or capsule's init-params.
+DEFAULT_RAW_REFUSED_KINDS = frozenset(
+    kind
+    for kind, vocab in KIND_KEYS.items()
+    if kind.endswith(("param", "arg"))
+    and "default" in vocab
+    and DEFAULT_RAW not in vocab
+)
+
+
+def default_raw_errors(cfg: dict) -> "list[str]":
+    """Every ``default_raw`` on a parameter that does not read it, by row.
+
+    Asked at load (`_config.load`). ``default_raw`` is an init-param's key
+    (gh-1099); a method's, a module function's or a kind table's parameter
+    takes a named C constant as ``default`` itself (gh-2679). The key was
+    reported as unknown and otherwise ignored, so the parameter rendered
+    with no default -- an optional argument turned required, which is an
+    API break a re-render introduces without anyone seeing it (gh-2709).
+    It is refused for that reason, rather than warned about: the warning
+    exited 0 and the break shipped.
+
+    The rows are :func:`unknown_keys`' -- the one walk of every table jm
+    has a vocabulary for -- so this names exactly the rows that walk
+    reaches, and a table added to it is covered here too.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"methods": [{"name": "run", "params": [
+    ...     {"name": "n", "type": "uint32_t", "default_raw": "N_DEF"}]}]}}
+    >>> print(default_raw_errors(cfg)[0])  # doctest: +NORMALIZE_WHITESPACE
+    o.run(n): `default_raw` is an init-param key that a param does not
+    read, so the argument would be required; write the C constant as
+    `default = "<C constant>"` (gh-2709)
+    >>> cfg["o"]["methods"][0]["params"][0] = {
+    ...     "name": "n", "type": "uint32_t", "default": "N_DEF"}
+    >>> default_raw_errors(cfg)
+    []
+    """
+    return [
+        f"{u.where}: `{DEFAULT_RAW}` is an init-param key that a {u.kind} "
+        "does not read, so the argument would be required; write the C "
+        'constant as `default = "<C constant>"` (gh-2709)'
+        for u in unknown_keys(cfg)
+        if u.key == DEFAULT_RAW and u.kind in DEFAULT_RAW_REFUSED_KINDS
+    ]
 
 
 #: Warnings already emitted this process, so a command that loads the manifest

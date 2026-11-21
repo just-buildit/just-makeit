@@ -14,14 +14,14 @@ Three things kept that from being usable:
   manifest accepted it, so ``jm script`` printed a replay jm rejected;
 - ``default_raw``, the constructor's spelling, was reached for on a method
   parameter and ignored with a warning that said only "no effect", leaving
-  the parameter required.
+  the parameter required. That half is now a load refusal, gated by
+  ``test_gh2709_default_raw_param_refused.py``.
 
 GATE: every docstring face of a method (standalone object, module object)
       and of a module function says ``name : T, default <value>`` -- the C
       name for a constant, the Python spelling for a literal; every
       ``parse_type`` scalar takes a CLI default on both commands; the
-      project's ``jm script`` replays to the same parameters; and
-      ``default_raw`` on a parameter points at ``default``.
+      project's ``jm script`` replays to the same parameters.
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ import pytest
 
 from _jmrun import replay_script, run_cli
 from just_makeit import _config as C
-from just_makeit import _keys
 from just_makeit._types import _CTYPE_META
 
 #: The constants the probe's defaults name. Never defined: no test here
@@ -213,26 +212,3 @@ def test_every_parse_type_scalar_takes_a_cli_default(tmp_path, command):
     assert [(p["type"], p.get("default")) for p in rows] == [
         (t, _CTYPE_META[t]["zero"]) for t in _PARSE_TYPE
     ]
-
-
-@pytest.mark.parametrize(
-    ("kind", "table"),
-    [("param", "methods"), ("function param", "functions")],
-)
-def test_default_raw_on_a_param_points_at_default(project, kind, table):
-    """The constructor's key, on a parameter: the warning says what to write
-    instead, rather than only that it does nothing."""
-    cfg = C.load(project)
-    rows = (
-        cfg["frame"]["methods"][0]["params"]
-        if table == "methods"
-        else cfg["module"]["dsp"]["functions"][0]["params"]
-    )
-    rows[-1]["default_raw"] = _CP
-    hits = [
-        u.message()
-        for u in _keys.unknown_keys(cfg)
-        if u.kind == kind and u.key == "default_raw"
-    ]
-    assert hits, kind
-    assert "write the C constant as `default`" in hits[0], hits[0]
