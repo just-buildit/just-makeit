@@ -202,6 +202,47 @@ def buffer_is_relocated(field: dict) -> bool:
     return bool(field.get("c_ptr"))
 
 
+def is_bit_pattern(field: dict) -> bool:
+    """True when *field* is a bit array: ``bytes`` with ``bit_pattern``.
+
+    >>> is_bit_pattern({"name": "p", "bytes": True,
+    ...                 "coerce": "bit_pattern"})
+    True
+    >>> is_bit_pattern({"name": "p", "bytes": True})
+    False
+    """
+    return bool(field.get("bytes")) and field.get("coerce") == "bit_pattern"
+
+
+def bit_refusal_c(name: str, index: str, value: str, indent: str) -> str:
+    """The statement refusing an element of a bit array that is not 0 or 1.
+
+    gh-2696. A ``bit_pattern`` field holds one bit per element, and every
+    face that takes one refuses anything else with this one sentence: the
+    ``bytes`` and int-sequence branches of ``_attach_bytes`` and the JSON
+    reader. ``bytes([8])`` was stored as 8 while ``[8]`` was stored as 1,
+    so the two spellings were different field values, and what a stored 8
+    meant was up to whatever read it. *name* is the C expression naming
+    the field, *index* the element's position and *value* the element,
+    each cast to the type its conversion prints.
+
+    >>> print(bit_refusal_c('"data"', "_k", "_buf[_k]", ""))
+    PyErr_Format(PyExc_ValueError,
+                 "%s is a bit array, one element per bit (0 or 1): "
+                 "element %zd is %ld, not a bit; np.unpackbits turns "
+                 "octets into bits",
+                 "data", (Py_ssize_t)(_k), (long)(_buf[_k]));
+    """
+    pad = indent + " " * 13
+    return (
+        f"{indent}PyErr_Format(PyExc_ValueError,\n"
+        f'{pad}"%s is a bit array, one element per bit (0 or 1): "\n'
+        f'{pad}"element %zd is %ld, not a bit; np.unpackbits turns "\n'
+        f'{pad}"octets into bits",\n'
+        f"{pad}{name}, (Py_ssize_t)({index}), (long)({value}));"
+    )
+
+
 def coerce_str_fn(field: dict) -> str:
     """The project's C function a field reads a ``str`` through, or ``""``.
 
@@ -234,9 +275,7 @@ def coerce_str_fn(field: dict) -> str:
     ''
     """
     fn = field.get("coerce_str_fn") or ""
-    if fn and not (
-        field.get("bytes") and field.get("coerce") == "bit_pattern"
-    ):
+    if fn and not is_bit_pattern(field):
         raise ValueError(
             f"composer field '{field.get('name', '<unnamed>')}': "
             f'`coerce_str_fn = "{fn}"` needs `bytes = true` and '
@@ -271,12 +310,7 @@ def uses_builtin_bit_grammar(fields: "list[dict]") -> bool:
     >>> uses_builtin_bit_grammar([{"name": "p", "bytes": True}])
     False
     """
-    return any(
-        f.get("bytes")
-        and f.get("coerce") == "bit_pattern"
-        and not coerce_str_fn(f)
-        for f in fields
-    )
+    return any(is_bit_pattern(f) and not coerce_str_fn(f) for f in fields)
 
 
 def host_coercer(fn: str) -> str:
@@ -334,7 +368,8 @@ def _host_attach_c(fn: str) -> str:
     none gets a message naming it.
 
     One per distinct *fn* (gh-1736): the body names no field, because each
-    caller passes its own destination.
+    caller passes its own destination -- and its own name, which
+    ``_attach_bytes`` refuses a non-bit element by (gh-2696).
     """
     doc = _c_comment(
         f"A str is read by the project's {fn}() (coerce_str_fn, gh-1709) "
@@ -344,10 +379,11 @@ def _host_attach_c(fn: str) -> str:
     return f"""
 {doc}
 static int
-{host_coercer(fn)}(uint8_t **dst, size_t *n_dst, PyObject *obj)
+{host_coercer(fn)}(uint8_t **dst, size_t *n_dst, PyObject *obj,
+{" " * len(host_coercer(fn))} const char *bits)
 {{
     if (!obj || !PyUnicode_Check(obj))
-        return _attach_bytes(dst, n_dst, obj);
+        return _attach_bytes(dst, n_dst, obj, bits);
     Py_ssize_t slen;
     const char *s = PyUnicode_AsUTF8AndSize(obj, &slen);
     if (!s)
@@ -2003,9 +2039,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     #  (b) bit_pattern coercion: a bytes field accepts a 0/1 pattern as bytes, a
     #      binary/hex string ("0101" / "0xAA55"), or a sequence of ints.
     aliases = [(a, f["name"]) for f in fields for a in f.get("aliases", [])]
-    bits_coerce = any(
-        f.get("bytes") and f.get("coerce") == "bit_pattern" for f in fields
-    )
+    bits_coerce = any(is_bit_pattern(f) for f in fields)
     # gh-1736: jm's own str grammar, only while some field still reads it.
     bits_grammar = uses_builtin_bit_grammar(fields)
     # gh-1709: a field naming `coerce_str_fn` reads a str through the
@@ -2019,9 +2053,19 @@ def render_source_type(cfg: dict, module: str) -> str:
         if fn
     )
 
-    def _attacher(f: dict) -> str:
+    def _attach_call(f: dict, dst: str, n_dst: str) -> str:
+        """The call converting ``value`` into field *f*'s buffer.
+
+        gh-2696: while some field coerces, the coercer takes a fourth
+        argument -- the name of a bit_pattern field, by which it refuses an
+        element that is not 0 or 1, or ``NULL`` for a plain bytes field.
+        """
         fn = coerce_str_fn(f)
-        return host_coercer(fn) if fn else "_attach_bytes"
+        call = host_coercer(fn) if fn else "_attach_bytes"
+        bits = ""
+        if bits_coerce:
+            bits = f', "{f["name"]}"' if is_bit_pattern(f) else ", NULL"
+        return f"{call}({dst}, {n_dst}, value{bits})"
 
     parts: list[str] = []
 
@@ -2203,10 +2247,20 @@ def render_source_type(cfg: dict, module: str) -> str:
             if bits_grammar
             else ""
         )
+        # gh-2696: one rule for a bit_pattern field (`bits` non-NULL) in
+        # both branches -- an element that is not 0 or 1 is refused. The
+        # bytes branch copied it as it was and the int branch mapped it to
+        # `v != 0`, so `bytes([8])` and `[8]` were different values.
         attach_body = f"""    if (PyBytes_Check(obj)) {{
         Py_ssize_t nb = PyBytes_GET_SIZE(obj);
         if (nb <= 0)
             return 1;
+        const uint8_t *in = (const uint8_t *)PyBytes_AS_STRING(obj);
+        for (Py_ssize_t i = 0; bits && i < nb; i++)
+            if (in[i] > 1) {{
+{bit_refusal_c("bits", "i", "in[i]", " " * 16)}
+                return 0;
+            }}
         uint8_t *buf = (uint8_t *)malloc((size_t)nb);
         if (!buf) {{ PyErr_NoMemory(); return 0; }}
         memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
@@ -2225,6 +2279,12 @@ def render_source_type(cfg: dict, module: str) -> str:
             if (v == -1 && PyErr_Occurred()) {{
                 free(buf);
                 Py_DECREF(seq);
+                return 0;
+            }}
+            if (bits && v != 0 && v != 1) {{
+                free(buf);
+                Py_DECREF(seq);
+{bit_refusal_c("bits", "i", "v", " " * 16)}
                 return 0;
             }}
             buf[i] = (uint8_t)(v != 0);
@@ -2346,11 +2406,20 @@ _attach_{cn}({struct} *src, PyObject *obj)
     # comment, which every compiler warns on (-Wcomment) because that is what
     # an unterminated comment looks like; and `attach_doc` runs to 59 columns,
     # so it only fits under 80 on a line of its own.
+    # gh-2696: a coercing source's attach also takes the field's name when
+    # it is a bit_pattern field, NULL otherwise (see `_attach_call`).
+    bits_doc, bits_param = "", ""
+    if bits_coerce:
+        bits_doc = (
+            "\n * A bit_pattern field passes its name as bits, and an element"
+            "\n * that is not 0 or 1 is refused by it (gh-2696)."
+        )
+        bits_param = ",\n              const char *bits"
     attach_bytes_c = f"""/* {attach_doc}
  * into an owned *dst and *n_dst (one shared coercer; each bytes field
- * passes its own struct destination). */
+ * passes its own struct destination).{bits_doc} */
 static int
-_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
+_attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
 {{
     free(*dst);
     *dst   = NULL;
@@ -2376,7 +2445,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj)
                 struct,
                 n,
                 [(_p, "NULL"), (_l, "0")],
-                f"{_attacher(f)}({_cast}&_t.{_p}, &_t.{_l}, value)",
+                _attach_call(f, f"{_cast}&_t.{_p}", f"&_t.{_l}"),
                 "free(" + _cfree + "{src}." + _p + ");",
                 gd,
             )
@@ -6951,6 +7020,15 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 ),
                 " " * 20,
             )
+            if is_bit_pattern(f):
+                # gh-2696: a bit array reads a bit per element, refused
+                # with the sentence the Python faces use.
+                elem += f"""
+                    if (_buf[_k] > 1) {{
+{bit_refusal_c(f'"{n}"', "_k", "_buf[_k]", " " * 24)}
+                        free(_buf);
+                        return -1;
+                    }}"""
             src_parse.append(f"""        {{
             const cJSON *_b = cJSON_GetObjectItemCaseSensitive(so, "{n}");
             if (cJSON_IsArray(_b) && cJSON_GetArraySize(_b) > 0) {{
