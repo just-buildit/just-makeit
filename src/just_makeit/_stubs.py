@@ -1755,8 +1755,10 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 req_parts.append(
                     f"{n}: {T.py_param_annotation(_py(t), t, '')}"
                 )
-            elif optional:
-                parts_init.append(f"{n}: {_py(t)} | None = None")
+            # gh-2697: no `optional` branch for a non-array. `optional` is
+            # array dispatch, and `_config.load` refuses it anywhere else
+            # (`init_param_optional_errors`); the `| None = None` this
+            # rendered for a scalar was a signature no binding honoured.
             elif t.startswith("string_enum:"):
                 parts_init.append(
                     f'{n}: {_py(t)} = "{dflt}"'
