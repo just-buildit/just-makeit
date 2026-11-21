@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+## [0.134.0] — 2026-11-21
+
+### Added
+
+- **A composer field's Python read goes through C: `get_fn` (gh-2710).** A
+    source or segment field's getter read its struct member, so a stored
+    sentinel -- doppler's `window = WFM_WINDOW_UNSET`, meaning "the
+    standard's count, `2 * fs / bandwidth`" -- read back as
+    `18446744073709551615` where the generator used 4. `get_fn = "<fn>"` on
+    a `[[module.X.source.fields]]` or `[[module.X.segment.fields]]` row
+    reads it through `<type> fn(const <struct> *, double fs)`, handed the
+    source's `fs` or the segment's own. jm declares the prototype in
+    `<cname>_bridge.h` beside the other seams. Only the read changes: the
+    setter, the constructor keyword, `to_json`, `from_json` and the stored
+    member keep the stored value. A `bytes`, `complex` or owned-pointer
+    field has no scalar read, and the key is refused there.
+
+### Fixed
+
+- **`default_raw` on a parameter that does not read it is refused at load
+    (gh-2709).** It is an init-param's key; a method's, a module function's
+    or a handle / capsule table's parameter takes a named C constant as
+    `default` itself. Written on one, it drew an advisory warning, exited 0
+    and was ignored, so the parameter rendered with no default: an optional
+    argument turned required on re-render. The refusal names the row, the key
+    and the spelling that works, `default = "<C constant>"`. The key walk
+    also reaches a view's method rows and their params, which it skipped.
+
 ## [0.133.1] — 2026-11-20
 
 ### Fixed
