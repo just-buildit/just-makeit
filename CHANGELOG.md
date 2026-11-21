@@ -1,5 +1,58 @@
 ## [Unreleased]
 
+## [0.133.1] — 2026-11-20
+
+### Fixed
+
+- **A composer source type's `fs` runs at the default its docstring states**
+    (gh-2678). The source type's constructor defaulted `fs` to `1e6`,
+    written in jm, while its class docstring and `.pyi` borrowed the
+    segment's `fs` field -- so doppler's `Synth` documented `default 1.0`
+    and ran at 1e6. The default, the docstring entry and the `fs` getset
+    doc now all come from one row: the source `object`'s own `fs` init
+    param (its `default` and `doc`), or, when it declares none, jm's
+    fallback `1e6`, documented as such. The segment's `fs` documents the
+    segment. An object `fs` with no default is refused.
+
+- **A parameter defaulting to a header constant is named in its docstring
+    (gh-2679, gh-2703).** On a method or module function, a `default`
+    naming a constant (`LIMIT_NONE`) already seeded the binding and put
+    `...` in the stub signature, but no docstring said what that was:
+    neither the `.pyi` `Parameters` entry nor the runtime `__doc__` named
+    any parameter's default. Both now end the type line with
+    `default LIMIT_NONE` (a literal in its Python spelling). A constructor
+    parameter declared with `default_raw` is named the same way in the
+    class docstring, on the stub and on the runtime `__doc__`, for an
+    object, a module object and a view. `jm method` and `jm function`
+    accept a `=default` on a `uint32_t`, `size_t`, `int8_t`, complex or any
+    other scalar the binding parses through an intermediate, so `jm script`
+    replays the default it prints; and `default_raw` on a method or function
+    parameter now warns to write the constant as `default`.
+
+- **A `bit_pattern` field refuses an element that is not 0 or 1, on every
+    face (gh-2696).** A composer source field with `bytes = true` and
+    `coerce = "bit_pattern"` copied a `bytes` value as it was but mapped an
+    int sequence's elements to `v != 0`, so `bytes([8])` stored 8 and `[8]`
+    stored 1, `from_json` stored any element up to 255, and the c-face
+    CLI's `--<field>` flag dropped any character but `0`/`1`, so `01x1`
+    read as `011`. Every spelling -- `bytes`, `bytearray`, a list, a numpy
+    array, the setter, a project-read field's non-`str` value and
+    `from_json` -- now refuses a non-bit element with one `ValueError`
+    naming the field and the element, and pointing at `np.unpackbits` for
+    octets; the CLI flag exits 2 naming the flag and the character. A
+    plain `bytes` field is unchanged.
+
+- **An init-param `optional = true` on anything but an array is refused at
+    load (gh-2697).** `optional` is array dispatch (the array's presence
+    selects `create_fn`), and the CLI already refused it on any other type,
+    but a manifest could still declare it on a scalar: the module `.pyi`
+    then read `window: int | None = None` and the docstring `int or None`
+    while the binding parsed a plain integer seeded with `0`, so `None`
+    raised `TypeError` and an omitted argument reached `create()` as `0`.
+    The refusal names the row and what to declare instead: `default`, or
+    `default_raw` for a named C constant; a capsule param already takes
+    `None` unless it declares `required = true`.
+
 ## [0.133.0] — 2026-11-19
 
 ### Added
