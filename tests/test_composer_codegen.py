@@ -1502,7 +1502,8 @@ class TestPyiDocstrings:
         assert "    seed : int, default 1" in pyi
         # bytes field — no explicit default, always None
         assert "    bits : bytes | None, default None" in pyi
-        # fs field from segment appears in Synth docstring
+        # fs: the source's own row (gh-2678); this fixture's generator
+        # declares no `fs` init param, so it is jm's documented fallback.
         assert "    fs : float, default 1e6" in pyi
 
     def test_segment_class_docstring_parameters(self):
