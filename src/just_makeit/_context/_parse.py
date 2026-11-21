@@ -378,6 +378,93 @@ def required_errors(cfg: dict) -> "list[str]":
     return out
 
 
+#: The init-param key that makes an ARRAY select a second constructor when
+#: it is supplied (gh-1004), and means nothing on any other param (gh-2697).
+OPTIONAL_KEY = "optional"
+
+
+def init_param_optional_errors(cfg: dict) -> "list[str]":
+    """Every init-param ``optional`` jm would not honour, by row.
+
+    Asked at load (`_config.load`), over every object's and view's
+    ``init_params``. ``optional = true`` is array *dispatch*: the array's
+    presence selects ``create_fn`` instead of ``<comp>_create`` (gh-1004),
+    which is why ``jm object --init-param`` accepts the token only after an
+    array type. On a scalar, enum, path, bytes or capsule param no binding
+    reads it, yet the module ``.pyi`` read it as ``T | None = None`` and the
+    docstring as ``T or None`` while the binding still parsed a plain value
+    seeded with the type's zero: ``None`` raised ``TypeError`` and an
+    omitted argument reached ``create()`` as ``0`` (gh-2697). A non-bool
+    value is refused for the same reason a method param's ``required`` is
+    (gh-2360): the readers test truthiness, so ``"no"`` would mean yes.
+
+    The refusal names what does exist: ``default`` (a literal of the type)
+    or ``default_raw`` (a C expression jm passes through, gh-1099) give an
+    omitted scalar its meaning, and a capsule param is nullable unless it
+    declares ``required = true`` (gh-805 §H).
+
+    Examples
+    --------
+    >>> cfg = {"w": {"init_params": [
+    ...     {"name": "window", "type": "uint32_t", "optional": True}]}}
+    >>> init_param_optional_errors(cfg)[0].split(":")[0]
+    '[[w.init_params]] window'
+    >>> cfg["w"]["init_params"][0].update(type="float[]", create_fn="mk")
+    >>> init_param_optional_errors(cfg)
+    []
+    >>> cfg["w"]["init_params"][0]["optional"] = "yes"
+    >>> print(init_param_optional_errors(cfg)[0])
+    [[w.init_params]] window: optional = 'yes' must be true or false
+
+    A view's ``init_params`` are asked too, and a row that is not a table
+    is the key walk's to name, not this one's:
+
+    >>> init_param_optional_errors({"w": {"views": [{"name": "v",
+    ...     "init_params": [{"name": "n", "type": "int",
+    ...                      "optional": True}, 1]}]}})[0].split(":")[0]
+    '[[w.views.init_params]] n'
+    """
+    from .._config import components
+
+    rows: "list[tuple[str, dict]]" = []
+    for comp in components(cfg):
+        body = cfg[comp]
+        if not isinstance(body, dict):
+            continue
+        rows += [
+            (f"[[{comp}.init_params]]", p)
+            for p in body.get("init_params") or []
+        ]
+        for v in body.get("views") or []:
+            if isinstance(v, dict):
+                rows += [
+                    (f"[[{comp}.views.init_params]]", p)
+                    for p in v.get("init_params") or []
+                ]
+    out: "list[str]" = []
+    for where, p in rows:
+        if not isinstance(p, dict) or OPTIONAL_KEY not in p:
+            continue
+        name = p.get("name", "?")
+        value = p[OPTIONAL_KEY]
+        if not isinstance(value, bool):
+            out.append(
+                f"{where} {name}: optional = {value!r} must be true or false"
+            )
+        elif value and not is_array_param_type(str(p.get("type", ""))):
+            out.append(
+                f"{where} {name}: optional = true is array dispatch -- the"
+                " array's presence selects `create_fn` -- and"
+                f" {name} is {p.get('type', p.get('object', '?'))!r}, so no"
+                " binding reads it. To give an omitted argument a value,"
+                ' declare `default` (a literal) or `default_raw = "<C'
+                ' expression>"` (a named constant, passed through); a capsule'
+                " param already takes None unless it declares required ="
+                " true. Drop the key"
+            )
+    return out
+
+
 def capsule_unwrap_c(
     name: str,
     ctype: str,

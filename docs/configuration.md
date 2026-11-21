@@ -887,7 +887,7 @@ for the full semantics.
 | TOML field                                                             | CLI flag                                                                     | Status                      |
 | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------- |
 | `name`, `type`, `default`                                              | `jm object --init-param name:type[:default]` (repeatable)                    | ✅                          |
-| `optional = true` (+ `create_fn`)                                      | `jm object --init-param 'name:type[]:optional[:create_fn]'`                  | ✅ (syntax extension)       |
+| `optional = true` (+ `create_fn`; an array only, gh-2697)              | `jm object --init-param 'name:type[]:optional[:create_fn]'`                  | ✅ (syntax extension)       |
 | `required = true` (a scalar with no default)                           | `jm object --init-param 'name:type:required'`                                | ✅ (gh-266)                 |
 | `doc = "<text>"`                                                       | (TOML only)                                                                  | ✅                          |
 | `type = "enum:<name>"` / `type = "string_enum:a,b"`                    | `jm object --init-param 'name:enum:<name>[:default]'` (or `string_enum:a,b`) | ✅ (gh-1489)                |
