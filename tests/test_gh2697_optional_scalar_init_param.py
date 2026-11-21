@@ -82,12 +82,16 @@ def test_an_array_may_still_dispatch(arr):
     assert init_param_optional_errors({"w": {"init_params": [row]}}) == []
 
 
-def test_false_is_absence_and_a_non_bool_is_refused():
+def test_false_is_absence_and_a_string_true_is_asked():
+    # Truthiness, as every reader tests the key: the hand-written
+    # `optional = "true"` (test_gh515 declares one on an array) is the
+    # same declaration as `true`.
     row = {"name": "n", "type": "int", "optional": False}
     assert init_param_optional_errors({"w": {"init_params": [row]}}) == []
-    row["optional"] = "yes"
-    (err,) = init_param_optional_errors({"w": {"init_params": [row]}})
-    assert err.endswith("optional = 'yes' must be true or false")
+    row["optional"] = "true"
+    assert len(init_param_optional_errors({"w": {"init_params": [row]}})) == 1
+    row["type"] = "float[]"
+    assert init_param_optional_errors({"w": {"init_params": [row]}}) == []
 
 
 _WINDOW = (
