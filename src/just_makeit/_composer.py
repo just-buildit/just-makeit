@@ -1210,6 +1210,83 @@ def _range_return_c(meta: dict, dst: str, indent: str = "        ") -> str:
 #: every source takes as a trailing keyword.
 SOURCE_INIT_LOCALS = frozenset({"fs"})
 
+#: gh-2678: the source type's ``fs`` when nothing declares one -- the value
+#: every source took before the declaration was read, kept so a project
+#: whose generator has no ``fs`` init param builds as it did.
+_SOURCE_FS_FALLBACK = {
+    "name": "fs",
+    "type": "double",
+    "default": "1e6",
+    "doc": "Sample rate in Hz, handed to the generator the source builds.",
+}
+
+
+def source_fs(cfg: dict, module: str) -> dict:
+    """The source type's trailing ``fs`` argument, as one field row.
+
+    gh-2678. Every other argument of the source type's constructor is a
+    ``[[module.X.source.fields]]`` row, and its runtime default, its
+    ``.pyi`` docstring entry and its getset doc all render from that row.
+    ``fs`` had no row: the constructor's default was ``1e6`` written here,
+    while the class docstring borrowed the SEGMENT's ``fs`` field -- so
+    doppler's ``Synth`` documented ``default 1.0`` and ran at 1e6, and a
+    caller passing ``freq`` in cycles per sample got an offset a million
+    times too small.
+
+    The row is the composed object's own declaration: the ``fs`` init param
+    of the source's ``object`` (else ``generates.generator``), whose
+    constructor the value is ultimately handed to through ``bridge_fn``.
+    Its ``default`` and ``doc`` are the source's. With no such param the
+    row is :data:`_SOURCE_FS_FALLBACK`, documented as what it is. The
+    segment's ``fs`` field documents the segment only.
+
+    Every face reads this one row: the ``tp_init`` default
+    (:func:`render_source_type`), the getset doc and the class docstring
+    (:func:`type_doc_lines`).
+
+    Raises
+    ------
+    Refusal
+        If the object declares ``fs`` with no default: the source's
+        argument is optional, and a value jm made up beside a declaration
+        that has none is the split this function exists to remove.
+
+    Examples
+    --------
+    >>> cfg = {
+    ...     "module": {"m": {"source": {"object": "g"}}},
+    ...     "g": {"init_params": [
+    ...         {"name": "fs", "type": "double", "default": "48000.0",
+    ...          "doc": "Rate."}]},
+    ... }
+    >>> r = source_fs(cfg, "m")
+    >>> r["default"], r["doc"]
+    ('48000.0', 'Rate.')
+    >>> source_fs({"module": {"m": {"source": {}}}}, "m")["default"]
+    '1e6'
+    """
+    src = C.composer_source(cfg, module)
+    obj = src.get("object") or (src.get("generates") or {}).get("generator")
+    if not obj:
+        return dict(_SOURCE_FS_FALLBACK)
+    for p in C.init_params(cfg, obj):
+        if p[0] != "fs":
+            continue
+        if not p[2]:
+            raise Refusal(
+                f"composer module '{module}': the source type's `fs` takes "
+                f"its default from [[{obj}.init_params]] `fs`, which has "
+                f"none. Give that init param a `default` (gh-2678)."
+            )
+        return {
+            "name": "fs",
+            "type": "double",
+            "default": p[2],
+            "doc": p[9] if len(p) > 9 and p[9] else _SOURCE_FS_FALLBACK["doc"],
+        }
+    return dict(_SOURCE_FS_FALLBACK)
+
+
 #: gh-1525: what a delegated serializer (:func:`render_serializers`) declares
 #: beside its params: the resolved segment array it hands the C serializer.
 SERIALIZER_LOCALS = frozenset({"segs"})
@@ -1904,6 +1981,8 @@ def render_source_type(cfg: dict, module: str) -> str:
     struct = src["struct"]
     tname = src["type_name"]  # Python class name, e.g. "Synth"
     fields = _source_fields(cfg, module)
+    # gh-2678: the trailing `fs` argument's one declaration.
+    fs_row = source_fs(cfg, module)
     pkg = C.project_name(cfg)
     pkg_path = C.module_package_resolved(cfg, module)
     dotted = f"{pkg}.{pkg_path.replace('/', '.')}.{tname}"
@@ -2335,7 +2414,7 @@ static int
 {{
     static char *kwlist[] = {{{kwlist}, "fs", NULL}};
 {decls_s}
-    double fs = 1e6;
+    double fs = {fs_row["default"]};
 {alias_pre}    if (!PyArg_ParseTupleAndKeywords(args, {parse_kw}, "{fmt}", kwlist,
             {addrs_s}, &fs)) {{
 {parse_fail}
@@ -2540,7 +2619,7 @@ static int
 }}""")
     getset_rows.append(
         f'    {{"fs", (getter){tname}_get_fs, (setter){tname}_set_fs, '
-        "NULL, NULL},"
+        f"{_field_doc_c(fs_row)}, NULL}},"
     )
 
     # Feature 6 — computed (derived) read-only properties: a value computed in C
@@ -5430,12 +5509,12 @@ def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
     seg = C.composer_segment(cfg, module)
     src_fields = _source_fields(cfg, module)
     seg_fields = _segment_fields(cfg, module)
-    # The fs segment field also appears at the end of Synth.__init__.
-    fs_field = next((f for f in seg_fields if f.get("name") == "fs"), None)
+    # gh-2678: the source's trailing `fs` is its own row, the one its
+    # `tp_init` default and getset doc render from -- not the segment's.
     out = {
         src["type_name"]: _pyi_doc_lines(
             src["type_name"],
-            src_fields + ([fs_field] if fs_field else []),
+            src_fields + [source_fs(cfg, module)],
             enum_reg,
             str(_header_docs(cfg, module).get("source") or ""),
         ),
