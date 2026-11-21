@@ -434,7 +434,9 @@ borrowing consumer while the source is the owner.
 sequence of ints (a list, a NumPy array), or a `str`. jm stores one bit per
 byte, so every element must be 0 or 1: `bytes([8])` and `[8]` are both
 refused with a `ValueError` naming the field and the element (gh-2696), on
-every face including `from_json`. Octets become bits with `np.unpackbits`. By
+every face including `from_json`; the c-face CLI's `--<field>` flag exits 2
+on a character that is not `0` or `1`. Octets become bits with
+`np.unpackbits`. By
 default jm reads a `str` itself: `0`/`1` digits, or `0x` hex expanded MSB
 first.
 

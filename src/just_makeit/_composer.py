@@ -214,6 +214,11 @@ def is_bit_pattern(field: dict) -> bool:
     return bool(field.get("bytes")) and field.get("coerce") == "bit_pattern"
 
 
+#: What a bit_pattern field is, as every refusal of a non-bit says it
+#: (gh-2696): the Python faces' and the C command line's.
+BIT_ARRAY = "is a bit array, one element per bit (0 or 1)"
+
+
 def bit_refusal_c(name: str, index: str, value: str, indent: str) -> str:
     """The statement refusing an element of a bit array that is not 0 or 1.
 
@@ -236,7 +241,7 @@ def bit_refusal_c(name: str, index: str, value: str, indent: str) -> str:
     pad = indent + " " * 13
     return (
         f"{indent}PyErr_Format(PyExc_ValueError,\n"
-        f'{pad}"%s is a bit array, one element per bit (0 or 1): "\n'
+        f'{pad}"%s {BIT_ARRAY}: "\n'
         f'{pad}"element %zd is %ld, not a bit; np.unpackbits turns "\n'
         f'{pad}"octets into bits",\n'
         f"{pad}{name}, (Py_ssize_t)({index}), (long)({value}));"
@@ -7436,12 +7441,27 @@ def render_cli(cfg: dict, module: str) -> str:
         src.{_cp} = _b; src.{_cl} = _k;
     }}""")
                 continue
+            # gh-2696: a bit_pattern field's flag refuses a character that
+            # is not a bit, exiting 2 naming the flag as a bad number does;
+            # it was dropped, so "01x1" read as 011.
+            refuse = ""
+            if is_bit_pattern(f):
+                refuse = f"""
+            else {{
+                fprintf(stderr,
+                        "bad --{n}: {n} {BIT_ARRAY}: "
+                        "character %zu is '%c', not a bit\\n",
+                        _j, {n}[_j]);
+                free(_b);
+                return 2;
+            }}"""
             assign.append(f"""    if ({n}) {{
         size_t _ln = strlen({n});
         uint8_t *_b = (uint8_t *)malloc(_ln ? _ln : 1);
         size_t _k = 0;
         for (size_t _j = 0; _j < _ln; _j++)
-            if ({n}[_j] == '0' || {n}[_j] == '1') _b[_k++] = ({n}[_j] - '0');
+            if ({n}[_j] == '0' || {n}[_j] == '1')
+                _b[_k++] = ({n}[_j] - '0');{refuse}
         src.{_cp} = _b; src.{_cl} = _k;
     }}""")
         else:

@@ -16,9 +16,15 @@ constructor, the setter, a project-read field's non-``str`` value, and
 (:func:`~just_makeit._composer.bit_refusal_c`). A plain ``bytes`` field
 beside it is not a bit array, and keeps taking any byte.
 
+The C command line was a fourth face: its ``--<field>`` flag read 0/1
+digits and dropped any other character, so ``01x1`` was ``011``. A
+bit_pattern field read by jm's grammar now exits 2 naming the flag and the
+character, as a bad number does.
+
 GATE: every spelling of every bit_pattern field reads 0/1 the same and
 refuses a non-bit element with the field's sentence; a plain bytes field on
-the same source stores ``bytes([8])`` as 8.
+the same source stores ``bytes([8])`` as 8; the CLI flag refuses a non-bit
+character and takes a bit string.
 """
 
 from __future__ import annotations
@@ -57,6 +63,13 @@ FIELDS = [
 
 BIT_FIELDS = [f["name"] for f in FIELDS if _composer.is_bit_pattern(f)]
 PLAIN_FIELDS = [f["name"] for f in FIELDS if not _composer.is_bit_pattern(f)]
+#: The bit fields whose CLI flag jm reads (a host-read one is the project's).
+CLI_FIELDS = [
+    f["name"]
+    for f in FIELDS
+    if _composer.is_bit_pattern(f) and not _composer.coerce_str_fn(f)
+]
+CLI = "mixcli"
 
 
 def _module() -> dict:
@@ -77,6 +90,7 @@ def _module() -> dict:
         },
         "oo": {"composer_type_name": "Mix"},
         "json": {"enabled": True},
+        "cli": {"enabled": True, "name": CLI},
         "extra_link_libs": ["backing_core"],
     }
 
@@ -97,6 +111,7 @@ def _header() -> str:
         "const seg_t *mix_segments(const mix_state_t *st, size_t *n,"
         " int *r, int *c);\n"
         "void mix_destroy(mix_state_t *st);\n"
+        "mix_state_t *mix_from_file(const char *path);\n"
         "#endif\n"
     )
 
@@ -141,6 +156,8 @@ size_t mix_execute(mix_state_t *st, float _Complex *o, size_t m)
 {{ (void)st; (void)o; (void)m; return 0; }}
 const seg_t *mix_segments(const mix_state_t *st, size_t *n, int *r, int *c)
 {{ *n = st->n; *r = 0; *c = 0; return st->segs; }}
+mix_state_t *mix_from_file(const char *path)
+{{ (void)path; return NULL; }}
 void mix_destroy(mix_state_t *st)
 {{
   for (size_t i = 0; i < st->n; i++) {{
@@ -258,6 +275,7 @@ def _want(field: str, how: str, v: list) -> object:
 
 def test_the_cases_are_not_vacuous() -> None:
     assert len(BIT_FIELDS) == 2 and PLAIN_FIELDS == ["raw"]
+    assert CLI_FIELDS == ["bits"]
     assert [f for f in FIELDS if _composer.coerce_str_fn(f)], (
         "no field reads its str through the project"
     )
@@ -347,3 +365,31 @@ def test_every_face_reads_one_rule(tmp_path: Path) -> None:
         len(GOOD) + len(BAD)
     )
     assert not wrong, f"{len(wrong)} wrong:\n" + "\n".join(wrong)
+
+    # The C command line: a non-bit character is refused naming the flag,
+    # and a bit string is taken.
+    exe = [
+        p
+        for p in (proj / "build").rglob(f"{CLI}*")
+        if p.is_file() and p.name in (CLI, f"{CLI}.exe")
+    ]
+    assert exe, "the c-face CLI was not built"
+    for n in CLI_FIELDS:
+        bad = subprocess.run(
+            [str(exe[0]), f"--{n}", "01x1"],
+            cwd=proj,
+            capture_output=True,
+            text=True,
+        )
+        assert bad.returncode == 2, (bad.returncode, bad.stderr)
+        assert (
+            f"bad --{n}: {n} {_composer.BIT_ARRAY}: "
+            "character 2 is 'x', not a bit" in bad.stderr
+        ), bad.stderr
+        good = subprocess.run(
+            [str(exe[0]), f"--{n}", "0101"],
+            cwd=proj,
+            capture_output=True,
+            text=True,
+        )
+        assert good.returncode == 0, (good.returncode, good.stderr)
