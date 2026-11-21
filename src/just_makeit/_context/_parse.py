@@ -394,9 +394,9 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     reads it, yet the module ``.pyi`` read it as ``T | None = None`` and the
     docstring as ``T or None`` while the binding still parsed a plain value
     seeded with the type's zero: ``None`` raised ``TypeError`` and an
-    omitted argument reached ``create()`` as ``0`` (gh-2697). A non-bool
-    value is refused for the same reason a method param's ``required`` is
-    (gh-2360): the readers test truthiness, so ``"no"`` would mean yes.
+    omitted argument reached ``create()`` as ``0`` (gh-2697). The key is
+    tested for truth, as every reader tests it, so a hand-written
+    ``optional = "true"`` is asked the same as ``true``.
 
     The refusal names what does exist: ``default`` (a literal of the type)
     or ``default_raw`` (a C expression jm passes through, gh-1099) give an
@@ -412,9 +412,9 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     >>> cfg["w"]["init_params"][0].update(type="float[]", create_fn="mk")
     >>> init_param_optional_errors(cfg)
     []
-    >>> cfg["w"]["init_params"][0]["optional"] = "yes"
-    >>> print(init_param_optional_errors(cfg)[0])
-    [[w.init_params]] window: optional = 'yes' must be true or false
+    >>> cfg["w"]["init_params"][0].update(type="int", optional=False)
+    >>> init_param_optional_errors(cfg)
+    []
 
     A view's ``init_params`` are asked too, and a row that is not a table
     is the key walk's to name, not this one's:
@@ -446,12 +446,9 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
         if not isinstance(p, dict) or OPTIONAL_KEY not in p:
             continue
         name = p.get("name", "?")
-        value = p[OPTIONAL_KEY]
-        if not isinstance(value, bool):
-            out.append(
-                f"{where} {name}: optional = {value!r} must be true or false"
-            )
-        elif value and not is_array_param_type(str(p.get("type", ""))):
+        # Truthiness, as every reader of the key tests it: the stub that
+        # disagreed with the binding rendered for exactly these values.
+        if p[OPTIONAL_KEY] and not is_array_param_type(str(p.get("type", ""))):
             out.append(
                 f"{where} {name}: optional = true is array dispatch -- the"
                 " array's presence selects `create_fn` -- and"
