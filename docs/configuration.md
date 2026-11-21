@@ -1008,6 +1008,9 @@ int taps = DP_MAX_TAPS;
 def __init__(self, taps: int = ...) -> None: ...
 ```
 
+The class docstring's `Parameters` entry, on the stub and on the runtime
+`__doc__`, says what `...` is: `taps : int, default DP_MAX_TAPS` (gh-2703).
+
 The refusal names `default_raw` in its message, so the remedy arrives with the
 error. Before gh-1099 that key was read **only** for types carrying a parse
 intermediate — it worked on a `size_t` and was silently dropped on an `int`,
