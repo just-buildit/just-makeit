@@ -431,9 +431,12 @@ commonly `const`-qualified, because the type it belongs to is written for the
 borrowing consumer while the source is the owner.
 
 `coerce = "bit_pattern"` widens what the field takes from Python: `bytes`, a
-sequence of ints (a list, a NumPy array; any nonzero is a 1), or a `str`. jm
-stores one bit per byte. By default jm reads a `str` itself: `0`/`1` digits,
-or `0x` hex expanded MSB first.
+sequence of ints (a list, a NumPy array), or a `str`. jm stores one bit per
+byte, so every element must be 0 or 1: `bytes([8])` and `[8]` are both
+refused with a `ValueError` naming the field and the element (gh-2696), on
+every face including `from_json`. Octets become bits with `np.unpackbits`. By
+default jm reads a `str` itself: `0`/`1` digits, or `0x` hex expanded MSB
+first.
 
 A project that already has a text form for a bit pattern names its own reader
 with `coerce_str_fn` (gh-1709), so the `str` face uses that grammar instead of
