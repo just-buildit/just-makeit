@@ -84,7 +84,7 @@ def project(tmp_path_factory) -> Path:
     # both faces alike; a Doxygen block is what gives it a Parameters
     # section to carry the default.
     hdr = next(root.glob("native/inc/*/dsp/dsp_core.h"))
-    text = hdr.read_text()
+    text = hdr.read_text(encoding="utf-8")
     proto = re.search(r"^double \w*clamp\(", text, re.M)
     assert proto, text
     doc = (
@@ -92,7 +92,9 @@ def project(tmp_path_factory) -> Path:
         " * @param lim  Limit.\n * @param s  Shift.\n"
         " * @return The clamped value.\n */\n"
     )
-    hdr.write_text(text[: proto.start()] + doc + text[proto.start() :])
+    hdr.write_text(
+        text[: proto.start()] + doc + text[proto.start() :], encoding="utf-8"
+    )
     _ok("apply", cwd=root)
     return root
 
@@ -103,7 +105,7 @@ def _faces(root: Path) -> "dict[str, str]":
     def one(pattern: str) -> str:
         hits = sorted(root.glob(pattern))
         assert len(hits) == 1, (pattern, hits)
-        return hits[0].read_text()
+        return hits[0].read_text(encoding="utf-8")
 
     return {
         "object stub": one("src/nc/frame.pyi"),
