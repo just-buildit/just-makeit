@@ -318,6 +318,134 @@ def uses_builtin_bit_grammar(fields: "list[dict]") -> bool:
     return any(is_bit_pattern(f) and not coerce_str_fn(f) for f in fields)
 
 
+def get_fn(field: dict) -> str:
+    """The project's C function a field's Python read goes through, or ``""``.
+
+    gh-2710. A source or segment field's getter read its struct member, so
+    a stored value whose default is a sentinel -- doppler's ``window``,
+    ``SIZE_MAX`` meaning "the standard's count, ``2 * fs / bandwidth``" --
+    read back as the sentinel, not as what the generator will use.
+    ``get_fn = "<fn>"`` names the project's resolver::
+
+        <type> fn(const <struct> *, double fs);
+
+    ``<struct>`` is the table's own (``source.struct`` or ``segment.struct``)
+    and ``fs`` is the rate the value is read at: the source object's ``fs``,
+    or a segment's own ``fs`` field. Only the Python read changes; the
+    setter, the constructor keyword, ``to_json``, ``from_json`` and the
+    stored member keep the stored value, so a record written and read back
+    is unchanged.
+
+    The read converts the function's result as it converted the member: by
+    the field's ``type``, an enum's int decoded to its name, and a ranged
+    field's scalar read (its ``(lo, hi)`` pair, when one is stored, is read
+    as stored). A field kind with no scalar read -- a ``bytes`` or
+    ``complex`` buffer, an owned pointer -- is refused, since the key would
+    be read by nobody.
+
+    >>> get_fn({"name": "window", "type": "size_t", "get_fn": "win"})
+    'win'
+    >>> get_fn({"name": "window", "type": "size_t"})
+    ''
+    """
+    fn = field.get("get_fn") or ""
+    if fn and (
+        field.get("bytes")
+        or field.get("complex")
+        or _field_is_owned_ptr(field)
+    ):
+        raise Refusal(
+            f"composer field '{field.get('name', '<unnamed>')}': "
+            f'`get_fn = "{fn}"` reads a scalar through '
+            "`<type> fn(const <struct> *, double fs)`, and a `bytes`, "
+            "`complex` or owned-pointer field has no scalar read "
+            "(gh-2710)."
+        )
+    return fn
+
+
+def _read_acc(field: dict, stored: str, struct_ptr: str, fs: str) -> str:
+    """The C expression a field's Python getter converts (gh-2710): its
+    :func:`get_fn` called on *struct_ptr* at rate *fs*, else *stored*.
+
+    >>> _read_acc({"name": "w", "get_fn": "win"}, "self->src.w",
+    ...           "&self->src", "self->fs")
+    'win(&self->src, self->fs)'
+    >>> _read_acc({"name": "w"}, "self->src.w", "&self->src", "self->fs")
+    'self->src.w'
+    """
+    fn = get_fn(field)
+    return f"{fn}({struct_ptr}, {fs})" if fn else stored
+
+
+def _segment_copy_c(
+    fields: "list[dict]", dst: str, src: str, indent: str = " " * 8
+) -> str:
+    """The C copying every segment scalar from *src* to *dst*, one line each.
+
+    *fields* are :func:`_segment_fields` (ranged-annotated); *dst* and *src*
+    are member-access prefixes (``"segs[i]."``, ``"seg->"``). A ranged field
+    carries its ``<name>_hi`` companion and the shared ``ranged`` bitmask
+    across, so a ``(lo, hi)`` draw survives. The one spelling of "a segment
+    object as its struct" both directions of the Composer's conversion and
+    a segment field's ``get_fn`` snapshot read (gh-2710).
+
+    >>> print(_segment_copy_c([{"name": "n"}, {"name": "o", "_ranged": "R"}],
+    ...                       "segs[i].", "seg->"))
+            segs[i].n = seg->n;
+            segs[i].o = seg->o;
+            segs[i].ranged = seg->ranged;
+            segs[i].o_hi = seg->o_hi;
+    """
+    names = [f["name"] for f in fields]
+    ranged = [f["name"] for f in fields if f.get("_ranged")]
+    if ranged:
+        names += ["ranged"] + [f"{n}_hi" for n in ranged]
+    return "\n".join(f"{indent}{dst}{n} = {src}{n};" for n in names)
+
+
+def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
+    """The :class:`_Seam` each source / segment field ``get_fn`` names
+    (gh-2710), in field order: ``<type> fn(const <struct> *, double);``.
+
+    Raises
+    ------
+    Refusal
+        A segment field names one but the segment declares no ``fs`` field:
+        a segment's getter is handed the segment's own rate, and there is
+        none to hand it.
+    """
+    out: "list[_Seam]" = []
+    tables = (
+        ("source", C.composer_source(cfg, module), _source_fields),
+        ("segment", C.composer_segment(cfg, module), _segment_fields),
+    )
+    for where, tbl, fields in tables:
+        rows = [f for f in fields(cfg, module) if get_fn(f)]
+        if not rows:
+            continue
+        names = {f["name"] for f in fields(cfg, module)}
+        if where == "segment" and "fs" not in names:
+            raise Refusal(
+                f"composer `{module}`: segment field "
+                f"'{rows[0]['name']}' names `get_fn`, which is handed the "
+                "segment's own `fs`, and [module."
+                f"{module}.segment] declares no `fs` field (gh-2710)."
+            )
+        for f in rows:
+            fn = get_fn(f)
+            out.append(
+                _Seam(
+                    fn,
+                    f"{f['type']} {fn}(const {tbl['struct']} *, double);",
+                    f"{where} field `{f['name']}` (get_fn)",
+                    f"/* Read {where} field `{f['name']}` at rate fs"
+                    " (get_fn, gh-2710). */",
+                )
+            )
+    return out
+
+
 def host_coercer(fn: str) -> str:
     """The generated static that reads a ``str`` through the project's *fn*.
 
@@ -2505,6 +2633,10 @@ static int
     getset_rows: list[str] = []
     for f in fields:
         n = f["name"]
+        # gh-2710: what the getter converts -- the member, or the project's
+        # get_fn at the source's rate. Refused here on a field kind with no
+        # scalar read; nothing but the read below changes.
+        acc = _read_acc(f, f"self->src.{n}", "&self->src", "self->fs")
         if _field_is_enum(f):
             e = f["enum"]
             # gh-1026: the shared refusal, so a property setter and a
@@ -2519,7 +2651,7 @@ static int
             )
             # gh-1450: checked, and searched when the enum binds C
             # constants -- this indexed the table blind.
-            _dec = _enumc.decode_c(n, e, f"self->src.{n}", C.enums(cfg))
+            _dec = _enumc.decode_c(n, e, acc, C.enums(cfg))
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
@@ -2635,7 +2767,7 @@ static int
     (void)closure;
     if (self->src.ranged & {flag})
 {pair}
-    return {meta["to_py"](dst)};
+    return {meta["to_py"](acc)};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -2654,7 +2786,7 @@ static int
             # accepted by the type's own format char.
             ctype = f["type"]
             meta = _number_meta(ctype, _row(module, "source.fields", n))
-            to_py = meta["to_py"](f"self->src.{n}")
+            to_py = meta["to_py"](acc)
             parse = scalar_parse_c(
                 ctype, "value", "_v", "return -1;", label=n, meta=meta
             )
@@ -3135,8 +3267,25 @@ def render_segment_type(cfg: dict, module: str) -> str:
     getset_rows = [
         f'    {{"sources", (getter){tname}_get_sources, NULL, NULL, NULL}},'
     ]
+    # gh-2710: a field naming `get_fn` is read through the project's C, which
+    # takes the segment struct -- so its getter builds one from this object's
+    # scalars (the sources are not carried: NULL, 0) and hands it the
+    # segment's own `fs`.
+    _snap_copy = _segment_copy_c(fields, "_seg.", "self->", " " * 4)
+
+    def _snapshot(f: dict) -> str:
+        if not get_fn(f):
+            return ""
+        return (
+            f"    {seg['struct']} _seg;\n"
+            "    memset(&_seg, 0, sizeof _seg);\n"
+            f"{_snap_copy}\n"
+        )
+
     for f in fields:
         n, ct = f["name"], f["type"]
+        snap = _snapshot(f)
+        acc = _read_acc(f, f"self->{n}", "&_seg", "self->fs")
         if f.get("_ranged"):
             # scalar, or (lo, hi) when the field's ranged bit is set; each
             # bound by the field's own type row (gh-2224: this built the pair
@@ -3152,9 +3301,9 @@ def render_segment_type(cfg: dict, module: str) -> str:
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    if (self->ranged & {flag})
+{snap}    if (self->ranged & {flag})
 {pair}
-    return {meta["to_py"](dst)};
+    return {meta["to_py"](acc)};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -3181,12 +3330,12 @@ static int
             )
             # gh-1450: checked, and searched when the enum binds C
             # constants -- this indexed the table blind.
-            _dec = _enumc.decode_c(n, e, f"self->{n}", C.enums(cfg))
+            _dec = _enumc.decode_c(n, e, acc, C.enums(cfg))
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-{_dec}
+{snap}{_dec}
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -3206,7 +3355,7 @@ static int
         # gh-2035: both ways by the declared type. A `bool` read back as an
         # `int`, and a complex parsed through `PyLong_AsLong`.
         meta = _number_meta(ct, _row(module, "segment.fields", n))
-        to_py = meta["to_py"](f"self->{n}")
+        to_py = meta["to_py"](acc)
         parse = scalar_parse_c(
             ct, "value", "_v", "return -1;", label=n, meta=meta
         )
@@ -3214,7 +3363,7 @@ static int
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-    return {to_py};
+{snap}    return {to_py};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -3935,7 +4084,6 @@ def render_composer_type(cfg: dict, module: str) -> str:
     src_t = src["type_name"]
     seg_t = seg["type_name"]
     seg_struct = seg["struct"]
-    seg_fields = list(seg.get("fields", []))
     sources_member = seg.get("sources_member", "sources")
     count_member = seg.get("count_member", "n_sources")
     cname = oo.get("composer_type_name", "Composer")
@@ -4043,43 +4191,8 @@ def render_composer_type(cfg: dict, module: str) -> str:
     # segment scalar field copy lines (both directions). Ranged segment fields
     # also carry their `ranged` bitmask + <name>_hi companion across, so a
     # (lo, hi) draw survives the OO ⇄ struct conversion and from_json round-trip.
-    seg_ranged = [f for f in _segment_fields(cfg, module) if f.get("_ranged")]
-    fwd_extra = (
-        "".join(
-            ["\n        segs[i].ranged = seg->ranged;"]
-            + [
-                f"\n        segs[i].{f['name']}_hi = seg->{f['name']}_hi;"
-                for f in seg_ranged
-            ]
-        )
-        if seg_ranged
-        else ""
-    )
-    back_extra = (
-        "".join(
-            ["\n        sg->ranged = src[i].ranged;"]
-            + [
-                f"\n        sg->{f['name']}_hi = src[i].{f['name']}_hi;"
-                for f in seg_ranged
-            ]
-        )
-        if seg_ranged
-        else ""
-    )
-    fwd = (
-        "\n".join(
-            f"        segs[i].{f['name']} = seg->{f['name']};"
-            for f in seg_fields
-        )
-        + fwd_extra
-    )
-    back = (
-        "\n".join(
-            f"        sg->{f['name']} = src[i].{f['name']};"
-            for f in seg_fields
-        )
-        + back_extra
-    )
+    fwd = _segment_copy_c(_segment_fields(cfg, module), "segs[i].", "seg->")
+    back = _segment_copy_c(_segment_fields(cfg, module), "sg->", "src[i].")
 
     # JSON faces (gh-287 C2.3): from_json / from_file classmethods + to_json.
     # from_json/_file follow the regular <backing>_* convention; the serializer
@@ -6171,8 +6284,9 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     """``(name, prototype lines)`` for each straight-C seam
     :func:`render_bridge_h` declares, in order: the ``bridge_fn``, its
     ``bridge_error_fn``, each computed ``fn``, each field's
-    ``coerce_str_fn`` (gh-1709) and each owned-pointer field's four host
-    functions (gh-1711). Every name is an
+    ``coerce_str_fn`` (gh-1709), each owned-pointer field's four host
+    functions (gh-1711) and each source / segment field's ``get_fn``
+    (gh-2710). Every name is an
     author-named key's value (:data:`_csym.AUTHOR_NAMED_KEYS`), declared
     because the manifest spells it -- the header and :func:`seam_fns` read
     this one list, so they cannot disagree on which names those are.
@@ -6195,7 +6309,8 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     computed = _source_computed(cfg, module)
     str_fns = _coerce_str_fns(cfg, module)
     ptr_fns = _owned_ptr_prototypes(cfg, module)
-    if not gen and not computed and not str_fns and not ptr_fns:
+    get_fns = _get_fn_seams(cfg, module)
+    if not (gen or computed or str_fns or ptr_fns or get_fns):
         return []
     src_struct = C.composer_source(cfg, module)["struct"]
     seams: "list[_Seam]" = []
@@ -6251,6 +6366,7 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
             )
         )
     seams += ptr_fns
+    seams += get_fns  # gh-2710
     # gh-1739: one declaration per name, and every key naming it agrees.
     first: "dict[str, _Seam]" = {}
     for s in seams:
@@ -6298,7 +6414,8 @@ def _coerce_str_fns(cfg: dict, module: str) -> "dict[str, str]":
 def seam_fns(cfg: dict, module: str) -> "list[str]":
     """The C functions *module*'s :func:`bridge_h` declares: the project's
     own, each named by a ``bridge_fn`` / ``bridge_error_fn`` / computed
-    ``fn`` / field ``coerce_str_fn`` key, or an owned-pointer field's
+    ``fn`` / field ``coerce_str_fn`` / field ``get_fn`` key, or an
+    owned-pointer field's
     ``copy_fn`` / ``free_fn`` / ``parse_fn`` / ``format_fn``. jm derives none of them, whatever
     prefix their name has, so :func:`_csym.renames` does not read them as
     derived (gh-1694)."""

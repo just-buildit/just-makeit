@@ -576,6 +576,7 @@ A source can hand work back to the project as plain C, with no CPython in it:
     the next `steps()` builds from the new configuration. A value that is
     refused leaves the field as it was; it used to clear it, so a caller that
     relied on that must assign `None` to clear the field (gh-2274).
+
 - **`methods = ["prod", ...]`** in the same table (gh-2259) puts named
     methods of the generator object on the source type too:
     `Synth(...).prod(x)` instead of building the generator yourself. Each
@@ -592,12 +593,38 @@ A source can hand work back to the project as plain C, with no CPython in it:
     `varargs` or `manual_stub` method (hand-written bindings), a borrow or
     its release (they lend the generator's memory), a `single` record, or
     a `codec` method (its docstring has no `Raises` to list the build in).
+
 - **`[[module.X.source.computed]]`** (`name`, `type`, `fn`, `doc`) is a
     read-only property computed in C on every read:
     `<type> fn(const <struct> *)`.
 
+- **`get_fn = "<fn>"`** on a `[[module.X.source.fields]]` or
+    `[[module.X.segment.fields]]` row (gh-2710) reads the field through
+    the project's C: `<type> fn(const <struct> *, double fs)`, where
+    `<struct>` is that table's `struct`. A source field's getter is handed
+    the source's `fs`; a segment field's is handed the segment's own `fs`
+    field (required), and a copy of the segment's scalars, with no sources.
+    Only the Python read changes: the setter, the constructor keyword,
+    `to_json`, `from_json` and the stored member keep the stored value, so
+    a record written and read back is unchanged. This is how a stored
+    sentinel reads as what the generator will use:
+
+    ```toml
+    [[module.wfm_compose.source.fields]]
+    name = "window"
+    type = "size_t"
+    default = "WFM_WINDOW_UNSET"
+    get_fn = "dp_wfm_source_window"
+    ```
+
+    `Synth(fs=40e6).window` is then `dp_wfm_source_window(&src, 40e6)`,
+    while `to_json()` still writes the sentinel. The result converts as the
+    member did: by `type`, an enum's int as its name, and a ranged field's
+    scalar (a stored `(lo, hi)` pair reads as stored). A `bytes`, `complex`
+    or owned-pointer field has no scalar read, so the key is refused there.
+
 jm writes the prototype of every seam (these, a field's `coerce_str_fn` and
-an owned-pointer field's four host functions) into a generated
+`get_fn`, and an owned-pointer field's four host functions) into a generated
 `native/inc/<pkg>/<cname>/<cname>_bridge.h`, which the binding includes. The
 file is written only when at least one seam exists, so a C test or benchmark
 includes it instead of re-declaring a signature jm owns. The
@@ -1130,12 +1157,13 @@ number.
 | `[X.cli]`           | `enabled`, `name`                                                                                                                                                                                                                                                                                                                                |
 
 A **field** entry (`source.fields`/`segment.fields`):
-`{ name, type, enum?, default?, bytes?, complex?, c_ptr?, c_len?, coerce?, coerce_str_fn?, aliases?, doc? }`
+`{ name, type, enum?, default?, bytes?, complex?, c_ptr?, c_len?, coerce?, coerce_str_fn?, get_fn?, aliases?, doc? }`
 — one declaration drives the marshalling, the type slots, the JSON shape, and
 the CLI flag. `complex` marks an owned complex64 array, as `bytes` marks an
 owned byte buffer; `c_ptr` / `c_len` relocate either into a nested struct
 (§4.2); `coerce = "bit_pattern"` and `coerce_str_fn` widen what a `bytes`
-field takes (§4.2); `aliases` are constructor keywords accepted in place of
+field takes (§4.2); `get_fn` reads the field through a C resolver (§4.3);
+`aliases` are constructor keywords accepted in place of
 the field's name; `doc` is the fallback docstring for a member its header
 leaves undocumented. A source field may instead be an owned pointer (§4.2,
 gh-1711):

@@ -939,6 +939,8 @@ COMPOSER_FIELD_KEYS = frozenset(
         "coerce",
         # gh-1709: the project's reader for a bit_pattern field's str.
         "coerce_str_fn",
+        # gh-2710: the project's resolver a field's Python read goes through.
+        "get_fn",
         "aliases",
         "doc",
     }

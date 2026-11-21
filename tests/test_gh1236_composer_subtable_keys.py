@@ -63,6 +63,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "c_len": "sync.len",
     "coerce": "hex",
     "coerce_str_fn": "wfm_bits_parse",
+    # gh-2710: the resolver a field's Python read goes through.
+    "get_fn": "wfm_window",
     "aliases": ["i"],
     "doc": 'The "IQ" run.',
     "fn": "wfm_iq",
