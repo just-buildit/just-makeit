@@ -13,6 +13,7 @@ from .. import _config as C
 from .._report import Refusal
 from .. import _csym as CSYM
 from .._docstring import (
+    defaulted_ann,
     docstring_lines,
     docstring_literal,
     WHY_PARAM_DOC,
@@ -53,6 +54,7 @@ from ._types import (
     _c_set_val,
     _py_default,
     _py_eq,
+    doc_default,
     _py_sample_val,
 )
 
@@ -1740,16 +1742,19 @@ def _build_no_state_init_ctx(
         # numpydoc already reads a bare `name : type` as having no default,
         # whereas the trailing `, default ` jm used to emit was neither
         # readable prose nor a literal anyone could copy into a call.
+        # gh-2703: the clause the class docstring's `_stubs` peer writes, so
+        # a `default_raw` constant is named here as well.
         pyi_doc_sections.append(
             "\n".join(
-                f"    {name} : {scalar_py_annotation(ct)}"
-                + (
-                    f", default {_py_default(ct, dflt)}"
-                    if dflt.strip()
-                    else ""
+                "    "
+                + defaulted_ann(
+                    f"{name} : {scalar_py_annotation(ct)}",
+                    doc_default(
+                        {"type": ct, "default": dflt, "default_raw": dr}
+                    ),
                 )
                 + f"\n        {_pdoc(name, False)}"
-                for name, ct, dflt, *_ in opt_scalar_ip
+                for name, ct, dflt, dr in opt_scalar_ip
             )
         )
     pyi_param_docs = "\n".join(pyi_doc_sections) or "    (none)"
@@ -3649,10 +3654,16 @@ def make_state_ctx(
     # gh-1488: a header constant is documented by its C name. The signature
     # beside it says `...`, and the prose is where a reader learns what that
     # stands for; "default ..." would say nothing at all.
+    # gh-2703: through the one clause every face appends.
     pyi_param_docs = "\n".join(
-        f"    {name} : {scalar_py_annotation(ct)},"
-        f" default {dflt.strip() if T.is_c_only_default(ct, dflt) else _py_default(ct, dflt)}\n"
-        f"        {name} state variable."
+        "    "
+        + defaulted_ann(
+            f"{name} : {scalar_py_annotation(ct)}",
+            dflt.strip()
+            if T.is_c_only_default(ct, dflt)
+            else _py_default(ct, dflt),
+        )
+        + f"\n        {name} state variable."
         for name, ct, dflt in ctor_scalars
     )
 
