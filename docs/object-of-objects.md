@@ -434,11 +434,17 @@ borrowing consumer while the source is the owner.
 sequence of ints (a list, a NumPy array), or a `str`. jm stores one bit per
 byte, so every element must be 0 or 1: `bytes([8])` and `[8]` are both
 refused with a `ValueError` naming the field and the element (gh-2696), on
-every face including `from_json`; the c-face CLI's `--<field>` flag exits 2
-on a character that is not `0` or `1`. Octets become bits with
-`np.unpackbits`. By
-default jm reads a `str` itself: `0`/`1` digits, or `0x` hex expanded MSB
-first.
+every face including `from_json`. Octets become bits with `np.unpackbits`.
+By default jm reads a `str` itself: `0`/`1` digits, or `0x` hex expanded MSB
+first. The c-face CLI's `--<field>` flag reads the same grammar, generated
+from the same declaration (gh-2706), so `--bits 0xA` is the four bits
+`bits="0xA"` is, and a refused character exits 2 with the `ValueError`'s
+message: `bad --bits: character 2 is 'x', not 0 or 1 (...)`.
+
+The widening is the field's own. A plain `bytes = true` field beside a
+`bit_pattern` one takes what it takes in any source: a `bytes`, any byte,
+and anything else is a `TypeError` (gh-2701). Its CLI flag reads `0`/`1`
+digits, one byte each, and exits 2 on any other character.
 
 A project that already has a text form for a bit pattern names its own reader
 with `coerce_str_fn` (gh-1709), so the `str` face uses that grammar instead of
