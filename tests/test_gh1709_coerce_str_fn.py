@@ -123,7 +123,7 @@ class TestTheGeneratedBinding:
         cfg = _with_bits(coerce="bit_pattern")
         s = _composer.render_source_type(cfg, "wfm_compose")
         assert "_coerce_" not in s
-        assert "bit string must be 0/1 or '0x..' hex" in s
+        assert _composer.bit_text_c() in s
         assert _composer.render_bridge_h(cfg, "wfm_compose") == ""
 
     def test_the_cli_flag_reads_the_same_grammar(self) -> None:
@@ -444,7 +444,11 @@ assert Card(payload=None).payload is None
 
 # The sibling field did not name the key: jm's grammar, unchanged.
 assert Card(raw="0101").raw == bytes([0, 1, 0, 1])
-refused(lambda: Card(raw="rep:1:5"), "bit string must be 0/1 or '0x..' hex")
+refused(
+    lambda: Card(raw="rep:1:5"),
+    "raw: character 0 is 'r', not 0 or 1 (a bit string is 0/1 digits, "
+    "or 0x and hex digits)",
+)
 print("DEMO OK")
 """
 

@@ -36,8 +36,8 @@ from test_gh1711_composer_owned_pointer import FRAME  # noqa: E402
 
 MOD = "wfm_compose"
 HOST = "dp_wfm_field_bits"
-#: jm's own grammar's refusal: present exactly when the grammar is emitted.
-GRAMMAR = "bit string must be 0/1 or '0x..' hex"
+#: jm's own grammar: present exactly when some field reads it (gh-2706).
+GRAMMAR = _composer.bit_text_c()
 #: doppler's four pattern fields, which is what made the comment 104 wide.
 PATTERNS = ("bits", "pilot", "preamble", "sync_word")
 

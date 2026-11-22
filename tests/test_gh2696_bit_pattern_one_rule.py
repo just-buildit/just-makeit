@@ -13,26 +13,37 @@ Now an element that is not 0 or 1 is refused on every face of a
 bit_pattern field -- ``bytes``, ``bytearray``, a list, a numpy array, the
 constructor, the setter, a project-read field's non-``str`` value, and
 ``from_json`` -- with one sentence naming the field
-(:func:`~just_makeit._composer.bit_refusal_c`). A plain ``bytes`` field
-beside it is not a bit array, and keeps taking any byte.
+(:func:`~just_makeit._composer.bit_refusal_c`).
+
+gh-2701: a plain ``bytes`` field beside it is not a bit array. It took
+the bit-only paths -- jm's ``"0101"`` string and the int sequence mapped to
+``v != 0`` -- only because a sibling was bit_pattern, the coercer being one
+per source. It now takes what it takes in a source with no bit_pattern
+field: a ``bytes``, any byte, and nothing else.
 
 The C command line was a fourth face: its ``--<field>`` flag read 0/1
-digits and dropped any other character, so ``01x1`` was ``011``. A
-bit_pattern field read by jm's grammar now exits 2 naming the flag and the
-character, as a bad number does.
+digits and dropped any other character, so ``01x1`` was ``011``, and it
+read no hex while the Python face's ``str`` did (gh-2706). Both faces now
+read text through one grammar, :func:`~just_makeit._composer.bit_text_c`,
+and word a refused character with one sentence: the CLI exits 2 with
+``bad --<field>: `` and the ``ValueError``'s message. A plain field's flag
+reads ``0``/``1`` digits, no hex, and refuses anything else.
 
 GATE: every spelling of every bit_pattern field reads 0/1 the same and
-refuses a non-bit element with the field's sentence; a plain bytes field on
-the same source stores ``bytes([8])`` as 8; the CLI flag refuses a non-bit
-character and takes a bit string.
+refuses a non-bit element with the field's sentence; a plain bytes field
+takes a ``bytes`` as it is and refuses everything else, as the attach of a
+source with no bit_pattern field does; the CLI flag and the Python ``str``
+give the same bits, or the same refusal, for every text in ``TEXTS``.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -70,6 +81,9 @@ CLI_FIELDS = [
     if _composer.is_bit_pattern(f) and not _composer.coerce_str_fn(f)
 ]
 CLI = "mixcli"
+#: Set in the CLI's environment, the backing prints each source's bytes
+#: fields as it is created -- how the test reads what a flag stored.
+DUMP = "BPO_DUMP_BITS"
 
 
 def _module() -> dict:
@@ -129,7 +143,15 @@ def _source() -> str:
         for n in names
     )
     free = "".join(f"      free(st->segs[i].sources[k].{n});\n" for n in names)
+    dump = "".join(
+        f'      fprintf(stderr, "{n}=");\n'
+        f"      for (size_t j = 0; j < d->n_{n}; j++)\n"
+        f'        fprintf(stderr, "%u ", (unsigned)d->{n}[j]);\n'
+        '      fprintf(stderr, "\\n");\n'
+        for n in names
+    )
     return f"""#include "{PKG}/mix/mix_core.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 struct mix_state {{
@@ -147,7 +169,9 @@ mix_state_t *mix_create(const seg_t *s, size_t n, int r, int c)
     for (size_t k = 0; k < s[i].n_sources; k++) {{
       src_t *d = &st->segs[i].sources[k];
       *d = s[i].sources[k];
-{copy}    }}
+{copy}      if (getenv("{DUMP}")) {{
+{dump}      }}
+    }}
   }}
   st->n = n;
   return st;
@@ -261,16 +285,67 @@ print(json.dumps(out))
 """
 
 
+#: What a plain bytes field says to anything but ``bytes`` -- what the
+#: attach of a source with no bit_pattern field says (gh-2701).
+PLAIN_REFUSAL = "TypeError: bits must be bytes or None"
+
+
 def _want(field: str, how: str, v: list) -> object:
     """What *v* by *how* must read as on *field*."""
     for bad, (i, x) in BAD:
         if v == bad and field in BIT_FIELDS:
             return f"ValueError: {_sentence(field, i, x)}"
     if field in PLAIN_FIELDS and how not in ("bytes", "json"):
-        # Unchanged, and not this issue's: a plain field in a coercing
-        # source shares the int-sequence branch's `v != 0`.
-        return [int(x != 0) for x in v]
+        # gh-2701: a plain field takes a `bytes` and nothing else, whatever
+        # its siblings declare; the int sequence's `v != 0` was theirs.
+        return PLAIN_REFUSAL
     return list(v)
+
+
+#: The texts both faces of a bit_pattern field read (gh-2706): binary, hex
+#: in either case, the empty spellings, and every kind of refusal.
+TEXTS = [
+    "0101",
+    "",
+    "1",
+    "0xA",
+    "0XaF",
+    "0x0",
+    "0x",
+    "01x1",
+    "0xG",
+    "0x1g",
+    "2",
+    "0b1",
+    " 01",
+    "x",
+]
+
+#: A plain field's flag: 0/1 digits, and no hex (gh-2701).
+PLAIN_TEXTS = {
+    "0101": [0, 1, 0, 1],
+    "01x1": "character 2 is 'x', not 0 or 1",
+    "0xA": "character 1 is 'x', not 0 or 1",
+}
+
+
+def _grammar(text: str) -> object:
+    """jm's bit text grammar, stated independently of the C: the bits, or
+    the refused character's sentence."""
+    if text[:2] in ("0x", "0X"):
+        bits: list = []
+        for i, c in enumerate(text[2:], 2):
+            if c not in "0123456789abcdefABCDEF":
+                return f"character {i} is '{c}', not a hex digit"
+            bits += [int(b) for b in f"{int(c, 16):04b}"]
+        return bits
+    for i, c in enumerate(text):
+        if c not in "01":
+            return (
+                f"character {i} is '{c}', not 0 or 1 (a bit string is 0/1 "
+                "digits, or 0x and hex digits)"
+            )
+    return [int(c) for c in text]
 
 
 def test_the_cases_are_not_vacuous() -> None:
@@ -279,6 +354,13 @@ def test_the_cases_are_not_vacuous() -> None:
     assert [f for f in FIELDS if _composer.coerce_str_fn(f)], (
         "no field reads its str through the project"
     )
+    # TEXTS reach every branch of the grammar: binary, hex, and each
+    # refusal, so an agreement over them is an agreement over the grammar.
+    got = [_grammar(t) for t in TEXTS]
+    assert any(isinstance(g, list) and g for g in got)
+    assert [] in got
+    assert any(isinstance(g, str) and "hex digit" in g for g in got)
+    assert any(isinstance(g, str) and "not 0 or 1" in g for g in got)
 
 
 def test_each_field_passes_the_coercer_what_it_is() -> None:
@@ -298,15 +380,61 @@ def test_each_field_passes_the_coercer_what_it_is() -> None:
         assert f'"{n}", (Py_ssize_t)(_k)' not in json_text, n
 
 
+def _attach_body(text: str) -> str:
+    """The body of ``_attach_bytes`` in a rendered source type."""
+    head = text.index("\n_attach_bytes(")
+    start = text.index("        return 1;\n", head) + len(
+        "        return 1;\n"
+    )
+    return text[start : text.index("\n}\n", start)]
+
+
+def test_a_plain_field_runs_the_attach_of_a_source_without_bits() -> None:
+    """gh-2701, with no toolchain: what a plain field (``bits`` NULL) runs
+    in a coercing source's attach is, line for line, the whole attach of a
+    source that declares no bit_pattern field."""
+    plain = {"project": {"name": PKG}, "module": {"mix": _module()}}
+    plain["module"]["mix"]["source"]["fields"] = [
+        dict(f) for f in FIELDS if f["name"] in PLAIN_FIELDS
+    ]
+    alone = _attach_body(_composer.render_source_type(plain, "mix"))
+    assert "PyUnicode_Check" not in alone and "PySequence" not in alone
+    cfg = {"project": {"name": PKG}, "module": {"mix": _module()}}
+    mixed = _attach_body(_composer.render_source_type(cfg, "mix"))
+    guarded = (
+        "    if (!bits) {\n" + textwrap.indent(alone, "    ") + "\n    }\n"
+    )
+    assert mixed.startswith(guarded), mixed[: len(guarded) + 200]
+
+
+def test_both_faces_carry_the_one_grammar() -> None:
+    """gh-2706, with no toolchain: the extension and the CLI each carry
+    ``bit_text_c()`` verbatim and read text through it, and neither keeps a
+    digit loop of its own beside it."""
+    cfg = {"project": {"name": PKG}, "module": {"mix": _module()}}
+    grammar = _composer.bit_text_c()
+    fn = _composer.BIT_TEXT_FN
+    for face in (
+        _composer.render_source_type(cfg, "mix"),
+        _composer.render_cli(cfg, "mix"),
+    ):
+        assert face.count(grammar) == 1
+        rest = face.replace(grammar, "")
+        assert f"{fn}(" in rest
+        assert "== '1'" not in rest and "'x'" not in rest
+
+
 def _run(cmd: list, cwd: Path) -> None:
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     assert r.returncode == 0, (cmd, r.stdout[-4000:], r.stderr[-4000:])
 
 
-@pytest.mark.slow
-@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
-def test_every_face_reads_one_rule(tmp_path: Path) -> None:
-    """Build one composer and hand every spelling to every bytes field."""
+@pytest.fixture(scope="module")
+def built(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One composer with every bytes field shape, built warning-clean."""
+    if _NO_TOOLCHAIN:
+        pytest.skip("no cmake / C compiler")
+    tmp_path = tmp_path_factory.mktemp("gh2696")
     assert run_cli("new", PKG, cwd=tmp_path).returncode == 0
     proj = tmp_path / PKG
     inc = proj / "native" / "inc" / PKG / "mix"
@@ -340,7 +468,41 @@ def test_every_face_reads_one_rule(tmp_path: Path) -> None:
         proj,
     )
     _run(["cmake", "--build", "build", "--parallel", "4"], proj)
+    return proj
 
+
+def _cli(proj: Path) -> str:
+    exe = [
+        p
+        for p in (proj / "build").rglob(f"{CLI}*")
+        if p.is_file() and p.name in (CLI, f"{CLI}.exe")
+    ]
+    assert exe, "the c-face CLI was not built"
+    return str(exe[0])
+
+
+def _flag(proj: Path, field: str, text: str) -> object:
+    """What the CLI's ``--<field> <text>`` stored -- the bits the backing
+    was created with -- or, on exit 2, the one stderr line."""
+    r = subprocess.run(
+        [_cli(proj), f"--{field}", text],
+        cwd=proj,
+        capture_output=True,
+        text=True,
+        env={**os.environ, DUMP: "1"},
+    )
+    if r.returncode == 2:
+        return r.stderr.strip()
+    assert r.returncode == 0, (field, text, r.returncode, r.stderr)
+    line = [x for x in r.stderr.splitlines() if x.startswith(f"{field}=")]
+    assert len(line) == 1, r.stderr
+    return [int(b) for b in line[0].split("=", 1)[1].split()]
+
+
+@pytest.mark.slow
+def test_every_face_reads_one_rule(built: Path) -> None:
+    """Hand every spelling to every bytes field."""
+    proj = built
     driver = proj / "drive_gh2696.py"
     driver.write_text(
         f"PKG = {PKG!r}\nBITS = {BIT_FIELDS!r}\nPLAIN = {PLAIN_FIELDS!r}\n"
@@ -366,30 +528,66 @@ def test_every_face_reads_one_rule(tmp_path: Path) -> None:
     )
     assert not wrong, f"{len(wrong)} wrong:\n" + "\n".join(wrong)
 
-    # The C command line: a non-bit character is refused naming the flag,
-    # and a bit string is taken.
-    exe = [
-        p
-        for p in (proj / "build").rglob(f"{CLI}*")
-        if p.is_file() and p.name in (CLI, f"{CLI}.exe")
-    ]
-    assert exe, "the c-face CLI was not built"
+
+#: Run in the built project's interpreter, with `PKG`, `PLAIN` and `TEXTS`
+#: prepended: a plain field refuses jm's bit string as it refuses any str,
+#: and a bit_pattern field answers each text. Prints `{field: {text: ...}}`.
+_TEXT_DRIVER = r"""
+import json, sys
+sys.path.insert(0, "src")
+Src = __import__(PKG + ".mix.mix", fromlist=["Src"]).Src
+out = {}
+for field in ["bits"] + PLAIN:
+    out[field] = {}
+    for t in TEXTS:
+        try:
+            # No bits read back as None, as the CLI's dump reads them as [].
+            out[field][t] = list(getattr(Src(**{field: t}), field) or b"")
+        except Exception as e:
+            out[field][t] = f"{type(e).__name__}: {e}"
+print(json.dumps(out))
+"""
+
+
+@pytest.mark.slow
+def test_the_cli_and_python_read_one_grammar(built: Path) -> None:
+    """gh-2706: for every text, the CLI flag and the Python ``str`` store
+    the same bits or refuse with the same sentence -- and that is the
+    grammar as stated in :func:`_grammar`. gh-2701: a plain field's flag
+    reads 0/1 digits and refuses the rest, and its Python face refuses a
+    str as a source without bit_pattern fields does."""
+    proj = built
+    driver = proj / "drive_gh2706.py"
+    driver.write_text(
+        f"PKG = {PKG!r}\nPLAIN = {PLAIN_FIELDS!r}\nTEXTS = {TEXTS!r}\n"
+        f"{_TEXT_DRIVER}",
+        encoding="utf-8",
+    )
+    r = subprocess.run(
+        [sys.executable, str(driver)], cwd=proj, capture_output=True, text=True
+    )
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+    py = json.loads(r.stdout)
+    wrong = []
     for n in CLI_FIELDS:
-        bad = subprocess.run(
-            [str(exe[0]), f"--{n}", "01x1"],
-            cwd=proj,
-            capture_output=True,
-            text=True,
-        )
-        assert bad.returncode == 2, (bad.returncode, bad.stderr)
-        assert (
-            f"bad --{n}: {n} {_composer.BIT_ARRAY}: "
-            "character 2 is 'x', not a bit" in bad.stderr
-        ), bad.stderr
-        good = subprocess.run(
-            [str(exe[0]), f"--{n}", "0101"],
-            cwd=proj,
-            capture_output=True,
-            text=True,
-        )
-        assert good.returncode == 0, (good.returncode, good.stderr)
+        for t in TEXTS:
+            want = _grammar(t)
+            py_want = (
+                want if isinstance(want, list) else f"ValueError: {n}: {want}"
+            )
+            cli_want = want if isinstance(want, list) else f"bad --{n}: {want}"
+            if py[n][t] != py_want:
+                wrong.append(f"python {n}={t!r}: {py[n][t]!r} != {py_want!r}")
+            cli = _flag(proj, n, t)
+            if cli != cli_want:
+                wrong.append(f"--{n} {t!r}: {cli!r} != {cli_want!r}")
+    for n in PLAIN_FIELDS:
+        for t in TEXTS:
+            if py[n][t] != PLAIN_REFUSAL:
+                wrong.append(f"python {n}={t!r}: {py[n][t]!r}")
+        for t, want in PLAIN_TEXTS.items():
+            cli_want = want if isinstance(want, list) else f"bad --{n}: {want}"
+            cli = _flag(proj, n, t)
+            if cli != cli_want:
+                wrong.append(f"--{n} {t!r}: {cli!r} != {cli_want!r}")
+    assert not wrong, f"{len(wrong)} wrong:\n" + "\n".join(wrong)

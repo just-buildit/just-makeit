@@ -808,7 +808,7 @@ class TestBitPatternCoercion:
         assert "PyUnicode_Check(obj)" in s  # str path
         assert "PySequence_Fast(" in s  # sequence path
         assert "s[1] == 'x' || s[1] == 'X'" in s  # 0x hex
-        assert "bit string must be 0/1 or '0x..' hex" in s
+        assert _composer.bit_text_c() in s
 
     def test_plain_bytes_only_without_coerce(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")

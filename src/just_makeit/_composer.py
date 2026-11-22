@@ -214,9 +214,87 @@ def is_bit_pattern(field: dict) -> bool:
     return bool(field.get("bytes")) and field.get("coerce") == "bit_pattern"
 
 
-#: What a bit_pattern field is, as every refusal of a non-bit says it
-#: (gh-2696): the Python faces' and the C command line's.
+#: What a bit_pattern field is, as every refusal of a non-bit element says
+#: it (gh-2696).
 BIT_ARRAY = "is a bit array, one element per bit (0 or 1)"
+
+#: The C function reading jm's text form of a bit pattern (gh-2706).
+BIT_TEXT_FN = "_jm_bit_text"
+
+#: How a face words a character :data:`BIT_TEXT_FN` refuses, after its own
+#: prefix (``"<field>: "`` on the Python face, ``"bad --<field>: "`` on the
+#: CLI): a ``printf`` format taking the character's index, the character as
+#: an ``unsigned char`` and the grammar's reason.
+BIT_TEXT_REFUSAL = "character %zu is '%c', %s"
+
+
+def bit_text_c() -> str:
+    """jm's text grammar for a bit pattern, as one C function (gh-2706).
+
+    The one declaration of what text a bytes field reads, emitted
+    verbatim into every translation unit that reads it -- the extension's
+    ``_attach_bytes`` (a ``bit_pattern`` field's ``str``) and the c-face
+    CLI's ``--<field>`` flag -- so the two faces cannot accept different
+    text. The CLI had kept its own loop: it read ``0``/``1`` digits only,
+    so ``--bits 0xA`` was refused while ``bits="0xA"`` was four bits, and
+    before gh-2696 it was read as one 0 bit.
+
+    The grammar: ``0``/``1`` digits, one bit each; or, where *hex* is
+    nonzero, ``0x`` / ``0X`` then hex digits, four bits each, MSB first.
+    *hex* is zero only for a plain ``bytes`` field's CLI flag (gh-2701):
+    the hex spelling is ``bit_pattern``'s alone. The function fills *out*
+    (room for ``4 * len`` bits, at least one byte) and returns 1 with
+    *n_out* the bit count; on a character it refuses it returns 0 with *at*
+    its index and *reason* why, which each face words through
+    :data:`BIT_TEXT_REFUSAL`. It touches no Python, so the CLI's pure-C
+    unit compiles it too.
+
+    >>> c = bit_text_c()
+    >>> c.splitlines()[0].startswith("/*") and BIT_TEXT_FN + "(" in c
+    True
+    """
+    return f"""/* jm's text form of a bit pattern (gh-2706), the one grammar every
+ * face reading text for a bytes field shares: 0/1 digits, or (hex
+ * nonzero) 0x then hex digits, four bits each, MSB first. Fills out
+ * (room for 4 * len bits) and returns 1 with *n_out the bit count, or 0
+ * with *at the refused character's index and *reason the reason. */
+static int
+{BIT_TEXT_FN}(const char *s, size_t len, int hex, uint8_t *out,
+             size_t *n_out, size_t *at, const char **reason)
+{{
+    size_t k = 0;
+    if (hex && len >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {{
+        for (size_t i = 2; i < len; i++) {{
+            char c = s[i];
+            int v = (c >= '0' && c <= '9')   ? c - '0'
+                    : (c >= 'a' && c <= 'f') ? c - 'a' + 10
+                    : (c >= 'A' && c <= 'F') ? c - 'A' + 10
+                                             : -1;
+            if (v < 0) {{
+                *at     = i;
+                *reason = "not a hex digit";
+                return 0;
+            }}
+            for (int b = 0; b < 4; b++)
+                out[k++] = (uint8_t)((v >> (3 - b)) & 1);
+        }}
+    }}
+    else {{
+        for (size_t i = 0; i < len; i++) {{
+            if (s[i] != '0' && s[i] != '1') {{
+                *at     = i;
+                *reason = hex ? "not 0 or 1 (a bit string is 0/1 "
+                                "digits, or 0x and hex digits)"
+                              : "not 0 or 1";
+                return 0;
+            }}
+            out[k++] = (uint8_t)(s[i] - '0');
+        }}
+    }}
+    *n_out = k;
+    return 1;
+}}
+"""
 
 
 def bit_refusal_c(name: str, index: str, value: str, indent: str) -> str:
@@ -261,7 +339,7 @@ def coerce_str_fn(field: dict) -> str:
     ``coerce_str_fn = "<fn>"`` names the project's reader instead::
 
         size_t fn(const char *text, uint8_t *out, size_t max_out,
-                  const char **why);
+                  const char **reason);
 
     It is called twice: with ``out = NULL, max_out = 0`` to size the pattern,
     then with a buffer of that many bytes to fill it, one bit per byte. Each
@@ -737,7 +815,7 @@ def _owned_ptr_parse_call(p: OwnedPtr, text: str, why: str) -> str:
     face that reads its text form uses (gh-1735).
 
     Under ``parse_why`` the reader has the reason-naming signature
-    ``T *parse_fn(const char *, const char **why)`` (the shape of
+    ``T *parse_fn(const char *, const char **reason)`` (the shape of
     ``[module.X.json] from_json_why``, gh-1706), so the call gains *why*, a
     ``const char **`` expression -- ``&_why`` where the site owns the
     local, or a parameter it was handed. Without, the one-argument call is
@@ -2044,7 +2122,7 @@ def json_why(cfg: dict, module: str) -> "dict[str, bool]":
 
     ``[module.X.json] from_json_why`` / ``from_file_why`` declare that the
     delegated ``from_json_fn`` / ``from_file_fn`` has the reason-naming
-    signature ``<state_t> *fn(const char *, const char **why)``. The Python
+    signature ``<state_t> *fn(const char *, const char **reason)``. The Python
     factory then passes ``&_why`` and a refusal raises the sentence the C
     wrote, through `reason_raise_c`; the generated C CLI passes it too and
     prints it. Undeclared, the one-argument call is unchanged.
@@ -2370,6 +2448,25 @@ def render_source_type(cfg: dict, module: str) -> str:
     store_bits = """    *dst   = buf;
     *n_dst = (size_t)nb;
     return 1;"""
+    # A plain bytes field takes a `bytes` and nothing else. This one body is
+    # all of a non-coercing source's attach, and in a coercing source it is
+    # what a plain field (`bits` NULL) runs, so a plain field takes the same
+    # values whatever its siblings declare (gh-2701): the str grammar and the
+    # int-sequence branch below are a bit_pattern field's alone.
+    plain_body = f"""    if (!PyBytes_Check(obj)) {{
+        PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
+        return 0;
+    }}
+    Py_ssize_t nb = PyBytes_GET_SIZE(obj);
+    if (nb <= 0)
+        return 1;
+    uint8_t *buf = (uint8_t *)malloc((size_t)nb);
+    if (!buf) {{
+        PyErr_NoMemory();
+        return 0;
+    }}
+    memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
+{store_bits}"""
     if bits_coerce and bits_grammar:
         attach_doc = (
             "Coerce a 0/1 pattern (bytes | binary/hex str | int sequence)"
@@ -2381,44 +2478,25 @@ def render_source_type(cfg: dict, module: str) -> str:
         attach_doc = "Coerce a 0/1 pattern (bytes | int sequence) or None"
         seq_err = "bits must be bytes or a sequence of ints"
     if bits_coerce:
+        # gh-2706: the str is read by the one grammar (`bit_text_c`) the
+        # c-face CLI's flag reads too; a refused character is worded by the
+        # one sentence both faces share.
         str_grammar = (
             f"""    if (PyUnicode_Check(obj)) {{
         Py_ssize_t slen;
         const char *s = PyUnicode_AsUTF8AndSize(obj, &slen);
         if (!s)
             return 0;
-        if (slen >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {{
-            Py_ssize_t nd = slen - 2, nb = nd * 4; /* hex digit -> 4 bits MSB */
-            uint8_t *buf = (uint8_t *)malloc(nb ? (size_t)nb : 1);
-            if (!buf) {{ PyErr_NoMemory(); return 0; }}
-            for (Py_ssize_t i = 0; i < nd; i++) {{
-                char c = s[2 + i];
-                int v = (c >= '0' && c <= '9')   ? c - '0'
-                        : (c >= 'a' && c <= 'f') ? c - 'a' + 10
-                        : (c >= 'A' && c <= 'F') ? c - 'A' + 10
-                                                 : -1;
-                if (v < 0) {{
-                    free(buf);
-                    PyErr_SetString(PyExc_ValueError, "invalid hex digit");
-                    return 0;
-                }}
-                for (int b = 0; b < 4; b++)
-                    buf[i * 4 + b] = (uint8_t)((v >> (3 - b)) & 1);
-            }}
-{store_bits}
-        }}
-        uint8_t *buf = (uint8_t *)malloc(slen ? (size_t)slen : 1);
+        uint8_t *buf = (uint8_t *)malloc(slen ? 4 * (size_t)slen : 1);
         if (!buf) {{ PyErr_NoMemory(); return 0; }}
-        for (Py_ssize_t i = 0; i < slen; i++) {{
-            if (s[i] != '0' && s[i] != '1') {{
-                free(buf);
-                PyErr_SetString(PyExc_ValueError,
-                                "bit string must be 0/1 or '0x..' hex");
-                return 0;
-            }}
-            buf[i] = (uint8_t)(s[i] - '0');
+        size_t nb = 0, at = 0;
+        const char *reason = NULL;
+        if (!{BIT_TEXT_FN}(s, (size_t)slen, 1, buf, &nb, &at, &reason)) {{
+            free(buf);
+            PyErr_Format(PyExc_ValueError, "%s: {BIT_TEXT_REFUSAL}",
+                         bits, at, (unsigned char)s[at], reason);
+            return 0;
         }}
-        Py_ssize_t nb = slen;
 {store_bits}
     }}
 """
@@ -2429,12 +2507,15 @@ def render_source_type(cfg: dict, module: str) -> str:
         # both branches -- an element that is not 0 or 1 is refused. The
         # bytes branch copied it as it was and the int branch mapped it to
         # `v != 0`, so `bytes([8])` and `[8]` were different values.
-        attach_body = f"""    if (PyBytes_Check(obj)) {{
+        attach_body = f"""    if (!bits) {{
+{textwrap.indent(plain_body, "    ")}
+    }}
+    if (PyBytes_Check(obj)) {{
         Py_ssize_t nb = PyBytes_GET_SIZE(obj);
         if (nb <= 0)
             return 1;
         const uint8_t *in = (const uint8_t *)PyBytes_AS_STRING(obj);
-        for (Py_ssize_t i = 0; bits && i < nb; i++)
+        for (Py_ssize_t i = 0; i < nb; i++)
             if (in[i] > 1) {{
 {bit_refusal_c("bits", "i", "in[i]", " " * 16)}
                 return 0;
@@ -2459,33 +2540,20 @@ def render_source_type(cfg: dict, module: str) -> str:
                 Py_DECREF(seq);
                 return 0;
             }}
-            if (bits && v != 0 && v != 1) {{
+            if (v != 0 && v != 1) {{
                 free(buf);
                 Py_DECREF(seq);
 {bit_refusal_c("bits", "i", "v", " " * 16)}
                 return 0;
             }}
-            buf[i] = (uint8_t)(v != 0);
+            buf[i] = (uint8_t)v;
         }}
         Py_DECREF(seq);
 {store_bits}
     }}"""
     else:
         attach_doc = "Copy a Python bytes (0/1 pattern) or None"
-        attach_body = f"""    if (!PyBytes_Check(obj)) {{
-        PyErr_SetString(PyExc_TypeError, "bits must be bytes or None");
-        return 0;
-    }}
-    Py_ssize_t nb = PyBytes_GET_SIZE(obj);
-    if (nb <= 0)
-        return 1;
-    uint8_t *buf = (uint8_t *)malloc((size_t)nb);
-    if (!buf) {{
-        PyErr_NoMemory();
-        return 0;
-    }}
-    memcpy(buf, PyBytes_AS_STRING(obj), (size_t)nb);
-{store_bits}"""
+        attach_body = plain_body
 
     # Alias-folding preamble (feature 2a): rename alias kwargs to their canonical
     # field before parsing. kwds is copied only when an alias is actually present
@@ -2590,10 +2658,13 @@ _attach_{cn}({struct} *src, PyObject *obj)
     if bits_coerce:
         bits_doc = (
             "\n * A bit_pattern field passes its name as bits, and an element"
-            "\n * that is not 0 or 1 is refused by it (gh-2696)."
+            "\n * that is not 0 or 1 is refused by it (gh-2696); a plain"
+            "\n * field passes NULL and takes only bytes (gh-2701)."
         )
         bits_param = ",\n              const char *bits"
-    attach_bytes_c = f"""/* {attach_doc}
+    # gh-2706: the grammar the str branch reads, ahead of its one caller.
+    grammar_c = bit_text_c() + "\n" if bits_coerce and bits_grammar else ""
+    attach_bytes_c = f"""{grammar_c}/* {attach_doc}
  * into an owned *dst and *n_dst (one shared coercer; each bytes field
  * passes its own struct destination).{bits_doc} */
 static int
@@ -7690,27 +7761,28 @@ def render_cli(cfg: dict, module: str) -> str:
         src.{_cp} = _b; src.{_cl} = _k;
     }}""")
                 continue
-            # gh-2696: a bit_pattern field's flag refuses a character that
-            # is not a bit, exiting 2 naming the flag as a bad number does;
-            # it was dropped, so "01x1" read as 011.
-            refuse = ""
-            if is_bit_pattern(f):
-                refuse = f"""
-            else {{
-                fprintf(stderr,
-                        "bad --{n}: {n} {BIT_ARRAY}: "
-                        "character %zu is '%c', not a bit\\n",
-                        _j, {n}[_j]);
-                free(_b);
-                return 2;
-            }}"""
+            # gh-2706: the flag is read by the grammar the Python face's str
+            # is (`bit_text_c`), so `--bits 0xA` is the four bits
+            # `bits="0xA"` is, and a refused character is worded alike.
+            # gh-2701: a plain field's flag reads 0/1 digits and refuses any
+            # other character, whatever its siblings declare -- it dropped
+            # them, so "01x1" read as 011; the hex spelling is bit_pattern's.
+            hex_ok = int(is_bit_pattern(f))
             assign.append(f"""    if ({n}) {{
-        size_t _ln = strlen({n});
-        uint8_t *_b = (uint8_t *)malloc(_ln ? _ln : 1);
-        size_t _k = 0;
-        for (size_t _j = 0; _j < _ln; _j++)
-            if ({n}[_j] == '0' || {n}[_j] == '1')
-                _b[_k++] = ({n}[_j] - '0');{refuse}
+        size_t _ln = strlen({n}), _k = 0, _at = 0;
+        const char *_reason = NULL;
+        uint8_t *_b = (uint8_t *)malloc(_ln ? 4 * _ln : 1);
+        if (!_b) {{
+            fprintf(stderr, "out of memory\\n");
+            return 1;
+        }}
+        if (!{BIT_TEXT_FN}({n}, _ln, {hex_ok}, _b, &_k, &_at,
+                          &_reason)) {{
+            fprintf(stderr, "bad --{n}: {BIT_TEXT_REFUSAL}\\n", _at,
+                    (unsigned char){n}[_at], _reason);
+            free(_b);
+            return 2;
+        }}
         src.{_cp} = _b; src.{_cl} = _k;
     }}""")
         else:
@@ -7750,6 +7822,9 @@ def render_cli(cfg: dict, module: str) -> str:
     number_helpers = _app.cli_number_helpers(parse_s)
     if number_helpers:
         number_helpers = "\n" + number_helpers
+    # gh-2706: the one bit grammar, dropped below if no flag reads it.
+    bit_grammar_c = bit_text_c()
+    number_helpers += "\n" + bit_grammar_c
     assign_s = "\n".join(assign)
     seg_assign_s = "\n".join(seg_assign)
     # The flag path mallocs each bytes field's buffer; <backing>_create
@@ -7879,5 +7954,7 @@ main(int argc, char **argv)
     return 0;
 }}
 """
-    # gh-1863: the lookup only where some emitted flag parser uses it.
+    # gh-1863: the lookup only where some emitted flag parser uses it, and
+    # the bit grammar only where some bytes field's flag reads it.
+    text = _drop_uncalled(text, bit_grammar_c, BIT_TEXT_FN)
     return _drop_lookup_if_uncalled(text, cfg, module, decoded=[])
