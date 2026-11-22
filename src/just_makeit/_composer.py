@@ -404,6 +404,51 @@ def _segment_copy_c(
     return "\n".join(f"{indent}{dst}{n} = {src}{n};" for n in names)
 
 
+def _source_getter_c(tname: str, obj: str, field: dict, body: str) -> str:
+    """A source field's Python getter, *body* its statements.
+
+    A field naming :func:`get_fn` reads at a rate, so its body is a
+    ``<tname>_read_<name>(<obj> *self, double fs)`` the getter calls with
+    the source's own ``fs`` -- and a flat ``Segment`` getter calls with the
+    segment's (gh-2717: it read the inner source's attribute, whose ``fs``
+    is the source type's default, not the segment's). *body* spells the rate
+    ``fs`` (:func:`_read_acc`). Any other field's getter is *body* itself.
+
+    >>> print(_source_getter_c("Src", "SrcObject", {"name": "w"},
+    ...                        "    return x;"))
+    static PyObject *
+    Src_get_w(SrcObject *self, void *closure)
+    {
+        (void)closure;
+        return x;
+    }
+    >>> print(_source_getter_c("Src", "SrcObject",
+    ...                        {"name": "w", "get_fn": "win"},
+    ...                        "    return x;"))
+    static PyObject *
+    Src_read_w(SrcObject *self, double fs)
+    {
+        return x;
+    }
+    static PyObject *
+    Src_get_w(SrcObject *self, void *closure)
+    {
+        (void)closure;
+        return Src_read_w(self, self->fs);
+    }
+    """
+    n = field["name"]
+    get = f"static PyObject *\n{tname}_get_{n}({obj} *self, void *closure)\n"
+    if not get_fn(field):
+        return f"{get}{{\n    (void)closure;\n{body}\n}}"
+    return (
+        f"static PyObject *\n{tname}_read_{n}({obj} *self, double fs)\n"
+        f"{{\n{body}\n}}\n"
+        f"{get}{{\n    (void)closure;\n"
+        f"    return {tname}_read_{n}(self, self->fs);\n}}"
+    )
+
+
 def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
     """The :class:`_Seam` each source / segment field ``get_fn`` names
     (gh-2710), in field order: ``<type> fn(const <struct> *, double);``.
@@ -2636,7 +2681,7 @@ static int
         # gh-2710: what the getter converts -- the member, or the project's
         # get_fn at the source's rate. Refused here on a field kind with no
         # scalar read; nothing but the read below changes.
-        acc = _read_acc(f, f"self->src.{n}", "&self->src", "self->fs")
+        acc = _read_acc(f, f"self->src.{n}", "&self->src", "fs")
         if _field_is_enum(f):
             e = f["enum"]
             # gh-1026: the shared refusal, so a property setter and a
@@ -2652,12 +2697,7 @@ static int
             # gh-1450: checked, and searched when the enum binds C
             # constants -- this indexed the table blind.
             _dec = _enumc.decode_c(n, e, acc, C.enums(cfg))
-            getset_fns.append(f"""static PyObject *
-{tname}_get_{n}({obj} *self, void *closure)
-{{
-    (void)closure;
-{_dec}
-}}
+            getset_fns.append(f"""{_source_getter_c(tname, obj, f, _dec)}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
@@ -2761,14 +2801,11 @@ static int
             parse = _range_parse_c(
                 f, meta, "value", dst, "self->src.ranged", "return -1;"
             )
-            getset_fns.append(f"""static PyObject *
-{tname}_get_{n}({obj} *self, void *closure)
-{{
-    (void)closure;
-    if (self->src.ranged & {flag})
-{pair}
-    return {meta["to_py"](acc)};
-}}
+            _body = (
+                f"    if (self->src.ranged & {flag})\n{pair}\n"
+                f"    return {meta['to_py'](acc)};"
+            )
+            getset_fns.append(f"""{_source_getter_c(tname, obj, f, _body)}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
@@ -2790,12 +2827,9 @@ static int
             parse = scalar_parse_c(
                 ctype, "value", "_v", "return -1;", label=n, meta=meta
             )
-            getset_fns.append(f"""static PyObject *
-{tname}_get_{n}({obj} *self, void *closure)
-{{
-    (void)closure;
-    return {to_py};
-}}
+            getset_fns.append(f"""{
+                _source_getter_c(tname, obj, f, f"    return {to_py};")
+            }
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
@@ -3384,8 +3418,22 @@ static int
     # source.fields and each getter delegates to the source's own getset (so an
     # enum field still reads as a string). A multi-source segment has no single
     # waveform to flatten, so the getter raises AttributeError there.
+    #
+    # gh-2717: a field naming `get_fn` reads at a rate, and the segment's is
+    # its own `fs` field. Delegating read it at the inner source's `fs`, the
+    # source type's default, since the segment's `fs` keyword is the
+    # segment's -- so its getter calls the source's `_read_` with the
+    # segment's rate. Without a segment `fs` the source's own is the rate.
+    seg_fs = "fs" in {f["name"] for f in fields}
     for f in _segment_flat_fields(cfg, module):
         n = f["name"]
+        read = (
+            f"{src_tname}_read_{n}(({src_tname}Object *)"
+            f"PyList_GET_ITEM(self->sources, 0), self->fs)"
+            if get_fn(f) and seg_fs
+            else f"PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "
+            f'"{n}")'
+        )
         getset_fns.append(f"""static PyObject *
 {tname}_flat_{n}({obj} *self, void *closure)
 {{
@@ -3395,7 +3443,7 @@ static int
                         "{n} is only on a single-source {tname}");
         return NULL;
     }}
-    return PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "{n}");
+    return {read};
 }}""")
         getset_rows.append(
             f'    {{"{n}", (getter){tname}_flat_{n}, NULL, '

@@ -604,6 +604,10 @@ A source can hand work back to the project as plain C, with no CPython in it:
     `<struct>` is that table's `struct`. A source field's getter is handed
     the source's `fs`; a segment field's is handed the segment's own `fs`
     field (required), and a copy of the segment's scalars, with no sources.
+    A `flat_sources` segment's flat read of a source field is handed the
+    segment's `fs` too, when the segment declares one (gh-2717): the inner
+    source keeps the source type's default rate, since the segment's `fs`
+    keyword is the segment's.
     Only the Python read changes: the setter, the constructor keyword,
     `to_json`, `from_json` and the stored member keep the stored value, so
     a record written and read back is unchanged. This is how a stored
