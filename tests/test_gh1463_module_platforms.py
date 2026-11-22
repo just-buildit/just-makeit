@@ -289,4 +289,7 @@ def test_the_key_is_known_on_a_kind_module():
 def test_the_replayed_script_names_the_key(project):
     out = _jm("script", cwd=project).stdout
     assert '# NOTE: [module.sink] platforms = ["linux", "macos"]' in out
-    assert '# NOTE: [module.hand] platforms = ["macos", "linux"]' in out
+    # gh-2711: a `kind` module's table is re-declared whole, `platforms`
+    # with it, so it needs no NOTE.
+    assert '\nplatforms = ["macos", "linux"]\n' in out
+    assert "# NOTE: [module.hand]" not in out
