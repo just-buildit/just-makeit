@@ -99,7 +99,7 @@ class TestTheSeam:
         cfg = _with({"get_fn": "src_freq"}, {"get_fn": "seg_n"})
         cfg["module"][MOD]["json"] = {"enabled": True}
         src = _composer.render_source_type(cfg, MOD)
-        assert "PyFloat_FromDouble(src_freq(&self->src, self->fs))" in src
+        assert "PyFloat_FromDouble(src_freq(&self->src, fs))" in src
         assert src.count("src_freq(") == 1
         seg = _composer.render_segment_type(cfg, MOD)
         assert "seg_n(&_seg, self->fs)" in seg
@@ -114,7 +114,7 @@ class TestTheSeam:
             if f["name"] == "snr_mode":
                 f["get_fn"] = "src_mode"
         src = _composer.render_source_type(cfg, MOD)
-        assert "long _v = (long)(src_mode(&self->src, self->fs));" in src
+        assert "long _v = (long)(src_mode(&self->src, fs));" in src
         h = _composer.render_bridge_h(cfg, MOD)
         assert "int src_mode(const wfm_source_t *, double);" in h
 
@@ -125,10 +125,7 @@ class TestTheSeam:
         ]
         src = _composer.render_source_type(cfg, MOD)
         assert "if (self->src.ranged & R_FREQ)" in src
-        assert (
-            "return PyFloat_FromDouble(src_freq(&self->src, self->fs));"
-            in (src)
-        )
+        assert "return PyFloat_FromDouble(src_freq(&self->src, fs));" in (src)
 
 
 class TestRefusals:
