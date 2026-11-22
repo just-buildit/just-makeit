@@ -394,9 +394,13 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     reads it, yet the module ``.pyi`` read it as ``T | None = None`` and the
     docstring as ``T or None`` while the binding still parsed a plain value
     seeded with the type's zero: ``None`` raised ``TypeError`` and an
-    omitted argument reached ``create()`` as ``0`` (gh-2697). The key is
-    tested for truth, as every reader tests it, so a hand-written
-    ``optional = "true"`` is asked the same as ``true``.
+    omitted argument reached ``create()`` as ``0`` (gh-2697).
+
+    The key is a flag, read through `_config._truthy` -- the one reading of
+    jm's string-typed flags, shared by every reader of it -- so a TOML bool
+    and the strings ``"true"`` / ``"false"`` mean what they say. Any other
+    value is refused here: tested for truth, ``optional = "false"`` was a
+    non-empty string and turned array dispatch ON (gh-2705).
 
     The refusal names what does exist: ``default`` (a literal of the type)
     or ``default_raw`` (a C expression jm passes through, gh-1099) give an
@@ -415,6 +419,12 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     >>> cfg["w"]["init_params"][0].update(type="int", optional=False)
     >>> init_param_optional_errors(cfg)
     []
+    >>> cfg["w"]["init_params"][0]["optional"] = "false"
+    >>> init_param_optional_errors(cfg)
+    []
+    >>> cfg["w"]["init_params"][0]["optional"] = "no"
+    >>> print(init_param_optional_errors(cfg)[0])
+    [[w.init_params]] window: optional = 'no' must be true or false
 
     A view's ``init_params`` are asked too, and a row that is not a table
     is the key walk's to name, not this one's:
@@ -424,7 +434,7 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     ...                      "optional": True}, 1]}]}})[0].split(":")[0]
     '[[w.views.init_params]] n'
     """
-    from .._config import components
+    from .._config import _truthy, components
 
     rows: "list[tuple[str, dict]]" = []
     for comp in components(cfg):
@@ -446,9 +456,15 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
         if not isinstance(p, dict) or OPTIONAL_KEY not in p:
             continue
         name = p.get("name", "?")
-        # Truthiness, as every reader of the key tests it: the stub that
-        # disagreed with the binding rendered for exactly these values.
-        if p[OPTIONAL_KEY] and not is_array_param_type(str(p.get("type", ""))):
+        value = p[OPTIONAL_KEY]
+        # A TOML bool or its string form, the values `_truthy` gives a
+        # meaning to. Not `in (True, False, ...)`: ``1 == True``.
+        if not isinstance(value, bool) and value not in ("true", "false"):
+            out.append(
+                f"{where} {name}: optional = {value!r} must be true or false"
+            )
+            continue
+        if _truthy(value) and not is_array_param_type(str(p.get("type", ""))):
             out.append(
                 f"{where} {name}: optional = true is array dispatch -- the"
                 " array's presence selects `create_fn` -- and"
