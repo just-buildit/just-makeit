@@ -39,6 +39,7 @@ from . import _keys
 from . import _incpath as INC
 from . import _csym as CSYM
 from . import _types as T
+from ._context._types import kind_doc_default
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._capsule import scalar_meta
 from ._context._parse import (
@@ -57,6 +58,7 @@ from ._context._diagnostics import (
     reason_raise_c,
 )
 from ._docstring import (
+    defaulted_ann,
     docstring_literal,
     ClassParam,
     DoxyBlock,
@@ -3805,13 +3807,74 @@ def render_serializers(
 """)
         # gh-1499: a declared `doc` is the method's docstring on both
         # faces; without one each keeps the line it always had.
-        _doc_c = (
-            authored_c_doc(str(s["doc"]))
-            if s.get("doc")
-            else f'"{name}(...) -> {returns}"'
-        )
+        # gh-2703: a serializer that takes params documents them, the stub's
+        # text derived here behind the call line, as `_ml_doc_c` does.
+        if params:
+            from ._docstring import docstring_body
+
+            _doc_c = _build_ml_doc(
+                [
+                    f"{name}({', '.join(p['name'] for p in params)})"
+                    f" -> {returns}",
+                    "",
+                    *docstring_body(serializer_doc_lines(s), 8),
+                ]
+            )
+        elif s.get("doc"):
+            _doc_c = authored_c_doc(str(s["doc"]))
+        else:
+            _doc_c = f'"{name}(...) -> {returns}"'
         rows.append(f'    {{"{name}", {fnref},\n     {flags}, {_doc_c}}},\n')
     return "\n".join(funcs), "".join(rows)
+
+
+def serializer_doc_lines(s: dict) -> "list[str]":
+    """A ``[[module.X.serializers]]`` method's ``.pyi`` docstring (indent 8).
+
+    Without params it is the line it always was: the declared ``doc``, or
+    ``Serialise as <name>.`` With params (gh-2703) it is the numpy form a
+    handle method takes, so each param has a ``Parameters`` entry -- with
+    its manifest ``doc`` and, when it has one, its default on the type line
+    (:func:`~._docstring.defaulted_ann`, spelled as a source field's
+    default is). Neither face named a serializer's params at all, so a
+    default reached the caller through no docstring. The runtime ``ml_doc``
+    is derived from these lines (`render_serializers`).
+
+    Examples
+    --------
+    >>> s = {"name": "sigmf", "params": [
+    ...     {"name": "rate", "type": "double", "default": "1e6"}]}
+    >>> [ln.strip() for ln in serializer_doc_lines(s)][4]
+    'rate : float, default 1e6'
+    >>> [ln.strip() for ln in serializer_doc_lines({"name": "blue"})]
+    ['\"\"\"Serialise as blue.\"\"\"']
+    """
+    name = s["name"]
+    params = list(s.get("params", []))
+    authored = str(s.get("doc") or "")
+    if not params:
+        return authored_docstring(
+            authored_doc_lines(authored) or [f"Serialise as {name}."], 8
+        )
+    return render_numpy_doc(
+        None,
+        name,
+        [
+            (
+                p["name"],
+                defaulted_ann(
+                    _pyi_field_type(p),
+                    kind_doc_default(p, _field_is_numeric(p)),
+                ),
+            )
+            for p in params
+        ],
+        s.get("returns", "str"),
+        override=authored or f"Serialise as {name}.",
+        authored_doc=authored,
+        param_docs={p["name"]: str(p["doc"]) for p in params if p.get("doc")},
+        indent=8,
+    )
 
 
 # ── composer type (e.g. Composer) ────────────────────────────────────────────
@@ -5700,17 +5763,16 @@ def _pyi_doc_lines(
     params: list[ClassParam] = []
     for f in fields:
         ann = _pyi_field_type(f)
-        type_line = f"{f['name']} : {ann}"
-        if "default" in f:
-            dv = f["default"]
-            # A numeric field (incl. a ranged ``float | tuple[float, float]``)
-            # renders its default bare; only string/enum defaults are quoted.
-            if _field_is_numeric(f):
-                type_line += f", default {dv}"
-            else:
-                type_line += f', default ``"{dv}"``'
-        elif f.get("bytes") or f.get("complex") or _field_is_owned_ptr(f):
-            type_line += ", default None"
+        # gh-2703: through the clause every face appends. A numeric field
+        # (incl. a ranged ``float | tuple[float, float]``) is spelled as a
+        # number, a string / enum default is quoted; a buffer, stream or
+        # owned pointer with none starts as ``None``.
+        dflt = kind_doc_default(f, _field_is_numeric(f))
+        if not dflt and (
+            f.get("bytes") or f.get("complex") or _field_is_owned_ptr(f)
+        ):
+            dflt = "None"
+        type_line = defaulted_ann(f"{f['name']} : {ann}", dflt)
         # Optional per-field description (manifest ``doc =``), then — for an
         # enum field — its choice list. Both are wrapped by the shared builder
         # at CLASS_DESC_WIDTH; gh-744's measured case was a 695-column
@@ -6264,11 +6326,7 @@ def render_pyi(cfg: dict, module: str) -> str:
             f"    def {s['name']}(self{sig}) -> {ret}:",
             # gh-1499: a declared `doc`, as written; `render_serializers`
             # puts the same text in the method's `ml_doc`.
-            *authored_docstring(
-                authored_doc_lines(str(s.get("doc") or ""))
-                or [f"Serialise as {s['name']}."],
-                8,
-            ),
+            *serializer_doc_lines(s),
         ]
     # gh-2346: the borrowed-state capsule, stubbed as a handle's is (gh-794).
     _cap_pyi = C.published_capsule(cfg, module)
