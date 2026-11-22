@@ -1134,6 +1134,22 @@ def run(root: Path) -> None:
 
     # ── modules ──────────────────────────────────────────────────────────────
     for mod in mods:
+        # gh-2711: a `kind` module (handle, capsule, composer) is declared in
+        # the manifest alone -- no verb spells `kind`, `backing` or any of
+        # its sub-tables -- so `jm module` replayed an ordinary empty module
+        # in its place. Its whole table is re-declared through the
+        # manifest's own writer, as `[[enum]]` is above, here where the
+        # module stood: a component's `object` init-param may name a handle
+        # or composer module, and is refused until the table exists. Its
+        # glue is written by the `apply` that closes the script, once every
+        # component it composes or backs has been created.
+        if C.module_kind(cfg, mod):
+            lines.append(
+                f"cat >> {C.FILENAME} <<'EOF'\n\n"
+                f"{C._dump_generic('module', {mod: cfg['module'][mod]})}"
+                "EOF\n"
+            )
+            continue
         # gh-1463: `platforms` has no CLI flag, so the reader is told to
         # re-add it. Dropped in silence, the replayed project would build
         # the module on a platform whose core does not exist (the gh-490
@@ -1484,6 +1500,12 @@ def run(root: Path) -> None:
     if app_lines:
         lines += app_lines
         lines.append("\n")
+
+    # gh-2711: a `kind` module re-declared above as a manifest table has no
+    # verb to write its glue; `apply` does, now that every component it
+    # backs or composes exists.
+    if any(C.module_kind(cfg, mod) for mod in mods):
+        lines.append("just-makeit apply\n")
 
     sys.stdout.write("".join(lines))
 
