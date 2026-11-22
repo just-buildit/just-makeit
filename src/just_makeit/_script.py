@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _context as Ctx
+from ._config import _truthy
 
 
 # Characters that make a bare shell word mean something other than itself.
@@ -189,7 +190,7 @@ def _init_param_carry(p: dict) -> tuple[str, frozenset[str]]:
     if _derived and isinstance(_derived, str):
         spec = f"{name}:{typ}:derived:{_derived}"
         return spec, frozenset({"name", "type", "derived"})
-    if p.get("optional"):
+    if _truthy(p.get("optional")):
         spec = f"{name}:{typ}:optional"
         if p.get("create_fn"):
             spec += f":{p['create_fn']}"
