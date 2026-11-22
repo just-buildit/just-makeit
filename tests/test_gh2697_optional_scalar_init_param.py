@@ -83,7 +83,7 @@ def test_an_array_may_still_dispatch(arr):
 
 
 def test_false_is_absence_and_a_string_true_is_asked():
-    # Truthiness, as every reader tests the key: the hand-written
+    # The key is read through `_config._truthy` (gh-2705): the hand-written
     # `optional = "true"` (test_gh515 declares one on an array) is the
     # same declaration as `true`.
     row = {"name": "n", "type": "int", "optional": False}

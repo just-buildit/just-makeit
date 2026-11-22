@@ -5942,7 +5942,10 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             p.get("default_raw", ""),
             p.get("real_type", ""),
             p.get("real_create_fn", ""),
-            p.get("optional", False),
+            # gh-2705: a flag, so `optional = "false"` is false -- tested
+            # for truth, the string turned array dispatch ON. Every reader
+            # of slot 6 reads it from here; load refuses any other value.
+            _truthy(p.get("optional", False)),
             p.get("create_fn", ""),
             p.get("required", False),
             p.get("doc", ""),
