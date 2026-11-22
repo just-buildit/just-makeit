@@ -3427,12 +3427,16 @@ static int
     seg_fs = "fs" in {f["name"] for f in fields}
     for f in _segment_flat_fields(cfg, module):
         n = f["name"]
+        # `sources` is the live list its getter returns, so slot 0 may hold
+        # anything a caller assigned: the cast is behind a type check, and
+        # a foreign object reads by attribute as every other field does.
+        attr = f'return PyObject_GetAttrString(_it, "{n}");'
         read = (
-            f"{src_tname}_read_{n}(({src_tname}Object *)"
-            f"PyList_GET_ITEM(self->sources, 0), self->fs)"
+            f"if (PyObject_TypeCheck(_it, &{src_type_obj}))\n"
+            f"        return {src_tname}_read_{n}(({src_tname}Object *)_it,"
+            f" self->fs);\n    {attr}"
             if get_fn(f) and seg_fs
-            else f"PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "
-            f'"{n}")'
+            else attr
         )
         getset_fns.append(f"""static PyObject *
 {tname}_flat_{n}({obj} *self, void *closure)
@@ -3443,7 +3447,8 @@ static int
                         "{n} is only on a single-source {tname}");
         return NULL;
     }}
-    return {read};
+    PyObject *_it = PyList_GET_ITEM(self->sources, 0);
+    {read}
 }}""")
         getset_rows.append(
             f'    {{"{n}", (getter){tname}_flat_{n}, NULL, '
