@@ -1,5 +1,86 @@
 ## [Unreleased]
 
+## [0.135.0] — 2026-11-22
+
+### Added
+
+- **A composer `bytes` field can name `get_fn`, so a member that describes
+    its bits reads as them (gh-2718).** doppler's bit fields are a literal
+    (`bits` set) or generated (`bits` NULL, `len` the length a PN or Gold
+    generator renders), and the getter read a generated one as `None`, with
+    `get_fn` refused on a `bytes` field. A `bytes` field's `get_fn` is
+    `size_t fn(const <struct> *, double fs, uint8_t *out, size_t max)`,
+    declared in `<cname>_bridge.h`: it returns the length and writes at most
+    `max` elements, so `out = NULL, max = 0` sizes the buffer. The getter
+    reads through it, a `flat_sources` Segment's read of the field renders
+    at the segment's `fs` (as gh-2717's scalar reads do), and `to_json`
+    writes a generated member as the bits it renders, where it left the
+    field out.
+
+### Fixed
+
+- **A plain `bytes` composer field takes the same values whatever its
+    siblings declare (gh-2701).** The bytes coercer is generated once per
+    source, so when any field was `coerce = "bit_pattern"` a plain
+    `bytes = true` field beside it also took jm's `"0101"` string and an int
+    sequence (each element stored as `v != 0`), both refused in a source
+    with no bit_pattern field. It now takes a `bytes` and refuses anything
+    else with the `TypeError` it raises in such a source. The c-face CLI's
+    `--<field>` flag for a plain field reads `0`/`1` digits and exits 2
+    naming the character on anything else, where it silently dropped it,
+    so `01x1` read as `011`.
+
+- **Every parameter with a default names it in its docstring, on every kind
+    (gh-2703).** gh-2679 added the `name : T, default <value>` clause to a
+    method's and a module function's parameters. These still had none, on
+    the `.pyi` and on the runtime `__doc__`:
+
+    - a defaulted array param (`default = "[]"`). It now reads
+        `default None`: an omitted array and `None` both reach C as `NULL`.
+        An array init param used to read `default ...`.
+    - a handle method's `args`.
+    - a composer serializer's `params`, which had no `Parameters` section
+        at all.
+
+    A handle's `create_args` and a composer's fields kept their own copy
+    of the clause. Every writer now appends it through one helper, and a
+    numeric default is spelled as a method parameter's is: a handle
+    `bool` reads `default True`, no longer `default true`.
+
+- **A `bit_pattern` field's CLI flag reads the text its Python face reads
+    (gh-2706).** jm's string form of a bit pattern, `0`/`1` digits or `0x`
+    hex expanded MSB first, was read by the Python `str` coercer and by a
+    separate loop in the c-face CLI that knew no hex, so `bits="0xA"` was
+    four bits while `--bits 0xA` exited 2. Both faces now read text through
+    one generated C function and word a refused character with one
+    sentence naming its index and the reason: Python raises
+    `ValueError: bits: character 2 is 'x', not 0 or 1 (...)`, and the CLI
+    prints the same text after `bad --bits:` and exits 2.
+
+- **`jm script` replays a handle, capsule or composer module whole
+    (gh-2711).** No verb declares a `kind` module, and the script emitted a
+    plain `jm module <name>` for one, so `kind`, `backing` and every
+    sub-table (`source`, `segment`, `methods`, `create_args`, ...) were
+    dropped without a NOTE: the replay held an ordinary empty module where
+    the composer had been. The script now re-declares the module's table
+    through the manifest's writer, as it does `[[enum]]`, where the module
+    stood (a component's `object` init-param may name it), and ends with
+    `just-makeit apply` to write its binding. An init-param's
+    `optional = "false"` no longer replays as `:optional`: the script asks
+    `optional` by truth, as jm's other readers do.
+
+- **`Composer.segments` keeps a generated `bytes` member, and copies a
+    `complex` stream (gh-2718).** The segment-list copy duplicated a
+    `c_ptr` / `c_len` pair only when both were set and otherwise zeroed the
+    length, so a member with a NULL pointer and a length (a generated run of
+    bits) came back absent and `Composer(c.segments)` composed a different
+    source. It now keeps the whole member and duplicates the pointer only
+    when it is set. A `complex` stream was not duplicated at all, so the
+    copied source and the composer state both freed one buffer; it is
+    duplicated now. The c-face CLI freed a relocated `bytes` field's
+    enclosing struct (`src.<name>`) instead of its `c_ptr` member; it frees
+    the member.
+
 ## [0.134.1] — 2026-11-21
 
 ### Fixed
