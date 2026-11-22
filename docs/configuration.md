@@ -2147,6 +2147,11 @@ The nested tables (and the view's `create_error`) are written by
 `just-makeit property|method|warning|error <obj> --view <ClassName>`; see
 [Extend commands → `just-makeit view`](commands/extend.md#just-makeit-view).
 
+Any other key on a view row is reported as an unknown `view` key naming the
+row (`acc.views(SeededAcc): unknown view key ...`), as one on the object row
+is, and does nothing; so is a key the object's own rows would not take on the
+view's `init_params` and `properties` (gh-2713).
+
 ### `[module.<name>]`
 
 | Key                                                      | Type                    | Notes                                                                                              |
