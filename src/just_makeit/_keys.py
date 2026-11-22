@@ -20,14 +20,26 @@ turning that into an error would break every manifest already relying on it.
 
 Scope
 -----
-Only the tables whose key sets can be stated with confidence are checked:
-objects, their methods/properties/state/init-params/array-args, and
-module-level functions. Handle, composer and capsule modules (``kind = "handle"`` and
-friends in :mod:`._handle`) carry their own method vocabulary — ``returns``,
-``out_len_fn``, ``caller_out`` — and are **skipped** rather than guessed at.
-A false warning on a valid key is worse than the silence this replaces: it
-trains the reader to ignore the channel. Widening the registry to those tables
-is additive and safe to do later; warning on them now is not.
+Only the tables whose key sets can be stated with confidence are checked,
+each against its entry in :data:`KIND_KEYS`, by :func:`unknown_keys`:
+
+- the top-level ``[[enum]]`` rows (gh-2606);
+- each object, and its state, init-param, init-group, array-arg
+  (gh-2008), property, record and record-field (gh-1405), method and
+  method-param, and extra-method (gh-1997) rows;
+- each object's view rows (gh-2713), with the view's own init-params,
+  properties, methods and method params (gh-2709);
+- module-level functions and their params;
+- the ``kind``-bearing modules -- handle, capsule and composer -- with
+  their own method, argument, getter, factory and property rows and the
+  composer's sub-tables (gh-1114, gh-1236).
+
+What stays unchecked has no stated key set: an object module's own table
+(only its dropped ``depends_on`` is reported, gh-1432), the warning rows of
+an object or a view, and the reserved sections other than ``[[enum]]``
+(``[project]``, ``[app]``, ``[codec.X]``, ``[[group]]``, ...). A false warning on a valid key is worse than the
+silence this replaces: it trains the reader to ignore the channel, so a
+table gains a vocabulary only once its readers say what it is.
 """
 
 from __future__ import annotations
@@ -125,6 +137,43 @@ OBJECT_KEYS = frozenset(
         # the author writes in the object's `_extra.c`; gh-1190's composer
         # key, for an ordinary object.
         "extra_methods",
+    }
+)
+
+#: Keys valid on a ``[[<component>.views]]`` row (gh-504): a second Python
+#: class over the object's C core. Exactly the keys jm's readers take off a
+#: view row -- ``_view.run`` writes them, ``_config``'s ``view_*`` helpers
+#: and ``_apply``'s replay read them -- and
+#: ``tests/test_gh2713_view_row_keys.py`` derives that set from the source
+#: and holds the two equal in both directions. Before gh-2713 the row was
+#: walked by nothing, so a misspelt ``exclude_propertys`` was accepted, kept,
+#: and excluded nothing, in silence.
+VIEW_KEYS = frozenset(
+    {
+        "class_name",
+        "doc",
+        # gh-2516: the object module the class lives in, when not its
+        # parent's (`_config.view_module`).
+        "module",
+        "create_fn",
+        # gh-2681: the object of the view's module whose core declares and
+        # defines `create_fn` (`_config.view_create_core`).
+        "create_core",
+        # gh-580: the view's own create()-failure translation, inheriting
+        # the parent's per key when absent.
+        "create_error",
+        "create_error_message",
+        # gh-2552: `create_fn` takes a trailing `const char **why`.
+        "create_why",
+        "exclude_properties",
+        "exclude_methods",
+        # Sub-tables: the view's own constructor shape (falling back to the
+        # parent's), the properties and methods it adds or overrides, and its
+        # post-construction warnings (gh-509).
+        "init_params",
+        "properties",
+        "methods",
+        "warnings",
     }
 )
 
@@ -1051,6 +1100,7 @@ COMPOSER_CLI_KEYS = frozenset({"enabled", "name"})
 
 KIND_KEYS: dict[str, frozenset] = {
     "object": OBJECT_KEYS,
+    "view": VIEW_KEYS,  # gh-2713
     "state": STATE_KEYS,
     "init_param": INIT_PARAM_KEYS,
     "init_group": INIT_GROUP_KEYS,
@@ -1547,9 +1597,8 @@ def unknown_keys(cfg: dict) -> list:
 
     Notes
     -----
-    Tables jm cannot characterise are skipped rather than guessed at — see
-    this module's docstring. In particular a ``kind``-bearing module (handle,
-    composer, capsule) is left alone entirely.
+    Tables jm cannot characterise are skipped rather than guessed at; the
+    module docstring's Scope section lists what is walked and what is not.
     """
     # `components` is the canonical answer to "which top-level tables are
     # objects" — it already excludes `app`, `enum` and `codec`, which a
@@ -1599,6 +1648,19 @@ def unknown_keys(cfg: dict) -> list:
                 found += _check(
                     "record field", f"{where}({f.get('name', '?')})", f
                 )
+        # gh-2713: a view row (gh-504), and the init-param and property rows
+        # it declares, against the vocabularies an object's own rows are
+        # held to -- the view's are read by the same readers. Its method
+        # rows are walked below, with the object's.
+        for entry in _entries(section, "views"):
+            where = f"{name}.views({entry.get('class_name', '?')})"
+            found += _check("view", where, entry)
+            for sub, kind in (
+                ("init_params", "init_param"),
+                ("properties", "property"),
+            ):
+                for p in _entries(entry, sub):
+                    found += _check(kind, f"{where}.{p.get('name', '?')}", p)
         # gh-2709: an object's methods and its views' (gh-504), through the
         # one walk the load-time param checks share. A view's method rows
         # were walked by nothing, so a key on one -- or on its params --
