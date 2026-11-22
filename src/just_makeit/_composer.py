@@ -417,9 +417,23 @@ def get_fn(field: dict) -> str:
     The read converts the function's result as it converted the member: by
     the field's ``type``, an enum's int decoded to its name, and a ranged
     field's scalar read (its ``(lo, hi)`` pair, when one is stored, is read
-    as stored). A field kind with no scalar read -- a ``bytes`` or
-    ``complex`` buffer, an owned pointer -- is refused, since the key would
-    be read by nobody.
+    as stored).
+
+    A ``bytes`` field reads a run of elements, so its function writes them
+    (gh-2718)::
+
+        size_t fn(const <struct> *, double fs, uint8_t *out, size_t max);
+
+    It returns the field's length in elements (bits, for a bit pattern) and
+    writes at most ``max`` of them, so ``out = NULL, max = 0`` sizes the
+    buffer. This is how a member that DESCRIBES its bits reads as them:
+    doppler's ``wfm_seq_t`` is a literal (``bits`` non-NULL) or generated
+    (``bits`` NULL, ``len`` the length a PN or Gold generator renders), and
+    the getter read a generated one as ``None``. ``to_json`` writes a
+    generated member (a NULL pointer with a length) through it too, since
+    the record has no spelling for the description; a stored run is
+    written as stored. A ``complex`` stream or an owned pointer is
+    refused: the key would be read by nobody.
 
     >>> get_fn({"name": "window", "type": "size_t", "get_fn": "win"})
     'win'
@@ -427,19 +441,84 @@ def get_fn(field: dict) -> str:
     ''
     """
     fn = field.get("get_fn") or ""
-    if fn and (
-        field.get("bytes")
-        or field.get("complex")
-        or _field_is_owned_ptr(field)
-    ):
+    if fn and (field.get("complex") or _field_is_owned_ptr(field)):
         raise Refusal(
             f"composer field '{field.get('name', '<unnamed>')}': "
             f'`get_fn = "{fn}"` reads a scalar through '
-            "`<type> fn(const <struct> *, double fs)`, and a `bytes`, "
-            "`complex` or owned-pointer field has no scalar read "
-            "(gh-2710)."
+            "`<type> fn(const <struct> *, double fs)`, or a `bytes` "
+            "field's elements through `size_t fn(const <struct> *, "
+            "double fs, uint8_t *out, size_t max)`, and a `complex` or "
+            "owned-pointer field has neither read (gh-2710, gh-2718)."
         )
     return fn
+
+
+def get_fn_prototype(field: dict, struct: str) -> str:
+    """The C prototype a field's :func:`get_fn` is declared with.
+
+    A scalar's returns the value at rate ``fs`` (gh-2710); a ``bytes``
+    field's writes its elements and returns their count (gh-2718).
+
+    >>> get_fn_prototype({"name": "w", "type": "size_t", "get_fn": "win"},
+    ...                  "s_t")
+    'size_t win(const s_t *, double);'
+    >>> get_fn_prototype({"name": "b", "bytes": True, "get_fn": "rd"},
+    ...                  "s_t")
+    'size_t rd(const s_t *, double, uint8_t *, size_t);'
+    """
+    fn = get_fn(field)
+    if field.get("bytes"):
+        return f"size_t {fn}(const {struct} *, double, uint8_t *, size_t);"
+    return f"{field['type']} {fn}(const {struct} *, double);"
+
+
+def _bytes_render_c(
+    field: dict,
+    struct_ptr: str,
+    fs: str,
+    buf: str,
+    oom: str,
+    mismatch: str,
+    indent: str,
+) -> str:
+    """The C rendering a ``bytes`` field's :func:`get_fn` into a fresh
+    ``uint8_t *<buf>`` of ``size_t <buf>_n`` elements (gh-2718).
+
+    Sized by a first call with ``out = NULL, max = 0``, written by a
+    second. A length of 0 leaves *buf* NULL. An allocation that fails runs
+    *oom*; a second call returning another length frees *buf*, sets it
+    NULL and runs *mismatch*. The one spelling of "call a bytes
+    ``get_fn``", for the getter and for ``to_json``.
+
+    >>> print(_bytes_render_c({"name": "b", "bytes": True, "get_fn": "rd"},
+    ...       "&s", "fs", "_g", "return NULL;", "return NULL;", ""))
+    size_t _g_n = rd(&s, fs, NULL, 0);
+    uint8_t *_g = NULL;
+    if (_g_n) {
+        _g = (uint8_t *)malloc(_g_n);
+        if (!_g) {
+            return NULL;
+        } else if (rd(&s, fs, _g, _g_n) != _g_n) {
+            free(_g);
+            _g = NULL;
+            return NULL;
+        }
+    }
+    """
+    fn = get_fn(field)
+    text = f"""size_t {buf}_n = {fn}({struct_ptr}, {fs}, NULL, 0);
+uint8_t *{buf} = NULL;
+if ({buf}_n) {{
+    {buf} = (uint8_t *)malloc({buf}_n);
+    if (!{buf}) {{
+        {oom}
+    }} else if ({fn}({struct_ptr}, {fs}, {buf}, {buf}_n) != {buf}_n) {{
+        free({buf});
+        {buf} = NULL;
+        {mismatch}
+    }}
+}}"""
+    return textwrap.indent(text, indent)
 
 
 def _read_acc(field: dict, stored: str, struct_ptr: str, fs: str) -> str:
@@ -529,7 +608,7 @@ def _source_getter_c(tname: str, obj: str, field: dict, body: str) -> str:
 
 def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
     """The :class:`_Seam` each source / segment field ``get_fn`` names
-    (gh-2710), in field order: ``<type> fn(const <struct> *, double);``.
+    (gh-2710), in field order, each declared by :func:`get_fn_prototype`.
 
     Raises
     ------
@@ -560,9 +639,15 @@ def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
             out.append(
                 _Seam(
                     fn,
-                    f"{f['type']} {fn}(const {tbl['struct']} *, double);",
+                    get_fn_prototype(f, tbl["struct"]),
                     f"{where} field `{f['name']}` (get_fn)",
-                    f"/* Read {where} field `{f['name']}` at rate fs"
+                    _c_comment(
+                        f"Write {where} field `{f['name']}` at rate fs: at "
+                        "most max elements, returning the count (out NULL, "
+                        "max 0 sizes; get_fn, gh-2718)."
+                    )
+                    if f.get("bytes")
+                    else f"/* Read {where} field `{f['name']}` at rate fs"
                     " (get_fn, gh-2710). */",
                 )
             )
@@ -2786,15 +2871,38 @@ static int
         elif f.get("bytes"):
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
-            getset_fns.append(f"""static PyObject *
-{tname}_get_{n}({obj} *self, void *closure)
-{{
-    (void)closure;
-    if (self->src.{_p} && self->src.{_l})
+            # gh-2718: a field naming `get_fn` reads through it, so a member
+            # that describes its bits (a NULL pointer with a length) reads
+            # as the bits it stands for rather than None. Its body spells the
+            # rate `fs`, so `_source_getter_c` puts it in `<Src>_read_<n>`,
+            # which a flat Segment read calls at the segment's fs (gh-2717).
+            if get_fn(f):
+                _fn = get_fn(f)
+                _render = _bytes_render_c(
+                    f,
+                    "&self->src",
+                    "fs",
+                    "_g",
+                    "return PyErr_NoMemory();",
+                    "return PyErr_Format(PyExc_RuntimeError,\n"
+                    f'            "{_fn}() sized {n} as %zu elements, '
+                    'then wrote another count",\n'
+                    "            _g_n);",
+                    "    ",
+                )
+                _read = f"""{_render}
+    if (!_g)
+        Py_RETURN_NONE;
+    PyObject *_r = PyBytes_FromStringAndSize(
+        (const char *)_g, (Py_ssize_t)_g_n);
+    free(_g);
+    return _r;"""
+            else:
+                _read = f"""    if (self->src.{_p} && self->src.{_l})
         return PyBytes_FromStringAndSize(
             (const char *)self->src.{_p}, (Py_ssize_t)self->src.{_l});
-    Py_RETURN_NONE;
-}}
+    Py_RETURN_NONE;"""
+            getset_fns.append(f"""{_source_getter_c(tname, obj, f, _read)}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
@@ -4230,30 +4338,59 @@ def render_composer_type(cfg: dict, module: str) -> str:
     #     field left ALIASING the composer state's buffer instead of owned, so
     #     the rebuilt object and the state both freed it.
     # Empty when the source declares no bytes field, which is the common case.
-    src_bytes_copy = "".join(
-        f"""            if (syn->src.{p} && syn->src.{ln}) {{
-                uint8_t *copy = (uint8_t *)malloc(syn->src.{ln});
-                if (copy)
-                    memcpy(copy, syn->src.{p}, syn->src.{ln});
-                syn->src.{p} = copy;
-            }} else {{
-                syn->src.{p} = NULL;
-                syn->src.{ln} = 0;
-            }}
-"""
-        for p, ln in (
-            buffer_members(f) for f in src.get("fields", []) if f.get("bytes")
-        )
-    )
-    # gh-1711: an owned pointer is copied through its host function, so the
-    # rebuilt source owns its own value and the state keeps its. Every alias
-    # is cleared BEFORE the first copy, so a copy that fails leaves nothing
-    # the rebuilt source's dealloc could free on the state's behalf.
+    #
+    # gh-2718: the struct copy above already carries the whole member, so the
+    # copy only duplicates a pointer that is there. It used to zero the
+    # length of a NULL pointer, and a NULL pointer with a length is a
+    # GENERATED member (doppler's `wfm_seq_t`: a PN or Gold run of `len` bits,
+    # `bits` non-NULL for a literal only), so the copy composed a different
+    # source. A `complex` stream is the same owned pair and was not
+    # duplicated at all: the rebuilt source and the state both freed it.
+    # Every alias is cleared before the first copy, as gh-1711's are below,
+    # so a copy that fails leaves nothing the dealloc frees for the state.
     _ptrs = [
         owned_ptr(cfg, f)
         for f in src.get("fields", [])
         if _field_is_owned_ptr(f)
     ]
+    _bufs = [
+        buffer_members(f) for f in src.get("fields", []) if _field_is_buffer(f)
+    ]
+    src_bytes_copy = ""
+    if _bufs:
+        _undo = "".join(
+            f"                    syn->src.{op.member} = NULL;\n"
+            for op in _ptrs
+        )
+        src_bytes_copy = (
+            "            {\n"
+            + "".join(
+                f"                const void *_b{i} = syn->src.{p};\n"
+                f"                syn->src.{p} = NULL;\n"
+                for i, (p, _ln) in enumerate(_bufs)
+            )
+            + "".join(
+                f"""                if (_b{i}) {{
+                    size_t _sz = syn->src.{ln} * sizeof *syn->src.{p};
+                    void *_c = malloc(_sz ? _sz : 1);
+                    if (!_c) {{
+{_undo}                        Py_DECREF(syn);
+                        Py_DECREF(srclist);
+                        Py_DECREF(list);
+                        return PyErr_NoMemory();
+                    }}
+                    memcpy(_c, _b{i}, _sz);
+                    syn->src.{p} = _c;
+                }}
+"""
+                for i, (p, ln) in enumerate(_bufs)
+            )
+            + "            }\n"
+        )
+    # gh-1711: an owned pointer is copied through its host function, so the
+    # rebuilt source owns its own value and the state keeps its. Every alias
+    # is cleared BEFORE the first copy, so a copy that fails leaves nothing
+    # the rebuilt source's dealloc could free on the state's behalf.
     if _ptrs:
         src_bytes_copy += "            {\n"
         src_bytes_copy += "".join(
@@ -7180,11 +7317,36 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             # this emitter after the deep-copy one was fixed — which is the
             # argument for `buffer_members` existing at all.
             _p, _l = buffer_members(f)
+            # gh-2718: a NULL pointer with a length is a GENERATED member,
+            # which the record has no spelling for; a field naming `get_fn`
+            # writes the bits it renders, so the field is kept, and the
+            # record reads back as the same bits. Without one there is no
+            # read of it, and it is left out as before.
+            _gen = ""
+            if get_fn(f):
+                _render = _bytes_render_c(
+                    f,
+                    "src",
+                    "fs",
+                    "_g",
+                    "/* out of memory: left out, as cJSON's own are */",
+                    "/* the count changed: nothing faithful to write */",
+                    "            ",
+                )
+                _gen = f""" else if (src->{_l}) {{
+{_render}
+            if (_g) {{
+                cJSON *ba = cJSON_AddArrayToObject(so, "{n}");
+                for (size_t bi = 0; bi < _g_n; bi++)
+                    cJSON_AddItemToArray(ba, cJSON_CreateNumber(_g[bi]));
+                free(_g);
+            }}
+        }}"""
             src_ser.append(f"""        if (src->{_p} && src->{_l}) {{
             cJSON *ba = cJSON_AddArrayToObject(so, "{n}");
             for (size_t bi = 0; bi < src->{_l}; bi++)
                 cJSON_AddItemToArray(ba, cJSON_CreateNumber(src->{_p}[bi]));
-        }}""")
+        }}{_gen}""")
         elif _field_is_owned_ptr(f):
             # gh-1711: the host's text form, nested as JSON when it is JSON
             # (so a record reads as one document), else kept as a string.
@@ -7209,6 +7371,12 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 f"        {_json_put('so', n, f['type'], f'src->{n}', wide)}"
             )
     src_ser_s = "\n".join(src_ser)
+    # gh-2718: a bytes `get_fn` renders at the segment's rate, so the
+    # source's record is handed it -- and only then, so a record without
+    # one is unchanged.
+    _src_gen = any(f.get("bytes") and get_fn(f) for f in src_fields)
+    src_fs_param = ", double fs" if _src_gen else ""
+    src_fs_arg = ", g->fs" if _src_gen else ""
 
     def _seg_enum_name(f: dict) -> str:
         return _enumc.name_expr(f["enum"], "g->" + f["name"], C.enums(cfg))
@@ -7404,7 +7572,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     text = f"""/* ── generic SSOT-driven JSON (de)serialization ── */
 {_JSON_NUM_C}{wide_c}
 static void
-_json_add_source(cJSON *so, const {src_struct} *src)
+_json_add_source(cJSON *so, const {src_struct} *src{src_fs_param})
 {{
 {src_ser_s}
 }}
@@ -7441,7 +7609,7 @@ static PyObject *
         cJSON *srcarr = cJSON_AddArrayToObject(sj, "sources");
         for (size_t k = 0; k < g->{count_member}; k++) {{
             cJSON *so = cJSON_CreateObject();
-            _json_add_source(so, &g->{sources_member}[k]);
+            _json_add_source(so, &g->{sources_member}[k]{src_fs_arg});
             cJSON_AddItemToArray(srcarr, so);
         }}
         cJSON_AddItemToArray(arr, sj);
@@ -7829,9 +7997,15 @@ def render_cli(cfg: dict, module: str) -> str:
     seg_assign_s = "\n".join(seg_assign)
     # The flag path mallocs each bytes field's buffer; <backing>_create
     # deep-copies it, so free our copy after create — keeps the tool
-    # Valgrind-clean (constant even under --continuous).
+    # Valgrind-clean (constant even under --continuous). gh-2718: by the
+    # member the flag wrote (`buffer_members`, with a relocated member's
+    # cast), as every other site frees it -- this freed `src.<name>`, which
+    # for a `c_ptr` field is the enclosing struct, not the pointer.
     bytes_free = "".join(
-        f"        free(src.{f['name']});\n"
+        "        free({}src.{});\n".format(
+            "(void *)" if buffer_is_relocated(f) else "",
+            buffer_members(f)[0],
+        )
         for f in src_fields
         if f.get("bytes")
     ) + "".join(

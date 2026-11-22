@@ -143,9 +143,12 @@ class TestTheOverrideReachesEverySite:
         assert "free((void *)self->src.sync.bits);" in c
 
     def test_the_segment_deep_copy(self, c: str) -> None:
-        assert "if (syn->src.sync.bits && syn->src.sync.len)" in c
-        assert "memcpy(copy, syn->src.sync.bits, syn->src.sync.len);" in c
-        assert "syn->src.sync.len = 0;" in c
+        assert "= syn->src.sync.bits;\n" in c
+        assert (
+            "size_t _sz = syn->src.sync.len * sizeof *syn->src.sync.bits;"
+        ) in c
+        # gh-2718: a NULL pointer keeps its length (a generated member).
+        assert "syn->src.sync.len = 0;" not in c
 
     def test_the_json_serializer(self, c: str) -> None:
         assert "if (src->sync.bits && src->sync.len)" in c
