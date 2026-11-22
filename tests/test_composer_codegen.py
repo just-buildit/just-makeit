@@ -987,10 +987,8 @@ class TestSegmentFlatAccessors:
             assert (
                 f'{{"{n}", (getter)Segment_flat_{n}, NULL, NULL, NULL}},' in s
             )
-        assert (
-            'PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "freq")'
-            in s
-        )
+        assert "PyObject *_it = PyList_GET_ITEM(self->sources, 0);" in s
+        assert 'return PyObject_GetAttrString(_it, "freq");' in s
 
     def test_multi_source_raises_attributeerror(self):
         s = _composer.render_segment_type(_flat_cfg(), "wfm_compose")
@@ -1098,10 +1096,8 @@ class TestSegmentFlatAccessors:
         s = _composer.render_segment_type(cfg, "playlist")
         assert "Track_flat_gain(TrackObject *self" in s
         assert "Track_flat_channel(TrackObject *self" in s
-        assert (
-            'PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "gain")'
-            in s
-        )
+        assert "PyObject *_it = PyList_GET_ITEM(self->sources, 0);" in s
+        assert 'return PyObject_GetAttrString(_it, "gain");' in s
         assert "Track_flat_dur" not in s  # dur is a Track scalar, not proxied
         pyi = _composer.render_pyi(cfg, "playlist")
         assert "    gain: float" in pyi
