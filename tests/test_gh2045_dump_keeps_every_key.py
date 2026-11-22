@@ -101,6 +101,11 @@ def _composer(**tables: object) -> dict:
 #: `elements_per_sample` are refused at load on anything else.
 PLACES = {
     "object": (dict(_OBJECT), lambda r: {"project": dict(_PROJECT), "o": r}),
+    # gh-2713: a view row, which `_keys` now walks.
+    "view": (
+        {"class_name": "V", "create_fn": "o_create_v"},
+        lambda r: _obj(views=[r]),
+    ),
     "state": (
         {"name": "buf", "type": "float[8]"},
         lambda r: _obj(state=[r]),
