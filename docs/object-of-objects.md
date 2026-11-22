@@ -630,8 +630,24 @@ A source can hand work back to the project as plain C, with no CPython in it:
     `Synth(fs=40e6).window` is then `dp_wfm_source_window(&src, 40e6)`,
     while `to_json()` still writes the sentinel. The result converts as the
     member did: by `type`, an enum's int as its name, and a ranged field's
-    scalar (a stored `(lo, hi)` pair reads as stored). A `bytes`, `complex`
-    or owned-pointer field has no scalar read, so the key is refused there.
+    scalar (a stored `(lo, hi)` pair reads as stored).
+
+    On a `bytes` field (gh-2718) the function writes the field's elements:
+    `size_t fn(const <struct> *, double fs, uint8_t *out, size_t max)`
+    returns the length in elements (bits, for a bit pattern) and writes at
+    most `max`, so `out = NULL, max = 0` sizes the buffer. This is how a
+    member that *describes* its bits reads as them. doppler's `wfm_seq_t`
+    is a literal (`bits` set) or generated (`bits` NULL, `len` the length a
+    PN generator renders), and without the key a generated member reads as
+    `None`. The getter calls the function whenever the field names it.
+    `to_json` writes a generated member (a NULL pointer with a length) as
+    the bits the function renders, since the record has no spelling for the
+    description, and a stored run as stored. Every copy jm makes of a
+    `c_ptr` / `c_len` pair (`Composer.segments`, and so
+    `Composer(c.segments)`) keeps the whole member and duplicates the
+    pointer only when it is set, so a generated member keeps its length.
+    A `complex` or owned-pointer field has no such read, so the key is
+    refused there.
 
 jm writes the prototype of every seam (these, a field's `coerce_str_fn` and
 `get_fn`, and an owned-pointer field's four host functions) into a generated

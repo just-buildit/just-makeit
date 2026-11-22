@@ -356,7 +356,7 @@ class TestComposerType:
         assert "wfm_compose_segments(self->state" in s
         assert "Composer_get_segments" in s
         # rebuilt sources deep-copy their bits
-        assert "malloc(syn->src.n_bits)" in s
+        assert "size_t _sz = syn->src.n_bits * sizeof *syn->src.bits;" in s
         # close / context manager / dealloc destroy the backing state
         assert "wfm_compose_destroy(self->state)" in s
         assert "Composer_enter" in s and "Composer_exit" in s

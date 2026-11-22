@@ -132,7 +132,6 @@ class TestRefusals:
     @pytest.mark.parametrize(
         "field",
         [
-            {"name": "bits", "type": "uint8_t*", "bytes": True},
             {"name": "iq", "type": "float _Complex*", "complex": True},
             {
                 "name": "frame",
@@ -143,16 +142,16 @@ class TestRefusals:
                 "format_fn": "ft",
             },
         ],
-        ids=["bytes", "complex", "owned_pointer"],
+        ids=["complex", "owned_pointer"],
     )
     def test_a_field_with_no_scalar_read(self, field: dict) -> None:
         cfg = copy.deepcopy(_cfg())
         fields = cfg["module"][MOD]["source"]["fields"]
         fields[:] = [f for f in fields if f["name"] != field["name"]]
         fields.append({**field, "get_fn": "nope"})
-        with pytest.raises(ValueError, match="has no scalar read"):
+        with pytest.raises(ValueError, match="has neither read"):
             _composer.render_bridge_h(cfg, MOD)
-        with pytest.raises(ValueError, match="has no scalar read"):
+        with pytest.raises(ValueError, match="has neither read"):
             _composer.render_source_type(cfg, MOD)
 
     def test_a_segment_field_with_no_segment_fs(self) -> None:
