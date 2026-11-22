@@ -1064,7 +1064,11 @@ Reads `just-makeit.toml` and emits one command per scaffold step in the
 correct category order: `new` → `module` → `object` → `record` → `method` →
 `property` → `view` → `warning` → `error` → `function`, plus
 `config version` when the version is not `0.1.0`. A key with no CLI spelling
-is listed as a `# NOTE:` comment saying where to re-add it. The output is a
+is listed as a `# NOTE:` comment saying where to re-add it. A table with no
+verb at all -- `[[enum]]`, and a `kind = "handle"`, `"capsule"` or
+`"composer"` module with every sub-table it holds -- is re-declared whole, as
+a `cat >> just-makeit.toml` block, and a script holding a `kind` module ends
+with `just-makeit apply` to write its binding (gh-2711). The output is a
 valid shell script that, when run from the parent directory, produces an
 identical `just-makeit.toml`. Within the `object` category, order matches
 original creation order for a `--no-fragments` (single-manifest) project;
