@@ -147,3 +147,21 @@ def test_a_handle_consumer_replays_after_its_table(tmp_path):
     root, mod = _project(tmp_path, "handle")
     _ok(root, "object", "user", "--init-param", f"src:object:{mod}")
     _round_trip(root, mod, tmp_path / "replay")
+
+
+def test_optional_false_does_not_replay_as_optional():
+    """The _script.py reader of gh-2705: an init-param's `optional` is
+    asked by truth, as its other readers ask it, so a hand-written
+    `optional = "false"` -- a non-empty string -- is not `:optional`.
+
+    Driven through the emitter every init-param replay goes through, not
+    through `jm script`: until gh-2705's load-time reader asks by truth
+    too, `load` refuses the row before the script is reached.
+    """
+    from just_makeit._script import _init_param_carry
+
+    for off in ("false", False):
+        row = {"name": "g", "type": "double[]", "optional": off}
+        assert _init_param_carry(row)[0] == "g:double[]", off
+    row = {"name": "g", "type": "double[]", "optional": "true"}
+    assert _init_param_carry(row)[0] == "g:double[]:optional"

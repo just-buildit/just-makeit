@@ -6,4 +6,6 @@
     the composer had been. The script now re-declares the module's table
     through the manifest's writer, as it does `[[enum]]`, where the module
     stood (a component's `object` init-param may name it), and ends with
-    `just-makeit apply` to write its binding.
+    `just-makeit apply` to write its binding. An init-param's
+    `optional = "false"` no longer replays as `:optional`: the script asks
+    `optional` by truth, as jm's other readers do.
