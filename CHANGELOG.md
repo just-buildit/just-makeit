@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+## [0.134.1] — 2026-11-21
+
+### Fixed
+
+- **An init param's `optional = "false"` means false (gh-2705).** Every
+    reader tested the key for truth, and the TOML string `"false"` is truthy,
+    so on an array init param it turned array dispatch ON and `apply` refused
+    the row for naming no `create_fn`. The key is now read through the one
+    reading of jm's string-typed flags: a TOML bool or `"true"` / `"false"`,
+    each meaning what it says. Any other value is refused at load, naming the
+    table, the row and the key.
+
+- **An unread key on a view row is reported (gh-2713).** No vocabulary
+    checked a `[[<obj>.views]]` row, nor the init-param and property rows a
+    view declares, so a misspelt key there (`exclude_propertys`) was kept and
+    did nothing, in silence. Each now warns as the same key on an object row
+    does, naming the row and, where it has one, the table the key belongs to.
+
+- **A Segment's flat read of a `get_fn` source field resolves at the
+    segment's `fs` (gh-2717).** A `flat_sources` Segment's flat getter
+    returned the inner source's attribute, and the inner source holds the
+    source type's default `fs`, since the segment's `fs` keyword is the
+    segment's. So doppler's `Segment(..., fs=40e6).window` read the unset
+    sentinel where `Synth(...)` with the same keywords read 4. The flat
+    getter of a field naming `get_fn` now calls the resolver with the
+    segment's own `fs`, as the source's getter calls it with its own. A
+    segment with no `fs` field reads at the source's rate, as before.
+
 ## [0.134.0] — 2026-11-21
 
 ### Added
