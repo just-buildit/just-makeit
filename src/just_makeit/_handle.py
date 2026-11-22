@@ -50,8 +50,9 @@ from ._context import _diagnostics
 from ._context._methods import set_state_check_c
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
+from ._context._types import kind_doc_default
 from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
-from ._docstring import docstring_literal
+from ._docstring import defaulted_ann, docstring_literal
 from ._context._parse import capsule_new_c as _capsule_new_c
 from ._context._parse import (
     scalar_arg_c,
@@ -186,6 +187,19 @@ def _is_scalar_arg(a: dict) -> bool:
     return a.get("type") not in ("path", "bytes", "string") and not a.get(
         "enum"
     )
+
+
+def _arg_doc_default(a: dict) -> str:
+    """What a create_arg's or method arg's ``Parameters`` entry says it
+    defaults to: a scalar's value for Python or by its C name, anything
+    else quoted (gh-2703, :func:`~._context._types.kind_doc_default`).
+
+    >>> _arg_doc_default({"name": "by", "type": "int", "default": "STEP"})
+    'STEP'
+    >>> _arg_doc_default({"name": "mode", "type": "string", "default": "raw"})
+    '``"raw"``'
+    """
+    return kind_doc_default(a, _is_scalar_arg(a))
 
 
 def _scalar_arg(
@@ -2595,14 +2609,9 @@ def _pyi_class_docstring(
     for a in create_args:
         n = a["name"]
         ann = _pyi_arg_ann(a)
-        type_line = f"{n} : {ann}"
-        if "default" in a:
-            dv = a["default"]
-            # Numeric defaults bare; string / enum defaults quoted.
-            if ann in ("float", "int", "bool"):
-                type_line += f", default {dv}"
-            else:
-                type_line += f', default ``"{dv}"``'
+        # gh-2703: the clause a method arg's entry carries too, from one
+        # spelling of the value (`_arg_doc_default`).
+        type_line = defaulted_ann(f"{n} : {ann}", _arg_doc_default(a))
         notes: list[str] = []
         # gh-1499: a create_arg's manifest `doc`, as written, outranks the
         # header `@param` -- the order an object's init param has (gh-1493).
@@ -2825,9 +2834,15 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
         [
             (
                 a["name"],
+                # gh-2703: the default on the type line, as a create_arg's
+                # and an object method param's (gh-2679) carry it. The
+                # one-line form's call already inlined it; a `Parameters`
+                # entry, on both faces, said only the type.
                 _arg_array_ann(a)
                 if str(a.get("type", "")).endswith("[]")
-                else _pyi_arg_ann(a, enums),
+                else defaulted_ann(
+                    _pyi_arg_ann(a, enums), _arg_doc_default(a)
+                ),
             )
             for a in py_args(m)
         ],

@@ -188,9 +188,13 @@ def doc_default(param: dict) -> str:
     names it in C, as a state field's entry does. A literal is spelled for
     Python (:func:`_py_default`), an enum's choice is quoted.
 
-    Empty when there is nothing to say: no default, an array's (``[]`` is
-    "omittable", which the signature's ``...`` already says), or a default
-    the binding computes at run time (``stub_default``, gh-1426 A).
+    Empty when there is nothing to say: no default, or a default the
+    binding computes at run time (``stub_default``, gh-1426 A).
+
+    gh-2703: an array's ``default = "[]"`` (the only one it takes, gh-2657)
+    is ``None``. An omitted argument and ``None`` both reach the C call as
+    ``NULL`` with length ``0``, so ``None`` is the value a caller can write
+    for it; the signature's ``...`` says only that it may be omitted.
 
     Examples
     --------
@@ -205,6 +209,8 @@ def doc_default(param: dict) -> str:
     ...              "default": "rs"})
     "'rs'"
     >>> doc_default({"name": "xs", "type": "float[]", "default": "[]"})
+    'None'
+    >>> doc_default({"name": "xs", "type": "float[]"})
     ''
     >>> doc_default({"name": "a", "type": "int"})
     ''
@@ -225,8 +231,10 @@ def doc_default(param: dict) -> str:
     """
     dflt = str(param.get("default") or "").strip()
     ctype = str(param.get("type", ""))
-    if param.get("stub_default") or ctype.endswith("[]"):
+    if param.get("stub_default"):
         return ""
+    if ctype.endswith("[]"):
+        return "None" if dflt else ""
     if not dflt:
         return str(param.get("default_raw") or "").strip()
     if param.get("enum"):
@@ -236,6 +244,43 @@ def doc_default(param: dict) -> str:
     if is_c_only_default(ctype, dflt):
         return dflt
     return _py_default(ctype, dflt)
+
+
+def kind_doc_default(row: dict, numeric: bool) -> str:
+    """What a ``kind`` module's docstring says one of its rows defaults to.
+
+    gh-2703. A handle's ``create_args`` and method ``args``, and a
+    composer's source and segment ``fields``, each wrote its own
+    ``, default ...`` clause, and a handle method's ``Parameters`` entry
+    wrote none. Every one now appends through
+    :func:`~just_makeit._docstring.defaulted_ann`, with the value this
+    spells: a number as :func:`doc_default` spells a method parameter's
+    (a literal for Python, a header constant by its C name), and a string,
+    path or enum choice as the reST literal these faces have always
+    printed. *numeric* is the caller's answer to "is this row's value a
+    number": the kinds disagree on which rows are, so each asks its own.
+
+    Empty when the row declares no ``default``.
+
+    Examples
+    --------
+    >>> kind_doc_default({"type": "double", "default": "1e6"}, True)
+    '1e6'
+    >>> kind_doc_default({"type": "int", "default": "LAMP_STEP"}, True)
+    'LAMP_STEP'
+    >>> kind_doc_default({"type": "bool", "default": "true"}, True)
+    'True'
+    >>> kind_doc_default({"type": "string", "default": "raw"}, False)
+    '``"raw"``'
+    >>> kind_doc_default({"type": "int"}, True)
+    ''
+    """
+    if row.get("default") is None:
+        return ""
+    dv = str(row["default"])
+    if not numeric:
+        return f'``"{dv}"``'
+    return doc_default({"type": row.get("type", ""), "default": dv}) or dv
 
 
 def _py_eq(lhs: str, rhs: str) -> str:

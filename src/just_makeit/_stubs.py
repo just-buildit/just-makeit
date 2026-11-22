@@ -1086,10 +1086,12 @@ def _build_class_docstring(
                 continue
             if ctype.startswith("string_enum:"):
                 py_d = f'"{dflt}"' if dflt else ""
-            elif ctype in T._CTYPE_META:
+            elif ctype in T._CTYPE_META or ctype.endswith("[]"):
                 # gh-2703: a scalar's clause is a method param's (gh-2679),
                 # so a `default_raw` constant -- C the signature can only
-                # call `...` -- is named, as a literal `default` always was.
+                # call `...` -- is named, as a literal `default` always was;
+                # and a defaulted array's is `None`, as a method's is, not
+                # the `...` its signature can only say.
                 py_d = doc_default(
                     {
                         "type": ctype,
@@ -1137,7 +1139,8 @@ def _build_class_docstring(
                 )
                 params.append(
                     ClassParam(
-                        f"{name} : {py_t}, default {py_d}",
+                        # gh-2703: the one clause every face appends.
+                        defaulted_ann(f"{name} : {py_t}", py_d),
                         (sdoc or f"{name} state variable.",),
                     )
                 )
