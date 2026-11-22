@@ -53,14 +53,11 @@ class TestRender:
 
     def test_the_flat_read_is_handed_the_segments_fs(self) -> None:
         seg = self._seg(_module())
-        assert (
-            "Src_read_window((SrcObject *)"
-            "PyList_GET_ITEM(self->sources, 0), self->fs)"
-        ) in seg
+        assert "Src_read_window((SrcObject *)_it, self->fs)" in seg
+        # The cast is behind a type check: `sources` is a live list.
+        assert "if (PyObject_TypeCheck(_it, &SrcType))" in seg
         # A field with no get_fn still delegates to the source's getter.
-        assert (
-            'PyObject_GetAttrString(PyList_GET_ITEM(self->sources, 0), "bw")'
-        ) in seg
+        assert 'return PyObject_GetAttrString(_it, "bw");' in seg
 
     def test_no_segment_fs_reads_at_the_sources_own(self) -> None:
         m = _module()
@@ -68,7 +65,7 @@ class TestRender:
         fields[:] = [f for f in fields if f["name"] not in ("fs", "span")]
         seg = self._seg(m)
         assert "Src_read_window" not in seg
-        assert '(self->sources, 0), "window")' in seg
+        assert 'return PyObject_GetAttrString(_it, "window");' in seg
 
 
 _DRIVER = """\
@@ -95,6 +92,20 @@ assert seg.window == 16, ("the flat read follows the segment's fs",
 inner.window = 5
 assert seg.window == 5, seg.window
 assert seg.bw == 10e6, seg.bw
+
+# `sources` is the live list: a foreign object in slot 0 is read by
+# attribute, never cast to a source -- an AttributeError, not a crash.
+class Foreign:
+    window = 7
+seg.sources[0] = Foreign()
+assert seg.window == 7, seg.window
+seg.sources[0] = 5
+try:
+    seg.window
+except AttributeError:
+    pass
+else:
+    raise AssertionError("an int has no window")
 print("FLAT GET_FN OK")
 """
 
