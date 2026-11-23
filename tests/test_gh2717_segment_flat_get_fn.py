@@ -79,15 +79,18 @@ SIZE_MAX = 2**64 - 1
 src = Src(bw=10e6, fs=40e6)
 seg = Seg(bw=10e6, fs=40e6, count=4000)
 inner = seg.sources[0]
-assert inner.fs != 40e6, ("the inner source keeps its own fs", inner.fs)
 assert src.window == 8, src.window
 assert seg.window == src.window, ("flat read at the segment's fs",
                                   seg.window, src.window)
-assert seg.window != inner.window, ("not the inner source's fs",
-                                    seg.window, inner.window)
+# gh-2725: the inline source is built at the segment's fs, and a later
+# `seg.fs` moves the segment only -- so the two rates now differ, and the
+# flat read must follow the segment's, not the inner source's.
 seg.fs = 80e6
+assert inner.fs == 40e6, ("the inner source keeps its own fs", inner.fs)
 assert seg.window == 16, ("the flat read follows the segment's fs",
                           seg.window)
+assert seg.window != inner.window, ("not the inner source's fs",
+                                    seg.window, inner.window)
 # A stored value reads as itself; a field with no get_fn is unchanged.
 inner.window = 5
 assert seg.window == 5, seg.window
@@ -114,7 +117,12 @@ print("FLAT GET_FN OK")
 def project(tmp_path_factory) -> Path:
     if base._NO_TOOLCHAIN:
         pytest.skip("no cmake / C compiler")
-    tmp = tmp_path_factory.mktemp("gh2717")
+    return build(tmp_path_factory.mktemp("gh2717"), _module())
+
+
+def build(tmp: Path, module: dict) -> Path:
+    """gh-2710's backing project with *module* as its composer, built
+    under ``-Werror``; gh-2725 builds its own variant through this."""
     assert run_cli("new", PKG, cwd=tmp).returncode == 0
     proj = tmp / PKG
     inc = proj / "native" / "inc" / PKG / "win"
@@ -132,7 +140,7 @@ def project(tmp_path_factory) -> Path:
     cfg = C.load(proj)
     cfg["project"]["c_deps"] = ["backing"]
     cfg["project"]["status_allow"] = ["CMakeLists.txt:backing_core"]
-    cfg.setdefault("module", {})["win"] = _module()
+    cfg.setdefault("module", {})["win"] = module
     C.save(proj, cfg)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
