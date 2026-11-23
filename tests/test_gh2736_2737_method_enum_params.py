@@ -230,10 +230,39 @@ def test_apply_refuses_the_init_param_spelling(tmp_path, face, ptype):
     out = r.stdout + r.stderr
     assert r.returncode != 0, out
     assert "Traceback" not in out and "KeyError" not in out, out
+    # Refused at load, before anything is rendered: the issue's header
+    # warning printed the spelling as the C type of a prototype.
+    assert f"{ptype} mode" not in out, out
     assert f"param 'mode': `type = \"{ptype}\"` is the init_param" in out
     assert '{ name = "mode", type = "int", enum = "' in out, out
     after = {p: p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
     assert after == before
+
+
+@pytest.mark.parametrize("ptype", SPELLINGS)
+def test_the_load_check_names_every_row(ptype):
+    """`manifest_type_errors` reports each row before anything renders --
+    all of them at once, where a render stops at the first."""
+    row = {"name": "mode", "type": ptype}
+    cfg = {
+        "o": {"methods": [{"name": "mpdu", "params": [row]}]},
+        "s": {
+            "views": [
+                {
+                    "class_name": "V",
+                    "methods": [{"name": "g", "params": [row]}],
+                }
+            ]
+        },
+        "module": {"m": {"functions": [{"name": "f", "params": [row]}]}},
+    }
+    errs = C.manifest_type_errors(cfg)
+    want = T.param_enum_spelling_error("mode", ptype)
+    assert errs == [
+        f"module 'm' function 'f': {want}",
+        f"'o' method 'mpdu': {want}",
+        f"'s' view 'V' method 'g': {want}",
+    ], errs
 
 
 @pytest.mark.parametrize("ptype", SPELLINGS)
