@@ -88,5 +88,6 @@ class TestStringEnumPreservesDeclOrder:
         assert (
             "def __init__(self, poly: int = 96,"
             " seed: int = 1, length: int = 7,"
-            ' lfsr: str = "galois")' in pyi
+            # gh-2736: the choices, as the module stub has always said.
+            ' lfsr: Literal["galois", "fibonacci"] = "galois")' in pyi
         )

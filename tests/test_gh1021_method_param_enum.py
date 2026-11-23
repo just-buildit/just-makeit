@@ -237,17 +237,19 @@ class TestEndToEnd:
             "static const char *const _enum_Frame_kindE[]"
         ) < src.index("Frame_add(")
 
-    def test_both_faces_say_str(self, project):
+    def test_both_faces_say_the_choices(self, project):
         """The runtime docstring and the .pyi come from one builder (gh-642).
 
         A stub saying `int` is what handed the caller the TypeError this
         issue reports, and a docstring saying `int` documents the same lie.
         """
-        assert "kind : str" in _frag(project)
+        # gh-2736: `Literal[...]` of the choices, as an init param's.
+        lit = 'Literal["none", "rs", "conv"]'
+        assert f"kind : {lit}" in _frag(project).replace('\\"', '"')
         stub = (project / "src" / "proj" / "wfm" / "wfm.pyi").read_text(
             encoding="utf-8"
         )
-        assert "kind: str = 'rs'" in stub
+        assert f"kind: {lit} = 'rs'" in stub
 
     def test_the_generated_example_is_a_real_choice(self, project):
         """The example is executable prose. A `0` there reads as a working

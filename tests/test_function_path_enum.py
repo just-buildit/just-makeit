@@ -309,5 +309,6 @@ def test_pyi_path_and_enum_annotations(logm_root):
     pyi = _stubs.make_module_pyi(cfg, "logm")
     assert "import os" in pyi
     assert "p: str | os.PathLike" in pyi
-    assert "kind: str" in pyi
-    assert "kind: str = 'json'" in pyi
+    # gh-2736: the choices, as an init param's `string_enum:` reads.
+    assert 'kind: Literal["raw", "json", "csv"] = \'json\'' in pyi
+    assert "from typing import Literal" in pyi

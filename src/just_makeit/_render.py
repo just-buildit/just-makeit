@@ -916,6 +916,7 @@ def render_component_pyi(ctx: dict) -> str:
     # The empty constructor also rendered `(self, )`, which ruff rewrites.
     from ._stubs import (
         _uses_any,
+        _uses_literal,
         import_head,
         mark_positional_only,
         method_table_flags,
@@ -944,7 +945,10 @@ def render_component_pyi(ctx: dict) -> str:
             ("Any," if _uses_any(probe) else "")
             + "final"
             + ctx.get("pyi_stream_typing", "")
-            + ctx.get("pyi_property_typing", "")
+            # gh-2736: asked of the probe, by the module peer's predicate.
+            # It came from a slot only the property builder filled, so a
+            # method's enum parameter annotated `Literal[...]` unimported.
+            + (",Literal" if _uses_literal(probe) else "")
         ).split(",")
         if n.strip()
     ]

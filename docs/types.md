@@ -743,6 +743,20 @@ describes the C `int` (`0 none, 1 rs`), which is the one thing a Python
 caller must not pass, so it is not used. To say more about the argument,
 give it a manifest `doc`: it is shown first, with the choices after it.
 
+**The annotation is the choices too.** On the same faces, the `.pyi` and
+the docstring's type line spell an enum-backed parameter as `Literal[...]`
+of its names, as an init param's has always read:
+
+```python
+def add_stage(
+    self, depth: int, kind: Literal["none", "rs", "conv"] = 'rs'
+) -> int: ...
+```
+
+A type checker then refuses `frame.add_stage(2, "nope")` before the
+binding does, and a tool that derives test values from the stub finds the
+legal ones.
+
 ______________________________________________________________________
 
 ## Sacred vs glue files

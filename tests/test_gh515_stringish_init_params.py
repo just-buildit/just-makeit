@@ -204,7 +204,9 @@ def test_path_init_param_pyi(tmp_path):
 
     # Required-positional: no `= ...` default, and ahead of the enum kwarg.
     assert (
-        "def __init__(self, path: str | os.PathLike, sample_type: str" in text
+        # gh-2736: the enum's annotation is its choices.
+        "def __init__(self, path: str | os.PathLike, sample_type: Literal["
+        in text
     )
     assert "path : str | os.PathLike\n" in text
     # The annotation names `os`, so the stub must bind it (gh-623).

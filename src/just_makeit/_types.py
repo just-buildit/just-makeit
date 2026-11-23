@@ -11,6 +11,7 @@ import ast as _ast
 import math as _math
 import re as _re
 import struct as _struct
+from collections.abc import Iterable
 
 
 # Shared to_py lambdas reused across fixed-width integer groups.
@@ -2017,6 +2018,31 @@ def string_enum_choices(ptype: str) -> list[str]:
     ]
 
 
+def enum_literal(choices: Iterable[str]) -> str:
+    """The ``.pyi`` annotation of a parameter that takes one of *choices*.
+
+    The one spelling of an enum-backed parameter on every face (gh-2736):
+    an init param's ``string_enum:`` type, a property decoding through an
+    ``[[enum]]``, and a method's, module function's or handle's
+    ``enum = "<name>"`` parameter all take a choice STRING, so a stub that
+    says ``str`` accepts a typo the binding refuses, and a caller deriving
+    values from the annotation cannot find the legal ones. With no choices
+    known (an undeclared enum, which the binding refuses elsewhere) the
+    annotation stays ``str``, since ``Literal[]`` is not a type.
+
+    Examples
+    --------
+    >>> enum_literal(["le", "be"])
+    'Literal["le", "be"]'
+    >>> enum_literal([])
+    'str'
+    """
+    names = list(choices)
+    if not names:
+        return "str"
+    return "Literal[" + ", ".join(f'"{c}"' for c in names) + "]"
+
+
 def string_enum_constants(ptype: str) -> "list[str] | None":
     """The C constant each choice binds to, or ``None`` (gh-1450).
 
@@ -2149,6 +2175,64 @@ def enum_spelling_hint(ctype: str, use: str) -> str:
     return (
         f"{declare}\nFor an enum, use: "
         f"{use.replace('<enum>', name or '<enum>')}"
+    )
+
+
+def param_enum_spelling_error(pname: str, ptype: str) -> str:
+    r"""Refuse an init_param enum spelling on a method or function param.
+
+    gh-2737. A method's, view method's or module function's ``params`` row
+    spells an enum as ``type = "int"`` plus ``enum = "<name>"``; the
+    ``type = "enum:<name>"`` / ``type = "string_enum:a,b"`` spellings are
+    an init_param's (docs/types.md, "Enum params: which spelling goes
+    where"). gh-1021 refused the first, at render, on one method path; the
+    second passed ``apply``'s load check and reached ``_CTYPE_META`` in
+    every method shape and every function, a ``KeyError`` naming only the
+    string -- after a header warning had printed it as a C type.
+
+    The one sentence for both places that ask: ``apply``'s load check
+    (``_config.manifest_type_errors``) and the one tuple-parse slot every
+    face reaches (``_context._parse.scalar_arg_c``), for an entry point that
+    renders without loading through ``apply``.
+
+    Parameters
+    ----------
+    pname : str
+        The parameter's name.
+    ptype : str
+        Its declared ``type``.
+
+    Returns
+    -------
+    str
+        ``""`` unless *ptype* is an enum spelling; otherwise the refusal,
+        ending with :func:`enum_spelling_hint`'s row that works.
+
+    Examples
+    --------
+    >>> param_enum_spelling_error("n", "int")
+    ''
+    >>> print(param_enum_spelling_error("kind", "enum:kindE"))
+    param 'kind': `type = "enum:kindE"` is the init_param spelling and is not read on a method or function parameter, which takes its enum by name.
+    For an enum, use: { name = "kind", type = "int", enum = "kindE" }
+    >>> print(param_enum_spelling_error("m", "string_enum:a,b"))
+    ... # doctest: +ELLIPSIS
+    param 'm': ...
+    [[enum]] in just-makeit.toml and name it:
+      [[enum]]
+      name = "<enum>"
+      values = ["a", "b"]
+    For an enum, use: { name = "m", type = "int", enum = "<enum>" }
+    """
+    hint = enum_spelling_hint(
+        ptype, f'{{ name = "{pname}", type = "int", enum = "<enum>" }}'
+    )
+    if not hint:
+        return ""
+    return (
+        f"param '{pname}': `type = \"{ptype}\"` is the init_param spelling"
+        " and is not read on a method or function parameter, which takes"
+        f" its enum by name.{hint}"
     )
 
 

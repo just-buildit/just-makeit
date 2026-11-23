@@ -11,12 +11,14 @@ import re
 from .. import _coerce
 from .. import _record
 from .. import _retain
+from .._report import Refusal
 from .._types import (
     _CTYPE_META,
     _CTYPE_TO_NPY,
     _join_fmt_with_optional,
     is_array_param_type,
     array_elem_ctype,
+    param_enum_spelling_error,
     param_fmt,
     param_writable,
     parse_seed,
@@ -1040,7 +1042,15 @@ def scalar_arg_c(
         if (n_obj != NULL) {
         size_t n = (size_t)n_raw;
     """
-    meta = _CTYPE_META[ptype] if meta is None else meta
+    if meta is None:
+        # gh-2737: an init_param's enum spelling on a method or function
+        # param reached the lookup below as a bare `KeyError`. `apply`
+        # refuses it at load; this is the same sentence for a path that
+        # renders without that check.
+        spelled = param_enum_spelling_error(pname, ptype)
+        if spelled:
+            raise Refusal(spelled)
+        meta = _CTYPE_META[ptype]
     fmt = param_fmt(ptype, default)
     label = label or pname
     if "parse_type" in meta:
@@ -1384,23 +1394,9 @@ def _build_params_parse(
             )
             call_args.append(pname)
         else:
-            # gh-1021: `type = "enum:<name>"` is the INIT-PARAM spelling. It
-            # reached `_CTYPE_META[ptype]` and raised a bare `KeyError` naming
-            # only the string, from a stack frame deep inside the renderer —
-            # a traceback where a diagnostic belongs. A method parameter
-            # spells its enum as the `enum` KEY, which keeps the enum's NAME
-            # (the init-param form flattens to `string_enum:a,b,c` and loses
-            # it), so say so rather than crash.
-            if ptype.startswith("enum:"):
-                raise ValueError(
-                    f"param '{pname}': `type = \"{ptype}\"` is the "
-                    f"init_param spelling and is not read on a method "
-                    f"parameter.\n"
-                    f"Declare it as the type it is in C, plus the enum by "
-                    f"name:\n"
-                    f'    {{ name = "{pname}", type = "int", '
-                    f'enum = "{ptype[len("enum:") :]}" }}'
-                )
+            # gh-1021 / gh-2737: an init_param's enum spelling (`enum:<name>`,
+            # `string_enum:a,b`) is refused inside `scalar_arg_c`, naming the
+            # `enum` key a method parameter spells it with.
             # gh-1271: `z` where the parameter declared NULL as a value, `s`
             # otherwise -- `scalar_arg_c` asks the shared predicate, so the
             # stub's `str | None` and this char cannot disagree. gh-2035: the

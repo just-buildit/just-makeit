@@ -6245,9 +6245,10 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
     table gh-598 did not cover.
 
     Accepts everything the ``jm method`` / ``jm function`` front-ends accept:
-    a registered scalar, an array (``float[]``), an enum reference
-    (``enum:kind``) or an inline choice list (``string_enum:a,b``). Anything
-    carrying :data:`_FOREIGN_TYPE_KEYS` is skipped.
+    a registered scalar or an array (``float[]``); an enum is ``type = "int"``
+    plus an ``enum`` key. The init_param's enum spellings (``enum:kind``,
+    ``string_enum:a,b``) are refused, naming the row that works (gh-2737).
+    Any other type carrying :data:`_FOREIGN_TYPE_KEYS` is skipped.
 
     Parameters
     ----------
@@ -6272,6 +6273,10 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
     ...     {"params": [{"name": "h", "type": "dp_plan_t *",
     ...                  "header": "dp/plan.h"}]}, "w")
     []
+    >>> _param_type_errors(
+    ...     {"params": [{"name": "m", "type": "string_enum:a,b"}]},
+    ...     "w")[0].startswith("w: param 'm': `type = ")
+    True
     >>> _param_type_errors({"extra_args": [{"name": "k", "type": "wat_t"}]},
     ...                    "'v' method 'run'")[0].splitlines()[0]
     "'v' method 'run': extra_arg 'k' has unknown type 'wat_t'."
@@ -6282,6 +6287,16 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
     # only `params` let an `extra_args` type reach `_CTYPE_META` unchecked.
     for key, noun in (("params", "param"), ("extra_args", "extra_arg")):
         for pm in entry.get(key, []) or []:
+            # gh-2737: the init_param's enum spellings, which
+            # `_declared_type_error` accepts for the init_param's sake. Beside
+            # an `enum` key too: `type` is still the C type the prototype
+            # declares, and `string_enum:a,b mode` is not one.
+            spelled = _T.param_enum_spelling_error(
+                str(pm.get("name", "?")), str(pm.get("type", ""))
+            )
+            if spelled:
+                errors.append(f"{what}: {spelled}")
+                continue
             err = _declared_type_error(
                 pm, f"{what}: {noun} {pm.get('name', '?')!r}"
             ) or _param_default_error(

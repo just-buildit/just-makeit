@@ -3827,37 +3827,47 @@ def render_runtime_doc(
 
 
 class EnumAnn(str):
-    """The annotation ``str`` of an enum-backed parameter, with its choices.
+    """The annotation of an enum-backed parameter, with its choices.
 
     gh-2379. An enum-backed parameter is a C ``int`` and, in Python, one of a
     set of strings. The header's ``@param`` prose describes the C ``int`` --
     ``0 little, 1 big.`` -- so a docstring that repeated it told the caller
     to pass a number the binding refuses. Every face already computes the
-    parameter's annotation (``str``); carrying the choices on that same
-    object lets the ONE place that picks a description,
-    `render_numpy_method_doc`, document the choices instead, without a
-    parallel argument threaded through every renderer.
+    parameter's annotation; carrying the choices on that same object lets
+    the ONE place that picks a description, `render_numpy_method_doc`,
+    document the choices instead, without a parallel argument threaded
+    through every renderer.
 
-    It is a ``str`` equal to ``"str"``, so a signature, a comparison or a
-    format that reads it as an annotation is unchanged.
+    gh-2736: the annotation is ``Literal[...]`` of the choices, spelled by
+    :func:`~just_makeit._types.enum_literal` -- the spelling an init param's
+    ``string_enum:`` has always had. It was ``str`` here, so the same enum
+    read ``Literal`` on a constructor and ``str`` on a method, and a caller
+    deriving values from the stub (doppler's mutator gate) could not find
+    the legal ones. Every face that builds one -- a method parameter in both
+    ``.pyi`` producers, a module function's, a handle's -- now says it.
 
     gh-2679: a ``Parameters`` type line also carries the parameter's default
-    (``str, default 'rs'``, :func:`defaulted_ann`). *spelled* is that line,
-    and the choices ride along with it; a signature never gets one.
+    (``Literal[...], default 'rs'``, :func:`defaulted_ann`). *spelled* is
+    that line, and the choices ride along with it; a signature never gets
+    one.
 
     Examples
     --------
     >>> a = EnumAnn(["le", "be"])
-    >>> a, a == "str", a.choices
-    ('str', True, ('le', 'be'))
+    >>> a, a.choices
+    ('Literal["le", "be"]', ('le', 'be'))
+    >>> EnumAnn([])
+    'str'
     """
 
     choices: "tuple[str, ...]"
 
     def __new__(
-        cls, choices: "Collection[str]", spelled: str = "str"
+        cls, choices: "Collection[str]", spelled: str = ""
     ) -> "EnumAnn":
-        obj = super().__new__(cls, spelled)
+        from ._types import enum_literal
+
+        obj = super().__new__(cls, spelled or enum_literal(choices))
         obj.choices = tuple(choices)
         return obj
 
@@ -3882,8 +3892,8 @@ def defaulted_ann(ann: str, default: str) -> str:
     >>> defaulted_ann("float", "")
     'float'
     >>> a = defaulted_ann(EnumAnn(["le", "be"]), "'le'")
-    >>> a, a.choices
-    ("str, default 'le'", ('le', 'be'))
+    >>> print(a, a.choices)
+    Literal["le", "be"], default 'le' ('le', 'be')
     """
     if not default:
         return ann

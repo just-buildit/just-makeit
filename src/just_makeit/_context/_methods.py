@@ -6616,7 +6616,6 @@ def make_properties_ctx(
         "property_decls": "",
         "property_struct_fields": "",
         "property_stubs_pyi": "",
-        "pyi_property_typing": "",
     }
     if not properties:
         return _EMPTY
@@ -7166,7 +7165,4 @@ def make_properties_ctx(
         "property_decls": property_decls,
         "property_struct_fields": property_struct_fields,
         "property_stubs_pyi": property_stubs_pyi,
-        # gh-519: the standalone .pyi hardcodes `from typing import Any`; an
-        # enum property annotates as Literal[...] and needs it imported.
-        "pyi_property_typing": ", Literal" if enums_used else "",
     }
