@@ -665,7 +665,8 @@ hand-written original:
 
 - inline single-source: `Segment(type="tone", num_samples=…)` forwards the
     source fields to the source type, builds the source at the segment's own
-    `fs` (given or defaulted, so `seg.sources[0].fs == seg.fs`), and wraps the
+    `fs` (given by keyword or position, or defaulted, so
+    `seg.sources[0].fs == seg.fs`), and wraps the
     one result. The two are separate objects afterwards: setting `seg.fs`
     moves the segment only;
 - multi-source: `Segment.sum(*sources, num_samples=…)` (a classmethod that

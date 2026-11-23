@@ -3415,8 +3415,23 @@ def render_segment_type(cfg: dict, module: str) -> str:
     # a rate no segment had. Afterwards the two are separate objects: a
     # later `seg.fs = x` moves the segment only, as `Segment.sum` never
     # touches the sources it is handed.
+    # A positional `fs` (the source type's trailing argument, after every
+    # source field) is left in `args` by the keyword-only extraction, so the
+    # forward would give it twice: then the source is built at THAT rate and
+    # the segment reads it back, and naming it both ways is refused.
+    seg_fs_row = next((f for f in fields if f["name"] == "fs"), None)
+    n_src = len(_source_fields(cfg, module))
     fwd_fs = (
-        "    {\n"
+        "    int _fs_pos = args && PyTuple_GET_SIZE(args) > "
+        f"{n_src};\n"
+        '    if (_fs_pos && kwds && PyDict_GetItemString(kwds, "fs")) {\n'
+        "        PyErr_SetString(PyExc_TypeError,\n"
+        f'                        "{tname}() got fs by position and '
+        'keyword");\n'
+        "        Py_DECREF(kw);\n"
+        "        return -1;\n"
+        "    }\n"
+        "    if (!_fs_pos) {\n"
         "        PyObject *_fs = PyFloat_FromDouble((double)self->fs);\n"
         '        int _r = _fs ? PyDict_SetItemString(kw, "fs", _fs) : -1;\n'
         "        Py_XDECREF(_fs);\n"
@@ -3425,7 +3440,14 @@ def render_segment_type(cfg: dict, module: str) -> str:
         "            return -1;\n"
         "        }\n"
         "    }\n"
-        if "fs" in {f["name"] for f in fields}
+        if seg_fs_row
+        else ""
+    )
+    fs_back = (
+        "    if (_fs_pos)\n"
+        f"        self->fs = ({seg_fs_row['type']})"
+        f"(({src_tname}Object *)one)->fs;\n"
+        if seg_fs_row
         else ""
     )
 
@@ -3443,7 +3465,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     Py_DECREF(kw);
     if (!one)
         return -1;
-    PyObject *list = PyList_New(1);
+{fs_back}    PyObject *list = PyList_New(1);
     if (!list) {{
         Py_DECREF(one);
         return -1;

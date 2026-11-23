@@ -16,8 +16,10 @@ the ``fs`` it was built with.
 
 GATE: compiled, with the segment's ``fs`` default (2e6) unlike the
 source type's (1e6): ``seg.sources[0].fs == seg.fs`` both given and
-defaulted, the inner ``get_fn`` read agrees with the flat one, a ``sum``
-source is untouched, and a segment with no ``fs`` field forwards nothing.
+defaulted, the inner ``get_fn`` read agrees with the flat one, a
+positional ``fs`` is both the source's and the segment's (and refused
+beside a keyword one), a ``sum`` source is untouched, and a segment with
+no ``fs`` field forwards nothing.
 """
 
 from __future__ import annotations
@@ -63,11 +65,20 @@ class TestRender:
         assert init.index('PyDict_DelItemString(kw, "fs")') < put
         assert put < init.index("PyObject_Call(")
 
+    def test_a_positional_fs_is_counted_past_the_source_fields(
+        self,
+    ) -> None:
+        # Src takes `bw, window` then `fs`: a third positional is fs.
+        seg = self._seg(_module())
+        assert "PyTuple_GET_SIZE(args) > 2;" in seg
+        assert "self->fs = (double)((SrcObject *)one)->fs;" in seg
+
     def test_no_segment_fs_forwards_nothing(self) -> None:
         m = _module()
         fields = m["segment"]["fields"]
         fields[:] = [f for f in fields if f["name"] not in ("fs", "span")]
-        assert '"fs", _fs' not in self._seg(m)
+        out = self._seg(m)
+        assert '"fs", _fs' not in out and "_fs_pos" not in out
 
 
 _DRIVER = """\
@@ -93,6 +104,18 @@ assert seg.sources[0].fs == seg.fs == 2e6, ("the segment's DEFAULT fs "
 # Separate objects afterwards: the setter moves the segment only.
 seg.fs = 80e6
 assert seg.sources[0].fs == 2e6, seg.sources[0].fs
+
+# A positional fs (after both source fields) builds the source at that
+# rate and is the segment's too; naming it both ways is refused.
+seg = Seg(10e6, 5, 40e6)
+assert seg.sources[0].fs == seg.fs == 40e6, ("positional fs",
+                                             seg.sources[0].fs, seg.fs)
+try:
+    Seg(10e6, 5, 40e6, fs=1e6)
+except TypeError as e:
+    assert "fs" in str(e), e
+else:
+    raise AssertionError("fs by position and keyword")
 
 # A summed source keeps the fs it was built with.
 s = Src(bw=10e6, fs=4e6)
