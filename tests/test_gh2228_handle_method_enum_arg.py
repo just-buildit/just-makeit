@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _handle  # noqa: E402
+from conftest import flatten_signatures  # noqa: E402
 from test_gh2207_handle_stub_param_names import (  # noqa: E402
     _BASE,
     _ENUMS,
@@ -135,7 +136,8 @@ def test_the_stub_takes_the_choice_string(choice_cases):
         f"{ident}: '{a['name']}' is annotated {anns.get(a['name'])}"
         for ident, m, _body, anns in choice_cases
         for a in m["args"]
-        if a.get("enum") and anns.get(a["name"]) != "str"
+        # gh-2736: `Literal[...]` of the choices, a create-arg's spelling.
+        if a.get("enum") and anns.get(a["name"]) != "Literal['zqlo', 'zqhi']"
     ]
     assert not wrong, "\n".join(wrong)
 
@@ -371,14 +373,18 @@ def test_an_invalid_choice_raises_naming_the_choices(built):
     assert h.get() == 0, "a refused choice must not reach C"
 
 
-def test_the_built_stub_names_each_choice_str(built):
+def test_the_built_stub_names_each_choice(built):
     root, _ = _built(built)
-    pyi = next(root.rglob("mo.pyi")).read_text(encoding="utf-8")
+    pyi = flatten_signatures(
+        next(root.rglob("mo.pyi")).read_text(encoding="utf-8")
+    )
     for sig in (
-        "def set(self, level: str = ...) -> None:",
-        "def fill(self, n: int, level: str) -> NDArray[Any]:",
-        "def at(self, level: str, /) -> NDArray[Any]:",
-        "def blob(self, level: str, /) -> bytes:",
-        "def make(level: str, /) -> Mo:",
+        "def set(self, level: Lv = ...) -> None:",
+        "def fill(self, n: int, level: Lv) -> NDArray[Any]:",
+        "def at(self, level: Lv, /) -> NDArray[Any]:",
+        "def blob(self, level: Lv, /) -> bytes:",
+        "def make(level: Lv, /) -> Mo:",
     ):
+        # gh-2736: the choices, which the stub imports `Literal` for.
+        sig = sig.replace("Lv", 'Literal["off", "low", "high"]')
         assert sig in pyi, (sig, pyi)

@@ -679,9 +679,13 @@ class TestPyi:
         assert "Parameters" in pyi
         assert "----------" in pyi
         # Enum args show their default and choices.
-        assert 'file_type : str, default ``"raw"``' in pyi
+        # gh-2736: the type is the choices' Literal, as a signature's.
+        assert 'file_type : Literal["raw", "csv"], default ``"raw"``' in pyi
         assert '``"raw"``, ``"csv"``' in pyi
-        assert 'sample_type : str, default ``"cf32"``' in pyi
+        assert (
+            'sample_type : Literal["cf32", "cf64", "ci16"], default ``"cf32"``'
+            in pyi
+        )
         assert '``"cf32"``, ``"cf64"``, ``"ci16"``' in pyi
         # Numeric defaults are bare (no quotes).
         assert "headroom : float, default 0.0" in pyi

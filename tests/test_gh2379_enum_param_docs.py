@@ -41,6 +41,8 @@ from just_makeit import _docstring as D  # noqa: E402
 C_PROSE = "0 little, 1 big."
 CHOICES = ["le", "be"]
 ONE_OF = 'One of ``"le"``, ``"be"``.'
+#: gh-2736: the annotation every face spells an enum parameter with.
+LIT = 'Literal["le", "be"]'
 
 
 def _ok(*args: str, cwd: Path) -> None:
@@ -196,7 +198,7 @@ def _ml_doc(text: str, name: str) -> str:
 def test_a_runtime_doc_documents_the_choices(proj, rel):
     """The runtime ``PyMethodDef`` doc of each face, read from its literal."""
     doc = _ml_doc(_read(proj, rel), "fin").replace('\\"', '"')
-    assert "endian : str" in doc, (rel, doc)
+    assert f"endian : {LIT}" in doc, (rel, doc)
     assert C_PROSE not in doc, (rel, doc)
     assert ONE_OF in doc, (rel, doc)
 
@@ -216,7 +218,7 @@ def test_a_view_class_documents_the_choices(proj, cls):
     section = _class_section(_read(proj, "src/p/dsp/dsp.pyi"), cls)
     assert "def fin(" in section, section
     fin = section[section.index("def fin(") :].split("\n    def ")[0]
-    assert "endian : str" in fin, (cls, fin)
+    assert f"endian : {LIT}" in fin, (cls, fin)
     assert ONE_OF in fin, (cls, fin)
     assert C_PROSE not in fin, (cls, fin)
 
@@ -375,9 +377,11 @@ def test_an_authored_doc_comes_first_and_the_choices_follow():
     assert C_PROSE not in text, text
 
 
-def test_an_enum_annotation_is_still_str():
+def test_an_enum_annotation_is_the_choices_literal():
+    """gh-2736: it was `str`, while an init param's said `Literal[...]`."""
     ann = D.EnumAnn(CHOICES)
-    assert ann == "str" and f"x: {ann}" == "x: str"
+    assert ann == LIT and f"x: {ann}" == f"x: {LIT}"
+    assert D.EnumAnn([]) == "str"
 
 
 class TestTheHandleFaces:
@@ -405,7 +409,7 @@ class TestTheHandleFaces:
                 self.METHOD, {"sink_set_order": self.BLOCK}, self.ENUMS
             )
         )
-        assert "endian : str" in text, text
+        assert f"endian : {LIT}" in text, text
         assert ONE_OF in text, text
         assert C_PROSE not in text, text
 

@@ -237,7 +237,12 @@ class TestManifestTypeErrorsCoversTheInputSide:
                     "methods": [
                         {
                             "name": "r",
-                            "params": [{"name": "k", "type": "enum:kind"}],
+                            # gh-2737: a method param's enum is the
+                            # `enum` key; `type = "enum:kind"` is the
+                            # init_param's, refused here.
+                            "params": [
+                                {"name": "k", "type": "int", "enum": "kind"}
+                            ],
                         }
                     ]
                 }

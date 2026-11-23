@@ -134,8 +134,7 @@ def _py(ctype: str) -> str:
         npt = _CTYPE_TO_NP.get(elem, "Any")
         return f"NDArray[{npt}]"
     if ctype.startswith("string_enum:"):
-        choices = T.string_enum_choices(ctype)
-        return "Literal[" + ", ".join(f'"{c}"' for c in choices) + "]"
+        return T.enum_literal(T.string_enum_choices(ctype))
     if ctype == "path":
         # gh-623: the binding coerces with PyUnicode_FSConverter, so a Path is
         # as valid as a str and the annotation must admit both. (gh-515 spelled
@@ -2051,7 +2050,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # `fn_py_surface`, which spells the same two rules for the peer
             # surface. A stub saying `int` here is what let a manifest declare
             # an enum and hand the caller a TypeError.
-            _pbase = "str" if p.get("enum") else _py(p["type"])
+            # gh-2736: `Literal[...]` of the choices, from the one EnumAnn the
+            # Parameters list below and the standalone peer
+            # (`_context._methods._stub_params`) build too.
+            _pbase = (
+                EnumAnn(C.enums(cfg).get(p["enum"]) or [])
+                if p.get("enum")
+                else _py(p["type"])
+            )
             _pdflt = p.get("default") or ""
             # gh-1271: `str | None` where the binding takes `z`. Derived from
             # the same predicate the format char is, so the stub cannot
@@ -2760,37 +2766,23 @@ def _uses_any(body: str) -> bool:
     return bool(_re.search(r"\bAny\b", _DOCSTRING_RE.sub("", body)))
 
 
-def _uses_literal(cfg: dict, module: str) -> bool:
-    """Return True if the module's stub needs ``Literal``.
+def _uses_literal(body: str) -> bool:
+    """True if the rendered stub *body* needs ``Literal``.
 
-    Two independent sources: a ``string_enum:`` init param, and (gh-519) a
-    property that decodes through the ``[[enum]]`` SSOT — both annotate as
-    ``Literal[...]``."""
-    enum_reg = C.enums(cfg)
-    objects = C.module_objects(cfg, module)
-    for obj in objects:
-        for param in C.init_params(cfg, obj):
-            if param[1].startswith("string_enum:"):
-                return True
-        props = list(C.properties(cfg, obj))
-        for v in C.views(cfg, obj):
-            # gh-2516: a view naming another module is asked there.
-            if C.view_module(cfg, obj, v) == module:
-                props += C.view_properties(v)
-        for prop in props:
-            if prop.get("enum") in enum_reg:
-                return True
-    # gh-2516: a view registered here over another module's object, through
-    # the overlay its class renders from.
-    for parent, view in C.module_views(cfg, module):
-        if parent in objects:
-            continue
-        synth, vcfg = view_overlay(cfg, parent, view)
-        if any(
-            p[1].startswith("string_enum:") for p in C.init_params(vcfg, synth)
-        ) or any(p.get("enum") in enum_reg for p in C.properties(vcfg, synth)):
-            return True
-    return False
+    Asked of the rendered text, as :func:`_uses_any` is. This enumerated
+    the surfaces that annotate as ``Literal[...]`` -- a ``string_enum:``
+    init param and (gh-519) an ``[[enum]]``-decoded property -- and
+    gh-2736 added a third: a method's or module function's ``enum``
+    parameter. A list of sources is a list that goes stale; the text
+    cannot.
+
+    >>> _uses_literal('def f(self, m: Literal["a", "b"]) -> None: ...')
+    True
+    >>> q = '"' * 3
+    >>> _uses_literal("def f(self) -> None: " + q + "Literal[x]." + q)
+    False
+    """
+    return bool(_re.search(r"\bLiteral\[", _DOCSTRING_RE.sub("", body)))
 
 
 def _uses_os(body: str) -> bool:
@@ -3470,7 +3462,6 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     mp = C.module_paths(module)
     out_pkg = C.module_package_resolved(cfg, module)
 
-    needs_literal = _uses_literal(cfg, module)
     # gh-1272: decided AFTER the body exists — see `_uses_os`. The slot is
     # remembered here so the import still lands in its historical position
     # (after `Sequence`, before numpy) and no existing stub churns.
@@ -3644,7 +3635,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             ("Callable", needs_stream),
             ("final", needs_final),
             ("Iterator", needs_stream),
-            ("Literal", needs_literal),
+            ("Literal", _uses_literal(body)),
         )
         if needed
     ]

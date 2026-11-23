@@ -318,17 +318,6 @@ class TestNoEnumIsByteIdentical:
         with_reg = _ctx(self.PROPS, enums=ENUMS)
         assert without == with_reg
 
-    def test_pyi_typing_slot_stays_empty(self):
-        assert _ctx(self.PROPS, enums=ENUMS)["pyi_property_typing"] == ""
-
-    def test_empty_property_list_supplies_the_new_slot(self):
-        assert (
-            make_properties_ctx("rdr", "Rdr", [], csym="rdr")[
-                "pyi_property_typing"
-            ]
-            == ""
-        )
-
 
 # ── .pyi stub ────────────────────────────────────────────────────────────────
 
@@ -351,7 +340,11 @@ class TestStub:
         lit = 'Literal["raw", "wav", "blue"]'
         assert f"    def ft(self) -> {lit}:" in pyi
         assert f"    def ft(self, value: {lit}) -> None: ..." in pyi
-        assert ctx["pyi_property_typing"] == ", Literal"
+        # gh-2736: the import is asked of the rendered stub, by the one
+        # predicate both stub writers use, not of a per-builder slot.
+        from just_makeit._stubs import _uses_literal
+
+        assert _uses_literal(pyi)
 
 
 # ── end to end ───────────────────────────────────────────────────────────────

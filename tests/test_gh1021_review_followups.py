@@ -129,16 +129,18 @@ class TestIncrementalSplice:
 
 
 class TestStubDocAgreesWithStubSignature:
-    def test_the_parameters_block_says_str(self, project):
+    def test_the_parameters_block_says_the_signatures_type(self, project):
         """One generated file said `def add(self, k: str = 'a')` over a doc
         line reading `k : int` — the two faces of one parameter disagreeing,
         inside a single stub."""
         stub = (project / "src" / "proj" / "wfm" / "wfm.pyi").read_text(
             encoding="utf-8"
         )
-        assert "k: str = 'a'" in stub
+        # gh-2736: both say `Literal[...]` of the choices.
+        lit = 'Literal["a", "b"]'
+        assert f"k: {lit} = 'a'" in stub
         assert "k : int" not in stub
-        assert "k : str" in stub
+        assert f"k : {lit}" in stub
 
 
 class TestIncoherentCombinationsAreRefused:

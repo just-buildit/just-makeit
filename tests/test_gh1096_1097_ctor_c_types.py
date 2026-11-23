@@ -147,7 +147,9 @@ class TestTheDeclarationCanNameItsCType:
         root = _project(tmp_path, "c", ENUM_IP)
         _quiet(__import__("just_makeit._apply", fromlist=["run"]).run, root)
         pyi = (root / "src" / "c" / "obj.pyi").read_text(encoding="utf-8")
-        assert 'noise_mode: str = "mean"' in pyi
+        # gh-2736: the choices, as the module stub has always said.
+        lit = 'Literal["mean", "median", "min", "max"]'
+        assert f'noise_mode: {lit} = "mean"' in pyi
 
     def test_the_binding_still_validates_the_choice_string(self, tmp_path):
         """C converts the int at the call — that interchangeability is what

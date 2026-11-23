@@ -1752,7 +1752,7 @@ def _factory_doc_lines(cfg: dict, module: str, f: dict) -> list[str]:
         return render_numpy_doc(
             None,
             f["name"],
-            [(a["name"], _pyi_arg_ann(a)) for a in ips],
+            [(a["name"], _pyi_arg_ann(a, C.enums(cfg))) for a in ips],
             tname,
             override=default,
             authored_doc=str(f.get("doc") or ""),
@@ -2500,12 +2500,14 @@ def _pyi_scalar(ctype: str) -> str:
     return _capsule._pyi_scalar(ctype)
 
 
-def _pyi_arg_ann(a: dict, enums: "dict | None" = None) -> str:
+def _pyi_arg_ann(a: dict, enums: "dict[str, list[str]]") -> str:
     """Python annotation for a handle create_arg (path, string, enum, scalar).
 
-    An enum arg's annotation is an :class:`~_docstring.EnumAnn` when *enums*
-    is given: ``str``, carrying the choices, so a method's ``Parameters``
-    section documents them (gh-2379)."""
+    An enum arg's annotation is an :class:`~_docstring.EnumAnn`:
+    ``Literal[...]`` of its choices (gh-2736), carrying them, so a method's
+    ``Parameters`` section documents them (gh-2379). *enums* is required:
+    every signature and every docstring asks with the registry, so the two
+    cannot spell one argument differently."""
     if a.get("type") == "path":
         # gh-623: same PyUnicode_FSConverter coercion as every other path
         # surface (see _coerce), so the same annotation.
@@ -2517,7 +2519,7 @@ def _pyi_arg_ann(a: dict, enums: "dict | None" = None) -> str:
     if a.get("enum"):
         from ._docstring import EnumAnn
 
-        return EnumAnn((enums or {}).get(a["enum"]) or [])
+        return EnumAnn(enums.get(a["enum"]) or [])
     return _pyi_scalar(a.get("type", "int"))
 
 
@@ -2608,7 +2610,7 @@ def _pyi_class_docstring(
     params: list[ClassParam] = []
     for a in create_args:
         n = a["name"]
-        ann = _pyi_arg_ann(a)
+        ann = _pyi_arg_ann(a, enum_reg)
         # gh-2703: the clause a method arg's entry carries too, from one
         # spelling of the value (`_arg_doc_default`).
         type_line = defaulted_ann(f"{n} : {ann}", _arg_doc_default(a))
@@ -2713,6 +2715,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
     parses in, so the stub cannot offer a keyword the binding refuses
     (gh-2207).
     """
+    enums = enums or {}
     name = m["name"]
     margs = list(m.get("args", []))
     returns = m.get("returns")
@@ -2722,7 +2725,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
     if returns == "bytes":
         # (f) scalar/string args -> bytes (len from handle, gh-565).
         sig = "self" + "".join(
-            f", {a['name']}: " + _pyi_arg_ann(a) for a in margs
+            f", {a['name']}: " + _pyi_arg_ann(a, enums) for a in margs
         )
         ann = "bytes"
         doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
@@ -2741,7 +2744,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
         )
         for a in _d_scalars:
             dflt = a.get("default")
-            sig += f", {a['name']}: {_pyi_arg_ann(a)}"
+            sig += f", {a['name']}: {_pyi_arg_ann(a, enums)}"
             if dflt is not None:
                 sig += " = ..."
         ann = "NDArray[Any]"
@@ -2754,7 +2757,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
         # Joined after `self` as (f) is: with no args, `"self, " + ""` was
         # a dangling comma, and the `/` below would make it a syntax error.
         sig = "self" + "".join(
-            f", {a['name']}: " + _pyi_arg_ann(a) for a in margs
+            f", {a['name']}: " + _pyi_arg_ann(a, enums) for a in margs
         )
         ann = "NDArray[Any]"
         doc_call = f"{name}({', '.join(a['name'] for a in margs)})"
@@ -2764,7 +2767,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
         # it (gh-2211), a `default` shown as `= ...`.
         _c_rest = margs[1:]
         sig = f"self, {_count_name(m)}: int" + "".join(
-            f", {a['name']}: {_pyi_arg_ann(a)}"
+            f", {a['name']}: {_pyi_arg_ann(a, enums)}"
             + (" = ..." if a.get("default") is not None else "")
             for a in _c_rest
         )
@@ -2782,7 +2785,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
         # never `x` -- the binding's kwlist takes the declared name.
         _b_arr, *_b_scalars = py_args(m)
         parts = ["self", f"{_b_arr['name']}: {_arg_array_ann(_b_arr)}"] + [
-            f"{s['name']}: {_pyi_arg_ann(s)}"
+            f"{s['name']}: {_pyi_arg_ann(s, enums)}"
             + (" = ..." if s.get("default") is not None else "")
             for s in _b_scalars
         ]
@@ -2801,7 +2804,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
         # `= ...` (#319). A path arg is `str` (gh-565); an `error` status
         # method returns None (the int rc is consumed as the raise trigger).
         sig = "self, " + ", ".join(
-            f"{a['name']}: {_pyi_arg_ann(a)}"
+            f"{a['name']}: {_pyi_arg_ann(a, enums)}"
             + (" = ..." if a.get("default") is not None else "")
             for a in margs
         )
@@ -2954,7 +2957,7 @@ def render_pyi(
     # __init__ from create_args (docstring lives on the class above).
     init_params = []
     for a in create_args:
-        ann = _pyi_arg_ann(a)
+        ann = _pyi_arg_ann(a, enum_reg)
         if "default" in a or a.get("kwonly"):
             init_params.append(f"{a['name']}: {ann} = ...")
         else:
@@ -3068,7 +3071,9 @@ def render_pyi(
     # that build a fresh handle via an alt create_fn and return the typed class.
     for f in C.handle_factories(cfg, module):
         ips = list(f.get("init_params", []))
-        sig = ", ".join(f"{a['name']}: {_pyi_arg_ann(a)}" for a in ips)
+        sig = ", ".join(
+            f"{a['name']}: {_pyi_arg_ann(a, enum_reg)}" for a in ips
+        )
         # gh-2212: the flags the factory table registers decide the `/`.
         sig = positional_only(sig, FACTORY_FLAGS)
         lines.append(f"def {f['name']}({sig}) -> {tname}:")
@@ -3079,13 +3084,16 @@ def render_pyi(
     # A handle carries paths on four surfaces (create-arg, method, factory,
     # alt-ctor), so decide from the rendered text rather than re-deriving which
     # ones have one — a new path surface then cannot forget to declare itself.
-    from ._stubs import _NUMPY_IMPORT_LINES, import_head
+    from ._stubs import _NUMPY_IMPORT_LINES, _uses_literal, import_head
 
     at = lines.index(_HEAD)
     lines[at : at + 1] = import_head(
         future=["from __future__ import annotations"],
         std=[
-            "from typing import Any, final",
+            # gh-2736: an enum arg annotates `Literal[...]`, asked of the
+            # text as `os` is below.
+            "from typing import Any, final"
+            + (", Literal" if _uses_literal("\n".join(lines)) else ""),
             "import os"
             if any(_coerce.PATH_PY_TYPE in ln for ln in lines)
             else "",

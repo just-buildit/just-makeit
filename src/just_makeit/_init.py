@@ -197,10 +197,6 @@ def _make_component_ctx(component: str, owner: "INC.Owner") -> dict[str, str]:
         "stream_module_ready": "",
         "pyi_stream_typing": "",
         "pyi_stream_methods": "",
-        # gh-519: `, Literal` when some property declares an `enum`; empty
-        # otherwise, so a project without enum properties renders unchanged.
-        # make_properties_ctx overwrites it on every path that has properties.
-        "pyi_property_typing": "",
         # gh-623: `\nimport os` when a `path` init-param puts `os.PathLike` in
         # the signature; empty otherwise, so an object without one renders
         # byte-identical. make_state_ctx overwrites it.
