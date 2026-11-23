@@ -361,6 +361,7 @@ from _compilers import (  # noqa: E402
     ASAN_NO_PRELOAD_WINDOWS,
     NO_AVX512,
     POSIX_ONLY,
+    WINDOWS_CFLAGS_GAP,
     WINDOWS_CONSUMER_GAP,
 )
 
@@ -395,6 +396,8 @@ _ALLOWED_SKIPS = (
     # A consumer route not yet ported to the MSVC ABI (a filed gap, named
     # in the reason), and a subject with no Windows counterpart.
     WINDOWS_CONSUMER_GAP,
+    # gh-2751: a composer get_fn driver's cmake flags, a filed gap.
+    WINDOWS_CFLAGS_GAP,
     POSIX_ONLY,
     # test_gh1374's own subject: it must contain the spelling it hunts for.
     "names the pattern in order to detect it",

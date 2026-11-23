@@ -48,6 +48,7 @@ from pathlib import Path
 import pytest
 
 import _cbuild as cbuild
+from _compilers import WINDOWS_CFLAGS_GAP
 from _jmrun import run_cli
 
 from just_makeit import _composer
@@ -287,6 +288,10 @@ print("GH2747 OK")
 def project(tmp_path_factory) -> Path:
     if base._NO_TOOLCHAIN:
         pytest.skip("no cmake / C compiler")
+    # gh-2751: this file is in the Windows leg (it imports _cbuild for the
+    # default_raw build), and gh-2717's cmake fixture is not clang-cl's.
+    if cbuild.is_msvc(cbuild.compiler_for() or ""):
+        pytest.skip(WINDOWS_CFLAGS_GAP)
     return flat.build(
         tmp_path_factory.mktemp("gh2747"),
         _module(),
