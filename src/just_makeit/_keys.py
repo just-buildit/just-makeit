@@ -1042,6 +1042,9 @@ COMPOSER_SOURCE_KEYS = frozenset(
         # tests/test_gh1236_composer_subtable_keys.py now records every key
         # the renderer reads, so the next one cannot go the same way.
         "ranged",
+        # gh-2747: the resolver `Synth.fs`'s read goes through, the source
+        # type's `fs` row's `get_fn` (`_composer.source_fs`).
+        "fs_get_fn",
     }
 )
 COMPOSER_GENERATES_KEYS = frozenset(

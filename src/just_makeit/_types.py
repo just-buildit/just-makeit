@@ -549,10 +549,17 @@ def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
     seeds what ``reset()`` assigns -- ``0.1f`` is a ``float`` constant in a
     ``double _Complex`` field too.
 
+    gh-2747: a scalar parsed straight into its own type (``double``, with
+    no ``parse_type``) is seeded the same way, its zero the type's
+    ``zero``: the one reading of ``default`` beside ``default_raw`` for
+    every scalar init param, which a composer source's ``fs`` reads too.
+
     Examples
     --------
     >>> parse_seed("size_t", "16"), parse_seed("size_t", "", "N_MAX")
     ('16', 'N_MAX')
+    >>> parse_seed("double", "", "G_FS"), parse_seed("double", "")
+    ('G_FS', '0.0')
     >>> parse_seed("double _Complex", ""), parse_seed("double _Complex", "0.0 + 0.0 * I")
     ('{0.0, 0.0}', '{0.0, 0.0}')
     >>> parse_seed("double _Complex", "1.0 - 0.5 * I")
@@ -563,7 +570,7 @@ def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
     '{crealf(CPLX_ONE), cimagf(CPLX_ONE)}'
     """
     meta = _CTYPE_META[ctype]
-    zero = meta["parse_zero"]
+    zero = meta.get("parse_zero") or meta["zero"]
     if not zero.startswith("{"):
         return default_raw or default or zero
     c_text = default_raw or default

@@ -609,7 +609,15 @@ A source can hand work back to the project as plain C, with no CPython in it:
     the project's C: `<type> fn(const <struct> *, double fs)`, where
     `<struct>` is that table's `struct`. A source field's getter is handed
     the source's `fs`; a segment field's is handed the segment's own `fs`
-    field (required), and a copy of the segment's scalars, with no sources.
+    field (required), and a copy of the segment: its scalars, and its
+    sources as the struct's `sources_member` / `count_member` (gh-2747).
+    The sources are shallow copies of the segment's source objects, read
+    exactly as the Composer reads them when it builds its segments, so a
+    resolver whose answer depends on a source (a segment `fs` that an
+    `ofdm` source makes its bandwidth) can give it. An element of
+    `seg.sources` that is not the source type raises `TypeError`, in the
+    read and in `Composer(...)` alike, and a segment with no sources hands
+    a count of 0.
     A `flat_sources` segment's flat read of a source field is handed the
     segment's `fs` too, when the segment declares one (gh-2717): the inner
     source keeps the source type's default rate, since the segment's `fs`
@@ -649,8 +657,28 @@ A source can hand work back to the project as plain C, with no CPython in it:
     A `complex` or owned-pointer field has no such read, so the key is
     refused there.
 
+- **`fs_get_fn = "<fn>"`** on `[module.X.source]` (gh-2747) is the same
+    read for the source type's own `fs`, which is not a field row:
+    `double fn(const <struct> *, double fs)`, handed the stored `fs`.
+    `Synth.fs` returns `fn(&src, fs)`, and so does the `.fs` of every
+    source the Composer reads back (`c.segments[i].sources[k].fs`). The
+    setter, the constructor, the stored member (what `bridge_fn` is
+    handed) and the record keep the stored value. Resolving on read stays
+    true when an input changes later (`src.type = ...`); a value resolved
+    once at construction would not:
+
+    ```toml
+    [module.wfm_compose.source]
+    fs_get_fn = "dp_wfm_source_fs"   # an ofdm source's default fs is its bandwidth
+    ```
+
+    The source's `fs` default is the `fs` init param of `source.object`
+    (gh-2678), and a `default_raw` there (a header constant) is its default
+    as for any init param.
+
 jm writes the prototype of every seam (these, a field's `coerce_str_fn` and
-`get_fn`, and an owned-pointer field's four host functions) into a generated
+`get_fn`, the source's `fs_get_fn`, and an owned-pointer field's four host
+functions) into a generated
 `native/inc/<pkg>/<cname>/<cname>_bridge.h`, which the binding includes. The
 file is written only when at least one seam exists, so a C test or benchmark
 includes it instead of re-declaring a signature jm owns. The
@@ -1175,7 +1203,7 @@ number.
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `create_fn`         | the create every face calls, `<state_t> *fn(segs, n, repeat, continuous)`; default `<backing>_create`, used as written (gh-1758)                                                                                                                                                                                                                 |
 | `create_why`        | the create takes a trailing `const char **why`; every face that creates raises or prints its reason (gh-1755)                                                                                                                                                                                                                                    |
-| `[X.source]`        | `object`, `struct`, `type_name`, `fields[]`; optional `computed[]` and `generates` (the straight-C seams, §4.3) and `ranged`                                                                                                                                                                                                                     |
+| `[X.source]`        | `object`, `struct`, `type_name`, `fields[]`; optional `computed[]`, `generates` and `fs_get_fn` (the straight-C seams, §4.3) and `ranged`                                                                                                                                                                                                        |
 | `[X.segment]`       | `type_name`, `struct`, `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`), `flat_sources` (a one-source segment proxies that source's fields as read-only attributes), `ranged`                                                                                                                                |
 | `ranged`            | on `[X.source]` / `[X.segment]`: `[{name, flag}, …]`, fields that also take a `(lo, hi)` pair, redrawn uniformly each repeat; the struct carries a `<name>_hi` companion. Each bound converts at the field's own type, so an integer one keeps every bit and is refused out of range (gh-2224)                                                   |
 | `[X.timeline]`      | `type_name` (the `Timeline` type is emitted only when it is set)                                                                                                                                                                                                                                                                                 |

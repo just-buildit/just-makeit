@@ -1565,6 +1565,7 @@ AUTHOR_NAMED_KEYS = (
     "bridge_error_fn",
     "coerce_str_fn",
     "get_fn",
+    "fs_get_fn",
     "copy_fn",
     "free_fn",
     "parse_fn",

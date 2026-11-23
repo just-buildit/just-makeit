@@ -416,6 +416,13 @@ def get_fn(field: dict) -> str:
     stored member keep the stored value, so a record written and read back
     is unchanged.
 
+    A segment field's function is handed a copy of the segment: its
+    scalars, and its sources in ``sources_member`` / ``count_member``
+    (gh-2747; :func:`_segment_sources_c`), so a value that depends on a
+    source resolves. The source type's own ``fs`` reads the same way
+    through ``[module.X.source] fs_get_fn``, the ``get_fn`` of
+    :func:`source_fs`'s row (gh-2747).
+
     The read converts the function's result as it converted the member: by
     the field's ``type``, an enum's int decoded to its name, and a ranged
     field's scalar read (its ``(lo, hi)`` pair, when one is stored, is read
@@ -563,6 +570,76 @@ def _segment_copy_c(
     return "\n".join(f"{indent}{dst}{n} = {src}{n};" for n in names)
 
 
+def _segment_sources_fn(cfg: dict, module: str) -> str:
+    """The name of the generated C that reads a Segment's sources list as a
+    transient source-struct array (:func:`_segment_sources_c`).
+
+    >>> cfg = {"module": {"m": {"segment": {"type_name": "Seg"}}}}
+    >>> _segment_sources_fn(cfg, "m")
+    '_Seg_sources_c'
+    """
+    return f"_{C.composer_segment(cfg, module)['type_name']}_sources_c"
+
+
+def _segment_sources_c(cfg: dict, module: str) -> str:
+    """The generated C reading a Segment's ``sources`` list as a transient
+    ``<source struct>[]`` (gh-2747).
+
+    The one spelling of "a Segment's sources as the struct's
+    ``sources_member`` / ``count_member``", read by both places a segment
+    becomes its struct: the Composer's conversion
+    (``_build_<backing>_segments``) and a segment field's ``get_fn``
+    snapshot, which before gh-2747 carried no sources (``NULL, 0``), so a
+    resolver whose answer depends on them -- doppler's ``ofdm`` source
+    makes a segment's ``fs`` the channel bandwidth -- could not give it.
+
+    Each element is a SHALLOW copy of the source object's struct: scalars,
+    and any ``bytes`` / owned pointer ALIASING the source object's own
+    buffer. The caller frees the array, never what it aliases, and keeps
+    the list alive while the array is read. The array is never NULL on
+    success: an empty list is a one-element allocation with a count of 0,
+    as the Composer has always handed its kernel.
+
+    ``sources`` is the live list its getter returns, so it may hold
+    anything a caller assigned. An element that is not the source type is
+    a ``TypeError`` naming its index, not a cast: the Composer's
+    conversion read every element as a source object before this, and a
+    foreign one was undefined behavior. Out of memory is a
+    ``MemoryError``. Either way the function returns NULL with the
+    exception set and nothing allocated.
+    """
+    src = C.composer_source(cfg, module)
+    seg = C.composer_segment(cfg, module)
+    src_t, seg_t, st = src["type_name"], seg["type_name"], src["struct"]
+    return f"""/* gh-2747: a {seg_t}'s sources list as a transient {st}[] (*n_out
+ * elements, never NULL on success). Each element ALIASES its {src_t}'s
+ * buffers: free the array only, and keep the list alive while it is read.
+ * NULL with an exception set on a non-{src_t} element or out of memory. */
+static {st} *
+{_segment_sources_fn(cfg, module)}(PyObject *sources, size_t *n_out)
+{{
+    Py_ssize_t ns = PyList_GET_SIZE(sources);
+    {st} *srcs = ({st} *)calloc((size_t)(ns ? ns : 1), sizeof *srcs);
+    if (!srcs) {{
+        PyErr_NoMemory();
+        return NULL;
+    }}
+    for (Py_ssize_t k = 0; k < ns; k++) {{
+        PyObject *it = PyList_GET_ITEM(sources, k);
+        if (!PyObject_TypeCheck(it, &{src_t}Type)) {{
+            free(srcs);
+            PyErr_Format(PyExc_TypeError,
+                         "{seg_t}.sources[%zd] is not a {src_t}", k);
+            return NULL;
+        }}
+        srcs[k] = (({src_t}Object *)it)->src; /* scalars + aliased bits ptr */
+    }}
+    *n_out = (size_t)ns;
+    return srcs;
+}}
+"""
+
+
 def _source_getter_c(tname: str, obj: str, field: dict, body: str) -> str:
     """A source field's Python getter, *body* its statements.
 
@@ -611,7 +688,9 @@ def _source_getter_c(tname: str, obj: str, field: dict, body: str) -> str:
 
 def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
     """The :class:`_Seam` each source / segment field ``get_fn`` names
-    (gh-2710), in field order, each declared by :func:`get_fn_prototype`.
+    (gh-2710), in field order, each declared by :func:`get_fn_prototype`;
+    the source's ``fs_get_fn`` (gh-2747) after the source fields, declared
+    by the same prototype on :func:`source_fs`'s row.
 
     Raises
     ------
@@ -627,6 +706,10 @@ def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
     )
     for where, tbl, fields in tables:
         rows = [f for f in fields(cfg, module) if get_fn(f)]
+        if where == "source" and tbl.get("fs_get_fn"):
+            # gh-2747: the source type's `fs` row, whose `get_fn` is
+            # `[module.X.source] fs_get_fn` (:func:`source_fs`).
+            rows.append({**source_fs(cfg, module), "_fs_row": True})
         if not rows:
             continue
         names = {f["name"] for f in fields(cfg, module)}
@@ -639,6 +722,17 @@ def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
             )
         for f in rows:
             fn = get_fn(f)
+            if f.get("_fs_row"):
+                out.append(
+                    _Seam(
+                        fn,
+                        get_fn_prototype(f, tbl["struct"]),
+                        "source `fs` (fs_get_fn)",
+                        "/* Read the source's fs from its stored rate"
+                        " (fs_get_fn, gh-2747). */",
+                    )
+                )
+                continue
             out.append(
                 _Seam(
                     fn,
@@ -1624,12 +1718,32 @@ def source_fs(cfg: dict, module: str) -> dict:
     (:func:`render_source_type`), the getset doc and the class docstring
     (:func:`type_doc_lines`).
 
+    gh-2747: the init param's ``default_raw`` (a C expression, typically
+    a header constant) is its default, as it is for any other init param:
+    the row's ``default`` is :func:`~just_makeit._types.parse_seed`'s
+    reading of ``default`` beside ``default_raw``, so the ``tp_init``
+    local is seeded with the constant and the docstring names it, as it
+    names a numeric field's constant. Before this a raw default read as no
+    default and was refused, so a project kept the literal in the
+    manifest beside the constant in C.
+
+    gh-2747: ``[module.X.source] fs_get_fn = "<fn>"`` is the row's
+    :func:`get_fn`, so ``Synth.fs`` reads through the project's resolver
+    exactly as a source field does (gh-2710)::
+
+        double fn(const <source struct> *, double fs);
+
+    handed the stored ``fs``. Only the Python read changes; the setter,
+    the constructor, the stored member (what ``bridge_fn`` is handed) and
+    the record keep the stored value.
+
     Raises
     ------
     Refusal
-        If the object declares ``fs`` with no default: the source's
-        argument is optional, and a value jm made up beside a declaration
-        that has none is the split this function exists to remove.
+        If the object declares ``fs`` with neither ``default`` nor
+        ``default_raw``: the source's argument is optional, and a value jm
+        made up beside a declaration that has none is the split this
+        function exists to remove.
 
     Examples
     --------
@@ -1644,24 +1758,40 @@ def source_fs(cfg: dict, module: str) -> dict:
     ('48000.0', 'Rate.')
     >>> source_fs({"module": {"m": {"source": {}}}}, "m")["default"]
     '1e6'
+    >>> cfg["g"]["init_params"][0] = {"name": "fs", "type": "double",
+    ...                               "default_raw": "G_FS"}
+    >>> cfg["module"]["m"]["source"]["fs_get_fn"] = "g_fs"
+    >>> r = source_fs(cfg, "m")
+    >>> r["default"], r["get_fn"]
+    ('G_FS', 'g_fs')
     """
     src = C.composer_source(cfg, module)
+    row = _source_fs_row(cfg, module, src)
+    fn = src.get("fs_get_fn")
+    if fn:
+        row["get_fn"] = fn
+    return row
+
+
+def _source_fs_row(cfg: dict, module: str, src: dict) -> dict:
+    """:func:`source_fs`'s row before its ``fs_get_fn``: the declaration."""
     obj = src.get("object") or (src.get("generates") or {}).get("generator")
     if not obj:
         return dict(_SOURCE_FS_FALLBACK)
     for p in C.init_params(cfg, obj):
         if p[0] != "fs":
             continue
-        if not p[2]:
+        if not (p[2] or p[3]):
             raise Refusal(
                 f"composer module '{module}': the source type's `fs` takes "
                 f"its default from [[{obj}.init_params]] `fs`, which has "
-                f"none. Give that init param a `default` (gh-2678)."
+                "none. Give that init param a `default` or a `default_raw` "
+                "(gh-2678, gh-2747)."
             )
         return {
             "name": "fs",
             "type": "double",
-            "default": p[2],
+            "default": T.parse_seed("double", p[2], p[3]),
             "doc": p[9] if len(p) > 9 and p[9] else _SOURCE_FS_FALLBACK["doc"],
         }
     return dict(_SOURCE_FS_FALLBACK)
@@ -3024,12 +3154,16 @@ static int
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
 
-    # fs getset (always present).
+    # fs getset (always present). gh-2747: its read goes through the row's
+    # `get_fn` (`[module.X.source] fs_get_fn`) when one is named, handed
+    # the stored rate; the setter, `tp_init` and `bridge_fn` keep the
+    # stored member.
+    fs_acc = _read_acc(fs_row, "self->fs", "&self->src", "self->fs")
     getset_fns.append(f"""static PyObject *
 {tname}_get_fs({obj} *self, void *closure)
 {{
     (void)closure;
-    return PyFloat_FromDouble(self->fs);
+    return PyFloat_FromDouble({fs_acc});
 }}
 static int
 {tname}_set_fs({obj} *self, PyObject *value, void *closure)
@@ -3304,6 +3438,8 @@ def render_segment_type(cfg: dict, module: str) -> str:
 {members}}} {obj};
 """)
 
+    parts.append(_segment_sources_c(cfg, module))
+
     parts.append(f"""static void
 {tname}_dealloc({obj} *self)
 {{
@@ -3531,9 +3667,17 @@ def render_segment_type(cfg: dict, module: str) -> str:
     ]
     # gh-2710: a field naming `get_fn` is read through the project's C, which
     # takes the segment struct -- so its getter builds one from this object's
-    # scalars (the sources are not carried: NULL, 0) and hands it the
-    # segment's own `fs`.
+    # scalars and hands it the segment's own `fs`. gh-2747: and from its
+    # sources, through the one conversion the Composer reads them by
+    # (`_segment_sources_c`), so a resolver whose answer depends on them --
+    # doppler's `ofdm` makes a segment's `fs` the channel bandwidth -- can
+    # give it. The resolver is called into `_gv` and the transient array
+    # freed before anything returns; a non-source element or OOM raises.
     _snap_copy = _segment_copy_c(fields, "_seg.", "self->", " " * 4)
+    _sources_fn = _segment_sources_fn(cfg, module)
+    _src_struct = C.composer_source(cfg, module)["struct"]
+    _sources_member = seg.get("sources_member", "sources")
+    _count_member = seg.get("count_member", "n_sources")
 
     def _snapshot(f: dict) -> str:
         if not get_fn(f):
@@ -3542,12 +3686,21 @@ def render_segment_type(cfg: dict, module: str) -> str:
             f"    {seg['struct']} _seg;\n"
             "    memset(&_seg, 0, sizeof _seg);\n"
             f"{_snap_copy}\n"
+            "    size_t _ns;\n"
+            f"    {_src_struct} *_srcs = {_sources_fn}(self->sources, &_ns);\n"
+            "    if (!_srcs)\n"
+            "        return NULL;\n"
+            f"    _seg.{_sources_member} = _srcs;\n"
+            f"    _seg.{_count_member} = _ns;\n"
+            f"    {f['type']} _gv = "
+            f"{_read_acc(f, '', '&_seg', 'self->fs')};\n"
+            "    free(_srcs);\n"
         )
 
     for f in fields:
         n, ct = f["name"], f["type"]
         snap = _snapshot(f)
-        acc = _read_acc(f, f"self->{n}", "&_seg", "self->fs")
+        acc = "_gv" if snap else f"self->{n}"
         if f.get("_ranged"):
             # scalar, or (lo, hi) when the field's ranged bit is set; each
             # bound by the field's own type row (gh-2224: this built the pair
@@ -3563,9 +3716,9 @@ def render_segment_type(cfg: dict, module: str) -> str:
 {tname}_get_{n}({obj} *self, void *closure)
 {{
     (void)closure;
-{snap}    if (self->ranged & {flag})
+    if (self->ranged & {flag})
 {pair}
-    return {meta["to_py"](acc)};
+{snap}    return {meta["to_py"](acc)};
 }}
 static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -4429,6 +4582,9 @@ def render_composer_type(cfg: dict, module: str) -> str:
     seg_struct = seg["struct"]
     sources_member = seg.get("sources_member", "sources")
     count_member = seg.get("count_member", "n_sources")
+    # gh-2747: a segment's sources as its struct's, the one spelling a
+    # segment field's `get_fn` snapshot reads too.
+    sources_fn = _segment_sources_fn(cfg, module)
     cname = oo.get("composer_type_name", "Composer")
     pkg = C.project_name(cfg)
     # gh-1736: wrapped, since the type and struct names set its width.
@@ -5051,23 +5207,16 @@ _build_{backing}_segments(PyObject *seglist, size_t *n_out)
     }}
     for (Py_ssize_t i = 0; i < nseg; i++) {{
         {seg_t}Object *seg = ({seg_t}Object *)PyList_GET_ITEM(seglist, i);
-        Py_ssize_t ns = PyList_GET_SIZE(seg->sources);
-        {src["struct"]} *srcs =
-            ({src["struct"]} *)calloc((size_t)(ns ? ns : 1), sizeof *srcs);
+        size_t ns;
+        {src["struct"]} *srcs = {sources_fn}(seg->sources, &ns);
         if (!srcs) {{
             for (Py_ssize_t j = 0; j < i; j++)
                 free(segs[j].{sources_member});
             free(segs);
-            PyErr_NoMemory();
             return NULL;
         }}
-        for (Py_ssize_t k = 0; k < ns; k++) {{
-            {src_t}Object *syn =
-                ({src_t}Object *)PyList_GET_ITEM(seg->sources, k);
-            srcs[k] = syn->src; /* scalars + aliased bits ptr */
-        }}
         segs[i].{sources_member} = srcs;
-        segs[i].{count_member} = (size_t)ns;
+        segs[i].{count_member} = ns;
 {fwd}
     }}
     *n_out = (size_t)nseg;
