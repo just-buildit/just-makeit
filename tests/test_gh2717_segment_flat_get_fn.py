@@ -120,18 +120,24 @@ def project(tmp_path_factory) -> Path:
     return build(tmp_path_factory.mktemp("gh2717"), _module())
 
 
-def build(tmp: Path, module: dict) -> Path:
+def build(
+    tmp: Path,
+    module: dict,
+    header: str = base._HEADER,
+    resolve: str = base._RESOLVE,
+) -> Path:
     """gh-2710's backing project with *module* as its composer, built
-    under ``-Werror``; gh-2725 builds its own variant through this."""
+    under ``-Werror``; gh-2725 builds its own variant through this, and
+    gh-2747 its own *header* and *resolve* C as well."""
     assert run_cli("new", PKG, cwd=tmp).returncode == 0
     proj = tmp / PKG
     inc = proj / "native" / "inc" / PKG / "win"
     inc.mkdir(parents=True, exist_ok=True)
-    (inc / "win_core.h").write_text(base._HEADER, encoding="utf-8")
+    (inc / "win_core.h").write_text(header, encoding="utf-8")
     backing = proj / "native" / "src" / "backing"
     backing.mkdir(parents=True, exist_ok=True)
     (backing / "win_core.c").write_text(base._SOURCE, encoding="utf-8")
-    (backing / "win_resolve.c").write_text(base._RESOLVE, encoding="utf-8")
+    (backing / "win_resolve.c").write_text(resolve, encoding="utf-8")
     (backing / "cJSON.h").write_text(CJSON_H, encoding="utf-8")
     (backing / "cJSON.c").write_text(CJSON_C, encoding="utf-8")
     (backing / "CMakeLists.txt").write_text(

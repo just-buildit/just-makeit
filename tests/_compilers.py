@@ -256,6 +256,14 @@ WINDOWS_CONSUMER_GAP = (
     "Windows: this C consumer route is not ported to the MSVC ABI yet "
     "(gh-2599)"
 )
+#: gh-2751: a composer ``get_fn`` driver built through gh-2717's cmake
+#: fixture, whose ``-Wall -Wextra -Werror`` is ``-Weverything -Werror``
+#: under clang-cl. A filed gap, not an environment: the fix is the
+#: fixture's flags.
+WINDOWS_CFLAGS_GAP = (
+    "Windows: this composer get_fn fixture's cmake flags are not "
+    "clang-cl's yet (gh-2751)"
+)
 #: What has no Windows counterpart at all, such as a root-owned (``sudo``)
 #: install stood in for by POSIX directory permissions. Each use names its
 #: subject after the prefix.

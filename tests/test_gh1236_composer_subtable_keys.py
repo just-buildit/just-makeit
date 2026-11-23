@@ -85,6 +85,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "generates": {"generator": "nco", "bridge_fn": "wfm_bridge"},
     # gh-1381: source AND segment -- which fields take a (lo, hi) pair
     "ranged": [{"name": "freq", "flag": "WFM_RANGE_FREQ"}],
+    # gh-2747: the resolver the source type's `fs` read goes through
+    "fs_get_fn": "wfm_fs",
     # source.generates
     "generator": "nco",
     "bridge_fn": "wfm_bridge",

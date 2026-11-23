@@ -325,9 +325,14 @@ class TestComposerType:
         s = _composer.render_composer_type(_cfg(), "wfm_compose")
         # builds a transient wfm_segment_t[] from Segment/Synth objects
         assert "_build_wfm_compose_segments" in s
-        assert "srcs[k] = syn->src;" in s  # aliases bits, create deep-copies
+        # gh-2747: the sources through the one conversion a segment
+        # `get_fn` snapshot reads too; it aliases bits, create deep-copies.
+        assert "_Segment_sources_c(seg->sources, &ns);" in s
+        assert "srcs[k] = ((SynthObject *)it)->src;" in (
+            _composer.render_segment_type(_cfg(), "wfm_compose")
+        )
         assert "segs[i].sources = srcs;" in s
-        assert "segs[i].n_sources = (size_t)ns;" in s
+        assert "segs[i].n_sources = ns;" in s
         assert "segs[i].fs = seg->fs;" in s
         # frees only the transient arrays, never the bits (owned by Synth)
         assert "NOT the bits" in s
