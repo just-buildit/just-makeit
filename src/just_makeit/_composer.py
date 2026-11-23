@@ -570,7 +570,8 @@ def _source_getter_c(tname: str, obj: str, field: dict, body: str) -> str:
     ``<tname>_read_<name>(<obj> *self, double fs)`` the getter calls with
     the source's own ``fs`` -- and a flat ``Segment`` getter calls with the
     segment's (gh-2717: it read the inner source's attribute, whose ``fs``
-    is the source type's default, not the segment's). *body* spells the rate
+    need not be the segment's -- a ``Segment.sum`` source keeps its own,
+    and any source is a separate object after construction, gh-2725). *body* spells the rate
     ``fs`` (:func:`_read_acc`). Any other field's getter is *body* itself.
 
     >>> print(_source_getter_c("Src", "SrcObject", {"name": "w"},
@@ -3261,7 +3262,8 @@ def render_segment_type(cfg: dict, module: str) -> str:
 
     Two faces, matching compose.py: the inline single-source constructor
     (``Segment(type="tone", num_samples=…)`` — forwards the source fields to the
-    source type and wraps the one result) and the multi-source ``sum``
+    source type, builds it at the segment's ``fs`` (gh-2725) and wraps the
+    one result) and the multi-source ``sum``
     classmethod (``Segment.sum(*sources, num_samples=…)``). The backing
     ``wfm_segment_t[]`` is built later by the Composer; the type itself is pure
     Python-side data, so it needs no backing struct."""
@@ -3404,6 +3406,51 @@ def render_segment_type(cfg: dict, module: str) -> str:
     init_fail = _fail_tail(init_extracts, "Py_DECREF(kw);", "-1")
     sum_fail = _fail_tail(sum_extracts, "Py_DECREF(self);", "NULL")
 
+    # gh-2725: the source the inline face builds is this segment's, so it is
+    # built at the segment's rate -- given or defaulted. Every other way a
+    # Segment gets its sources agrees: the composer's read-back sets each
+    # rebuilt source's `fs` to its segment's (`_segments_to_list`). Before
+    # this the keyword was consumed as the segment's and the source kept the
+    # source type's default, so a read through `seg.sources[0]` resolved at
+    # a rate no segment had. Afterwards the two are separate objects: a
+    # later `seg.fs = x` moves the segment only, as `Segment.sum` never
+    # touches the sources it is handed.
+    # A positional `fs` (the source type's trailing argument, after every
+    # source field) is left in `args` by the keyword-only extraction, so the
+    # forward would give it twice: then the source is built at THAT rate and
+    # the segment reads it back, and naming it both ways is refused.
+    seg_fs_row = next((f for f in fields if f["name"] == "fs"), None)
+    n_src = len(_source_fields(cfg, module))
+    fwd_fs = (
+        "    int _fs_pos = args && PyTuple_GET_SIZE(args) > "
+        f"{n_src};\n"
+        '    if (_fs_pos && kwds && PyDict_GetItemString(kwds, "fs")) {\n'
+        "        PyErr_SetString(PyExc_TypeError,\n"
+        f'                        "{tname}() got fs by position and '
+        'keyword");\n'
+        "        Py_DECREF(kw);\n"
+        "        return -1;\n"
+        "    }\n"
+        "    if (!_fs_pos) {\n"
+        "        PyObject *_fs = PyFloat_FromDouble((double)self->fs);\n"
+        '        int _r = _fs ? PyDict_SetItemString(kw, "fs", _fs) : -1;\n'
+        "        Py_XDECREF(_fs);\n"
+        "        if (_r < 0) {\n"
+        "            Py_DECREF(kw);\n"
+        "            return -1;\n"
+        "        }\n"
+        "    }\n"
+        if seg_fs_row
+        else ""
+    )
+    fs_back = (
+        "    if (_fs_pos)\n"
+        f"        self->fs = ({seg_fs_row['type']})"
+        f"(({src_tname}Object *)one)->fs;\n"
+        if seg_fs_row
+        else ""
+    )
+
     # tp_init — single-source inline: forward leftover args/kwds to the source
     # type, wrap the one source.
     parts.append(f"""static int
@@ -3414,11 +3461,11 @@ def render_segment_type(cfg: dict, module: str) -> str:
     if (!kw)
         return -1;
 {init_extracts}
-    PyObject *one = PyObject_Call((PyObject *)&{src_type_obj}, args, kw);
+{fwd_fs}    PyObject *one = PyObject_Call((PyObject *)&{src_type_obj}, args, kw);
     Py_DECREF(kw);
     if (!one)
         return -1;
-    PyObject *list = PyList_New(1);
+{fs_back}    PyObject *list = PyList_New(1);
     if (!list) {{
         Py_DECREF(one);
         return -1;
@@ -3601,10 +3648,11 @@ static int
     # waveform to flatten, so the getter raises AttributeError there.
     #
     # gh-2717: a field naming `get_fn` reads at a rate, and the segment's is
-    # its own `fs` field. Delegating read it at the inner source's `fs`, the
-    # source type's default, since the segment's `fs` keyword is the
-    # segment's -- so its getter calls the source's `_read_` with the
-    # segment's rate. Without a segment `fs` the source's own is the rate.
+    # its own `fs` field. Delegating read it at the inner source's `fs`,
+    # which a `sum` source keeps as its own and which a later `seg.fs = x`
+    # does not move (gh-2725) -- so its getter calls the source's `_read_`
+    # with the segment's rate. Without a segment `fs` the source's own is
+    # the rate.
     seg_fs = "fs" in {f["name"] for f in fields}
     for f in _segment_flat_fields(cfg, module):
         n = f["name"]

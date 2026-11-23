@@ -382,10 +382,14 @@ del cq
 src = Src(gen=3, fs=4e6)
 seg = Seg(gen=3, fs=4e6)
 assert len(src.seq) == 12, src.seq
-assert seg.sources[0].fs != 4e6, ("the inner source keeps its own fs",
-                                   seg.sources[0].fs)
 assert seg.seq == src.seq, ("flat read at the segment's fs", seg.seq,
                             src.seq)
+# gh-2725: the inline source starts at the segment's fs; moving the
+# segment's leaves it, and the flat read follows the segment.
+seg.fs = 2e6
+assert seg.sources[0].fs == 4e6, ("the inner source keeps its own fs",
+                                   seg.sources[0].fs)
+assert seg.seq == Src(gen=3, fs=2e6).seq, seg.seq
 assert seg.seq != seg.sources[0].seq, "not the inner source's fs"
 print("BYTES GET_FN OK")
 """
