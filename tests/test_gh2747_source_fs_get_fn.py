@@ -251,6 +251,24 @@ assert empty.fs == 5e6, empty.fs
 empty.sources.clear()
 assert empty.fs == 1.0, ("no sources", empty.fs)
 
+# 4b. No __init__ ran, so `sources` is NULL: a count of 0, not a crash.
+class S2(Seg):
+    def __init__(self):
+        pass
+assert S2().fs == 0.0, ("a subclass skipping __init__", S2().fs)
+assert Seg.__new__(Seg).fs == 0.0, "Seg.__new__ alone"
+
+# 4c. A source read back through a Segment or the Composer is a Src, so its
+# `.fs` reads through fs_get_fn too -- at the stored fs it was handed: the
+# segment's (gh-2725, and the Composer's read-back). At the source type's
+# default (1e6) an ofdm source resolves; at the segment's 1.0 it does not,
+# since this resolver treats only 1e6 as the source's unset value.
+assert Seg(bw=20e6, ofdm=1, fs=1e6).sources[0].fs == 20e6
+assert Seg(bw=20e6, ofdm=1).sources[0].fs == 1.0
+w1 = Win([Seg.sum(Src(bw=20e6, ofdm=1), Src(bw=5e6), fs=1e6)])
+assert w1.segments[0].sources[0].fs == 20e6, w1.segments[0].sources[0].fs
+assert w1.segments[0].sources[1].fs == 1e6, "not ofdm: stored"
+
 # 5. A foreign element is refused by name, in the read and the Composer.
 bad = Seg.sum(Src(bw=5e6))
 bad.sources.append(5)

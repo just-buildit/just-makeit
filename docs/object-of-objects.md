@@ -672,6 +672,10 @@ A source can hand work back to the project as plain C, with no CPython in it:
     fs_get_fn = "dp_wfm_source_fs"   # an ofdm source's default fs is its bandwidth
     ```
 
+    Every other `get_fn` (a source field's, a segment field's, a flat
+    read's) is still handed the STORED `fs`, not this resolved one, so a
+    resolver whose answer depends on `fs` resolves it again itself.
+
     The source's `fs` default is the `fs` init param of `source.object`
     (gh-2678), and a `default_raw` there (a header constant) is its default
     as for any init param.

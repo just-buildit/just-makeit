@@ -598,7 +598,11 @@ def _segment_sources_c(cfg: dict, module: str) -> str:
     buffer. The caller frees the array, never what it aliases, and keeps
     the list alive while the array is read. The array is never NULL on
     success: an empty list is a one-element allocation with a count of 0,
-    as the Composer has always handed its kernel.
+    as the Composer has always handed its kernel. A NULL list -- a
+    Segment whose ``__init__`` never ran (``Seg.__new__(Seg)``, or a
+    subclass whose ``__init__`` skips the base's; the type is a base type
+    built by ``PyType_GenericNew``) -- is no sources too, so such a
+    segment's ``get_fn`` read gives the stored value instead of crashing.
 
     ``sources`` is the live list its getter returns, so it may hold
     anything a caller assigned. An element that is not the source type is
@@ -618,7 +622,9 @@ def _segment_sources_c(cfg: dict, module: str) -> str:
 static {st} *
 {_segment_sources_fn(cfg, module)}(PyObject *sources, size_t *n_out)
 {{
-    Py_ssize_t ns = PyList_GET_SIZE(sources);
+    /* NULL on an instance whose __init__ never ran (Seg.__new__(Seg), a
+     * subclass that skips it): no sources, not a crash. */
+    Py_ssize_t ns = sources ? PyList_GET_SIZE(sources) : 0;
     {st} *srcs = ({st} *)calloc((size_t)(ns ? ns : 1), sizeof *srcs);
     if (!srcs) {{
         PyErr_NoMemory();

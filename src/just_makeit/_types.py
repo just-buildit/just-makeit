@@ -570,7 +570,7 @@ def parse_seed(ctype: str, default: str, default_raw: str = "") -> str:
     '{crealf(CPLX_ONE), cimagf(CPLX_ONE)}'
     """
     meta = _CTYPE_META[ctype]
-    zero = meta.get("parse_zero") or meta["zero"]
+    zero = meta["parse_zero"] if "parse_zero" in meta else meta["zero"]
     if not zero.startswith("{"):
         return default_raw or default or zero
     c_text = default_raw or default
