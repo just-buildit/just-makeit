@@ -1639,8 +1639,13 @@ def _build_no_state_init_ctx(
         if kind == "str_enum":
             # gh-2736: `Literal[...]` of the choices, the module peer's
             # (`_stubs._py`) spelling -- this said `str` (gh-1905).
+            # No default is `= ...`, as the module peer writes it: `= ""`
+            # beside a Literal is a default mypy refuses (gh-2736 review).
             choices, sdflt = _str_enum_by_name[name]
-            pyi_parts.append(f'{name}: {T.enum_literal(choices)} = "{sdflt}"')
+            pyi_parts.append(
+                f"{name}: {T.enum_literal(choices)} = "
+                + (f'"{sdflt}"' if sdflt else "...")
+            )
         elif kind == "opt_arr":
             pyi_parts.append(f"{name}: {_arr_ann(name)} | None = None")
         elif kind == "def_arr":
@@ -1684,8 +1689,7 @@ def _build_no_state_init_ctx(
     if str_enum_ip:
         pyi_doc_sections.append(
             "\n".join(
-                f"    {sname} : {T.enum_literal(choices)}, "
-                f'default "{sdflt}"\n'
+                f'    {sname} : str, default "{sdflt}"\n'
                 f"        {enum_param_desc(choices)}"
                 for sname, choices, sdflt in str_enum_ip
             )

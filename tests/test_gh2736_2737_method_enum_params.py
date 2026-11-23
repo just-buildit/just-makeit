@@ -196,6 +196,50 @@ def test_the_runtime_doc_says_it_too(applied, rel):
     assert f"mode : {LIT}, default 'data'" in text, rel
 
 
+#: A ``string_enum:`` init param with and without a default, and the exact
+#: ``__init__`` both producers must write for it.
+INIT_CASES = {
+    "mode:string_enum:fast,hq": (
+        'def __init__(self, mode: Literal["fast", "hq"] = ...) -> None: ...'
+    ),
+    "mode:string_enum:fast,hq:hq": (
+        'def __init__(self, mode: Literal["fast", "hq"] = "hq") -> None: ...'
+    ),
+}
+
+
+def init_enum_project(tmp: Path, spec: str) -> Path:
+    """Object ``so`` standalone and ``mo`` in module ``m``, each taking the
+    init param *spec*; shared with the mypy face of this gate."""
+    assert run_cli("new", PKG, "--module", "m", cwd=tmp).returncode == 0
+    root = tmp / PKG
+    for args in (("so",), ("mo", "--module", "m")):
+        r = run_cli("object", *args, "--init-param", spec, cwd=root)
+        assert r.returncode == 0, r.stdout + r.stderr
+    return root
+
+
+@pytest.mark.parametrize("spec", sorted(INIT_CASES))
+def test_both_producers_write_one_init_signature(tmp_path, spec):
+    """gh-2736 review: the standalone producer wrote `= ""` beside the
+    Literal when no default was declared -- a default mypy refuses, where
+    the module producer writes `= ...`."""
+    root = init_enum_project(tmp_path, spec)
+    want = INIT_CASES[spec]
+    docs = set()
+    for rel in (f"src/{PKG}/so.pyi", f"src/{PKG}/m/m.pyi"):
+        assert want in _read(root, rel), (rel, _read(root, rel))
+        docs |= {
+            ln.strip()
+            for ln in _read(root, rel).splitlines()
+            if ln.strip().startswith("mode : ")
+        }
+    # The class docstring's type line too: one line, and a default clause
+    # only when one was declared.
+    assert len(docs) == 1, docs
+    assert ("default" in docs.pop()) == spec.endswith(":hq"), spec
+
+
 def test_the_header_prototype_takes_the_c_int(applied):
     """gh-2737: the prototype jm writes passes the decoded int."""
     for rel in ("native/inc/wl/o/o_core.h", "native/inc/wl/s/s_core.h"):
