@@ -526,7 +526,7 @@ wheels = [
 
 [[package]]
 name = "just-makeit"
-version = "0.135.2"
+version = "0.136.0"
 source = { editable = "." }
 dependencies = [
     { name = "packaging" },

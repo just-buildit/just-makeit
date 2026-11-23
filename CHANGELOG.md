@@ -1,5 +1,33 @@
 ## [Unreleased]
 
+## [0.136.0] — 2026-11-23
+
+### Added
+
+- **A composer source's `fs` can read through the project's C, and a
+    segment field's `get_fn` sees the segment's sources (gh-2747).**
+    doppler's `ofdm` source reads an `fs` at a face's default as its
+    channel bandwidth, but `Synth(type="ofdm").fs` and
+    `Segment(type="ofdm").fs` read the default. A `fs_get_fn = "<fn>"` on
+    `[module.X.source]`, declared in `<cname>_bridge.h` as
+    `double fn(const <struct> *, double fs)`, is the read of the source
+    type's `fs`; the setter, the constructor, the stored member and the
+    record keep the stored value. A segment field's `get_fn` is now handed
+    the segment's sources in its `sources_member` / `count_member`, read by
+    the one conversion the Composer builds its segments with.
+
+### Fixed
+
+- **A composer source's `fs` takes its object's `default_raw`, and a
+    foreign `Segment.sources` element is refused (gh-2747).** The source
+    type's `fs` default comes from the `fs` init param of `source.object`
+    (gh-2678), which was refused when it gave `default_raw` (a header
+    constant) instead of `default`; it is now that init param's default, as
+    for any other. And `Composer(...)` read every element of a segment's
+    `sources` list as a source object without checking it, so an element
+    a caller appended was undefined behavior; it is now a `TypeError`
+    naming the element.
+
 ## [0.135.2] — 2026-11-23
 
 ### Fixed
