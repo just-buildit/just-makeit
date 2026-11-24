@@ -130,22 +130,7 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                         f"in the sacred header, or `doc =` on the method",
                     )
                 )
-            struct = _record.c_struct(method)
-            for field in _record.fields(method, blocks):
-                if field.doc:
-                    continue
-                out.append(
-                    DocGap(
-                        comp,
-                        "record field",
-                        f"{method.get('name')}.{field.name}",
-                        (
-                            f"{struct}.{field.name}'s own `/**< ... */`"
-                            if struct
-                            else "`doc =` on the result field"
-                        ),
-                    )
-                )
+            out += _record_field_gaps(comp, method, blocks)
         # gh-1400: and its views. A view renders as a synthetic component
         # whose members resolve under its parent's stem (`stub_stem`,
         # gh-2406) -- ask the overlay, never the parent's list.
@@ -205,7 +190,34 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                         f"or `doc =` on the function",
                     )
                 )
+            # gh-2755: a function returning one record has fields too. A
+            # list of records has no named field surface to document.
+            if _record.is_record(fn):
+                out += _record_field_gaps(module, fn, fn_blocks)
     return out
+
+
+def _record_field_gaps(owner: str, member: dict, blocks: dict) -> list:
+    """The undocumented result fields of *member*, a method or function.
+
+    One loop for both faces that return a record (gh-2755): a field's doc
+    is the manifest's, else its struct's own member doc (`_record.fields`).
+    """
+    struct = _record.c_struct(member)
+    return [
+        DocGap(
+            owner,
+            "record field",
+            f"{member.get('name')}.{field.name}",
+            (
+                f"{struct}.{field.name}'s own `/**< ... */`"
+                if struct
+                else "`doc =` on the result field"
+            ),
+        )
+        for field in _record.fields(member, blocks)
+        if not field.doc
+    ]
 
 
 def report(found: list[DocGap]) -> str:

@@ -48,6 +48,14 @@ def run(args: list[str]) -> None:
     fn_status_errors: list[dict] = []
     fn_out_size: str = ""
     fn_result_fields: list[dict] = []
+    # gh-2755: ONE record returned by value, and its type's keys -- the
+    # spellings `jm method` takes (gh-244, gh-257, gh-261, gh-646).
+    fn_single = False
+    fn_record: dict[str, str] = {
+        "record_name": "",
+        "record_module": "",
+        "record_doc": "",
+    }
     impl_spec_f: str | None = None
     replacements_f: list[tuple[str, str]] = []
     fn_inline = False
@@ -264,6 +272,16 @@ def run(args: list[str]) -> None:
                 print(f"error: {exc}", file=sys.stderr)
                 sys.exit(1)
             i += 1
+        elif tok == "--single":
+            fn_single = True
+            i += 1
+        elif tok in ("--record-name", "--record-module", "--record-doc"):
+            i += 1
+            if i >= len(remaining):
+                print(f"error: {tok} requires a value", file=sys.stderr)
+                sys.exit(1)
+            fn_record[tok[2:].replace("-", "_")] = remaining[i]
+            i += 1
         elif tok == "--impl":
             i += 1
             if i >= len(remaining):
@@ -295,13 +313,14 @@ def run(args: list[str]) -> None:
         sys.exit(1)
 
     # gh-646: a per-field doc renders on the PyStructSequence a `--single`
-    # method builds. A free function has no single-record shape at all, so the
-    # text would be accepted, round-tripped, and never seen — say so instead.
-    if any(f.get("doc") for f in fn_result_fields):
+    # result builds (gh-2755 gave a free function one). A list of records has
+    # no named field surface, so the text would be accepted, round-tripped,
+    # and never seen — say so instead.
+    if not fn_single and any(f.get("doc") for f in fn_result_fields):
         print(
-            "error: a --result-field doc requires the single-record shape, "
-            "which free functions do not have.\n"
-            "Declare it as a method with --single, or drop the doc.",
+            "error: --result-field docs require --single.\n"
+            "Without it the function returns a list of plain tuples, which "
+            "has no named field surface to carry them.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -374,4 +393,6 @@ def run(args: list[str]) -> None:
         check_return=fn_check_return,
         why=fn_why,
         status_errors=fn_status_errors or None,
+        single=fn_single,
+        **fn_record,
     )

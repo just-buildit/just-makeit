@@ -350,6 +350,11 @@ def load(root: Path) -> dict:
     out_errors = scalar_out_errors(cfg)
     if out_errors:
         _refuse(out_errors)
+    # gh-2755: a module function's single record -- `single` with no
+    # columns, a record key with no `single`, or a key it never reads.
+    record_errors = function_record_errors(cfg)
+    if record_errors:
+        _refuse(record_errors)
     # gh-2470: a set_state status table with no set_state, or a row the
     # shared validator refuses on every other table face.
     set_state_errors = _set_state_status_errors_errors(cfg)
@@ -805,6 +810,36 @@ def scalar_out_errors(cfg: dict) -> "list[str]":
                     f"yet (gh-2685). Return it from the method, or drop "
                     f"{key} = true."
                 )
+    return errors
+
+
+def function_record_errors(cfg: dict) -> "list[str]":
+    """Every module function whose single-record declaration is refused.
+
+    gh-2755. A ``[[module.X.functions]]`` row with ``single = true``
+    returns ONE named record, the struct its C function returns by value.
+    The rules are `_record.function_single_why_not`'s, which ``jm
+    function`` asks too, so the command and ``apply`` refuse one row.
+
+    Examples
+    --------
+    >>> bad = {"module": {"m": {"functions": [
+    ...     {"name": "f", "return_type": "rec_t", "single": True}]}}}
+    >>> function_record_errors(bad)[0].split(":")[0]
+    "[[module.m.functions]] function 'f'"
+    >>> function_record_errors({"module": {"m": {"functions": [
+    ...     {"name": "f"}]}}})
+    []
+    """
+    from . import _record
+
+    errors: list[str] = []
+    for mid in modules(cfg):
+        for fn in module_functions(cfg, mid):
+            if isinstance(fn, dict):
+                why = _record.function_single_why_not(fn)
+                if why:
+                    errors.append(f"[[module.{mid}.functions]] {why}")
     return errors
 
 

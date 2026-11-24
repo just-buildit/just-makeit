@@ -1333,6 +1333,32 @@ def param_writable(p) -> bool:
     return isinstance(p, dict) and bool(p.get("out") or p.get("mutable"))
 
 
+def zero_return(return_type: str) -> str:
+    """The ``return`` of *return_type*'s zero, or "" for ``void``.
+
+    The neutral value a fixed-output stub returns, and what
+    `_method.impl_default_return` completes a body with: one spelling, so the
+    two cannot differ. A registered scalar returns its ``_CTYPE_META``
+    zero. Any other type is a record returned by value -- ``single``, or a
+    declared record element as a fixed return (gh-1405) -- and returns a
+    zeroed C99 compound literal. The fixed stub emitted no ``return`` at
+    all for that kind, so a fresh scaffold fell off the end of a non-void
+    function (gh-2248). A module function returning one record by value
+    (gh-2755) completes its stub with the same line.
+
+    >>> zero_return("float")
+    'return (float)0.0f;'
+    >>> zero_return("iq16_t")
+    'return (iq16_t){0};'
+    >>> zero_return("void")
+    ''
+    """
+    if return_type == "void":
+        return ""
+    meta = _CTYPE_META.get(return_type)
+    return f"return ({return_type}){meta['zero'] if meta else '{0}'};"
+
+
 def param_scalar_out(p) -> bool:
     """True when a declared SCALAR param is an output the C function writes.
 

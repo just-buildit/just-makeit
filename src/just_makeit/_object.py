@@ -499,6 +499,18 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
         if _is_scaffold_brief(module, cname, parsed):
             continue
         out[cname] = parsed
+    # gh-2755: a function returning one record documents its fields from
+    # the struct's own `///<` member docs, as a method's record does
+    # (gh-1300). Only when one is documented: a fresh header stays `{}`.
+    structs = {
+        k: v
+        for k, v in extract_struct_member_docs(
+            header.read_text(encoding="utf-8")
+        ).items()
+        if v
+    }
+    if structs:
+        out[struct_members_key()] = structs
     return out
 
 
@@ -2616,6 +2628,12 @@ def render_module_ext_c(
     if extra_files is None:
         extra_files = _module_extra_files(root, mp.cname, comp_ctxs, cfg)
     comp_ctxs = _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
+    module_ctx = Ctx.make_module_ctx(
+        module,
+        pkg,
+        C.module_package_resolved(cfg, module),
+        C.module_doc(cfg, module),
+    )
     return R.render_module_ext_aggregator(
         module,
         comp_ctxs,
@@ -2626,12 +2644,10 @@ def render_module_ext_c(
         enums=C.enums(cfg),
         # gh-645: `[module.X] doc` -> m_doc, the same string the re-export
         # __init__.py docstring gets.
-        module_doc_c=Ctx.make_module_ctx(
-            module,
-            pkg,
-            C.module_package_resolved(cfg, module),
-            C.module_doc(cfg, module),
-        )["module_doc_c"],
+        module_doc_c=module_ctx["module_doc_c"],
+        # gh-2755: a function's record type is qualified by the package
+        # the module's classes are imported from (gh-1486).
+        module_tp=module_ctx["module_tp"],
         # gh-643: the module header's Doxygen for its free functions — the
         # same blocks the .pyi derives from (gh-384), so `help(fn)` and the
         # stub carry the same text.
@@ -3055,8 +3071,13 @@ def _regenerate_module_now(
     # scope `record_registration_c` resolves names in, so a parent+view or
     # two sibling objects sharing a name are both covered, not just one
     # object's own methods.
+    # gh-2755: a module function's record is in the same namespace.
+    fn_records = _record.function_registrations(
+        C.module_functions(cfg, module), _load_module_doc_blocks(root, module)
+    )
     for _msg in _record.doc_conflict(
         [r for ctx in comp_ctxs for r in ctx.get("record_registrations", [])]
+        + fn_records
     ):
         _report.warn(_msg)
 
@@ -3481,7 +3502,7 @@ def _regenerate_module_now(
         reg.name
         for ctx in comp_ctxs
         for reg in ctx.get("record_registrations", [])
-    ]
+    ] + [reg.name for reg in fn_records]
     # gh-342: extra_types are names jm itself emits into the `from .<module>
     # import …` line (types from a hand-written sibling compiled into the same
     # .so). They must be in the keep-set or the gh-329 prune strips them from

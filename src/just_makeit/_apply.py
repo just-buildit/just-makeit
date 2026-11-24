@@ -1602,6 +1602,12 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 # from the replay's manifest and the binding raises the
                 # check_return error for every status again.
                 status_errors=fn.get("status_errors") or None,
+                # gh-2755: ONE record by value. Unforwarded, the replay
+                # rendered the list-of-records prototype and binding.
+                single=bool(fn.get("single")),
+                record_name=fn.get("record_name", ""),
+                record_module=fn.get("record_module", ""),
+                record_doc=fn.get("record_doc", ""),
             )
 
 

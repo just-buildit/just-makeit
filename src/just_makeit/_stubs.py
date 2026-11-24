@@ -2557,6 +2557,10 @@ def fn_py_surface(
     if outs:
         anns = [_py(p["type"]) for p in outs]
         ret = anns[0] if len(anns) == 1 else f"tuple[{', '.join(anns)}]"
+    elif _record.is_record(fn):
+        # gh-2755: ONE record, the class `make_module_pyi` declares for it
+        # -- the annotation a single-record method's stub carries.
+        ret = _record.public_name(fn)
     elif fn.get("check_return") and not out_type:
         # gh-363: the int status is consumed by a raise-on-non-zero; the Python
         # surface is "succeeds or raises", i.e. returns None. With an output
@@ -3525,17 +3529,25 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         ]
         # gh-2516: a view over another module's object returns what its
         # overlay's methods do, the parent's and its own.
-        + [m for synth, vcfg in _foreign for m in C.methods(vcfg, synth)],
+        + [m for synth, vcfg in _foreign for m in C.methods(vcfg, synth)]
+        # gh-2755: and a module function returning one record.
+        + list(functions),
         # gh-1300: merged, not spread -- a spread keeps only the last
         # object's per-struct field docs, and the records above belong to
         # every object.
         merge_doc_blocks(
             *(cfg.get(obj, {}).get("_doc_blocks", {}) for obj in objects),
             *(vcfg[synth].get("_doc_blocks", {}) for synth, vcfg in _foreign),
+            fn_doc_blocks,
         ),
     )
     if _rec_block:
+        if not (objects or _foreign):
+            # gh-2755: a functions-only module's record class needs the
+            # blank line an object's stub gets above.
+            parts.append("")
         parts.append(_rec_block)
+        needs_final = True
     # gh-2344: the enum values the aggregator publishes, one per Python name.
     # Read the same way the aggregator reads its objects' entries (first
     # object to name an enum wins, and only what its fragment defines), so

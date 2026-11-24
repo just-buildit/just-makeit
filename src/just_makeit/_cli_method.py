@@ -727,12 +727,20 @@ def run(args: list[str]) -> None:
         sys.exit(1)
 
     # gh-244: --single returns ONE named record; only meaningful with
-    # --result-field (which supplies the field names/types).
-    if single and not result_fields:
-        print(
-            "error: --single requires at least one --result-field.",
-            file=sys.stderr,
-        )
+    # --result-field (which supplies the field names/types). gh-646:
+    # --record-doc documents that record TYPE, which needs --single too
+    # (the reasoning is below). gh-2755: one refusal, which a module
+    # function's faces ask as well.
+    _single_err = _record.single_why_not(
+        {
+            "single": single,
+            "result_fields": result_fields,
+            "record_doc": record_doc,
+        },
+        f"method {method_name!r}",
+    )
+    if _single_err:
+        print(f"error: {_single_err}", file=sys.stderr)
         sys.exit(1)
 
     # gh-646: a per-field doc lands on the PyStructSequence field and the
@@ -744,14 +752,8 @@ def run(args: list[str]) -> None:
     # the whole point of migrating a hand-written module is that its doc
     # surfaces stop being unlinked, so the field docs are accepted and
     # rendered into the method's runtime docstring below. `--record-doc`
-    # still needs --single: there is no record TYPE here to attach it to.
-    if not single and record_doc:
-        print(
-            "error: --record-doc requires --single.\n"
-            "Without it there is no named record type to document.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    # still needs --single: there is no record TYPE here to attach it to
+    # (refused above, by `_record.single_why_not`).
     if (
         not single
         and not record_dtype

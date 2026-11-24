@@ -429,8 +429,15 @@ Commands:
                                 statuses keep the --check-return error.
                                 Repeatable. Requires --check-return.
     --result-field name:type    Append a field to a returned record list; repeatable.
+    --single                    With --result-field, return ONE named record (a
+                                PyStructSequence) instead of a list[tuple]. The C
+                                function returns the --return-type struct by value.
+    --record-name NAME          With --single, the record type's public name,
+                                overriding the one derived from --return-type.
+    --record-module MOD         With --single, the record type's __module__.
+    --record-doc "text"         With --single, the record type's own docstring.
     --doc "text"                Docstring shown in Python help().
-    --inline                    Emit static inline body in _core.h (no _core.c entry).
+    --inline                   Emit static inline body in _core.h (no _core.c entry).
     --impl file::funcname       Lift function body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 

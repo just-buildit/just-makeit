@@ -24,6 +24,7 @@ from ._types import (
     param_writable,
     param_scalar_out,
     fn_input_params,
+    zero_return,
 )
 from . import _coerce
 from . import _config as C
@@ -1172,6 +1173,7 @@ def fn_c_decl(
     max_results_param: str = "",
     variable_output: bool = False,
     why: bool = False,
+    single: bool = False,
 ) -> str:
     """One-line C declaration: 'return_type fn_name(c_params);'
 
@@ -1190,8 +1192,12 @@ def fn_c_decl(
     appends '{return_type} *result' (plus 'size_t max_results' when
     max_results_param is empty, meaning the cap is not already a named
     param).
+
+    single: with result_fields (gh-2755), the function returns ONE record,
+    the ``return_type`` struct by value, so the declaration is the plain
+    ``return_type fn_name(params)`` -- no result buffer, no count.
     """
-    result_fields = result_fields or []
+    result_fields = [] if single else (result_fields or [])
     if result_fields:
         rt_disp = return_type
         c_parts, _ = _fn_c_params(params)
@@ -1286,6 +1292,7 @@ def fn_c_inline_stub(
     max_results_param: str = "",
     variable_output: bool = False,
     why: bool = False,
+    single: bool = False,
 ) -> str:
     """C body stub for embedding in ``_core.h`` as ``static inline``.
 
@@ -1307,7 +1314,7 @@ def fn_c_inline_stub(
         The function's parameters, scalar or array.
     return_type : str
         C return type string (e.g. ``"int16_t"``, ``"float"``).
-    out_type, result_fields, max_results_param, variable_output, why
+    out_type, result_fields, max_results_param, variable_output, why, single
         As for :func:`fn_c_decl`, whose signature this matches.
 
     Returns
@@ -1344,6 +1351,7 @@ def fn_c_inline_stub(
         max_results_param=max_results_param,
         variable_output=variable_output,
         why=why,
+        single=single,
         storage="static inline ",
     )
 
@@ -1417,16 +1425,30 @@ def fn_c_stub(
     max_results_param: str = "",
     variable_output: bool = False,
     why: bool = False,
+    single: bool = False,
     storage: str = "",
 ) -> str:
     """C implementation stub for <module>_core.c (public, no _impl suffix).
 
-    out_type, variable_output, result_fields and why extend the signature in
-    the same way as fn_c_decl; see that function's docstring for the
-    semantics. *storage* prefixes the return type (``"static inline "`` for
-    :func:`fn_c_inline_stub`); it is the only way the two stubs differ.
+    out_type, variable_output, result_fields, why and single extend the
+    signature in the same way as fn_c_decl; see that function's docstring
+    for the semantics. *storage* prefixes the return type (``"static inline
+    "`` for :func:`fn_c_inline_stub`); it is the only way the two stubs
+    differ. A ``single`` record's stub returns the zeroed struct
+    (`_types.zero_return`, gh-2755), as a single-record method's does.
+
+    >>> print(fn_c_stub("scene", [("fc", "double")], "scene_t",
+    ...       result_fields=[{"name": "r", "type": "double"}], single=True))
+    /* <<IMPLEMENT: scene>> */
+    scene_t
+    scene(double fc)
+    {
+        (void)fc;
+        return (scene_t){0}; /* placeholder */
+    }
+    <BLANKLINE>
     """
-    result_fields = result_fields or []
+    result_fields = [] if single else (result_fields or [])
     if result_fields:
         rt_disp = return_type
         c_parts, suppress = _fn_c_params(params)
@@ -1512,7 +1534,11 @@ def fn_c_stub(
     c_ret_line = (
         f"    return ({ret_disp}){ret_meta['zero']}; /* placeholder */"
         if ret_meta
-        else ""
+        else (
+            f"    {zero_return(return_type)} /* placeholder */"
+            if single
+            else ""
+        )
     )
     return (
         f"/* <<IMPLEMENT: {fn_name}>> */\n"
@@ -2193,6 +2219,7 @@ def _py_wrapper_for_function(
     enums: "dict[str, list[str]] | None" = None,
     *,
     c_name: str,
+    record_sid: str = "",
 ) -> str:
     """Generate a _bind_<fn_name> Python wrapper for a module-level C function.
 
@@ -2212,6 +2239,12 @@ def _py_wrapper_for_function(
     fn_c_decl appended a bare trailing `size_t max_results` param instead, so
     the wrapper passes the capacity for it: `out_size` when declared
     (gh-2205), else the literal `max_results` value.
+
+    record_sid: when set (gh-2755), the function returns ONE record -- the
+    ``return_type`` struct by value -- built into the structseq whose
+    descriptor and type are ``<record_sid>_desc`` / ``_type``. The tail is
+    a single-record method's, from the same `_record` emitters, and
+    ``result_fields`` names its columns.
     """
     result_fields = result_fields or []
     ret_meta = _CTYPE_META.get(return_type)
@@ -2273,7 +2306,19 @@ def _py_wrapper_for_function(
         cleanup = ""
         py_args = "PyObject *Py_UNUSED(args)"
 
-    if result_fields:
+    if record_sid:
+        # gh-2755: ONE record, returned by value -- the single-record
+        # method's shape (gh-244). The C call runs before `cleanup` releases
+        # what it reads (gh-1490's order), and the type is made here only
+        # when module init has not made it already.
+        _cleanup_inline = cleanup.replace("\n    ", " ").strip()
+        ret_line = (
+            _record.ensure_type_c(record_sid, _cleanup_inline)
+            + f"    {return_type} _r = {c_name}({call_args});\n"
+            + cleanup
+            + _record.build_c(record_sid, result_fields).rstrip("\n")
+        )
+    elif result_fields:
         # Build list-of-tuples from struct array. gh-598: fields convert
         # through _CTYPE_META's to_py (the shared record_tuple_build), not a
         # second format-char table that fell back to a cast-less "i".
@@ -2620,6 +2665,7 @@ def make_functions_ctx(
     doc_blocks: "dict | None" = None,
     *,
     owner: "INC.Owner",
+    module_tp: str = "<<module_tp>>",
 ) -> dict:
     """Return template context keys for module-level Python wrapper functions.
 
@@ -2631,6 +2677,12 @@ def make_functions_ctx(
                              or '' when no function param uses an enum
       function_uses_enum — True when any function param references an enum (the
                            ext.c then also #includes <string.h> for strcmp)
+      record_registrations — a `_record.RecordReg` per function returning
+                           one record (gh-2755), for the aggregator's
+                           ``PyInit_`` to create and publish
+
+    *module_tp* is the package the module's types are imported from, which
+    qualifies a returned record's type name (`_record.qualified_name`).
 
     The module-level table is named ``{module}_module_methods`` (not
     ``{Module}_methods``) so it never collides with an object's own
@@ -2646,6 +2698,7 @@ def make_functions_ctx(
             "module_m_methods": "NULL",
             "function_enum_tables": "",
             "function_uses_enum": False,
+            "record_registrations": [],
         }
     # gh-643: the runtime doc derives from the same module-header block the
     # .pyi derives from, through the same renderer. Local imports: _stubs and
@@ -2715,6 +2768,21 @@ def make_functions_ctx(
         else:
             flags = "METH_NOARGS"
             fn_ref = f"_bind_{name}"
+        # gh-2755: a function returning ONE record gets the descriptor a
+        # single-record method gets, from the same `_record` emitters, above
+        # its wrapper; the aggregator creates and publishes the type.
+        record_sid = ""
+        if _record.is_record(fn):
+            record_sid = f"{_record.FUNCTION_RECORD_PREFIX}_{name}"
+            _flds = _record.fields(fn, doc_blocks)
+            wrappers.append(
+                _record.descriptor_c(
+                    record_sid,
+                    _record.qualified_name(fn, module_tp),
+                    _record.type_doc(fn, _flds),
+                    _flds,
+                ).rstrip("\n")
+            )
         wrappers.append(
             _py_wrapper_for_function(
                 name,
@@ -2731,6 +2799,7 @@ def make_functions_ctx(
                 status_errors=_borrow.status_rows(fn),
                 enums=enums,
                 c_name=c_name,
+                record_sid=record_sid,
             )
         )
         # `doc` is already a C string literal (escaped, possibly multi-line) —
@@ -2759,6 +2828,9 @@ def make_functions_ctx(
         "module_m_methods": f"{module}_module_methods",
         "function_enum_tables": enum_tables,
         "function_uses_enum": bool(enums_used),
+        "record_registrations": _record.function_registrations(
+            functions, doc_blocks
+        ),
     }
 
 
@@ -3032,6 +3104,7 @@ def render_module_ext_aggregator(
     layout: "dict | None" = None,
     *,
     owner: "INC.Owner",
+    module_tp: str = "<<module_tp>>",
 ) -> str:
     """Render the thin aggregator ``<module>_ext.c``.
 
@@ -3066,6 +3139,7 @@ def render_module_ext_aggregator(
         enums,
         fn_doc_blocks,
         owner=owner,
+        module_tp=module_tp,
     )
     has_module_fns = bool(functions)
     module_core_include = (
@@ -3173,6 +3247,13 @@ def render_module_ext_aggregator(
             "    }",
         ]
         add_object_calls_lines += _rec_add
+    # gh-2755: a module function's record, in the same namespace -- a
+    # function returning a record a method also returns shares its type.
+    _rec_ready, _rec_add = record_registration_c(
+        fn_ctx["record_registrations"], _rec_seen
+    )
+    type_ready_lines += _rec_ready
+    add_object_calls_lines += _rec_add
     type_ready_lines += [
         f"    if (PyType_Ready(&{et}Type) < 0) return NULL;"
         for et in _extra_types

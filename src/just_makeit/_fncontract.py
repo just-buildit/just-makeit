@@ -49,6 +49,7 @@ import re
 from pathlib import Path
 
 from . import _config as C
+from . import _record
 from . import _render as R
 from . import _stubs
 from . import _textio
@@ -141,8 +142,17 @@ def _result(fn: dict) -> "str | None":
     'self.assertIsNone(result)'
     >>> _result({"name": "f", "return_type": "const char *"}) is None
     True
+
+    gh-2755: one record is an instance of the type the module publishes
+    under the stub's annotation, which the package re-exports.
+
+    >>> _result({"name": "f", "return_type": "r_t", "single": True,
+    ...          "record_name": "R", "result_fields": [{"name": "n"}]})
+    'self.assertIsInstance(result, module.R)'
     """
     ann = _stubs.fn_py_surface(fn)[0]
+    if _record.is_record(fn):
+        return f"self.assertIsInstance(result, module.{ann})"
     if ann == "None":
         return "self.assertIsNone(result)"
     # gh-2683: several scalar out params come back as a tuple, one element
@@ -221,6 +231,10 @@ def _call(name: str, args: "list[str]") -> str:
 def _skip_reason(fn: dict) -> "str | None":
     """Why *fn* gets a skipped test rather than a contract call, or None."""
     for flag in _SHAPE_FLAGS:
+        # gh-2755: one record by value keeps the plain call; only its
+        # result differs, and `_result` checks that.
+        if flag == "result_fields" and _record.is_record(fn):
+            continue
         if fn.get(flag):
             return f"{flag} changes the call's shape: no contract call yet"
     for p in T.fn_input_params(fn.get("params", [])):
