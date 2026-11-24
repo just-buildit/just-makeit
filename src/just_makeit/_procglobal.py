@@ -380,6 +380,11 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
     `_apply._render_procglobal_headers`, which re-renders it from the whole
     manifest on every `apply` so that `status` compares it and a stale owner
     macro cannot outlive the release that fixed it.
+
+    The two prototypes sit inside an ``extern "C"`` block (gh-2754): the
+    header is installed with the rest of the include tree, and a C++
+    translation unit that included it without one gave both functions C++
+    linkage -- a mangled name the C core never defines, so the link failed.
     """
     if not (is_process_global(cfg, comp) if declared is None else declared):
         return ""
@@ -454,7 +459,15 @@ def render_header(cfg: dict, comp: str, declared: "bool | None" = None) -> str:
 #ifndef {guard}
 #define {guard}
 
+#ifdef __cplusplus
+extern "C" {{
+#endif
+
 {decls}
+
+#ifdef __cplusplus
+}}
+#endif
 
 {names}
 #endif /* {guard} */

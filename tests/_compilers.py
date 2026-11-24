@@ -128,9 +128,15 @@ def find_compiler(name: str) -> "str | None":
     >>> find_compiler("no-such-cc") is None
     True
     """
-    exe = shutil.which(name)
-    if exe:
-        return exe
+    return shutil.which(name) or _newest_versioned(name)
+
+
+def _newest_versioned(name: str) -> "str | None":
+    """The newest ``<name>-<N>`` on PATH, else None (see `find_compiler`).
+
+    Among several versions the highest number wins, and among one
+    version's copies the first on PATH.
+    """
     versioned = re.compile(re.escape(name) + r"-(\d+)")
     best: "tuple[int, str] | None" = None
     for d in os.environ.get("PATH", "").split(os.pathsep):
@@ -144,6 +150,41 @@ def find_compiler(name: str) -> "str | None":
             if hit and (best is None or int(m.group(1)) > best[0]):
                 best = (int(m.group(1)), hit)
     return best[1] if best else None
+
+
+def _is_gnu(exe: str) -> bool:
+    """Whether *exe* is GNU gcc, read off its ``--version`` banner.
+
+    Only GNU's driver prints the Free Software Foundation copyright line;
+    Apple's ``/usr/bin/gcc`` is clang under gcc's name and does not.
+    """
+    r = subprocess.run([exe, "--version"], capture_output=True, text=True)
+    return r.returncode == 0 and "Free Software Foundation" in r.stdout
+
+
+def find_gnu_cc() -> "str | None":
+    """The path of a GNU gcc on PATH, bare or versioned, else None.
+
+    A third question beside the two above, asked by a test that needs a
+    gcc-only option -- ``-aux-info``, which lists every function a
+    translation unit declares with its storage class (gh-2754). The name
+    ``gcc`` alone does not answer it: on macOS that is Apple clang, and
+    Homebrew's GNU gcc is only on PATH as ``gcc-<N>``. So the bare name
+    counts when it is GNU's, else the newest versioned one does.
+
+    None means no GNU gcc. On Linux and macOS installing one is the fix,
+    and the caller's skip is held red; on Windows the caller skips with
+    `WINDOWS_NO_GNU_CC`.
+
+    Examples
+    --------
+    >>> find_gnu_cc() is None or _is_gnu(find_gnu_cc())
+    True
+    """
+    for exe in (shutil.which("gcc"), _newest_versioned("gcc")):
+        if exe and _is_gnu(exe):
+            return exe
+    return None
 
 
 #: Where each platform's AddressSanitizer runtime is, and how it gets into an
@@ -268,6 +309,14 @@ WINDOWS_CFLAGS_GAP = (
 #: install stood in for by POSIX directory permissions. Each use names its
 #: subject after the prefix.
 POSIX_ONLY = "POSIX-only subject:"
+#: gh-2754: a test that lists a header's functions with GNU gcc's
+#: ``-aux-info`` on the Windows (clang-cl) leg, where no GNU gcc is part
+#: of the toolchain (MinGW is retired, gh-1368). What it checks --
+#: ``extern "C"`` linkage -- is a rule of the C++ language, not of the
+#: platform, and the Linux and macOS legs run it.
+WINDOWS_NO_GNU_CC = (
+    "Windows: no GNU gcc to list declarations with -aux-info (gh-2754)"
+)
 
 #: The skip reason when the host cannot run AVX-512 code, which
 #: ``tests/conftest.py`` allows: the silicon is absent, and no install adds
