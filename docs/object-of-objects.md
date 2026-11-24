@@ -705,8 +705,10 @@ A source can hand work back to the project as plain C, with no CPython in it:
     then fix `constellation` at the value it resolves to, in the same
     write. A segment field's `fn` is handed a copy of the segment (its
     scalars and its sources, the snapshot a segment `get_fn` reads), and on
-    `NULL` every scalar is copied back; a write to a source in that copy is
-    discarded. Only the setter calls `fn`: the constructor, `from_json` and
+    `NULL` every scalar is copied back. Each source in that copy is
+    shallow: a write to its scalars is discarded, but its `bytes` and
+    owned-pointer members point at the live source's buffers, so `fn` must
+    not write through or free them. Only the setter calls `fn`: the constructor, `from_json` and
     the record set every field at once and keep their own check of the
     whole struct. A `bytes`, `complex`, owned-pointer or ranged field has
     no single value to hand over, so the key is refused there when the
