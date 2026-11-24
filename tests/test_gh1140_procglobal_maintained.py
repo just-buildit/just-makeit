@@ -127,6 +127,26 @@ class TestApplyMaintainsTheHeader:
         assert _owner_line(project) == OWNER
         assert _cli("status", "--check", cwd=project).returncode == 0
 
+    def test_a_pre_gh2754_header_gains_its_extern_c_block(
+        self, project: Path
+    ) -> None:
+        """gh-2754: what a project scaffolded before the fix carries -- the
+        two prototypes with no ``extern "C"`` block -- is drift, and
+        `apply` writes the block in, so adopting the release is enough."""
+        p = project / _header(project)
+        guarded = p.read_text(encoding="utf-8")
+        block = ('#ifdef __cplusplus\nextern "C" {\n#endif\n\n', "")
+        close = ("\n\n#ifdef __cplusplus\n}\n#endif\n", "\n")
+        old = guarded
+        for anchor, repl in (block, close):
+            assert old.count(anchor) == 1, (anchor, old)
+            old = old.replace(anchor, repl)
+        p.write_text(old, encoding="utf-8")
+        assert _cli("status", "--check", cwd=project).returncode == 1
+        assert _cli("apply", cwd=project).returncode == 0
+        assert p.read_text(encoding="utf-8") == guarded
+        assert _cli("status", "--check", cwd=project).returncode == 0
+
     def test_a_clobbered_header_is_restored(self, project: Path) -> None:
         """`DO NOT EDIT` is only true if something rewrites it."""
         (project / _header(project)).write_text(CLOBBER, encoding="utf-8")

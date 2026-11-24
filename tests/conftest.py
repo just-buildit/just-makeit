@@ -363,6 +363,7 @@ from _compilers import (  # noqa: E402
     POSIX_ONLY,
     WINDOWS_CFLAGS_GAP,
     WINDOWS_CONSUMER_GAP,
+    WINDOWS_NO_GNU_CC,
 )
 
 _ALLOWED_SKIPS = (
@@ -398,6 +399,10 @@ _ALLOWED_SKIPS = (
     WINDOWS_CONSUMER_GAP,
     # gh-2751: a composer get_fn driver's cmake flags, a filed gap.
     WINDOWS_CFLAGS_GAP,
+    # gh-2754: the extern "C" linkage sweep lists functions with GNU gcc's
+    # -aux-info; the clang-cl leg has no GNU gcc. The rule is C++'s, not
+    # the platform's, and Linux and macOS run it.
+    WINDOWS_NO_GNU_CC,
     POSIX_ONLY,
     # test_gh1374's own subject: it must contain the spelling it hunts for.
     "names the pattern in order to detect it",

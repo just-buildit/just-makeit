@@ -67,7 +67,13 @@ COMPILER_NAMES = frozenset(
 
 #: The calls that answer "which compiler" (`_compilers`, `_cbuild`).
 LOOKUPS = frozenset(
-    {"default_cc", "default_cxx", "find_compiler", "compiler_for"}
+    {
+        "default_cc",
+        "default_cxx",
+        "find_compiler",
+        "find_gnu_cc",
+        "compiler_for",
+    }
 )
 
 #: Arguments that ask a compiler about itself rather than build anything.
