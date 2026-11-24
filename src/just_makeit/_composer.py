@@ -938,10 +938,14 @@ def set_fn_errors(cfg: dict) -> "list[str]":
             ("segment", C.composer_segment(cfg, mod)),
         )
         for where, tbl in tables:
-            rows = _annotate_ranged(
-                list(tbl.get("fields", [])), _ranged_map(tbl)
-            )
-            if where == "segment" and any(f.get("set_fn") for f in rows):
+            fields = list(tbl.get("fields", []))
+            # Only a table that names `set_fn` is read here: the ranged map
+            # is the renderer's to refuse, so a manifest with no `set_fn`
+            # loads exactly as it did before gh-2753.
+            if not any(f.get("set_fn") for f in fields):
+                continue
+            rows = _annotate_ranged(fields, _ranged_map(tbl))
+            if where == "segment":
                 try:
                     _segment_fields(cfg, mod)  # gh-1711 refuses first
                 except ValueError as e:
