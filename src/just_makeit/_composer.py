@@ -757,7 +757,7 @@ def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
     return out
 
 
-def set_fn(field: dict) -> str:
+def set_fn(field: dict, module: str = "", where: str = "") -> str:
     """The project's C function a field's Python setter writes through, or
     ``""`` (gh-2753).
 
@@ -794,6 +794,9 @@ def set_fn(field: dict) -> str:
     one spelling of a value and around it for the other would keep the
     pair whole only some of the time.
 
+    *module* and *where* (``"source"`` or ``"segment"``) name the row in
+    the refusal; a caller that has already checked the row may omit them.
+
     Raises
     ------
     Refusal
@@ -820,8 +823,10 @@ def set_fn(field: dict) -> str:
         else ""
     )
     if kind:
+        row = f"{where} field" if where else "field"
+        at = f"composer `{module}` {row}" if module else f"composer {row}"
         raise Refusal(
-            f"composer field '{field.get('name', '<unnamed>')}': "
+            f"{at} '{field.get('name', '<unnamed>')}': "
             f'`set_fn = "{fn}"` writes one value through '
             "`const char *fn(<struct> *, <type> value)`, and "
             f"{kind} field has no single value to hand it (gh-2753)."
@@ -883,7 +888,7 @@ def _set_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
     )
     for where, tbl, fields in tables:
         for f in fields(cfg, module):
-            fn = set_fn(f)
+            fn = set_fn(f, module, where)
             if not fn:
                 continue
             out.append(
@@ -918,19 +923,33 @@ def set_fn_errors(cfg: dict) -> "list[str]":
     ...     "fields": [{"name": "f", "type": "double", "set_fn": "w"}],
     ...     "ranged": [{"name": "f", "flag": "R_F"}]}}}}
     >>> print(set_fn_errors(cfg)[0])  # doctest: +ELLIPSIS
-    composer field 'f': `set_fn = "w"` ... a ranged field ... (gh-2753).
+    composer `m` source field 'f': `set_fn = "w"` ... a ranged field ...
+
+    A segment field carrying owned-pointer keys gets gh-1711's refusal
+    instead, which says where the field belongs (``source.fields``):
+    ``set_fn`` is not what is wrong with it.
     """
     errors: list[str] = []
     for mod in C.modules(cfg):
         if not C.is_composer_module(cfg, mod):
             continue
-        for tbl in (C.composer_source(cfg, mod), C.composer_segment(cfg, mod)):
+        tables = (
+            ("source", C.composer_source(cfg, mod)),
+            ("segment", C.composer_segment(cfg, mod)),
+        )
+        for where, tbl in tables:
             rows = _annotate_ranged(
                 list(tbl.get("fields", [])), _ranged_map(tbl)
             )
+            if where == "segment" and any(f.get("set_fn") for f in rows):
+                try:
+                    _segment_fields(cfg, mod)  # gh-1711 refuses first
+                except ValueError as e:
+                    errors.append(str(e))
+                    continue
             for f in rows:
                 try:
-                    set_fn(f)
+                    set_fn(f, mod, where)
                 except Refusal as e:
                     errors.append(str(e))
     return errors
@@ -3154,7 +3173,7 @@ static int
         n = f["name"]
         # gh-2753: a `set_fn` on a field with no single value is refused
         # here as at load, whichever branch below the field takes.
-        set_fn(f)
+        set_fn(f, module, "source")
         # gh-2710: what the getter converts -- the member, or the project's
         # get_fn at the source's rate. Refused here on a field kind with no
         # scalar read; nothing but the read below changes.
@@ -3900,7 +3919,9 @@ def render_segment_type(cfg: dict, module: str) -> str:
     # function fixed -- through `_segment_copy_c` the other way round. On a
     # sentence nothing is copied back, so the Segment is untouched whatever
     # the function did to the snapshot. The sources in the snapshot are a
-    # transient copy: a write to one of them is discarded.
+    # transient shallow copy: a write to a source's scalar is discarded, but
+    # its `bytes` and owned-pointer members alias the live source's buffers,
+    # so `set_fn` must not write through or free them.
     _copy_back = _segment_copy_c(fields, "self->", "_seg.", " " * 4)
 
     def _seg_store(f: dict, value: str) -> str:
@@ -3920,7 +3941,8 @@ def render_segment_type(cfg: dict, module: str) -> str:
 
     for f in fields:
         n, ct = f["name"], f["type"]
-        set_fn(f)  # gh-2753: refused on a ranged field, as at load
+        # gh-2753: refused on a ranged field, as at load
+        set_fn(f, module, "segment")
         snap = _snapshot(f)
         acc = "_gv" if snap else f"self->{n}"
         if f.get("_ranged"):

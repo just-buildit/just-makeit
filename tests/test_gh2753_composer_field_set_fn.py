@@ -266,11 +266,43 @@ class TestRefusals:
         cfg.setdefault("module", {})["win"] = m
         cfg["enum"] = copy.deepcopy(_ENUMS)
         C.save(proj, cfg)
-        with pytest.raises(Refusal, match="composer field 'wlan'.*ranged"):
+        with pytest.raises(
+            Refusal, match="composer `win` source field 'wlan'.*ranged"
+        ):
             C.load(proj)
         r = run_cli("apply", cwd=proj)
         assert r.returncode != 0
-        assert "composer field 'wlan'" in r.stdout + r.stderr
+        assert "composer `win` source field 'wlan'" in r.stdout + r.stderr
+
+    def test_the_refusal_names_the_module_and_the_table(self) -> None:
+        m = _module()
+        for f in m["segment"]["fields"]:
+            if f["name"] == "span":
+                f.pop("get_fn")
+                f["set_fn"] = "nope"
+        m["segment"]["ranged"] = [{"name": "span", "flag": "R_S"}]
+        (err,) = _composer.set_fn_errors(_cfg(m))
+        assert err.startswith("composer `win` segment field 'span': "), err
+
+    def test_a_segment_owned_pointer_gets_gh1711s_refusal(self) -> None:
+        """A segment field with owned-pointer keys belongs in
+        ``source.fields``; that is what to say, not that ``set_fn`` has no
+        single value to hand it."""
+        m = _module()
+        m["segment"]["fields"].append(
+            {
+                "name": "frame",
+                "type": "frame_t *",
+                "copy_fn": "fc",
+                "free_fn": "ff",
+                "parse_fn": "fp",
+                "format_fn": "ft",
+                "set_fn": "nope",
+            }
+        )
+        (err,) = _composer.set_fn_errors(_cfg(m))
+        assert "gh-1711" in err and "source.fields" in err, err
+        assert "gh-2753" not in err, err
 
 
 # -- the compiled proof ------------------------------------------------------
