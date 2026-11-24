@@ -3515,8 +3515,9 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # -- an object's methods and views their object's, a foreign view its
     # overlay's, a function the module header's -- in the order the
     # aggregator registers them (every object, then every view, then the
-    # functions), so the first claim on a name wins on both faces. A map merged across them documented a record in the stub that
-    # its descriptor left bare.
+    # functions), so the first claim on a name wins on both faces. A map
+    # merged across them documented a record in the stub that its
+    # descriptor left bare.
     _rec_block = _record.pyi_classes_of(
         [
             (m, cfg.get(obj, {}).get("_doc_blocks", {}))
