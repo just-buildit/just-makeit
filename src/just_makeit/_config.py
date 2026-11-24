@@ -288,6 +288,12 @@ def load(root: Path) -> dict:
         delegated_errors = delegated_method_errors(cfg)
         if delegated_errors:
             _refuse(delegated_errors)
+        # gh-2753: a field `set_fn` on a field with no single value.
+        from ._composer import set_fn_errors
+
+        set_fn_errs = set_fn_errors(cfg)
+        if set_fn_errs:
+            _refuse(set_fn_errs)
     _expand_init_groups(cfg)
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
     # wrong guess -- accepted as truthy, it rendered a two-argument call to
@@ -9752,8 +9758,8 @@ _OBJECT_ORDER = (
 )  # fmt: skip
 _COMPOSER_FIELD_ORDER = (
     "name", "type", "enum", "default", "bytes", "complex", "c_ptr", "c_len",
-    "aliases", "coerce", "coerce_str_fn", "get_fn", *_COMPOSER_OWNED_PTR_KEYS,
-    "doc",
+    "aliases", "coerce", "coerce_str_fn", "get_fn", "set_fn",
+    *_COMPOSER_OWNED_PTR_KEYS, "doc",
 )  # fmt: skip
 _INIT_PARAM_ORDER = tuple(key for key, _is_bool in _INIT_PARAM_FIELDS)
 _FIELD_ORDER = ("name", "type", "doc")

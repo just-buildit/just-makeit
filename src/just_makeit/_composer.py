@@ -757,6 +757,185 @@ def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
     return out
 
 
+def set_fn(field: dict) -> str:
+    """The project's C function a field's Python setter writes through, or
+    ``""`` (gh-2753).
+
+    The mirror of :func:`get_fn`. A source or segment field's setter
+    stored the converted value in its own member, so a field that is half
+    of a pair could not keep the pair whole: doppler's ``ofdm`` rate is
+    ``constellation`` and ``code_rate``, both ``auto`` by default, and
+    ``s.code_rate = "3/4"`` on a default source stored half a pair the
+    renderer refuses. ``set_fn = "<fn>"`` names the project's writer::
+
+        const char *fn(<struct> *, <type> value);
+
+    ``<struct>`` is the table's own (``source.struct`` or
+    ``segment.struct``) and ``<type>`` the field's ``type`` (an enum's is
+    its index type). The function returns ``NULL`` after it has written --
+    the field, and any sibling member it must fix to keep the struct
+    whole -- or a static sentence, which the setter raises as
+    ``ValueError``. On a sentence the function must leave the struct as it
+    was: the generated setter stores nothing itself, so there is nothing
+    for it to undo (gh-2214's rule: a write's C status is read, never
+    discarded).
+
+    The setter converts and checks first, as it always has -- the
+    declared type's range, an enum's string to its index -- so the
+    function is handed a value of the member's type only. The constructor,
+    ``from_json`` and the record do NOT call it: they set every field at
+    once, and keep their own refusal of a struct that is not whole.
+
+    Refused on a field with no single value to hand over: a ``bytes`` or
+    ``complex`` run, an owned pointer (each assigned through its own
+    replace path) and a ranged field, whose value may be a ``(lo, hi)``
+    pair. A ranged field is refused rather than called on its scalar
+    branch only, since a setter that wrote through the project's C for
+    one spelling of a value and around it for the other would keep the
+    pair whole only some of the time.
+
+    Raises
+    ------
+    Refusal
+        *field* names ``set_fn`` and is ``bytes``, ``complex``, an owned
+        pointer or ranged.
+
+    >>> set_fn({"name": "rate", "type": "int", "set_fn": "set_rate"})
+    'set_rate'
+    >>> set_fn({"name": "rate", "type": "int"})
+    ''
+    """
+    fn = field.get("set_fn") or ""
+    if not fn:
+        return ""
+    kind = (
+        "a `bytes`"
+        if field.get("bytes")
+        else "a `complex`"
+        if field.get("complex")
+        else "an owned-pointer"
+        if _field_is_owned_ptr(field)
+        else "a ranged"
+        if field.get("_ranged")
+        else ""
+    )
+    if kind:
+        raise Refusal(
+            f"composer field '{field.get('name', '<unnamed>')}': "
+            f'`set_fn = "{fn}"` writes one value through '
+            "`const char *fn(<struct> *, <type> value)`, and "
+            f"{kind} field has no single value to hand it (gh-2753)."
+        )
+    return fn
+
+
+def set_fn_prototype(field: dict, struct: str) -> str:
+    """The C prototype a field's :func:`set_fn` is declared with (gh-2753).
+
+    >>> set_fn_prototype({"name": "r", "type": "int", "set_fn": "set_r"},
+    ...                  "s_t")
+    'const char *set_r(s_t *, int);'
+    """
+    return f"const char *{set_fn(field)}({struct} *, {field['type']});"
+
+
+def _store_c(field: dict, member: str, struct_ptr: str, value: str) -> str:
+    """The setter statements that store *value*, the field's converted C
+    value: through :func:`set_fn` on *struct_ptr* when the field names one,
+    raising its sentence as ``ValueError`` (gh-2753), else assigned to
+    *member*. Indented for a setter body; ``return -1;`` on a refusal.
+
+    >>> print(_store_c({"name": "r"}, "self->src.r", "&self->src", "_i"))
+        self->src.r = _i;
+    >>> print(_store_c({"name": "r", "type": "int", "set_fn": "set_r"},
+    ...                "self->src.r", "&self->src", "_i"))
+        const char *_why = set_r(&self->src, _i);
+        if (_why) {
+            PyErr_SetString(PyExc_ValueError, _why);
+            return -1;
+        }
+    """
+    fn = set_fn(field)
+    if not fn:
+        return f"    {member} = {value};"
+    return (
+        f"    const char *_why = {fn}({struct_ptr}, {value});\n"
+        "    if (_why) {\n"
+        "        PyErr_SetString(PyExc_ValueError, _why);\n"
+        "        return -1;\n"
+        "    }"
+    )
+
+
+def _set_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
+    """The :class:`_Seam` each source / segment field ``set_fn`` names
+    (gh-2753), in field order, each declared by :func:`set_fn_prototype`.
+
+    Raises
+    ------
+    Refusal
+        A field names one on a kind :func:`set_fn` refuses.
+    """
+    out: "list[_Seam]" = []
+    tables = (
+        ("source", C.composer_source(cfg, module), _source_fields),
+        ("segment", C.composer_segment(cfg, module), _segment_fields),
+    )
+    for where, tbl, fields in tables:
+        for f in fields(cfg, module):
+            fn = set_fn(f)
+            if not fn:
+                continue
+            out.append(
+                _Seam(
+                    fn,
+                    set_fn_prototype(f, tbl["struct"]),
+                    f"{where} field `{f['name']}` (set_fn)",
+                    _c_comment(
+                        f"Write {where} field `{f['name']}` and any sibling "
+                        "it fixes: NULL after writing, or a static "
+                        "sentence raised as ValueError with the struct "
+                        "untouched (set_fn, gh-2753)."
+                    ),
+                )
+            )
+    return out
+
+
+def set_fn_errors(cfg: dict) -> "list[str]":
+    """Every composer field ``set_fn`` jm cannot call (gh-2753).
+
+    Asked at load (`_config.load`), so a ``set_fn`` on a field with no
+    single value -- ``bytes``, ``complex``, an owned pointer, or a ranged
+    field -- stops before anything is written, with :func:`set_fn`'s
+    sentence naming the field and why. The render refuses the same rows
+    through the same function, so a manifest built in memory is held to
+    it too.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"m": {"kind": "composer", "source": {
+    ...     "fields": [{"name": "f", "type": "double", "set_fn": "w"}],
+    ...     "ranged": [{"name": "f", "flag": "R_F"}]}}}}
+    >>> print(set_fn_errors(cfg)[0])  # doctest: +ELLIPSIS
+    composer field 'f': `set_fn = "w"` ... a ranged field ... (gh-2753).
+    """
+    errors: list[str] = []
+    for mod in C.modules(cfg):
+        if not C.is_composer_module(cfg, mod):
+            continue
+        for tbl in (C.composer_source(cfg, mod), C.composer_segment(cfg, mod)):
+            rows = _annotate_ranged(
+                list(tbl.get("fields", [])), _ranged_map(tbl)
+            )
+            for f in rows:
+                try:
+                    set_fn(f)
+                except Refusal as e:
+                    errors.append(str(e))
+    return errors
+
+
 def host_coercer(fn: str) -> str:
     """The generated static that reads a ``str`` through the project's *fn*.
 
@@ -2973,6 +3152,9 @@ static int
     getset_rows: list[str] = []
     for f in fields:
         n = f["name"]
+        # gh-2753: a `set_fn` on a field with no single value is refused
+        # here as at load, whichever branch below the field takes.
+        set_fn(f)
         # gh-2710: what the getter converts -- the member, or the project's
         # get_fn at the source's rate. Refused here on a field kind with no
         # scalar read; nothing but the read below changes.
@@ -3000,7 +3182,7 @@ static int
     const char *s = PyUnicode_AsUTF8(value);
     if (!s) return -1;
 {_enum_set}
-    self->src.{n} = _i;
+{_store_c(f, f"self->src.{n}", "&self->src", "_i")}
     return 0;
 }}""")
             getset_rows.append(
@@ -3152,7 +3334,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-{parse}    self->src.{n} = _v;
+{parse}{_store_c(f, f"self->src.{n}", "&self->src", "_v")}
     return 0;
 }}""")
             getset_rows.append(
@@ -3685,9 +3867,9 @@ def render_segment_type(cfg: dict, module: str) -> str:
     _sources_member = seg.get("sources_member", "sources")
     _count_member = seg.get("count_member", "n_sources")
 
-    def _snapshot(f: dict) -> str:
-        if not get_fn(f):
-            return ""
+    def _snap_build(fail: str) -> str:
+        # The segment as its struct, sources and all; *fail* on a foreign
+        # source or OOM. The caller frees `_srcs`.
         return (
             f"    {seg['struct']} _seg;\n"
             "    memset(&_seg, 0, sizeof _seg);\n"
@@ -3695,16 +3877,50 @@ def render_segment_type(cfg: dict, module: str) -> str:
             "    size_t _ns;\n"
             f"    {_src_struct} *_srcs = {_sources_fn}(self->sources, &_ns);\n"
             "    if (!_srcs)\n"
-            "        return NULL;\n"
+            f"        {fail}\n"
             f"    _seg.{_sources_member} = _srcs;\n"
             f"    _seg.{_count_member} = _ns;\n"
-            f"    {f['type']} _gv = "
+        )
+
+    def _snapshot(f: dict) -> str:
+        if not get_fn(f):
+            return ""
+        return (
+            _snap_build("return NULL;") + f"    {f['type']} _gv = "
             f"{_read_acc(f, '', '&_seg', 'self->fs')};\n"
             "    free(_srcs);\n"
         )
 
+    # gh-2753: a field naming `set_fn` is written through the project's C,
+    # which takes the segment struct. A Segment holds its scalars as
+    # `self-><name>`, not in a struct, so the setter builds the same
+    # snapshot a `get_fn` read does (scalars and sources, one spelling:
+    # `_segment_copy_c` and `_segment_sources_c`), hands it to `set_fn`,
+    # and on NULL copies every scalar back -- the field and any sibling the
+    # function fixed -- through `_segment_copy_c` the other way round. On a
+    # sentence nothing is copied back, so the Segment is untouched whatever
+    # the function did to the snapshot. The sources in the snapshot are a
+    # transient copy: a write to one of them is discarded.
+    _copy_back = _segment_copy_c(fields, "self->", "_seg.", " " * 4)
+
+    def _seg_store(f: dict, value: str) -> str:
+        fn = set_fn(f)
+        if not fn:
+            return f"    self->{f['name']} = {value};"
+        return (
+            _snap_build("return -1;")
+            + f"    const char *_why = {fn}(&_seg, {value});\n"
+            "    free(_srcs);\n"
+            "    if (_why) {\n"
+            "        PyErr_SetString(PyExc_ValueError, _why);\n"
+            "        return -1;\n"
+            "    }\n"
+            f"{_copy_back}"
+        )
+
     for f in fields:
         n, ct = f["name"], f["type"]
+        set_fn(f)  # gh-2753: refused on a ranged field, as at load
         snap = _snapshot(f)
         acc = "_gv" if snap else f"self->{n}"
         if f.get("_ranged"):
@@ -3765,7 +3981,7 @@ static int
     const char *s = PyUnicode_AsUTF8(value);
     if (!s) return -1;
 {_enum_set}
-    self->{n} = _i;
+{_seg_store(f, "_i")}
     return 0;
 }}""")
             getset_rows.append(
@@ -3790,7 +4006,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-{parse}    self->{n} = _v;
+{parse}{_seg_store(f, "_v")}
     return 0;
 }}""")
         getset_rows.append(
@@ -6808,7 +7024,7 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     ``bridge_error_fn``, each computed ``fn``, each field's
     ``coerce_str_fn`` (gh-1709), each owned-pointer field's four host
     functions (gh-1711) and each source / segment field's ``get_fn``
-    (gh-2710). Every name is an
+    (gh-2710) and ``set_fn`` (gh-2753). Every name is an
     author-named key's value (:data:`_csym.AUTHOR_NAMED_KEYS`), declared
     because the manifest spells it -- the header and :func:`seam_fns` read
     this one list, so they cannot disagree on which names those are.
@@ -6832,7 +7048,8 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     str_fns = _coerce_str_fns(cfg, module)
     ptr_fns = _owned_ptr_prototypes(cfg, module)
     get_fns = _get_fn_seams(cfg, module)
-    if not (gen or computed or str_fns or ptr_fns or get_fns):
+    set_fns = _set_fn_seams(cfg, module)
+    if not (gen or computed or str_fns or ptr_fns or get_fns or set_fns):
         return []
     src_struct = C.composer_source(cfg, module)["struct"]
     seams: "list[_Seam]" = []
@@ -6889,6 +7106,7 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
         )
     seams += ptr_fns
     seams += get_fns  # gh-2710
+    seams += set_fns  # gh-2753
     # gh-1739: one declaration per name, and every key naming it agrees.
     first: "dict[str, _Seam]" = {}
     for s in seams:
@@ -6936,7 +7154,8 @@ def _coerce_str_fns(cfg: dict, module: str) -> "dict[str, str]":
 def seam_fns(cfg: dict, module: str) -> "list[str]":
     """The C functions *module*'s :func:`bridge_h` declares: the project's
     own, each named by a ``bridge_fn`` / ``bridge_error_fn`` / computed
-    ``fn`` / field ``coerce_str_fn`` / field ``get_fn`` key, or an
+    ``fn`` / field ``coerce_str_fn`` / field ``get_fn`` / field
+    ``set_fn`` key, or an
     owned-pointer field's
     ``copy_fn`` / ``free_fn`` / ``parse_fn`` / ``format_fn``. jm derives none of them, whatever
     prefix their name has, so :func:`_csym.renames` does not read them as

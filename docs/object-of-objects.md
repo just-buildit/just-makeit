@@ -680,8 +680,41 @@ A source can hand work back to the project as plain C, with no CPython in it:
     (gh-2678), and a `default_raw` there (a header constant) is its default
     as for any init param.
 
-jm writes the prototype of every seam (these, a field's `coerce_str_fn` and
-`get_fn`, the source's `fs_get_fn`, and an owned-pointer field's four host
+- **`set_fn = "<fn>"`** on a `[[module.X.source.fields]]` or
+    `[[module.X.segment.fields]]` row (gh-2753) is the mirror of `get_fn`:
+    the field's Python setter writes through the project's C,
+    `const char *fn(<struct> *, <type> value)`. The setter converts and
+    checks the value first, as it always has (the declared type's range,
+    an enum's name to its index), then calls `fn` instead of storing. `fn`
+    returns `NULL` after it has written, and it may write sibling members
+    too; or it returns a static sentence, which the setter raises as
+    `ValueError`. On a sentence `fn` must leave the struct as it was: the
+    setter stores nothing itself. This is how a field that is half of a
+    pair keeps the pair whole:
+
+    ```toml
+    [[module.wfm_compose.source.fields]]
+    name = "code_rate"
+    type = "int"
+    enum = "code_rate"
+    default = "auto"
+    set_fn = "dp_wfm_source_set_code_rate"
+    ```
+
+    `s.code_rate = "1/2"` on a source whose `constellation` is `auto` can
+    then fix `constellation` at the value it resolves to, in the same
+    write. A segment field's `fn` is handed a copy of the segment (its
+    scalars and its sources, the snapshot a segment `get_fn` reads), and on
+    `NULL` every scalar is copied back; a write to a source in that copy is
+    discarded. Only the setter calls `fn`: the constructor, `from_json` and
+    the record set every field at once and keep their own check of the
+    whole struct. A `bytes`, `complex`, owned-pointer or ranged field has
+    no single value to hand over, so the key is refused there when the
+    manifest loads.
+
+jm writes the prototype of every seam (these, a field's `coerce_str_fn`,
+`get_fn` and `set_fn`, the source's `fs_get_fn`, and an owned-pointer field's
+four host
 functions) into a generated
 `native/inc/<pkg>/<cname>/<cname>_bridge.h`, which the binding includes. The
 file is written only when at least one seam exists, so a C test or benchmark
@@ -1219,12 +1252,13 @@ number.
 | `[X.cli]`           | `enabled`, `name`                                                                                                                                                                                                                                                                                                                                |
 
 A **field** entry (`source.fields`/`segment.fields`):
-`{ name, type, enum?, default?, bytes?, complex?, c_ptr?, c_len?, coerce?, coerce_str_fn?, get_fn?, aliases?, doc? }`
+`{ name, type, enum?, default?, bytes?, complex?, c_ptr?, c_len?, coerce?, coerce_str_fn?, get_fn?, set_fn?, aliases?, doc? }`
 — one declaration drives the marshalling, the type slots, the JSON shape, and
 the CLI flag. `complex` marks an owned complex64 array, as `bytes` marks an
 owned byte buffer; `c_ptr` / `c_len` relocate either into a nested struct
 (§4.2); `coerce = "bit_pattern"` and `coerce_str_fn` widen what a `bytes`
-field takes (§4.2); `get_fn` reads the field through a C resolver (§4.3);
+field takes (§4.2); `get_fn` reads the field through a C resolver and
+`set_fn` writes it through a C writer (§4.3);
 `aliases` are constructor keywords accepted in place of
 the field's name; `doc` is the fallback docstring for a member its header
 leaves undocumented. A source field may instead be an owned pointer (§4.2,

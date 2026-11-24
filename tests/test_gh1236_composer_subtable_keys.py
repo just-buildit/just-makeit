@@ -65,6 +65,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "coerce_str_fn": "wfm_bits_parse",
     # gh-2710: the resolver a field's Python read goes through.
     "get_fn": "wfm_window",
+    # gh-2753: the writer a field's Python setter goes through.
+    "set_fn": "wfm_set_window",
     "aliases": ["i"],
     "doc": 'The "IQ" run.',
     "fn": "wfm_iq",
@@ -273,12 +275,20 @@ class TestEveryAcceptedKeySurvivesASave:
         """The half that was actually broken. A field row was read for
         `complex`, `c_ptr`, `c_len` and `doc` and written for none of them."""
         row = _full(vocab)
+        rows = [row]
+        if "set_fn" in row:
+            # gh-2753: `set_fn` beside `bytes` / `complex` is refused at
+            # load, so it rides on a scalar row of its own.
+            rows = [
+                {k: v for k, v in row.items() if k != "set_fn"},
+                {"name": "w", "type": "size_t", "set_fn": row["set_fn"]},
+            ]
         cfg = _cfg()
         cfg["module"][MOD].setdefault(outer, {})[inner] = (
-            row if inner == "generates" else [row]
+            row if inner == "generates" else rows
         )
         got = _round_trip(tmp_path, cfg)[outer][inner]
-        got = got if isinstance(got, dict) else got[0]
+        got = got if isinstance(got, dict) else {k: 0 for r in got for k in r}
         lost = sorted(k for k in row if k not in got)
         assert not lost, f"{outer}.{inner} keys dropped by C.save: {lost}"
 
