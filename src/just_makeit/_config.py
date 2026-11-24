@@ -1611,7 +1611,12 @@ def _set_key(tbl, key: str, value, _tk) -> None:
         if plain and plain[-1] < len(body) - 1:
             last_key = body[plain[-1]][0]
             if not last_key.is_dotted():
-                tbl.value._insert_after(last_key, key, _tk.item(value))
+                # By body index, not by key: tomlkit 0.15.3 removed the
+                # private `Container._insert_after` this called, and every
+                # manifest write that adds a key raised AttributeError.
+                # `_insert_at` exists, with this meaning, from the 0.15.0
+                # floor through 0.15.3.
+                tbl.value._insert_at(plain[-1] + 1, key, _tk.item(value))
                 return
     tbl[key] = _tk_value(value, _tk)
 

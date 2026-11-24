@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+## [0.137.1] — 2026-11-24
+
+### Fixed
+
+- jm runs on tomlkit 0.15.3, which removed a private method jm used to place a new manifest key: every command that added one failed with `AttributeError` (gh-2770).
+
 ## [0.137.0] — 2026-11-23
 
 ### Added
