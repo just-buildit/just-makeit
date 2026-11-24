@@ -861,24 +861,46 @@ def module_record_regs(
     a record name the module already publishes with other fields, before
     `_record.resolve` would raise while the C is assembled.
 
-    A view that merely inherits a parent's record method is not listed —
-    ``view_methods`` carries only what the view declares itself — and it
-    does not need to be: an inherited method is the parent's dict, so it
-    contributes the name and shape the parent already contributes.
+    The views are the ones the module's ``.so`` registers, in the order the
+    aggregator registers them (`module_views`, gh-2516): its own objects'
+    views placed here, then other modules' views placed here. A view placed
+    in ANOTHER module shares nothing with this one, so it is not listed.
+
+    A home view that merely inherits a parent's record method is not
+    listed -- ``view_methods`` carries only what the view declares itself
+    -- and it does not need to be: an inherited method is the parent's
+    dict, so it contributes the name and shape the parent already does. A
+    foreign view's parent is not in this module, so its inherited methods
+    are listed, from the overlay the stub and the fragment render
+    (`_stubs.view_overlay`).
     """
     from . import _record
 
-    objs = module_objects(cfg, module) if module else [object_name]
     out: list = []
-    for obj in objs:
-        prefix = resolved_class_name(cfg, obj)
-        out += _record.registrations(methods(cfg, obj), prefix)
-        for view in views(cfg, obj):
+    if not module:
+        prefix = resolved_class_name(cfg, object_name)
+        out += _record.registrations(methods(cfg, object_name), prefix)
+        for view in views(cfg, object_name):
             out += _record.registrations(
                 view_methods(view), view.get("class_name") or prefix
             )
-    if module:
-        out += _record.function_registrations(module_functions(cfg, module))
+        return out
+    own = module_objects(cfg, module)
+    for obj in own:
+        out += _record.registrations(
+            methods(cfg, obj), resolved_class_name(cfg, obj)
+        )
+    for parent, view in module_views(cfg, module):
+        prefix = view.get("class_name") or resolved_class_name(cfg, parent)
+        if parent in own:
+            rows = view_methods(view)
+        else:
+            from ._stubs import view_overlay
+
+            synth, vcfg = view_overlay(cfg, parent, view)
+            rows = methods(vcfg, synth)
+        out += _record.registrations(rows, prefix)
+    out += _record.function_registrations(module_functions(cfg, module))
     return out
 
 

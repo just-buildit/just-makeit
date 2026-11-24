@@ -3514,23 +3514,27 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # gh-2755: each member with the doc blocks its own C descriptor reads
     # -- an object's methods and views their object's, a foreign view its
     # overlay's, a function the module header's -- in the order the
-    # aggregator registers them, so the first claim on a name wins on both
-    # faces. A map merged across them documented a record in the stub that
+    # aggregator registers them (every object, then every view, then the
+    # functions), so the first claim on a name wins on both faces. A map merged across them documented a record in the stub that
     # its descriptor left bare.
     _rec_block = _record.pyi_classes_of(
         [
             (m, cfg.get(obj, {}).get("_doc_blocks", {}))
             for obj in objects
-            # A view's own method is stubbed on the view class below and can
-            # return a record the parent never does; leaving it out would emit
-            # a `-> ToneMetrics` annotation with no ToneMetrics declared.
             for m in C.methods(cfg, obj)
-            + [
-                n
-                for v in C.views(cfg, obj)
-                if C.view_module(cfg, obj, v) == module
-                for n in C.view_methods(v)
-            ]
+        ]
+        # Then every home view's own methods, after ALL the objects, as the
+        # aggregator registers them (`build_component_ctxs` appends the
+        # views last). A view's own method is stubbed on the view class
+        # below and can return a record the parent never does; leaving it
+        # out would emit a `-> ToneMetrics` annotation with no ToneMetrics
+        # declared.
+        + [
+            (n, cfg.get(obj, {}).get("_doc_blocks", {}))
+            for obj in objects
+            for v in C.views(cfg, obj)
+            if C.view_module(cfg, obj, v) == module
+            for n in C.view_methods(v)
         ]
         # gh-2516: a view over another module's object returns what its
         # overlay's methods do, the parent's and its own.
