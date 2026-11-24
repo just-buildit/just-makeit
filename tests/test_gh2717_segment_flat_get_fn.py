@@ -125,10 +125,12 @@ def build(
     module: dict,
     header: str = base._HEADER,
     resolve: str = base._RESOLVE,
+    enums: "list[dict] | None" = None,
 ) -> Path:
     """gh-2710's backing project with *module* as its composer, built
-    under ``-Werror``; gh-2725 builds its own variant through this, and
-    gh-2747 its own *header* and *resolve* C as well."""
+    under ``-Werror``; gh-2725 builds its own variant through this,
+    gh-2747 its own *header* and *resolve* C as well, and gh-2753 the
+    ``[[enum]]`` tables (*enums*) its fields name."""
     assert run_cli("new", PKG, cwd=tmp).returncode == 0
     proj = tmp / PKG
     inc = proj / "native" / "inc" / PKG / "win"
@@ -147,6 +149,8 @@ def build(
     cfg["project"]["c_deps"] = ["backing"]
     cfg["project"]["status_allow"] = ["CMakeLists.txt:backing_core"]
     cfg.setdefault("module", {})["win"] = module
+    if enums:
+        cfg["enum"] = enums
     C.save(proj, cfg)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr

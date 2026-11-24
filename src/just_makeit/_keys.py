@@ -990,6 +990,8 @@ COMPOSER_FIELD_KEYS = frozenset(
         "coerce_str_fn",
         # gh-2710: the project's resolver a field's Python read goes through.
         "get_fn",
+        # gh-2753: the project's writer a field's Python setter calls.
+        "set_fn",
         "aliases",
         "doc",
     }
