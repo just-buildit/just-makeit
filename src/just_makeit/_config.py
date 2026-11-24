@@ -840,7 +840,46 @@ def function_record_errors(cfg: dict) -> "list[str]":
                 why = _record.function_single_why_not(fn)
                 if why:
                     errors.append(f"[[module.{mid}.functions]] {why}")
+        # gh-1268's refusal, for the whole extension module: two records
+        # under one public name with different fields. `_record.resolve`
+        # raises it while the C is assembled, which was a traceback.
+        conflict = _record.name_conflict(module_record_regs(cfg, mid, ""))
+        if conflict:
+            errors.append(f"[module.{mid}] {conflict}")
     return errors
+
+
+def module_record_regs(
+    cfg: dict, module: "str | None", object_name: str
+) -> list:
+    """Every record already published by the extension module in play.
+
+    gh-1268. The unit is the **extension module**: a module's objects, their
+    views and its functions (gh-2755) all land in one `.so` and share one
+    attribute namespace, while a standalone object's `.so` holds only its
+    own. ``jm method``, ``jm function`` and the load ask it, so each refuses
+    a record name the module already publishes with other fields, before
+    `_record.resolve` would raise while the C is assembled.
+
+    A view that merely inherits a parent's record method is not listed —
+    ``view_methods`` carries only what the view declares itself — and it
+    does not need to be: an inherited method is the parent's dict, so it
+    contributes the name and shape the parent already contributes.
+    """
+    from . import _record
+
+    objs = module_objects(cfg, module) if module else [object_name]
+    out: list = []
+    for obj in objs:
+        prefix = resolved_class_name(cfg, obj)
+        out += _record.registrations(methods(cfg, obj), prefix)
+        for view in views(cfg, obj):
+            out += _record.registrations(
+                view_methods(view), view.get("class_name") or prefix
+            )
+    if module:
+        out += _record.function_registrations(module_functions(cfg, module))
+    return out
 
 
 def _refuse(errors: "list[str]") -> None:

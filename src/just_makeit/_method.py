@@ -1868,32 +1868,6 @@ def _signature_differences(
     return sorted(differing)
 
 
-def _module_record_regs(
-    cfg: dict, module: str | None, object_name: str
-) -> list:
-    """Every record already published by the extension module in play.
-
-    gh-1268. The unit is the **extension module**: a module's objects and
-    their views all land in one `.so` and share one attribute namespace,
-    while a standalone object's `.so` holds only its own.
-
-    A view that merely inherits a parent's record method is not listed —
-    ``view_methods`` carries only what the view declares itself — and it
-    does not need to be: an inherited method is the parent's dict, so it
-    contributes the name and shape the parent already contributes.
-    """
-    objs = C.module_objects(cfg, module) if module else [object_name]
-    out: list = []
-    for obj in objs:
-        prefix = C.resolved_class_name(cfg, obj)
-        out += _record.registrations(C.methods(cfg, obj), prefix)
-        for view in C.views(cfg, obj):
-            out += _record.registrations(
-                C.view_methods(view), view.get("class_name") or prefix
-            )
-    return out
-
-
 def _run_view_override(
     root: Path,
     object_name: str,
@@ -2715,7 +2689,7 @@ def run(
     # this is the same refusal one step earlier, for the same reason the
     # gh-996 block above gives — before this command writes anything.
     _conflict = _record.name_conflict(
-        _module_record_regs(cfg, module, object_name)
+        C.module_record_regs(cfg, module, object_name)
         + _record.registrations(
             [
                 {

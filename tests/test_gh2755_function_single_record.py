@@ -437,13 +437,30 @@ def test_a_record_it_cannot_honour_is_refused(tmp_path, extra, rt, says):
     assert says in err, err
 
 
-def test_a_method_single_without_fields_is_still_refused(tmp_path):
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("method", "o", "m", "--return-type", "rec_t", "--single"),
+        (
+            "function",
+            "f",
+            "--module",
+            "ccsds",
+            "--return-type",
+            "rec_t",
+            "--single",
+        ),
+    ],  # fmt: skip
+    ids=["method", "function"],
+)
+def test_single_without_fields_is_refused_in_the_loads_words(tmp_path, argv):
+    """Before the return-type check, which would call the struct a bad
+    scalar: the command and the load refuse it in one sentence."""
     assert run_cli("new", "p", "--no-c-prefix", cwd=tmp_path).returncode == 0
     dest = tmp_path / "p"
+    assert run_cli("module", "ccsds", cwd=dest).returncode == 0
     assert run_cli("object", "o", cwd=dest).returncode == 0
-    r = run_cli(
-        "method", "o", "m", "--return-type", "double", "--single", cwd=dest
-    )
+    r = run_cli(*argv, cwd=dest)
     assert r.returncode != 0
     assert "single = true (--single) needs result_fields" in r.stderr, (
         r.stdout + r.stderr
@@ -467,3 +484,77 @@ def test_the_load_reads_every_record_key():
     assert [u.message() for u in _keys.unknown_keys(cfg)] == []
     assert C.manifest_type_errors(cfg) == []
     assert C.function_record_errors(cfg) == []
+
+
+# -- one public name, one shape, from every direction (gh-1268) --------
+
+_SCENE = ("--return-type", "scene_t", "--single", "--record-name", "Scene")
+
+_FN_SCENE = (
+    "function", "scene", "--module", "ccsds", *_SCENE,
+    "--result-field", "ratio:double", "--param", "x:double",
+)  # fmt: skip
+
+_FN_SCENE2 = (
+    "function", "scene2", "--module", "ccsds", *_SCENE,
+    "--result-field", "n:int", "--param", "x:double",
+)  # fmt: skip
+
+_METHOD_SCENE = (
+    "method", "o", "m", "--module", "ccsds", *_SCENE,
+    "--result-field", "n:int",
+)  # fmt: skip
+
+
+def _module_project(tmp_path: Path) -> Path:
+    assert run_cli("new", "p", "--no-c-prefix", cwd=tmp_path).returncode == 0
+    dest = tmp_path / "p"
+    for argv in (("module", "ccsds"), ("object", "o", "--module", "ccsds")):
+        r = run_cli(*argv, cwd=dest)
+        assert r.returncode == 0, r.stdout + r.stderr
+    return dest
+
+
+#: (the record declared first, the clashing one) -- every direction.
+CLASHES = [
+    (_FN_SCENE, _FN_SCENE2),
+    (_FN_SCENE, _METHOD_SCENE),
+    (_METHOD_SCENE, _FN_SCENE),
+]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    CLASHES,
+    ids=["function-then-function", "function-then-method", "method-then-fn"],
+)
+def test_a_clashing_record_name_is_refused_in_one_line(
+    tmp_path, first, second
+):
+    dest = _module_project(tmp_path)
+    r = run_cli(*first, cwd=dest)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = run_cli(*second, cwd=dest)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0, out
+    assert "Traceback" not in out, out
+    assert "error: two records share the public name 'Scene'" in out, out
+
+
+def test_a_clashing_manifest_is_refused_at_load():
+    rec = {"single": True, "record_name": "Scene", "return_type": "s_t"}
+    a = [{"name": "a", "type": "double"}]
+    n = [{"name": "n", "type": "int"}]
+    cfg = {
+        "module": {
+            "m": {
+                "objects": [],
+                "functions": [
+                    {**rec, "name": "f", "result_fields": a},
+                    {**rec, "name": "g", "result_fields": n},
+                ],
+            }
+        }
+    }
+    (err,) = C.function_record_errors(cfg)
+    assert err.startswith("[module.m] two records share the public"), err

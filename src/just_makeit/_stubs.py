@@ -64,7 +64,6 @@ from ._docstring import (
     class_import_line,
     ctor_demo_lines,
     import_demo_lines,
-    merge_doc_blocks,
     method_doc,
     name_summary,
     ctor_demo_label,
@@ -3512,9 +3511,15 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # class, so every such class is declared here, above the object classes
     # that reference it. Deduplicated across the whole module: two objects
     # returning the same record declare it once.
-    _rec_block = _record.pyi_classes(
+    # gh-2755: each member with the doc blocks its own C descriptor reads
+    # -- an object's methods and views their object's, a foreign view its
+    # overlay's, a function the module header's -- in the order the
+    # aggregator registers them, so the first claim on a name wins on both
+    # faces. A map merged across them documented a record in the stub that
+    # its descriptor left bare.
+    _rec_block = _record.pyi_classes_of(
         [
-            m
+            (m, cfg.get(obj, {}).get("_doc_blocks", {}))
             for obj in objects
             # A view's own method is stubbed on the view class below and can
             # return a record the parent never does; leaving it out would emit
@@ -3529,17 +3534,13 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         ]
         # gh-2516: a view over another module's object returns what its
         # overlay's methods do, the parent's and its own.
-        + [m for synth, vcfg in _foreign for m in C.methods(vcfg, synth)]
+        + [
+            (m, vcfg[synth].get("_doc_blocks", {}))
+            for synth, vcfg in _foreign
+            for m in C.methods(vcfg, synth)
+        ]
         # gh-2755: and a module function returning one record.
-        + list(functions),
-        # gh-1300: merged, not spread -- a spread keeps only the last
-        # object's per-struct field docs, and the records above belong to
-        # every object.
-        merge_doc_blocks(
-            *(cfg.get(obj, {}).get("_doc_blocks", {}) for obj in objects),
-            *(vcfg[synth].get("_doc_blocks", {}) for synth, vcfg in _foreign),
-            fn_doc_blocks,
-        ),
+        + [(fn, fn_doc_blocks) for fn in functions]
     )
     if _rec_block:
         if not (objects or _foreign):

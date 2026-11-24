@@ -437,7 +437,7 @@ Commands:
     --record-module MOD         With --single, the record type's __module__.
     --record-doc "text"         With --single, the record type's own docstring.
     --doc "text"                Docstring shown in Python help().
-    --inline                   Emit static inline body in _core.h (no _core.c entry).
+    --inline                    Emit static inline body in _core.h (no _core.c entry).
     --impl file::funcname       Lift function body from funcname in file.
     --replace old::new          String substitution on --impl body; repeatable.
 

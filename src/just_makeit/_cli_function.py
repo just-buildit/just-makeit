@@ -325,6 +325,17 @@ def run(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    # gh-2755: the single record's own refusal first, so `--single` with no
+    # `--result-field` reads as the load reads it, not as a bad return type.
+    _single_err = _record.single_why_not(
+        {"single": fn_single, "result_fields": fn_result_fields, **fn_record},
+        f"function {fn_name!r}",
+        type_keys=True,
+    )
+    if _single_err:
+        print(f"error: {_single_err}", file=sys.stderr)
+        sys.exit(1)
+
     # gh-244: a result_fields function's --return-type names the user's
     # record struct (the buffer element type for a list), not a scalar — so
     # it's exempt from the scalar allowlist.

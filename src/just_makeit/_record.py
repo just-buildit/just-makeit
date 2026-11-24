@@ -1139,11 +1139,27 @@ def pyi_classes(methods: list[dict], doc_blocks: dict | None = None) -> str:
     """Every record class a method table needs, deduplicated by type name.
 
     Two methods returning the same record declare it once; the first wins, the
-    way a C header's first declaration does.
+    way a C header's first declaration does. Every member reads *doc_blocks*;
+    :func:`pyi_classes_of` is the form whose members read their own.
+    """
+    return pyi_classes_of([(m, doc_blocks) for m in methods])
+
+
+def pyi_classes_of(members: "list[tuple[dict, dict | None]]") -> str:
+    """Every record class *members* need, each read from its own doc blocks.
+
+    gh-2755. A member is ``(row, doc_blocks)``: a method with the blocks of
+    the object whose C descriptor it is rendered into, a module function
+    with the module header's. Each record's fields are documented from the
+    SAME blocks its C descriptor reads (:func:`fields`), so ``help()`` and
+    the stub cannot disagree. One map merged across every face did: a
+    struct documented in one header documented, in the stub alone, a record
+    whose descriptor reads another. First claim on a name wins, the order
+    the module registers them in (:func:`resolve`).
     """
     seen: set[str] = set()
     out: list[str] = []
-    for m in methods:
+    for m, doc_blocks in members:
         if not is_record(m):
             continue
         nm = public_name(m)

@@ -493,6 +493,26 @@ def run(
         )
         sys.exit(1)
 
+    # gh-1268 / gh-2755: the module publishes one type per record name, so
+    # a record claiming a name an object, view or function already
+    # publishes with other fields is refused -- the check `jm method` and
+    # the load make, before this command writes anything.
+    _conflict = _record.name_conflict(
+        C.module_record_regs(cfg, module, "")
+        + _record.function_registrations(
+            [
+                {
+                    "name": fn_name,
+                    "return_type": return_type,
+                    "result_fields": result_fields,
+                    **record_keys,
+                }
+            ]
+        )
+    )
+    if _conflict:
+        raise Refusal(_conflict)
+
     # gh-353: an enum param (5th tuple element) must name a declared [[enum]].
     # The CLI parser has no cfg, so the name is validated here against the
     # project's enum SSOT (C.enums) with a clear error.
