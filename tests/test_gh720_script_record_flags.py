@@ -116,8 +116,9 @@ class TestEmittedFlags:
         assert flag in _emit(project)
 
     def test_function_result_fields_are_emitted(self, project):
-        # `jm function` takes --result-field but not --single; dropping the
-        # fields rebuilt the function returning its bare --return-type.
+        # A list-of-records function (gh-2755's test covers --single on
+        # one); dropping the fields rebuilt it returning its bare
+        # --return-type.
         out = _emit(project)
         assert "--result-field idx:int" in out
         assert "--result-field val:double" in out

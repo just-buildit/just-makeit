@@ -269,7 +269,7 @@ def public_name(m: dict) -> str:
     return "".join(w.capitalize() for w in base.split("_") if w) or "Record"
 
 
-def qualified_name(m: dict) -> str:
+def qualified_name(m: dict, module_tp: str = "<<module_tp>>") -> str:
     """The dotted name the structseq reports as ``type(r).__name__``.
 
     A manifest ``record_module`` (gh-261) names the module outright
@@ -279,12 +279,19 @@ def qualified_name(m: dict) -> str:
     fill because the package is not known here. It was the bare C component
     name, which ``__module__`` then reported and pickle could not import.
 
+    *module_tp* is that package when the caller knows it. A module
+    function's wrapper (gh-2755) is spliced into the aggregator as rendered
+    text, with no ``render`` pass left to fill the slot, so the aggregator
+    passes the package it already derived for the module.
+
     >>> qualified_name({"record_name": "Tone"})
     '<<module_tp>>.Tone'
+    >>> qualified_name({"record_name": "Tone"}, "p.dsp")
+    'p.dsp.Tone'
     >>> qualified_name({"record_name": "Tone", "record_module": "p.dsp"})
     'p.dsp.Tone'
     """
-    module = m.get("record_module") or "<<module_tp>>"
+    module = m.get("record_module") or module_tp
     return f"{module}.{public_name(m)}"
 
 
@@ -732,6 +739,71 @@ def descriptor_c(
     )
 
 
+def ensure_type_c(sid: str, release: "str | None" = None) -> str:
+    """Create *sid*'s structseq type if module init has not, or fail.
+
+    Module init creates every record type (:func:`registrations`), so this
+    is the fallback for a wrapper reached before that ran. *release* is the
+    C that frees what the wrapper acquired before it, run on the failure
+    path ahead of the ``return NULL``: ``None`` for a wrapper that acquired
+    nothing, and a string (possibly empty) for one whose parse block may
+    have, which braces the failure path.
+
+    One emitter for both faces that return one record: a method (gh-244)
+    and a module function (gh-2755).
+
+    Examples
+    --------
+    >>> print(ensure_type_c("F_m"), end="")
+        if (!F_m_type) {
+            F_m_type = PyStructSequence_NewType(&F_m_desc);
+            if (!F_m_type) return NULL;
+        }
+    >>> print(ensure_type_c("F_m", "Py_DECREF(a);").splitlines()[2])
+            if (!F_m_type) { Py_DECREF(a); return NULL; }
+    >>> print(ensure_type_c("F_m", "").splitlines()[2])
+            if (!F_m_type) { return NULL; }
+    """
+    if release is None:
+        fail = " return NULL;"
+    else:
+        fail = f" {{{' ' + release if release else ''} return NULL; }}"
+    return (
+        f"    if (!{sid}_type) {{\n"
+        f"        {sid}_type = PyStructSequence_NewType(&{sid}_desc);\n"
+        f"        if (!{sid}_type){fail}\n"
+        f"    }}\n"
+    )
+
+
+def build_c(sid: str, result_fields: list[dict], value: str = "_r") -> str:
+    """Fill a new *sid* record from the C struct *value* and return it.
+
+    Each field converts through its ``_CTYPE_META`` ``to_py``, the one
+    conversion every record shape uses. The tail of a wrapper whose kernel
+    returned the record by value: a method's (gh-244) or a module
+    function's (gh-2755).
+
+    Examples
+    --------
+    >>> print(build_c("F_m", [{"name": "x", "type": "double"}]), end="")
+        PyObject *_o = PyStructSequence_New(F_m_type);
+        if (!_o) return NULL;
+        PyStructSequence_SET_ITEM(_o, 0, PyFloat_FromDouble(_r.x));
+        return _o;
+    """
+    rows = []
+    for i, f in enumerate(result_fields):
+        to_py = T._CTYPE_META[f["type"]]["to_py"](f"{value}.{f['name']}")
+        rows.append(f"    PyStructSequence_SET_ITEM(_o, {i}, {to_py});\n")
+    return (
+        f"    PyObject *_o = PyStructSequence_New({sid}_type);\n"
+        f"    if (!_o) return NULL;\n"
+        f"{''.join(rows)}"
+        f"    return _o;\n"
+    )
+
+
 def dtype_c(sid: str, record_t: str, flds: list[RecordField]) -> str:
     """A cached ``PyArray_Descr *`` matching the C record's layout exactly.
 
@@ -1067,11 +1139,27 @@ def pyi_classes(methods: list[dict], doc_blocks: dict | None = None) -> str:
     """Every record class a method table needs, deduplicated by type name.
 
     Two methods returning the same record declare it once; the first wins, the
-    way a C header's first declaration does.
+    way a C header's first declaration does. Every member reads *doc_blocks*;
+    :func:`pyi_classes_of` is the form whose members read their own.
+    """
+    return pyi_classes_of([(m, doc_blocks) for m in methods])
+
+
+def pyi_classes_of(members: "list[tuple[dict, dict | None]]") -> str:
+    """Every record class *members* need, each read from its own doc blocks.
+
+    gh-2755. A member is ``(row, doc_blocks)``: a method with the blocks of
+    the object whose C descriptor it is rendered into, a module function
+    with the module header's. Each record's fields are documented from the
+    SAME blocks its C descriptor reads (:func:`fields`), so ``help()`` and
+    the stub cannot disagree. One map merged across every face did: a
+    struct documented in one header documented, in the stub alone, a record
+    whose descriptor reads another. First claim on a name wins, the order
+    the module registers them in (:func:`resolve`).
     """
     seen: set[str] = set()
     out: list[str] = []
-    for m in methods:
+    for m, doc_blocks in members:
         if not is_record(m):
             continue
         nm = public_name(m)
@@ -1148,6 +1236,132 @@ def registrations(
             )
         )
     return out
+
+
+#: The static prefix of a module function's record type (gh-2755): its
+#: descriptor and type are ``_jm_fnrec_<fn>_desc`` / ``_type`` in the
+#: module aggregator. Not ``_bind_<fn>``, the wrapper's own name, so a
+#: function called ``x_type`` cannot collide with ``x``'s record type.
+FUNCTION_RECORD_PREFIX = "_jm_fnrec"
+
+
+def function_registrations(
+    functions: list[dict], doc_blocks: dict | None = None
+) -> list[RecordReg]:
+    """A :class:`RecordReg` for every module function returning one record.
+
+    gh-2755. The function face of :func:`registrations`: the same entries,
+    keyed under :data:`FUNCTION_RECORD_PREFIX`, so the aggregator creates
+    and publishes a function's record type exactly as it does a method's,
+    in the one public-name namespace (:func:`resolve`). A method and a
+    function returning the same record therefore share one type.
+
+    >>> rf = [{"name": "n", "type": "int"}]
+    >>> regs = function_registrations(
+    ...     [{"name": "f", "single": True, "record_name": "R",
+    ...       "result_fields": rf}, {"name": "g"}])
+    >>> [(r.sid, r.name) for r in regs]
+    [('_jm_fnrec_f', 'R')]
+    """
+    return registrations(functions, FUNCTION_RECORD_PREFIX, doc_blocks)
+
+
+#: The keys that name or describe the ONE record type a ``single`` result
+#: is (gh-257, gh-261, gh-646): with no ``single`` there is no such type.
+RECORD_TYPE_KEYS = ("record_name", "record_module", "record_doc")
+
+
+def single_why_not(m: dict, what: str, type_keys: bool = False) -> str:
+    """Why *m*'s ``single`` declaration describes no record, or ``""``.
+
+    One refusal for every face that returns one record (gh-2755): a
+    method's command line asks it, and so do a module function's command
+    line and the manifest load.
+
+    - ``single`` with no ``result_fields`` has no columns to build the
+      record from (gh-244).
+    - ``record_doc`` with no ``single`` documents a type that does not
+      exist (gh-646).
+    - with *type_keys*, ``record_name`` and ``record_module`` too. A
+      method's command line has always accepted those two without
+      ``--single``; a module function never has, so its faces refuse them
+      rather than accept a key nothing reads.
+
+    Examples
+    --------
+    >>> print(single_why_not({"single": True}, "function 'f'"))
+    function 'f': single = true (--single) needs result_fields \
+(--result-field): they are the record's columns.
+    >>> single_why_not({"record_name": "R"}, "method 'm'")
+    ''
+    >>> single_why_not({"record_name": "R"}, "f", type_keys=True)[:42]
+    'f: record_name (--record-name) names the s'
+    >>> single_why_not({"single": True, "result_fields": [{}]}, "f")
+    ''
+    """
+    if m.get("single") and not m.get("result_fields"):
+        return (
+            f"{what}: single = true (--single) needs result_fields "
+            "(--result-field): they are the record's columns."
+        )
+    if m.get("single"):
+        return ""
+    keys = RECORD_TYPE_KEYS if type_keys else ("record_doc",)
+    for key in keys:
+        if m.get(key):
+            flag = "--" + key.replace("_", "-")
+            return (
+                f"{what}: {key} ({flag}) names the single record's type, "
+                "and there is none without single = true (--single)."
+            )
+    return ""
+
+
+#: A module function's keys that a ``single`` result never reads (gh-2755):
+#: they size, allocate or check an output the by-value record replaces.
+SINGLE_FUNCTION_UNREAD_KEYS = (
+    "out_type",
+    "variable_output",
+    "out_size",
+    "max_results",
+    "max_results_param",
+    "check_return",
+    "why",
+    "status_errors",
+)
+
+
+def function_single_why_not(fn: dict) -> str:
+    """Why module function *fn*'s record declaration cannot be honoured.
+
+    gh-2755. :func:`single_why_not`, with the record's type keys refused
+    without ``single``, then every key a by-value record leaves unread:
+    the function returns the struct itself, so a capacity, an allocated
+    output or a status check has nothing to act on, and accepting one
+    would drop it silently. ``""`` when the declaration is honoured.
+
+    Examples
+    --------
+    >>> rf = [{"name": "n", "type": "int"}]
+    >>> function_single_why_not({"name": "f", "single": True,
+    ...                          "result_fields": rf})
+    ''
+    >>> print(function_single_why_not({"name": "f", "single": True,
+    ...       "result_fields": rf, "check_return": True}))
+    function 'f': check_return has no effect on a single = true record, \
+which the C function returns by value. Drop one of the two.
+    """
+    what = f"function {str(fn.get('name') or '?')!r}"
+    why = single_why_not(fn, what, type_keys=True)
+    if why or not fn.get("single"):
+        return why
+    for key in SINGLE_FUNCTION_UNREAD_KEYS:
+        if fn.get(key):
+            return (
+                f"{what}: {key} has no effect on a single = true record, "
+                "which the C function returns by value. Drop one of the two."
+            )
+    return ""
 
 
 def _conflict_message(first: RecordReg, other: RecordReg) -> str:

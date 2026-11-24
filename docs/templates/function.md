@@ -124,6 +124,10 @@ positional-only).
 - **`--result-field name:type`** — emit a list of `{name, type}` records
     per call (repeatable). Requires `--return-type <struct>` naming the C
     struct one row is, declared in the sacred header.
+- **`--single`** — with `--result-field`, return ONE named record: the C
+    function returns the `--return-type` struct by value and Python gets a
+    `PyStructSequence`, its type published by the module under
+    `--record-name` (gh-2755).
 
 ## Concrete types
 

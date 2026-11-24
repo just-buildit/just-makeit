@@ -910,6 +910,13 @@ CASES: "dict[str, dict[str, Case]]" = {
             "--return-type", "peak_t", "--result-field", "index:size_t",
             "--result-field", "value:double", needs=("o", "module"),
             only=BASE),
+        # gh-2755: one record by value, and its type's keys.
+        "single": _case(
+            "function", "g", "--module", "{mod}", "--param", "x:double",
+            "--return-type", "scene_t", "--single", "--result-field",
+            "ratio:double:the ratio", "--record-name", "Scene",
+            "--record-doc", "The scene.", "--record-module", "p.scenes",
+            needs=("o", "module"), only=BASE),
         "path-and-enum": _case(
             "function", "g", "--module", "{mod}", "--param",
             "fname:path", "--param", "m:enum:mode", "--return-type", "int",

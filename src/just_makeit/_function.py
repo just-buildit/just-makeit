@@ -137,6 +137,7 @@ def _write_function_c(
     variable_output: bool = False,
     impl_body: str | None = None,
     why: bool = False,
+    single: bool = False,
     *,
     c_name: str,
 ) -> None:
@@ -154,6 +155,7 @@ def _write_function_c(
         max_results_param=max_results_param,
         variable_output=variable_output,
         why=why,
+        single=single,
     )
     if impl_body is not None:
         from . import _impl as I
@@ -182,6 +184,7 @@ def _inject_into_core_h(
     max_results_param: str = "",
     variable_output: bool = False,
     why: bool = False,
+    single: bool = False,
     *,
     c_name: str,
     csym: str,
@@ -195,6 +198,7 @@ def _inject_into_core_h(
         max_results_param=max_results_param,
         variable_output=variable_output,
         why=why,
+        single=single,
     )
     existing = path.read_text(encoding="utf-8")
     # Inject inside the extern "C" block so the declaration has C linkage in
@@ -224,6 +228,7 @@ def _inject_inline_into_core_h(
     variable_output: bool = False,
     impl_body: str | None = None,
     why: bool = False,
+    single: bool = False,
     *,
     c_name: str,
     csym: str,
@@ -245,6 +250,7 @@ def _inject_inline_into_core_h(
         max_results_param=max_results_param,
         variable_output=variable_output,
         why=why,
+        single=single,
     )
     if impl_body is not None:
         from . import _impl as I
@@ -298,6 +304,10 @@ def run(
     check_return: bool = False,
     why: bool = False,
     status_errors: list[dict] | None = None,
+    single: bool = False,
+    record_name: str = "",
+    record_module: str = "",
+    record_doc: str = "",
 ) -> None:
     C.require_name(fn_name, "function")
     # gh-1760: one row per param is what the manifest stores; the C writers
@@ -314,10 +324,36 @@ def run(
         return_type,
         result_fields,
         variable_output=variable_output,
+        single=single,
     )
     if _shape_err:
         print(f"error: {_shape_err}", file=sys.stderr)
         sys.exit(1)
+    # gh-2755: a single record's keys, refused by the check `_config.load`
+    # makes, before any C is written. `max_results` is this command's own
+    # default for a list of records, so it is not asked about here.
+    record_keys = {
+        "single": single,
+        "record_name": record_name,
+        "record_module": record_module,
+        "record_doc": record_doc,
+    }
+    _single_err = _record.function_single_why_not(
+        {
+            "name": fn_name,
+            "result_fields": result_fields,
+            "out_type": out_type,
+            "variable_output": variable_output,
+            "out_size": out_size,
+            "max_results_param": max_results_param,
+            "check_return": check_return,
+            "why": why,
+            "status_errors": status_errors,
+            **record_keys,
+        }
+    )
+    if _single_err:
+        raise Refusal(_single_err)
     # gh-910: the function's own name was already checked; its parameters and
     # result fields were not, and this command writes the module's C before it
     # saves the manifest — so `save`'s gate fired only after `gaïn` had reached
@@ -457,6 +493,26 @@ def run(
         )
         sys.exit(1)
 
+    # gh-1268 / gh-2755: the module publishes one type per record name, so
+    # a record claiming a name an object, view or function already
+    # publishes with other fields is refused -- the check `jm method` and
+    # the load make, before this command writes anything.
+    _conflict = _record.name_conflict(
+        C.module_record_regs(cfg, module, "")
+        + _record.function_registrations(
+            [
+                {
+                    "name": fn_name,
+                    "return_type": return_type,
+                    "result_fields": result_fields,
+                    **record_keys,
+                }
+            ]
+        )
+    )
+    if _conflict:
+        raise Refusal(_conflict)
+
     # gh-353: an enum param (5th tuple element) must name a declared [[enum]].
     # The CLI parser has no cfg, so the name is validated here against the
     # project's enum SSOT (C.enums) with a clear error.
@@ -536,6 +592,7 @@ def run(
             variable_output=variable_output,
             impl_body=impl_body,
             why=why,
+            single=single,
             c_name=c_name,
             csym=csym,
         )
@@ -553,6 +610,7 @@ def run(
             max_results_param=max_results_param,
             variable_output=variable_output,
             why=why,
+            single=single,
         )
         if impl_body is not None:
             from . import _impl as I
@@ -572,6 +630,7 @@ def run(
             max_results_param=max_results_param,
             variable_output=variable_output,
             why=why,
+            single=single,
             c_name=c_name,
             csym=csym,
         )
@@ -589,6 +648,7 @@ def run(
             variable_output=variable_output,
             impl_body=impl_body,
             why=why,
+            single=single,
             c_name=c_name,
         )
 
@@ -604,6 +664,7 @@ def run(
             max_results_param=max_results_param,
             variable_output=variable_output,
             why=why,
+            single=single,
             c_name=c_name,
             csym=csym,
         )
@@ -623,8 +684,13 @@ def run(
         fn_entry["out_type"] = out_type
     if result_fields:
         fn_entry["result_fields"] = result_fields
-        if not max_results_param:
+        # gh-2755: a single record has no buffer for a capacity to size.
+        if not max_results_param and not single:
             fn_entry["max_results"] = max_results
+    # gh-2755: the record's keys, each only when declared.
+    for key, value in record_keys.items():
+        if value:
+            fn_entry[key] = value
     if max_results_param:
         fn_entry["max_results_param"] = max_results_param
     # #318 / gh-335: a stateless self-sizing output. The C stub/decl place

@@ -64,7 +64,6 @@ from ._docstring import (
     class_import_line,
     ctor_demo_lines,
     import_demo_lines,
-    merge_doc_blocks,
     method_doc,
     name_summary,
     ctor_demo_label,
@@ -2557,6 +2556,10 @@ def fn_py_surface(
     if outs:
         anns = [_py(p["type"]) for p in outs]
         ret = anns[0] if len(anns) == 1 else f"tuple[{', '.join(anns)}]"
+    elif _record.is_record(fn):
+        # gh-2755: ONE record, the class `make_module_pyi` declares for it
+        # -- the annotation a single-record method's stub carries.
+        ret = _record.public_name(fn)
     elif fn.get("check_return") and not out_type:
         # gh-363: the int status is consumed by a raise-on-non-zero; the Python
         # surface is "succeeds or raises", i.e. returns None. With an output
@@ -3508,34 +3511,49 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # class, so every such class is declared here, above the object classes
     # that reference it. Deduplicated across the whole module: two objects
     # returning the same record declare it once.
-    _rec_block = _record.pyi_classes(
+    # gh-2755: each member with the doc blocks its own C descriptor reads
+    # -- an object's methods and views their object's, a foreign view its
+    # overlay's, a function the module header's -- in the order the
+    # aggregator registers them (every object, then every view, then the
+    # functions), so the first claim on a name wins on both faces. A map
+    # merged across them documented a record in the stub that its
+    # descriptor left bare.
+    _rec_block = _record.pyi_classes_of(
         [
-            m
+            (m, cfg.get(obj, {}).get("_doc_blocks", {}))
             for obj in objects
-            # A view's own method is stubbed on the view class below and can
-            # return a record the parent never does; leaving it out would emit
-            # a `-> ToneMetrics` annotation with no ToneMetrics declared.
             for m in C.methods(cfg, obj)
-            + [
-                n
-                for v in C.views(cfg, obj)
-                if C.view_module(cfg, obj, v) == module
-                for n in C.view_methods(v)
-            ]
+        ]
+        # Then every home view's own methods, after ALL the objects, as the
+        # aggregator registers them (`build_component_ctxs` appends the
+        # views last). A view's own method is stubbed on the view class
+        # below and can return a record the parent never does; leaving it
+        # out would emit a `-> ToneMetrics` annotation with no ToneMetrics
+        # declared.
+        + [
+            (n, cfg.get(obj, {}).get("_doc_blocks", {}))
+            for obj in objects
+            for v in C.views(cfg, obj)
+            if C.view_module(cfg, obj, v) == module
+            for n in C.view_methods(v)
         ]
         # gh-2516: a view over another module's object returns what its
         # overlay's methods do, the parent's and its own.
-        + [m for synth, vcfg in _foreign for m in C.methods(vcfg, synth)],
-        # gh-1300: merged, not spread -- a spread keeps only the last
-        # object's per-struct field docs, and the records above belong to
-        # every object.
-        merge_doc_blocks(
-            *(cfg.get(obj, {}).get("_doc_blocks", {}) for obj in objects),
-            *(vcfg[synth].get("_doc_blocks", {}) for synth, vcfg in _foreign),
-        ),
+        + [
+            (m, vcfg[synth].get("_doc_blocks", {}))
+            for synth, vcfg in _foreign
+            for m in C.methods(vcfg, synth)
+        ]
+        # gh-2755: and a module function returning one record.
+        + [(fn, fn_doc_blocks) for fn in functions]
     )
     if _rec_block:
+        if not (objects or _foreign):
+            # gh-2755: a functions-only module's record class needs the
+            # blank line an object's stub gets above.
+            parts.append("")
         parts.append(_rec_block)
+        needs_final = True
     # gh-2344: the enum values the aggregator publishes, one per Python name.
     # Read the same way the aggregator reads its objects' entries (first
     # object to name an enum wins, and only what its fragment defines), so

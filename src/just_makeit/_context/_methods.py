@@ -4711,14 +4711,7 @@ def make_methods_ctx(
                 # Any array acquired above must be released on the structseq
                 # type-creation failure path too, not just after the call.
                 _cleanup_inline = _p_cleanup.replace("\n    ", " ").strip()
-                _fail = f" {{{' ' + _cleanup_inline if _cleanup_inline else ''} return NULL; }}"
-                _s_ensure = (
-                    f"    if (!{_sid}_type) {{\n"
-                    f"        {_sid}_type ="
-                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
-                    f"        if (!{_sid}_type){_fail}\n"
-                    f"    }}\n"
-                )
+                _s_ensure = _record.ensure_type_c(_sid, _cleanup_inline)
                 _s_call = (
                     _single_kernel_block(
                         ret_disp,
@@ -4739,14 +4732,7 @@ def make_methods_ctx(
                     f"{_in_acq}"
                     f"    size_t n_in = (size_t)PyArray_SIZE(in_arr);\n"
                 )
-                _s_ensure = (
-                    f"    if (!{_sid}_type) {{\n"
-                    f"        {_sid}_type ="
-                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
-                    f"        if (!{_sid}_type)"
-                    f" {{ Py_DECREF(in_arr); return NULL; }}\n"
-                    f"    }}\n"
-                )
+                _s_ensure = _record.ensure_type_c(_sid, "Py_DECREF(in_arr);")
                 _s_call = (
                     _single_kernel_block(
                         ret_disp,
@@ -4762,13 +4748,7 @@ def make_methods_ctx(
                 )
             else:
                 _s_parse = ""
-                _s_ensure = (
-                    f"    if (!{_sid}_type) {{\n"
-                    f"        {_sid}_type ="
-                    f" PyStructSequence_NewType(&{_sid}_desc);\n"
-                    f"        if (!{_sid}_type) return NULL;\n"
-                    f"    }}\n"
-                )
+                _s_ensure = _record.ensure_type_c(_sid)
                 _s_call = _single_kernel_block(
                     ret_disp,
                     f"{c_fn}({_st})",
@@ -4776,12 +4756,6 @@ def make_methods_ctx(
                     release="",
                     why=_mwhy,
                     status=_mstatus,
-                )
-            _set_lines = []
-            for _i, _f in enumerate(result_fields):
-                _topy = _CTYPE_META[_f["type"]]["to_py"](f"_r.{_f['name']}")
-                _set_lines.append(
-                    f"    PyStructSequence_SET_ITEM(_o, {_i}, {_topy});\n"
                 )
             # gh-1959: with no input and no param the body parses nothing,
             # so the wrapper is METH_NOARGS -- it took `(self, args)`, never
@@ -4801,10 +4775,9 @@ def make_methods_ctx(
                     f"{_s_parse}"
                     f"{_s_ensure}"
                     f"{_s_call}"
-                    f"    PyObject *_o = PyStructSequence_New({_sid}_type);\n"
-                    f"    if (!_o) return NULL;\n"
-                    f"{''.join(_set_lines)}"
-                    f"    return _o;\n"
+                    # gh-2755: the one record tail, shared with a module
+                    # function that returns a record by value.
+                    f"{_record.build_c(_sid, result_fields)}"
                     f"}}"
                 )
             )

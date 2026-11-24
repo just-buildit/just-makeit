@@ -181,6 +181,8 @@ _SHAPE_VALUES: dict[str, tuple] = {
     "max_results_param": ("",),
     "variable_output": (False, True),
     "why": (False, True),
+    # gh-2755: one record by value -- the plain `T f(params)` signature.
+    "single": (False, True),
 }
 
 #: Keyword parameters every emitter has that say nothing about the shape.

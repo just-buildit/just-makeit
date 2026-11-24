@@ -350,6 +350,11 @@ def load(root: Path) -> dict:
     out_errors = scalar_out_errors(cfg)
     if out_errors:
         _refuse(out_errors)
+    # gh-2755: a module function's single record -- `single` with no
+    # columns, a record key with no `single`, or a key it never reads.
+    record_errors = function_record_errors(cfg)
+    if record_errors:
+        _refuse(record_errors)
     # gh-2470: a set_state status table with no set_state, or a row the
     # shared validator refuses on every other table face.
     set_state_errors = _set_state_status_errors_errors(cfg)
@@ -806,6 +811,97 @@ def scalar_out_errors(cfg: dict) -> "list[str]":
                     f"{key} = true."
                 )
     return errors
+
+
+def function_record_errors(cfg: dict) -> "list[str]":
+    """Every module function whose single-record declaration is refused.
+
+    gh-2755. A ``[[module.X.functions]]`` row with ``single = true``
+    returns ONE named record, the struct its C function returns by value.
+    The rules are `_record.function_single_why_not`'s, which ``jm
+    function`` asks too, so the command and ``apply`` refuse one row.
+
+    Examples
+    --------
+    >>> bad = {"module": {"m": {"functions": [
+    ...     {"name": "f", "return_type": "rec_t", "single": True}]}}}
+    >>> function_record_errors(bad)[0].split(":")[0]
+    "[[module.m.functions]] function 'f'"
+    >>> function_record_errors({"module": {"m": {"functions": [
+    ...     {"name": "f"}]}}})
+    []
+    """
+    from . import _record
+
+    errors: list[str] = []
+    for mid in modules(cfg):
+        for fn in module_functions(cfg, mid):
+            if isinstance(fn, dict):
+                why = _record.function_single_why_not(fn)
+                if why:
+                    errors.append(f"[[module.{mid}.functions]] {why}")
+        # gh-1268's refusal, for the whole extension module: two records
+        # under one public name with different fields. `_record.resolve`
+        # raises it while the C is assembled, which was a traceback.
+        conflict = _record.name_conflict(module_record_regs(cfg, mid, ""))
+        if conflict:
+            errors.append(f"[module.{mid}] {conflict}")
+    return errors
+
+
+def module_record_regs(
+    cfg: dict, module: "str | None", object_name: str
+) -> list:
+    """Every record already published by the extension module in play.
+
+    gh-1268. The unit is the **extension module**: a module's objects, their
+    views and its functions (gh-2755) all land in one `.so` and share one
+    attribute namespace, while a standalone object's `.so` holds only its
+    own. ``jm method``, ``jm function`` and the load ask it, so each refuses
+    a record name the module already publishes with other fields, before
+    `_record.resolve` would raise while the C is assembled.
+
+    The views are the ones the module's ``.so`` registers, in the order the
+    aggregator registers them (`module_views`, gh-2516): its own objects'
+    views placed here, then other modules' views placed here. A view placed
+    in ANOTHER module shares nothing with this one, so it is not listed.
+
+    A home view that merely inherits a parent's record method is not
+    listed -- ``view_methods`` carries only what the view declares itself
+    -- and it does not need to be: an inherited method is the parent's
+    dict, so it contributes the name and shape the parent already does. A
+    foreign view's parent is not in this module, so its inherited methods
+    are listed, from the overlay the stub and the fragment render
+    (`_stubs.view_overlay`).
+    """
+    from . import _record
+
+    out: list = []
+    if not module:
+        prefix = resolved_class_name(cfg, object_name)
+        out += _record.registrations(methods(cfg, object_name), prefix)
+        for view in views(cfg, object_name):
+            out += _record.registrations(
+                view_methods(view), view.get("class_name") or prefix
+            )
+        return out
+    own = module_objects(cfg, module)
+    for obj in own:
+        out += _record.registrations(
+            methods(cfg, obj), resolved_class_name(cfg, obj)
+        )
+    for parent, view in module_views(cfg, module):
+        prefix = view.get("class_name") or resolved_class_name(cfg, parent)
+        if parent in own:
+            rows = view_methods(view)
+        else:
+            from ._stubs import view_overlay
+
+            synth, vcfg = view_overlay(cfg, parent, view)
+            rows = methods(vcfg, synth)
+        out += _record.registrations(rows, prefix)
+    out += _record.function_registrations(module_functions(cfg, module))
+    return out
 
 
 def _refuse(errors: "list[str]") -> None:

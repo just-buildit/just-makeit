@@ -957,29 +957,9 @@ def _methods_c_stub_result_single(
     return "\n".join(lines) + "\n"
 
 
-def _zero_return(return_type: str) -> str:
-    """The ``return`` of *return_type*'s zero, or "" for ``void``.
-
-    The neutral value a fixed-output stub returns, and what
-    :func:`impl_default_return` completes a body with: one spelling, so the
-    two cannot differ. A registered scalar returns its ``_CTYPE_META``
-    zero. Any other type is a record returned by value -- ``single``, or a
-    declared record element as a fixed return (gh-1405) -- and returns a
-    zeroed C99 compound literal. The fixed stub emitted no ``return`` at
-    all for that kind, so a fresh scaffold fell off the end of a non-void
-    function (gh-2248).
-
-    >>> _zero_return("float")
-    'return (float)0.0f;'
-    >>> _zero_return("iq16_t")
-    'return (iq16_t){0};'
-    >>> _zero_return("void")
-    ''
-    """
-    if return_type == "void":
-        return ""
-    meta = T._CTYPE_META.get(return_type)
-    return f"return ({return_type}){meta['zero'] if meta else '{0}'};"
+#: The one spelling of a stub's neutral ``return``, shared with the
+#: module-function stub (gh-2755): `_types.zero_return`.
+_zero_return = T.zero_return
 
 
 def ends_in_return(body: str) -> bool:
@@ -1888,32 +1868,6 @@ def _signature_differences(
     return sorted(differing)
 
 
-def _module_record_regs(
-    cfg: dict, module: str | None, object_name: str
-) -> list:
-    """Every record already published by the extension module in play.
-
-    gh-1268. The unit is the **extension module**: a module's objects and
-    their views all land in one `.so` and share one attribute namespace,
-    while a standalone object's `.so` holds only its own.
-
-    A view that merely inherits a parent's record method is not listed —
-    ``view_methods`` carries only what the view declares itself — and it
-    does not need to be: an inherited method is the parent's dict, so it
-    contributes the name and shape the parent already contributes.
-    """
-    objs = C.module_objects(cfg, module) if module else [object_name]
-    out: list = []
-    for obj in objs:
-        prefix = C.resolved_class_name(cfg, obj)
-        out += _record.registrations(C.methods(cfg, obj), prefix)
-        for view in C.views(cfg, obj):
-            out += _record.registrations(
-                C.view_methods(view), view.get("class_name") or prefix
-            )
-    return out
-
-
 def _run_view_override(
     root: Path,
     object_name: str,
@@ -2735,7 +2689,7 @@ def run(
     # this is the same refusal one step earlier, for the same reason the
     # gh-996 block above gives — before this command writes anything.
     _conflict = _record.name_conflict(
-        _module_record_regs(cfg, module, object_name)
+        C.module_record_regs(cfg, module, object_name)
         + _record.registrations(
             [
                 {

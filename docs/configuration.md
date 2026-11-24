@@ -1517,29 +1517,31 @@ guard, so guard anything platform-specific in it yourself.
 
 ### `[[module.<name>.functions]]` entries
 
-| TOML field                                    | CLI flag                                                                          | Status       |
-| --------------------------------------------- | --------------------------------------------------------------------------------- | ------------ |
-| `name`, `return_type`, `doc`                  | `jm function <fn> --module <mod> --return-type T --doc STR`                       | ✅           |
-| `params = [{name, type, out?}]`               | `jm function --param name:T` + `--out-param name:T[]`                             | ✅ (0.13.22) |
-| `params … {mutable = true}`                   | (synonym for `out` — writable array param)                                        | ✅ (0.15.3)  |
-| `params … {type = "int", out = true}`         | `jm function --out-param name:T` — a scalar output, returned to Python            | ✅ (gh-2683) |
-| `params … {str_hint = "..."}`                 | (TOML only) an array refuses a `str`, with this appended                          | ✅ (gh-1756) |
-| `params … {rank = N}`                         | (TOML only) an array of any other rank is refused                                 | ✅ (gh-805)  |
-| `params … {elements_per_sample = N}`          | (TOML only) the C counts samples of N elements                                    | ✅ (gh-805)  |
-| `inline = true`                               | `jm function --inline`                                                            | ✅           |
-| `out_type = "T"`                              | `jm function --out-type T`                                                        | ✅ (0.13.23) |
-| `out_type = "T[n]"`                           | `jm function --out-type 'T[n]'`                                                   | ✅ (gh-1888) |
-| `variable_output = true`, `out_size = "EXPR"` | `jm function --variable-output --out-type T --out-size EXPR`                      | ✅ (gh-335)  |
-| `out_type = "str"`                            | (TOML only)                                                                       | 🟡 (0.71.2)  |
-| `check_return = true`                         | `jm function --check-return`                                                      | ✅ (gh-363)  |
-| `why = true`                                  | `jm function --why` (with `--check-return`)                                       | ✅ (gh-1706) |
-| `status_errors = [{...}]`                     | `jm function --status-error STATUS:Exc[:msg]` (with `--check-return`; repeatable) | ✅ (gh-1614) |
-| `result_fields = [{name, type}]`              | `jm function --result-field name:type` (repeatable)                               | ✅ (0.13.23) |
-| `result_fields`, `out_size = "EXPR"`          | `jm function --result-field name:type --out-size EXPR`                            | ✅ (gh-2205) |
-| `max_results`                                 | (TOML only)                                                                       | 🟡           |
-| `max_results_param`                           | (TOML only)                                                                       | 🟡           |
-| `impl = "..."` body                           | (manifest only; `jm function --impl` lifts once and records nothing)              | ✅           |
-| `impl_file`, `replace`                        | (manifest only; `--impl` / `--replace` record nothing)                            | ✅           |
+| TOML field                                    | CLI flag                                                                           | Status       |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- | ------------ |
+| `name`, `return_type`, `doc`                  | `jm function <fn> --module <mod> --return-type T --doc STR`                        | ✅           |
+| `params = [{name, type, out?}]`               | `jm function --param name:T` + `--out-param name:T[]`                              | ✅ (0.13.22) |
+| `params … {mutable = true}`                   | (synonym for `out` — writable array param)                                         | ✅ (0.15.3)  |
+| `params … {type = "int", out = true}`         | `jm function --out-param name:T` — a scalar output, returned to Python             | ✅ (gh-2683) |
+| `params … {str_hint = "..."}`                 | (TOML only) an array refuses a `str`, with this appended                           | ✅ (gh-1756) |
+| `params … {rank = N}`                         | (TOML only) an array of any other rank is refused                                  | ✅ (gh-805)  |
+| `params … {elements_per_sample = N}`          | (TOML only) the C counts samples of N elements                                     | ✅ (gh-805)  |
+| `inline = true`                               | `jm function --inline`                                                             | ✅           |
+| `out_type = "T"`                              | `jm function --out-type T`                                                         | ✅ (0.13.23) |
+| `out_type = "T[n]"`                           | `jm function --out-type 'T[n]'`                                                    | ✅ (gh-1888) |
+| `variable_output = true`, `out_size = "EXPR"` | `jm function --variable-output --out-type T --out-size EXPR`                       | ✅ (gh-335)  |
+| `out_type = "str"`                            | (TOML only)                                                                        | 🟡 (0.71.2)  |
+| `check_return = true`                         | `jm function --check-return`                                                       | ✅ (gh-363)  |
+| `why = true`                                  | `jm function --why` (with `--check-return`)                                        | ✅ (gh-1706) |
+| `status_errors = [{...}]`                     | `jm function --status-error STATUS:Exc[:msg]` (with `--check-return`; repeatable)  | ✅ (gh-1614) |
+| `result_fields = [{name, type}]`              | `jm function --result-field name:type` (repeatable)                                | ✅ (0.13.23) |
+| `result_fields`, `out_size = "EXPR"`          | `jm function --result-field name:type --out-size EXPR`                             | ✅ (gh-2205) |
+| `single = true`, `result_fields`              | `jm function --single --result-field name:type[:doc]` — one record by value        | ✅ (gh-2755) |
+| `record_name`, `record_module`, `record_doc`  | `jm function --record-name` / `--record-module` / `--record-doc` (with `--single`) | ✅ (gh-2755) |
+| `max_results`                                 | (TOML only)                                                                        | 🟡           |
+| `max_results_param`                           | (TOML only)                                                                        | 🟡           |
+| `impl = "..."` body                           | (manifest only; `jm function --impl` lifts once and records nothing)               | ✅           |
+| `impl_file`, `replace`                        | (manifest only; `--impl` / `--replace` record nothing)                             | ✅           |
 
 #### A function that returns a string
 
@@ -1622,6 +1624,56 @@ allocates an `out_type` / `result_fields` / `variable_output` result. A
 scalar out on a **method** is refused at load: only a module function has the
 binding yet (gh-2685). An array `out` param keeps its meaning, the caller's
 buffer to fill, and the two kinds may be mixed.
+
+#### A function that returns one record
+
+`single = true` with `result_fields` makes a function return ONE named
+record (gh-2755), the shape a [`--single` method](commands/extend.md#record-shapes)
+returns. The C function returns the `return_type` struct by value, and Python
+gets a `PyStructSequence`: unpackable like a tuple, each field also reachable
+by name.
+
+```toml
+[[module.ccsds.functions]]
+name          = "scene"
+return_type   = "my_scene_t"
+single        = true
+record_name   = "Scene"
+result_fields = [
+    { name = "chip_rate", type = "double" },
+    { name = "ratio",     type = "double" },
+]
+params = [{ name = "fc", type = "double" }, { name = "spc", type = "double" }]
+```
+
+```c
+/* my_scene_t is yours: declare it in the module header, above the
+ * prototype jm writes there. */
+typedef struct { double chip_rate; double ratio; } my_scene_t;
+my_scene_t my_project_scene(double fc, double spc);
+```
+
+```python
+from my_project.ccsds import Scene, scene
+
+r = scene(1e6, 4.0)   # my_project.ccsds.Scene(chip_rate=250000.0, ratio=8.0)
+r.chip_rate           # 250000.0
+isinstance(r, Scene)  # True
+```
+
+The module creates the type at import and publishes it under `record_name`
+(derived from `return_type` when omitted: `my_scene_t` is `MyScene`), the
+package re-exports it, and the stub declares the record class and annotates
+the function `-> Scene`. A method and a function returning the same record
+name and fields share one type. `record_doc` documents the type and
+`record_module` overrides its `__module__`, as on a method; a field with no
+`doc` reads the `///<` member doc on that field of the struct in the module
+header. Refused at load, naming the key: `single` with no `result_fields`,
+`record_name` / `record_module` / `record_doc` without `single`, and a key a
+by-value record never reads (`check_return`, `why`, `status_errors`,
+`out_type`, `variable_output`, `out_size`, `max_results`,
+`max_results_param`). `jm function --single --record-name NAME` writes the
+same row.
 
 ### Counts
 
@@ -2171,20 +2223,21 @@ view's `init_params` and `properties` (gh-2713).
 
 One entry per `just-makeit function` call.
 
-| Key                                                 | Type                          | Notes                                                                                                                                                                                                                                                     |
-| --------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                              | string                        | Function name                                                                                                                                                                                                                                             |
-| `return_type`                                       | string                        | C return type                                                                                                                                                                                                                                             |
-| `doc`                                               | string                        | Python docstring                                                                                                                                                                                                                                          |
-| `params`                                            | array of `{name, type, out?}` | Parameters; an array param with `out = true` (or its synonym `mutable = true`) is writable — generated `T *name`, not `const T *name`; a scalar one is an output the binding returns ([scalar outputs](#a-function-that-returns-scalar-outputs), gh-2683) |
-| `inline`                                            | bool                          | `--inline`                                                                                                                                                                                                                                                |
-| `out_type`, `out_size`                              | string                        | `--out-type` / `--out-size`: the element type and length of a fresh output (`out_type = "str"` returns a `str`)                                                                                                                                           |
-| `variable_output`                                   | bool                          | `--variable-output`: the function sizes its own output                                                                                                                                                                                                    |
-| `result_fields`, `max_results`, `max_results_param` | array / int / string          | A list-of-records result                                                                                                                                                                                                                                  |
-| `check_return`                                      | bool                          | `--check-return`: a non-zero `int` return raises                                                                                                                                                                                                          |
-| `why`                                               | bool                          | `--why`: the C function takes a trailing `const char **why` (gh-1706)                                                                                                                                                                                     |
-| `status_errors`                                     | array                         | `--status-error`: status → exception table (gh-1614)                                                                                                                                                                                                      |
-| `impl`, `impl_file`, `replace`                      | string / table                | A body `jm apply` re-stamps — as for an [object](#component-lifecycle-impl-bodies)                                                                                                                                                                        |
+| Key                                                    | Type                          | Notes                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                                 | string                        | Function name                                                                                                                                                                                                                                             |
+| `return_type`                                          | string                        | C return type                                                                                                                                                                                                                                             |
+| `doc`                                                  | string                        | Python docstring                                                                                                                                                                                                                                          |
+| `params`                                               | array of `{name, type, out?}` | Parameters; an array param with `out = true` (or its synonym `mutable = true`) is writable — generated `T *name`, not `const T *name`; a scalar one is an output the binding returns ([scalar outputs](#a-function-that-returns-scalar-outputs), gh-2683) |
+| `inline`                                               | bool                          | `--inline`                                                                                                                                                                                                                                                |
+| `out_type`, `out_size`                                 | string                        | `--out-type` / `--out-size`: the element type and length of a fresh output (`out_type = "str"` returns a `str`)                                                                                                                                           |
+| `variable_output`                                      | bool                          | `--variable-output`: the function sizes its own output                                                                                                                                                                                                    |
+| `result_fields`, `max_results`, `max_results_param`    | array / int / string          | A list-of-records result                                                                                                                                                                                                                                  |
+| `single`, `record_name`, `record_module`, `record_doc` | bool / string                 | `--single`: ONE record, the struct returned by value ([one record](#a-function-that-returns-one-record), gh-2755)                                                                                                                                         |
+| `check_return`                                         | bool                          | `--check-return`: a non-zero `int` return raises                                                                                                                                                                                                          |
+| `why`                                                  | bool                          | `--why`: the C function takes a trailing `const char **why` (gh-1706)                                                                                                                                                                                     |
+| `status_errors`                                        | array                         | `--status-error`: status → exception table (gh-1614)                                                                                                                                                                                                      |
+| `impl`, `impl_file`, `replace`                         | string / table                | A body `jm apply` re-stamps — as for an [object](#component-lifecycle-impl-bodies)                                                                                                                                                                        |
 
 A param's `default` reads as it does on a method. An array param takes only
 `default = "[]"`, and when omitted it reaches the function as `NULL` with

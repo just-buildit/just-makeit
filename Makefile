@@ -324,6 +324,7 @@ PROJECT_ENV_TESTS = tests/test_examples.py \
                     tests/test_stub_conformance.py \
                     tests/test_gh1724_array_stub_mypy.py \
                     tests/test_gh2736_enum_stub_mypy.py \
+                    tests/test_gh2755_function_record_mypy.py \
                     tests/test_gh2452_public_api_mypy.py \
                     tests/test_gh746_py_format_command.py \
                     tests/test_gh746_formatter_fixed_point.py \

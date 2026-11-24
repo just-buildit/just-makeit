@@ -389,9 +389,9 @@ def _record_flags(entry: dict) -> list[str]:
     `jm method` and `jm function` both accept ``--result-field``, so the
     emitter is shared rather than copied — a second copy is what let
     ``result_fields`` be dropped from one writer while the other kept it.
-    Only ``jm method`` accepts the ``--single`` shape and its three
-    modifiers, so those are emitted only when the manifest declares them
-    (a function never records ``single``).
+    Both accept the ``--single`` shape and its three modifiers too (a
+    function since gh-2755), which are emitted only when the manifest
+    declares them.
 
     Dropping these was gh-720: the replayed script rebuilt a method that
     returned a bare scalar instead of a record — the gh-490 silent-divergence

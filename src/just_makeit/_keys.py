@@ -643,6 +643,12 @@ FUNCTION_KEYS = frozenset(
         "out_type",
         "out_size",
         "result_fields",
+        # gh-2755: ONE record, returned by value as a named structseq --
+        # the method's single-record shape (gh-244), through its emitters.
+        "single",
+        "record_name",
+        "record_module",
+        "record_doc",
         "max_results",
         "max_results_param",
         "variable_output",
