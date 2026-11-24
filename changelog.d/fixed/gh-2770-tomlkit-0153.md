@@ -1,1 +1,1 @@
-jm runs on tomlkit 0.15.3. That release removed a private method jm used to place a new manifest key, so every command that added one failed with `AttributeError`.
+- jm runs on tomlkit 0.15.3, which removed a private method jm used to place a new manifest key: every command that added one failed with `AttributeError` (gh-2770).
