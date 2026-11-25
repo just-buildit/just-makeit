@@ -197,6 +197,47 @@ def _included_member_docs(
     return out, structs, blocks
 
 
+def _struct_member_blocks(inc_root: Path, text: str) -> dict:
+    """The per-struct member-doc entry of a doc-block map (gh-1300, gh-2778).
+
+    The ONE place a header's struct field docs join its doc blocks, for an
+    object's header (:func:`_load_doc_blocks`) and a module's
+    (:func:`_load_module_doc_blocks`) alike: a record field with no ``doc``
+    reads its struct's member doc from here, whichever face the record
+    belongs to. Two copies of this merge is how gh-2778 happened -- the
+    object's followed the header's includes (gh-724), and the module's,
+    written later, read only the module header, so a struct declared in a
+    header the module header includes documented none of its fields.
+
+    *text* is the header's own text; its quoted project includes, resolved
+    under *inc_root*, are followed through :func:`_included_member_docs`
+    (transitive, cycle-safe, never a system header). The header's own
+    definition of a struct name wins. Every Doxygen member style the parser
+    reads is honored: a leading ``/** */``, a trailing ``/**<`` or ``///<``.
+    Only structs with a documented field are kept, and the entry is present
+    only when one is: a freshly scaffolded header must still load as an
+    empty map (gh-666).
+
+    Returns ``{struct_members_key(): {struct: {field: doc}}}`` or ``{}``.
+
+    Examples
+    --------
+    >>> own = "typedef struct { int n; /**< Own. */ } a_t;"
+    >>> _struct_member_blocks(Path("/nonexistent"), own)[
+    ...     struct_members_key()]
+    {'a_t': {'n': 'Own.'}}
+    >>> _struct_member_blocks(Path("/nonexistent"), "struct a { int n; };")
+    {}
+    """
+    _, included, _ = _included_member_docs(inc_root, text)
+    structs = {
+        k: v
+        for k, v in {**included, **extract_struct_member_docs(text)}.items()
+        if v
+    }
+    return {struct_members_key(): structs} if structs else {}
+
+
 def _load_doc_blocks(
     root: Path,
     obj: str,
@@ -233,27 +274,15 @@ def _load_doc_blocks(
     #
     # gh-724: included project headers first, so the component's own header
     # overwrites them below and wins any name it declares itself.
-    _inc_by_name, _inc_structs, _ = _included_member_docs(inc_root, text)
+    _inc_by_name, _, _ = _included_member_docs(inc_root, text)
     for _mname, _mdoc in _inc_by_name.items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for _mname, _mdoc in extract_member_docs(text).items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
-    # gh-1300: the per-struct map, the component's own header winning a struct
-    # name it defines. This, not the bare-name map above, is what a struct
-    # FIELD's documentation is read from.
-    #
-    # Only structs with a documented field, and only when there is one: a
-    # freshly scaffolded header must still load as an empty map (gh-666).
-    _structs = {
-        k: v
-        for k, v in {
-            **_inc_structs,
-            **extract_struct_member_docs(text),
-        }.items()
-        if v
-    }
-    if _structs:
-        out[struct_members_key()] = _structs
+    # gh-1300: the per-struct map. This, not the bare-name map above, is what
+    # a struct FIELD's documentation is read from -- through the one lookup a
+    # module header's records read too (gh-2778).
+    out.update(_struct_member_blocks(inc_root, text))
     # gh-1591: a declaration's C name starts with the object's STEM.
     stem = CSYM.stem(tree, obj)
     # gh-1651: the class the header was rendered with, so its `reset`
@@ -488,7 +517,8 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     header = INC.core_h(doc_root, cname)
     if not header.exists():
         return {}
-    raw = extract_doc_blocks(header.read_text(encoding="utf-8"))
+    text = header.read_text(encoding="utf-8")
+    raw = extract_doc_blocks(text)
     out: dict = {}
     for cname, block_text in raw.items():
         parsed = parse_doxygen_block(block_text, name=cname)
@@ -500,17 +530,10 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
             continue
         out[cname] = parsed
     # gh-2755: a function returning one record documents its fields from
-    # the struct's own `///<` member docs, as a method's record does
-    # (gh-1300). Only when one is documented: a fresh header stays `{}`.
-    structs = {
-        k: v
-        for k, v in extract_struct_member_docs(
-            header.read_text(encoding="utf-8")
-        ).items()
-        if v
-    }
-    if structs:
-        out[struct_members_key()] = structs
+    # the struct's own member docs, as a method's record does (gh-1300):
+    # wherever the struct is declared among the module header and the
+    # project headers it includes, through the one lookup (gh-2778).
+    out.update(_struct_member_blocks(INC.inc_dir(doc_root), text))
     return out
 
 
