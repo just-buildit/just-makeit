@@ -57,3 +57,38 @@ def test_all_bound_or_all_unbound_still_accepted(tmp_path):
         cwd=proj,
     )
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def _hand_edit(proj, old, new):
+    """Replace *old* with *new* in every project TOML, as a hand edit would.
+
+    Returns the number of files that held *old*, so a test can assert the
+    edit landed rather than pass on an unchanged manifest.
+    """
+    hits = 0
+    for path in proj.rglob("*.toml"):
+        text = path.read_text(encoding="utf-8")
+        if old in text:
+            path.write_text(text.replace(old, new), encoding="utf-8")
+            hits += 1
+    return hits
+
+
+def test_hand_edited_manifest_is_refused_by_apply_with_the_same_sentence(
+    tmp_path,
+):
+    proj = _scaffold(tmp_path)
+    r = run_cli(
+        "object", "k", "--init-param", "kind:string_enum:lo,hi:lo", cwd=proj
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    hits = _hand_edit(proj, 'string_enum:lo,hi"', 'string_enum:lo,hi=lo"')
+    assert hits >= 1, "the hand edit did not land; the test proves nothing"
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "Traceback" not in r.stderr, r.stderr
+    assert "IndexError" not in r.stderr, r.stderr
+    assert "string_enum choices must all bind a C constant" in r.stderr, (
+        r.stderr
+    )
+    assert "'lo' bind none" in r.stderr, r.stderr

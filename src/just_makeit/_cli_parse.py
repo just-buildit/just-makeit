@@ -164,8 +164,9 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
     if T.is_string_enum_type(ctype):
         err = T.string_enum_spec_error(ctype)
         if err:
-            print(f"error: --init-param '{spec}': {err}", file=sys.stderr)
-            sys.exit(1)
+            from ._report import Refusal
+
+            raise Refusal(f"--init-param '{spec}': {err}")
 
     # Optional array syntax: name:type:optional[:create_fn]
     if len(parts) >= 3 and parts[2].lower() == "optional":
