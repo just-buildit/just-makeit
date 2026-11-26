@@ -159,6 +159,13 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
         parts = [parts[0], f"{parts[1]}:{parts[2]}", *parts[3:]]
     name = parts[0]
     ctype = parts[1]
+    # gh-2744: a default written as `kind:string_enum:lo,hi=lo` lands in the
+    # choice list. Refuse it here, naming the row, not a traceback later.
+    if T.is_string_enum_type(ctype):
+        err = T.string_enum_spec_error(ctype)
+        if err:
+            print(f"error: --init-param '{spec}': {err}", file=sys.stderr)
+            sys.exit(1)
 
     # Optional array syntax: name:type:optional[:create_fn]
     if len(parts) >= 3 and parts[2].lower() == "optional":
