@@ -1572,9 +1572,8 @@ def validate_record_shape(
 def typedef_text(record: str, flds: "list[RecordField]") -> str:
     """The typedef jm expects the author to write for *record*.
 
-    One rendering for the advice (`_method.record_type_advice`, gh-1319) and
-    the refusal (:func:`undeclared_record_why`, gh-2760), so the struct jm
-    prints is the same whichever of them prints it.
+    The struct :func:`record_type_note` prints (gh-1319, gh-2760), rendered
+    in one place so every record shape's note shows the same typedef.
 
     >>> print(typedef_text("pk_t", [RecordField("i", "int", "")]))
     typedef struct
