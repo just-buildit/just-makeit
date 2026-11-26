@@ -1830,6 +1830,10 @@ def is_scaffold_doc(
     >>> half = parse_doxygen_block("@brief tune.\\n@param hz  In Hz.")
     >>> is_scaffold_doc(half, "tune")
     False
+    >>> why = parse_doxygen_block(
+    ...     "@brief tune.\\n@param hz\\n@param why  " + WHY_PARAM_DOC)
+    >>> is_scaffold_doc(why, "tune")
+    True
     >>> tmpl = parse_doxygen_block("@brief Get current g.\\n@param state  X.")
     >>> is_scaffold_doc(tmpl, "get_g")
     True
@@ -1853,8 +1857,14 @@ def is_scaffold_doc(
     if _fold(brief) != _fold(member):
         return False
     # Generic ``@brief <member>.`` — only an untouched skeleton counts.
+    # gh-2788: jm's own ``why`` description (gh-1722) is jm's text, not the
+    # author's, so it leaves the skeleton untouched. Counted as filled in,
+    # adding ``why`` to an existing method made `apply`'s refreshed block
+    # read as authored and its placeholder ``@brief stat.`` the docstring.
     return not block.returns.strip() and not any(
-        desc.strip() for _n, desc in block.params
+        desc.strip()
+        for n, desc in block.params
+        if not (n == "why" and _fold(desc) == _fold(WHY_PARAM_DOC))
     )
 
 
