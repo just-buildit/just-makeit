@@ -2076,6 +2076,37 @@ def enum_literal(choices: Iterable[str]) -> str:
     return "Literal[" + ", ".join(f'"{c}"' for c in names) + "]"
 
 
+def string_enum_spec_error(ptype: str) -> "str | None":
+    """Why a ``string_enum:`` spec cannot be read, or ``None`` (gh-2744).
+
+    Each choice either binds a C constant (``name=CONST``) or none does; a
+    spec that mixes the two has no meaning, because
+    :func:`string_enum_constants` would index a constant that is not there.
+    The usual cause is an init param default written where the choice list
+    is read: ``kind:string_enum:lo,hi=lo`` binds ``hi`` to ``lo``, and the
+    default belongs after a third ``:``.
+
+    >>> string_enum_spec_error("string_enum:a,b") is None
+    True
+    >>> string_enum_spec_error("string_enum:auto=X_AUTO,f32=X_F32") is None
+    True
+    >>> "'lo' bind none" in string_enum_spec_error("string_enum:lo,hi=lo")
+    True
+    """
+    parts = ptype[len("string_enum:") :].split(",")
+    bound = [p for p in parts if "=" in p]
+    if not bound or len(bound) == len(parts):
+        return None
+    bare = [p for p in parts if "=" not in p]
+    return (
+        "string_enum choices must all bind a C constant or none may: "
+        f"{', '.join(repr(p) for p in bare)} bind none, "
+        f"{', '.join(repr(p) for p in bound)} bind a constant. "
+        "A default goes after a third ':', as in "
+        "'name:string_enum:lo,hi:lo'."
+    )
+
+
 def string_enum_constants(ptype: str) -> "list[str] | None":
     """The C constant each choice binds to, or ``None`` (gh-1450).
 
