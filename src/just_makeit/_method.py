@@ -1315,46 +1315,6 @@ def _is_method_stub(text: str, at: int) -> bool:
     return "}" not in text[prev.end() : at]
 
 
-def record_type_advice(core_h: Path, record_dtype: str, flds) -> str:
-    """What to tell the author when nothing defines *record_dtype*, else "".
-
-    gh-1319. `record_dtype` renders prototypes in the author's struct type and
-    jm accepted the declaration without a word, so the untouched tree failed
-    to compile with ``unknown type name 'iq_pair_t'`` -- in the sacred header
-    AND the sacred source, three files from the declaration that caused it.
-    Both record paths had it; `borrow` inherited it from `variable_output`.
-
-    **jm reports rather than writes, and that is a deliberate carve-out.**
-    Scaffolding the typedef was implemented first and reverted: the record
-    struct is routinely added to the header AFTER the method is declared --
-    gh-788's own fixtures do exactly that -- so a scaffolded definition
-    collides with the author's (``conflicting types for 'dp_tlm_rec_t'``) and
-    jm would have created a compile error in a sacred file to avoid a
-    different one. A scaffold that does not build is a better outcome than a
-    file jm broke, which this repo has now learned twice (gh-1328).
-
-    So *"the untouched scaffold builds"* is **not** met for a record method,
-    and that gap is filed rather than papered over. What is fixed is the
-    silence: the author is told the exact type to declare, with the field list
-    jm already has, at the moment they declare the method.
-    """
-    if not record_dtype or not flds:
-        return ""
-    if core_h.is_file() and record_dtype in core_h.read_text(encoding="utf-8"):
-        return ""
-    body = "\n".join(f"    {f.ctype} {f.name};" for f in flds)
-    return (
-        f"\nNOTE: nothing defines `{record_dtype}` yet, so the tree will not"
-        f" compile\n"
-        f"      until you add it to {core_h.name}. It is YOURS -- jm reads its"
-        f" layout\n"
-        f"      back with offsetof/sizeof, so padding and ordering you choose"
-        f" are\n"
-        f"      followed:\n"
-        f"\ntypedef struct\n{{\n{body}\n}} {record_dtype};\n"
-    )
-
-
 def _tree_has_symbol(root: Path, component: str, cfg: dict, sym: str) -> bool:
     """Whether *component*'s ``_core.c`` or ``_core.h`` already has *sym*.
 
@@ -3359,15 +3319,21 @@ def run(
     # as gh-1323's `dfn`, caught the same way, by the suite rather than by
     # reading.
     _rec_advice = ""
+    # gh-2760: the struct a record result names -- the array element under
+    # `record_dtype`, else the `--single` / `--result-field` return type.
+    _record_result_type = record_dtype or (
+        return_type if result_fields else ""
+    )
     if module:
         _regenerate_module(root, cfg, module, pkg)
         # Surgically add the new method's declaration to the per-object
         # _core.h (needed for the module ext.c's #include) — no re-render,
         # no body splice.
         core_h_ = INC.core_h(root, object_name, cfg)
-        _rec_advice = record_type_advice(
+        _rec_advice = _record.record_type_note(
+            root,
             core_h_,
-            record_dtype,
+            _record_result_type,
             _record.fields({"result_fields": result_fields}, {}),
         )
         if _inject_decls_into_core_h(
@@ -3428,9 +3394,10 @@ def run(
         bench_c_tmpl = R.NO_STEP_BENCH_C if no_step else R.COMPONENT_BENCH_C
         # gh-1319: `record_dtype` names a type jm does not own. Say so HERE
         # rather than leaving the compiler to, three files away.
-        _rec_advice = record_type_advice(
+        _rec_advice = _record.record_type_note(
+            root,
             core_h,
-            record_dtype,
+            _record_result_type,
             _record.fields({"result_fields": result_fields}, {}),
         )
         if _inject_decls_into_core_h(
