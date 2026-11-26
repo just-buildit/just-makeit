@@ -328,6 +328,12 @@ def module_fn_smoke_calls(
     parameters (``"2 * span * sps + 1"``), so with every scalar zeroed it
     evaluates to 1, or 0, or divides by zero, and a scaffold that allocates
     from that is worse than one that does not call.
+
+    gh-2765: a list-of-records function (``result_fields`` without
+    ``single``) is the same case. `fn_c_decl` appends ``<struct> *result``
+    and, unless ``max_results_param`` names the cap, ``size_t max_results``;
+    neither is in ``params``. The record struct is the author's, so jm cannot
+    size a local of it either.
     """
     from ._types import _CTYPE_META
 
@@ -339,7 +345,14 @@ def module_fn_smoke_calls(
         ]
         # gh-1591: the call names the function's C symbol.
         name = CSYM.stem(owner, fn["name"])
-        if fn.get("out_type"):
+        # gh-1060, gh-2765: an out-parameter jm adds to the prototype itself
+        # -- `out_type`'s `*out`, or a list of records' `*result` (plus
+        # `max_results` unless a param names the cap) -- never enters
+        # `params`, so the call below would be built short of the signature.
+        # A `single` record is returned by value and adds none.
+        if fn.get("out_type") or (
+            fn.get("result_fields") and not fn.get("single")
+        ):
             lines.append(
                 f"    /* TODO: {name}(...) writes into a caller-sized output"
                 f" buffer jm cannot synthesise; call it here. */"

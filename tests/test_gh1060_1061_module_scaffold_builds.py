@@ -92,9 +92,26 @@ def _link_libs(text: str, target: str) -> list[str]:
     return [w for w in m.group(1).split() if w]
 
 
-class TestAnOutTypeFunctionIsNotCalled:
-    """gh-1060 — the call must match the prototype jm generated."""
+#: Every shape whose prototype carries a parameter jm adds itself, beyond
+#: the manifest's `params`. gh-1060 was the `out_type` buffer; gh-2765 the
+#: list-of-records `*result` (and `max_results`, unless a param is the cap).
+_OUT_SHAPES = {
+    "out-type": dict(out_type="float", variable_output=True, out_size="16"),
+    "records": dict(
+        return_type="rec_t", result_fields=[{"name": "a", "type": "int"}]
+    ),
+    "records-named-cap": dict(
+        return_type="rec_t",
+        result_fields=[{"name": "a", "type": "int"}],
+        max_results_param="cap",
+    ),
+}
 
+
+class TestAnOutTypeFunctionIsNotCalled:
+    """gh-1060, gh-2765 — the call must match the prototype jm generated."""
+
+    @pytest.mark.parametrize("shape", sorted(_OUT_SHAPES))
     @pytest.mark.parametrize(
         "params",
         [
@@ -104,21 +121,22 @@ class TestAnOutTypeFunctionIsNotCalled:
         ids=["with-params", "no-params"],
     )
     def test_the_call_never_disagrees_with_the_prototype(
-        self, tmp_path, params
+        self, tmp_path, params, shape
     ):
         root = tmp_path / "demo"
         _quiet(new_run, "demo", root, c_prefix=None)
         _quiet(module_run, root, "dsp")
+        kw = dict(_OUT_SHAPES[shape])
+        if kw.get("max_results_param"):
+            # The named cap is itself a param, so it is passed, not added.
+            params = [*params, ("cap", "size_t")]
         _quiet(
             function_run,
             root,
             "taps",
             "dsp",
             params=list(params),
-            out_type="float",
-            variable_output=True,
-            # gh-1888: with no array param the capacity must be declared.
-            out_size="16",
+            **kw,
         )
         header = (root / INC_ROOT / "dsp" / "dsp_core.h").read_text(
             encoding="utf-8"
@@ -156,6 +174,37 @@ class TestAnOutTypeFunctionIsNotCalled:
             encoding="utf-8"
         )
         assert _args_in_call(test_c, "gain") == 1
+
+    def test_a_single_record_function_is_still_called(self, tmp_path):
+        """gh-2765's guard against over-fixing.
+
+        A `single = true` function (gh-2755) returns its record by value, so
+        its prototype is its params alone and the call stays a full one.
+        """
+        root = tmp_path / "demo"
+        _quiet(new_run, "demo", root, c_prefix=None)
+        _quiet(module_run, root, "dsp")
+        _quiet(
+            function_run,
+            root,
+            "best",
+            "dsp",
+            params=[("x", "double")],
+            return_type="rec_t",
+            result_fields=[{"name": "a", "type": "int"}],
+            single=True,
+        )
+        header = (root / INC_ROOT / "dsp" / "dsp_core.h").read_text(
+            encoding="utf-8"
+        )
+        test_c = (root / "native" / "tests" / "test_dsp_core.c").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            _args_in_call(test_c, "best")
+            == _params_in_prototype(header, "best")
+            == 1
+        )
 
 
 class TestTheModulePairLinksWhatTheSoLinks:
@@ -296,3 +345,55 @@ class TestItActuallyBuilds:
         for exe in ("test_dsp_core", "bench_dsp_core"):
             found = list(build.rglob(exe))
             assert found, f"{exe} was never linked"
+
+    def test_a_module_with_a_list_of_records_fn_builds(self, tmp_path):
+        """gh-2765: the smoke test of a list-of-records function compiles.
+
+        The record struct is the author's, so the test declares it in the
+        sacred header the way an author would; everything else is exactly
+        what the CLI wrote. Before the fix the smoke call passed one argument
+        to a three-parameter prototype and `test_dsp_core` failed to compile.
+        """
+        root = tmp_path / "demo"
+        _quiet(new_run, "demo", root, c_prefix=None)
+        _quiet(module_run, root, "dsp")
+        for name, extra in (
+            ("peaks", {}),
+            ("capped", {"max_results_param": "cap"}),
+        ):
+            params = [("x", "double")]
+            if extra:
+                params.append(("cap", "size_t"))
+            _quiet(
+                function_run,
+                root,
+                name,
+                "dsp",
+                params=params,
+                return_type="rec_t",
+                result_fields=[{"name": "a", "type": "int"}],
+                **extra,
+            )
+        header = root / INC_ROOT / "dsp" / "dsp_core.h"
+        text = header.read_text(encoding="utf-8")
+        anchor = '#include "demo/clib_common.h"\n'
+        assert text.count(anchor) == 1, text
+        header.write_text(
+            text.replace(
+                anchor, anchor + "typedef struct { int a; } rec_t;\n"
+            ),
+            encoding="utf-8",
+        )
+        build = root / "build"
+        cfg = subprocess.run(
+            ["cmake", "-S", str(root), "-B", str(build), "-DBUILD_PYTHON=OFF"],
+            capture_output=True,
+            text=True,
+        )
+        assert cfg.returncode == 0, cfg.stdout + cfg.stderr
+        made = subprocess.run(
+            ["cmake", "--build", str(build)],
+            capture_output=True,
+            text=True,
+        )
+        assert made.returncode == 0, made.stdout + made.stderr
