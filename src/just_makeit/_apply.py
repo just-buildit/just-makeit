@@ -4918,7 +4918,9 @@ def _apply_manifest(
         # gh-2574: a method that newly declares `why` on a module object
         # keeps its old prototype -- that sacred header only gains
         # declarations -- so the binding just written passes `&_why` to a
-        # function that does not take it. Said here, on the channel gh-632's
+        # function that does not take it. gh-2588: a standalone object's
+        # header is refreshed above, but the author's DEFINITION keeps the
+        # old signature, so `why_drift` reads that too. Said here, on the channel gh-632's
         # prototype replacement warns on, since this run wrote the call and
         # the build is where it would surface otherwise. After every write,
         # inside the `with` (the render is the temp tree's); never in
@@ -4931,7 +4933,7 @@ def _apply_manifest(
                     f"{_d.rel}: {_d.fn}() and the manifest disagree about"
                     " its trailing `int *status` / `const char **why`, so"
                     " the binding does not compile against it\n"
-                    f"    header:   {_d.fn}({_d.declared})\n"
+                    f"    {_d.side + ':':<10}{_d.fn}({_d.declared})\n"
                     f"    manifest: {_d.fn}({_d.rendered})\n"
                     # gh-2584: what differs, in `append_tail`'s order.
                     f"  {_ctorsig.tail_remedy(_d.declared, _d.rendered)}"

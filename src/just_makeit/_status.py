@@ -2351,21 +2351,21 @@ def run(
     if _why_drift:
         print(
             f"WHY ({len(_why_drift)}) — a method's trailing `int *status`"
-            " / `const char **why`\n  differs between the header and the"
+            " / `const char **why`\n  differs between your C and the"
             " manifest:"
         )
         for d in _why_drift:
             print(f"  ! {d.rel}")
-            print(f"      header:   {d.fn}({d.declared})")
+            print(f"      {d.side + ':':<10}{d.fn}({d.declared})")
             print(f"      manifest: {d.fn}({d.rendered})")
         print(
-            "  `apply` adds a declaration to this header and never rewrites"
-            " one, so the\n"
-            "  binding passes what the manifest says and the header does not"
-            " take it.\n"
-            "  Edit the declaration and its _core.c definition to match, or"
-            " drop `why` /\n  `status_out`.\n"
-            "  Not suppressible. See gh-2574, gh-2584."
+            "  The binding passes what the manifest says, and C that does not"
+            " take it\n"
+            "  does not compile. `apply` never rewrites a module object's"
+            " declaration, nor\n"
+            "  any definition. Edit the declaration and its definition to"
+            " match, or drop\n  `why` / `status_out`.\n"
+            "  Not suppressible. See gh-2574, gh-2584, gh-2588."
         )
         print()
 

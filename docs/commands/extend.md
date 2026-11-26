@@ -556,10 +556,11 @@ ValueError: set_decim: decim must be in 1..n
     beside a parameter named `why` (a view's inherited ones included).
 
 The header, the `_core.c` stub, the binding and the bench all carry the
-parameter. On an existing method your `_core.c` definition is yours to change;
-a module object's header only gains declarations on `apply`, so `apply` warns
-for each method whose prototype lacks the parameter, and `jm status` reports
-`WHY` until the declaration and its `_core.c` definition take it too.
+parameter. On an existing method your `_core.c` definition is yours to change.
+A standalone object's header is refreshed on `apply`; a module object's only
+gains declarations, so its old prototype stays. Either way `apply` warns for
+each declaration or definition that lacks the parameter, naming the file, and
+`jm status --check` fails with `WHY` until it takes it too (gh-2588).
 
 #### A count's refusal can pick its exception (`--status-out`)
 

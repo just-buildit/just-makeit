@@ -74,6 +74,9 @@ class CtorDrift:
     csym: str  #: the component's C symbol stem (gh-1591)
     #: the constructor compared: `create()`, its ``create_fn``, or a view's
     fn: str
+    #: which C spelling *declared* is: the header's declaration, or (gh-2588)
+    #: the author's definition, in a ``.c`` or an inline one in the header
+    side: str = "header"
 
     def describe(self) -> str:
         """One warning, naming both sides and what to do about it."""
@@ -627,20 +630,31 @@ def tail_remedy(declared: str, rendered: str) -> str:
 
 
 def why_drift(root: Path, tree: Path, cfg: dict) -> "list[CtorDrift]":
-    """Every method declaration whose trailing ``why`` -- or ``int *status``
-    ahead of it (gh-2584) -- the header and the manifest disagree about
-    (gh-2574, gh-2407).
+    """Every method whose trailing ``why`` -- or ``int *status`` ahead of it
+    (gh-2584) -- the author's C and the manifest disagree about (gh-2574,
+    gh-2407, gh-2588).
 
     `drift`'s check, for the parameter a method's ``why = true`` appends.
-    A module object's sacred header only GAINS declarations on `apply`
-    (`_apply._declared_method_decls`), so adding ``why`` to a method that
-    is already declared leaves the old prototype in place, and the binding
-    then passes an argument the header does not take -- a compile error
-    several files from the cause. The declaration *tree* (a replay of
-    *cfg*) renders is compared with *root*'s, for every method of every
-    object and its views. Only those parameters are the finding: the
-    rest of a method's prototype is the author's to adopt, and every other
+    The declaration *tree* (a replay of *cfg*) renders is the manifest's
+    side; *root*'s C is compared with it, for every method of every object
+    and its views. Only those parameters are the finding: the rest of a
+    method's prototype is the author's to adopt, and every other
     disagreement is already a compile error naming the declaration.
+
+    Both of *root*'s spellings are read, because each kind of object leaves
+    a different one stale:
+
+    - A module object's sacred header only GAINS declarations on `apply`
+      (`_apply._declared_method_decls`), so adding ``why`` to a method that
+      is already declared leaves the old prototype in place (gh-2574).
+    - A standalone object's header IS refreshed to the manifest, but the
+      DEFINITION is the author's and keeps the old signature, so the build
+      fails on conflicting types while the header agrees (gh-2588). Read in
+      the header (an inline definition) and in every ``.c`` of the
+      component's source directory, as a definition may live next door
+      (gh-275).
+
+    One finding per file and function, the header's first.
     """
     out: "list[CtorDrift]" = []
     for comp in C.components(cfg):
@@ -651,36 +665,43 @@ def why_drift(root: Path, tree: Path, cfg: dict) -> "list[CtorDrift]":
         syms = sorted({C.method_c_symbol(stem, m) for m in rows})
         if not syms:
             continue
-        sides = []
-        for base in (tree, root):
-            try:
-                text = INC.core_h(base, comp, cfg).read_text(encoding="utf-8")
-            except OSError:
-                text = ""
+        want: "dict[str, Signature]" = {}
+        for sig in signatures(_read(INC.core_h(tree, comp, cfg))):
+            want.setdefault(sig.name, sig)
+        header = INC.core_h(root, comp, cfg)
+        sources = [header] + sorted(INC.src_path(root, comp, cfg).glob("*.c"))
+        for path in sources:
             found: "dict[str, Signature]" = {}
-            for sig in signatures(text):
+            for sig in signatures(_read(path)):
                 found.setdefault(sig.name, sig)
-            sides.append(found)
-        want, have = sides
-        for sym in syms:
-            w, h = want.get(sym), have.get(sym)
-            if w is None or h is None:
-                continue
-            if _tail(w.params) == _tail(h.params):
-                continue
-            out.append(
-                CtorDrift(
-                    component=comp,
-                    rel=INC.core_rel(comp, cfg),
-                    # As written, one space per run: `_norm` would print
-                    # `const char * *why`.
-                    declared=" ".join(h.spelled.split()),
-                    rendered=" ".join(w.spelled.split()),
-                    csym=stem,
-                    fn=sym,
+            for sym in syms:
+                w, h = want.get(sym), found.get(sym)
+                if w is None or h is None:
+                    continue
+                if _tail(w.params) == _tail(h.params):
+                    continue
+                out.append(
+                    CtorDrift(
+                        component=comp,
+                        rel=path.relative_to(root).as_posix(),
+                        # As written, one space per run: `_norm` would
+                        # print `const char * *why`.
+                        declared=" ".join(h.spelled.split()),
+                        rendered=" ".join(w.spelled.split()),
+                        csym=stem,
+                        fn=sym,
+                        side="header" if h.kind == "decl" else "defined",
+                    )
                 )
-            )
     return out
+
+
+def _read(path: Path) -> str:
+    """*path*'s text, or ``""`` when it cannot be read."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 @dataclass(frozen=True)
