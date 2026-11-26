@@ -140,8 +140,31 @@ def _header_member_docs(
     return hit
 
 
+def _resolve_quoted_include(
+    root: Path, here: "Path | None", rel: str
+) -> "Path | None":
+    """The project header ``#include "rel"`` names, or ``None`` (gh-2779).
+
+    A C compiler looks for a quoted include beside the including file first,
+    then along ``-I``. *here* is the including header's directory, ``None``
+    when there is no file; *root* is the resolved ``native/inc``. Only a
+    file inside *root* is returned: an absolute path, or one that climbs out
+    of the include directory, names no project header (gh-2781).
+
+    >>> _resolve_quoted_include(Path("/inc"), None, "/usr/include/x.h") is None
+    True
+    """
+    # An absolute *rel* makes `base / rel` that path, so the one containment
+    # test below refuses it as it refuses a `../` that climbs out.
+    for base in ([here] if here is not None else []) + [root]:
+        path = (base / rel).resolve()
+        if path.is_relative_to(root) and path.is_file():
+            return path
+    return None
+
+
 def _included_member_docs(
-    inc_root: Path, text: str
+    inc_root: Path, text: str, origin: "Path | None" = None
 ) -> tuple[dict[str, str], dict[str, dict[str, str]], dict[str, str]]:
     """Member docs from the project headers *text* includes (gh-724).
 
@@ -157,8 +180,14 @@ def _included_member_docs(
     - **Member docs only.** Declaration blocks stay owned by the component's
       own header. Following includes for those would let one component's
       `@brief` land on another's method of the same name.
-    - **Quoted, project-local includes only**, resolved under ``native/inc``.
-      A system header cannot document this project's fields.
+    - **Quoted, project-local includes only**, resolved as a C compiler
+      resolves them: the including header's own directory first, then
+      ``native/inc`` (gh-2779). *origin* is the directory of the header
+      *text* came from; ``None`` when *text* is not a file's (a list of
+      ``-I``-relative includes). A system header cannot document this
+      project's fields, so a path that resolves outside ``native/inc`` --
+      an absolute ``#include "/usr/include/x.h"``, or a ``../`` that climbs
+      out -- is not read (gh-2781).
     - **Transitive, with a visited set**, because a shared header may itself
       include the one holding the struct. Cycles are the normal case in C
       (every header has an include guard), so the set is required, not a
@@ -179,15 +208,17 @@ def _included_member_docs(
     structs: dict[str, dict[str, str]] = {}
     blocks: dict[str, str] = {}
     seen: set[Path] = set()
-    pending = [text]
+    root = inc_root.resolve()
+    pending: list[tuple[str, Path | None]] = [(text, origin)]
     while pending:
-        for rel in _LOCAL_INCLUDE_RE.findall(pending.pop()):
-            path = (inc_root / rel).resolve()
-            if path in seen or not path.is_file():
+        body_text, here = pending.pop()
+        for rel in _LOCAL_INCLUDE_RE.findall(body_text):
+            path = _resolve_quoted_include(root, here, rel)
+            if path is None or path in seen:
                 continue
             seen.add(path)
             docs, body, by_struct, by_block = _header_member_docs(path)
-            pending.append(body)
+            pending.append((body, path.parent))
             for name, doc in docs.items():
                 out.setdefault(name, doc)
             for sname, fields in by_struct.items():
@@ -197,7 +228,9 @@ def _included_member_docs(
     return out, structs, blocks
 
 
-def _struct_member_blocks(inc_root: Path, text: str) -> dict:
+def _struct_member_blocks(
+    inc_root: Path, text: str, origin: "Path | None" = None
+) -> dict:
     """The per-struct member-doc entry of a doc-block map (gh-1300, gh-2778).
 
     The ONE place a header's struct field docs join its doc blocks, for an
@@ -209,8 +242,9 @@ def _struct_member_blocks(inc_root: Path, text: str) -> dict:
     written later, read only the module header, so a struct declared in a
     header the module header includes documented none of its fields.
 
-    *text* is the header's own text; its quoted project includes, resolved
-    under *inc_root*, are followed through :func:`_included_member_docs`
+    *text* is the header's own text and *origin* its directory; its quoted
+    project includes, resolved beside it and then under *inc_root*
+    (gh-2779), are followed through :func:`_included_member_docs`
     (transitive, cycle-safe, never a system header). The header's own
     definition of a struct name wins. Every Doxygen member style the parser
     reads is honored: a leading ``/** */``, a trailing ``/**<`` or ``///<``.
@@ -229,7 +263,7 @@ def _struct_member_blocks(inc_root: Path, text: str) -> dict:
     >>> _struct_member_blocks(Path("/nonexistent"), "struct a { int n; };")
     {}
     """
-    _, included, _ = _included_member_docs(inc_root, text)
+    _, included, _ = _included_member_docs(inc_root, text, origin)
     structs = {
         k: v
         for k, v in {**included, **extract_struct_member_docs(text)}.items()
@@ -274,7 +308,7 @@ def _load_doc_blocks(
     #
     # gh-724: included project headers first, so the component's own header
     # overwrites them below and wins any name it declares itself.
-    _inc_by_name, _, _ = _included_member_docs(inc_root, text)
+    _inc_by_name, _, _ = _included_member_docs(inc_root, text, header.parent)
     for _mname, _mdoc in _inc_by_name.items():
         out[member_doc_key(_mname)] = DoxyBlock(brief=_mdoc)
     for _mname, _mdoc in extract_member_docs(text).items():
@@ -282,7 +316,7 @@ def _load_doc_blocks(
     # gh-1300: the per-struct map. This, not the bare-name map above, is what
     # a struct FIELD's documentation is read from -- through the one lookup a
     # module header's records read too (gh-2778).
-    out.update(_struct_member_blocks(inc_root, text))
+    out.update(_struct_member_blocks(inc_root, text, header.parent))
     # gh-1591: a declaration's C name starts with the object's STEM.
     stem = CSYM.stem(tree, obj)
     # gh-1651: the class the header was rendered with, so its `reset`
@@ -533,7 +567,9 @@ def _load_module_doc_blocks(root: Path, module: str) -> dict:
     # the struct's own member docs, as a method's record does (gh-1300):
     # wherever the struct is declared among the module header and the
     # project headers it includes, through the one lookup (gh-2778).
-    out.update(_struct_member_blocks(INC.inc_dir(doc_root), text))
+    out.update(
+        _struct_member_blocks(INC.inc_dir(doc_root), text, header.parent)
+    )
     return out
 
 
