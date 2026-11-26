@@ -860,7 +860,7 @@ jobs:
       # gh-2610: the `visual_studio_uv` example's venv step is `uv sync`, run
       # as written on Windows, and uv is that page's prerequisite. Only uv:
       # no python-version, so setup-uv activates no venv over setup-python's.
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
 
       - name: Download the built wheel
         if: inputs.wheel-artifact != ''
