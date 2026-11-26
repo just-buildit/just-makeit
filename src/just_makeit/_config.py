@@ -6342,6 +6342,51 @@ def _usable_ctype(ctype: str) -> bool:
     return _T.is_valid_type(ctype) or ctype in _T.PSEUDO_TYPES
 
 
+def _string_enum_spec_errors(cfg: dict) -> list[str]:
+    """Every unreadable ``string_enum:`` type in the manifest (gh-2744).
+
+    The class, not the instance: the flag refuses its own spelling, but a
+    hand-edited TOML row reaches the same reader. A ``string_enum:`` spec can
+    sit in any table with a ``type`` key -- an init param, a state field, a
+    result field -- so every such value is asked
+    :func:`_types.string_enum_spec_error`, whatever table holds it. Method and
+    function ``params`` are skipped: :func:`_param_type_errors` already
+    refuses every ``string_enum:`` spelling there (gh-2737), and a second
+    message for the same row would only repeat it.
+
+    Each message is opened by the row's dotted path from the manifest root.
+
+    Examples
+    --------
+    >>> errs = _string_enum_spec_errors({"k": {"init_params": [
+    ...     {"name": "kind", "type": "string_enum:lo,hi=lo"}]}})
+    >>> errs[0].startswith("k.init_params[0]: string_enum choices")
+    True
+    >>> _string_enum_spec_errors({"k": {"methods": [
+    ...     {"name": "run", "params": [{"name": "m",
+    ...      "type": "string_enum:lo,hi=lo"}]}]}})
+    []
+    """
+    errors: list[str] = []
+
+    def walk(node, path: str) -> None:
+        if isinstance(node, dict):
+            spec = node.get("type")
+            if isinstance(spec, str) and _T.is_string_enum_type(spec):
+                err = _T.string_enum_spec_error(spec)
+                if err:
+                    errors.append(f"{path}: {err}")
+            for key, value in node.items():
+                if key != "params":
+                    walk(value, f"{path}.{key}" if path else key)
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                walk(value, f"{path}[{i}]")
+
+    walk(cfg, "")
+    return errors
+
+
 def _param_type_errors(entry: dict, what: str) -> list[str]:
     """Validate one table's ``params`` types; [] when they are all usable.
 
@@ -6998,6 +7043,9 @@ def manifest_type_errors(cfg: dict) -> list[str]:
     'det' method 'scan': result field 'idx' has unknown type 'wat_t'.
     """
     errors: list[str] = []
+    # gh-2744: a hand-edited `string_enum:` spec reaches the same reader the
+    # flag's spec does, so every table's spec is asked the same question.
+    errors.extend(_string_enum_spec_errors(cfg))
 
     # gh-1450: `enumerators` binds each choice to a C constant, so a list
     # that does not line up with `values` would bind choices to the wrong
