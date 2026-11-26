@@ -729,3 +729,13 @@ def run(
         print(f"Done!  Implement {fn_name}() in {core_c.name}")
     else:
         print(f"Done!  Implement {fn_name}() in {fn_c.name}")
+    # gh-2760: the gh-1319 note a record method prints, for a record
+    # function: last on screen, naming the struct no header jm reads defines.
+    _note = _record.record_type_note(
+        root,
+        core_h,
+        return_type if result_fields else "",
+        _record.fields({"result_fields": result_fields or []}, {}),
+    )
+    if _note:
+        print(_note, end="")

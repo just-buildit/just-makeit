@@ -29,6 +29,7 @@ Doc sources, in precedence order, for both the record and each field:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import NamedTuple
 
 from . import _types as T
@@ -1566,3 +1567,103 @@ def validate_record_shape(
             f"name it here."
         )
     return ""
+
+
+def typedef_text(record: str, flds: "list[RecordField]") -> str:
+    """The typedef jm expects the author to write for *record*.
+
+    One rendering for the advice (`_method.record_type_advice`, gh-1319) and
+    the refusal (:func:`undeclared_record_why`, gh-2760), so the struct jm
+    prints is the same whichever of them prints it.
+
+    >>> print(typedef_text("pk_t", [RecordField("i", "int", "")]))
+    typedef struct
+    {
+        int i;
+    } pk_t;
+    """
+    body = "\n".join(f"    {f.ctype} {f.name};" for f in flds)
+    return f"typedef struct\n{{\n{body}\n}} {record};"
+
+
+def record_defined(root: "Path", header: "Path", record: str) -> bool:
+    """Whether *header*, or a project header it includes, defines *record*.
+
+    gh-2760. "Defines" means a complete struct the C compiler can size: a
+    ``typedef struct {...} name;``, or a tagged struct and its typedef. A
+    forward ``typedef struct tag name;`` alone is not a definition, because
+    the binding takes ``sizeof`` of the record. Includes are followed the
+    way struct member docs follow them (gh-724, gh-2778, gh-2779): quoted
+    project headers, beside the including header first and then under the
+    ``-I`` directory, transitively. A type that only a
+    system or angle-bracket header defines is therefore not found, and the
+    note says so: such a type needs nothing from the author (gh-2760).
+    """
+    from . import _incpath as INC
+    from ._docstring import extract_struct_member_docs
+    from ._object import _included_member_docs
+
+    if not header.is_file():
+        return False
+    text = header.read_text(encoding="utf-8")
+    if record in extract_struct_member_docs(text):
+        return True
+    _, included, _ = _included_member_docs(
+        INC.inc_dir(root), text, header.parent
+    )
+    return record in included
+
+
+def record_type_note(
+    root: Path, header: Path, record: str, flds: "list[RecordField]"
+) -> str:
+    """What to tell the author when nothing defines *record*, else ``""``.
+
+    gh-1319. A record result renders prototypes in the author's struct type
+    (``record_dtype``; and, since gh-2760, the ``--single`` / ``--result-field``
+    return type), and jm accepted the declaration without a word, so the
+    untouched tree failed to compile with ``unknown type name 'iq_pair_t'``
+    -- in the sacred header AND the sacred source, three files from the
+    declaration that caused it.
+
+    **jm reports rather than writes, and that is a deliberate carve-out.**
+    Scaffolding the typedef was implemented first and reverted: the record
+    struct is routinely added to the header AFTER the method is declared --
+    gh-788's own fixtures do exactly that -- so a scaffolded definition
+    collides with the author's (``conflicting types for 'dp_tlm_rec_t'``) and
+    jm would have created a compile error in a sacred file to avoid a
+    different one (gh-1328).
+
+    **Nor does it refuse** (gh-2760, measured): a record may come from a
+    system header jm never reads -- the gh-1959 preset returns ``div_t`` from
+    ``<stdlib.h>`` -- and ``jm script`` replays the command into a fresh tree
+    before the author's struct exists. Both are valid, and a refusal there
+    would be one the author cannot act on.
+
+    So *"the untouched scaffold builds"* is **not** met for a record result,
+    and the gap is stated rather than papered over. What is fixed is the
+    silence: the author is told the exact type to declare, with the field
+    list jm already has, at the moment they declare the member. "Defined" is
+    :func:`record_defined`: a complete struct in the header or a project
+    header it includes.
+
+    >>> print(record_type_note(Path("/nonexistent"), Path("/nonexistent/x.h"),
+    ...     "pk_t", [RecordField("i", "int", "")]).splitlines()[1])
+    NOTE: nothing defines `pk_t` in a header jm reads, so the tree will
+    >>> record_type_note(Path("/x"), Path("/x/x.h"), "", [])
+    ''
+    """
+    if not record or not flds or record_defined(root, header, record):
+        return ""
+    return (
+        f"\nNOTE: nothing defines `{record}` in a header jm reads, so the"
+        f" tree will\n"
+        f"      not compile until you add it to {header.name} (or a project"
+        f" header\n"
+        f"      it includes). It is YOURS -- jm reads its layout back with\n"
+        f"      offsetof/sizeof, so padding and ordering you choose are"
+        f" followed.\n"
+        f"      A type a system or library header already defines needs"
+        f" nothing:\n"
+        f"\n{typedef_text(record, flds)}\n"
+    )
