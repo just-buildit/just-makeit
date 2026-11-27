@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import sys
 
+from ._perprocess import per_process
+
 
 class Refusal(ValueError):
     """jm declines a manifest or a command, with a message for its author.
@@ -162,9 +164,21 @@ def gating_count() -> int:
     return _gating
 
 
+#: Every warning text :func:`warn` has printed with ``once=True`` in this
+#: process. One set for every advisory that deduplicates (gh-2244): three
+#: modules each kept their own, and the in-process runner, which must empty
+#: them between commands, knew about none of them.
+_SAID: "set[str]" = per_process(set())
+
+
 def warn(
-    text: str, *, gates: bool = False, stream=None, indent: str = ""
-) -> None:
+    text: str,
+    *,
+    gates: bool = False,
+    stream=None,
+    indent: str = "",
+    once: bool = False,
+) -> bool:
     """Print one warning, weighted.
 
     Parameters
@@ -185,12 +199,40 @@ def warn(
         either.
     indent : str
         Leading whitespace, for a warning nested in a report block.
+    once : bool
+        Print *text* at most once per process. For a check that runs on
+        every manifest load: ``jm apply`` loads the real tree and its temp
+        scaffold, and a reader should hear each thing once. The memory is
+        `_perprocess` state, so the in-process runner empties it before
+        each command, as a new process would (gh-2244).
+
+    Returns
+    -------
+    bool
+        True when the warning was printed; False only when *once* held it
+        back.
+
+    Examples
+    --------
+    >>> import io
+    >>> out = io.StringIO()
+    >>> warn("said once", once=True, stream=out)
+    True
+    >>> warn("said once", once=True, stream=out)
+    False
+    >>> out.getvalue()
+    'warning ~: said once\n'
     """
     global _gating
+    if once:
+        if text in _SAID:
+            return False
+        _SAID.add(text)
     if gates:
         _gating += 1
     mark = _GATE_MARK if gates else _ADVISORY_MARK
     print(f"{indent}warning {mark}: {text}", file=stream or sys.stderr)
+    return True
 
 
 def trailer(stream=None) -> None:

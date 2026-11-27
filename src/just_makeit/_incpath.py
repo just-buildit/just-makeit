@@ -31,6 +31,8 @@ import re
 from pathlib import Path
 from typing import Union
 
+from ._perprocess import per_process
+
 #: The ``-I`` directory, relative to a project root: every generated
 #: ``#include`` resolves from here, in the build tree and (as ``include/``)
 #: once installed. It stays put when headers move under the package.
@@ -52,8 +54,10 @@ PREFIXED_SCHEMA = 8
 Owner = Union[Path, dict]
 
 #: gh-2095: per manifest path, the key it was loaded under and the merged
-#: manifest `C.load` built: see :func:`manifest`.
-_CFG_CACHE: "dict[str, tuple[tuple, dict]]" = {}
+#: manifest `C.load` built: see :func:`manifest`. Per process (gh-2244): the
+#: in-process runner empties it before each command, so a hand edit made
+#: between two commands is read fresh.
+_CFG_CACHE: "dict[str, tuple[tuple, dict]]" = per_process({})
 
 
 def manifest(owner: Owner) -> dict:

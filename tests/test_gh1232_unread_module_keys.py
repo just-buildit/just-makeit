@@ -64,7 +64,7 @@ def _messages(cfg: dict) -> list[str]:
     """Every unknown-key message *cfg* produces.
 
     Through `unknown_keys`, not `warn_unknown_keys`: the latter deduplicates
-    against a module-level `_SEEN` for the life of the process, so the second
+    once per process (`_report.warn` ``once``), so the second
     test to provoke an identical message would see nothing and pass
     vacuously. The first cut of this file did exactly that.
     """

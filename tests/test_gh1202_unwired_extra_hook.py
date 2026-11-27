@@ -38,10 +38,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from _jmrun import warning_lines  # noqa: E402
-from just_makeit import _report  # noqa: E402
+from just_makeit import _perprocess, _report  # noqa: E402
 from just_makeit._extrahook import (  # noqa: E402
     HOOK_SUFFIXES,
-    _SEEN,
     describe,
     unwired_hooks,
     warn_unwired_hooks,
@@ -151,7 +150,7 @@ def test_the_warning_is_advisory_and_does_not_gate(tmp_path: Path):
     root = _tree(
         tmp_path, "#include <Python.h>\n", {"m_ext_extra.c": "/* x */\n"}
     )
-    _SEEN.clear()
+    _perprocess.fresh()
     _report.reset()
     buf = io.StringIO()
     with contextlib.redirect_stderr(buf):
@@ -167,7 +166,7 @@ def test_the_same_hook_is_reported_once_per_process(tmp_path: Path):
     root = _tree(
         tmp_path, "#include <Python.h>\n", {"m_ext_extra.c": "/* x */\n"}
     )
-    _SEEN.clear()
+    _perprocess.fresh()
     buf = io.StringIO()
     first = warn_unwired_hooks(root, stream=buf)
     second = warn_unwired_hooks(root, stream=buf)
