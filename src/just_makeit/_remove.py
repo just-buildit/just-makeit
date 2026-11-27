@@ -213,7 +213,7 @@ def _object_paths(
     pkg: str,
     obj: str,
     module: str | None,
-    keep_module_core: bool = False,
+    removing: bool = False,
 ) -> list[Path]:
     """Return every generated path that belongs to object *obj*.
 
@@ -231,20 +231,21 @@ def _object_paths(
     (gh-1361) is the object's alone -- a functions-only module has none --
     so it always goes.
 
-    That keep is *keep_module_core*, which only `jm remove object` asks
-    for. `jm regenerate` (and `jm add --force`, `jm remove state`, which go
-    through it) lists the same paths to rebuild them: there the core must
-    go, or the rebuilt header declares a ``create()`` the kept ``_core.c``
-    does not define, and the module no longer compiles.
+    The shared directories are kept out for every caller. `jm regenerate`
+    (and `jm add --force`, `jm remove state`, which go through it) lists
+    these paths to delete and rebuild, and it deleted the module's whole
+    ``native/src/<cname>/`` too: a module function's ``<fn>.c`` and the
+    author's own C in the core were gone, on exit 0 (gh-2843). It rebuilds
+    the collocated object's share of the core itself
+    (`_object.carry_module_core`). *removing* is `jm remove object`: only
+    a removal keeps the C test and bench for the module's functions.
     """
     from . import _invariants
 
-    shared = (
-        keep_module_core
-        and module is not None
-        and C.collocated_object(cfg, module) == obj
+    shared = module is not None and C.collocated_object(cfg, module) == obj
+    harness = not (
+        removing and shared and module and C.module_functions(cfg, module)
     )
-    harness = not (shared and module and C.module_functions(cfg, module))
     paths = [
         # Its header directory, wherever the layout puts it (gh-2427), and
         # never another component's below it.
@@ -411,9 +412,7 @@ def _remove_object_files(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> None:
     """Delete every generated file/dir for *obj* and strip its build wiring."""
-    for path in _object_paths(
-        root, cfg, pkg, obj, module, keep_module_core=True
-    ):
+    for path in _object_paths(root, cfg, pkg, obj, module, removing=True):
         _rm(path)
     _prune_native_dirs(root, cfg, obj)
     _strip_cmake_object(root, obj, cfg)
