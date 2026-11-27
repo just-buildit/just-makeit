@@ -2527,6 +2527,32 @@ def _drop_pyproject_script(root: Path, name: str) -> bool:
     return True
 
 
+def _write_app(path: Path, rendered: str, verb: str) -> None:
+    """Write one app source, naming any edit an `update` discards (gh-1912).
+
+    The loss is the same on every face: `jm app` and every `jm apply` regenerate
+    the file wholesale, so an edit made since the last write is gone. Before
+    this, only the C face said so (gh-962); the console and pep723 faces
+    overwrote without a word. The check is here, in the one path all three
+    write through, so no face can skip it. It runs only when the bytes differ,
+    so a re-run over an untouched scaffold stays quiet.
+    """
+    if (
+        verb == "update"
+        and path.exists()
+        and path.read_text(encoding="utf-8") != rendered
+    ):
+        _report.warn(
+            f"{path}: this app is regenerated from its [[app]] row in the"
+            " manifest, by `jm app` and by every `jm apply`, and your edits to"
+            " it have just been discarded. Nothing preserves a body here — put"
+            " custom logic in a component (`jm method`) and call it from the"
+            " generated code, or keep your own copy outside the generated"
+            " paths."
+        )
+    _write_guarded(path, rendered, verb)
+
+
 def _run_c(
     root: Path, cfg: dict, entry: dict, main_c: Path, rendered: str
 ) -> list[Path]:
@@ -2544,14 +2570,6 @@ def _run_c(
     # Only when the bytes actually differ, so a re-run over an untouched
     # scaffold — which is most of them — stays quiet.
     _existed = main_c.exists()
-    if _existed and main_c.read_text(encoding="utf-8") != rendered:
-        _report.warn(
-            f"{main_c}: this app is regenerated from its [[app]] row in the"
-            " manifest, by `jm app` and by every `jm apply`, and your edits to"
-            " it have just been discarded. Nothing preserves a body here — put"
-            " custom logic in a component (`jm method`) and call it from the"
-            " generated main(), or keep your own copy outside native/src/app/."
-        )
     # gh-1336: through the SHARED guard, so a slot no context filled is
     # refused here the way `_init` already refuses it. This face wrote the
     # raw token into C -- `"error: /*<<create_name>>*/() failed\n"` -- which
@@ -2561,7 +2579,7 @@ def _run_c(
     # gh-962: the verb is computed BEFORE the write. It was after, so
     # `exists()` was trivially true and a first-time scaffold announced
     # itself as `update`.
-    _write_guarded(main_c, rendered, "update" if _existed else "create")
+    _write_app(main_c, rendered, "update" if _existed else "create")
 
     name = entry["name"]
     tgt = _exe_targets(cfg, root)[name]
@@ -2597,7 +2615,7 @@ def _run_console(
     # so this always said `update`. gh-1336 routes it through the shared
     # guard, which is also where the ordering gets fixed.
     _verb = "update" if cli_py.exists() else "create"
-    _write_guarded(cli_py, rendered, _verb)
+    _write_app(cli_py, rendered, _verb)
 
     name = entry["name"]
     dotted = _console_module(root, cfg, entry)[1]
@@ -2616,7 +2634,7 @@ def _run_console(
 def _run_pep723(script: Path, rendered: str) -> list[Path]:
     # Same pair as above: the guard, and the verb read before the write.
     _verb = "update" if script.exists() else "create"
-    _write_guarded(script, rendered, _verb)
+    _write_app(script, rendered, _verb)
     return [script]
 
 
