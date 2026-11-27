@@ -570,8 +570,13 @@ def render_decode(
     cf = _entry_field(p, "count", "count")
     vf = _entry_field(p, "value", "value")
     # scalar_collapse is a codec-level decode policy (a value packed as a lone
-    # element reads back as a scalar, not a 1-list); a property may override it.
-    collapse = bool(p.get("scalar_collapse", cdc.get("scalar_collapse")))
+    # element reads back as a scalar, not a 1-list); a property may override
+    # it. A flag (gh-2120): `scalar_collapse = "false"` is off at either.
+    collapse = (
+        truthy(p.get("scalar_collapse"))
+        if "scalar_collapse" in p
+        else truthy(cdc.get("scalar_collapse"))
+    )
     header = p.get("header")
     helper = f"{Component}_decode_{pname}"
 
