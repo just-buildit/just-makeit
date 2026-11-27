@@ -220,8 +220,8 @@ def warn(
     True
     >>> warn("said once", once=True, stream=out)
     False
-    >>> out.getvalue()
-    'warning ~: said once\n'
+    >>> print(out.getvalue(), end="")
+    warning ~: said once
     """
     global _gating
     if once:
