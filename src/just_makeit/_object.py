@@ -22,7 +22,7 @@ import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Callable, Iterable, Iterator, NamedTuple
 
 from . import _color as Color
 from . import _borrow
@@ -3678,49 +3678,83 @@ def _regenerate_module_now(
         _linkcheck.write(root, cfg, _obj)
 
 
-def _top_level_definitions(text: str) -> "dict[str, str]":
-    r"""Every function *text* defines at file scope, by name, with the text
-    of its definition (the comment above it included).
+class _Item(NamedTuple):
+    """One file-scope item of C text (:func:`_top_level_items`)."""
 
-    gh-2843 item 1. :func:`_extract_c_function_bodies` reads only the house
-    style -- the return type on its own line -- and skips a one-line
-    signature on purpose, so the generated ``void <stem>_steps(`` is never
-    "hand-patched". Merging a render into a file needs every definition
-    whatever its layout, so this reads structure from the comment- and
-    string-blind :func:`_docsync._code_mask`: an item ends at a file-scope
-    ``;`` or at the ``}`` closing a body, and a body whose head ends in a
-    parameter list is a function named by the identifier before that list.
-    Preprocessor lines separate items, and an ``extern "C" { ... }`` block
-    is transparent: a header's declarations sit inside one.
+    kind: str
+    text: str
+    names: frozenset
 
-    >>> d = _top_level_definitions(
-    ...     "#include <x.h>\n/* doc */\nint\nf(void)\n{\n    return 1;\n}\n"
-    ...     "void g(int a,\n       int b) { (void)a; }\n"
-    ...     "typedef struct { int (*cb)(void); } t;\nint h(void);\n"
-    ... )
-    >>> sorted(d)
-    ['f', 'g']
-    >>> d["f"].splitlines()[0]
-    '/* doc */'
-    >>> sorted(_top_level_definitions(
-    ...     'extern "C" {\nstatic inline int\nk(void)\n{\n    return 0;\n}\n}\n'
-    ... ))
-    ['k']
+
+#: Preprocessor lines that are a header's frame, not its content: the
+#: include guard and the ``extern "C"`` wrapper. Never carried, never lost.
+_FRAME_PP = re.compile(
+    r"#\s*(?:ifndef\s+\w+_H|define\s+\w+_H|endif\b.*|ifdef\s+__cplusplus)\s*$"
+)
+
+
+def _top_level_items(text: str) -> "list[_Item]":
+    r"""The file-scope items of C *text*, in order, each with the names it
+    declares (:func:`_csym.declared`) and the comment directly above it.
+
+    gh-2843. Merging a render into an author's file has to move whole
+    items: a function's definition with its body, a prototype with its
+    Doxygen block, a ``typedef``, an ``#include``. Line by line it could
+    not tell the object's own struct (which the render replaces) from the
+    author's macro (which is carried). Structure is read from the
+    comment- and string-blind :func:`_docsync._code_mask`: an item ends at
+    a file-scope ``;``, at the ``}`` closing a function body, or at the end
+    of a preprocessor line, and an ``extern "C" { ... }`` block is
+    transparent. :func:`_extract_c_function_bodies` reads only the house
+    style and skips a one-line signature on purpose, so the generated
+    ``void <stem>_steps(`` was invisible to it.
+
+    Kinds: ``def`` (a function definition), ``decl`` (any other ``;``
+    item: a prototype, a typedef, a global), ``include``, ``macro`` (a
+    ``#define`` or ``#undef``), ``frame`` (:data:`_FRAME_PP`) and ``cond``
+    (any other directive, which cannot move without what it guards).
+
+    >>> [(i.kind, sorted(i.names)) for i in _top_level_items(
+    ...     '#ifndef P_H\n#define P_H\n#include <x.h>\n'
+    ...     'extern "C" {\n/** doc */\nint f(int a);\n'
+    ...     'void g(int a,\n       int b) { (void)a; }\n}\n'
+    ...     'typedef struct { int (*cb)(void); } t;\n#endif /* P_H */\n'
+    ... )]  # doctest: +NORMALIZE_WHITESPACE
+    [('frame', ['P_H']), ('frame', ['P_H']), ('include', []), ('decl', ['f']),
+     ('def', ['g']), ('decl', ['t']), ('frame', [])]
+    >>> _top_level_items('/** doc */\nint f(int a);\n')[0].text
+    '/** doc */\nint f(int a);'
     """
     from ._docsync import _code_mask
 
     mask = _code_mask(text)
-    out: dict[str, str] = {}
+    items: "list[_Item]" = []
     depth = start = i = extern = 0
+
+    def emit(kind: str, end: int) -> None:
+        body = text[start:end].strip()
+        if body:
+            items.append(_Item(kind, body, frozenset(CSYM.declared(body))))
+
     while i < len(mask):
         c = mask[i]
         line_start = mask.rfind("\n", 0, i) + 1
         if depth == 0 and c == "#" and not mask[line_start:i].strip():
-            # A preprocessor line, continuations included, ends an item.
             j = i
             while (j := mask.find("\n", j)) != -1 and mask[j - 1] == "\\":
                 j += 1
-            i = start = len(mask) if j == -1 else j + 1
+            end = len(mask) if j == -1 else j
+            line = text[i:end].strip()
+            if _FRAME_PP.match(line):
+                kind = "frame"
+            elif line.startswith("#include"):
+                kind = "include"
+            elif re.match(r"#\s*(?:define|undef)\b", line):
+                kind = "macro"
+            else:
+                kind = "cond"
+            items.append(_Item(kind, line, frozenset(CSYM.declared(line))))
+            i = start = end + 1
             continue
         if (
             c == "{"
@@ -3739,99 +3773,187 @@ def _top_level_definitions(text: str) -> "dict[str, str]":
             if depth == 0:
                 head = mask[start : mask.index("{", start)].rstrip()
                 if head.endswith(")"):
-                    # The identifier before the head's last parameter list.
-                    k, d = len(head) - 1, 0
-                    while k >= 0:
-                        d += {")": 1, "(": -1}.get(head[k], 0)
-                        if d == 0:
-                            break
-                        k -= 1
-                    m = re.search(r"(\w+)\s*$", head[:k])
-                    if m:
-                        out[m.group(1)] = text[start : i + 1].strip()
+                    emit("def", i + 1)
                     start = i + 1
         elif c == ";" and depth == 0:
+            emit("decl", i + 1)
             start = i + 1
         i += 1
-    return out
+    return items
 
 
-def _meaningful_lines(text: str) -> "list[str]":
-    """The lines of C *text* that are code: stripped, without blank lines
-    or comments. What `_keep_module_core_h` requires to survive."""
-    code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    code = re.sub(r"//[^\n]*", "", code)
-    return [ln.strip() for ln in code.splitlines() if ln.strip()]
+def _top_level_definitions(text: str) -> "dict[str, str]":
+    """Every function *text* defines at file scope, by name, with its text
+    (:func:`_top_level_items`)."""
+    return {
+        n: it.text
+        for it in _top_level_items(text)
+        if it.kind == "def"
+        for n in it.names
+    }
 
 
-def _keep_module_core_h(
-    path: Path, old: str, comp: str, family: "C.CoreFamily | None"
-) -> None:
-    """Carry what a module's ``_core.h`` held into its collocated object's.
+def _signature(definition: str) -> str:
+    """A definition's head -- everything before its body's ``{`` -- with
+    comments dropped and whitespace collapsed, for comparing two."""
+    from ._docsync import _code_mask
 
-    gh-2843 item 1. ``jm object m --module m`` renders the object's header
-    over the module's own ``m_core.h``. That header already held the
-    declarations ``jm function`` injected and anything the author wrote,
-    and the render dropped them: ``m_ext.c`` then called a function nothing
-    declared, and ``status --check`` reported the header STALE on a tree
-    the verb had just written.
+    head = _code_mask(definition)
+    head = head[: head.index("{")]
+    return " ".join(head.split())
 
-    Carried back, each through the code that already does it:
 
-    - every prototype, by :func:`_init._inject_decls_into_core_h` -- what
-      `apply` uses to give a header the declarations it lacks, so a
-      prototype the render already has is not duplicated;
-    - every function definition (a ``static inline`` one from ``jm
-      function --inline``, or the author's), by
-      :func:`_top_level_definitions`, before the header's close;
-    - every ``#include``, after the render's own.
-
-    Anything else of the old header's code that would still be lost -- a
-    macro, a typedef -- is refused, naming it: the module's header is
-    sacred, and silently dropping a line of it is what this fixes. `_undo`
-    puts the tree back.
-    """
-    from ._init import _core_h_decl_lines, _inject_decls_into_core_h
-
-    _inject_decls_into_core_h(
-        path, comp, _core_h_decl_lines(old), family=family
+def _module_fn_names(cfg: dict, module: str) -> "frozenset[str]":
+    """The C names of *module*'s functions (`_function`'s ``c_name``)."""
+    return frozenset(
+        CSYM.stem(cfg, f["name"]) for f in C.module_functions(cfg, module)
     )
+
+
+def _object_share(
+    cfg: dict, comp: str, module: str
+) -> "Callable[[str], bool]":
+    """Whether a C name is the collocated object *comp*'s own: its symbol
+    stem, or a name derived from it (``<stem>_...``), unless it is one of
+    *module*'s functions, whose C names share the module's prefix
+    (gh-2843)."""
+    stem = CSYM.stem(cfg, comp)
+    fns = _module_fn_names(cfg, module)
+
+    def owned(name: str) -> bool:
+        low = name.lower()
+        return (low == stem or low.startswith(stem + "_")) and name not in fns
+
+    return owned
+
+
+def _carry(
+    path: Path,
+    old: str,
+    owned: "Callable[[str], bool]",
+    fns: "frozenset[str]" = frozenset(),
+    *,
+    header: bool,
+) -> None:
+    """Carry into the fresh render at *path* every item of *old* -- the
+    file it replaced -- that the render does not itself declare.
+
+    gh-2843. The collocated object's core is its module's ``<cname>_core``,
+    which also holds what ``jm function`` put there and what the author
+    wrote. A render of the object's core replaces the object's own share
+    (every item naming something the render declares: its struct, its
+    prototypes, its definitions -- the render wins), and everything else of
+    *old* is carried, whole, with the comment above it: each ``#include``
+    after the render's own, each macro and ``;`` item that is not a
+    prototype (a typedef, a global) after those, and each prototype and
+    definition at the end (a header's before its C++ close). A
+    conditional directive cannot move without what it guards, so a file
+    holding one is refused, naming it; `_undo` puts the tree back.
+
+    An item of *old* naming the object's own share (*owned*,
+    :func:`_object_share`) that the render no longer declares is the
+    previous object's -- an accessor for a state field since removed -- and
+    goes with it, as it did when the whole core was rebuilt.
+
+    A module function's definition (*fns*, its C names) is the author's
+    whatever the render holds: the render of a ``--functions-in-core`` or
+    ``--inline`` function is a stub, and ``--discard`` discards the
+    object's bodies, not the module's. Its old definition replaces the
+    render's.
+
+    *header* is the ``_core.h`` (closed by its C++ wrapper and guard) as
+    opposed to the ``_core.c`` (closed by nothing).
+    """
     text = path.read_text(encoding="utf-8")
-    new_bodies = _top_level_definitions(text)
-    bodies = [
-        body
-        for name, body in _top_level_definitions(old).items()
-        if name not in new_bodies
+    old_items = _top_level_items(old)
+    old_fn_defs = {
+        n: it.text
+        for it in old_items
+        if it.kind == "def"
+        for n in it.names & fns
+    }
+    for it in _top_level_items(text):
+        if it.kind == "def":
+            for n in it.names & old_fn_defs.keys():
+                text = text.replace(it.text, old_fn_defs[n], 1)
+    ours = frozenset(CSYM.declared(text))
+    keep = [
+        it
+        for it in old_items
+        if it.kind != "frame"
+        and not (it.names & ours)
+        and not any(owned(n) for n in it.names)
+        and not (it.kind == "include" and it.text in text)
     ]
-    if bodies:
-        close = "#ifdef __cplusplus\n}\n#endif"
-        at = text.rindex(close) if close in text else text.rindex("#endif")
-        text = text[:at] + "\n\n".join(bodies) + "\n\n" + text[at:]
-    includes = [
-        ln
-        for ln in old.splitlines()
-        if ln.startswith("#include") and ln not in text
-    ]
-    if includes:
-        last = max(
-            text.rindex(ln)
-            for ln in text.splitlines()
-            if ln.startswith("#include")
-        )
-        end = text.index("\n", last) + 1
-        text = text[:end] + "".join(f"{ln}\n" for ln in includes) + text[end:]
-    have = set(_meaningful_lines(text))
-    lost = [ln for ln in _meaningful_lines(old) if ln not in have]
-    if lost:
+    cond = [it.text for it in keep if it.kind == "cond"]
+    if cond:
         raise _report.Refusal(
-            f"{path} holds code the object's header would drop, which jm"
-            f" cannot place: {'; '.join(lost)}. Move it to a header of your"
-            " own and include that, then run this again (gh-2843)."
+            f"{path} holds a conditional block jm cannot carry into the"
+            f" collocated object's render: {'; '.join(cond)}. Move that"
+            " block to a header of your own and include it, then run this"
+            " again (gh-2843)."
         )
+    includes = [it.text for it in keep if it.kind == "include"]
+    front = [
+        it.text
+        for it in keep
+        if it.kind == "macro"
+        or (it.kind == "decl" and not re.search(r"\)\s*;\s*$", it.text))
+    ]
+    back = [
+        it.text
+        for it in keep
+        if it.kind == "def"
+        or (it.kind == "decl" and re.search(r"\)\s*;\s*$", it.text))
+    ]
+    if includes or front:
+        lines = text.splitlines(keepends=True)
+        at = 0
+        for n, ln in enumerate(lines):
+            if ln.startswith("#include"):
+                at = n + 1
+        add = "".join(f"{t}\n" for t in includes)
+        add += "".join(f"\n{t}\n" for t in front)
+        text = "".join(lines[:at]) + add + "".join(lines[at:])
+    if back:
+        block = "\n\n".join(back) + "\n\n"
+        if header:
+            close = "#ifdef __cplusplus\n}\n#endif"
+            at = text.rindex(close) if close in text else text.rindex("#endif")
+            text = text[:at] + block + text[at:]
+        else:
+            text = text.rstrip() + "\n\n" + block.rstrip() + "\n"
     _textio.write_text(path, text)
 
 
-def _keep_module_core_c(path: Path, rendered: str) -> None:
+def carry_module_core(
+    cfg: dict,
+    comp: str,
+    module: str,
+    core_h: Path,
+    old_h: "str | None",
+    core_c: Path,
+    old_c: "str | None",
+) -> None:
+    """Carry what a collocated object's core held, beside the object's own
+    code, into the fresh render of it at *core_h* / *core_c* (gh-2843).
+
+    The rebuild of `jm regenerate` (and `jm add --force`, `jm remove
+    state`) for the object whose core is its module's: the render replaces
+    the object's share, and every other item -- a module function's
+    declaration, the author's helper -- is carried (:func:`_carry`).
+    """
+    owned = _object_share(cfg, comp, module)
+    fns = _module_fn_names(cfg, module)
+    if old_h is not None and core_h.exists():
+        _carry(core_h, old_h, owned, fns, header=True)
+    if old_c is not None and core_c.exists():
+        _carry(core_c, old_c, owned, fns, header=False)
+
+
+def _keep_module_core_c(
+    path: Path, rendered: str, owned: "Callable[[str], bool]"
+) -> None:
     """Give a module's existing ``_core.c`` what its collocated object's
     render defines, without re-rendering it.
 
@@ -3839,18 +3961,34 @@ def _keep_module_core_c(path: Path, rendered: str) -> None:
     ``m_core.c`` over the module's, and the author's own functions in it
     were gone with no prompt. ``_core.c`` is the author's: jm only ever
     ADDS to it a definition it lacks -- the rule `apply` keeps for the same
-    file (gh-1294). So each definition the object's render has and the file
-    lacks (:func:`_top_level_definitions`, which reads the one-line
-    ``steps`` signature too) is appended from the render, with any ``#include`` the render has and the file
-    lacks, and nothing the file holds is touched.
+    file (gh-1294). So each definition the render has and the file lacks
+    is appended, with any ``#include`` the render has and the file lacks,
+    and nothing the file holds is touched.
+
+    A definition the file already has -- the object's own, kept by `jm
+    remove object` and now re-added -- is kept when its signature is the
+    render's. With another signature, or for one of the object's own names
+    (*owned*) the render no longer defines -- an accessor for a state field
+    since dropped -- the module would not build, so that is refused, naming
+    it: the old definition is the author's to delete (or to update) first.
     """
     existing = path.read_text(encoding="utf-8")
     have = _top_level_definitions(existing)
-    add = [
-        body
-        for name, body in _top_level_definitions(rendered).items()
-        if name not in have
+    want = _top_level_definitions(rendered)
+    stale = [
+        n
+        for n in have
+        if (n in want and _signature(have[n]) != _signature(want[n]))
+        or (n not in want and owned(n))
     ]
+    if stale:
+        raise _report.Refusal(
+            f"{path} already defines {', '.join(stale)}, which the object's"
+            " header no longer declares (or declares with another"
+            " signature) -- the previous object's code. Delete (or update)"
+            " those definitions, then run this again (gh-2843)."
+        )
+    add = [body for name, body in want.items() if name not in have]
     includes = [
         ln
         for ln in rendered.splitlines()
@@ -3859,16 +3997,12 @@ def _keep_module_core_c(path: Path, rendered: str) -> None:
     text = existing
     if includes:
         head = "".join(f"{ln}\n" for ln in includes)
-        lines = [
-            ln
-            for ln in text.splitlines(keepends=True)
-            if ln.startswith("#include")
-        ]
-        if lines:
-            end = text.index(lines[-1]) + len(lines[-1])
-            text = text[:end] + head + text[end:]
-        else:
-            text = head + text
+        lines = text.splitlines(keepends=True)
+        at = 0
+        for n, ln in enumerate(lines):
+            if ln.startswith("#include"):
+                at = n + 1
+        text = "".join(lines[:at]) + head + "".join(lines[at:])
     if add:
         text = text.rstrip() + "\n\n" + "\n\n".join(add) + "\n"
     if text != existing:
@@ -4437,7 +4571,7 @@ def run(
     # gh-2843 item 1: the collocated object's core IS its module's, which
     # may already hold the module's function declarations and the author's
     # own C. The object's render replaces the header, then what the module's
-    # header held is carried back (`_keep_module_core_h`); `_core.c` is
+    # header held is carried back (`_carry`); `_core.c` is
     # only appended to (`_keep_module_core_c`), never re-rendered.
     collocated = comp == C.collocated_object(layout_owner, module)
     old_core_h = (
@@ -4451,8 +4585,11 @@ def run(
         "update" if core_h_path.exists() else "create",
     )
     if old_core_h is not None:
-        _keep_module_core_h(
-            core_h_path, old_core_h, comp, C.core_family(layout_owner, comp)
+        _carry(
+            core_h_path,
+            old_core_h,
+            _object_share(layout_owner, comp, module),
+            header=True,
         )
     if impl_body is not None and not no_step:
         from . import _impl as I
@@ -4471,7 +4608,11 @@ def run(
     if not header_only:
         core_c_path = INC.src_path(root, comp, layout_owner) / f"{comp}_core.c"
         if collocated and core_c_path.exists():
-            _keep_module_core_c(core_c_path, r(R.COMPONENT_CORE_C))
+            _keep_module_core_c(
+                core_c_path,
+                r(R.COMPONENT_CORE_C),
+                _object_share(layout_owner, comp, module),
+            )
         else:
             _write(
                 core_c_path,

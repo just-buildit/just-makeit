@@ -39,7 +39,11 @@ from . import _incpath as INC
 from ._docstring import max_out_prototypes, restore_max_out_prototypes
 from ._keys import METHOD_KEYS, OBJECT_KEYS
 from ._linkcheck import binding_sources
-from ._object import _extract_c_function_bodies, _restore_c_function_bodies
+from ._object import (
+    _extract_c_function_bodies,
+    _restore_c_function_bodies,
+    carry_module_core,
+)
 from ._remove import _confirm, _object_paths, _rm
 from ._report import Refusal
 
@@ -269,6 +273,30 @@ def run(
 
     core_h = INC.core_h(root, component, cfg)
     core_c = INC.src_path(root, component, cfg) / f"{component}_core.c"
+    # gh-2843: the collocated object's core is its module's -- the module's
+    # functions are declared there and the author writes there too. Its
+    # directories are not in `paths` (`_object_paths`), so the two core
+    # files are, and what else they held is carried into the rebuild
+    # (`carry_module_core`) instead of going with the object's share.
+    collocated = bool(module) and C.collocated_object(cfg, module) == component
+    old_core_h = old_core_c = None
+    if collocated:
+        old_core_h = (
+            core_h.read_text(encoding="utf-8") if core_h.exists() else None
+        )
+        old_core_c = (
+            core_c.read_text(encoding="utf-8") if core_c.exists() else None
+        )
+        paths += [p for p in (core_h, core_c) if p.exists()]
+        # Its binding fragments too, with or without --discard: they were
+        # rebuilt with the module directory before, and a state change
+        # moves the constructor's kwlist (gh-965), so a kept fragment calls
+        # the rebuilt create() with the old arguments.
+        paths += [
+            p
+            for p in binding_sources(root, cfg, component)
+            if p.exists() and p not in paths
+        ]
     preserved_h: dict[str, str] = {}
     preserved_c: dict[str, str] = {}
     # gh-903: the author owns every `*_max_out` signature (gh-761), and
@@ -326,6 +354,10 @@ def run(
     from . import _apply
 
     _apply.run(root)
+    if collocated:
+        carry_module_core(
+            cfg, component, module, core_h, old_core_h, core_c, old_core_c
+        )
 
     if preserved_h and core_h.exists():
         restored = _restore_c_function_bodies(

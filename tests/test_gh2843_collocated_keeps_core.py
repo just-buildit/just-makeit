@@ -17,6 +17,7 @@ The gate builds each tree and runs its C tests.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -126,19 +127,60 @@ def test_core_c_keeps_the_authors_code(tmp_path):
         _build_and_test(proj)
 
 
-def test_code_jm_cannot_place_is_refused(tmp_path):
-    proj = _module(tmp_path)
-    core_h, core_c = _core(proj)
+def _edit_header(
+    proj: Path, after_inc: str = "", before_decl: str = ""
+) -> None:
+    core_h, _ = _core(proj)
     text = core_h.read_text(encoding="utf-8")
     inc = '#include "p/clib_common.h"\n'
     assert text.count(inc) == 1
-    core_h.write_text(
-        text.replace(inc, inc + "#define FILT_TAPS 8\n"), encoding="utf-8"
+    text = text.replace(inc, inc + after_inc)
+    if before_decl:
+        decl = "double p_gain(double x);"
+        assert text.count(decl) == 1
+        text = text.replace(decl, before_decl + decl)
+    core_h.write_text(text, encoding="utf-8")
+
+
+def test_the_authors_header_items_are_carried(tmp_path):
+    # Every item the module's header held is carried whole: a Doxygen
+    # block stays above its prototype, an #include and a macro go after
+    # the render's own includes.
+    proj = _module(tmp_path)
+    _ok(
+        "function",
+        "gain",
+        "--module",
+        "filt",
+        "--param",
+        "x:double",
+        "--return-type",
+        "double",
+        cwd=proj,
     )
+    doc = "/** @brief Authored gain, gh-2843. */\n"
+    _edit_header(proj, "#include <string.h>\n#define FILT_TAPS 8\n", doc)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    text = _core(proj)[0].read_text(encoding="utf-8")
+    assert doc + "double p_gain(double x);" in text, text
+    assert text.count("#include <string.h>") == 1, text
+    assert "#define FILT_TAPS 8" in text, text
+    # An #include both headers have (clib_common.h) is not written twice.
+    includes = [ln for ln in text.splitlines() if ln.startswith("#include")]
+    assert len(includes) == len(set(includes)), text
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+def test_code_jm_cannot_place_is_refused(tmp_path):
+    # A conditional block cannot move without what it guards.
+    proj = _module(tmp_path)
+    _edit_header(proj, "#ifdef FILT_FAST\n#define FILT_TAPS 4\n#endif\n")
     tree = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
     r = run_cli("object", "filt", "--module", "filt", cwd=proj)
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "#define FILT_TAPS 8" in r.stderr, r.stderr
+    assert "#ifdef FILT_FAST" in r.stderr, r.stderr
     after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
     assert after == tree
 
@@ -149,3 +191,243 @@ def test_a_plain_collocated_object_still_builds(tmp_path):
     _ok("object", "filt", "--module", "filt", cwd=proj)
     _status_ok(proj)
     _build_and_test(proj)
+
+
+# The verbs that rebuild the collocated object: each deleted the module's
+# whole `native/src/<cname>/` -- a module function's `<fn>.c` and the
+# author's own C in the core with it -- on exit 0 (gh-2843). `apply` is
+# the control: it never deleted either.
+_REBUILDS = {
+    "regenerate-force": (("regenerate", "filt", "--force"), ""),
+    "regenerate": (("regenerate", "filt"), "y\n"),
+    "add-force": (
+        ("add", "--state", "bias:double:1.0", "--object", "filt", "-f"),
+        "",
+    ),
+    "remove-state": (
+        ("remove", "state", "gain", "--object", "filt", "-f"),
+        "",
+    ),
+    "apply": (("apply",), ""),
+}
+_GAIN_BODY = "return 2.0 * x; /* authored gain body, gh-2843 */"
+_EXTRA = "\nint p_extra(void) { /* authored, gh-2843 */ return 7; }\n"
+
+
+@pytest.mark.parametrize("verb", sorted(_REBUILDS))
+def test_a_rebuild_keeps_every_authored_body(tmp_path, verb):
+    proj = _module(tmp_path)
+    _ok(
+        "function",
+        "gain",
+        "--module",
+        "filt",
+        "--param",
+        "x:double",
+        "--return-type",
+        "double",
+        cwd=proj,
+    )
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    gain_c = proj / "native" / "src" / "filt" / "gain.c"
+    text = gain_c.read_text(encoding="utf-8")
+    stub = re.search(r"return [^;]*;", text)
+    assert stub, text
+    gain_c.write_text(
+        text.replace(stub.group(0), _GAIN_BODY, 1), encoding="utf-8"
+    )
+    core_h, core_c = _core(proj)
+    with core_c.open("a", encoding="utf-8") as f:
+        f.write(_EXTRA)
+    argv, stdin = _REBUILDS[verb]
+    r = run_cli(*argv, cwd=proj, stdin=stdin)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _GAIN_BODY in gain_c.read_text(encoding="utf-8")
+    assert _EXTRA.strip() in core_c.read_text(encoding="utf-8")
+    assert "double p_gain(double x);" in core_h.read_text(encoding="utf-8")
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+def test_a_re_added_object_keeps_its_kept_core(tmp_path):
+    # `jm remove object` keeps the collocated object's core (gh-2141);
+    # adding the object back keeps it too, and defines nothing twice.
+    proj = _module(tmp_path)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _, core_c = _core(proj)
+    with core_c.open("a", encoding="utf-8") as f:
+        f.write(_EXTRA)
+    _ok("remove", "object", "filt", "--force", cwd=proj)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    text = core_c.read_text(encoding="utf-8")
+    assert _EXTRA.strip() in text, text
+    assert len(re.findall(r"^p_filt_create\(", text, re.M)) == 1, text
+    includes = [ln for ln in text.splitlines() if ln.startswith("#include")]
+    assert len(includes) == len(set(includes)), text
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+def test_a_re_add_of_another_shape_is_refused(tmp_path):
+    # The kept core defines the previous object's create(); a re-add whose
+    # create() takes other parameters would not build, so it is refused,
+    # naming it, with the tree as it was.
+    proj = _module(tmp_path)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _ok("remove", "object", "filt", "--force", cwd=proj)
+    tree = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    r = run_cli(
+        "object", "filt", "--module", "filt", "--init-param", "k:int", cwd=proj
+    )
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "already defines p_filt_create" in r.stderr, r.stderr
+    assert "Delete (or update)" in r.stderr, r.stderr
+    after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    assert after == tree
+
+
+@pytest.mark.parametrize("in_core", [False, True], ids=["own-file", "in-core"])
+def test_a_module_function_named_like_the_object_is_kept(tmp_path, in_core):
+    # `filt_norm` in module `filt` is `p_filt_norm` in C: the object's
+    # prefix, but the module's function. Its body in the shared `_core.c`
+    # (--functions-in-core) is not the previous object's code, so adding
+    # the object is not refused over it, and a rebuild keeps it.
+    _ok("new", "p", cwd=tmp_path)
+    proj = tmp_path / "p"
+    _ok(
+        "module",
+        "filt",
+        *(["--functions-in-core"] if in_core else []),
+        cwd=proj,
+    )
+    _ok(
+        "function",
+        "filt_norm",
+        "--module",
+        "filt",
+        "--param",
+        "x:double",
+        "--return-type",
+        "double",
+        cwd=proj,
+    )
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _ok("regenerate", "filt", "--force", cwd=proj)
+    core_h, _ = _core(proj)
+    assert "double p_filt_norm(double x);" in core_h.read_text(
+        encoding="utf-8"
+    )
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+def test_a_core_c_without_the_header_include_gets_it(tmp_path):
+    # The author's own `_core.c`, with no #include of the core header: the
+    # object's definitions need the header's types, so it gets the render's.
+    proj = _module(tmp_path)
+    _, core_c = _core(proj)
+    core_c.write_text(_EXTRA.lstrip(), encoding="utf-8")
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    text = core_c.read_text(encoding="utf-8")
+    assert '#include "p/filt/filt_core.h"' in text, text
+    assert _EXTRA.strip() in text, text
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+def test_a_re_add_leaving_stale_accessors_is_refused(tmp_path):
+    # Same create() (its params are the init params), another state: the
+    # kept core's accessors read a field the new struct has not.
+    proj = _module(tmp_path)
+    _ok(
+        "object",
+        "filt",
+        "--module",
+        "filt",
+        "--init-param",
+        "k:int",
+        "--state",
+        "a:double:1.0",
+        cwd=proj,
+    )
+    _ok("remove", "object", "filt", "--force", cwd=proj)
+    tree = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    r = run_cli(
+        "object",
+        "filt",
+        "--module",
+        "filt",
+        "--init-param",
+        "k:int",
+        "--state",
+        "b:double:1.0",
+        cwd=proj,
+    )
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "p_filt_get_a" in r.stderr, r.stderr
+    after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    assert after == tree
+
+
+@pytest.mark.parametrize(
+    "module_flag, fn_flag, where",
+    [("--functions-in-core", "", "c"), ("", "--inline", "h")],
+    ids=["functions-in-core", "inline"],
+)
+def test_a_discarding_rebuild_keeps_a_module_functions_body(
+    tmp_path, module_flag, fn_flag, where
+):
+    # A module function's body in the shared core (gh-247's
+    # --functions-in-core, or --inline in the header) is the author's: the
+    # render holds a stub for it, and --discard discards the OBJECT's
+    # bodies, not the module's.
+    _ok("new", "p", cwd=tmp_path)
+    proj = tmp_path / "p"
+    _ok("module", "filt", *([module_flag] if module_flag else []), cwd=proj)
+    _ok(
+        "function",
+        "gain",
+        "--module",
+        "filt",
+        "--param",
+        "x:double",
+        "--return-type",
+        "double",
+        *([fn_flag] if fn_flag else []),
+        cwd=proj,
+    )
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    core_h, core_c = _core(proj)
+    f = core_c if where == "c" else core_h
+    text = f.read_text(encoding="utf-8")
+    m = re.search(r"p_gain\(double x\)\s*\{(.*?)\n\}", text, re.S)
+    assert m, text
+    body = "\n    return 3.0 * x; /* authored, gh-2843 */"
+    f.write_text(
+        text[: m.start(1)] + body + text[m.end(1) :], encoding="utf-8"
+    )
+    _ok(
+        "add", "--state", "bias:double:1.0", "--object", "filt", "-f", cwd=proj
+    )
+    assert body.strip() in f.read_text(encoding="utf-8")
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+def test_a_macro_and_a_typedef_are_carried_on_their_own(tmp_path):
+    # With no #include beside them: the items that go after the render's
+    # includes (a macro, a typedef) are carried by themselves.
+    proj = _module(tmp_path)
+    _edit_header(proj, "#define FILT_TAPS 8\ntypedef int filt_tap_t;\n")
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    text = _core(proj)[0].read_text(encoding="utf-8")
+    assert "#define FILT_TAPS 8" in text, text
+    assert "typedef int filt_tap_t;" in text, text
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)

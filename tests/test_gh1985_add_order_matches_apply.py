@@ -254,12 +254,6 @@ def _hand_written(module: str):
 _FN = ("--param", "x:double", "--return-type", "double")
 
 
-#: adder (``module.function``) -> flavor -> (`jm new` flags, steps).
-#:
-#: Every flavor but the one marked adds in an order the manifest does not
-#: list -- so on the code before gh-1985 it ends with `status --check` red.
-#: A step is argv for `jm`, or a hand edit of the tree. Keyed by what
-#: `test_every_adder_has_a_case` derives from the source.
 def _depend_on_filt(root: Path, *members: str) -> None:
     """Make each of *members* depend on module ``filt``'s collocated core."""
     for name in members:
@@ -280,6 +274,12 @@ def _biq_and_zed_depend_on_filt(root: Path) -> None:
     _depend_on_filt(root, "biq", "zed")
 
 
+#: adder (``module.function``) -> flavor -> (`jm new` flags, steps).
+#:
+#: Every flavor but the one marked adds in an order the manifest does not
+#: list -- so on the code before gh-1985 it ends with `status --check` red.
+#: A step is argv for `jm`, or a hand edit of the tree. Keyed by what
+#: `test_every_adder_has_a_case` derives from the source.
 CASES = {
     "_init.run": {
         # The issue: a split layout loads objects/*.toml sorted.
