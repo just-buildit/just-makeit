@@ -260,15 +260,24 @@ _FN = ("--param", "x:double", "--return-type", "double")
 #: list -- so on the code before gh-1985 it ends with `status --check` red.
 #: A step is argv for `jm`, or a hand edit of the tree. Keyed by what
 #: `test_every_adder_has_a_case` derives from the source.
+def _depend_on_filt(root: Path, *members: str) -> None:
+    """Make each of *members* depend on module ``filt``'s collocated core."""
+    for name in members:
+        frag = root / "objects" / f"{name}.toml"
+        text = frag.read_text(encoding="utf-8")
+        assert text.count(f"[{name}]\n") == 1
+        frag.write_text(
+            text.replace(f"[{name}]\n", f'[{name}]\ndepends_on = ["filt"]\n'),
+            encoding="utf-8",
+        )
+
+
 def _biq_depends_on_filt(root: Path) -> None:
-    """Make member ``biq`` depend on its module's collocated core."""
-    frag = root / "objects" / "biq.toml"
-    text = frag.read_text(encoding="utf-8")
-    assert text.count("[biq]\n") == 1
-    frag.write_text(
-        text.replace("[biq]\n", '[biq]\ndepends_on = ["filt"]\n'),
-        encoding="utf-8",
-    )
+    _depend_on_filt(root, "biq")
+
+
+def _biq_and_zed_depend_on_filt(root: Path) -> None:
+    _depend_on_filt(root, "biq", "zed")
 
 
 CASES = {
@@ -301,6 +310,25 @@ CASES = {
             (),
             [("module", "filt"), ("object", "filt", "--module", "filt"),
              ("object", "biq", "--module", "filt"), _biq_depends_on_filt,
+             ("apply",), ("remove", "object", "filt", "--force")],
+        ),
+        # Two dependents: `apply` gives the core to the one it replays
+        # first, so the order the re-wire walks them in is load-bearing.
+        "two-dependents": (
+            (),
+            [("module", "filt"), ("object", "filt", "--module", "filt"),
+             ("object", "biq", "--module", "filt"),
+             ("object", "zed", "--module", "filt"),
+             _biq_and_zed_depend_on_filt,
+             ("apply",), ("remove", "object", "filt", "--force")],
+        ),
+        # A header-only dependent's core is INTERFACE: nothing of its own
+        # to fold in, so the re-wire must not add a line for it.
+        "header-only-dependent": (
+            (),
+            [("module", "filt"), ("object", "filt", "--module", "filt"),
+             ("object", "biq", "--module", "filt", "--header-only"),
+             _biq_depends_on_filt,
              ("apply",), ("remove", "object", "filt", "--force")],
         ),
     },
