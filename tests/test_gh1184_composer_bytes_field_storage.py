@@ -122,9 +122,12 @@ class TestTheOverrideReachesEverySite:
         return _all_c(_with_bits(**RELOCATED))
 
     def test_the_constructor(self, c: str) -> None:
-        # gh-2274: the constructor and the setter both go through the
-        # field's one replace, which holds the cast.
-        assert "Synth_replace_sync(self, sync)" in c
+        # gh-2864: the constructor attaches into its copy `_n`, with the
+        # same cast the setter's replace holds.
+        assert (
+            "_attach_bytes((uint8_t **)&_n.sync.bits, &_n.sync.len, sync)" in c
+        )
+        assert "free((void *)_n.sync.bits);" in c
         assert (
             "_attach_bytes((uint8_t **)&_t.sync.bits, &_t.sync.len, value)"
         ) in c

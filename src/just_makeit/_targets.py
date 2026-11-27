@@ -172,6 +172,12 @@ def emitted(cfg: dict) -> list[str]:
         objs = C.module_objects(cfg, mod)
         module_objects |= set(objs)
         names.append(cname)
+        # gh-2863: a composer's c-face CLI is an executable target too.
+        if C.is_composer_module(cfg, mod):
+            from . import _composer
+
+            if _composer.composer_cli(cfg, mod).get("enabled"):
+                names.append(_composer.cli_name(cfg, mod))
         # gh-1055: skipped when a same-named object already emits the pair.
         if C.module_functions(cfg, mod) and not C.collocated_object(cfg, mod):
             names += [f"test_{cname}_core", f"bench_{cname}_core"]
