@@ -1887,6 +1887,24 @@ def truthy(value: object) -> bool:
     return value is True or value == "true"
 
 
+def is_set(table: dict, key: str) -> bool:
+    """Whether *key* is set in *table*: a flag through :func:`truthy`, any
+    other key by its truth.
+
+    For a loop over a list of keys that mixes flags with other keys (a
+    list of shapes a function may declare): ``table.get(key)`` there read
+    ``why = "false"`` as set, which only the flags' own reader gets right.
+
+    Examples
+    --------
+    >>> row = {"why": "false", "out_size": "n", "variable_output": False}
+    >>> [is_set(row, k) for k in ("why", "out_size", "variable_output")]
+    [False, True, False]
+    """
+    value = table.get(key)
+    return truthy(value) if key in FLAG_KEYS else bool(value)
+
+
 def flag_values(tree: object, path: "tuple[str, ...]" = ()):
     """Yield ``(path, table, key)`` for every flag key in *tree*.
 

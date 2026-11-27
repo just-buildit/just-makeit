@@ -50,6 +50,7 @@ from pathlib import Path
 
 from . import _coerce
 from . import _config as C
+from ._keys import is_set
 from . import _record
 from . import _render as R
 from . import _stubs
@@ -238,7 +239,7 @@ def _skip_reason(fn: dict) -> "str | None":
         # result differs, and `_result` checks that.
         if flag == "result_fields" and _record.is_record(fn):
             continue
-        if fn.get(flag):
+        if is_set(fn, flag):
             return f"{flag} changes the call's shape: no contract call yet"
     for p in T.fn_input_params(fn.get("params", [])):
         if _arg(p) is None:
