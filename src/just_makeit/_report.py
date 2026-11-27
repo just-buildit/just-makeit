@@ -151,6 +151,47 @@ _ADVISORY_MARK = "~"
 _gating = 0
 
 
+#: The console scripts that run `_cli.main` (``[project.scripts]``).
+_JM_SCRIPTS = frozenset({"jm", "just-makeit"})
+
+
+def running_verb(argv: "list[str] | None" = None) -> str:
+    """The command this process runs, spelled as a message names it.
+
+    gh-2114. A check that several verbs share -- `_object`'s module
+    CMakeLists ask, reached from ``jm object``, ``jm method``, ``jm
+    remove`` and the rest -- refuses in the name of the command the author
+    typed, not a generic "this command" that leaves them to work out which.
+    That command is ``argv[1]`` when *argv* (default ``sys.argv``) is jm's
+    own console script; the in-process runner (`_example.run_cli`) sets it
+    the same way.
+
+    Anywhere else -- a test calling a writer directly, under pytest's argv
+    -- there is no command to name, and the answer says only that.
+
+    Examples
+    --------
+    >>> running_verb(["/venv/bin/jm", "object", "x", "--module", "m"])
+    '`jm object`'
+    >>> running_verb(["just-makeit", "remove", "object", "w"])
+    '`jm remove`'
+    >>> running_verb(["/venv/bin/pytest", "tests/test_x.py"])
+    'this command'
+    >>> running_verb(["jm", "--help"])
+    'this command'
+    """
+    from pathlib import Path
+
+    argv = sys.argv if argv is None else argv
+    if (
+        len(argv) > 1
+        and Path(argv[0]).stem in _JM_SCRIPTS
+        and not argv[1].startswith("-")
+    ):
+        return f"`jm {argv[1]}`"
+    return "this command"
+
+
 def reset() -> None:
     """Zero the gating count. Called at the start of a command that reports."""
     global _gating
