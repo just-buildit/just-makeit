@@ -229,16 +229,16 @@ def overridden_builtin_slots(
             m["name"],
             m.get("arg_type", "void"),
             m.get("return_type", "void"),
-            bool(m.get("variable_output")),
+            truthy(m.get("variable_output")),
             m.get("multi_output") or [],
             list(m.get("params") or []),
             m.get("out_type"),
-            pass_capacity=bool(m.get("pass_capacity")),
-            batch=bool(m.get("batch")),
+            pass_capacity=truthy(m.get("pass_capacity")),
+            batch=truthy(m.get("batch")),
             result_fields=m.get("result_fields") or [],
-            single=bool(m.get("single")),
+            single=truthy(m.get("single")),
             record_dtype=m.get("record_dtype", ""),
-            borrow=bool(m.get("borrow")),
+            borrow=truthy(m.get("borrow")),
             csym=ctx["csym"],
             max_out_fn=m.get("max_out_fn", ""),  # gh-2680
             why=truthy(m.get("why")),  # gh-2574
@@ -532,7 +532,7 @@ def reserved_python_members(cfg, component: str) -> "dict[str, str]":
     # params beside an `arg_type` input, the same way.
     for m in C.methods(cfg, component):
         if not _outbuf.enabled(
-            variable_output=bool(m.get("variable_output")),
+            variable_output=truthy(m.get("variable_output")),
             multi_output=bool(m.get("multi_output")),
             has_arg=str(m.get("arg_type", "void")) != "void",
             params=list(m.get("params", []) or []),

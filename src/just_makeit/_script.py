@@ -413,7 +413,7 @@ def _record_flags(entry: dict) -> list[str]:
             spec += f":{f['doc']}"
         parts.append(_flag("--result-field", spec))
 
-    if entry.get("single"):
+    if _truthy(entry.get("single")):
         parts.append(_bool_flag("--single"))
 
     # gh-257 / gh-261 / gh-646. Each only means anything under --single, and
@@ -440,21 +440,21 @@ def _record_flags(entry: dict) -> list[str]:
     # indent and no continuation, so it ran into whatever followed it on one
     # line. It happened to shell-split correctly and so was never wrong, only
     # unreadable -- and the next flag added beside it would not have been.
-    if entry.get("borrow"):
+    if _truthy(entry.get("borrow")):
         parts.append(_bool_flag("--borrow"))
     if entry.get("borrow_count"):
         parts.append(_flag("--borrow-count", str(entry["borrow_count"])))
-    if entry.get("borrow_writeable"):
+    if _truthy(entry.get("borrow_writeable")):
         parts.append(_bool_flag("--borrow-writeable"))
     # gh-1418: the key was honoured and had no flag, so a replayed script
     # rebuilt a method that RAISES where the original returned None -- exit
     # 0, different project, which is the gh-490 divergence this emitter's
     # own docstring is about.
-    if entry.get("none_on_empty"):
+    if _truthy(entry.get("none_on_empty")):
         parts.append(_bool_flag("--none-on-empty"))
     # gh-1426 B: dropped on replay, the rebuilt method CASTS where the
     # original refused -- exit 0, a different project.
-    if entry.get("strict"):
+    if _truthy(entry.get("strict")):
         parts.append(_bool_flag("--strict"))
     # gh-1418 part 2: the table is what makes a NULL mean something, so a
     # replay that dropped it would rebuild the method with end-of-stream
@@ -699,10 +699,10 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     if rt:
         parts.append(_flag("--return-type", rt))
 
-    if m.get("varargs"):
+    if _truthy(m.get("varargs")):
         parts.append(_bool_flag("--varargs"))
 
-    if m.get("batch"):
+    if _truthy(m.get("batch")):
         parts.append(_bool_flag("--batch"))
 
     # gh-2215: `jm method --no-bench` writes `bench = false`; dropped here,
@@ -710,9 +710,9 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     if not _truthy(m.get("bench", True)):
         parts.append(_bool_flag("--no-bench"))
 
-    if m.get("variable_output"):
+    if _truthy(m.get("variable_output")):
         parts.append(_bool_flag("--variable-output"))
-    if m.get("error_on_empty"):
+    if _truthy(m.get("error_on_empty")):
         parts.append(_bool_flag("--error-on-empty"))
     # gh-2012: the count's type and its unsigned refusal value.
     if m.get("count_type"):
@@ -723,15 +723,15 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--count-default", str(m["count_default"])))
     if m.get("count_name"):
         parts.append(_flag("--count-name", str(m["count_name"])))
-    if m.get("no_count"):  # gh-2233
+    if _truthy(m.get("no_count")):  # gh-2233
         parts.append(_bool_flag("--no-count"))
     if m.get("out_cols"):
         parts.append(_flag("--out-cols", str(m["out_cols"])))
-    if m.get("pass_capacity"):
+    if _truthy(m.get("pass_capacity")):
         parts.append(_bool_flag("--pass-capacity"))
-    if m.get("exact_max_out"):
+    if _truthy(m.get("exact_max_out")):
         parts.append(_bool_flag("--exact-max-out"))
-    if m.get("short_out"):
+    if _truthy(m.get("short_out")):
         parts.append(_bool_flag("--short-out"))
     # gh-684: the worst-case output count. Dropping it replayed the method
     # with jm's derived default instead of the declared bound.
@@ -747,13 +747,13 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_flag("--fn", str(m["fn"])))
     if m.get("max_out_fn"):  # gh-2680
         parts.append(_flag("--max-out-fn", str(m["max_out_fn"])))
-    if m.get("error_negative"):
+    if _truthy(m.get("error_negative")):
         parts.append(_bool_flag("--error-negative"))
     # gh-823 Ask D. `status_return` was forwarded by `_apply` and emitted by
     # nobody, so a replayed script rebuilt the method WITHOUT it — gh-808's
     # shape exactly. Now load-bearing as well as wrong: `--error` below may
     # accompany it, and would replay with nothing to attach to.
-    if m.get("status_return"):
+    if _truthy(m.get("status_return")):
         parts.append(_bool_flag("--status-return"))
     # gh-2574: dropped here, a replayed method's kernel lost its trailing
     # `const char **why` and the author's `_core.c` stopped compiling.
@@ -779,9 +779,9 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
     # instead of the declared one. The gh-490 silent-divergence trap again,
     # three more times; the gate now measures every key rather than waiting
     # for the next one to be noticed.
-    if m.get("manual_stub"):
+    if _truthy(m.get("manual_stub")):
         parts.append(_bool_flag("--manual-stub"))
-    if m.get("nogil"):
+    if _truthy(m.get("nogil")):
         parts.append(_bool_flag("--nogil"))
     if m.get("py_return_type"):
         parts.append(_flag("--py-return-type", str(m["py_return_type"])))
@@ -830,7 +830,7 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
     if _truthy(p.get("writable")):
         parts.append(_bool_flag("--writable"))
 
-    if p.get("field"):
+    if _truthy(p.get("field")):
         parts.append(_bool_flag("--field"))
 
     # gh-2182: a setter that refuses a value. Dropped, the replay rebuilds a
@@ -842,7 +842,7 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
         parts.append(_flag("--error-message", p["error_message"]))
     # gh-2538: a getter that can fail. Dropped, the replay declares a getter
     # returning the value, which the author's status getter does not match.
-    if p.get("getter_status"):
+    if _truthy(p.get("getter_status")):
         parts.append(_bool_flag("--getter-status"))
     # gh-2543: a writable property's getter failure; `error` is the setter's.
     if p.get("getter_error"):
@@ -996,11 +996,11 @@ def _function_flags(fn: dict, module: str) -> list[str]:
     # plain-out_type path (which would under-allocate).
     if fn.get("out_type"):
         parts.append(_flag("--out-type", fn["out_type"]))
-    if fn.get("variable_output"):
+    if _truthy(fn.get("variable_output")):
         parts.append(_bool_flag("--variable-output"))
     if fn.get("out_size"):
         parts.append(_flag("--out-size", fn["out_size"]))
-    if fn.get("check_return"):
+    if _truthy(fn.get("check_return")):
         parts.append(_bool_flag("--check-return"))
     if _truthy(fn.get("why")):
         parts.append(_bool_flag("--why"))

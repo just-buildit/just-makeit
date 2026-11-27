@@ -1804,9 +1804,16 @@ def default_raw_errors(cfg: dict) -> "list[str]":
 #: refused at load holding anything but :data:`FLAG_SPELLINGS`
 #: (:func:`flag_errors`), and respelled by ``jm upgrade`` when it holds the
 #: Python spelling an older jm wrote (:data:`PYTHON_SPELLINGS`). Matched by
-#: NAME, in every table: a key named here is a flag wherever it appears.
+#: NAME, in every table, as a scalar (a TABLE of that name is not a flag),
+#: unless :data:`_FLAG_ROW_SCOPE` names the rows it is a flag in.
+#:
 #: `tests/test_gh2120_one_flag_reader.py` holds this set equal to the keys
-#: the source reads through `truthy`, and refuses a flag read any other way.
+#: the source reads through `truthy`, refuses a flag read any other way,
+#: and holds it equal to the bool keys of jm's typed registries -- a
+#: `bool` coercion in `_method._SIGNATURE_COERCIONS`, a bool field of
+#: :data:`INIT_PARAM_FIELDS`, a `bool` parameter of a command's `run()`
+#: named for a manifest key -- plus :data:`UNTYPED_FLAG_KEYS`, so a bool
+#: key with no `truthy` reader fails rather than going unseen.
 FLAG_KEYS = frozenset(
     {
         # [project]
@@ -1843,8 +1850,81 @@ FLAG_KEYS = frozenset(
         "why",
         "status_out",
         "writable",
+        # a method's call shape (`_method._SIGNATURE_COERCIONS`)
+        "variable_output",
+        "batch",
+        "none_on_empty",
+        "strict",
+        "error_on_empty",
+        "single",
+        "borrow",
+        "borrow_writeable",
+        "varargs",
+        "manual_stub",
+        "pass_capacity",
+        "exact_max_out",
+        "short_out",
+        "no_count",
+        "nogil",
+        "status_return",
+        "error_negative",
+        # a property, a module function
+        "field",
+        "getter_status",
+        "inline",
+        "check_return",
     }
 )
+
+#: The flags no typed registry declares a bool -- each lives in a table
+#: whose keys are a plain name set, with no command taking it as an
+#: argument. Named here, with its table, so the gh-2120 test can hold
+#: :data:`FLAG_KEYS` to the registries plus this set; a key that gains a
+#: typed home (a `run()` parameter, a coercion) must leave it.
+UNTYPED_FLAG_KEYS = frozenset(
+    {
+        # a module, a composer's `[module.X.cli]` / `[module.X.json]`, a
+        # method's bench opt-out, a capsule param
+        "no_generate",
+        "context_manager",
+        "sample_type",
+        "enabled",
+        "bench",
+        "retain",
+        # a state row
+        "opaque",
+        "no_ctor",
+        "controllable",
+        # a composer field / source field
+        "bytes",
+        "complex",
+        "parse_why",
+        # a composer's `[module.X.composer]`, `[module.X.json]`, segments
+        "stream",
+        "to_dict",
+        "from_json_why",
+        "from_file_why",
+        "flat_sources",
+        # a kind module: a getter's cache, a create / init / method arg,
+        # a `[[depends_on]]` row
+        "cache",
+        "kwonly",
+        "link",
+        "test_only",
+        # a capsule / composer method: the caller supplies the out buffer
+        "caller_out",
+        # a method or function param: an output buffer (only there:
+        # :data:`_FLAG_ROW_SCOPE`)
+        "out",
+    }
+)
+
+FLAG_KEYS = FLAG_KEYS | UNTYPED_FLAG_KEYS
+
+#: Keys that are a flag only in the rows named: by the array the row sits
+#: in. A kind module's getter says ``out = "<C type>"``, where a method's
+#: param says ``out = true``.
+_FLAG_ROW_SCOPE = {"out": frozenset({"params"})}
 
 #: The values a flag may hold: a TOML bool, or the string form jm writes for
 #: the keys it has always written quoted (``perf = "false"``).
@@ -1859,9 +1939,22 @@ PYTHON_SPELLINGS = {"True": True, "False": False}
 #: The flags whose own load check already refuses everything but a TOML
 #: bool, in a message that says what the switch is for (gh-1722's ``why``,
 #: gh-2552's ``create_why``, gh-2584's ``status_out``, gh-2327's
-#: ``retain``). :func:`flag_errors` leaves them to it, so each is refused
-#: once; the ``jm upgrade`` respell still reaches them.
-BOOL_ONLY_FLAGS = frozenset({"why", "create_why", "status_out", "retain"})
+#: ``retain``, gh-1883's ``short_out``, ``no_count``, and a composer's
+#: ``from_json_why`` / ``from_file_why``). :func:`flag_errors` leaves them
+#: to it, so each is refused once; the ``jm upgrade`` respell still reaches
+#: them.
+BOOL_ONLY_FLAGS = frozenset(
+    {
+        "why",
+        "create_why",
+        "status_out",
+        "retain",
+        "short_out",
+        "no_count",
+        "from_json_why",
+        "from_file_why",
+    }
+)
 
 #: A table that carries a flag's name and is not a flag: ``[project.bench]``
 #: holds the benchmark settings, where a method's ``bench = false`` opts out.
@@ -1921,14 +2014,30 @@ def flag_values(tree: object, path: "tuple[str, ...]" = ()):
     ...     {"name": "w", "optional": "false"}]}}
     >>> [(".".join(p), k) for p, _t, k in flag_values(cfg)]
     [('o', 'streamable'), ('o.init_params[w]', 'optional')]
+
+    A table named like a flag is walked, not taken for one, and ``out`` is
+    a flag only on a param row:
+
+    >>> cfg = {"stream": {"no_state": "true"}, "module": {"m": {
+    ...     "getters": [{"fn": "g", "out": "g_t"}],
+    ...     "methods": [{"name": "r", "params": [{"name": "o", "out": True}]}]}}}
+    >>> [(".".join(p), k) for p, _t, k in flag_values(cfg)]
+    [('stream', 'no_state'), ('module.m.methods[r].params[o]', 'out')]
     """
     if isinstance(tree, dict):
+        row = path[-1].split("[", 1)[0] if path else ""
         for key, value in tree.items():
             here = (*path, str(key))
-            if key in FLAG_KEYS and tuple(here) not in _FLAG_NAMED_TABLES:
-                yield path, tree, key
-            elif isinstance(value, (dict, list)):
+            if isinstance(value, (dict, list)):
+                # A table or array named like a flag (a component, a
+                # library, `[project.bench]`) is not one: walk into it.
                 yield from flag_values(value, here)
+            elif (
+                key in FLAG_KEYS
+                and tuple(here) not in _FLAG_NAMED_TABLES
+                and row in _FLAG_ROW_SCOPE.get(key, (row,))
+            ):
+                yield path, tree, key
     elif isinstance(tree, list):
         for i, row in enumerate(tree):
             name = row.get("name") if isinstance(row, dict) else None

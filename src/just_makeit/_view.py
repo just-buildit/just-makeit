@@ -41,6 +41,7 @@ from . import _ctorsig
 from ._init import _inject_decls_into_core_h, _inject_includes_into_core_h
 from ._method import _append_to_core_c
 from ._object import _regenerate_module
+from ._keys import truthy
 
 
 def _fail(msg: str) -> None:
@@ -250,7 +251,7 @@ def run(
         linked = {
             C.dep_names([d])[0]
             for d in C.depends_on_raw(cfg, create_core)
-            if isinstance(d, dict) and d.get("link")
+            if isinstance(d, dict) and truthy(d.get("link"))
         }
         if object_name not in linked:
             _fail(

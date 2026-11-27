@@ -282,6 +282,51 @@ def test_a_string_false_flag_is_off(tmp_path, spelling, on):
     check("property")
 
 
+def _nogil_project(tmp_path: Path) -> "tuple[Path, Path]":
+    """An object ``g`` with a ``--nogil`` method ``w``, and its manifest."""
+    r = run_cli("new", "p", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    root = tmp_path / "p"
+    for argv in (
+        ("object", "g", "--init-param", "gain:double:1.0"),
+        ("method", "g", "w", "--return-type", "int", "--nogil"),
+    ):
+        r = run_cli(*argv, cwd=root)
+        assert r.returncode == 0, r.stderr
+    return root, _manifest_with(root, "nogil")
+
+
+def _releases_gil(root: Path) -> bool:
+    ext = (root / "native/src/g/g_ext.c").read_text(encoding="utf-8")
+    return "Py_BEGIN_ALLOW_THREADS" in ext
+
+
+def test_nogil_false_never_releases_the_gil(tmp_path):
+    """``nogil`` had no ``truthy`` reader and was no flag: ``nogil =
+    "False"`` loaded, was not respelled, and the method released the GIL.
+    Now ``"False"`` is refused naming ``jm upgrade``, which respells it to
+    ``false``; ``false`` and ``"false"`` release nothing."""
+    root, path = _nogil_project(tmp_path)
+    assert _releases_gil(root)
+    _spell(root, "nogil", '"False"')
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0, r.stdout
+    assert 'g.methods[w]: nogil = "False"' in r.stderr, r.stderr
+    assert "just-makeit upgrade" in r.stderr, r.stderr
+    assert _releases_gil(root)  # refused, so nothing was rewritten
+    r = run_cli("upgrade", cwd=root)
+    assert r.returncode == 0, r.stderr
+    assert "\nnogil = false\n" in path.read_text(encoding="utf-8")
+    for spelling in ("false", '"false"'):
+        _spell(root, "nogil", spelling)
+        r = run_cli("apply", cwd=root)
+        assert r.returncode == 0, r.stderr
+        assert not _releases_gil(root), spelling
+    _spell(root, "nogil", "true")
+    assert run_cli("apply", cwd=root).returncode == 0
+    assert _releases_gil(root)
+
+
 # --- source scans (registration-free) ---------------------------------------
 
 #: The function that IS the reading of a flag.
@@ -389,6 +434,9 @@ _RAW_READ_OK = {
     ("_config.py", "_why_key_errors", "mod['create_why']"): 2,
     ("_config.py", "_why_key_errors", "fn['why']"): 1,
     ("_config.py", "_create_why_errors", "table['create_why']"): 1,
+    ("_config.py", "_why_key_errors", "f['parse_why']"): 1,
+    ("_config.py", "_short_out_errors", "entry['short_out']"): 1,
+    ("_config.py", "_no_count_errors", "entry['no_count']"): 1,
     (
         "_context/_diagnostics.py",
         "method_status_out_errors",
@@ -423,6 +471,14 @@ _RAW_READ_OK = {
     # (`why`, `status_out`) with the rest: Python values from the CLI or
     # the replay, never a manifest spelling.
     ("_method.py", "run", "_args[k]"): 2,
+    # A kind module's getter names its result struct, `out = "<C type>"`;
+    # `out` is a flag only on a param row (`_keys._FLAG_ROW_SCOPE`).
+    ("_handle.py", "_scalar_out", "g.get('out', '')"): 1,
+    ("_handle.py", "render_getsets", "g['out']"): 1,
+    ("_handle.py", "render_type", "g['out']"): 1,
+    # `INPUT_SIDE_KEYS` maps each key NAME to the input side it reads; the
+    # loop's `k` indexes that table, not a manifest row.
+    ("_method.py", "shape_keys_why_not", "_keys.INPUT_SIDE_KEYS[k]"): 1,
 }
 
 
@@ -583,60 +639,139 @@ def _bind(target: ast.AST, items) -> "dict[str, object]":
     return {}
 
 
-def _local_envs(tree: ast.Module) -> "dict[str, dict[str, ast.AST]]":
-    """Per function, its own ``name = <expr>`` assignments; a name
-    assigned more than once is left out, so it resolves as unknown
-    rather than as one of its values."""
-    envs: "dict[str, dict[str, ast.AST]]" = {}
-    twice: "set[tuple[str, str]]" = set()
-    for owner, node in _enclosing(tree):
+#: What `_enclosing` names an owner by: a function. A lambda or class body
+#: inside one is read as part of it.
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def _own_nodes(scope: ast.AST):
+    """Every node in *scope*'s own body: not inside a nested function,
+    which binds its own names."""
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _bound_names(node: ast.AST) -> "list[str]":
+    """The names *node* binds, in any form: ``=`` (unpacking too), ``+=``,
+    an annotation, a ``for`` / comprehension target, ``:=``, ``with ...
+    as``, ``except ... as``, an import, a nested def or class."""
+    targets: "list[ast.AST]" = []
+    if isinstance(node, ast.Assign):
+        targets = list(node.targets)
+    elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+        targets = [node.target]
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        targets = [node.target]
+    elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+        targets = [node.optional_vars]
+    elif isinstance(node, ast.ExceptHandler) and node.name:
+        return [node.name]
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        return [(a.asname or a.name).split(".")[0] for a in node.names]
+    elif isinstance(
+        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    ):
+        return [node.name]
+    return [
+        n.id
+        for t in targets
+        for n in ast.walk(t)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    ]
+
+
+def _scope_env(scope: ast.AST) -> "dict[str, ast.AST]":
+    """*scope*'s own names: each bound exactly once by a plain ``name =
+    <expr>`` maps to that expression; every other name it binds -- twice,
+    or any other way, or as a parameter -- maps to ``_UNKNOWN``, so it
+    shadows a module constant of the same name rather than resolving as
+    one of its values."""
+    counts: "dict[str, int]" = {}
+    simple: "dict[str, ast.AST]" = {}
+    params: "list[str]" = []
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        a = scope.args
+        params = [
+            p.arg
+            for p in (
+                *a.posonlyargs,
+                *a.args,
+                *a.kwonlyargs,
+                a.vararg,
+                a.kwarg,
+            )
+            if p is not None
+        ]
+    for node in _own_nodes(scope):
+        for name in _bound_names(node):
+            counts[name] = counts.get(name, 0) + 1
         if (
             isinstance(node, ast.Assign)
             and len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
         ):
-            env = envs.setdefault(owner, {})
-            name = node.targets[0].id
-            if name in env:
-                twice.add((owner, name))
-            env[name] = node.value
-    for owner, name in twice:
-        envs[owner].pop(name, None)
-        # Shadow the module's value too: the name is the function's.
-        envs[owner][name] = ast.Constant(value=_UNKNOWN)
-    return envs
+            simple[node.targets[0].id] = node.value
+    unknown = ast.Constant(value=_UNKNOWN)
+    env: "dict[str, ast.AST]" = {name: unknown for name in (*params, *counts)}
+    for name, value in simple.items():
+        if counts.get(name) == 1 and name not in params:
+            env[name] = value
+    return env
 
 
-def _loop_keys(tree: ast.Module) -> "dict[tuple[str, str], set[str]]":
-    """``(function, loop variable)`` -> the FLAG_KEYS keys it takes, for
+def _scope_ids(tree: ast.Module) -> "dict[int, int]":
+    """``id(node)`` -> ``id`` of the function (or module) whose own body
+    holds it: the key a loop variable is bound under, so two functions of
+    one name keep their own."""
+    out: "dict[int, int]" = {}
+
+    def walk(node: ast.AST, scope: int) -> None:
+        for child in ast.iter_child_nodes(node):
+            out[id(child)] = scope
+            walk(child, id(child) if isinstance(child, _SCOPES) else scope)
+
+    walk(tree, id(tree))
+    return out
+
+
+def _loop_keys(tree: ast.Module) -> "dict[tuple[int, str], set[str]]":
+    """``(scope, loop variable)`` -> the FLAG_KEYS keys it takes, for
     every ``for`` loop and comprehension whose iterable resolves (see
     :func:`_value`) to keys that include one: a read ``table.get(<var>)``
-    there reads those flags. An iterable that does not resolve yields
-    nothing -- this scan is fail-open by decision (gh-2120: failing
-    closed flagged 378 reads keyed by C types, component names and
-    symbols)."""
-    envs = _local_envs(tree)
+    there reads those flags. Each function resolves names in its own
+    environment (keyed by the function, so two of one name do not share),
+    then the module's. An iterable that does not resolve yields nothing
+    -- this scan is fail-open by decision (gh-2120: failing closed flagged
+    378 reads keyed by C types, component names and symbols)."""
     module = _module_assigns(tree)
-    out: "dict[tuple[str, str], set[str]]" = {}
-    for owner, node in _enclosing(tree):
-        if not isinstance(node, (ast.For, ast.comprehension)):
-            continue
-        env = {**module, **envs.get(owner, {})}
-        items = _elements(_value(node.iter, env))
-        for name, vals in _bind(node.target, items).items():
-            if vals is _UNKNOWN:
+    out: "dict[tuple[int, str], set[str]]" = {}
+    scopes = [tree] + [n for n in ast.walk(tree) if isinstance(n, _SCOPES)]
+    for scope in scopes:
+        owner = id(scope)
+        env = {**module, **(_scope_env(scope) if scope is not tree else {})}
+        for node in _own_nodes(scope):
+            if not isinstance(node, (ast.For, ast.comprehension)):
                 continue
-            flags = {v for v in vals if isinstance(v, str)} & _keys.FLAG_KEYS
-            if flags:
-                out.setdefault((owner, name), set()).update(flags)
+            items = _elements(_value(node.iter, env))
+            for name, vals in _bind(node.target, items).items():
+                if vals is _UNKNOWN:
+                    continue
+                flags = {v for v in vals if isinstance(v, str)}
+                flags &= _keys.FLAG_KEYS
+                if flags:
+                    out.setdefault((owner, name), set()).update(flags)
     return out
 
 
 def _flag_key(
     node: ast.AST,
     consts: "dict[str, str]",
-    owner: str = "",
-    loops: "dict[tuple[str, str], set[str]] | None" = None,
+    scope: int = 0,
+    loops: "dict[tuple[int, str], set[str]] | None" = None,
 ) -> "str | None":
     """The ``FLAG_KEYS`` key *node* reads -- ``x.get(k[, d])`` or a load
     of ``x[k]``, *k* a literal, a module-level string constant, or a loop
@@ -657,7 +792,7 @@ def _flag_key(
         if k.id in consts:
             key = consts[k.id]
             return key if key in _keys.FLAG_KEYS else None
-        hit = (loops or {}).get((owner, k.id))
+        hit = (loops or {}).get((scope, k.id))
         if hit:
             return sorted(hit)[0]
     return None
@@ -676,6 +811,7 @@ def _raw_flag_reads(tree: ast.Module) -> "list[tuple[str, int, str]]":
     in *tree* that is not the first argument of ``truthy`` / ``_truthy``."""
     consts = _module_strings(tree)
     loops = _loop_keys(tree)
+    scope = _scope_ids(tree)
     parent: "dict[int, ast.AST]" = {
         id(child): node
         for node in ast.walk(tree)
@@ -683,7 +819,7 @@ def _raw_flag_reads(tree: ast.Module) -> "list[tuple[str, int, str]]":
     }
     out = []
     for owner, node in _enclosing(tree):
-        if not _flag_key(node, consts, owner, loops):
+        if not _flag_key(node, consts, scope[id(node)], loops):
             continue
         up = parent.get(id(node))
         if _is_truthy_call(up) and up.args and up.args[0] is node:
@@ -763,6 +899,13 @@ def test_raw_read_exemptions_still_exist():
         "        if p.get(k):\n            return k\n",
         "def f(m):\n    for key in _keys.BOOL_ONLY_FLAGS & {'why'}:\n"
         "        m.get(key)\n",
+        # gh-2120 review of b4d4b313 (F2): two functions of one name keep
+        # their own names -- the second's `ks` does not make the first's
+        # unknown, nor its loop the second's.
+        "def a(p):\n    def g():\n        ks = ('writable',)\n"
+        "        for k in ks:\n            p.get(k)\n"
+        "def b(p):\n    def g():\n        ks = ('doc',)\n"
+        "        for k in ks:\n            p.get(k)\n",
         "D = {'why': 1, 'doc': 2}\n"
         "def f(m):\n    for key, _v in D.items():\n        m.get(key)\n",
     ],
@@ -788,8 +931,21 @@ def test_the_raw_scan_is_armed(src):
         "            return k\n",
         "def f(m):\n    for key, flag in (('doc', '--doc'),):\n"
         "        if m.get(key):\n            return flag\n",
-        "def f(m):\n    for key in _keys.BOOL_ONLY_FLAGS - {'why', 'create_why',"
-        " 'status_out', 'retain'}:\n        m.get(key)\n",
+        # F2: a name bound twice, or another way than `=`, is unknown --
+        # never one of its values (`ks += ...`, a `for` rebinding, `:=`,
+        # unpacking, a parameter shadowing a module constant).
+        "def f(p):\n    ks = ('writable',)\n    ks += ('doc',)\n"
+        "    for k in ks:\n        p.get(k)\n",
+        "def f(p):\n    ks = ('writable',)\n    for ks in [()]:\n        pass\n"
+        "    for k in ks:\n        p.get(k)\n",
+        "def f(p):\n    ks = ('writable',)\n    if (ks := ()):\n        pass\n"
+        "    for k in ks:\n        p.get(k)\n",
+        "def f(p):\n    ks = ('writable',)\n    ks, _ = (), 1\n"
+        "    for k in ks:\n        p.get(k)\n",
+        "KS = ('writable',)\n"
+        "def f(p, KS=()):\n    for k in KS:\n        p.get(k)\n",
+        "def f(m):\n    for key in _keys.BOOL_ONLY_FLAGS & {'name', 'type'}:"
+        "\n        m.get(key)\n",
     ],
 )
 def test_the_raw_scan_passes_a_read_through_truthy(src):
@@ -816,6 +972,13 @@ def _module_strings(tree: ast.Module) -> "dict[str, str]":
 #: key; each call of it names one (resolved below), and counts as a read.
 _KEY_FROM_CALLER = {("_keys.py", "is_set")}
 
+#: ``is_set`` calls over EVERY key of a row, which no key set names.
+_IS_SET_EVERY_KEY = {
+    # Which backing keys a property row sets: each key it carries, a flag
+    # read as one (`field = "false"` is not a backing).
+    ("_borrow.py", "_property_read"),
+}
+
 
 def _truthy_keys() -> "tuple[set[str], list[str]]":
     """Every key the source reads through ``truthy`` / ``_truthy`` (or
@@ -826,6 +989,7 @@ def _truthy_keys() -> "tuple[set[str], list[str]]":
     for rel, tree in _sources():
         consts = _module_strings(tree)
         loops = _loop_keys(tree)
+        scope = _scope_ids(tree)
         for owner, node in _enclosing(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -833,8 +997,11 @@ def _truthy_keys() -> "tuple[set[str], list[str]]":
             name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
             if name == "is_set" and len(node.args) == 2:
                 k = node.args[1]
-                if isinstance(k, ast.Name) and (owner, k.id) in loops:
-                    keys |= loops[(owner, k.id)]
+                hit = (scope[id(node)], getattr(k, "id", ""))
+                if isinstance(k, ast.Name) and hit in loops:
+                    keys |= loops[hit]
+                    continue
+                if (rel, owner) in _IS_SET_EVERY_KEY:
                     continue
                 unnamed.append(f"{rel}:{node.lineno} {ast.unparse(node)}")
                 continue
@@ -860,6 +1027,89 @@ def _truthy_keys() -> "tuple[set[str], list[str]]":
             else:
                 keys.add(key)
     return keys, unnamed
+
+
+#: A command's `run()` parameter that takes a manifest key under another
+#: spelling (a trailing ``_`` dodges a module name; a short form).
+_RUN_PARAM_KEY = {
+    "pytest_": "pytest",
+    "pytest_benchmark_": "pytest_benchmark",
+    "step_delegates": "step_delegates_to_steps",
+}
+
+
+def _vocabulary() -> "set[str]":
+    """Every key a manifest table may carry: `_keys`' key sets."""
+    out: "set[str]" = set()
+    for name in dir(_keys):
+        if not name.endswith("KEYS"):
+            continue
+        value = getattr(_keys, name)
+        tables = value.values() if isinstance(value, dict) else [value]
+        for t in tables:
+            if isinstance(t, frozenset):
+                out |= {k for k in t if isinstance(k, str)}
+    return out
+
+
+def _registry_bools() -> "dict[str, set[str]]":
+    """Every manifest key a TYPED registry declares a bool, with the
+    registries that do -- independent of who reads it:
+
+    - a flag coercion in ``_method._SIGNATURE_COERCIONS``;
+    - a bool field of ``_keys.INIT_PARAM_FIELDS``;
+    - a ``bool`` parameter of a command's ``run()`` named for a manifest
+      key (``_RUN_PARAM_KEY`` maps the ones spelled otherwise)."""
+    from just_makeit import _method
+
+    out: "dict[str, set[str]]" = {}
+    for key, (coerce, _default) in _method._SIGNATURE_COERCIONS.items():
+        if coerce in (bool, _keys.truthy):
+            out.setdefault(key, set()).add("_SIGNATURE_COERCIONS")
+    for key, is_bool in _keys.INIT_PARAM_FIELDS:
+        if is_bool:
+            out.setdefault(key, set()).add("INIT_PARAM_FIELDS")
+    vocab = _vocabulary()
+    for rel, tree in _sources():
+        for node in tree.body:
+            if not (isinstance(node, ast.FunctionDef) and node.name == "run"):
+                continue
+            for a in node.args.args + node.args.kwonlyargs:
+                ann = ast.unparse(a.annotation) if a.annotation else ""
+                key = _RUN_PARAM_KEY.get(a.arg, a.arg)
+                if ann.strip("'\"") == "bool" and key in vocab:
+                    out.setdefault(key, set()).add(f"{rel} run()")
+    return out
+
+
+def test_flag_keys_are_the_registries_bools():
+    """Both directions, against registries that do not know who reads a
+    key: a bool there that is no flag is one ``flag_errors`` never refuses
+    and every bare reader reads ``"False"`` as on -- `nogil = "False"`
+    released the GIL; a flag no registry declares a bool must be named in
+    ``UNTYPED_FLAG_KEYS``, which a key leaves when it gains a typed home."""
+    reg = _registry_bools()
+    typed = set(reg)
+    missing = {k: sorted(reg[k]) for k in typed - _keys.FLAG_KEYS}
+    assert not missing, f"a registry's bool that is no flag: {missing}"
+    stray = _keys.FLAG_KEYS - typed - _keys.UNTYPED_FLAG_KEYS
+    assert not stray, (
+        "a flag no typed registry declares a bool; name it, with its "
+        f"table, in _keys.UNTYPED_FLAG_KEYS: {sorted(stray)}"
+    )
+    rehomed = {k: sorted(reg[k]) for k in _keys.UNTYPED_FLAG_KEYS & typed}
+    assert not rehomed, f"typed now; drop from UNTYPED_FLAG_KEYS: {rehomed}"
+    assert _keys.UNTYPED_FLAG_KEYS <= _keys.FLAG_KEYS
+
+
+def test_no_signature_flag_coerces_through_bool():
+    """``bool("false")`` is True: a flag's coercion is ``truthy``."""
+    from just_makeit import _method
+
+    plain = [
+        k for k, (c, _d) in _method._SIGNATURE_COERCIONS.items() if c is bool
+    ]
+    assert not plain, plain
 
 
 def test_flag_keys_are_the_keys_truthy_reads():

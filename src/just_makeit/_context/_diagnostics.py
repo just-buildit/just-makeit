@@ -43,6 +43,7 @@ import textwrap
 
 from .. import _csym as CSYM
 from .._keys import truthy
+from .._keys import is_set
 
 # Message prose is authored by a human and lands inside a C string literal.
 _C_ESCAPES = str.maketrans(
@@ -562,13 +563,13 @@ def method_status_out_errors(
         ]
     if not value:
         return []
-    if handle or m.get("status_return"):
+    if handle or truthy(m.get("status_return")):
         return [
             f"{where} declares status_out = true, but its status is its "
             "return value: `status_errors` rows already match the non-zero "
             "`int` it returns. Drop status_out."
         ]
-    if not any(m.get(k) for k in COUNT_REFUSALS):
+    if not any(is_set(m, k) for k in COUNT_REFUSALS):
         return [
             f"{where} declares status_out = true, but no count refusal: "
             "the `int *status` the C function writes is read only when "
@@ -645,7 +646,10 @@ def method_why_read(m: dict, *, handle: bool = False) -> bool:
     if method_raises(m):
         return True
     rows = bool(m.get("status_fn") and m.get("status_errors"))
-    return bool(m.get("borrow") and (not m.get("none_on_empty") or rows))
+    return bool(
+        truthy(m.get("borrow"))
+        and (not truthy(m.get("none_on_empty")) or rows)
+    )
 
 
 def method_why_errors(
@@ -1024,9 +1028,9 @@ def method_raises(m: dict) -> bool:
     True
     """
     return bool(
-        m.get("error_negative")
-        or m.get("status_return")
-        or m.get("error_on_empty")
+        truthy(m.get("error_negative"))
+        or truthy(m.get("status_return"))
+        or truthy(m.get("error_on_empty"))
         or m.get("error_sentinel")
     )
 
@@ -1132,7 +1136,7 @@ def handle_declared_raise(m: dict) -> "tuple[str, str] | None":
     ...                        "returns": "int", "status_return": True})
     ('ValueError', 'sink_send failed')
     """
-    if not (m.get("error") or m.get("status_return")):
+    if not (m.get("error") or truthy(m.get("status_return"))):
         return None
     return _raise_pair(m, str(m.get("fn") or m.get("name", "")))
 
@@ -1177,7 +1181,7 @@ def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
     """
     if not p.get("error"):
         return None
-    if p.get("getter_status") and not truthy(p.get("writable")):
+    if truthy(p.get("getter_status")) and not truthy(p.get("writable")):
         return None
     return _raise_pair(p, setter)
 
@@ -1275,7 +1279,7 @@ def property_getter_raise(p: dict, getter: str) -> "tuple[str, str] | None":
     ...                       "cor_get_k")
     ('AttributeError', 'cor_get_k failed')
     """
-    if not p.get("getter_status"):
+    if not truthy(p.get("getter_status")):
         return None
     if truthy(p.get("writable")):
         return _raise_pair(
@@ -1316,9 +1320,9 @@ def getter_prototype(p: dict, getter: str, csym: str, ctype: str) -> str:
     ...                  "double[]")
     'int cor_c_status(const cor_state_t *state)'
     """
-    if p.get("getter_status") and p.get("buf_field"):
+    if truthy(p.get("getter_status")) and p.get("buf_field"):
         return f"int {getter}(const {csym}_state_t *state)"
-    if p.get("getter_status"):
+    if truthy(p.get("getter_status")):
         return f"int {getter}(const {csym}_state_t *state, {ctype} *out)"
     return f"{ctype} {getter}(const {csym}_state_t *state)"
 
@@ -1475,7 +1479,7 @@ write``, with the return code appended (gh-869), when it gives none.'
     # the documentation is a list of what raises rather than a sentence
     # trying to hold three.
     out: "list[tuple[str, str]]" = []
-    if m.get("error_negative"):
+    if truthy(m.get("error_negative")):
         out.append(
             (
                 category,
@@ -1499,7 +1503,7 @@ write``, with the return code appended (gh-869), when it gives none.'
     # checked is a LENGTH, and there is no code to append, because it is zero
     # by construction. A generated docstring that describes a mechanism the
     # binding does not have is the gh-869 split wearing the other face.
-    if m.get("error_on_empty"):
+    if truthy(m.get("error_on_empty")):
         out.append(
             (
                 category,
@@ -1676,12 +1680,12 @@ def empty_is_none(m: dict) -> bool:
     ...                "none_on_empty": True})
     False
     """
-    if not m.get("none_on_empty") or m.get("batch"):
+    if not truthy(m.get("none_on_empty")) or truthy(m.get("batch")):
         return False
     # Deferred: `_borrow` imports this module for its raise emitters.
     from .._borrow import is_borrow
 
-    return bool(m.get("variable_output")) or is_borrow(m)
+    return truthy(m.get("variable_output")) or is_borrow(m)
 
 
 def optional_ann(m: dict, ann: str) -> str:
@@ -1738,7 +1742,7 @@ def fixed_result_parts(m: dict) -> "list[tuple[str, str]]":
     parts: "list[tuple[str, str]]" = []
     if out_type:
         parts.append(("array", str(out_type)))
-    elif not m.get("status_return"):
+    elif not truthy(m.get("status_return")):
         parts.append(("scalar", str(m.get("return_type") or "float _Complex")))
     parts += [("scalar", str(rt)) for rt in m.get("multi_output") or []]
     return parts

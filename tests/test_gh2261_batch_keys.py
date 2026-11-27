@@ -38,6 +38,7 @@ from _jmrun import run_cli  # noqa: E402
 
 from just_makeit import _keys  # noqa: E402
 from just_makeit._method import _SIGNATURE_COERCIONS  # noqa: E402
+from just_makeit._keys import truthy  # noqa: E402
 
 #: The keys a batch row may NOT carry, read off the registry.
 REFUSED_KEYS = sorted(_keys.METHOD_KEYS - _keys.BATCH_METHOD_KEYS)
@@ -86,7 +87,7 @@ def _sample(key: str) -> str:
     if key in _SAMPLES:
         return _SAMPLES[key]
     coerce, default = _SIGNATURE_COERCIONS[key]
-    if coerce is bool:
+    if coerce is truthy:  # a flag (gh-2120)
         return "true"
     if coerce is int:
         return str(default + 2)
