@@ -164,3 +164,38 @@ def test_save_refuses_it_on_its_own(proj: Path) -> None:
     with pytest.raises(Refusal, match="'s' state: 'n' is declared twice"):
         C.save(proj, cfg)
     assert _snapshot(proj) == before
+
+
+def test_a_name_may_repeat_across_lists(proj: Path) -> None:
+    """The over-reach guard: the check is per list, not per object or module.
+
+    The same parameter name in two methods, or in two functions, is two C
+    declarations, each with one ``a``.
+    """
+    for args in (
+        ("method", "s", "go", "--arg-type", "float[]", "--return-type",
+         "double", "--param", "a:int"),
+        ("method", "s", "run", "--arg-type", "float[]", "--return-type",
+         "double", "--param", "a:int"),
+        ("function", "f", "--module", "m", "--param", "a:int"),
+        ("function", "g", "--module", "m", "--param", "a:int"),
+    ):  # fmt: skip
+        r = run_cli(*args, cwd=proj)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("where", ["init_params", "method"])
+def test_a_views_own_lists_are_checked(where: str) -> None:
+    """A view (gh-504) has its own constructor and methods: one C list each."""
+    from just_makeit import _config as C
+
+    rows = [{"name": "n", "type": "int"}, {"name": "n", "type": "int"}]
+    view: dict = {"class_name": "V", "create_fn": "o_create_v"}
+    if where == "init_params":
+        view["init_params"] = rows
+        want = "'o' view 'V' init_params: 'n' is declared twice"
+    else:
+        view["methods"] = [{"name": "go", "params": rows}]
+        want = "'o' view 'V' method 'go' params: 'n' is declared twice"
+    errors = C.duplicate_name_errors({"o": {"views": [view]}})
+    assert any(e.startswith(want) for e in errors), errors

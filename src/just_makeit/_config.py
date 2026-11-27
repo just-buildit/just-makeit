@@ -3467,12 +3467,21 @@ parameter, so the scaffold would not compile."]
             continue
         out += rows_of(f"'{comp}' state", sec.get("state"))
         out += rows_of(f"'{comp}' init_params", sec.get("init_params"))
-        for m in sec.get("methods") or []:
-            if not isinstance(m, dict):
-                continue
-            what = f"'{comp}' method '{m.get('name')}'"
-            out += rows_of(f"{what} params", m.get("params"))
-            out += rows_of(f"{what} result_fields", m.get("result_fields"))
+        owners = [(f"'{comp}'", sec)]
+        # A view (gh-504) has its own constructor and its own methods, each
+        # one C declaration too; its state is the parent's struct.
+        for v in sec.get("views") or []:
+            if isinstance(v, dict):
+                who = f"'{comp}' view '{v.get('class_name')}'"
+                out += rows_of(f"{who} init_params", v.get("init_params"))
+                owners.append((who, v))
+        for who, owner in owners:
+            for m in owner.get("methods") or []:
+                if not isinstance(m, dict):
+                    continue
+                what = f"{who} method '{m.get('name')}'"
+                out += rows_of(f"{what} params", m.get("params"))
+                out += rows_of(f"{what} result_fields", m.get("result_fields"))
     for mod in modules(cfg):
         for fn in module_functions(cfg, mod):
             what = f"module '{mod}' function '{fn.get('name')}'"
