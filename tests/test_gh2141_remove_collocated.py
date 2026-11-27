@@ -56,14 +56,11 @@ def _collocated(tmp_path: Path, *, function: bool = False) -> Path:
     _ok("new", "p", cwd=tmp_path)
     proj = tmp_path / "p"
     _ok("module", "filt", cwd=proj)
-    _ok("object", "filt", "--module", "filt", cwd=proj)
     if function:
-        # TEMPORARY order, not the intended shape: the natural one (the
-        # function first, then the collocated object) leaves the header
-        # without the function's declaration before any removal -- #2843
-        # item 1, fixed in this same wave. That fix restores the natural
-        # order here.
+        # The natural order: the module's function, then its collocated
+        # object (whose core keeps the declaration since gh-2843).
         _ok("function", "gain", "--module", "filt", cwd=proj)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
     core_h, core_c = _core(proj)
     text = core_h.read_text(encoding="utf-8")
     guard = text.rindex("#endif")
