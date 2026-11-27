@@ -95,6 +95,7 @@ _NOT_PER_PROCESS = {
     ("_config", "_DEFERRED"): SCOPED,
     ("_object", "_DEFERRED_REGEN"): SCOPED,
     ("_undo", "_active"): SCOPED,
+    ("_undo", "_awaiting_root"): SCOPED,
     ("__init__", "globals()"): (
         "the lazy `__version__` and re-exports: jm's install, the same in "
         "every process, and a failed version lookup is not kept (gh-1166)"
