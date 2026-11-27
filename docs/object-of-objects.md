@@ -772,7 +772,9 @@ hand-written original:
     `fs` (given by keyword or position, or defaulted, so
     `seg.sources[0].fs == seg.fs`), and wraps the
     one result. The two are separate objects afterwards: setting `seg.fs`
-    moves the segment only;
+    moves the segment only. The segment's own scalars are parsed into a
+    copy and committed only once the source is built, so a refused
+    re-`__init__` leaves a live segment as it was (gh-2864);
 - multi-source: `Segment.sum(*sources, num_samples=…)` (a classmethod that
     type-checks each positional source).
 

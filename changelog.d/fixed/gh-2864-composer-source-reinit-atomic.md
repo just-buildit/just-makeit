@@ -8,4 +8,5 @@
     generator, frees the old buffers and owned pointers and commits; a
     refusal frees what it converted. A re-`__init__` that omits a ranged
     field also clears that field's range, rather than keeping the pair a
-    previous call set.
+    previous call set. A `Segment` re-`__init__` parses its own scalars into
+    a copy too, and commits them only once the source it wraps is built.

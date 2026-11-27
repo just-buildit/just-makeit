@@ -41,6 +41,7 @@ from . import _csym as CSYM
 from . import _types as T
 from ._context._types import kind_doc_default
 from ._context._modpath import module_docstring_lines, module_m_doc
+from . import _capsule
 from ._capsule import scalar_meta
 from ._context._parse import (
     _build_ml_doc,
@@ -4009,16 +4010,28 @@ def render_segment_type(cfg: dict, module: str) -> str:
             return f["default"]
         return "0"
 
-    set_defaults = "\n".join(
-        [f"    self->{f['name']} = {_default(f)};" for f in fields]
-        + (["    self->ranged = 0;"] if ranged_fields else [])
-        + [f"    self->{f['name']}_hi = 0;" for f in ranged_fields]
-    )
+    def _members(at: str) -> "list[str]":
+        """Every scalar member the segment object carries, spelled at
+        *at* (``self->`` or the init's copy ``_s.``)."""
+        return (
+            [f"{at}{f['name']}" for f in fields]
+            + ([f"{at}ranged"] if ranged_fields else [])
+            + [f"{at}{f['name']}_hi" for f in ranged_fields]
+        )
+
+    def _set_defaults(at: str) -> str:
+        return "\n".join(
+            [f"    {at}{f['name']} = {_default(f)};" for f in fields]
+            + ([f"    {at}ranged = 0;"] if ranged_fields else [])
+            + [f"    {at}{f['name']}_hi = 0;" for f in ranged_fields]
+        )
+
+    set_defaults = _set_defaults("self->")
 
     # extract a segment field from a kwargs dict; *delete* (init) or leave
     # (sum). Shared body emitted as a macro-free inline block per field. A
     # ranged field accepts a scalar or a (lo, hi) pair (→ ranged bit + _hi).
-    def _extract_block(f, *, delete: bool):
+    def _extract_block(f, *, delete: bool, at: str = "self->"):
         n, ct = f["name"], f["type"]
         dele = (
             f'        if (PyDict_DelItemString(kw, "{n}") < 0) goto fail;\n'
@@ -4040,7 +4053,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
                     indent="            ",
                 )
                 + "\n"
-                f"            self->{n} = _i;\n"
+                f"            {at}{n} = _i;\n"
             )
         elif f.get("_ranged"):
             # gh-2224: each bound by the field's own type row.
@@ -4048,8 +4061,8 @@ def render_segment_type(cfg: dict, module: str) -> str:
                 f,
                 _number_meta(ct, _row(module, "segment.fields", n)),
                 "_o",
-                f"self->{n}",
-                "self->ranged",
+                f"{at}{n}",
+                f"{at}ranged",
                 "goto fail;",
                 indent=" " * 12,
             )
@@ -4065,7 +4078,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
                     meta=_number_meta(ct, _row(module, "segment.fields", n)),
                     indent=" " * 12,
                 )
-                + f"            self->{n} = _v;\n"
+                + f"            {at}{n} = _v;\n"
             )
         return (
             f'    {{\n        PyObject *_o = PyDict_GetItemString(kw, "{n}");\n'
@@ -4074,7 +4087,13 @@ def render_segment_type(cfg: dict, module: str) -> str:
             f"{dele}        }}\n    }}"
         )
 
-    init_extracts = "\n".join(_extract_block(f, delete=True) for f in fields)
+    # gh-2864: `__init__` parses every scalar into `_s`, a copy, and
+    # commits it only once the source it wraps has been built, so a refused
+    # re-`__init__` (a bad scalar, or the source type refusing its fields)
+    # leaves a live segment as it was.
+    init_extracts = "\n".join(
+        _extract_block(f, delete=True, at="_s.") for f in fields
+    )
     sum_extracts = "\n".join(_extract_block(f, delete=False) for f in fields)
 
     # gh-2264: the `fail:` tail exists only for a field's parse to jump to.
@@ -4116,7 +4135,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
         "        return -1;\n"
         "    }\n"
         "    if (!_fs_pos) {\n"
-        "        PyObject *_fs = PyFloat_FromDouble((double)self->fs);\n"
+        "        PyObject *_fs = PyFloat_FromDouble((double)_s.fs);\n"
         '        int _r = _fs ? PyDict_SetItemString(kw, "fs", _fs) : -1;\n'
         "        Py_XDECREF(_fs);\n"
         "        if (_r < 0) {\n"
@@ -4129,18 +4148,26 @@ def render_segment_type(cfg: dict, module: str) -> str:
     )
     fs_back = (
         "    if (_fs_pos)\n"
-        f"        self->fs = ({seg_fs_row['type']})"
+        f"        _s.fs = ({seg_fs_row['type']})"
         f"(({src_tname}Object *)one)->fs;\n"
         if seg_fs_row
         else ""
     )
 
+    # gh-2864: the copy the scalars are parsed into (only its scalar
+    # members are used), and its commit once the source is built.
+    # A segment with no fields has no copy to make (-Wunused-variable).
+    init_defaults = f"    {obj} _s;\n" + _set_defaults("_s.") if fields else ""
+    init_commit = "".join(
+        f"    {d} = {c};\n"
+        for d, c in zip(_members("self->"), _members("_s."))
+    )
     # tp_init — single-source inline: forward leftover args/kwds to the source
     # type, wrap the one source.
     parts.append(f"""static int
 {tname}_init({obj} *self, PyObject *args, PyObject *kwds)
 {{
-{set_defaults}
+{init_defaults}
     PyObject *kw = kwds ? PyDict_Copy(kwds) : PyDict_New();
     if (!kw)
         return -1;
@@ -4155,7 +4182,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
         return -1;
     }}
     PyList_SET_ITEM(list, 0, one); /* steals */
-    Py_XSETREF(self->sources, list);
+{init_commit}    Py_XSETREF(self->sources, list);
     return 0;
 {init_fail}}}
 """)
@@ -6663,7 +6690,7 @@ def render_cmake(cfg: dict, module: str) -> str:
     dropping the ``.so`` into the (optionally overridden) package directory.
     Mirrors the capsule CMake generator."""
     mp = C.module_paths(module)
-    leaf, cname = mp.leaf, mp.cname
+    cname = mp.cname
     out_pkg = C.module_package_resolved(cfg, module)
     link_cores = C.dep_link_libs(C.capsule_depends_on(cfg, module))
     extra = C.capsule_extra_link_libs(cfg, module)
@@ -6681,20 +6708,7 @@ def render_cmake(cfg: dict, module: str) -> str:
 # {cname} — composer extension for `{C.capsule_backing(cfg, module)}` (gh-287).
 # The OO types live in the .so; kernels are in the backing _core.c.
 # Generated by just-makeit from [module.{module}] — edit the manifest, not this.
-Python3_add_library({leaf} MODULE WITH_SOABI {cname}_ext.c)
-target_link_libraries({leaf} PRIVATE
-{link_lines}    Python3::NumPy)
-target_include_directories({leaf} PRIVATE{inc})
-set_target_properties({leaf} PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${{PYTHON_PACKAGE_DIR}}/{out_pkg}"
-    RUNTIME_OUTPUT_DIRECTORY "${{PYTHON_PACKAGE_DIR}}/{out_pkg}")
-add_custom_command(TARGET {leaf} POST_BUILD
-    COMMAND ${{CMAKE_COMMAND}} -E copy_if_different
-        "$<TARGET_FILE:{leaf}>"
-        "${{PYTHON_PACKAGE_DIR}}/{out_pkg}/$<TARGET_FILE_NAME:{leaf}>"
-    VERBATIM
-    COMMENT "Copy {leaf} extension module")
-
+{_capsule.extension_cmake(module, link_lines, out_pkg, inc)}
 endif()
 {_cli_cmake_block(cfg, module, link_cores, extra)}""",
         cname,
@@ -8747,8 +8761,8 @@ def cli_program(cfg: dict, module: str) -> str:
 
     ``[module.X.cli] name`` when given, else ``<cname>_cli`` -- the stem of
     the ``<cname>_cli.c`` it builds (gh-2863). The default was the module
-    id, which is the module's own extension target
-    (``Python3_add_library(<leaf> ...)``), so every CLI declared without a
+    id, which is the module's own extension target (its cname,
+    ``_capsule.extension_cmake``), so every CLI declared without a
     ``name`` was a second target of that name and cmake refused to
     configure (CMP0002). A target name is global, so a ``name`` that jm
     also emits elsewhere is refused here, through the one count of what jm
