@@ -329,9 +329,13 @@ def _build_no_state_init_ctx(
       ``PyArray_NDIM`` shape check in the generated binding.
 
     * String-enum  (``type = "string_enum:a,b,c,d"``)
-      — optional keyword string parsed and mapped to an ``int`` index before
-      being forwarded to the C constructor.  Covers any C enum the caller
-      exposes as human-readable names.
+      — a choice string parsed and mapped to an ``int`` index (or the
+      choice's bound C constant) before being forwarded to the C
+      constructor.  Covers any C enum the caller exposes as human-readable
+      names.  With a ``default`` it is an optional keyword; with none it is
+      REQUIRED (gh-2743): parsed before the PyArg ``|``, and shown with no
+      ``= ...`` in the ``.pyi``.  The C smoke test and bench seed it with
+      the same choice the Python tests pass (gh-2565).
 
     * Path         (``type = "path"``, gh-515)
       — a required positional ``str | os.PathLike`` coerced through
@@ -370,6 +374,8 @@ def _build_no_state_init_ctx(
     # gh-1450: the C constant each choice binds to, when its `[[enum]]`
     # declares `enumerators`; absent, the choice's position is the value.
     _str_enum_consts: dict = {}
+    # gh-2743: the string-enum params with no default -- required.
+    _str_enum_required: set[str] = set()
     scalar_ip: list[tuple] = []
     # gh-515: "path" is a pseudo-type — deliberately absent from _CTYPE_META —
     # so it must be classified before any `_CTYPE_META[ct]` lookup can run.
@@ -587,6 +593,12 @@ def _build_no_state_init_ctx(
         elif is_string_enum_type(ct):
             str_enum_ip.append((name, string_enum_choices(ct), dflt))
             _str_enum_consts[name] = string_enum_constants(ct)
+            # gh-2743: no default means required. The first choice is an
+            # accident of declaration order, not a default the author chose,
+            # so omitting the argument is refused at the call boundary
+            # rather than validated as `""` and refused after it.
+            if not dflt or required_flag:
+                _str_enum_required.add(name)
         elif ct == "path":
             path_ip.append(name)
         elif ct == "bytes":
@@ -732,11 +744,22 @@ def _build_no_state_init_ctx(
         + [("bytes", n) for n in bytes_ip]
         # gh-790: same reasoning again. There is no object to build around a
         # handle that is not there, so a capsule is always required.
-        + [("capsule", n) for n, _, __, ___, ____ in capsule_ip],
+        + [("capsule", n) for n, _, __, ___, ____ in capsule_ip]
+        # gh-2743: a string enum with no default is required, parsed
+        # before the `|` like a required scalar.
+        + [
+            ("str_enum", n)
+            for n, _, __ in str_enum_ip
+            if n in _str_enum_required
+        ],
         key=lambda e: _order[e[1]],
     )
     optional_entries = sorted(
-        [("str_enum", n) for n, _, __ in str_enum_ip]
+        [
+            ("str_enum", n)
+            for n, _, __ in str_enum_ip
+            if n not in _str_enum_required
+        ]
         + [("opt_arr", n) for n, *_ in opt_arr_ip]
         + [("def_arr", n) for n, *_ in def_arr_ip]
         + [("scalar", n) for n, *_ in opt_scalar_ip],
@@ -770,6 +793,34 @@ def _build_no_state_init_ctx(
         if not value or T.is_c_only_default(ct, value):
             value = _CTYPE_META[ct]["zero"]
         return _py_default(ct, value)
+
+    def _str_enum_seed(name: str) -> str:
+        """The choice generated tests construct string-enum *name* with.
+
+        gh-2565: one answer for the C smoke test, the C bench and the Python
+        tests, so every face builds the same object. An ``example_value``
+        naming a choice (a quoted Python string, as the Python tests pass
+        it verbatim) wins, as it does for a scalar (gh-1105); then the
+        declared ``default``, which is what the binding applies when the
+        argument is omitted. A required param (gh-2743: no default) has no
+        such value, and any choice is a valid one to construct with, so it
+        is the first: the C enum's zero, which the C seed always was.
+        """
+        choices, sdflt = _str_enum_by_name[name]
+        ex = _example_values.get(name, "").strip()
+        if len(ex) > 1 and ex[0] == ex[-1] and ex[0] in "\"'":
+            if ex[1:-1] in choices:
+                return ex[1:-1]
+        return sdflt or choices[0]
+
+    def _str_enum_c_seed(name: str) -> str:
+        """The C value of :func:`_str_enum_seed` -- what the binding hands
+        ``create()`` for that choice: its bound constant (gh-1450), else its
+        index. The same mapping the binding's ``strcmp`` chain makes."""
+        choices, _ = _str_enum_by_name[name]
+        consts = _str_enum_consts.get(name)
+        i = choices.index(_str_enum_seed(name))
+        return consts[i] if consts else str(i)
 
     sig_parts: list[str] = []
     doc_parts: list[str] = []
@@ -896,7 +947,10 @@ def _build_no_state_init_ctx(
                 )
             )
             call_parts.append(pname)
-            c_create_parts_ordered.append("0")
+            # gh-2565: the choice the Python tests construct with -- the
+            # declared default when there is one -- not index 0, which built
+            # a different object than the binding's default one.
+            c_create_parts_ordered.append(_str_enum_c_seed(pname))
         elif pname in _path_names:
             # gh-515/gh-219: C sees a borrowed `const char *` valid only for the
             # duration of the call — the callee must copy it before returning.
@@ -1062,6 +1116,44 @@ def _build_no_state_init_ctx(
         scalar_fmt[name] = fmt
         return addr
 
+    def _emit_str_enum(name: str) -> str:
+        """Declare *name*'s choice-string local, queue its validation, and
+        return its PyArg address.
+
+        One emitter for a required string enum (gh-2743, before the ``|``)
+        and a defaulted one (after it). A defaulted local starts at its
+        default, which PyArg leaves in place when the argument is omitted; a
+        required one starts NULL, which PyArg always overwrites.
+        """
+        choices, sdflt = _str_enum_by_name[name]
+        seed = "NULL" if name in _str_enum_required else f'"{sdflt}"'
+        local_lines.append(f"    const char *{name}_str = {seed};")
+        enum_lines = [f"    int {name} = 0;"]
+        _consts = _str_enum_consts.get(name)
+        for i, choice in enumerate(choices):
+            kw = "if" if i == 0 else "else if"
+            val = _consts[i] if _consts else i
+            enum_lines.append(
+                f'    {kw} (strcmp({name}_str, "{choice}") == 0)'
+                f" {name} = {val};"
+            )
+        choices_str = ", ".join(f'\\"{c}\\"' for c in choices)
+        enum_lines += [
+            "    else {",
+            f'        PyErr_Format(PyExc_ValueError, "{name} must be one of'
+            f" {choices_str}, got '%s'\", {name}_str);",
+        ]
+        # gh-515/gh-219: every path borrow is already parsed by the time
+        # the enum check runs, so bail out through a release (mirrors
+        # _handle._init_fsfree).
+        enum_lines += [f"        {_coerce.path_release(p)}" for p in path_ip]
+        enum_lines += [
+            "        return -1;",
+            "    }",
+        ]
+        post_lines.extend(enum_lines)
+        return f"&{name}_str"
+
     # Required scalars are parsed before the optional kwargs (str-enum, optional
     # array, optional scalar), matching their position ahead of the PyArg `|`
     # — but, per gh-422, in TOML declaration order relative to any required
@@ -1085,6 +1177,9 @@ def _build_no_state_init_ctx(
             # comma-separated PyArg items that form expects.
             local_lines.append("    " + _coerce.path_decl(name))
             parse_args.append(_coerce.path_addr(name))
+        elif kind == "str_enum":
+            # gh-2743: a string enum with no default.
+            parse_args.append(_emit_str_enum(name))
         elif kind == "bytes":
             # gh-565: one `y#` converter fills the (buffer, length) pair —
             # bytes_addr() is the two comma-separated PyArg items. No release:
@@ -1151,35 +1246,7 @@ def _build_no_state_init_ctx(
     # handled in _emit_scalar.)
     for kind, name in optional_entries:
         if kind == "str_enum":
-            choices, sdflt = _str_enum_by_name[name]
-            local_lines.append(f'    const char *{name}_str = "{sdflt}";')
-            parse_args.append(f"&{name}_str")
-            enum_lines = [f"    int {name} = 0;"]
-            _consts = _str_enum_consts.get(name)
-            for i, choice in enumerate(choices):
-                kw = "if" if i == 0 else "else if"
-                val = _consts[i] if _consts else i
-                enum_lines.append(
-                    f'    {kw} (strcmp({name}_str, "{choice}") == 0)'
-                    f" {name} = {val};"
-                )
-            choices_str = ", ".join(f'\\"{c}\\"' for c in choices)
-            enum_lines += [
-                "    else {",
-                f'        PyErr_Format(PyExc_ValueError, "{name} must be one of'
-                f" {choices_str}, got '%s'\", {name}_str);",
-            ]
-            # gh-515/gh-219: every path borrow is already parsed by the time
-            # the enum check runs, so bail out through a release (mirrors
-            # _handle._init_fsfree).
-            enum_lines += [
-                f"        {_coerce.path_release(p)}" for p in path_ip
-            ]
-            enum_lines += [
-                "        return -1;",
-                "    }",
-            ]
-            post_lines.extend(enum_lines)
+            parse_args.append(_emit_str_enum(name))
         elif kind == "opt_arr":
             local_lines.append(f"    PyObject *{name}_obj = NULL;")
             parse_args.append(f"&{name}_obj")
@@ -1206,6 +1273,8 @@ def _build_no_state_init_ctx(
         # differs is the post-parse unwrap, not the parse.
         "O"
         if kind in ("arr", "capsule")
+        else "s"
+        if kind == "str_enum"
         else _coerce.path_fmt()
         if kind == "path"
         else _coerce.bytes_fmt()
@@ -1632,20 +1701,21 @@ def _build_no_state_init_ctx(
             _base = _capsule_meta[name][3] or "object"
             _ann = f"{_base} | None" if _capsule_meta[name][2] else _base
             pyi_parts.append(f"{name}: {_ann}")
+        elif kind == "str_enum":
+            # gh-2743: no default, so required -- no `= ...`, which said
+            # the call could omit an argument the binding refuses without.
+            choices, _ = _str_enum_by_name[name]
+            pyi_parts.append(f"{name}: {T.enum_literal(choices)}")
         else:
             ct = _req_scalar_meta[name][0]
             pyi_parts.append(f"{name}: {scalar_py_annotation(ct)}")
     for kind, name in optional_entries:
         if kind == "str_enum":
             # gh-2736: `Literal[...]` of the choices, the module peer's
-            # (`_stubs._py`) spelling -- this said `str` (gh-1905).
-            # No default is `= ...`, as the module peer writes it: `= ""`
-            # beside a Literal is a default mypy refuses (gh-2736 review).
+            # (`_stubs._py`) spelling -- this said `str` (gh-1905). Only a
+            # defaulted one is optional (gh-2743), so it has its default.
             choices, sdflt = _str_enum_by_name[name]
-            pyi_parts.append(
-                f"{name}: {T.enum_literal(choices)} = "
-                + (f'"{sdflt}"' if sdflt else "...")
-            )
+            pyi_parts.append(f'{name}: {T.enum_literal(choices)} = "{sdflt}"')
         elif kind == "opt_arr":
             pyi_parts.append(f"{name}: {_arr_ann(name)} | None = None")
         elif kind == "def_arr":
@@ -1689,8 +1759,10 @@ def _build_no_state_init_ctx(
     if str_enum_ip:
         pyi_doc_sections.append(
             "\n".join(
-                f'    {sname} : str, default "{sdflt}"\n'
-                f"        {enum_param_desc(choices)}"
+                f"    {sname} : str"
+                # gh-2743: a required one has no default to name.
+                + (f', default "{sdflt}"' if sdflt else "")
+                + f"\n        {enum_param_desc(choices)}"
                 for sname, choices, sdflt in str_enum_ip
             )
         )
@@ -1817,6 +1889,16 @@ def _build_no_state_init_ctx(
             # gh-790: a handle from another module. jm cannot conjure one, so
             # the same `...` sentinel and the same unseedable treatment.
             py_create_parts.append(f"{name}=...")
+        elif kind == "str_enum":
+            # gh-2743: required, so passed -- the choice the C seed maps
+            # (gh-2565), or the author's `example_value` as written.
+            py_create_parts.append(
+                f"{name}="
+                + (
+                    _example_values.get(name, "")
+                    or f'"{_str_enum_seed(name)}"'
+                )
+            )
     # gh-2556: a parameter with a default -- `default` or `default_raw` --
     # is LEFT OUT, so the binding applies its own. Restating it was a second
     # spelling of one value that went wrong whenever Python has none: a

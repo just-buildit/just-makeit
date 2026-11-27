@@ -335,6 +335,10 @@ def _ctor_flags(cfg: dict, component: str) -> list[dict]:
                         # gh-1450: what create() is handed for each choice,
                         # when its `[[enum]]` names C constants.
                         "constants": T.string_enum_constants(ct),
+                        # gh-2743: no default means required, as the
+                        # binding's constructor requires it -- not the
+                        # first choice standing in for a default.
+                        "required": not dflt or bool(len(p) > 8 and p[8]),
                     }
                 )
             else:
@@ -480,13 +484,23 @@ def _argparse_block(flags: list[dict]) -> str:
         if chs:
             # choice flag: argparse choices=[...], string-valued
             dflt = f["default"] if f["default"] in chs else chs[0]
-            helptext = _flag_help(f["name"], f["help"], dflt)
+            # gh-2743: a required choice (no default) has none to start at.
+            spec = (
+                "required=True"
+                if f.get("required")
+                else f"default={_pystr(dflt)}"
+            )
+            helptext = (
+                f["help"] or f["name"]
+                if f.get("required")
+                else _flag_help(f["name"], f["help"], dflt)
+            )
             choices_lit = ", ".join(_pystr(c) for c in chs)
             lines.append(
                 f"    p.add_argument(\n"
                 f'        "--{f["name"]}",\n'
                 f"        choices=[{choices_lit}],\n"
-                f"        default={_pystr(dflt)},\n"
+                f"        {spec},\n"
                 f'        help="{helptext}",\n'
                 f"    )"
             )
@@ -865,6 +879,12 @@ def _c_argv_parser(
             # choice flag: parse the string arg to its index via jm_parse_<name>
             didx = chs.index(f["default"]) if f.get("default") in chs else 0
             decls.append(f"    int {f['name']} = {didx};")
+            # gh-2743: a required choice is refused when absent, as a
+            # required number is (gh-2557) and as argparse refuses it.
+            must = bool(f.get("required"))
+            if must:
+                decls.append(f"    int {f['name']}_given = 0;")
+                required.append(f["name"])
             clauses.append(
                 f'if (!strcmp(argv[i], "--{f["name"]}") && i + 1 < argc) {{\n'
                 f"            {f['name']} = jm_parse_{f['name']}(argv[++i]);\n"
@@ -873,9 +893,11 @@ def _c_argv_parser(
                 f' be one of: {" ".join(chs)}\\n");\n'
                 f"                return 2;\n"
                 f"            }}\n"
-                f"        }}"
+                + (f"            {f['name']}_given = 1;\n" if must else "")
+                + "        }"
             )
-            usage_parts.append(f"[--{f['name']} {'|'.join(chs)}]")
+            _use = f"--{f['name']} {'|'.join(chs)}"
+            usage_parts.append(_use if must else f"[{_use}]")
             help_rows.append((f"--{f['name']} {'|'.join(chs)}", f["help"]))
             continue
         ct = f["type"]
