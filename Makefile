@@ -656,4 +656,25 @@ VENDORED_FILES = scripts/release-watch.sh scripts/msvc-env.sh \
 # src/just_makeit/examples/ are already outside CI_DOCS_RE's anchors.
 CI_DOCS_EXCLUDE_RE = ^docs/examples/
 
+# ── CI_FULL (gh-2174): the one-leg gate variants, by one switch ─────────────
+# Two gates run a stricter half on ONE matrix leg, and only ci.yml used to say
+# so: the shrink half of Gate A (JM_GATE_A_SHRINK, tests/_downstream_gates.py)
+# and the full verb gate (JM_VERB_GATE_FULL, tests/test_gh2057_*). A local
+# `make test-examples` or `make gates` therefore passed on a tree that CI's
+# leg then failed. CI_FULL=1 exports every such variant; ci.yml sets only this
+# switch, on the legs its planner picks (the `shrink` and `verb_gate_full`
+# matrix keys). `make gates` defaults to CI_FULL=1, the union of every leg.
+# CI_FULL also requires doppler, so a missing prerequisite is a failure with a
+# name, never a silent pass (JM_REQUIRE_DOPPLER, read by nco_tone).
+ONE_LEG_GATE_VARS = JM_GATE_A_SHRINK JM_VERB_GATE_FULL
+ifeq ($(filter gates,$(MAKECMDGOALS)),gates)
+CI_FULL ?= 1
+endif
+ifeq ($(CI_FULL),1)
+JM_GATE_A_SHRINK = 1
+JM_VERB_GATE_FULL = 1
+JM_REQUIRE_DOPPLER ?= 1
+export $(ONE_LEG_GATE_VARS) JM_REQUIRE_DOPPLER
+endif
+
 include standard.mk
