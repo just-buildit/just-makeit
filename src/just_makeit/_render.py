@@ -1718,13 +1718,13 @@ def _build_params_parse(
             # length out — this pair is already the documented peer shape, and
             # an interleave factor applied to only one of them is exactly the
             # drift that costs a buffer overrun in whichever face was missed.
-            _rank = _coerce.array_rank(p)
-            if _rank:
-                arr_acq.append(
-                    _coerce.array_rank_guard(
-                        pname, acq_var, _rank, prior_decrefs.strip()
-                    ).rstrip("\n")
-                )
+            # gh-1999: and the elements_per_sample guard beside it, both
+            # through the one emitter every acquisition site calls.
+            _shape = _coerce.array_shape_guard(
+                p, acq_var, prior_decrefs.strip()
+            )
+            if _shape:
+                arr_acq.append(_shape.rstrip("\n"))
             if defaulted:
                 arr_acq[acq_start:] = [
                     _coerce.defaulted_array_acq(

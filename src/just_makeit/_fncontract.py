@@ -48,6 +48,7 @@ import ast
 import re
 from pathlib import Path
 
+from . import _coerce
 from . import _config as C
 from . import _record
 from . import _render as R
@@ -94,7 +95,9 @@ def _arg(p: dict) -> "str | None":
         meta = T._CTYPE_META.get(T.array_elem_ctype(t))
         if meta is None or meta["kind"] not in ("int", "float", "complex"):
             return None
-        return f"np.zeros(4, dtype={meta['py_type']})"
+        # gh-1999: four whole samples of an interleaved array.
+        n = 4 * _coerce.elements_per_sample(p)
+        return f"np.zeros({n}, dtype={meta['py_type']})"
     meta = T._CTYPE_META.get(t)
     if meta is None or meta["kind"] not in ("int", "float", "complex"):
         return None

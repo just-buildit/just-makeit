@@ -1333,13 +1333,13 @@ def _build_params_parse(
             # gh-805 §C: an opt-in rank guard, before the length is taken —
             # `PyArray_SIZE` on a 2-D array silently yields its total element
             # count, which is a valid-looking length for a 1-D contract.
-            _rank = _coerce.array_rank(p)
-            if _rank:
-                arr_acq.append(
-                    _coerce.array_rank_guard(
-                        pname, acq_var, _rank, prior_decrefs.strip()
-                    ).rstrip("\n")
-                )
+            # gh-1999: and the elements_per_sample guard beside it, both
+            # through the one emitter every acquisition site calls.
+            _shape = _coerce.array_shape_guard(
+                p, acq_var, prior_decrefs.strip()
+            )
+            if _shape:
+                arr_acq.append(_shape.rstrip("\n"))
             if defaulted:
                 arr_acq[acq_start:] = [
                     _coerce.defaulted_array_acq(
