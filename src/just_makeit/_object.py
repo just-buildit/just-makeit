@@ -3515,14 +3515,20 @@ def _regenerate_module_now(
             f"name is global and a second one does not configure. Delete "
             f"{_lines} to let jm own the target instead (gh-1034)."
         )
-    _write(
-        INC.src_path(root, cname, cfg) / "CMakeLists.txt",
-        R.with_extra_cmake(
-            collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
-            cname,
-        ),
-        "update",
+    module_cmake = INC.src_path(root, cname, cfg) / "CMakeLists.txt"
+    module_cmake_text = R.with_extra_cmake(
+        collocated_cmake + R.render(R.CMAKE_LISTS_MODULE, cmake_ctx),
+        cname,
     )
+    # gh-2114: the module's own file is rewritten whole, so ask what `apply`
+    # asks of it first -- refuse to erase an author OBJECT library, warn of
+    # any other statement dropped.
+    from ._apply import ask_before_rewriting_cmake
+
+    ask_before_rewriting_cmake(
+        root, cfg, module_cmake, module_cmake_text, "this command"
+    )
+    _write(module_cmake, module_cmake_text, "update")
     if _fns:
         _write_module_test_and_bench(root, cname, _fns)
     # gh-981: reconcile the module's combined-library wiring against the file
