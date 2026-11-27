@@ -7,6 +7,17 @@
  */
 #include "studio/playlist/playlist_bridge.h"
 
+/* Seam 0 — is this config whole? NULL if so, else a sentence jm raises
+ * as ValueError. Every face that writes a Clip calls it, and a setter
+ * calls it on a COPY, so a refused assignment leaves the Clip unchanged. */
+const char *
+clip_check (const clip_t *src)
+{
+  if (src->gain > 100.0)
+    return "a clip's gain is a level, at most 100";
+  return NULL;
+}
+
 /* Seam 1 — source config to running generator. A real one would derive
  * increments from `fs`; this one just carries the level across, and refuses
  * a configuration it cannot honour. */

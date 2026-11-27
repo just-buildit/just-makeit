@@ -849,11 +849,24 @@ def set_fn_prototype(field: dict, struct: str) -> str:
     return f"const char *{set_fn(field)}({struct} *, {field['type']});"
 
 
-def _store_c(field: dict, member: str, struct_ptr: str, value: str) -> str:
+def _store_c(
+    field: dict,
+    member: str,
+    struct_ptr: str,
+    value: str,
+    struct: str = "",
+    check: str = "",
+) -> str:
     """The setter statements that store *value*, the field's converted C
     value: through :func:`set_fn` on *struct_ptr* when the field names one,
     raising its sentence as ``ValueError`` (gh-2753), else assigned to
     *member*. Indented for a setter body; ``return -1;`` on a refusal.
+
+    gh-2856: with *check* -- :func:`check_c`'s block against ``&_c`` -- a
+    field without ``set_fn`` is written to ``_c``, a copy of the *struct*
+    *struct_ptr* points at, which is checked and committed only when the
+    check passes. A field with ``set_fn`` ignores *check*: the project's
+    writer owns the struct's wholeness.
 
     >>> print(_store_c({"name": "r"}, "self->src.r", "&self->src", "_i"))
         self->src.r = _i;
@@ -864,8 +877,23 @@ def _store_c(field: dict, member: str, struct_ptr: str, value: str) -> str:
             PyErr_SetString(PyExc_ValueError, _why);
             return -1;
         }
+    >>> print(_store_c({"name": "r"}, "self->src.r", "&self->src", "_i",
+    ...                "s_t", "    CHECK(&_c);\\n"))
+        s_t _c = self->src;
+        _c.r = _i;
+        CHECK(&_c);
+        self->src = _c;
     """
     fn = set_fn(field)
+    if not fn and check:
+        live = struct_ptr.removeprefix("&")
+        copy = "_c" + member.removeprefix(live)
+        return (
+            f"    {struct} _c = {live};\n"
+            f"    {copy} = {value};\n"
+            f"{check}"
+            f"    {live} = _c;"
+        )
     if not fn:
         return f"    {member} = {value};"
     return (
@@ -962,6 +990,229 @@ def set_fn_errors(cfg: dict) -> "list[str]":
                 except Refusal as e:
                     errors.append(str(e))
     return errors
+
+
+def check_fn(cfg: dict, module: str) -> str:
+    """The project's whole-struct validator of *module*'s source, or ``""``
+    (gh-2856).
+
+    ``[module.X.source] check_fn = "<fn>"`` names::
+
+        const char *fn(const <source.struct> *);
+
+    which returns ``NULL`` when the struct is whole, or a static sentence
+    saying why it is not. Every face that writes source fields WITHOUT
+    going through a field's :func:`set_fn` calls it, through the one
+    emitter :func:`check_c`: the source type's constructor (and so a
+    factory and the inline ``Segment``), each plain property setter, the
+    generic JSON record (``from_json`` / ``from_file``), a delegated
+    ``from_json_fn`` / ``from_file_fn`` (every source of the state it
+    built) and the c-face CLI. A sentence is raised as ``ValueError`` (the
+    CLI prints it and exits 2).
+
+    A field naming ``set_fn`` calls only ``set_fn``: the project's writer
+    owns the struct's wholeness there, and is documented to write through
+    the same check, so jm does not call this again after it. A plain
+    setter -- one without ``set_fn`` -- writes to a COPY of the struct,
+    calls this on the copy, and commits only on ``NULL``, so a refused
+    assignment leaves the source as it was.
+
+    This is not ``bridge_error_fn``, which is the full build check and
+    refuses a source that is valid but not yet complete (no data, no
+    rate); and not ``create_why``, a switch on a create function's arity
+    that a source does not have (gh-1722, gh-1755).
+
+    Raises
+    ------
+    Refusal
+        The key is set to something other than a function name.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"m": {"source": {"check_fn": "src_why"}}}}
+    >>> check_fn(cfg, "m")
+    'src_why'
+    >>> check_fn({"module": {"m": {"source": {}}}}, "m")
+    ''
+    """
+    fn = C.composer_source(cfg, module).get("check_fn", "")
+    if not isinstance(fn, str):
+        raise Refusal(_check_fn_type_error(module, fn))
+    return fn
+
+
+def _check_fn_type_error(module: str, fn: object) -> str:
+    """The refusal of a ``check_fn`` that is not a function name."""
+    return (
+        f"composer `{module}` [module.{module}.source]: `check_fn` names "
+        "the project's `const char *fn(const <source.struct> *)`, so it "
+        f"is a string; got {fn!r} (gh-2856)."
+    )
+
+
+def check_fn_prototype(cfg: dict, module: str) -> str:
+    """The C prototype :func:`check_fn` is declared with in the bridge
+    header (gh-2856).
+
+    >>> cfg = {"module": {"m": {"source": {"struct": "s_t",
+    ...                                    "check_fn": "s_why"}}}}
+    >>> check_fn_prototype(cfg, "m")
+    'const char *s_why(const s_t *);'
+    """
+    src = C.composer_source(cfg, module)
+    return f"const char *{check_fn(cfg, module)}(const {src['struct']} *);"
+
+
+def check_c(
+    cfg: dict,
+    module: str,
+    struct_ptr: str,
+    fail: str,
+    indent: str = "    ",
+    *,
+    c_face: bool = False,
+) -> str:
+    """The ONE emitter of a call to :func:`check_fn` (gh-2856): every
+    write face renders its check through this, so they cannot disagree on
+    what a sentence means.
+
+    A block that calls the function on *struct_ptr* and, on a sentence,
+    reports it -- ``ValueError`` on a Python face, a line on stderr on the
+    c-face CLI (*c_face*) -- then runs *fail*, the face's own release and
+    exit. Empty when the source names no ``check_fn``, so a composer
+    without one renders as it always did. Every line is prefixed with
+    *indent* and ends in a newline.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"m": {"source": {"check_fn": "s_why"}}}}
+    >>> print(check_c(cfg, "m", "&_c", "return -1;"), end="")
+        {
+            const char *_chk = s_why(&_c);
+            if (_chk) {
+                PyErr_SetString(PyExc_ValueError, _chk);
+                return -1;
+            }
+        }
+    >>> check_c({"module": {"m": {"source": {}}}}, "m", "&_c", "return -1;")
+    ''
+    """
+    fn = check_fn(cfg, module)
+    if not fn:
+        return ""
+    report = (
+        'fprintf(stderr, "%s\\n", _chk);'
+        if c_face
+        else "PyErr_SetString(PyExc_ValueError, _chk);"
+    )
+    lines = [
+        "{",
+        f"    const char *_chk = {fn}({struct_ptr});",
+        "    if (_chk) {",
+        f"        {report}",
+        *(f"        {ln}" for ln in fail.splitlines()),
+        "    }",
+        "}",
+    ]
+    return "".join(f"{indent}{ln}\n" for ln in lines)
+
+
+def _check_state_c(
+    cfg: dict,
+    module: str,
+    state: str,
+    fail: str,
+    indent: str = "    ",
+    *,
+    c_face: bool = False,
+) -> str:
+    """:func:`check_c` over every source of a built composer *state*
+    (gh-2856): the check a delegated reader (``from_json_fn`` /
+    ``from_file_fn``) gets, since jm sees its sources only once the
+    project's C has built them. Read back through the backing's
+    ``<sym>_segments``, as ``to_json`` reads them. Empty without a
+    ``check_fn``.
+    """
+    if not check_fn(cfg, module):
+        return ""
+    sym = CSYM.backing_stem(cfg, C.capsule_backing(cfg, module))
+    seg = C.composer_segment(cfg, module)
+    srcs = seg.get("sources_member", "sources")
+    count = seg.get("count_member", "n_sources")
+    inner = check_c(
+        cfg,
+        module,
+        f"&_cs[_ci].{srcs}[_ck]",
+        fail,
+        "            ",
+        c_face=c_face,
+    )
+    body = (
+        "{\n"
+        "    size_t _cn;\n"
+        "    int _cr = 0, _cc = 0;\n"
+        f"    const {seg['struct']} *_cs =\n"
+        f"        {sym}_segments({state}, &_cn, &_cr, &_cc);\n"
+        "    for (size_t _ci = 0; _ci < _cn; _ci++)\n"
+        f"        for (size_t _ck = 0; _ck < _cs[_ci].{count}; _ck++)\n"
+        + inner
+        + "}"
+    )
+    return "".join(f"{indent}{ln}\n" for ln in body.splitlines())
+
+
+def check_fn_errors(cfg: dict) -> "list[str]":
+    """Every composer ``check_fn`` jm cannot call (gh-2856).
+
+    Asked at load (`_config.load`). The key is read on ``[module.X.source]``
+    alone -- the source struct is what the function validates -- so a
+    ``check_fn`` anywhere else in a composer module's tables (the segment,
+    ``source.generates``, a field row) is refused naming where it is,
+    rather than warned about as an unknown key and never called; and one
+    that is not a string is refused naming its value.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"m": {"kind": "composer",
+    ...     "segment": {"check_fn": "w"}, "source": {"check_fn": 3}}}}
+    >>> for e in check_fn_errors(cfg):
+    ...     print(e)  # doctest: +ELLIPSIS
+    composer `m` [module.m.source]: `check_fn` ... got 3 (gh-2856).
+    composer `m`: `check_fn` is read on [module.m.source] only ... \
+found at [module.m.segment] (gh-2856).
+    """
+    errors: list[str] = []
+    for mod in C.modules(cfg):
+        if not C.is_composer_module(cfg, mod):
+            continue
+        tbl = cfg.get("module", {}).get(mod, {})
+        fn = (tbl.get("source") or {}).get("check_fn", "")
+        if not isinstance(fn, str):
+            errors.append(_check_fn_type_error(mod, fn))
+        for where in _key_paths(tbl, "check_fn", f"module.{mod}"):
+            if where == f"module.{mod}.source":
+                continue
+            errors.append(
+                f"composer `{mod}`: `check_fn` is read on "
+                f"[module.{mod}.source] only -- it validates the whole "
+                "source struct -- and was found at "
+                f"[{where}] (gh-2856)."
+            )
+    return errors
+
+
+def _key_paths(node: object, key: str, at: str) -> "list[str]":
+    """The dotted path of every table under *node* that carries *key*."""
+    out: list[str] = []
+    if isinstance(node, dict):
+        if key in node:
+            out.append(at)
+        for k, v in node.items():
+            out += _key_paths(v, key, f"{at}.{k}")
+    elif isinstance(node, list):
+        for v in node:
+            out += _key_paths(v, key, f"{at}[]")
+    return out
 
 
 def host_coercer(fn: str) -> str:
@@ -1308,6 +1559,7 @@ def _replace_c(
     attach: str,
     free: str,
     gen_destroy: str,
+    check: str = "",
 ) -> str:
     """``<tname>_replace_<name>``: swap one owned buffer on a live source.
 
@@ -1346,6 +1598,12 @@ def _replace_c(
         The generator's destroy function when the source declares
         ``generates``; ``""`` otherwise, when there is nothing to wait for
         and no generator to drop.
+    check : str, optional
+        gh-2856: :func:`check_c`'s block against ``&_t``, whose failure
+        frees the converted buffer and returns 0. With it the function
+        takes a third argument, ``int check``: the property setter passes
+        1, so the copy is checked whole before anything is installed, and
+        ``__init__`` passes 0, since it checks once after every field.
 
     Examples
     --------
@@ -1384,11 +1642,16 @@ def _replace_c(
             "    }\n"
         )
     install = "".join(f"    self->src.{m} = _t.{m};\n" for m, _ in members)
+    param, checked = "", ""
+    if check:
+        param = ", int check"
+        checked = "    if (check)\n" + check
     return (
-        f"static int\n{tname}_replace_{name}({obj} *self, PyObject *value)\n"
+        f"static int\n{tname}_replace_{name}({obj} *self, PyObject *value"
+        f"{param})\n"
         f"{{\n    {struct} _t = self->src;\n{clear}"
         f"    if (!{attach})\n        return 0;\n"
-        f"{commit}    {free.format(src='self->src')}\n{install}"
+        f"{checked}{commit}    {free.format(src='self->src')}\n{install}"
         "    return 1;\n}\n"
     )
 
@@ -2827,6 +3090,11 @@ def render_source_type(cfg: dict, module: str) -> str:
     # post-parse: validate enums into the struct ints, assign scalars, attach
     # bytes.
     assign: list[str] = []
+    # gh-2856: an owned buffer's replace checks its copy for the setter
+    # (1) and not for `__init__` (0), which checks once after every field.
+    has_check = bool(check_fn(cfg, module))
+    no_check = ", 0" if has_check else ""
+    do_check = ", 1" if has_check else ""
     for f in fields:
         n = f["name"]
         if _field_is_enum(f):
@@ -2847,10 +3115,11 @@ def render_source_type(cfg: dict, module: str) -> str:
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             assign.append(
-                f"    if (!{tname}_replace_{n}(self, {n}))\n        return -1;"
+                f"    if (!{tname}_replace_{n}(self, {n}{no_check}))\n"
+                "        return -1;"
             )
         elif truthy(f.get("complex")) or _field_is_owned_ptr(f):
-            assign.append(f"""    if (!{tname}_replace_{n}(self, {n}))
+            assign.append(f"""    if (!{tname}_replace_{n}(self, {n}{no_check}))
         return -1;""")
         elif f.get("_ranged"):
             ct = f["type"]
@@ -3112,6 +3381,13 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
     # gh-2274: the one replacement of an owned buffer, for the property
     # setter and `__init__` both (see `_replace_c`).
     replace_c = ""
+
+    def _replace_check(free: str) -> str:
+        """gh-2856: the copy's check, freeing what was converted into it."""
+        return check_c(
+            cfg, module, "&_t", free.format(src="_t") + "\nreturn 0;"
+        )
+
     for f in fields:
         n = f["name"]
         gd = gen["destroy_fn"] if gen else ""
@@ -3128,6 +3404,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 _attach_call(f, f"{_cast}&_t.{_p}", f"&_t.{_l}"),
                 "free(" + _cfree + "{src}." + _p + ");",
                 gd,
+                _replace_check("free(" + _cfree + "{src}." + _p + ");"),
             )
         elif truthy(f.get("complex")):
             _p, _l = buffer_members(f)
@@ -3141,6 +3418,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 f"_attach_{n}(&_t, value)",
                 "free(" + _cfree + "{src}." + _p + ");",
                 gd,
+                _replace_check("free(" + _cfree + "{src}." + _p + ");"),
             )
         elif _field_is_owned_ptr(f):
             op = owned_ptr(cfg, f)
@@ -3153,8 +3431,14 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 f"_attach_{n}(&_t, value)",
                 f"{op.free_fn}(({op.ctype})" + "{src}." + op.member + ");",
                 gd,
+                _replace_check(
+                    f"{op.free_fn}(({op.ctype})" + "{src}." + op.member + ");"
+                ),
             )
 
+    # gh-2856: the whole struct, once every field is in it. A refusal
+    # raises from the constructor, so `Synth(...)` returns no object.
+    init_check = check_c(cfg, module, "&self->src", "return -1;")
     parts.append(
         attach_bytes_c
         + f"""{host_attach}{replace_c}
@@ -3170,7 +3454,7 @@ static int
     }}
 {parse_ok}    self->fs = fs;
 {(_inflight.wait("self", "return -1;", "    ") + f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
-    return 0;
+{init_check}    return 0;
 }}
 """
     )
@@ -3178,6 +3462,9 @@ static int
     # getset table.
     getset_fns: list[str] = []
     getset_rows: list[str] = []
+    # gh-2856: what a plain setter runs against its copy `_c` before it
+    # commits; "" without a `check_fn`.
+    chk = check_c(cfg, module, "&_c", "return -1;")
     for f in fields:
         n = f["name"]
         # gh-2753: a `set_fn` on a field with no single value is refused
@@ -3210,7 +3497,7 @@ static int
     const char *s = PyUnicode_AsUTF8(value);
     if (!s) return -1;
 {_enum_set}
-{_store_c(f, f"self->src.{n}", "&self->src", "_i")}
+{_store_c(f, f"self->src.{n}", "&self->src", "_i", struct, chk)}
     return 0;
 }}""")
             getset_rows.append(
@@ -3256,7 +3543,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {tname}_replace_{n}(self, value) ? 0 : -1;
+    return {tname}_replace_{n}(self, value{do_check}) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -3287,7 +3574,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {tname}_replace_{n}(self, value) ? 0 : -1;
+    return {tname}_replace_{n}(self, value{do_check}) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -3313,7 +3600,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {tname}_replace_{n}(self, value) ? 0 : -1;
+    return {tname}_replace_{n}(self, value{do_check}) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -3326,9 +3613,21 @@ static int
             meta = _number_meta(f["type"], _row(module, "source.fields", n))
             dst = f"self->src.{n}"
             pair = _range_return_c(meta, dst)
+            # gh-2856: with a `check_fn`, the pair is parsed into a copy,
+            # checked whole, and committed only when it passes.
             parse = _range_parse_c(
-                f, meta, "value", dst, "self->src.ranged", "return -1;"
+                f,
+                meta,
+                "value",
+                f"_c.{n}" if chk else dst,
+                "_c.ranged" if chk else "self->src.ranged",
+                "return -1;",
             )
+            if chk:
+                parse = (
+                    f"    {struct} _c = self->src;\n{parse}{chk}"
+                    "    self->src = _c;\n"
+                )
             _body = (
                 f"    if (self->src.ranged & {flag})\n{pair}\n"
                 f"    return {meta['to_py'](acc)};"
@@ -3362,7 +3661,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-{parse}{_store_c(f, f"self->src.{n}", "&self->src", "_v")}
+{parse}{_store_c(f, f"self->src.{n}", "&self->src", "_v", struct, chk)}
     return 0;
 }}""")
             getset_rows.append(
@@ -5003,6 +5302,11 @@ def render_composer_type(cfg: dict, module: str) -> str:
             _why["from_file"],
             release="    Py_DECREF(pathobj);\n",
         )
+        # gh-2856: the project's reader built the sources, so jm checks
+        # each one in the state it returned, before wrapping it.
+        state_check = _check_state_c(
+            cfg, module, "st", f"{destroy_fn}(st);\nreturn NULL;"
+        )
         json_fns = f"""
 static PyObject *
 {cname}_from_json(PyObject *cls, PyObject *args)
@@ -5011,7 +5315,7 @@ static PyObject *
     const char *json;
     if (!PyArg_ParseTuple(args, "s", &json))
         return NULL;
-{from_json_call}    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
+{from_json_call}{state_check}    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
         {destroy_fn}(st);
         return NULL;
@@ -5028,7 +5332,7 @@ static PyObject *
     PyObject *pathobj;
     if (!PyArg_ParseTuple(args, "O&", PyUnicode_FSConverter, &pathobj))
         return NULL;
-{from_file_call}    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
+{from_file_call}{state_check}    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
     if (!self) {{
         {destroy_fn}(st);
         return NULL;
@@ -6466,6 +6770,7 @@ def _pyi_doc_lines(
     fields: list[dict],
     enum_reg: dict[str, list[str]],
     raw_block: str = "",
+    raises: "list[tuple[str, str]] | None" = None,
 ) -> list[str]:
     """4-space-indented numpy-style class docstring from a field list (gh-375).
 
@@ -6515,7 +6820,24 @@ def _pyi_doc_lines(
                 choice_str = ", ".join(f'``"{c}"``' for c in choices)
                 notes.append(f"One of {choice_str}.")
         params.append(ClassParam(type_line, tuple(notes)))
-    return class_docstring(summary, body=body, params=params)
+    return class_docstring(
+        summary, body=body, params=params, raises=raises or ()
+    )
+
+
+def _check_raises(cfg: dict, module: str) -> "list[tuple[str, str]]":
+    """The ``Raises`` entry a constructor that builds a source gets from
+    :func:`check_fn` (gh-2856), or none."""
+    fn = check_fn(cfg, module)
+    if not fn:
+        return []
+    return [
+        (
+            "ValueError",
+            f"The fields given are not a whole source: ``{fn}`` refused "
+            "them, and its sentence is the message.",
+        )
+    ]
 
 
 def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
@@ -6544,12 +6866,14 @@ def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
             src_fields + [source_fs(cfg, module)],
             enum_reg,
             str(_header_docs(cfg, module).get("source") or ""),
+            _check_raises(cfg, module),
         ),
         seg["type_name"]: _pyi_doc_lines(
             seg["type_name"],
             src_fields + seg_fields,
             enum_reg,
             str(_header_docs(cfg, module).get("segment") or ""),
+            _check_raises(cfg, module),
         ),
     }
     tl_t = C.composer_timeline(cfg, module).get("type_name")
@@ -7147,7 +7471,8 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     ``bridge_error_fn``, each computed ``fn``, each field's
     ``coerce_str_fn`` (gh-1709), each owned-pointer field's four host
     functions (gh-1711) and each source / segment field's ``get_fn``
-    (gh-2710) and ``set_fn`` (gh-2753). Every name is an
+    (gh-2710) and ``set_fn`` (gh-2753), and the source's ``check_fn``
+    (gh-2856). Every name is an
     author-named key's value (:data:`_csym.AUTHOR_NAMED_KEYS`), declared
     because the manifest spells it -- the header and :func:`seam_fns` read
     this one list, so they cannot disagree on which names those are.
@@ -7172,10 +7497,28 @@ def _seams(cfg: dict, module: str) -> "list[tuple[str, list[str]]]":
     ptr_fns = _owned_ptr_prototypes(cfg, module)
     get_fns = _get_fn_seams(cfg, module)
     set_fns = _set_fn_seams(cfg, module)
-    if not (gen or computed or str_fns or ptr_fns or get_fns or set_fns):
+    chk = check_fn(cfg, module)
+    if not (
+        gen or computed or str_fns or ptr_fns or get_fns or set_fns or chk
+    ):
         return []
     src_struct = C.composer_source(cfg, module)["struct"]
     seams: "list[_Seam]" = []
+    if chk:
+        # gh-2856: the whole-struct validator every write face calls.
+        seams.append(
+            _Seam(
+                chk,
+                check_fn_prototype(cfg, module),
+                "`[source] check_fn`",
+                _c_comment(
+                    "Whether a source struct is whole: NULL, or a static "
+                    "sentence raised as ValueError by every face that "
+                    "writes it without a field's set_fn (check_fn, "
+                    "gh-2856)."
+                ),
+            )
+        )
     if gen:
         seams.append(
             _Seam(
@@ -7278,7 +7621,7 @@ def seam_fns(cfg: dict, module: str) -> "list[str]":
     """The C functions *module*'s :func:`bridge_h` declares: the project's
     own, each named by a ``bridge_fn`` / ``bridge_error_fn`` / computed
     ``fn`` / field ``coerce_str_fn`` / field ``get_fn`` / field
-    ``set_fn`` key, or an
+    ``set_fn`` / source ``check_fn`` key, or an
     owned-pointer field's
     ``copy_fn`` / ``free_fn`` / ``parse_fn`` / ``format_fn``. jm derives none of them, whatever
     prefix their name has, so :func:`_csym.renames` does not read them as
@@ -8102,6 +8445,11 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 )
             )
     src_parse_s = "\n".join(src_parse)
+    # gh-2856: the record's source, whole, before the composer is built
+    # from it. A sentence is raised by `from_json` / `from_file` (the
+    # factory keeps a raised exception), and the record's teardown frees
+    # what this source parsed.
+    src_check = check_c(cfg, module, "src", "return -1;")
     # gh-1735: a `parse_why` reader's sentence is raised by `from_json` /
     # `from_file`, so the record threads a `const char **why` from them down
     # to the call -- and only then, so a record without one is unchanged.
@@ -8185,7 +8533,7 @@ _json_parse_source(const cJSON *so, {src_struct} *src{src_why_param})
 {{
     memset(src, 0, sizeof(*src));
 {src_parse_s}
-    return 0;
+{src_check}    return 0;
 }}
 
 static PyObject *
@@ -8619,6 +8967,27 @@ def render_cli(cfg: dict, module: str) -> str:
         if _field_is_owned_ptr(f)
     )
 
+    # gh-2856: the flags' source, whole, before `create` -- refused with
+    # the sentence and exit 2, as a bad flag is; and the sources a
+    # `--from-file` reader built, which jm sees only in the state.
+    flag_check = check_c(
+        cfg,
+        module,
+        "&src",
+        textwrap.dedent(bytes_free) + "return 2;",
+        "        ",
+        c_face=True,
+    )
+    file_check = ""
+    if flag_check:
+        file_check = "        if (c)\n" + _check_state_c(
+            cfg,
+            module,
+            "c",
+            f"{destroy_fn}(c);\nreturn 2;",
+            "            ",
+            c_face=True,
+        )
     # gh-1583: the include of a jm header is spelled by the layout.
     _common_h = INC.include("clib_common.h", cfg)
     # gh-1709: a field's coerce_str_fn is declared by the bridge header, the
@@ -8626,7 +8995,9 @@ def render_cli(cfg: dict, module: str) -> str:
     # pointer's parse_fn and free_fn, which --<name> calls (gh-1711).
     bridge_inc = (
         f'#include "{INC.include(bridge_h(module, cfg), cfg)}"\n'
-        if _coerce_str_fns(cfg, module) or _owned_ptrs(cfg, module)
+        if _coerce_str_fns(cfg, module)
+        or _owned_ptrs(cfg, module)
+        or check_fn(cfg, module)  # gh-2856
         else ""
     )
     # The sample-type block is `jm app`'s, and carries the layout's include
@@ -8703,11 +9074,11 @@ main(int argc, char **argv)
     {sym}_state_t *c;{why_decl}
     if (from_file) {{
         c = {from_file_fn}({from_file_args});
-    }} else {{
+{file_check}    }} else {{
         {src_struct} src;
         memset(&src, 0, sizeof src);
 {assign_s}
-        {seg_struct} seg;
+{flag_check}        {seg_struct} seg;
         memset(&seg, 0, sizeof seg);
         seg.{sources_member} = &src;
         seg.{count_member} = 1;

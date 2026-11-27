@@ -323,6 +323,12 @@ def load(root: Path) -> dict:
         set_fn_errs = set_fn_errors(cfg)
         if set_fn_errs:
             _refuse(set_fn_errs)
+        # gh-2856: a `check_fn` that is not a name, or not on the source.
+        from ._composer import check_fn_errors
+
+        check_fn_errs = check_fn_errors(cfg)
+        if check_fn_errs:
+            _refuse(check_fn_errs)
     _expand_init_groups(cfg)
     # gh-2112: a name twice in one C struct or parameter list. After the
     # group expansion (gh-2799), so two `init_groups` rows making one name

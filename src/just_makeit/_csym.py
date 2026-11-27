@@ -620,7 +620,8 @@ def _echoed(cfg: dict) -> "dict[str, set[str]]":
     only because an author-named key spells it: a composer's seam header
     (``_composer.bridge_h``) and its ``bridge_fn`` / ``bridge_error_fn`` /
     computed ``fn`` / field ``coerce_str_fn`` / field ``get_fn`` /
-    field ``set_fn`` / owned-pointer ``copy_fn``, ``free_fn``, ``parse_fn``, ``format_fn``
+    field ``set_fn`` / source ``check_fn`` / owned-pointer ``copy_fn``,
+    ``free_fn``, ``parse_fn``, ``format_fn``
     (``_composer.seam_fns``).
     Paths are relative to the header root.
 
@@ -1573,6 +1574,7 @@ AUTHOR_NAMED_KEYS = (
     "get_fn",
     "set_fn",
     "fs_get_fn",
+    "check_fn",
     "copy_fn",
     "free_fn",
     "parse_fn",

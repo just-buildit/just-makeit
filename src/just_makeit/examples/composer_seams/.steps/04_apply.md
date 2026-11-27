@@ -15,6 +15,11 @@ The first of those is the gh-998 file, and it is the only header a composer
 module emits:
 
 ```c
+/* Whether a source struct is whole: NULL, or a static sentence raised as
+ * ValueError by every face that writes it without a field's set_fn
+ * (check_fn, gh-2856). */
+const char *clip_check(const clip_t *);
+
 /* Build the composed generator from a source config (source -> generator). */
 studio_clip_state_t *clip_from_source(const clip_t *, double);
 
