@@ -43,6 +43,7 @@ from ._object import (
     _extract_c_function_bodies,
     _restore_c_function_bodies,
     carry_module_core,
+    lost_conditionals,
 )
 from ._remove import _confirm, _object_paths, _rm
 from ._report import Refusal
@@ -279,14 +280,13 @@ def run(
     # files are, and what else they held is carried into the rebuild
     # (`carry_module_core`) instead of going with the object's share.
     collocated = bool(module) and C.collocated_object(cfg, module) == component
-    old_core_h = old_core_c = None
+    old_core_h = (
+        core_h.read_text(encoding="utf-8") if core_h.exists() else None
+    )
+    old_core_c = (
+        core_c.read_text(encoding="utf-8") if core_c.exists() else None
+    )
     if collocated:
-        old_core_h = (
-            core_h.read_text(encoding="utf-8") if core_h.exists() else None
-        )
-        old_core_c = (
-            core_c.read_text(encoding="utf-8") if core_c.exists() else None
-        )
         paths += [p for p in (core_h, core_c) if p.exists()]
         # Its binding fragments too, with or without --discard: they were
         # rebuilt with the module directory before, and a state change
@@ -354,10 +354,14 @@ def run(
     from . import _apply
 
     _apply.run(root)
-    if collocated:
-        carry_module_core(
-            cfg, component, module, core_h, old_core_h, core_c, old_core_c
-        )
+    if collocated and carry_module_core(
+        cfg, component, module, core_h, old_core_h, core_c, old_core_c
+    ):
+        # What apply derived from the render -- the `.pyi`, the runtime
+        # `__doc__` -- reads the header's Doxygen, which the carry just put
+        # back; derive it again from the carried header (gh-903's
+        # precedent: a second apply when the header changed under it).
+        _apply.run(root)
 
     if preserved_h and core_h.exists():
         restored = _restore_c_function_bodies(
@@ -375,6 +379,30 @@ def run(
         )
         _textio.write_text(core_c, restored)
         print(f"  restore hand-written bodies in {core_c}")
+
+    # gh-2843: a conditional block (`#ifdef __SSE2__ ... #endif`) cannot be
+    # lifted like a body, and the restore above only puts back the bodies it
+    # can name -- so without --discard, a block the rebuild no longer holds
+    # is refused rather than dropped with no word; `_undo` puts the tree
+    # back. --discard says it discards what the author wrote.
+    if not discard:
+        lost = [
+            f"{path.name}: {line}"
+            for path, old in ((core_h, old_core_h), (core_c, old_core_c))
+            if old is not None and path.exists()
+            for line in lost_conditionals(
+                old, path.read_text(encoding="utf-8")
+            )
+        ]
+        if lost:
+            raise Refusal(
+                f"cannot regenerate '{component}' without losing a"
+                f" conditional block: {'; '.join(lost)}. A preprocessor"
+                " block guarding definitions cannot be lifted like a body."
+                " Move the block, with what it guards, to a file of your own"
+                " -- a header you include, or a .c your CMakeLists compiles"
+                " -- or pass --discard to drop it (gh-2843)."
+            )
 
     # gh-903: put the author's `*_max_out` declarations back, and re-derive
     # from them. The second apply is not belt-and-braces — the glue above was
