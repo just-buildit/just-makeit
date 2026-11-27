@@ -3782,24 +3782,55 @@ def _top_level_definitions(text: str) -> "dict[str, str]":
     }
 
 
-def _signature(definition: str) -> "list[str]":
-    r"""A definition's head -- everything before its body's ``{`` -- as C
-    tokens, comments dropped, for comparing two whatever their layout.
+def _signature(definition: str) -> "tuple[tuple[str, ...], ...]":
+    r"""A definition's signature as the compiler reads it: its return type
+    and its parameter TYPES, as C tokens -- not the parameter names, and
+    not the layout.
 
     One line or two, ``T *f(`` or ``T * f(`` or ``T*\nf(``: a formatter's
     choice (LLVM and Google styles join the type to the name) is not a
-    different signature.
+    different signature, and nor is a parameter the author renamed (with
+    its body). A changed type is.
 
     >>> _signature("p_t *\np_create(double gain)\n{}") == _signature(
-    ...     "p_t * p_create(double  gain) {}")
+    ...     "p_t * p_create(double  g) {}")
     True
     >>> _signature("int f(int a) {}") == _signature("int f(long a) {}")
     False
+    >>> _signature("void f(const float *x, size_t n) {}")
+    (('void',), ('const', 'float', '*'), ('size_t',))
     """
     from ._docsync import _code_mask
 
     head = _code_mask(definition)
-    return re.findall(r"\w+|[^\s\w]", head[: head.index("{")])
+    toks = re.findall(r"\w+|[^\s\w]", head[: head.index("{")])
+    close = len(toks) - 1 - toks[::-1].index(")")
+    depth, open_ = 0, close
+    while open_ >= 0:
+        depth += {")": 1, "(": -1}.get(toks[open_], 0)
+        if depth == 0:
+            break
+        open_ -= 1
+    ret = tuple(toks[: open_ - 1])  # everything before the function's name
+    params: "list[tuple[str, ...]]" = []
+    cur: "list[str]" = []
+    depth = 0
+    for t in toks[open_ + 1 : close] + [","]:
+        if t == "," and depth == 0:
+            # A trailing identifier after a type is the parameter's name.
+            if len(cur) > 1 and re.fullmatch(r"\w+", cur[-1]):
+                cur = cur[:-1]
+            elif "[" in cur and cur.index("[") > 1:
+                k = cur.index("[")
+                if re.fullmatch(r"\w+", cur[k - 1]):
+                    cur = cur[: k - 1] + cur[k:]
+            if cur:
+                params.append(tuple(cur))
+            cur = []
+            continue
+        depth += {"(": 1, "[": 1, ")": -1, "]": -1}.get(t, 0)
+        cur.append(t)
+    return (ret, *params)
 
 
 def _module_fn_names(cfg: dict, module: str) -> "frozenset[str]":
@@ -3890,10 +3921,12 @@ def _carry(
     if cond:
         raise _report.Refusal(
             f"{path} holds a conditional block jm cannot carry into the"
-            f" collocated object's render: {'; '.join(cond)}. Move the"
-            " block, with what it guards, to a file of your own -- a header"
-            " you include, or a .c your CMakeLists compiles -- then run"
-            " this again (gh-2843)."
+            f" collocated object's render: {'; '.join(cond)}. That core is"
+            " the module's as well as the object's, so the block is module"
+            " code, which --discard does not drop: --discard discards only"
+            " the object's own bodies. Move the block, with what it guards,"
+            " to a file of your own -- a header you include, or a .c your"
+            " CMakeLists compiles -- then run this again (gh-2843)."
         )
     includes = [it.text for it in keep if it.kind == "include"]
     front = [
