@@ -362,6 +362,41 @@ def _insert_tp_doc(
     return (at, at, designator + "\n" + indent)
 
 
+#: The ``Raises`` section of a class docstring, as it sits in a C string
+#: literal: from its ``"Raises\n"`` line to the blank line that ends it.
+_RAISES_SECTION_RE = re.compile(r'"Raises\\n"\n.*?\n\s*"\\n"\n', re.S)
+
+
+def _swap_raises_section(existing: str, reference: str) -> str:
+    """*existing* with its ``Raises`` section taken from *reference* (gh-2555).
+
+    The section names the exception a constructor raises and the message
+    ``create_error_message`` gives it: jm's render with no authoring path
+    (gh-869). A manifest edit to either leaves the fragment's copy stale, and
+    the whole docstring is then kept as hand-written (gh-805 §F), so this
+    swaps only the section and nothing else in the doc.
+
+    Returns *existing* unchanged when either side has no such section.
+
+    Examples
+    --------
+    >>> ex = '"Raises\\\\n"\\n"ValueError\\\\n"\\n"\\\\n"\\n"Examples\\\\n"'
+    >>> ref = '"Raises\\\\n"\\n"RuntimeError\\\\n"\\n"\\\\n"\\n"Examples\\\\n"'
+    >>> print(_swap_raises_section(ex, ref))
+    "Raises\\n"
+    "RuntimeError\\n"
+    "\\n"
+    "Examples\\n"
+    >>> _swap_raises_section("no section here", ref) == "no section here"
+    True
+    """
+    have = _RAISES_SECTION_RE.search(existing)
+    want = _RAISES_SECTION_RE.search(reference)
+    if not have or not want:
+        return existing
+    return existing[: have.start()] + want.group(0) + existing[have.end() :]
+
+
 def _tp_doc_span(text: str, mask: str) -> tuple | None:
     """Span and text of the ``.tp_doc`` value, up to its terminating comma."""
     m = _TP_DOC_RE.search(mask)
@@ -827,6 +862,13 @@ def transplant_docs(
         if new_tp is None and _is_generic_tp_doc(ex_tp[2]) and ref_tp:
             if _norm(ref_tp[2]) != _norm(ex_tp[2]):
                 new_tp = ref_tp[2]
+        # gh-2555: a doc kept as hand-written still carries a `Raises`
+        # section jm rendered from the manifest, which a manifest edit leaves
+        # stale. That section has no authoring path, so only it is swapped.
+        if new_tp is None and ref_tp:
+            swapped = _swap_raises_section(ex_tp[2], ref_tp[2])
+            if swapped != ex_tp[2]:
+                new_tp = swapped
         if new_tp is not None:
             edits.append((ex_tp[0], ex_tp[1], new_tp))
     else:
@@ -3268,7 +3310,13 @@ def refresh_module_fragment_docs(
                     n: _ref_funcs[n] for n in _own_names if n in _ref_funcs
                 }
                 if _own:
-                    updated = O._restore_c_function_bodies(updated, _own)
+                    # gh-2555: `infra` opts the constructor wrapper back in.
+                    # The restore skips `*_init` by default, because the
+                    # verb path regenerates it from the template; apply has
+                    # no template, so the reference body must be written.
+                    updated = O._restore_c_function_bodies(
+                        updated, _own, infra=tuple(_own)
+                    )
                 # Loud, as the enum tables above are: a builder that moves is
                 # a binding that now accepts different rows. Compared as
                 # tokens, so a formatted fragment is not "changed" by layout.

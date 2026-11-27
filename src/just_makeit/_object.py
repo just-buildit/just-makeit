@@ -1700,6 +1700,7 @@ def _restore_c_function_bodies(
     preserved: dict[str, str],
     require_static: bool = True,
     force_regen: "tuple[str, ...]" = (),
+    infra: "tuple[str, ...]" = (),
 ) -> str:
     """Replace stub implementations in *new_source* with *preserved* bodies.
 
@@ -1733,6 +1734,11 @@ def _restore_c_function_bodies(
     the swallowing body — silently, which is the precise bug the declaration
     exists to remove. Applied only to declaring objects, so a fragment whose
     object has no destroy table is preserved exactly as before.
+
+    *infra* names ``*_dealloc`` / ``*_init`` functions the caller wants
+    written anyway (gh-2555). The default skips them, because the verb path
+    regenerates them from the template; ``jm apply`` restores from the
+    fragment on disk, which has no template, so it must name them.
     """
     _INFRA_SUFFIXES = ("_dealloc", "_init")
     _STREAM_SUFFIXES = ("_stream", "_getiter", "_make_iter")
@@ -1744,7 +1750,7 @@ def _restore_c_function_bodies(
             continue
         if _has_stream and fn_name.endswith(_STREAM_SUFFIXES):
             continue
-        if fn_name.endswith(_INFRA_SUFFIXES):
+        if fn_name.endswith(_INFRA_SUFFIXES) and fn_name not in infra:
             continue
         # Locate the function in new_source using the same brace-counting
         # approach (handles Py_UNUSED and other nested-paren params).
@@ -2746,6 +2752,11 @@ def jm_owned_functions(
     - gh-2055: every record dtype builder (`_record.dtype_builders`). It is
       the declared columns, so a kept one describes the old element while
       the element contract asserts the new one.
+    - gh-2555: the constructor wrapper ``<W>_init``. Every slot in its
+      template is a manifest render (the parse, the create call, the
+      create-failure block, the warning block), and no author placeholder
+      sits in it. Kept, its create-failure block went on raising the
+      exception the manifest used to name, while the stub moved on.
 
     A teardown that parks is taken from the render only where the text it
     lands in declares `PARK_FIELD`. *into* is the fresh render for a verb,
@@ -2793,7 +2804,7 @@ def jm_owned_functions(
     # gh-2272: the same for a teardown that waits on the in-flight count.
     if _declares_inflight(rendered) and not _declares_inflight(into):
         teardown = ()
-    return teardown + _record.dtype_builders(rendered)
+    return (f"{_w}_init",) + teardown + _record.dtype_builders(rendered)
 
 
 #: One struct member declaration, its name captured. Read on comment-masked
