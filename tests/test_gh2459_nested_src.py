@@ -425,36 +425,36 @@ def _with(cfg: dict, layout: str) -> dict:
 
 
 def test_remove_keeps_a_component_s_c_below_the_removed_one(tmp_path):
-    """A standalone ``rx`` sits above every member of ``[module."rx.ss"]``:
-    removing it takes its own files, never the members' C."""
+    """A standalone ``rx`` above every member of ``[module."rx.ss"]`` was the
+    one shape that put a component's C below another's here. It no longer
+    reaches `jm remove`: ``p/rx.so`` and the package ``p/rx/`` claim one
+    Python name, so the pair is refused at the verb, tree unchanged, and
+    at load (#2854). gh-2427's ``module-object`` case still nests one
+    directory below another, and gates `_remove._own_part` for both trees.
+    """
     _jm(tmp_path, "new", "p")
     root = tmp_path / "p"
     _declare(root, "nested")
     _jm(root, "object", "rx")
-    _jm(root, "module", "rx.ss")
-    _jm(root, "object", "fir", "--module", "rx.ss")
-    _jm(root, "apply")
-    inner = INC.src_path(root, "fir")
-    assert INC.src_path(root, "rx") in inner.parents
-    core = inner / "fir_core.c"
-    core.write_text(
-        core.read_text(encoding="utf-8") + "/* AUTHOR */\n", encoding="utf-8"
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    r = run_cli("module", "rx.ss", cwd=root)
+    assert r.returncode == 1, (r.stdout, r.stderr)
+    assert "claim the Python name 'p.rx'" in " ".join(r.stderr.split())
+    after = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert after == before
+    _jm(root, "module", "rxx.ss")
+    frag = root / "modules" / "rxx_ss.toml"
+    text = frag.read_text(encoding="utf-8")
+    assert text.count('"rxx.ss"') == 1
+    frag.unlink()
+    (root / "modules" / "rx_ss.toml").write_text(
+        text.replace('"rxx.ss"', '"rx.ss"'), encoding="utf-8"
     )
-    kept = {p: p.read_bytes() for p in inner.parent.rglob("*.c")}
-    _jm(root, "remove", "object", "rx", "--force")
-    assert not (INC.src_path(root, "rx") / "rx_core.c").exists()
-    for path, data in kept.items():
-        assert path.read_bytes() == data, path
-    _jm(root, "status", "--check")
-
-    _jm(root, "remove", "module", "rx.ss", "--force")
-    empty = [
-        p.relative_to(root).as_posix()
-        for p in (root / "native").rglob("*")
-        if p.is_dir() and not any(p.iterdir())
-    ]
-    assert empty == []
-    assert not (root / "native" / "src" / "rx").exists()
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "claim the Python name 'p.rx'" in " ".join(
+        (r.stdout + r.stderr).split()
+    )
 
 
 # ── 6. the record, not the tree (review of #2481) ──────────────────────────
