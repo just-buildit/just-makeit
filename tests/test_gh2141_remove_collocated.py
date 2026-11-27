@@ -56,9 +56,14 @@ def _collocated(tmp_path: Path, *, function: bool = False) -> Path:
     _ok("new", "p", cwd=tmp_path)
     proj = tmp_path / "p"
     _ok("module", "filt", cwd=proj)
-    if function:
-        _ok("function", "gain", "--module", "filt", cwd=proj)
     _ok("object", "filt", "--module", "filt", cwd=proj)
+    if function:
+        # TEMPORARY order, not the intended shape: the natural one (the
+        # function first, then the collocated object) leaves the header
+        # without the function's declaration before any removal -- #2843
+        # item 1, fixed in this same wave. That fix restores the natural
+        # order here.
+        _ok("function", "gain", "--module", "filt", cwd=proj)
     core_h, core_c = _core(proj)
     text = core_h.read_text(encoding="utf-8")
     guard = text.rindex("#endif")
@@ -102,19 +107,81 @@ def test_the_module_keeps_its_core_and_the_authors_c(tmp_path):
 
 def test_a_module_with_functions_keeps_its_core_harness(tmp_path):
     # gh-1479's keep, from the other side: while the module has functions
-    # the C test, link table and bench are its core's, not the object's.
+    # the C test and bench are its core's, not the object's. The link table
+    # (gh-1361) is the object's alone -- a functions-only module has none,
+    # and nothing compiles it once the object is gone -- so it goes.
     proj = _collocated(tmp_path, function=True)
-    assert all(p.is_file() for p in _harness(proj))
-    _ok("remove", "object", "filt", "--force", cwd=proj)
-    assert all(p.is_file() for p in _harness(proj)), [
-        p.name for p in _harness(proj) if not p.exists()
-    ]
+    test_c, symbols_c, bench_c = _harness(proj)
+    assert all(p.is_file() for p in (test_c, symbols_c, bench_c))
+    out = _ok("remove", "object", "filt", "--force", cwd=proj)
+    assert test_c.is_file() and bench_c.is_file()
+    assert not symbols_c.exists()
+    # The kept two still call the removed object's create() and step(), so
+    # the note says so: deleting those bodies alone breaks both builds.
+    assert (
+        "native/tests/test_filt_core.c, native/benchmarks/bench_filt_core.c"
+        " stay as the module's C test and bench, and still call 'filt''s"
+        " create() and step()"
+    ) in out, out
+    status = run_cli("status", "--check", cwd=proj)
+    assert status.returncode == 0, status.stdout + status.stderr
 
 
-@pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
-def test_the_module_builds_after_the_removal(tmp_path):
+def test_the_removal_names_what_the_author_still_owns(tmp_path):
+    # The kept core still holds the object's C, and only the author may
+    # delete it: the closing note is the one place that says so.
     proj = _collocated(tmp_path)
+    out = _ok("remove", "object", "filt", "--force", cwd=proj)
+    assert (
+        "note: native/inc/p/filt/filt_core.h and its _core.c are module"
+        " 'filt''s core and stay; delete 'filt''s declarations and bodies"
+        " from them by hand."
+    ) in out, out
+
+
+def test_the_prompt_does_not_threaten_the_kept_core(tmp_path):
+    # The core is kept, so "will be permanently deleted" and "cannot be
+    # recovered without git" -- the prompt for any other object whose
+    # core holds the author's C -- would both be false here.
+    proj = _collocated(tmp_path)
+    core_h, _ = _core(proj)
+    # The author implements step(): the stub's marker goes, which is what
+    # `_remove._is_implemented` reads as hand-written code.
+    text = core_h.read_text(encoding="utf-8")
+    stub = "/* TODO: implement using state variables */"
+    assert text.count(stub) == 1
+    core_h.write_text(
+        text.replace(stub, "/* the author's step */"), encoding="utf-8"
+    )
+    r = run_cli("remove", "object", "filt", cwd=proj, stdin="n\n")
+    out = r.stdout + r.stderr
+    assert "Aborted." in out, out
+    assert "permanently deleted" not in out, out
+    assert "cannot be recovered" not in out, out
+    assert "core and are kept." in out, out
+
+
+def test_a_dependent_takes_the_core_wiring_apply_gives_it(tmp_path):
+    # While the collocated object stands, the module's block folds its
+    # core in and a member that depends_on it adds no line of its own.
+    # Once it is removed, `apply` wires that core with the dependent: the
+    # removal must leave the root CMakeLists exactly there.
+    proj = _collocated(tmp_path)
+    _ok("object", "biq", "--module", "filt", cwd=proj)
+    frag = proj / "objects" / "biq.toml"
+    text = frag.read_text(encoding="utf-8")
+    assert text.count("[biq]\n") == 1
+    frag.write_text(
+        text.replace("[biq]\n", '[biq]\ndepends_on = ["filt"]\n'),
+        encoding="utf-8",
+    )
+    _ok("apply", cwd=proj)
     _ok("remove", "object", "filt", "--force", cwd=proj)
+    status = run_cli("status", "--check", cwd=proj)
+    assert status.returncode == 0, status.stdout + status.stderr
+
+
+def _build(proj: Path) -> Path:
     build = proj / "build"
     for cmd in (
         [
@@ -129,8 +196,50 @@ def test_the_module_builds_after_the_removal(tmp_path):
     ):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    return build
+
+
+@pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
+def test_the_module_builds_after_the_removal(tmp_path):
+    proj = _collocated(tmp_path)
+    _ok("remove", "object", "filt", "--force", cwd=proj)
+    build = _build(proj)
     # The author's definition was compiled into the module core: it is in
     # the object file cmake built from the surviving `filt_core.c`.
     objs = list(build.rglob("filt_core.c.o*"))
     assert objs, sorted(p.name for p in build.rglob("*.o*"))
     assert any(b"author_kept_gh2141" in o.read_bytes() for o in objs)
+
+
+# The verbs that rebuild the collocated object's core rather than remove
+# it. Each goes through `_regenerate`, which lists the object's paths with
+# `_remove._object_paths` -- the list gh-2141 taught to keep the module's
+# core. Kept there too, the rebuilt header declared a `create()` the old
+# `_core.c` did not define: `status --check` stayed 0 and the module no
+# longer compiled. Only a build sees that, so this gate builds.
+_REBUILDS = {
+    "add": ("add", "--state", "bias:double:1.0", "--object", "filt", "-f"),
+    "remove-state": ("remove", "state", "gain", "--object", "filt", "-f"),
+    "regenerate": ("regenerate", "filt", "--force"),
+}
+
+
+@pytest.mark.skipif(bool(_SKIP), reason=_SKIP or "")
+@pytest.mark.parametrize("verb", sorted(_REBUILDS))
+def test_a_rebuild_of_the_collocated_object_still_builds(tmp_path, verb):
+    _ok("new", "p", cwd=tmp_path)
+    proj = tmp_path / "p"
+    _ok("module", "filt", cwd=proj)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _ok("object", "biq", "--module", "filt", cwd=proj)
+    if verb == "regenerate":
+        frag = proj / "objects" / "filt.toml"
+        with frag.open("a", encoding="utf-8") as f:
+            f.write(
+                '\n[[filt.state]]\nname = "bias"\ntype = "double"\n'
+                'default = "1.0"\n'
+            )
+    _ok(*_REBUILDS[verb], cwd=proj)
+    _build(proj)
+    status = run_cli("status", "--check", cwd=proj)
+    assert status.returncode == 0, status.stdout + status.stderr
