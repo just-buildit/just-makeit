@@ -137,6 +137,8 @@ def test_the_removal_names_what_the_author_still_owns(tmp_path):
         " 'filt''s core and stay; delete 'filt''s declarations and bodies"
         " from them by hand."
     ) in out, out
+    # No functions, so no kept C test or bench for a second note to name.
+    assert "stay as the module's C test and bench" not in out, out
 
 
 def test_the_prompt_does_not_threaten_the_kept_core(tmp_path):
