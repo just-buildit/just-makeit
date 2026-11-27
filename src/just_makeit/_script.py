@@ -150,7 +150,7 @@ def _init_param_carry(p: dict) -> tuple[str, frozenset[str]]:
     # for the capsule grammar.
     if p.get("object"):
         spec = f"{name}:object:{p['object']}"
-        if not p.get("required"):
+        if not _truthy(p.get("required")):
             spec += ":optional"
         # `type`, `capsule` and `header` are what `object` RESOLVES to
         # (`_config.resolve_object_ref`), so the reference carries them.
@@ -167,7 +167,7 @@ def _init_param_carry(p: dict) -> tuple[str, frozenset[str]]:
         # a constructor which rejects the `None` the original accepted, which
         # is the same silent-divergence class as dropping the capsule grammar
         # itself.
-        if not p.get("required"):
+        if not _truthy(p.get("required")):
             spec += ":optional"
         return spec, frozenset(
             {"name", "type", "capsule", "header", "required"}
@@ -195,7 +195,7 @@ def _init_param_carry(p: dict) -> tuple[str, frozenset[str]]:
         if p.get("create_fn"):
             spec += f":{p['create_fn']}"
         return spec, frozenset({"name", "type", "optional", "create_fn"})
-    if p.get("required"):
+    if _truthy(p.get("required")):
         spec = f"{name}:{typ}:required"
         return spec, frozenset({"name", "type", "required"})
     if p.get("default") not in (None, ""):
@@ -757,10 +757,10 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
         parts.append(_bool_flag("--status-return"))
     # gh-2574: dropped here, a replayed method's kernel lost its trailing
     # `const char **why` and the author's `_core.c` stopped compiling.
-    if m.get("why"):
+    if _truthy(m.get("why")):
         parts.append(_bool_flag("--why"))
     # gh-2584: likewise the kernel's `int *status`.
-    if m.get("status_out"):
+    if _truthy(m.get("status_out")):
         parts.append(_bool_flag("--status-out"))
     if m.get("error"):
         parts.append(_flag("--error", str(m["error"])))
@@ -827,7 +827,7 @@ def _property_flags(p: dict, module: str | None) -> list[str]:
 
     parts.append(_flag("--type", p.get("type") or p.get("ctype", "size_t")))
 
-    if p.get("writable"):
+    if _truthy(p.get("writable")):
         parts.append(_bool_flag("--writable"))
 
     if p.get("field"):
@@ -1002,7 +1002,7 @@ def _function_flags(fn: dict, module: str) -> list[str]:
         parts.append(_flag("--out-size", fn["out_size"]))
     if fn.get("check_return"):
         parts.append(_bool_flag("--check-return"))
-    if fn.get("why"):
+    if _truthy(fn.get("why")):
         parts.append(_bool_flag("--why"))
 
     parts += _record_flags(fn)

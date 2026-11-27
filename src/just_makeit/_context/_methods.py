@@ -5948,7 +5948,7 @@ def _property_lookup_enum(
     method parameter does. A read-only enum property used to get the lookup
     anyway, which ``-Wall`` reports as an unused function.
     """
-    if not p.get("writable", False):
+    if not C._truthy(p.get("writable")):
         return ""
     return _property_enum(component, Component, p, enums)
 
@@ -6001,7 +6001,7 @@ def validate_property_error(
     Refusal
         Naming the property and what to change.
     """
-    if p.get("buf_field") and p.get("writable"):
+    if p.get("buf_field") and C._truthy(p.get("writable")):
         # gh-2543: a buffer view has no setter. One was rendered anyway --
         # a scalar parse into `T[] v` and a call to a `<stem>_set_<p>` jm
         # never declared -- and did not compile. Refused first, so no later
@@ -6034,13 +6034,13 @@ def validate_property_error(
         )
     if getter_status:
         _refuse_getter_status(where, p, state_var_names, csym=csym)
-        if not p.get("writable"):
+        if not C._truthy(p.get("writable")):
             return  # `error` is the getter's (gh-2538)
         if not category and not p.get("error_message"):
             return  # a writable property whose setter cannot refuse
     if not category:
         raise Refusal(_message_without_error(where))
-    if not p.get("writable"):
+    if not C._truthy(p.get("writable")):
         raise Refusal(
             f"{where}: error is raised when the setter refuses a value, and "
             f"a read-only property has no setter. Add writable = true, or "
@@ -6190,14 +6190,14 @@ def _refuse_getter_status(
     """
     getter = CSYM.property_getter(csym, p["name"])
     getter_keys = [k for k in _GETTER_ERROR_KEYS if p.get(k)]
-    if p.get("writable") and not p.get("getter_error"):
+    if C._truthy(p.get("writable")) and not p.get("getter_error"):
         raise Refusal(
             f"{where}: on a writable property error is the setter's "
             f"(gh-2182), so getter_status needs getter_error to name what "
             f"a failing read raises (e.g. getter_error = "
             f'"AttributeError"), with getter_error_message for its text.'
         )
-    if getter_keys and not p.get("writable"):
+    if getter_keys and not C._truthy(p.get("writable")):
         raise Refusal(
             f"{where}: on a read-only property error already names what a "
             f"failing read raises, so {getter_keys[0]} is redundant. Use "
@@ -6251,7 +6251,7 @@ def validate_container_property(component: str, p: dict) -> None:
             f"a {kind} is keyed by position. Drop key_fn, or use type = "
             f'"dict".'
         )
-    if p.get("writable"):
+    if C._truthy(p.get("writable")):
         raise ValueError(
             f"{where}: a container property is read-only. jm generates the "
             f"container fresh on every read, so a setter would mutate a copy "
@@ -6312,7 +6312,7 @@ def validate_json_property(component: str, p: dict) -> None:
                 f'Drop py_type, or use type = "json".'
             )
         return
-    if p.get("writable"):
+    if C._truthy(p.get("writable")):
         raise Refusal(
             f"{where}: a json property is read-only. The value is parsed "
             f"fresh from the C getter's text on every read, so a setter "
@@ -6686,7 +6686,7 @@ def make_properties_ctx(
     for p in properties:
         pname: str = p["name"]
         ctype: str = p.get("type") or p.get("ctype", "size_t")
-        writable: bool = p.get("writable", False)
+        writable: bool = C._truthy(p.get("writable"))
         field: bool = p.get("field", False)
         buf_field: str = p.get("buf_field", "")
         len_field: str = p.get("len_field", "n")
