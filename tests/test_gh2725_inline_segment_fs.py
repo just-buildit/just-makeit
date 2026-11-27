@@ -59,7 +59,8 @@ class TestRender:
         init = self._seg(_module()).split("Seg_init(", 1)[1]
         init = init.split("\n}\n", 1)[0]
         put = init.index('PyDict_SetItemString(kw, "fs", _fs)')
-        assert "PyFloat_FromDouble((double)self->fs)" in init
+        # gh-2864: read from the copy `__init__` commits whole.
+        assert "PyFloat_FromDouble((double)_s.fs)" in init
         # After the extraction that removes the segment's own keyword, and
         # before the source is built from what is left.
         assert init.index('PyDict_DelItemString(kw, "fs")') < put
@@ -71,7 +72,7 @@ class TestRender:
         # Src takes `bw, window` then `fs`: a third positional is fs.
         seg = self._seg(_module())
         assert "PyTuple_GET_SIZE(args) > 2;" in seg
-        assert "self->fs = (double)((SrcObject *)one)->fs;" in seg
+        assert "_s.fs = (double)((SrcObject *)one)->fs;" in seg
 
     def test_no_segment_fs_forwards_nothing(self) -> None:
         m = _module()
