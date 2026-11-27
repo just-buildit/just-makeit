@@ -951,18 +951,8 @@ def test_remove_leaves_nothing_of_the_module_behind(tmp_path, layout):
             "fir",
             "tap",
         ),
-        # A standalone `rx` sits above every member of [module."rx.ss"].
-        (
-            (
-                ("object", "rx"),
-                ("module", "rx.ss"),
-                ("object", "tap", "--module", "rx.ss"),
-            ),
-            "rx",
-            "tap",
-        ),
     ],
-    ids=["module-object", "standalone"],
+    ids=["module-object"],
 )
 def test_remove_keeps_a_component_nested_below_the_removed_one(
     tmp_path, build
@@ -994,6 +984,39 @@ def test_remove_keeps_a_component_nested_below_the_removed_one(
     for path, data in survivors.items():
         assert path.read_bytes() == data, path
     _jm(root, "status", "--check")
+
+
+def test_a_standalone_above_a_dotted_module_is_refused(tmp_path):
+    """B1's other shape -- a standalone `rx` above every member of
+    [module."rx.ss"] -- no longer reaches the removal: `p/rx.so` and the
+    package `p/rx/` claim one Python name, so the pair is refused at the
+    verb and at load (#2854). The module-object case above still nests one
+    component's directory below another's, and keeps B1 gated."""
+    _jm(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _declare(root, "nested")
+    _jm(root, "object", "rx")
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    r = run_cli("module", "rx.ss", cwd=root)
+    assert r.returncode == 1, (r.stdout, r.stderr)
+    assert "claim the Python name 'p.rx'" in " ".join(r.stderr.split())
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == (
+        before
+    )
+    # A hand-edited manifest declaring the pair is refused at load.
+    _jm(root, "module", "rxx.ss")
+    frag = root / "modules" / "rxx_ss.toml"
+    text = frag.read_text(encoding="utf-8")
+    assert text.count('"rxx.ss"') == 1
+    frag.unlink()
+    (root / "modules" / "rx_ss.toml").write_text(
+        text.replace('"rxx.ss"', '"rx.ss"'), encoding="utf-8"
+    )
+    r = run_cli("status", "--check", cwd=root)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert "claim the Python name 'p.rx'" in " ".join(
+        (r.stdout + r.stderr).split()
+    )
 
 
 # ── B2: a composer's bridge header under nested ─────────────────────────────
