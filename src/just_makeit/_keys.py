@@ -1798,6 +1798,174 @@ def default_raw_errors(cfg: dict) -> "list[str]":
     ]
 
 
+# --- flags (gh-2120) --------------------------------------------------------
+
+#: Every manifest key jm reads as a flag, through :func:`truthy`. Each is
+#: refused at load holding anything but :data:`FLAG_SPELLINGS`
+#: (:func:`flag_errors`), and respelled by ``jm upgrade`` when it holds the
+#: Python spelling an older jm wrote (:data:`PYTHON_SPELLINGS`). Matched by
+#: NAME, in every table: a key named here is a flag wherever it appears.
+#: `tests/test_gh2120_one_flag_reader.py` holds this set equal to the keys
+#: the source reads through `truthy`, and refuses a flag read any other way.
+FLAG_KEYS = frozenset(
+    {
+        # [project]
+        "perf",
+        "pytest",
+        "pytest_benchmark",
+        "strict_examples",
+        # an object, and a handle module (`serializable`)
+        "mutable",
+        "no_state",
+        "no_step",
+        "no_reset",
+        "opaque_state",
+        "header_only",
+        "process_global",
+        "no_python_bench",
+        "serializable",
+        "streamable",
+        "async_stream",
+        "step_delegates_to_steps",
+        "create_why",
+        # a module
+        "no_generate",
+        "functions_in_core",
+        "context_manager",
+        "sample_type",
+        # a composer's `[module.X.json]` and `[module.X.cli]`
+        "enabled",
+        # a row: an init param, a method, a method param, a property
+        "optional",
+        "required",
+        "retain",
+        "bench",
+        "why",
+        "status_out",
+        "writable",
+    }
+)
+
+#: The values a flag may hold: a TOML bool, or the string form jm writes for
+#: the keys it has always written quoted (``perf = "false"``).
+FLAG_SPELLINGS = (True, False, "true", "false")
+
+#: The flag spellings an older jm wrote and nothing reads: before gh-2046 its
+#: writer put a TOML bool through ``str()`` in quotes, so ``streamable =
+#: true`` came back ``"True"``. Only that writer produced them, so ``jm
+#: upgrade`` respells each to the bool it was (gh-2120).
+PYTHON_SPELLINGS = {"True": True, "False": False}
+
+#: The flags whose own load check already refuses everything but a TOML
+#: bool, in a message that says what the switch is for (gh-1722's ``why``,
+#: gh-2552's ``create_why``, gh-2584's ``status_out``, gh-2327's
+#: ``retain``). :func:`flag_errors` leaves them to it, so each is refused
+#: once; the ``jm upgrade`` respell still reaches them.
+BOOL_ONLY_FLAGS = frozenset({"why", "create_why", "status_out", "retain"})
+
+#: A table that carries a flag's name and is not a flag: ``[project.bench]``
+#: holds the benchmark settings, where a method's ``bench = false`` opts out.
+_FLAG_NAMED_TABLES = frozenset({("project", "bench")})
+
+
+def truthy(value: object) -> bool:
+    """Whether a manifest flag's *value* is on: the one reading of a flag.
+
+    ``true`` (a TOML bool) and ``"true"`` (the string form jm writes for
+    the keys it has always quoted) are on; ``false``, ``"false"`` and an
+    absent key (``None``) are off. :func:`flag_errors` refuses every other
+    value at load for every key in :data:`FLAG_KEYS`, so by the time a
+    reader asks, *value* is one of :data:`FLAG_SPELLINGS` or absent -- a
+    spelling this would read as off without meaning it, such as the
+    ``"True"`` an older jm wrote (gh-2120), never reaches it.
+
+    Examples
+    --------
+    >>> [truthy(v) for v in (True, "true", False, "false", None)]
+    [True, True, False, False, False]
+    """
+    return value is True or value == "true"
+
+
+def flag_values(tree: object, path: "tuple[str, ...]" = ()):
+    """Yield ``(path, table, key)`` for every flag key in *tree*.
+
+    The one walk of the manifest's flags, shared by the load refusal
+    (:func:`flag_errors`) and the ``jm upgrade`` respell, so the two cannot
+    disagree about which keys are flags. *tree* is a manifest dict -- or a
+    ``tomlkit`` document, whose tables and arrays are a dict and a list --
+    and *path* names where *table* sits: a row is named by its ``name``
+    when it has one, else by its index.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"streamable": True, "init_params": [
+    ...     {"name": "w", "optional": "false"}]}}
+    >>> [(".".join(p), k) for p, _t, k in flag_values(cfg)]
+    [('o', 'streamable'), ('o.init_params[w]', 'optional')]
+    """
+    if isinstance(tree, dict):
+        for key, value in tree.items():
+            here = (*path, str(key))
+            if key in FLAG_KEYS and tuple(here) not in _FLAG_NAMED_TABLES:
+                yield path, tree, key
+            elif isinstance(value, (dict, list)):
+                yield from flag_values(value, here)
+    elif isinstance(tree, list):
+        for i, row in enumerate(tree):
+            name = row.get("name") if isinstance(row, dict) else None
+            tag = name if isinstance(name, str) and name else str(i)
+            *head, last = path or ("",)
+            yield from flag_values(row, (*head, f"{last}[{tag}]"))
+
+
+def flag_errors(cfg: dict) -> "list[str]":
+    """Every flag in *cfg* holding a value that is not a flag, by key.
+
+    Asked at load (`_config.load`), before anything reads a flag.
+    :func:`truthy` reads anything but ``true`` / ``"true"`` as off, so a
+    value outside :data:`FLAG_SPELLINGS` would switch the feature off in
+    silence: a manifest an older jm rewrote says ``streamable = "True"``,
+    and ``apply`` rendered no ``stream()`` and exited 0 (gh-2120). That
+    spelling is refused with the command that repairs it; any other is
+    refused as the mistake it is.
+
+    Examples
+    --------
+    >>> print(flag_errors({"o": {"streamable": "True"}})[0])
+    ... # doctest: +NORMALIZE_WHITESPACE
+    o: streamable = "True" is the Python spelling an older jm wrote for
+    true, and jm reads only true or false; run `just-makeit upgrade`,
+    which respells it (gh-2120)
+    >>> print(flag_errors({"project": {"perf": "yes"}})[0])
+    project: perf = 'yes' must be true or false
+    >>> flag_errors({"o": {"streamable": "true", "mutable": False}})
+    []
+    >>> flag_errors({"project": {"bench": {"timeout": 5}}})
+    []
+    """
+    out: "list[str]" = []
+    for path, table, key in flag_values(cfg):
+        if key in BOOL_ONLY_FLAGS:
+            continue
+        value = table[key]
+        # By type first: ``1 == True``, so a bare membership test would
+        # take ``1`` and ``0`` as flags.
+        if isinstance(value, (bool, str)) and value in FLAG_SPELLINGS:
+            continue
+        where = ".".join(path) or "(top level)"
+        if isinstance(value, str) and value in PYTHON_SPELLINGS:
+            out.append(
+                f'{where}: {key} = "{value}" is the Python spelling an '
+                f"older jm wrote for {value.lower()}, and jm reads only true "
+                "or false; run `just-makeit upgrade`, which respells it "
+                "(gh-2120)"
+            )
+        else:
+            out.append(f"{where}: {key} = {value!r} must be true or false")
+    return out
+
+
 def warn_unknown_keys(cfg: dict, stream=None) -> list:
     """Print one ``warning:`` line per unrecognised key, deduplicated.
 

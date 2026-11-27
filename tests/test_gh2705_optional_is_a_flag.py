@@ -5,11 +5,11 @@ the string `"false"`, which is truthy, so on an array init param it turned
 array dispatch (gh-1004) ON -- the opposite of what the author wrote -- and
 `apply` refused the row for naming no `create_fn`.
 
-The key is now read through `_config._truthy`, the one reading of jm's
-string-typed flags: a TOML bool or the strings `"true"` / `"false"`. The
+The key is now read through `_keys.truthy`, the one reading of a flag: a
+TOML bool or the strings `"true"` / `"false"`. The
 tuple `_config._project_init_params` builds carries that reading to every
-generator, and `_context/_parse.init_param_optional_errors` (asked by
-`_config.load`) refuses any other value, naming the row.
+generator, and `_keys.flag_errors` (asked by `_config.load`, gh-2120)
+refuses any other value, naming the row -- as it does for every flag.
 
 The end-to-end check is registration-free over readers: it renders the
 whole project once per spelling and requires the trees to be identical, so
@@ -31,6 +31,7 @@ sys.path.insert(0, str(SRC))
 from just_makeit._context._parse import (  # noqa: E402
     init_param_optional_errors,
 )
+from just_makeit._keys import flag_errors  # noqa: E402
 
 #: Values a hand-written manifest could carry that are neither a TOML bool
 #: nor its string form. `1` and `0` matter: `1 == True` in Python, so a
@@ -50,12 +51,15 @@ def _cfg(value, typ="float[]") -> dict:
 
 @pytest.mark.parametrize("value", _REFUSED, ids=repr)
 def test_a_value_that_is_not_a_flag_is_refused(value):
-    errs = init_param_optional_errors(_cfg(value))
-    assert errs == [
-        f"[[w.init_params]] taps: optional = {value!r} must be true or false",
-        f"[[w.views.init_params]] taps: optional = {value!r} must be true"
-        " or false",
+    # gh-2120: the one refusal of a value that is not a flag. "True" is
+    # named as the spelling an older jm wrote, with its repair.
+    errs = flag_errors(_cfg(value))
+    assert [e.split(": optional = ")[0] for e in errs] == [
+        "w.init_params[taps]",
+        "w.views[v].init_params[taps]",
     ]
+    tail = "upgrade" if value == "True" else "must be true or false"
+    assert all(tail in e for e in errs), errs
 
 
 @pytest.mark.parametrize("value", [False, "false"], ids=repr)

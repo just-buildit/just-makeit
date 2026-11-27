@@ -1597,7 +1597,7 @@ def _app_shape(cfg: dict, component: str) -> str | None:
     """Classify the object's I/O shape so the right parser + loop can be
     generated: 'scalar', 'blockwise', 'consumer', 'generator', or None (an
     unsupported shape that falls back to an <<IMPLEMENT>> stub)."""
-    if cfg.get(component, {}).get("no_step") in (True, "true"):
+    if C.is_no_step(cfg, component):
         return None
     arg_t = C.arg_type(cfg, component)
     ret_t = C.return_type(cfg, component)

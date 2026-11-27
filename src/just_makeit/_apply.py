@@ -1311,7 +1311,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             out_divisor=int(m.get("out_divisor", 1)),
             batch=bool(m.get("batch")),
             # gh-2215: `jm method --no-bench` writes `bench = false`.
-            no_bench=m.get("bench") is False,
+            no_bench=not C._truthy(m.get("bench", True)),
             impl_body=m_impl,
             none_on_empty=bool(m.get("none_on_empty")),
             strict=bool(m.get("strict")),  # gh-1426 B
@@ -1372,9 +1372,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             error_negative=bool(m.get("error_negative")),
             # gh-2574: named here like every key, or the replay declares
             # the kernel without its trailing `const char **why`.
-            why=m.get("why") is True,
+            why=C._truthy(m.get("why")),
             # gh-2584: likewise, or the replay drops `int *status`.
-            status_out=m.get("status_out") is True,
+            status_out=C._truthy(m.get("status_out")),
             error=m.get("error", ""),
             error_message=m.get("error_message", ""),
             doc=m.get("doc", ""),
@@ -3501,9 +3501,9 @@ def _sync_aggregates(
             # its <cname>_cli.c (glue).
             from . import _composer
 
-            if C.is_composer_module(cfg, mod) and _composer.composer_cli(
-                cfg, mod
-            ).get("enabled"):
+            if C.is_composer_module(cfg, mod) and C._truthy(
+                _composer.composer_cli(cfg, mod).get("enabled")
+            ):
                 glue.append(INC.src_rel(mp.cname, f"{mp.cname}_cli.c", cfg))
             # gh-998: and its published straight-C seams. Gated on the same
             # predicate `materialize` writes the file under — a list here that
@@ -3986,7 +3986,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             comp,
             p["name"],
             ctype,
-            str(p.get("writable", "")).lower() in ("true", "1", "yes"),
+            C._truthy(p.get("writable")),
             csym=CSYM.stem(cfg, comp),
             setter_type=setter_return_type(p),  # gh-2182
             getter_status=bool(p.get("getter_status")),  # gh-2538

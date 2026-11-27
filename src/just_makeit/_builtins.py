@@ -36,6 +36,7 @@ distinctions between them are all load-bearing:
 from __future__ import annotations
 
 from . import _textio
+from ._keys import truthy
 from . import _incpath as INC
 
 from . import _outbuf
@@ -240,8 +241,8 @@ def overridden_builtin_slots(
             borrow=bool(m.get("borrow")),
             csym=ctx["csym"],
             max_out_fn=m.get("max_out_fn", ""),  # gh-2680
-            why=m.get("why") is True,  # gh-2574
-            status_out=m.get("status_out") is True,  # gh-2584
+            why=truthy(m.get("why")),  # gh-2574
+            status_out=truthy(m.get("status_out")),  # gh-2584
         )
         builtin = ctx.get(_DECL_SLOT[m["name"]], "")
         # The built-in's slot may carry a Doxygen block above the declaration;
