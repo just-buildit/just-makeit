@@ -849,7 +849,12 @@ CC_METHOD_KEYS = frozenset(
     }
 )
 KIND_GETTER_KEYS = frozenset({"fn", "out", "cache", "fields", "doc"})
-KIND_GETTER_FIELD_KEYS = frozenset(
+#: gh-2214: ``error`` / ``error_message`` on a row whose setter is the
+#: author's C function -- a handle getter field's ``writable_fn``, a capsule
+#: property, a composer setting -- are an object property's pair (gh-2182):
+#: the setter returns ``int``, and a non-zero return raises ``error``.
+SETTER_ERROR_KEYS = frozenset({"error", "error_message"})
+KIND_GETTER_FIELD_KEYS = SETTER_ERROR_KEYS | frozenset(
     {
         "name",
         "from",
@@ -891,13 +896,17 @@ KIND_METHOD_ARG_KEYS = frozenset(
     }
 )
 KIND_DEPENDS_ON_KEYS = frozenset({"name", "link", "test_only"})
-KIND_PROPERTY_KEYS = frozenset(
-    {"name", "type", "writable", "doc", "enum", "getter", "setter", "fn"}
+KIND_PROPERTY_KEYS = (
+    frozenset(
+        {"name", "type", "writable", "doc", "enum", "getter", "setter", "fn"}
+    )
+    | SETTER_ERROR_KEYS
 )
 #: gh-1126. `enum` is optional and names a `[[enum]]` SSOT for a
 #: string-valued setting; the others are validated at render time.
-KIND_SETTING_KEYS = frozenset(
-    {"name", "setter_fn", "getter_fn", "type", "enum", "doc"}
+KIND_SETTING_KEYS = (
+    frozenset({"name", "setter_fn", "getter_fn", "type", "enum", "doc"})
+    | SETTER_ERROR_KEYS
 )
 KIND_SERIALIZER_KEYS = frozenset(
     {"name", "fn", "header", "params", "returns", "doc"}

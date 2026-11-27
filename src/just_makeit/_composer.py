@@ -55,8 +55,12 @@ from ._context._diagnostics import (
     WHY_C_PARAM,
     WHY_DECL,
     WHY_LOCAL,
+    property_declared_raise,
+    property_raises_doc,
     reason_raise_c,
+    setter_call_c,
 )
+from ._context._methods import validate_setter_error
 from ._docstring import (
     defaulted_ann,
     docstring_literal,
@@ -5906,6 +5910,11 @@ def _settings_getset_c(
         n = st["name"]
         ctype = st.get("type", "int")
         ename = st.get("enum")
+        # gh-2214: with `error` the setter's int is tested and a non-zero
+        # one raises, on the attribute here and on the keyword
+        # `_settings_apply_c` applies.
+        validate_setter_error(_row(module, "settings", n), st, no_setter="")
+        set_call = _setting_call_c(st, f"({ctype})_arg_{n}" if ename else "_v")
         guard = (
             "    if (self->destroyed) {\n"
             "        PyErr_SetString(PyExc_RuntimeError,"
@@ -5938,7 +5947,7 @@ def _settings_getset_c(
                 f"    const char *_s = PyUnicode_AsUTF8(value);\n"
                 f"    if (!_s) return -1;\n"
                 f"{set_conv}"
-                f"    {st['setter_fn']}(self->state, ({ctype})_arg_{n});\n"
+                f"{set_call}"
                 f"    return 0;\n"
             )
         else:
@@ -5953,8 +5962,8 @@ def _settings_getset_c(
                     ctype, "value", "_v", "return -1;", label=n, meta=meta
                 )
                 + _again_c("-1")
-                + f"    {st['setter_fn']}(self->state, _v);\n"
-                f"    return 0;\n"
+                + set_call
+                + "    return 0;\n"
             )
         fns.append(
             f"static PyObject *\n"
@@ -5970,12 +5979,63 @@ def _settings_getset_c(
             f' "cannot delete {n}");\n'
             f"        return -1;\n    }}\n{set_body}}}\n\n"
         )
+        refusing = _setting_doc(st, runtime=True)
+        doc_c = (
+            _build_ml_doc(refusing)
+            if refusing
+            else authored_c_doc(str(st.get("doc") or ""))
+        )
         table.append(
             f'    {{"{n}", (getter){cname}_get_{n},'
             f" (setter){cname}_set_{n},"
-            f" {authored_c_doc(str(st.get('doc') or ''))}, NULL}},\n"
+            f" {doc_c}, NULL}},\n"
         )
     return "".join(fns), "".join(table)
+
+
+def _setting_call_c(st: dict, value: str, pad: int = 4) -> str:
+    """The call of setting *st*'s ``setter_fn`` with C expression *value*.
+
+    gh-2214: one spelling for both places a setting is applied -- the
+    attribute's setter slot and the keyword ``tp_init`` applies after
+    ``create_fn`` -- so a setter declaring ``error`` raises from both. Each
+    of them returns ``int``, so a refusal leaves with ``return -1;``.
+
+    >>> print(_setting_call_c({"setter_fn": "mix_set_g"}, "_v"), end="")
+        mix_set_g(self->state, _v);
+    """
+    fn = st["setter_fn"]
+    return setter_call_c(
+        f"{fn}(self->state, {value})",
+        property_declared_raise(st, fn),
+        pad=pad,
+    )
+
+
+def _setting_doc(st: dict, *, runtime: bool) -> list[str]:
+    """A refusing setting's docstring, on either face (gh-2214).
+
+    ``[]`` unless the setting declares ``error``: every other setting keeps
+    the attribute it had. With it, the docstring says what an assignment
+    raises, from `_diagnostics.property_raises_doc` -- the pair
+    `_setting_call_c` raises with -- through the renderers an object
+    property's ``Raises`` goes through, so the runtime text is the stub's
+    without its indent.
+    """
+    raises = property_raises_doc(st, st["setter_fn"])
+    if not raises:
+        return []
+    summary = f"{st['name']} ({_setting_py_type(st)})."
+    doc = str(st.get("doc") or "")
+    if runtime:
+        return render_runtime_doc(
+            None, st["name"], [], "None", summary,
+            authored_doc=doc, raises=raises,
+        )  # fmt: skip
+    return render_numpy_doc(
+        None, st["name"], [], "None", summary,
+        indent=8, authored_doc=doc, raises=raises,
+    )  # fmt: skip
 
 
 def _settings_pop_c(cfg: dict, module: str) -> str:
@@ -6082,8 +6142,13 @@ def _settings_apply_c(cfg: dict, module: str) -> str:
     out = []
     for st in rows:
         val, flag = _setting_locals(st["name"])
+        call = _setting_call_c(st, val, pad=8)
+        # gh-2214: a refusing setter is a block, so it is braced; the bare
+        # call keeps the render it always had.
         out.append(
-            f"    if ({flag})\n        {st['setter_fn']}(self->state, {val});\n"
+            f"    if ({flag}) {{\n{call}    }}\n"
+            if property_declared_raise(st, st["setter_fn"])
+            else f"    if ({flag})\n{call}"
         )
     return "".join(out)
 
@@ -6516,9 +6581,21 @@ def type_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
                 ClassParam(
                     f"{st['name']} : {_setting_py_type(st)}, optional",
                     tuple(
-                        ["\n".join(authored_doc_lines(str(st["doc"])))]
-                        if st.get("doc")
-                        else []
+                        (
+                            ["\n".join(authored_doc_lines(str(st["doc"])))]
+                            if st.get("doc")
+                            else []
+                        )
+                        # gh-2214: the keyword is applied through the
+                        # attribute's setter, so it is refused alike.
+                        + [
+                            f"Applied as ``{st['name']}`` is assigned, so a "
+                            f"value ``{st['setter_fn']}`` refuses raises "
+                            f"{cat}."
+                            for cat, _ in property_raises_doc(
+                                st, st["setter_fn"]
+                            )
+                        ]
                     ),
                 )
                 for st in C.composer_settings(cfg, module)
@@ -6921,9 +6998,22 @@ def render_pyi(cfg: dict, module: str) -> str:
         *[
             # gh-1126: read/write, unlike the three above. A setting is set
             # once before the first execute(); the pair behind it is the
-            # backing's own setter/getter.
-            f"    {st['name']}: {_setting_py_type(st)}"
+            # backing's own setter/getter. gh-2214: one that may refuse a
+            # value is a property, so it can document what it raises.
+            line
             for st in C.composer_settings(cfg, module)
+            for line in (
+                [
+                    "    @property",
+                    f"    def {st['name']}(self) -> {_setting_py_type(st)}:",
+                    *_setting_doc(st, runtime=False),
+                    f"    @{st['name']}.setter",
+                    f"    def {st['name']}(self, value:"
+                    f" {_setting_py_type(st)}) -> None: ...",
+                ]
+                if _setting_doc(st, runtime=False)
+                else [f"    {st['name']}: {_setting_py_type(st)}"]
+            )
         ],
         f"    def __init__(self, segments: {seg_or_tl} = ..., *, "
         "repeat: bool = ..., continuous: bool = ..."
