@@ -2838,7 +2838,8 @@ def collocated_object(cfg: dict, module: str) -> str | None:
 
 
 def namespace_errors(cfg: dict) -> "list[str]":
-    """Every name two owners claim in the one native namespace (gh-2142).
+    """Every C symbol stem two owners claim in the one native namespace
+    (gh-2142).
 
     A module's **cname** (its id with dots as underscores) and a component's
     name are one namespace: each names a directory below ``native/src/``, a
@@ -2849,6 +2850,16 @@ def namespace_errors(cfg: dict) -> "list[str]":
     import failed. The one exception is the collocated object
     (:func:`collocated_object`, gh-1949): the object of module X named for
     X's own cname, which IS the module's core by design.
+
+    Owners are compared by their C symbol stem, :func:`_csym.stem` -- the
+    one definition, not a copy of its ``<prefix>_`` rule. Without
+    ``[project] c_prefix`` the stem is the name, so this is the name
+    comparison; with one, two different names can derive one stem
+    (``filt`` and ``p_filt`` under prefix ``p`` both derive
+    ``p_filt_create`` and ``P_FILT_CORE_H``), which `apply` and `status`
+    refused through :func:`_csym.duplicates` but every verb accepted.
+    That pairing is refused here for module against module, component
+    against module, and component against component, in either order.
 
     The one rule, asked by `load` and `save` of the whole manifest --
     `jm module` meets it at its `save`, which comes before any file of the
@@ -2866,7 +2877,8 @@ def namespace_errors(cfg: dict) -> "list[str]":
     Returns
     -------
     list of str
-        One sentence per clash, in manifest order; empty when none.
+        One sentence per clash, in manifest order, naming both owners and
+        the stem they share; empty when none.
 
     Examples
     --------
@@ -2876,46 +2888,76 @@ def namespace_errors(cfg: dict) -> "list[str]":
     >>> e = namespace_errors({"module": {"filt": {"objects": []}},
     ...                       "filt": {}})
     >>> e[0].split(":")[0]
-    "the standalone component 'filt' takes the native name of module 'filt'"
+    "the standalone component 'filt' and module 'filt' share the C symbol stem 'filt'"
     >>> e = namespace_errors({"module": {"a": {"objects": []},
     ...                                  "b": {"objects": ["a"]}}, "a": {}})
     >>> e[0].split(":")[0]
-    "component 'a' of module 'b' takes the native name of module 'a'"
+    "component 'a' of module 'b' and module 'a' share the C symbol stem 'a'"
     >>> e = namespace_errors({"module": {"dsp.f": {}, "dsp_f": {}}})
     >>> e[0].split(":")[0]
-    "modules 'dsp.f' and 'dsp_f' share the native name 'dsp_f'"
+    "modules 'dsp.f' and 'dsp_f' share the C symbol stem 'dsp_f'"
+    >>> e = namespace_errors({"project": {"c_prefix": "p"},
+    ...                       "filt": {}, "p_filt": {}})
+    >>> e[0].split(":")[0]
+    "the standalone components 'filt' and 'p_filt' share the C symbol stem 'p_filt'"
     """
+    from . import _csym
+
     rule = (
         "modules, components, and nested-module cnames share one "
         "namespace (the native/src/ directory, the CMake target, the C "
         "symbol stem), which only a module and its own collocated object "
         "may share -- rename one of them"
     )
-    owner: dict[str, str] = {}
+    module_at: dict[str, str] = {}
     errors: list[str] = []
     for m in modules(cfg):
-        cname = module_paths(m).cname
-        if cname in owner:
+        s = _csym.stem(cfg, module_paths(m).cname)
+        if s in module_at:
             errors.append(
-                f"modules '{owner[cname]}' and '{m}' share the native name "
-                f"'{cname}': {rule}"
+                f"modules '{module_at[s]}' and '{m}' share the C symbol "
+                f"stem '{s}': {rule}"
             )
         else:
-            owner[cname] = m
+            module_at[s] = m
+    component_at: dict[str, str] = {}
     for comp in components(cfg):
-        m = owner.get(comp)
-        if m is None:
-            continue
+        s = _csym.stem(cfg, comp)
         home = module_of(cfg, comp)
-        if home and collocated_object(cfg, home) == comp:
-            continue
-        who = (
-            f"component '{comp}' of module '{home}'"
-            if home
-            else f"the standalone component '{comp}'"
-        )
-        errors.append(f"{who} takes the native name of module '{m}': {rule}")
+        m = module_at.get(s)
+        if m is not None and not (
+            m == home and collocated_object(cfg, home) == comp
+        ):
+            who = (
+                f"component '{comp}' of module '{home}'"
+                if home
+                else f"the standalone component '{comp}'"
+            )
+            errors.append(
+                f"{who} and module '{m}' share the C symbol stem '{s}': {rule}"
+            )
+        if s in component_at:
+            errors.append(
+                f"the {_component_pair(cfg, component_at[s], comp)} "
+                f"share the C symbol stem '{s}': {rule}"
+            )
+        else:
+            component_at[s] = comp
     return errors
+
+
+def _component_pair(cfg: dict, a: str, b: str) -> str:
+    """How :func:`namespace_errors` names two components sharing a stem:
+    ``standalone components 'a' and 'b'`` when neither is in a module,
+    else each with its module."""
+
+    def one(comp: str) -> str:
+        home = module_of(cfg, comp)
+        return f"'{comp}' (module '{home}')" if home else f"'{comp}'"
+
+    if not module_of(cfg, a) and not module_of(cfg, b):
+        return f"standalone components '{a}' and '{b}'"
+    return f"components {one(a)} and {one(b)}"
 
 
 def valid_identifier(name: str) -> bool:
