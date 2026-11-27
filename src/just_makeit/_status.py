@@ -412,6 +412,9 @@ def run(
         sys.exit(1)
 
     cfg = C.load(root)
+    # gh-1906: what `apply` refuses before its first write, refused here
+    # before the scratch replay, as the one `error:` line apply prints.
+    _apply._refuse_impl_keys(cfg)
     # gh-183: surface jm-version skew on stderr (keeps stdout/JSON clean).
     _rec, _run = C.jm_version(cfg), C.jm_cli_version()
     if not as_json and _rec and _run != "unknown" and _rec != _run:
