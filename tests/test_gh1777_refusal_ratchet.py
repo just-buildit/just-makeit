@@ -31,7 +31,7 @@ NOT_JM_CODE = ("templates", "examples")
 #: Bare ``raise ValueError`` sites per file, as of gh-1777. Lower a number
 #: when you convert a site to ``Refusal``; never raise one.
 BASELINE = {
-    "_apply.py": 6,
+    "_apply.py": 2,
     "_bind.py": 8,
     "_capsule.py": 1,
     "_cli_method.py": 2,
