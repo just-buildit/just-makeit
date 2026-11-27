@@ -125,12 +125,17 @@ def test_a_name_that_carries_the_prefix_is_not_prefixed_again(tmp_path):
 
 
 def test_two_names_deriving_one_symbol_are_refused(tmp_path):
+    """`x` and `zz_x` derive one stem under `c_prefix = "zz"`. The verb
+    that would declare the second is refused before it writes (gh-2142,
+    `_config.namespace_errors`), naming both names and the stem -- not left
+    for `apply` to meet as `zz_x_create` derived twice."""
     root = _new(tmp_path, "p", "--c-prefix", "zz", "--object", "x")
-    _run(root, "object", "zz_x")
-    r = run_cli("apply", cwd=root)
+    r = run_cli("object", "zz_x", cwd=root)
     assert r.returncode == 1, r.stdout
-    assert "`zz_x_create` is derived twice" in r.stderr, r.stderr
-    assert "`x`" in r.stderr and "`zz_x`" in r.stderr, r.stderr
+    assert "'x'" in r.stderr and "'zz_x'" in r.stderr, r.stderr
+    assert "C symbol stem 'zz_x'" in r.stderr, r.stderr
+    # Refused before it writes: nothing anywhere in the tree names zz_x.
+    assert not [f for f in root.rglob("*zz_x*")], list(root.rglob("*zz_x*"))
 
 
 def test_a_method_and_a_module_function_deriving_one_symbol_are_refused(
