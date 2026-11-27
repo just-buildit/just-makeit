@@ -2965,8 +2965,10 @@ def dropped_cmake_commands(original: str, rendered: str) -> "list[str]":
     return out
 
 
-def _warn_dropped_cmake(real: Path, original: str, rendered: str) -> None:
-    """Say which of the author's CMake statements apply is about to drop."""
+def _warn_dropped_cmake(
+    real: Path, original: str, rendered: str, verb: str = "`jm apply`"
+) -> None:
+    """Say which of the author's CMake statements *verb* is about to drop."""
     dropped = dropped_cmake_commands(original, rendered)
     if not dropped:
         return
@@ -2981,7 +2983,7 @@ def _warn_dropped_cmake(real: Path, original: str, rendered: str) -> None:
     _report.warn(
         f"{src}/CMakeLists.txt is regenerated, and it carries "
         f"{', '.join(f'{n}()' for n in dropped)} that jm does not write -- "
-        f"`jm apply` drops it. Move it into {src}/{d}_extra.cmake, "
+        f"{verb} drops it. Move it into {src}/{d}_extra.cmake, "
         "which the generated file includes and jm never touches (gh-1351)."
     )
 
@@ -3095,7 +3097,7 @@ def _reconciled_cmake_dirs(cfg: dict) -> "set[str]":
 
 
 def _refuse_cmake_that_would_lose(
-    temp_root: Path, root: Path, cfg: dict
+    temp_root: Path, root: Path, cfg: dict, verb: str = "`jm apply`"
 ) -> None:
     """Refuse an apply that would erase an author's OBJECT library (gh-1840).
 
@@ -3122,6 +3124,10 @@ def _refuse_cmake_that_would_lose(
 
     Every rendered directory is asked, ``--only`` or not: a library this
     run would not reach is lost by the next one.
+
+    *verb* names the command in the refusal. A verb that rewrites a
+    module's own CMakeLists asks this same question through
+    :func:`ask_before_rewriting_cmake` (gh-2114).
 
     Raises
     ------
@@ -3155,7 +3161,7 @@ def _refuse_cmake_that_would_lose(
     from ._render import extra_cmake_name
 
     lines = [
-        "`jm apply` would erase an OBJECT library it does not write, so it"
+        f"{verb} would erase an OBJECT library it does not write, so it"
         " wrote\nnothing:"
     ]
     for rel, gone in lost:
@@ -3173,6 +3179,55 @@ def _refuse_cmake_that_would_lose(
         " in the root CMakeLists.txt, then re-run (gh-1840)."
     )
     raise _report.Refusal("\n".join(lines))
+
+
+def ask_before_rewriting_cmake(
+    root: Path, cfg: dict, real: Path, text: str, verb: str
+) -> None:
+    """Ask `apply`'s questions before a verb rewrites *real* with *text*.
+
+    gh-2114. A verb that adds to a module -- ``jm object x --module m``,
+    ``jm method``, ``jm function``, ``jm view``, ``jm remove`` -- rewrites
+    the module's own ``native/src/<cname>/CMakeLists.txt`` whole, and that
+    write never went through `apply`'s reconcile: an author's OBJECT
+    library there was erased with no word, and so was any other statement
+    the author added, not even gh-1351's warning. This asks the same two
+    questions `apply` asks of the same file, through the same code: the
+    gh-1840 refusal (:func:`_refuse_cmake_that_would_lose`), over a scratch
+    tree holding only *text* at *real*'s place, and gh-1351's warning
+    (:func:`_warn_dropped_cmake`) for a statement the rewrite drops. The
+    refusal runs before *real* is written; the command's `_undo` guard
+    (gh-1867) puts back anything it wrote earlier.
+
+    Parameters
+    ----------
+    root
+        The project root.
+    cfg
+        The manifest the verb renders from.
+    real
+        The CMakeLists about to be written.
+    text
+        What the verb is about to write there.
+    verb
+        The command, as the messages name it.
+
+    Raises
+    ------
+    _report.Refusal
+        When *text* would erase an OBJECT library *real* declares.
+    """
+    if not real.is_file():
+        return
+    original = real.read_text(encoding="utf-8")
+    if original == text:
+        return
+    with tempfile.TemporaryDirectory() as scratch:
+        temp = Path(scratch) / real.relative_to(root)
+        temp.parent.mkdir(parents=True)
+        _textio.write_text(temp, text)
+        _refuse_cmake_that_would_lose(Path(scratch), root, cfg, verb)
+    _warn_dropped_cmake(real, original, text, verb)
 
 
 def _refresh_core_h_decls(
