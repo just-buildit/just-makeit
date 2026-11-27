@@ -40,6 +40,14 @@ MAKEFILE = ROOT / "Makefile"
 #: command line travels in MAKEFLAGS and would override the default probed.
 _OUTER_MAKE = ("PYTHON", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES")
 
+#: What steers ``uv python find`` to an interpreter other than the one it
+#: would discover from *cwd*. ``make test`` runs pytest under ``uv run
+#: --isolated``, which exports ``VIRTUAL_ENV`` naming its own throwaway env,
+#: and setup-uv exports ``UV_PYTHON`` on CI legs. Inherited, either one
+#: answers the probe before the checkout's ``.venv`` is ever discovered, so
+#: a regression to the venv default would read as green.
+_STEERS_UV = ("VIRTUAL_ENV", "UV_PYTHON")
+
 
 def _make_python(tmp_path: Path, cwd: Path, path: str | None = None) -> str:
     """``$(PYTHON)`` exactly as make expands it, run from *cwd*.
@@ -53,7 +61,11 @@ def _make_python(tmp_path: Path, cwd: Path, path: str | None = None) -> str:
     probe.write_text("_jm-value: ; @: $(info [$(PYTHON)])\n", encoding="utf-8")
     make = shutil.which("make")
     assert make, "make is not on PATH"
-    env = {k: v for k, v in os.environ.items() if k not in _OUTER_MAKE}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in _OUTER_MAKE + _STEERS_UV
+    }
     if path is not None:
         env["PATH"] = path
     r = subprocess.run(
