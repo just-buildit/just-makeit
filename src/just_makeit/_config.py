@@ -3404,13 +3404,32 @@ def object_ref_edges(cfg: dict, component: str) -> "list[str]":
     return out
 
 
-def duplicate_row_errors(where: str, rows) -> "list[str]":
+#: Why a name twice in one C declaration is refused (gh-2112).
+_TWICE_WHY = (
+    "each name is one C member or parameter, so the scaffold would not"
+    " compile."
+)
+
+#: Why a name twice in a record declaration's fields is refused (gh-2805).
+#: The columns become the record's numpy dtype, not a C declaration: the
+#: scaffold compiles, and numpy refuses the dtype on the first call.
+RECORD_TWICE_WHY = (
+    "each name is one column of the record's numpy dtype, which refuses a"
+    " name twice on the first call that builds it."
+)
+
+
+def duplicate_row_errors(
+    where: str, rows, why: str = _TWICE_WHY
+) -> "list[str]":
     """Each name in *rows* declared more than once, as a refusal (gh-2112).
 
     *rows* is one list that becomes one C declaration (see
     :func:`duplicate_name_errors`), as manifest rows: dicts with a
     ``name``. Asked of a verb's own new rows too, before it renders, where
-    there is no manifest to put them in yet.
+    there is no manifest to put them in yet. *why* is what the repeat
+    breaks: a C declaration by default, :data:`RECORD_TWICE_WHY` for a
+    record's columns.
 
     >>> duplicate_row_errors("'o' state", [{"name": "g"}, {"name": "g"}])[0][:31]
     "'o' state: 'g' is declared twic"
@@ -3426,11 +3445,7 @@ def duplicate_row_errors(where: str, rows) -> "list[str]":
         if name in seen and name not in twice:
             twice.append(name)
         seen.add(name)
-    return [
-        f"{where}: '{n}' is declared twice; each name is one C member"
-        " or parameter, so the scaffold would not compile."
-        for n in twice
-    ]
+    return [f"{where}: '{n}' is declared twice; {why}" for n in twice]
 
 
 def duplicate_name_errors(cfg: dict) -> "list[str]":
@@ -3444,6 +3459,12 @@ def duplicate_name_errors(cfg: dict) -> "list[str]":
     g:double:2`` (or two ``--init-param n``), ``jm method``/``jm function``
     with ``--param a:int --param a:int``, and the same rows by hand. Only
     ``jm add`` refused, for its own new state names.
+
+    A record declaration's ``fields`` (``[[<obj>.records]]``, gh-1405) are
+    walked too (gh-2805). They are not a C declaration -- the author's
+    struct is -- but the columns of the numpy dtype jm builds from it, so
+    a repeat compiled and raised ``ValueError: name already used as a name
+    or title`` on the first call of every member speaking the record.
 
     Asked by `load` and `save`, so a hand-written manifest is refused by
     every command that reads it, and a verb declaring the second name is
@@ -3469,6 +3490,12 @@ parameter, so the scaffold would not compile."]
             continue
         out += rows_of(f"'{comp}' state", sec.get("state"))
         out += rows_of(f"'{comp}' init_params", sec.get("init_params"))
+        # gh-2805: a record declaration (gh-1405) names its columns once for
+        # every member that speaks it, so a repeat reaches each of them.
+        for rec in records(cfg, comp):
+            if isinstance(rec, dict):
+                what = f"'{comp}' record '{rec.get('name')}' fields"
+                out += rows_of(what, rec.get("fields"), RECORD_TWICE_WHY)
         owners = [(f"'{comp}'", sec)]
         # A view (gh-504) has its own constructor and its own methods, each
         # one C declaration too; its state is the parent's struct.
