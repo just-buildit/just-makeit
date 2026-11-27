@@ -254,6 +254,73 @@ def test_a_constructor_edited_elsewhere_is_reported_not_rewritten(
     assert "DIAGNOSTICS (1)" in r.stdout, r.stdout
 
 
+def test_author_code_inside_the_failure_block_survives(tmp_path) -> None:
+    """A statement and a comment the author put INSIDE the failure block
+    make it theirs: a block is jm's only when it is jm's render token for
+    token. `apply` keeps it, and `status --check` names the raise --
+    not the author's own literal."""
+    proj = _declare(tmp_path)
+    frag = _frag(proj, "acc")
+    text = frag.read_text("utf-8")
+    raise_ = "        PyErr_SetString(PyExc_ValueError,"
+    assert text.count(raise_) == 1, text
+    mine = '        log_failure("acc refused");  /* author: keep this */\n'
+    frag.write_text(text.replace(raise_, mine + raise_), "utf-8")
+    _edit_manifest(proj)
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "constructor's diagnostics disagree" in r.stderr, r.stderr
+    after = frag.read_text("utf-8")
+    assert mine in after, after
+    r = run_cli("status", "--check", cwd=proj)
+    assert r.returncode != 0, r.stdout
+    assert "DIAGNOSTICS (1)" in r.stdout, r.stdout
+    assert 'raises ValueError "old acc", the manifest' in r.stdout, r.stdout
+    assert "acc refused" not in r.stdout, r.stdout
+
+
+def test_author_code_inside_a_warning_block_survives(tmp_path) -> None:
+    """The same for a statement the author put inside a warning's block,
+    after jm's own `PyErr_WarnEx`, where the block still opens as jm's."""
+    proj = _declare(tmp_path)
+    frag = _frag(proj, "acc")
+    text = frag.read_text("utf-8")
+    warn = "1) < 0)\n            return -1;\n"
+    assert text.count(warn) == 1, text
+    mine = '        log_warning("acc flagged");\n'
+    frag.write_text(text.replace(warn, warn + mine), "utf-8")
+    _edit_manifest(proj)
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert mine in frag.read_text("utf-8")
+    r = run_cli("status", "--check", cwd=proj)
+    assert "DIAGNOSTICS (1)" in r.stdout, r.stdout
+
+
+def test_a_first_declaration_replaces_the_default_block(tmp_path) -> None:
+    """The undeclared `MemoryError` block is jm's render too, so a
+    `create_error` first written in the manifest reaches the binding."""
+    _ok("new", "p", cwd=tmp_path)
+    proj = tmp_path / "p"
+    _ok("module", "dsp", cwd=proj)
+    _ok("object", "acc", "--module", "dsp", cwd=proj)
+    path = proj / "objects" / "acc.toml"
+    text = path.read_text("utf-8")
+    assert text.count("[acc]\n") == 1, text
+    path.write_text(
+        text.replace(
+            "[acc]\n",
+            '[acc]\ncreate_error = "ValueError"\n'
+            'create_error_message = "first"\n',
+        ),
+        "utf-8",
+    )
+    out = _ok("apply", cwd=proj)
+    assert "dsp_ext_acc.c: constructor (" in out, out
+    init = _docsync._init_body(_frag(proj, "acc").read_text("utf-8"))
+    assert "PyExc_ValueError" in init and '"first"' in init, init
+
+
 def test_a_formatted_constructor_is_still_recognised(tmp_path) -> None:
     """GNU layout -- a space before every `(`, braces on their own lines --
     changes no token, so the constructor is still jm's."""
