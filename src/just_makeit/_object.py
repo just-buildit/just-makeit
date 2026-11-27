@@ -3526,7 +3526,7 @@ def _regenerate_module_now(
     from ._apply import ask_before_rewriting_cmake
 
     ask_before_rewriting_cmake(
-        root, cfg, module_cmake, module_cmake_text, "this command"
+        root, cfg, module_cmake, module_cmake_text, _report.running_verb()
     )
     _write(module_cmake, module_cmake_text, "update")
     if _fns:
@@ -4243,14 +4243,24 @@ def run(
             r(R.COMPONENT_CORE_C),
             "update" if core_c_path.exists() else "create",
         )
-    obj_cmake_path = INC.src_path(root, comp, layout_owner) / "CMakeLists.txt"
-    _write(
-        obj_cmake_path, R.with_extra_cmake(r(R.CMAKE_LISTS_OBJECT_CORE), comp)
-    )
-    # Propagate any external-library cmake blocks from sibling objects so the
-    # new component picks up the same if(SOME_LIB) include/link wiring without
-    # manual edits (e.g. if(DOPPLER_C_LIB) in doppler-based projects).
-    _copy_external_cmake_blocks(root, comp, obj_cmake_path)
+    # gh-2114: the collocated object's CMakeLists IS the module's own file,
+    # which `_regenerate_module` below renders whole -- this object's core
+    # included -- after asking `apply`'s questions of it. Writing it here
+    # first erased an author's OBJECT library before that ask could see it,
+    # so the module's render is that file's one writer.
+    if comp != C.collocated_object(layout_owner, module):
+        obj_cmake_path = (
+            INC.src_path(root, comp, layout_owner) / "CMakeLists.txt"
+        )
+        _write(
+            obj_cmake_path,
+            R.with_extra_cmake(r(R.CMAKE_LISTS_OBJECT_CORE), comp),
+        )
+        # Propagate any external-library cmake blocks from sibling objects
+        # so the new component picks up the same if(SOME_LIB) include/link
+        # wiring without manual edits (e.g. if(DOPPLER_C_LIB) in
+        # doppler-based projects).
+        _copy_external_cmake_blocks(root, comp, obj_cmake_path)
     # gh-806: via the one renderer that stamps the scaffold check count.
     _write(
         INC.native_path(root, "test", comp, layout_owner),

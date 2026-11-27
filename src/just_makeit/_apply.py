@@ -3191,7 +3191,10 @@ def ask_before_rewriting_cmake(
     the module's own ``native/src/<cname>/CMakeLists.txt`` whole, and that
     write never went through `apply`'s reconcile: an author's OBJECT
     library there was erased with no word, and so was any other statement
-    the author added, not even gh-1351's warning. This asks the same two
+    the author added, not even gh-1351's warning. (The module's collocated
+    object, ``jm object m --module m``, writes no CMakeLists of its own:
+    that file is the module's, and this ask guards its one writer.) This
+    asks the same two
     questions `apply` asks of the same file, through the same code: the
     gh-1840 refusal (:func:`_refuse_cmake_that_would_lose`), over a scratch
     tree holding only *text* at *real*'s place, and gh-1351's warning
@@ -3210,7 +3213,8 @@ def ask_before_rewriting_cmake(
     text
         What the verb is about to write there.
     verb
-        The command, as the messages name it.
+        The command, as the messages name it: the one the author typed,
+        from :func:`_report.running_verb`.
 
     Raises
     ------

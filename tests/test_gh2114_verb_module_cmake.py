@@ -4,18 +4,22 @@
 ``native/src/<cname>/CMakeLists.txt`` is the module's own file, and every
 verb that adds to or takes from the module -- ``jm object x --module m``,
 ``jm function``, ``jm method``, ``jm remove object`` -- re-renders it whole
-(`_object._regenerate_module_now`). That write never went through `apply`'s
-reconcile, so an author's ``add_library(<x> OBJECT ...)`` there was erased
-with no word at all, and so was any other statement the author added: not
-gh-1840's refusal, not even gh-1351's warning. The root's wiring of the
-library was left naming a target that is gone, which cmake rejects at
-configure time.
+(`_object._regenerate_module_now`). So does adding the module's collocated
+object, ``jm object m --module m``, whose own CMakeLists IS the module's:
+it wrote its object render there first, before any ask, and the author's
+library was gone before the module's render could see it. Those writes
+never went through `apply`'s reconcile, so an author's
+``add_library(<x> OBJECT ...)`` there was erased with no word at all, and
+so was any other statement the author added: not gh-1840's refusal, not
+even gh-1351's warning. The root's wiring of the library was left naming a
+target that is gone, which cmake rejects at configure time.
 
 The verb now asks the same two questions through the same code
 (`_apply.ask_before_rewriting_cmake`): it refuses an erased OBJECT library,
-naming the ``<d>_extra.cmake`` hook, and leaves the tree byte-identical; it
-warns of any other dropped statement. A library moved to the hook survives
-the verb, and the project builds with it linked.
+naming the ``<d>_extra.cmake`` hook and the verb the author typed, and
+leaves the tree byte-identical; it warns of any other dropped statement.
+A library moved to the hook survives the verb, and the project builds with
+it linked.
 """
 
 from __future__ import annotations
@@ -34,29 +38,27 @@ from just_makeit import _libwiring as L
 
 _HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
-#: Every verb that re-renders module `m`'s own CMakeLists, one per writer
-#: path into `_regenerate_module_now`: an object added, a function added, a
-#: method added to a member, a member removed.
+#: Every verb that writes module `m`'s own CMakeLists, one per writer path:
+#: an object added, a function added, a method added to a member, a member
+#: removed -- all into `_regenerate_module_now` -- and the module's
+#: collocated object added, whose CMakeLists is the module's own file.
 VERBS = {
     "object": ("object", "x", "--module", "m"),
     "function": ("function", "g", "--module", "m"),
     "method": ("method", "w", "run2", "--module", "m"),
     "remove": ("remove", "object", "w", "--force"),
+    "collocated": ("object", "m", "--module", "m"),
 }
 
 
-@pytest.fixture(scope="module")
-def _base(tmp_path_factory) -> Path:
-    """Module `m` with its collocated object `m` (which shares the module's
-    CMakeLists) and a member `w`."""
-    top = tmp_path_factory.mktemp("gh2114")
+def _build(top: Path, objects: "tuple[str, ...]") -> Path:
+    """Project `p`: module `m` holding *objects*, applied."""
     r = run_cli("new", "p", cwd=top)
     assert r.returncode == 0, r.stdout + r.stderr
     root = top / "p"
     for args in (
         ("module", "m"),
-        ("object", "m", "--module", "m"),
-        ("object", "w", "--module", "m"),
+        *(("object", o, "--module", "m") for o in objects),
         ("apply",),
     ):
         r = run_cli(*args, cwd=root)
@@ -64,11 +66,37 @@ def _base(tmp_path_factory) -> Path:
     return root
 
 
+@pytest.fixture(scope="module")
+def _base(tmp_path_factory) -> Path:
+    """Module `m` with its collocated object `m` (which shares the module's
+    CMakeLists) and a member `w`."""
+    return _build(tmp_path_factory.mktemp("gh2114"), ("m", "w"))
+
+
+@pytest.fixture(scope="module")
+def _base_no_collocated(tmp_path_factory) -> Path:
+    """Module `m` with a member `w` and no collocated object yet, for the
+    verb that adds it."""
+    return _build(tmp_path_factory.mktemp("gh2114c"), ("w",))
+
+
 @pytest.fixture
-def project(_base: Path, tmp_path: Path) -> Path:
+def project(request, tmp_path: Path) -> Path:
+    """A fresh copy of the base the test's verb runs against: the one with
+    no `m` for the verb that adds it, the full one otherwise."""
+    spec = getattr(request.node, "callspec", None)
+    verb = spec.params.get("verb") if spec else None
+    base = request.getfixturevalue(
+        "_base_no_collocated" if verb == VERBS["collocated"] else "_base"
+    )
     dst = tmp_path / "p"
-    shutil.copytree(_base, dst)
+    shutil.copytree(base, dst)
     return dst
+
+
+def _named(verb: "tuple[str, ...]") -> str:
+    """The verb as the messages name it: the command the author typed."""
+    return f"`jm {verb[0]}`"
 
 
 def _cml(root: Path) -> Path:
@@ -119,6 +147,9 @@ def test_the_verb_refuses_and_writes_nothing(project: Path, verb):
     assert (
         f"native/src/m/CMakeLists.txt: {lib} -> native/src/m/m_extra.cmake"
     ) in r.stderr, r.stderr
+    assert f"{_named(verb)} would erase an OBJECT library" in r.stderr, (
+        r.stderr
+    )
     assert _tree(project) == before
 
 
@@ -140,6 +171,7 @@ def test_any_other_dropped_statement_is_named(project: Path, verb):
         if "target_compile_definitions()" in w
     ]
     assert "native/src/m/m_extra.cmake" in line, line
+    assert f"{_named(verb)} drops it" in line, line
 
 
 @pytest.mark.skipif(not _HAVE_TOOLCHAIN, reason="cmake or a C compiler")
