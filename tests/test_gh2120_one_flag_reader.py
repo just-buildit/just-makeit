@@ -372,40 +372,47 @@ def test_exemptions_still_exist():
 
 #: Reads of a FLAG_KEYS-named key that are not ``truthy(...)``, each
 #: legitimately raw, each with why. Keyed by (file, enclosing function,
-#: the read's source), so an exemption covers that one read and nothing
-#: else the function does.
+#: the read's source) and valued by how many times that read occurs, so an
+#: exemption covers those reads and not a second copy added beside them.
 _RAW_READ_OK = {
     # jm's own CLI flag records (`_value_flag`, the string-enum branch of
     # `_app_flags`): `required` there is always a Python bool, built from
     # slot 8 of `_config.init_params`, which reads it through `_truthy`.
-    ("_app.py", "_argparse_block", "f.get('required')"),
-    ("_app.py", "_c_argv_parser", "f.get('required')"),
+    # Three reads (the choice flag's spec and help, the value flag's spec)
+    # and two (the choice and the number `must`).
+    ("_app.py", "_argparse_block", "f.get('required')"): 3,
+    ("_app.py", "_c_argv_parser", "f.get('required')"): 2,
     # The bool-only load validators: each reads the raw value to refuse
     # anything but a TOML bool, naming it -- `truthy` would hide the
     # value they exist to report.
-    ("_config.py", "_why_key_errors", "mod['create_why']"),
-    ("_config.py", "_why_key_errors", "fn['why']"),
-    ("_config.py", "_create_why_errors", "table['create_why']"),
+    # Twice: the isinstance test, then the refusal naming the value.
+    ("_config.py", "_why_key_errors", "mod['create_why']"): 2,
+    ("_config.py", "_why_key_errors", "fn['why']"): 1,
+    ("_config.py", "_create_why_errors", "table['create_why']"): 1,
     (
         "_context/_diagnostics.py",
         "method_status_out_errors",
         "m['status_out']",
-    ),
-    ("_context/_diagnostics.py", "method_why_errors", "m['why']"),
-    ("_context/_parse.py", "required_errors", "p[REQUIRED_KEY]"),
-    ("_retain.py", "errors", "p[KEY]"),
+    ): 1,
+    ("_context/_diagnostics.py", "method_why_errors", "m['why']"): 1,
+    ("_context/_parse.py", "required_errors", "p[REQUIRED_KEY]"): 1,
+    ("_retain.py", "errors", "p[KEY]"): 1,
     # `[project.bench]` is the benchmark settings TABLE, not a method's
     # `bench = false` opt-out (`_keys._FLAG_NAMED_TABLES`).
-    ("_apply.py", "_replay", "cfg.get('project', {}).get('bench')"),
+    ("_apply.py", "_replay", "cfg.get('project', {}).get('bench')"): 1,
     (
         "_config.py",
         "project_bench_block_sizes",
         "cfg.get('project', {}).get('bench', {})",
-    ),
-    ("_config.py", "bench_timeout", "cfg.get('project', {}).get('bench', {})"),
+    ): 1,
+    (
+        "_config.py",
+        "bench_timeout",
+        "cfg.get('project', {}).get('bench', {})",
+    ): 1,
     # `NATIVE_FILES` maps a generated native file's role to its place; its
     # `bench` row is a path, not a manifest value.
-    ("_hollow.py", "unrun_benches", "INC.NATIVE_FILES['bench']"),
+    ("_hollow.py", "unrun_benches", "INC.NATIVE_FILES['bench']"): 1,
 }
 
 
@@ -430,22 +437,67 @@ def _module_tuples(tree: ast.Module) -> "dict[str, tuple[str, ...]]":
     return out
 
 
+_ALL_TUPLES: "dict[str, tuple[str, ...]]" = {}
+
+
+def _all_tuples() -> "dict[str, tuple[str, ...]]":
+    """Every module-level string tuple in the source, by name, so an
+    iterable spelled ``_keys.SOME_KEYS`` resolves as well as a bare
+    ``SOME_KEYS``."""
+    if not _ALL_TUPLES:
+        for _rel, tree in _sources():
+            _ALL_TUPLES.update(_module_tuples(tree))
+    return _ALL_TUPLES
+
+
+def _iter_keys(
+    node: ast.AST, local: "dict[str, tuple[str, ...]]"
+) -> "set[str]":
+    """The string keys an iterable *node* yields, as far as the source
+    spells them: a module tuple by name (``KEYS``, ``_keys.KEYS``), an
+    inline tuple / list / set literal, ``tuple()`` / ``list()`` /
+    ``sorted()`` / ``set()`` / ``frozenset()`` / ``reversed()`` of one,
+    and ``A + B`` / ``A | B``. Anything else yields nothing."""
+    if isinstance(node, ast.Name):
+        return set(local.get(node.id) or _all_tuples().get(node.id, ()))
+    if isinstance(node, ast.Attribute):
+        return set(_all_tuples().get(node.attr, ()))
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return {
+            e.value
+            for e in node.elts
+            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+        }
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in ("tuple", "list", "sorted", "set", "frozenset", "reversed")
+        and len(node.args) == 1
+    ):
+        return _iter_keys(node.args[0], local)
+    if isinstance(node, ast.BinOp) and isinstance(
+        node.op, (ast.Add, ast.BitOr)
+    ):
+        return _iter_keys(node.left, local) | _iter_keys(node.right, local)
+    return set()
+
+
 def _loop_keys(tree: ast.Module) -> "dict[tuple[str, str], set[str]]":
     """``(function, loop variable)`` -> the FLAG_KEYS keys it takes, for
-    every ``for <var> in <MODULE_TUPLE>`` whose tuple names one: a read
-    ``table.get(<var>)`` in that loop reads those flags."""
-    tuples = _module_tuples(tree)
+    every ``for`` loop and comprehension whose iterable names one (see
+    :func:`_iter_keys`): a read ``table.get(<var>)`` there reads those
+    flags."""
+    local = _module_tuples(tree)
     out: "dict[tuple[str, str], set[str]]" = {}
     for owner, node in _enclosing(tree):
-        if (
-            isinstance(node, ast.For)
-            and isinstance(node.target, ast.Name)
-            and isinstance(node.iter, ast.Name)
-            and node.iter.id in tuples
-        ):
-            flags = set(tuples[node.iter.id]) & _keys.FLAG_KEYS
-            if flags:
-                out.setdefault((owner, node.target.id), set()).update(flags)
+        if not isinstance(node, (ast.For, ast.comprehension)):
+            continue
+        if not isinstance(node.target, ast.Name):
+            continue
+        flags = _iter_keys(node.iter, local) & _keys.FLAG_KEYS
+        if flags:
+            out.setdefault((owner, node.target.id), set()).update(flags)
     return out
 
 
@@ -509,18 +561,26 @@ def _raw_flag_reads(tree: ast.Module) -> "list[tuple[str, int, str]]":
     return out
 
 
+def _raw_reads_by_row():
+    """``(file, function, source) -> [line, ...]`` for every raw read."""
+    rows: "dict[tuple[str, str, str], list[int]]" = {}
+    for rel, tree in _sources():
+        for owner, line, src in _raw_flag_reads(tree):
+            rows.setdefault((rel, owner, src), []).append(line)
+    return rows
+
+
 def test_no_flag_is_read_raw_outside_truthy():
     """``if p.get("writable"):`` reads ``writable = "false"`` -- a spelling
     load accepts -- as on, and so does ``w = p.get("writable", False)``
     tested three hundred lines later. Every read of a flag's value goes
     through ``truthy``; what legitimately reads it raw is named in
-    ``_RAW_READ_OK`` with why."""
-    found = [
-        f"{rel}:{line} {src}"
-        for rel, tree in _sources()
-        for owner, line, src in _raw_flag_reads(tree)
-        if (rel, owner, src) not in _RAW_READ_OK
-    ]
+    ``_RAW_READ_OK`` with why, as many times as it occurs -- a second
+    copy of an exempt read beside it is a new read, and refused."""
+    found = []
+    for (rel, owner, src), lines in sorted(_raw_reads_by_row().items()):
+        if len(lines) > _RAW_READ_OK.get((rel, owner, src), 0):
+            found += [f"{rel}:{ln} {src}" for ln in lines]
     assert not found, (
         'a flag read raw, which reads the string "false" as on; read it '
         "through `_keys.truthy` (`_keys.is_set` in a loop over keys):\n  "
@@ -529,13 +589,15 @@ def test_no_flag_is_read_raw_outside_truthy():
 
 
 def test_raw_read_exemptions_still_exist():
-    """An exemption whose read is gone is stale; drop it."""
-    seen = {
-        (rel, owner, src)
-        for rel, tree in _sources()
-        for owner, _line, src in _raw_flag_reads(tree)
+    """An exemption whose reads are gone, or fewer than it counts, is
+    stale; drop it or lower its count."""
+    rows = _raw_reads_by_row()
+    stale = {
+        row: (n, len(rows.get(row, [])))
+        for row, n in _RAW_READ_OK.items()
+        if len(rows.get(row, [])) < n
     }
-    assert _RAW_READ_OK <= seen, _RAW_READ_OK - seen
+    assert not stale, stale
 
 
 @pytest.mark.parametrize(
@@ -551,6 +613,14 @@ def test_raw_read_exemptions_still_exist():
         "KS = ('out_size', 'why')\n"
         "def f(fn):\n    for k in KS:\n        if fn.get(k):\n"
         "            return k\n",
+        # gh-2120 review: a comprehension over an inline literal, and a
+        # loop over a wrapped module tuple.
+        "def f(prop):\n    return any(prop.get(k) for k in ('writable',))\n",
+        "KS = ('out_size', 'why')\n"
+        "def f(fn):\n    for flag in tuple(KS):\n        if fn.get(flag):\n"
+        "            return flag\n",
+        "def f(fn):\n    for k in ['doc'] + ['why']:\n        fn[k]\n",
+        "def f(fn):\n    return {k: fn.get(k) for k in sorted({'retain'})}\n",
     ],
 )
 def test_the_raw_scan_is_armed(src):
