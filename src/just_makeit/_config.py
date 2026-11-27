@@ -40,6 +40,10 @@ from ._keys import MODULE_KEYS_BY_KIND as _MODULE_KEYS_BY_KIND
 from ._keys import PROPERTY_KEYS as _PROPERTY_KEYS
 from ._keys import STATE_KEYS as _STATE_KEYS
 
+# gh-2120: the one reading of a flag, defined beside the keys it reads and
+# the load refusal that keeps every other spelling from reaching it.
+from ._keys import truthy as _truthy
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
@@ -233,6 +237,14 @@ def load(root: Path) -> dict:
             with fragment_path.open("rb") as f:
                 fragment = tomllib.load(f)
             _merge_fragment(cfg, fragment, fragment_path)
+    # gh-2120: every flag holds a value `_truthy` reads as meant, before
+    # anything reads one -- an older jm's `streamable = "True"` read as
+    # false, and `apply` dropped `stream()` and exited 0.
+    from ._keys import flag_errors
+
+    bad_flags = flag_errors(cfg)
+    if bad_flags:
+        _refuse(bad_flags)
     # gh-816: an unknown key is still accepted and still round-trips (gh-257);
     # it just no longer does so in silence. Here rather than in each command
     # because this is the one place every reader passes through, and a
@@ -3633,13 +3645,6 @@ def _module_key(mod: str) -> str:
     ('"dsp.filters"', 'filt')
     """
     return _toml_basic_string(mod) if "." in mod else mod
-
-
-def _truthy(v: object) -> bool:
-    """Accept both ``"true"`` (canonical string form written by jm) and
-    Python ``True`` (what tomllib returns for ``key = true``).  Anything
-    else — ``"false"``, ``False``, ``None``, missing — is false."""
-    return v is True or v == "true"
 
 
 def is_mutable(cfg: dict, component: str) -> bool:
@@ -9428,7 +9433,7 @@ def object_create_why(cfg: dict, component: str) -> bool:
     >>> object_create_why({"g": {}}, "g")
     False
     """
-    return cfg.get(component, {}).get("create_why") is True
+    return _truthy(cfg.get(component, {}).get("create_why"))
 
 
 def view_create_why(view: dict) -> bool:
@@ -9443,7 +9448,7 @@ def view_create_why(view: dict) -> bool:
     >>> view_create_why({"class_name": "B"})
     False
     """
-    return view.get("create_why") is True
+    return _truthy(view.get("create_why"))
 
 
 def object_create_name(cfg: dict, component: str) -> str:

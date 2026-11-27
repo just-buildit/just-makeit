@@ -42,6 +42,7 @@ import re
 import textwrap
 
 from .. import _csym as CSYM
+from .._keys import truthy
 
 # Message prose is authored by a human and lands inside a C string literal.
 _C_ESCAPES = str.maketrans(
@@ -510,7 +511,7 @@ def method_status(m: dict) -> str:
     >>> method_status({"name": "m", "status_out": "yes"})
     ''
     """
-    return STATUS_LOCAL if m.get("status_out") is True else ""
+    return STATUS_LOCAL if truthy(m.get("status_out")) else ""
 
 
 #: The refusals ``status_out`` reads the cause of (gh-2584): a returned
@@ -613,7 +614,7 @@ def method_why(m: dict) -> str:
     >>> method_why({"name": "m"})
     ''
     """
-    return WHY_LOCAL if m.get("why") is True else ""
+    return WHY_LOCAL if truthy(m.get("why")) else ""
 
 
 def method_why_read(m: dict, *, handle: bool = False) -> bool:

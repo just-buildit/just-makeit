@@ -1000,7 +1000,7 @@ def _bench_method_block(
         to paste into ``main()`` of the bench executable, or ``""`` to skip.
     """
     if (
-        m.get("bench") is False
+        not C._truthy(m.get("bench", True))
         or m.get("variable_output")
         or m.get("varargs")
         or m.get("out_type")  # gh-529: no out buffer in the timing loop

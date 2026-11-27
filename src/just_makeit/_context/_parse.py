@@ -11,6 +11,7 @@ import re
 from .. import _coerce
 from .. import _record
 from .. import _retain
+from .._keys import truthy
 from .._report import Refusal
 from .._types import (
     _CTYPE_META,
@@ -311,7 +312,7 @@ def capsule_nullable(p: dict) -> bool:
     >>> capsule_nullable({"name": "t", "capsule": "x.t", "required": True})
     False
     """
-    return p.get(REQUIRED_KEY) is not True
+    return not truthy(p.get(REQUIRED_KEY))
 
 
 def capsule_annotation(p: dict) -> str:
@@ -398,11 +399,12 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     seeded with the type's zero: ``None`` raised ``TypeError`` and an
     omitted argument reached ``create()`` as ``0`` (gh-2697).
 
-    The key is a flag, read through `_config._truthy` -- the one reading of
-    jm's string-typed flags, shared by every reader of it -- so a TOML bool
-    and the strings ``"true"`` / ``"false"`` mean what they say. Any other
-    value is refused here: tested for truth, ``optional = "false"`` was a
-    non-empty string and turned array dispatch ON (gh-2705).
+    The key is a flag, read through `_keys.truthy` -- the one reading of
+    a flag, shared by every reader of it -- so a TOML bool and the strings
+    ``"true"`` / ``"false"`` mean what they say: tested for truth,
+    ``optional = "false"`` was a non-empty string and turned array dispatch
+    ON (gh-2705). Any other value is refused at load by
+    `_keys.flag_errors`, before this is asked (gh-2120).
 
     The refusal names what does exist: ``default`` (a literal of the type)
     or ``default_raw`` (a C expression jm passes through, gh-1099) give an
@@ -424,9 +426,6 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     >>> cfg["w"]["init_params"][0]["optional"] = "false"
     >>> init_param_optional_errors(cfg)
     []
-    >>> cfg["w"]["init_params"][0]["optional"] = "no"
-    >>> print(init_param_optional_errors(cfg)[0])
-    [[w.init_params]] window: optional = 'no' must be true or false
 
     A view's ``init_params`` are asked too, and a row that is not a table
     is the key walk's to name, not this one's:
@@ -436,7 +435,7 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
     ...                      "optional": True}, 1]}]}})[0].split(":")[0]
     '[[w.views.init_params]] n'
     """
-    from .._config import _truthy, components
+    from .._config import components
 
     rows: "list[tuple[str, dict]]" = []
     for comp in components(cfg):
@@ -455,18 +454,14 @@ def init_param_optional_errors(cfg: dict) -> "list[str]":
                 ]
     out: "list[str]" = []
     for where, p in rows:
-        if not isinstance(p, dict) or OPTIONAL_KEY not in p:
+        if not isinstance(p, dict):
             continue
         name = p.get("name", "?")
-        value = p[OPTIONAL_KEY]
-        # A TOML bool or its string form, the values `_truthy` gives a
-        # meaning to. Not `in (True, False, ...)`: ``1 == True``.
-        if not isinstance(value, bool) and value not in ("true", "false"):
-            out.append(
-                f"{where} {name}: optional = {value!r} must be true or false"
-            )
-            continue
-        if _truthy(value) and not is_array_param_type(str(p.get("type", ""))):
+        # The value is a flag spelling: `_keys.flag_errors` refused any
+        # other before this is asked (gh-2120).
+        if truthy(p.get(OPTIONAL_KEY)) and not is_array_param_type(
+            str(p.get("type", ""))
+        ):
             out.append(
                 f"{where} {name}: optional = true is array dispatch -- the"
                 " array's presence selects `create_fn` -- and"

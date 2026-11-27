@@ -60,6 +60,8 @@ method takes no params, so it has nothing to retain.
 
 from __future__ import annotations
 
+from ._keys import truthy
+
 #: The param key.
 KEY = "retain"
 
@@ -89,7 +91,7 @@ def is_retained(p: dict) -> bool:
     >>> is_retained({"name": "t", "capsule": "x.t"})
     False
     """
-    return bool(p.get("capsule")) and p.get(KEY) is True
+    return bool(p.get("capsule")) and truthy(p.get(KEY))
 
 
 def retained(m: dict) -> "list[dict]":

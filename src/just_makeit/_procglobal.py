@@ -175,7 +175,7 @@ def is_process_global(cfg: dict, comp: str) -> bool:
     section = cfg.get(comp)
     if not isinstance(section, dict):
         return False
-    return str(section.get("process_global", "")).lower() in ("true", "1")
+    return C._truthy(section.get("process_global"))
 
 
 def process_globals(cfg: dict) -> "list[str]":
