@@ -226,6 +226,52 @@ def test_respell_reaches_every_table_and_keeps_comments(tmp_path):
     assert _respell_flags(tmp_path) == []
 
 
+def _gain_project(tmp_path: Path, writable: str, required: str) -> Path:
+    """An object ``g`` with a defaulted init param ``gain`` spelling
+    ``required = <required>`` and a property ``level`` spelling
+    ``writable = <writable>`` (TOML source), applied."""
+    r = run_cli("new", "p", cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    root = tmp_path / "p"
+    for argv in (
+        ("object", "g", "--init-param", "gain:double:1.0"),
+        ("property", "g", "level", "--type", "double"),
+    ):
+        r = run_cli(*argv, cwd=root)
+        assert r.returncode == 0, r.stderr
+    path = _manifest_with(root, "default")
+    text = path.read_text(encoding="utf-8")
+    anchor = 'name = "gain"\ntype = "double"\ndefault = "1.0"\n'
+    assert text.count(anchor) == 1, text
+    text = text.replace(anchor, f"{anchor}required = {required}\n")
+    anchor = 'name = "level"\ntype = "double"\n'
+    assert text.count(anchor) == 1, text
+    text = text.replace(anchor, f"{anchor}writable = {writable}\n")
+    path.write_text(text, encoding="utf-8")
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 0, r.stderr
+    return root
+
+
+@pytest.mark.parametrize(
+    "spelling, on",
+    [('"false"', False), ("false", False), ('"true"', True), ("true", True)],
+)
+def test_a_string_false_flag_is_off(tmp_path, spelling, on):
+    """Load accepts ``"false"`` for every flag, so every reader must read
+    it as off: tested for truth bare, ``writable = "false"`` generated a
+    setter and ``required = "false"`` made a defaulted init param
+    required. Each spelling against its bool, on both faces."""
+    root = _gain_project(tmp_path, writable=spelling, required=spelling)
+    ext = (root / "native/src/g/g_ext.c").read_text(encoding="utf-8")
+    pyi = (root / "src/p/g.pyi").read_text(encoding="utf-8")
+    assert ("G_setprop_level" in ext) is on, ext
+    assert ("@level.setter" in pyi) is on, pyi
+    init = "def __init__(self, gain: float) -> None"
+    optional = "def __init__(self, gain: float = 1.0) -> None"
+    assert (init if on else optional) in pyi, pyi
+
+
 # --- source scans (registration-free) ---------------------------------------
 
 #: The function that IS the reading of a flag.
@@ -312,6 +358,139 @@ def test_exemptions_still_exist():
     assert _DEFINITION | _NOT_A_FLAG <= seen, (
         _DEFINITION | _NOT_A_FLAG
     ) - seen
+
+
+#: Functions that test a FLAG_KEYS-named key for truth on a dict jm built
+#: itself, not on a manifest row, each with why. Keyed by (file, function).
+_NOT_A_MANIFEST_ROW = {
+    # `f` is a CLI flag record from `_value_flag` / the string-enum branch
+    # of `_app_flags`, whose `required` is always a Python bool (slot 8 of
+    # `_config.init_params` is read through `_truthy` at its source).
+    ("_app.py", "_argparse_block"),
+    ("_app.py", "_c_argv_parser"),
+}
+
+
+def _flag_key(node: ast.AST, consts: "dict[str, str]") -> "str | None":
+    """The ``FLAG_KEYS`` key *node* reads -- ``x.get(k[, d])`` or
+    ``x[k]``, *k* a literal or a module-level string constant -- or None."""
+    k: object = None
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+    ):
+        k = node.args[0]
+    elif isinstance(node, ast.Subscript):
+        k = node.slice
+    if isinstance(k, ast.Constant) and isinstance(k.value, str):
+        key = k.value
+    elif isinstance(k, ast.Name):
+        key = consts.get(k.id)
+    else:
+        return None
+    return key if key in _keys.FLAG_KEYS else None
+
+
+def _truth_tested(tree: ast.AST):
+    """Yield ``(function name, node)`` for every expression Python tests
+    for truth: an ``if`` / ``while`` / ternary / ``assert`` test, an
+    ``and`` / ``or`` operand, a ``not`` operand, a comprehension filter,
+    and the argument of ``bool()`` (the element of ``any()`` / ``all()``
+    over a comprehension)."""
+    for owner, node in _enclosing(tree):
+        if isinstance(node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
+            yield owner, node.test
+        elif isinstance(node, ast.BoolOp):
+            for v in node.values:
+                yield owner, v
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            yield owner, node.operand
+        elif isinstance(node, ast.comprehension):
+            for cond in node.ifs:
+                yield owner, cond
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("bool", "any", "all")
+            and node.args
+        ):
+            arg = node.args[0]
+            if isinstance(arg, (ast.GeneratorExp, ast.ListComp)):
+                yield owner, arg.elt
+            else:
+                yield owner, arg
+
+
+def _bare_flag_reads(tree: ast.Module) -> "list[tuple[str, int, str]]":
+    """``(function, line, source)`` of every bare truth test of a
+    ``FLAG_KEYS`` key in *tree*."""
+    consts = _module_strings(tree)
+    return [
+        (owner, node.lineno, ast.unparse(node))
+        for owner, node in _truth_tested(tree)
+        if _flag_key(node, consts)
+    ]
+
+
+def test_no_flag_is_read_bare_outside_truthy():
+    """``if p.get("writable"):`` reads ``writable = "false"`` -- a spelling
+    load accepts -- as on, and a capsule property grew a setter it was
+    declared without. Every truth test of a flag goes through ``truthy``;
+    a ``truthy(x.get(k))`` call is not itself a truth test, so it passes."""
+    found = [
+        f"{rel}:{line} {src}"
+        for rel, tree in _sources()
+        for owner, line, src in _bare_flag_reads(tree)
+        if (rel, owner) not in _NOT_A_MANIFEST_ROW
+    ]
+    assert not found, (
+        'a flag tested for truth bare, which reads the string "false" as '
+        "on; read it through `_keys.truthy`:\n  " + "\n  ".join(found)
+    )
+
+
+def test_bare_read_exemptions_still_exist():
+    """An exemption whose function no longer reads a flag bare is stale."""
+    seen = {
+        (rel, owner)
+        for rel, tree in _sources()
+        for owner, _line, _src in _bare_flag_reads(tree)
+    }
+    assert _NOT_A_MANIFEST_ROW <= seen, _NOT_A_MANIFEST_ROW - seen
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "def f(p):\n    if p.get('writable'):\n        pass\n",
+        "def f(p):\n    return bool(p.get('required'))\n",
+        "def f(p):\n    return [a for a in p if a.get('writable')]\n",
+        "def f(p):\n    return any(a.get('writable') for a in p)\n",
+        "def f(p):\n    return 1 if p['why'] else 0\n",
+        "def f(p):\n    return not p.get('mutable', False)\n",
+        "K = 'status_out'\ndef f(p):\n    return p.get(K) and 1\n",
+    ],
+)
+def test_the_bare_scan_is_armed(src):
+    """Each truth-test shape is found."""
+    assert len(_bare_flag_reads(ast.parse(src))) == 1
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "def f(p):\n    if truthy(p.get('writable')):\n        pass\n",
+        "def f(p):\n    return [a for a in p if truthy(a.get('writable'))]\n",
+        "def f(p):\n    return bool(truthy(p.get('required')))\n",
+        # Not a flag key, and not a truth test.
+        "def f(p):\n    if p.get('doc'):\n        pass\n",
+        "def f(p):\n    return p.get('writable', False)\n",
+    ],
+)
+def test_the_bare_scan_passes_a_read_through_truthy(src):
+    assert _bare_flag_reads(ast.parse(src)) == []
 
 
 def _module_strings(tree: ast.Module) -> "dict[str, str]":

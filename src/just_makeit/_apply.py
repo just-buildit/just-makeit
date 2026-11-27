@@ -1396,7 +1396,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             p["name"],
             mod,
             p.get("type") or p.get("ctype", "size_t"),
-            bool(p.get("writable")),
+            C._truthy(p.get("writable")),
             field=bool(p.get("field")),
             buf_field=p.get("buf_field", ""),
             len_field=p.get("len_field", "n"),
@@ -1592,7 +1592,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 # gh-1706: the trailing `const char **why`. Unforwarded, the
                 # replay rendered a prototype without it and a binding that
                 # dropped the reason again.
-                why=bool(fn.get("why")),
+                why=C._truthy(fn.get("why")),
                 # gh-1614: replayed as declared, or the rows are dropped
                 # from the replay's manifest and the binding raises the
                 # check_return error for every status again.

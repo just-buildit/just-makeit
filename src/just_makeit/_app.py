@@ -51,6 +51,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from ._keys import truthy
 from . import _targets
 from . import _pythons
 from . import _render as R
@@ -1701,7 +1702,7 @@ def _build_fn_ctx(
         "call_and_print": _c_call_print(
             CSYM.stem(cfg, function),
             ret_t,
-            pnames + (["NULL"] if fn.get("why") else []),
+            pnames + (["NULL"] if truthy(fn.get("why")) else []),
         ),
         "py_call": _py_call(
             f"    result = {function}(", fn_flags, keyword=False
