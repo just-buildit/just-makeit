@@ -42,10 +42,11 @@ _OUTER_MAKE = ("PYTHON", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES")
 
 #: What steers ``uv python find`` to an interpreter other than the one it
 #: would discover from *cwd*. ``make test`` runs pytest under ``uv run
-#: --isolated``, which exports ``VIRTUAL_ENV`` naming its own throwaway env,
-#: and setup-uv exports ``UV_PYTHON`` on CI legs. Inherited, either one
-#: answers the probe before the checkout's ``.venv`` is ever discovered, so
-#: a regression to the venv default would read as green.
+#: --isolated``, which exports ``VIRTUAL_ENV`` naming its own throwaway env;
+#: inherited, it answers the probe before the checkout's ``.venv`` is ever
+#: discovered, so a regression to the venv default read as green (measured).
+#: ``UV_PYTHON``, which setup-uv exports on CI legs, is stripped as a
+#: precaution only: with uv 0.13.6 it did not change the answer.
 _STEERS_UV = ("VIRTUAL_ENV", "UV_PYTHON")
 
 
