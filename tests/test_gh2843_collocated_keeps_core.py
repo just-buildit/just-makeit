@@ -211,6 +211,7 @@ _REBUILDS = {
     "apply": (("apply",), ""),
 }
 _GAIN_BODY = "return 2.0 * x; /* authored gain body, gh-2843 */"
+_GAIN_DOC = "/**\n * @brief Authored gain doc, gh-2843.\n */\n"
 _EXTRA = "\nint p_extra(void) { /* authored, gh-2843 */ return 7; }\n"
 
 
@@ -239,12 +240,30 @@ def test_a_rebuild_keeps_every_authored_body(tmp_path, verb):
     core_h, core_c = _core(proj)
     with core_c.open("a", encoding="utf-8") as f:
         f.write(_EXTRA)
+    # The author documents the module's function: the Doxygen above its
+    # declaration is what its `.pyi` docstring is read from.
+    text = core_h.read_text(encoding="utf-8")
+    decl = "double p_gain(double x);"
+    assert text.count(decl) == 1
+    text = re.sub(
+        r"/\*\*(?:(?!\*/).)*\*/\s*" + re.escape(decl),
+        decl,
+        text,
+        count=1,
+        flags=re.S,
+    )
+    core_h.write_text(text.replace(decl, _GAIN_DOC + decl), encoding="utf-8")
+    _ok("apply", cwd=proj)
+    pyi = proj / "src" / "p" / "filt" / "filt.pyi"
+    assert "Authored gain doc, gh-2843." in pyi.read_text(encoding="utf-8")
     argv, stdin = _REBUILDS[verb]
     r = run_cli(*argv, cwd=proj, stdin=stdin)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _GAIN_BODY in gain_c.read_text(encoding="utf-8")
     assert _EXTRA.strip() in core_c.read_text(encoding="utf-8")
-    assert "double p_gain(double x);" in core_h.read_text(encoding="utf-8")
+    assert _GAIN_DOC + decl in core_h.read_text(encoding="utf-8")
+    # ...and the `.pyi` derived after the rebuild still reads it.
+    assert "Authored gain doc, gh-2843." in pyi.read_text(encoding="utf-8")
     _status_ok(proj)
     if not _SKIP:
         _build_and_test(proj)
@@ -431,3 +450,47 @@ def test_a_macro_and_a_typedef_are_carried_on_their_own(tmp_path):
     _status_ok(proj)
     if not _SKIP:
         _build_and_test(proj)
+
+
+def test_a_reformatted_kept_definition_is_not_a_new_signature(tmp_path):
+    # LLVM and Google styles join a return type to the name: the same
+    # create() on one line is not "another signature".
+    proj = _module(tmp_path)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _, core_c = _core(proj)
+    text = core_c.read_text(encoding="utf-8")
+    two = "p_filt_state_t *\np_filt_create(double gain)"
+    assert text.count(two) == 1
+    core_c.write_text(
+        text.replace(two, "p_filt_state_t *p_filt_create(double  gain)"),
+        encoding="utf-8",
+    )
+    _ok("remove", "object", "filt", "--force", cwd=proj)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+_SSE = "\n#ifdef __SSE2__\nint p_g_sse(void) { return 1; }\n#endif\n"
+
+
+def test_a_rebuild_refuses_to_drop_a_conditional_block(tmp_path):
+    # A standalone object: `regenerate` restores the bodies it can name,
+    # and a preprocessor block guarding definitions is not one of them.
+    _ok("new", "p", cwd=tmp_path)
+    proj = tmp_path / "p"
+    _ok("object", "g", cwd=proj)
+    core_c = proj / "native" / "src" / "g" / "g_core.c"
+    with core_c.open("a", encoding="utf-8") as f:
+        f.write(_SSE)
+    before = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    r = run_cli("regenerate", "g", "--force", cwd=proj)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "#ifdef __SSE2__" in r.stderr, r.stderr
+    assert "--discard" in r.stderr, r.stderr
+    after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    assert after == before
+    # --discard says it discards what the author wrote, and does.
+    _ok("regenerate", "g", "--discard", "--force", cwd=proj)
+    assert "__SSE2__" not in core_c.read_text(encoding="utf-8")
