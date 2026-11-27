@@ -6448,7 +6448,10 @@ def _project_init_params(cfg: dict, param_dicts: list[dict]) -> list[tuple]:
             # of slot 6 reads it from here; load refuses any other value.
             _truthy(p.get("optional", False)),
             p.get("create_fn", ""),
-            p.get("required", False),
+            # gh-2120: a flag too -- `required = "false"` tested for truth
+            # made a defaulted param required. Slot 8's readers (`_stubs`,
+            # `_docstring`, `_app`) take the bool from here.
+            _truthy(p.get("required")),
             p.get("doc", ""),
             # gh-790: a capsule-typed init-param — the object is CONSTRUCTED
             # from a pointer another module published. `capsule` is the name

@@ -1177,7 +1177,7 @@ def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
     """
     if not p.get("error"):
         return None
-    if p.get("getter_status") and not p.get("writable"):
+    if p.get("getter_status") and not truthy(p.get("writable")):
         return None
     return _raise_pair(p, setter)
 
@@ -1277,7 +1277,7 @@ def property_getter_raise(p: dict, getter: str) -> "tuple[str, str] | None":
     """
     if not p.get("getter_status"):
         return None
-    if p.get("writable"):
+    if truthy(p.get("writable")):
         return _raise_pair(
             {
                 "error": p.get("getter_error"),

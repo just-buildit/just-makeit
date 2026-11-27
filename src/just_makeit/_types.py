@@ -13,6 +13,8 @@ import re as _re
 import struct as _struct
 from collections.abc import Iterable
 
+from ._keys import truthy
+
 
 # Shared to_py lambdas reused across fixed-width integer groups.
 def _TO_PY_LONG(v):
@@ -1518,7 +1520,9 @@ def param_writable(p) -> bool:
     >>> param_writable(("y", "float[]", "0"))
     False
     """
-    return isinstance(p, dict) and bool(p.get("out") or p.get("mutable"))
+    return isinstance(p, dict) and bool(
+        p.get("out") or truthy(p.get("mutable"))
+    )
 
 
 def zero_return(return_type: str) -> str:
