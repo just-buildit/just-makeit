@@ -13,7 +13,6 @@ from just_makeit import _config as C
 from just_makeit._apply import (
     _interpolate,
     _resolve_impl,
-    _validate_fragment_impl_keys,
     run as apply_run,
 )
 from just_makeit._new import run as new_run
@@ -81,9 +80,10 @@ class TestResolveImpl:
         assert "return x;" in body
 
     def test_mutex_error(self, tmp_path):
+        # gh-1906: refused by the one validator, before any replay.
         section = {"impl": "return x;", "impl_file": "ref.c::foo"}
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            _resolve_impl(section, {}, tmp_path, "agc")
+        (err,) = C.impl_key_errors({"agc": section})
+        assert "mutually exclusive" in err
 
     def test_impl_file_requires_funcname(self, tmp_path):
         section = {"impl_file": "ref.c"}
@@ -162,31 +162,29 @@ class TestLineRangeExtraction:
 
 class TestValidateFragmentImplKeys:
     def test_clean_fragment_passes(self):
-        _validate_fragment_impl_keys({"agc": {"impl": "x"}}, "agc.toml")
+        assert C.impl_key_errors({"agc": {"impl": "x"}}) == []
 
     def test_object_mutex_violation(self):
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            _validate_fragment_impl_keys(
-                {"agc": {"impl": "x", "impl_file": "r.c::f"}},
-                "agc.toml",
-            )
+        (err,) = C.impl_key_errors(
+            {"agc": {"impl": "x", "impl_file": "r.c::f"}}
+        )
+        assert "mutually exclusive" in err
 
     def test_method_mutex_violation(self):
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            _validate_fragment_impl_keys(
-                {
-                    "agc": {
-                        "methods": [
-                            {
-                                "name": "exec",
-                                "impl": "x",
-                                "impl_file": "r.c::f",
-                            }
-                        ]
-                    }
-                },
-                "agc.toml",
-            )
+        (err,) = C.impl_key_errors(
+            {
+                "agc": {
+                    "methods": [
+                        {
+                            "name": "exec",
+                            "impl": "x",
+                            "impl_file": "r.c::f",
+                        }
+                    ]
+                }
+            }
+        )
+        assert "mutually exclusive" in err
 
 
 _OBJECT_FRAGMENT = """\

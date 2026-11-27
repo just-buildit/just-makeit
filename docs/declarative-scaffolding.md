@@ -464,11 +464,12 @@ bodies verbatim.
 
 !!! warning "Opaque fields require `create_impl`"
 
-    `jm apply <fragment.toml>` refuses a fragment that declares an opaque
-    state field without `create_impl` or `create_impl_file`. A plain
-    `jm apply` of a fragment already under `objects/` does not check
-    this. `create()` zero-fills with `calloc`, so an uninitialized opaque
-    pointer is NULL and the first dereference crashes. Pair every opaque
+    `jm apply` and `jm status` refuse an object that declares an opaque
+    state field without `create_impl` or `create_impl_file`, whether it
+    arrives as `jm apply <fragment.toml>` or is already under `objects/`
+    (gh-1906). The generated `create()` assigns no opaque field and the
+    struct is zero-filled with `calloc`, so the pointer would be NULL and
+    the first dereference would crash. Pair every opaque
     field with a `create_impl` that initializes it, and a `destroy_impl`
     that releases it (the validator does not enforce `destroy_impl`
     because some opaque fields are borrowed and shouldn't be freed, but

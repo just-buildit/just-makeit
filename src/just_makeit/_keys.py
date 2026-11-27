@@ -105,7 +105,7 @@ OBJECT_KEYS = frozenset(
         # manifest's `[module.X] objects` list itself.
         "module",
         # The four lifecycle bodies a manifest may supply, each with its
-        # `_file` companion — the pairs `_apply._validate_fragment_impl_keys`
+        # `_file` companion — the pairs `_config.impl_key_errors`
         # enforces mutual exclusion over.
         "impl",
         "impl_file",

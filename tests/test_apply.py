@@ -905,7 +905,7 @@ class TestDestroyImplMutex:
     """destroy_impl and destroy_impl_file are mutually exclusive."""
 
     def test_both_set_raises(self, tmp_path):
-        from just_makeit._apply import _validate_fragment_impl_keys
+        from just_makeit._config import impl_key_errors
 
         fragment = {
             "buf": {
@@ -913,8 +913,8 @@ class TestDestroyImplMutex:
                 "destroy_impl_file": "legacy.c::buf_destroy",
             },
         }
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            _validate_fragment_impl_keys(fragment, "test.toml")
+        (err,) = impl_key_errors(fragment)
+        assert "mutually exclusive" in err
 
 
 _OPAQUE_FIELD_FRAGMENT = """\
@@ -994,7 +994,7 @@ class TestOpaqueRequiresCreateImpl:
     the struct — validate up front and fail fast."""
 
     def test_missing_create_impl_raises(self):
-        from just_makeit._apply import _validate_fragment_impl_keys
+        from just_makeit._config import impl_key_errors
 
         fragment = {
             "fft": {
@@ -1004,11 +1004,11 @@ class TestOpaqueRequiresCreateImpl:
                 ],
             },
         }
-        with pytest.raises(ValueError, match="opaque state field"):
-            _validate_fragment_impl_keys(fragment, "test.toml")
+        (err,) = impl_key_errors(fragment)
+        assert "opaque state field" in err
 
     def test_create_impl_file_satisfies(self):
-        from just_makeit._apply import _validate_fragment_impl_keys
+        from just_makeit._config import impl_key_errors
 
         fragment = {
             "fft": {
@@ -1018,7 +1018,7 @@ class TestOpaqueRequiresCreateImpl:
                 ],
             },
         }
-        _validate_fragment_impl_keys(fragment, "test.toml")
+        assert impl_key_errors(fragment) == []
 
 
 # Fragment: one ctor param (size), two no_ctor fields (idx, sum), one opaque (buf).
