@@ -29,6 +29,7 @@ separate, intentional design choice, not this bug.)
 import ast
 import sys
 from pathlib import Path
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -36,6 +37,7 @@ from just_makeit._context._types import _py_default
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
+from just_makeit._report import Refusal
 from just_makeit._stubs import _py_default_stub
 
 
@@ -50,9 +52,13 @@ class TestPyDefaultBoolAndFloat:
         assert _py_default("bool", "false") == "False"
         assert _py_default_stub("bool", "false") == "False"
 
-    def test_bool_case_insensitive(self):
-        assert _py_default("bool", "TRUE") == "True"
-        assert _py_default_stub("bool", "False") == "False"
+    def test_bool_case_variant_is_refused(self):
+        # gh-2137: `TRUE` / `False` read as bools here, but the C faces
+        # write the default as declared and C has no such names. Refused,
+        # like every literal C cannot read, rather than spelled for Python.
+        for fn, text in ((_py_default, "TRUE"), (_py_default_stub, "False")):
+            with pytest.raises(Refusal, match="is not a C bool"):
+                fn("bool", text)
 
     def test_bool_empty_default_is_sentinel(self):
         assert _py_default("bool", "") == "..."

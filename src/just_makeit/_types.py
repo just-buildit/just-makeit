@@ -730,7 +730,7 @@ _C_INT_SUFFIX = _re.compile(r"(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?")
 _C_FLOAT_SUFFIX = _re.compile(r"[fFlL]?")
 
 
-def _constant_error(text: str) -> str:
+def _constant_error(text: str, limits: "tuple | None" = None) -> str:
     """Why a numeric literal is no C constant, else ``""``.
 
     gh-2137. Which constant a literal is -- integer or floating -- is its
@@ -741,7 +741,8 @@ def _constant_error(text: str) -> str:
     an octal or a ``u``-suffixed one, ``long long`` for a decimal without
     ``u`` -- so ``18446744073709551615`` has no type, and neither has the
     ``9223372036854775808`` that ``-9223372036854775808`` negates (C99
-    6.4.4.1; GCC reads both as unsigned, with a warning).
+    6.4.4.1; GCC reads both as unsigned, with a warning). *limits*, an
+    integer row's ``limits``, names the C constant that says it instead.
 
     >>> [_constant_error(t) for t in ("7lu", "7LLU", "0x1F", "1E3f", "2.L")]
     ['', '', '', '', '']
@@ -753,6 +754,8 @@ def _constant_error(text: str) -> str:
     ['', '']
     >>> print(_constant_error("-9223372036854775808"))
     `9223372036854775808` is too large for a decimal integer constant without a `u` suffix, which is signed: its largest is 9223372036854775807.
+    >>> print(_constant_error("-9223372036854775808", ("INT64_MIN", "X")))
+    `9223372036854775808` is too large for a decimal integer constant without a `u` suffix, which is signed: its largest is 9223372036854775807. Write the C constant `INT64_MIN`.
     """
     m = _C_NUMERIC_LITERAL.match(text)
     if m is None:
@@ -776,14 +779,18 @@ def _constant_error(text: str) -> str:
     magnitude = _ast.literal_eval(py)
     decimal = py.isdigit()
     if magnitude > 2**64 - 1:
-        return f"`{body}` is too large for any C integer constant."
-    if decimal and "u" not in suffix.lower() and magnitude > 2**63 - 1:
-        return (
+        why = f"`{body}` is too large for any C integer constant."
+    elif decimal and "u" not in suffix.lower() and magnitude > 2**63 - 1:
+        why = (
             f"`{body}` is too large for a decimal integer constant without"
             " a `u` suffix, which is signed: its largest is"
             f" {2**63 - 1}."
         )
-    return ""
+    else:
+        return ""
+    if limits is not None:
+        why += f" Write the C constant `{limits[value[0] != '-']}`."
+    return why
 
 
 def _int_range(ctype: str) -> "tuple[int, int]":
@@ -806,7 +813,9 @@ def _int_range(ctype: str) -> "tuple[int, int]":
     return -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
 
 
-def _range_error(ctype: str, default: str, value: "int | float | complex"):
+def _range_error(
+    ctype: str, default: str, value: "int | float | complex"
+) -> str:
     """Why *value* (C's reading of *default*) is not a *ctype* value.
 
     gh-2137. ``""`` when it is: an integer within the type's range, or a
@@ -915,9 +924,9 @@ def literal_default_error(ctype: str, default: str) -> str:
         )
     kind = meta["kind"]
     octal = (
-        f"default `{shown}` is not a C number for `{ctype}`: a leading 0 makes"
-        " an integer octal, and 8 and 9 are not octal digits. Write it"
-        " without the leading zero."
+        f"default `{shown}` is not a C number for `{ctype}`: a leading 0"
+        " makes an integer octal, and 8 and 9 are not octal digits. Write"
+        " it without the leading zero."
     )
     if kind == "complex":
         m = _C_COMPLEX_LITERAL.match(default)
@@ -933,10 +942,7 @@ def literal_default_error(ctype: str, default: str) -> str:
         return _range_error(ctype, default, readings[1])
     if kind not in ("int", "float") or not _C_NUMERIC_LITERAL.match(default):
         return ""
-    why = _constant_error(default)
-    if why and int_limits(ctype) is not None and "too large" in why:
-        macro = meta["limits"][not shown.startswith("-")]
-        why += f" Write the C constant `{macro}`."
+    why = _constant_error(default, int_limits(ctype))
     if why:
         return f"default `{shown}` is not valid C for `{ctype}`: {why}"
     value = c_literal_value(default)
