@@ -532,9 +532,16 @@ path doesn't — filepaths, format names, optional buffers.
 | Any [scalar](#state-variable-types) including `const char *` | flags, options, paths                       | `--init-param filepath:"const char *"`          |
 | Any [array shape](#array-element-types) `T[]`                | required positional ndarray                 | `--init-param coeffs:"float _Complex[]"`        |
 | `T[][]` (2-D array)                                          | required 2-D ndarray (e.g. polyphase banks) | `--init-param bank:"float _Complex[][]"`        |
-| `string_enum:a,b,c`                                          | optional string mapped to a C enum index    | `--init-param mode:"string_enum:read,write,rw"` |
+| `string_enum:a,b,c`                                          | a choice string mapped to a C enum index    | `--init-param mode:"string_enum:read,write,rw"` |
 | `enum:<name>`                                                | a named `[[enum]]` (single source of truth) | `--init-param mode:"enum:io_mode"`              |
 | `T[N]` (fixed length)                                        | not accepted here — use `--state` for that  | —                                               |
+
+A `string_enum:` or `enum:<name>` parameter takes one of its choice strings.
+With a default (`mode:"string_enum:read,write,rw":read`) it is an optional
+keyword; with none it is **required**, and omitting it raises `TypeError`
+(gh-2743). The first choice is not an implicit default: declare the one you
+mean. The generated C smoke test and bench construct with the same choice the
+Python tests do -- the default, else the first (gh-2565).
 
 `const char *` is legal as an init-param but **not** as a state field —
 strings live in Python land or the caller's memory; the state struct

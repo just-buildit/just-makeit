@@ -1761,11 +1761,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             # (`init_param_optional_errors`); the `| None = None` this
             # rendered for a scalar was a signature no binding honoured.
             elif t.startswith("string_enum:"):
-                parts_init.append(
-                    f'{n}: {_py(t)} = "{dflt}"'
-                    if dflt
-                    else f"{n}: {_py(t)} = ..."
-                )
+                # gh-2743: no default means required, hoisted with the other
+                # default-less params as the binding's kwlist hoists it
+                # (`_context/_state.py`'s `required_entries`). `= ...` here
+                # promised an omittable argument the binding refuses.
+                if dflt:
+                    parts_init.append(f'{n}: {_py(t)} = "{dflt}"')
+                else:
+                    req_parts.append(f"{n}: {_py(t)}")
             else:
                 # gh-1271: the real default, and the annotation that goes with
                 # it. This branch emitted `= ...` for every defaulted scalar,
