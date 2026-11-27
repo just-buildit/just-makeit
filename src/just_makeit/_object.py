@@ -3859,8 +3859,9 @@ def run(
     cfg = C.load(root)
     # gh-2142: an object named for a module's cname writes into that
     # module's directory -- refused, before anything is written, by the one
-    # rule `jm module` and `load` ask, of the manifest as it would read with
-    # this object in it. An unknown --module is left to its own error below.
+    # rule `load` and `save` ask, of the manifest as it would read with this
+    # object in it: this verb writes files before it saves. An unknown
+    # --module is left to its own error below.
     if module is None or module in C.modules(cfg):
         clashes = C.namespace_errors(
             {

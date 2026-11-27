@@ -2949,12 +2949,13 @@ def namespace_errors(cfg: dict) -> "list[str]":
     (:func:`collocated_object`, gh-1949): the object of module X named for
     X's own cname, which IS the module's core by design.
 
-    The one rule, asked by `load` and `save` of the whole manifest and by
-    `jm module` / `jm object` of the manifest as it would read after their
-    change, before either writes; a verb that introduces a name asks it
-    this way rather than spelling its own copy. A manifest `load` has
-    accepted holds no clash, so whatever a verb's trial manifest reports
-    is its own.
+    The one rule, asked by `load` and `save` of the whole manifest --
+    `jm module` meets it at its `save`, which comes before any file of the
+    module -- and by `jm object` of the manifest as it would read with the
+    object, since that verb writes files before it saves. A verb that
+    introduces a name asks it this way rather than spelling its own copy.
+    A manifest `load` has accepted holds no clash, so whatever a verb's
+    trial manifest reports is its own.
 
     Parameters
     ----------
