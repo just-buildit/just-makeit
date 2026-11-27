@@ -209,7 +209,12 @@ def _own_part(d: Path, others: "list[Path]") -> "list[Path]":
 
 
 def _object_paths(
-    root: Path, cfg: dict, pkg: str, obj: str, module: str | None
+    root: Path,
+    cfg: dict,
+    pkg: str,
+    obj: str,
+    module: str | None,
+    keep_module_core: bool = False,
 ) -> list[Path]:
     """Return every generated path that belongs to object *obj*.
 
@@ -221,14 +226,25 @@ def _object_paths(
     take, so neither directory is listed: the core stays where it is, for
     the module to build, and its declarations are the author's to delete
     (sacred, never spliced; the caller says so). Its binding fragment goes
-    through ``binding_sources`` like any member's. The C test, link table
-    and bench are the module core's too while the module has functions
-    (gh-1479's keep, from the other side), and go with the object
-    otherwise.
+    through ``binding_sources`` like any member's. The C test and bench are
+    the module core's too while the module has functions (gh-1479's keep,
+    from the other side), and go with the object otherwise. The link table
+    (gh-1361) is the object's alone -- a functions-only module has none --
+    so it always goes.
+
+    That keep is *keep_module_core*, which only `jm remove object` asks
+    for. `jm regenerate` (and `jm add --force`, `jm remove state`, which go
+    through it) lists the same paths to rebuild them: there the core must
+    go, or the rebuilt header declares a ``create()`` the kept ``_core.c``
+    does not define, and the module no longer compiles.
     """
     from . import _invariants
 
-    shared = module is not None and C.collocated_object(cfg, module) == obj
+    shared = (
+        keep_module_core
+        and module is not None
+        and C.collocated_object(cfg, module) == obj
+    )
     harness = not (shared and module and C.module_functions(cfg, module))
     paths = [
         # Its header directory, wherever the layout puts it (gh-2427), and
@@ -241,7 +257,7 @@ def _object_paths(
         *(
             INC.native_path(root, kind, obj, cfg)
             for kind in INC.NATIVE_FILES
-            if harness
+            if harness or kind == "symbols"
         ),
         # gh-1978: jm's element contract (gh-1404). Left behind, it imported
         # the removed class, and the project's Python tests failed to
@@ -396,7 +412,9 @@ def _remove_object_files(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> None:
     """Delete every generated file/dir for *obj* and strip its build wiring."""
-    for path in _object_paths(root, cfg, pkg, obj, module):
+    for path in _object_paths(
+        root, cfg, pkg, obj, module, keep_module_core=True
+    ):
         _rm(path)
     _prune_native_dirs(root, cfg, obj)
     _strip_cmake_object(root, obj, cfg)
@@ -462,7 +480,12 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
     shared = module is not None and C.collocated_object(cfg, module) == obj
 
     core_h = INC.core_h(root, obj, cfg)
-    if C.is_no_step(cfg, obj):
+    if shared:
+        # gh-2141: its core is the module's and stays (`_object_paths`), so
+        # nothing hand-written in it is deleted -- warning that it is would
+        # be false, and so would "cannot be recovered".
+        implemented, impl_path = False, core_h
+    elif C.is_no_step(cfg, obj):
         core_c = INC.src_path(root, obj, cfg) / f"{obj}_core.c"
         implemented = _core_c_warn_if_implemented(
             core_c,
@@ -475,7 +498,12 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         impl_path = core_h
 
     where = f" from module '{module}'" if module else ""
-    if implemented:
+    if shared:
+        prompt_note = (
+            f"\n  note: {impl_path} and its _core.c are module '{module}''s"
+            " core and are kept."
+        )
+    elif implemented:
         prompt_note = "\n  This cannot be recovered without git."
     elif impl_path.exists():
         prompt_note = (
@@ -523,16 +551,83 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         _regenerate_module(root, cfg, module, pkg)
     for host in hosts:
         _regenerate_module(root, cfg, host, pkg)
+    if shared:
+        _rewire_dependents(root, cfg, pkg, f"{obj}_core")
     print()
     print(f"Done!  Object '{obj}' removed.")
     if shared:
-        # gh-2141: its core is the module's (`_object_paths`), so it stays,
-        # still holding the object's C -- sacred, never spliced.
-        print(
-            f"  note: {core_h.relative_to(root).as_posix()} and its _core.c"
-            f" are module"
-            f" '{module}''s core and stay; delete '{obj}''s declarations"
-            " and bodies from them by hand."
+        print(_collocated_note(root, cfg, obj, module))
+
+
+def _collocated_note(root: Path, cfg: dict, obj: str, module: str) -> str:
+    """What `jm remove object` leaves the author to do after removing
+    *module*'s collocated object *obj* (gh-2141).
+
+    Its core is the module's (`_object_paths`), so it stays, still holding
+    the object's C -- sacred, never spliced. While the module has functions
+    its C test and bench stay too (gh-1479's keep), and both still exercise
+    the removed object's ``create()`` and ``step()``: deleting those bodies
+    from the core without editing the two of them leaves the C test and the
+    bench unbuildable, so the note names them.
+    """
+    rel = INC.core_h(root, obj, cfg).relative_to(root).as_posix()
+    note = (
+        f"  note: {rel} and its _core.c are module '{module}''s core and"
+        f" stay; delete '{obj}''s declarations and bodies from them by hand."
+    )
+    if C.module_functions(cfg, module):
+        kept = ", ".join(
+            INC.native_rel(kind, obj, cfg) for kind in ("test", "bench")
+        )
+        note += (
+            f"\n  note: {kept} stay as the module's C test and bench, and"
+            f" still call '{obj}''s create() and step(): edit them when you"
+            " delete those bodies."
+        )
+    return note
+
+
+def _rewire_dependents(root: Path, cfg: dict, pkg: str, core: str) -> None:
+    """Wire *core* where `apply` puts it once its collocated object is gone.
+
+    gh-2141. While a module's collocated object stands, the module's block
+    under ``# -- Modules`` folds the module core into the combined
+    libraries, and a component that ``depends_on`` it finds the line there
+    and adds none of its own. With the object removed, `apply` wires that
+    core with the first dependent instead -- under its ``add_subdirectory``,
+    before its own core -- and the module's block not at all, so the remove
+    left a root CMakeLists `status --check` called STALE. The lines are
+    taken out and each dependent is re-spliced through the adder's own
+    :func:`splice_cmake_component`, in manifest order: the first takes
+    them, the rest find them present. No dependent, no change.
+    """
+    from ._libwiring import (
+        dep_core_libs,
+        lib_targets,
+        splice_cmake_component,
+        wiring_line,
+    )
+
+    dependents = [
+        c
+        for c in C.object_order(cfg)
+        if core in dep_core_libs(C.depends_on_raw(cfg, c))
+    ]
+    if not dependents:
+        return
+    cmake_path = root / "CMakeLists.txt"
+    text = cmake_path.read_text(encoding="utf-8")
+    for target in lib_targets(text, pkg):
+        text = text.replace(wiring_line(target, core), "")
+    _textio.write_text(cmake_path, text)
+    for c in dependents:
+        own = [] if C.is_header_only(cfg, c) else [f"{c}_core"]
+        splice_cmake_component(
+            root,
+            pkg,
+            c,
+            dep_core_libs(C.depends_on_raw(cfg, c)) + own,
+            owner=cfg,
         )
 
 

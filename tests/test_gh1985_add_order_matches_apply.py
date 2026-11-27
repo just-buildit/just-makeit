@@ -253,12 +253,24 @@ def _hand_written(module: str):
 
 _FN = ("--param", "x:double", "--return-type", "double")
 
+
 #: adder (``module.function``) -> flavor -> (`jm new` flags, steps).
 #:
 #: Every flavor but the one marked adds in an order the manifest does not
 #: list -- so on the code before gh-1985 it ends with `status --check` red.
 #: A step is argv for `jm`, or a hand edit of the tree. Keyed by what
 #: `test_every_adder_has_a_case` derives from the source.
+def _biq_depends_on_filt(root: Path) -> None:
+    """Make member ``biq`` depend on its module's collocated core."""
+    frag = root / "objects" / "biq.toml"
+    text = frag.read_text(encoding="utf-8")
+    assert text.count("[biq]\n") == 1
+    frag.write_text(
+        text.replace("[biq]\n", '[biq]\ndepends_on = ["filt"]\n'),
+        encoding="utf-8",
+    )
+
+
 CASES = {
     "_init.run": {
         # The issue: a split layout loads objects/*.toml sorted.
@@ -281,6 +293,16 @@ CASES = {
         # gh-2062: `jm new` wires its own c_deps, each on top of the last,
         # so two of them land in reverse until the sort.
         "two-c-deps": (("--c-dep", "vend", "--c-dep", "alpha"), []),
+    },
+    "_remove._rewire_dependents": {
+        # gh-2141: with the collocated object gone, `apply` wires its core
+        # with the member that depends on it, not under the module.
+        "dependent-of-the-collocated-core": (
+            (),
+            [("module", "filt"), ("object", "filt", "--module", "filt"),
+             ("object", "biq", "--module", "filt"), _biq_depends_on_filt,
+             ("apply",), ("remove", "object", "filt", "--force")],
+        ),
     },
     "_object.run": {
         # A module object's place follows its MODULE's, and modules/*.toml
