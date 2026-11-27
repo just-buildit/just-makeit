@@ -310,6 +310,10 @@ def _ungated(jobs: dict) -> "list[str]":
     already-tested merge too (the mirror trigger did not, until it said
     always(); canonical's ci-changes-wiring-check now requires that), and it
     runs only when CI passed. Canonical's gate governs it, not this one.
+
+    A job only a ``schedule`` run can start (gh-2773's nightly-red
+    reporter) is not one either: a release commit is a push or a PR, never
+    the cron.
     """
     import json
 
@@ -331,8 +335,10 @@ def _ungated(jobs: dict) -> "list[str]":
                 and agg in needs
                 and f"needs.{agg}.result == 'success'" in cond
             )
+            nightly_only = "github.event_name == 'schedule' &&" in cond
             if (
                 after_ci
+                or nightly_only
                 or "needs.changes.outputs.src" in body
                 or (
                     any(n in gated and n != "changes" for n in needs)
