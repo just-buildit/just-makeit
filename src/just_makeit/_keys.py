@@ -1913,6 +1913,9 @@ UNTYPED_FLAG_KEYS = frozenset(
         "test_only",
         # a capsule / composer method: the caller supplies the out buffer
         "caller_out",
+        # a `[codec.X]` table's decode policy, and a codec property's
+        # override of it
+        "scalar_collapse",
         # a method or function param: an output buffer (only there:
         # :data:`_FLAG_ROW_SCOPE`)
         "out",
