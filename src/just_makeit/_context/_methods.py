@@ -3213,7 +3213,10 @@ def make_methods_ctx(
                         if _pe in _CTYPE_META
                         else "np.float32"
                     )
-                    parts.append(f"np.zeros(4, dtype={_pe_str})")
+                    # gh-1999: four SAMPLES, whole ones -- the binding
+                    # refuses a length that is not a multiple of E.
+                    _n = 4 * _coerce.elements_per_sample(_p)
+                    parts.append(f"np.zeros({_n}, dtype={_pe_str})")
                 elif _pt in _CTYPE_META:
                     parts.append(_CTYPE_META[_pt].get("py_zero", "0"))
                 else:

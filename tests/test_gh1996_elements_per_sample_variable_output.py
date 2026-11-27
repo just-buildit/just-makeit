@@ -478,7 +478,18 @@ def test_every_count_is_in_samples(shapes):
     for comp, m in _vo_methods(shapes):
         body = _function(src, f"{comp.capitalize()}_{m['name']}")
         for pname, e in _interleave_of(m).items():
-            sizes = re.findall(rf"PyArray_SIZE\({pname}_arr\)( / \d+)?", body)
+            # gh-1999's guard reads the ELEMENT count on purpose: its
+            # remainder test and the length its message names. Neither is
+            # a count of samples, so neither is held to the divisor here.
+            counted = re.sub(
+                rf"\(Py_ssize_t\)PyArray_SIZE\({pname}_arr\)"
+                rf"|PyArray_SIZE\({pname}_arr\) % {e} ",
+                "",
+                body,
+            )
+            sizes = re.findall(
+                rf"PyArray_SIZE\({pname}_arr\)( / \d+)?", counted
+            )
             assert sizes, f"{comp}.{m['name']}: {pname} is never measured"
             want = f" / {e}" if e != 1 else ""
             assert all(s == want for s in sizes), (

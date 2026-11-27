@@ -586,6 +586,108 @@ def array_rank_guard(
     )
 
 
+def array_multiple_guard(
+    pname: str,
+    arr_var: str,
+    elements_per_sample: int,
+    decrefs: str = "",
+    fail: str = "return NULL;",
+    indent: str = "    ",
+) -> str:
+    """Refuse an interleaved array whose length is not whole samples.
+
+    gh-1999. ``elements_per_sample = E`` divides an array's element count
+    into the kernel's sample count (:func:`array_count_c`), and that
+    division floors: five ``int16_t`` elements under E = 2 reached the
+    kernel as two samples, the fifth element -- half a sample -- dropped
+    without a word. A length that is not a multiple of E is a malformed
+    buffer, and the binding is the one place that can say so: the kernel
+    only ever sees the floored count. numpy refuses the same condition
+    itself (``np.frombuffer(b"abc", np.int16)``).
+
+    Renders nothing when E is 1: every length is a multiple of 1. The
+    parameters are :func:`array_rank_guard`'s, which this runs beside.
+
+    Examples
+    --------
+    >>> array_multiple_guard("x", "x_arr", 1)
+    ''
+    >>> print(array_multiple_guard("x", "x_arr", 2), end="")
+        if (PyArray_SIZE(x_arr) % 2 != 0) {
+            PyErr_Format(PyExc_ValueError,
+                         "x has %zd elements, not a multiple of"
+                         " elements_per_sample = 2",
+                         (Py_ssize_t)PyArray_SIZE(x_arr));
+            Py_DECREF(x_arr); return NULL;
+        }
+    """
+    if elements_per_sample == 1:
+        return ""
+    i = indent
+    e = elements_per_sample
+    release = f"{decrefs} " if decrefs else ""
+    return (
+        f"{i}if (PyArray_SIZE({arr_var}) % {e} != 0) {{\n"
+        f"{i}    PyErr_Format(PyExc_ValueError,\n"
+        f'{i}                 "{pname} has %zd elements, not a multiple of"\n'
+        f'{i}                 " elements_per_sample = {e}",\n'
+        f"{i}                 (Py_ssize_t)PyArray_SIZE({arr_var}));\n"
+        f"{i}    {release}Py_DECREF({arr_var}); {fail}\n"
+        f"{i}}}\n"
+    )
+
+
+def array_shape_guard(
+    param,
+    arr_var: str,
+    decrefs: str = "",
+    fail: str = "return NULL;",
+    indent: str = "    ",
+    implied_rank: int = 0,
+) -> str:
+    """Every shape guard an acquired array param needs, before its length.
+
+    The one call each acquisition site makes between acquiring an array and
+    reading its length: the ``rank`` guard (:func:`array_rank_guard`,
+    gh-805 §C) and the ``elements_per_sample`` guard
+    (:func:`array_multiple_guard`, gh-1999), each read through the one
+    reader of its key. A site that called the rank guard alone left the
+    interleave unchecked on every face at once; routing all of them through
+    here is what keeps a third shape key from going missing the same way.
+    ``tests/test_gh1999_elements_per_sample_multiple.py`` refuses a call to
+    either guard outside this module.
+
+    Parameters
+    ----------
+    param : dict or tuple
+        The param row, as :func:`array_rank` and
+        :func:`elements_per_sample` read it.
+    arr_var, decrefs, fail, indent
+        As :func:`array_rank_guard` takes them.
+    implied_rank : int
+        The rank the type fixes when ``rank`` is undeclared -- 2 for a
+        constructor's ``T[][]``, guarded either way (gh-2537).
+
+    Examples
+    --------
+    >>> array_shape_guard({"name": "x", "type": "float[]"}, "x_arr")
+    ''
+    >>> g = array_shape_guard({"name": "x", "type": "int16_t[]", "rank": 1,
+    ...                        "elements_per_sample": 2}, "x_arr")
+    >>> "PyArray_NDIM(x_arr) != 1" in g, "% 2 != 0" in g
+    (True, True)
+    """
+    pname = _param_name(param)
+    rank = array_rank(param) or implied_rank
+    out = ""
+    if rank:
+        out += array_rank_guard(pname, arr_var, rank, decrefs, fail, indent)
+    out += array_multiple_guard(
+        pname, arr_var, elements_per_sample(param), decrefs, fail, indent
+    )
+    return out
+
+
 def rank_doc(rank: "int | tuple[int, ...] | None") -> str:
     """The sentence a parameter's doc carries for *rank*, or ``""``.
 
