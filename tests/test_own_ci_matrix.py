@@ -1217,11 +1217,12 @@ class TestTheExamplesBuildOnTheNewestPython:
         steps = [
             s
             for s in _jobs()["examples"]["steps"]
-            if "JM_GATE_A_SHRINK" in (s.get("env") or {})
+            if "CI_FULL" in (s.get("env") or {})
         ]
         assert len(steps) == 1
-        assert steps[0]["env"]["JM_GATE_A_SHRINK"] == (
-            "${{ matrix.shrink && '1' || '' }}"
+        # gh-2174: the step sets the switch; the Makefile exports the variable.
+        assert (
+            steps[0]["env"]["CI_FULL"] == "${{ matrix.shrink && '1' || '' }}"
         )
 
     def test_the_planner_prints_them(
