@@ -1062,6 +1062,9 @@ COMPOSER_SOURCE_KEYS = frozenset(
         # gh-2747: the resolver `Synth.fs`'s read goes through, the source
         # type's `fs` row's `get_fn` (`_composer.source_fs`).
         "fs_get_fn",
+        # gh-2856: the whole-struct validator every write face calls
+        # (`_composer.check_fn`).
+        "check_fn",
     }
 )
 COMPOSER_GENERATES_KEYS = frozenset(

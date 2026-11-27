@@ -8,6 +8,10 @@ Clip(gain=2.0).gain      -> 2.0
            .duration     -> 4.0   (clip_duration, in C)
   after gain = 5.0       -> 10.0  (recomputed, not stored)
            .duration = 1.0 -> AttributeError (read-only)
+Clip(gain=200.0)         -> ValueError: a clip's gain is a level, at most 100
+  clip.gain = 200.0      -> ValueError: a clip's gain is a level, at most 100
+  ...and clip.gain       -> 5.0  (unchanged)
+Track(gain=200.0, dur=4) -> ValueError: a clip's gain is a level, at most 100
 Clip(gain=7.0).steps(3)  -> [7.+0.j 7.+0.j 7.+0.j]   (via clip_from_source)
 Clip(gain=-1.0).steps(1) -> ValueError: a clip's gain must be >= 0
 Mix(Track.sum(2,3,dur=4)).execute(8) -> [5.+0.j 5.+0.j 5.+0.j 5.+0.j]

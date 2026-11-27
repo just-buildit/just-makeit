@@ -12,6 +12,7 @@ part:
 
 | seam | declared by | what you write |
 | --- | --- | --- |
+| say whether a source config is whole | `[module.X.source] check_fn` | `const char *fn(const <struct> *)` |
 | build the generator from a source config | `[module.X.source.generates] bridge_fn` | `<c_prefix>_<gen>_state_t *fn(const <struct> *, double)` (here `studio_clip_state_t`) |
 | say why that build refused (optional) | `[module.X.source.generates] bridge_error_fn` | `const char *fn(const <struct> *, double)` |
 | derive a read-only property | `[[module.X.source.computed]] fn` | `<type> fn(const <struct> *)` |
@@ -24,7 +25,7 @@ inside the generated `_ext.c`, so a C test or benchmark could reach a
 signature jm owns only by writing a second copy of it. The same header also
 carries a `bit_pattern` field's `coerce_str_fn` (gh-1709) and an owned-pointer
 field's `copy_fn` / `free_fn` / `parse_fn` / `format_fn` (gh-1711); this
-example uses only the three above.
+example uses only the four above.
 
 That header is the one file this example is really about, and step 8 uses it
 the way it is meant to be used: from a translation unit that includes nothing

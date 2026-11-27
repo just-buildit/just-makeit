@@ -23,6 +23,11 @@ extra_link_libs = ["backing_core"]
 object = "clip"
 struct = "clip_t"
 type_name = "Clip"
+# ── seam 0: say whether a source config is whole ──────────────────────────
+# Called on every write that does not go through a field's set_fn -- the
+# constructor, each property setter, a JSON record -- so a Clip can never
+# hold a configuration the project would refuse (gh-2856).
+check_fn = "clip_check"
 
 [[module.playlist.source.fields]]
 name = "gain"
