@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import re
 import shutil
 import subprocess
 import sys
@@ -1100,6 +1101,101 @@ def test_flag_keys_are_the_registries_bools():
     rehomed = {k: sorted(reg[k]) for k in _keys.UNTYPED_FLAG_KEYS & typed}
     assert not rehomed, f"typed now; drop from UNTYPED_FLAG_KEYS: {rehomed}"
     assert _keys.UNTYPED_FLAG_KEYS <= _keys.FLAG_KEYS
+
+
+DOCS = Path(__file__).parent.parent / "docs"
+
+#: A documented bool that is not a jm manifest key (another tool's
+#: setting quoted in the docs), with why. Empty today; a row whose key
+#: the docs no longer show as a bool is stale.
+_DOC_BOOLS_NOT_JM: "dict[str, str]" = {}
+
+
+def _documented_bools() -> "dict[str, set[str]]":
+    """Every key the docs show as a bool, with the pages that do: a
+    reference-table row ``| `key` | bool |``, or a ``key = true`` /
+    ``key = false`` line (a TOML example). An oracle for the flags no
+    typed registry declares, kept by the people who write the docs rather
+    than beside ``FLAG_KEYS``."""
+    out: "dict[str, set[str]]" = {}
+    row = re.compile(r"^\|\s*`([a-z_]+)`\s*\|\s*(?:bool|boolean)\b", re.M)
+    line = re.compile(r"^\s*([a-z_]+)\s*=\s*(?:true|false)\b", re.M)
+    for page in sorted(DOCS.rglob("*.md")):
+        text = page.read_text(encoding="utf-8")
+        rel = page.relative_to(DOCS).as_posix()
+        for m in (*row.finditer(text), *line.finditer(text)):
+            out.setdefault(m.group(1), set()).add(rel)
+    return out
+
+
+def test_every_documented_bool_is_a_flag():
+    """``scalar_collapse`` was documented as a bool and read with
+    ``bool(...)``, so ``"false"`` collapsed: a documented bool that is no
+    flag is one ``flag_errors`` never refuses and ``jm upgrade`` never
+    respells."""
+    docs = _documented_bools()
+    assert docs, "no documented bool found: the oracle is not reading"
+    missing = {
+        k: sorted(v)
+        for k, v in docs.items()
+        if k not in _keys.FLAG_KEYS and k not in _DOC_BOOLS_NOT_JM
+    }
+    assert not missing, f"documented as a bool, not a flag: {missing}"
+    stale = set(_DOC_BOOLS_NOT_JM) - set(docs)
+    assert not stale, stale
+
+
+_CODEC = {
+    "discriminant": "char",
+    "entries": [{"code": "X", "ctype": "int64_t"}],
+}
+_CODEC_PROP = {
+    "name": "keywords",
+    "type": "dict",
+    "codec": "kw",
+    "count_fn": "g_kw_count",
+    "key_fn": "g_kw_tag",
+    "entry_fn": "g_kw_entry",
+    "entry_type": "g_kw_t",
+}
+
+
+def _collapses(cdc: dict, prop: dict) -> bool:
+    from just_makeit import _codec
+
+    fn_c, _expr, _decls = _codec.render_decode("g", "G", prop, cdc, csym="g")
+    return "PyList_GET_ITEM(_lst, 0)" in fn_c
+
+
+@pytest.mark.parametrize(
+    "spelling, on",
+    [("false", False), (False, False), ("true", True), (True, True)],
+)
+def test_scalar_collapse_reads_as_a_flag(spelling, on):
+    """``bool("false")`` collapsed a lone element to a scalar; at the
+    codec and at a property's override, each spelling is its bool."""
+    assert (
+        _collapses({**_CODEC, "scalar_collapse": spelling}, _CODEC_PROP) is on
+    )
+    over = {**_CODEC_PROP, "scalar_collapse": spelling}
+    assert _collapses({**_CODEC, "scalar_collapse": not on}, over) is on
+
+
+def test_scalar_collapse_python_spelling_is_refused_and_respelled(tmp_path):
+    cfg = {"codec": {"kw": {**_CODEC, "scalar_collapse": "False"}}}
+    (err,) = _keys.flag_errors(cfg)
+    assert 'codec.kw: scalar_collapse = "False"' in err, err
+    assert "just-makeit upgrade" in err, err
+    (tmp_path / "just-makeit.toml").write_text(
+        '[project]\nname = "p"\n\n[codec.kw]\ndiscriminant = "char"\n'
+        'scalar_collapse = "False"\n',
+        encoding="utf-8",
+    )
+    assert _respell_flags(tmp_path) == [
+        "just-makeit.toml: codec.kw.scalar_collapse"
+    ]
+    text = (tmp_path / "just-makeit.toml").read_text(encoding="utf-8")
+    assert "\nscalar_collapse = false\n" in text, text
 
 
 def test_no_signature_flag_coerces_through_bool():
