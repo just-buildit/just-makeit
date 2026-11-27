@@ -3761,6 +3761,18 @@ def run(
         )
         if _ss_why:
             raise _report.Refusal(_ss_why[0])
+    # gh-2112: a state field or init param named twice, refused before
+    # anything renders, by the check `load` and `save` make of a manifest.
+    # The rows alone, not a one-object manifest: the object's name may be a
+    # reserved key (`jm object module`), refused below as such.
+    _dupes = C.duplicate_row_errors(
+        f"'{object_name}' state", [{"name": v[0]} for v in state_vars or []]
+    ) + C.duplicate_row_errors(
+        f"'{object_name}' init_params",
+        [{"name": p[0]} for p in init_params or []],
+    )
+    if _dupes:
+        raise _report.Refusal.of(_dupes)
     if before and (
         why := C.before_why_not(
             C.load(root) if (root / C.FILENAME).exists() else {},

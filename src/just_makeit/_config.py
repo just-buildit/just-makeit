@@ -280,6 +280,10 @@ def load(root: Path) -> dict:
     cycles = object_ref_cycles(cfg)
     if cycles:
         raise Refusal("\n".join(cycles))
+    # gh-2112: a name twice in one C struct or parameter list.
+    dupes = duplicate_name_errors(cfg)
+    if dupes:
+        _refuse(dupes)
     # gh-2259: a generating source's delegated generator methods, asked
     # only of a manifest with a composer to ask about.
     if any(is_composer_module(cfg, m) for m in modules(cfg)):
@@ -2217,6 +2221,10 @@ def save(root: Path, cfg: dict) -> None:
     cycles = object_ref_cycles(cfg)
     if cycles:
         raise Refusal("\n".join(cycles))
+    # gh-2112: and a name declared twice in one C list, for the same reason.
+    dupes = duplicate_name_errors(cfg)
+    if dupes:
+        _refuse(dupes)
     # gh-999: contract the group expansion, HERE, for the same reason `load`
     # expands there — this is the one place every manifest write passes
     # through. `save` and `load` are the symmetric pair: what `load` unfolds,
@@ -3391,6 +3399,85 @@ def object_ref_edges(cfg: dict, component: str) -> "list[str]":
         target = str(p.get("object") or "").partition(".")[0]
         if target and target not in out:
             out.append(target)
+    return out
+
+
+def duplicate_row_errors(where: str, rows) -> "list[str]":
+    """Each name in *rows* declared more than once, as a refusal (gh-2112).
+
+    *rows* is one list that becomes one C declaration (see
+    :func:`duplicate_name_errors`), as manifest rows: dicts with a
+    ``name``. Asked of a verb's own new rows too, before it renders, where
+    there is no manifest to put them in yet.
+
+    >>> duplicate_row_errors("'o' state", [{"name": "g"}, {"name": "g"}])[0][:31]
+    "'o' state: 'g' is declared twic"
+    >>> duplicate_row_errors("'o' state", [{"name": "g"}, {"name": "h"}])
+    []
+    """
+    seen: "set[str]" = set()
+    twice: "list[str]" = []
+    for row in rows or []:
+        name = row.get("name") if isinstance(row, dict) else None
+        if not isinstance(name, str):
+            continue
+        if name in seen and name not in twice:
+            twice.append(name)
+        seen.add(name)
+    return [
+        f"{where}: '{n}' is declared twice; each name is one C member"
+        " or parameter, so the scaffold would not compile."
+        for n in twice
+    ]
+
+
+def duplicate_name_errors(cfg: dict) -> "list[str]":
+    """Every name declared twice in one C struct or parameter list.
+
+    gh-2112. Each of these lists becomes ONE C declaration -- the state
+    struct, ``create()``'s parameters, a method's or function's parameters,
+    a record's fields -- so a name in it twice is a duplicate member or a
+    redefined parameter, and the tree jm wrote does not compile. jm accepted
+    every one: ``jm new``/``jm object`` with ``--state g:double:1 --state
+    g:double:2`` (or two ``--init-param n``), ``jm method``/``jm function``
+    with ``--param a:int --param a:int``, and the same rows by hand. Only
+    ``jm add`` refused, for its own new state names.
+
+    Asked by `load` and `save`, so a hand-written manifest is refused by
+    every command that reads it, and a verb declaring the second name is
+    refused before it saves; the mutating-command undo (gh-1867) puts back
+    anything it had written. A state field and an init param sharing a name
+    is not a duplicate: that is how an init param sets its field.
+
+    >>> duplicate_name_errors({"o": {"state": [
+    ...     {"name": "g", "type": "double"},
+    ...     {"name": "g", "type": "double"}]}})
+    ["'o' state: 'g' is declared twice; each name is one C member or \
+parameter, so the scaffold would not compile."]
+    >>> duplicate_name_errors({"o": {"state": [{"name": "n"}],
+    ...     "init_params": [{"name": "n"}]}})
+    []
+    """
+
+    rows_of = duplicate_row_errors
+    out: "list[str]" = []
+    for comp in components(cfg):
+        sec = cfg.get(comp)
+        if not isinstance(sec, dict):
+            continue
+        out += rows_of(f"'{comp}' state", sec.get("state"))
+        out += rows_of(f"'{comp}' init_params", sec.get("init_params"))
+        for m in sec.get("methods") or []:
+            if not isinstance(m, dict):
+                continue
+            what = f"'{comp}' method '{m.get('name')}'"
+            out += rows_of(f"{what} params", m.get("params"))
+            out += rows_of(f"{what} result_fields", m.get("result_fields"))
+    for mod in modules(cfg):
+        for fn in module_functions(cfg, mod):
+            what = f"module '{mod}' function '{fn.get('name')}'"
+            out += rows_of(f"{what} params", fn.get("params"))
+            out += rows_of(f"{what} result_fields", fn.get("result_fields"))
     return out
 
 
