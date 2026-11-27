@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import _types as T
+from ._keys import is_set
 from ._docstring import struct_member_doc
 
 
@@ -1357,7 +1358,7 @@ which the C function returns by value. Drop one of the two.
     if why or not fn.get("single"):
         return why
     for key in SINGLE_FUNCTION_UNREAD_KEYS:
-        if fn.get(key):
+        if is_set(fn, key):
             return (
                 f"{what}: {key} has no effect on a single = true record, "
                 "which the C function returns by value. Drop one of the two."
