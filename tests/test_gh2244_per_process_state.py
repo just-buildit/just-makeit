@@ -95,6 +95,10 @@ _NOT_PER_PROCESS = {
     ("_config", "_DEFERRED"): SCOPED,
     ("_object", "_DEFERRED_REGEN"): SCOPED,
     ("_undo", "_active"): SCOPED,
+    ("__init__", "globals()"): (
+        "the lazy `__version__` and re-exports: jm's install, the same in "
+        "every process, and a failed version lookup is not kept (gh-1166)"
+    ),
     ("_perprocess", "_REGISTRY"): (
         "the registry itself: what is declared, not what was seen"
     ),
@@ -113,10 +117,7 @@ def _modules():
         dirs = [_PKG.joinpath(*rel.parts[:i]) for i in range(len(rel.parts))]
         if not all((d / "__init__.py").is_file() for d in dirs):
             continue
-        parts = list(rel.with_suffix("").parts)
-        if parts[-1] == "__init__":
-            parts = parts[:-1]
-        yield ".".join(parts), path
+        yield ".".join(rel.with_suffix("").parts), path
 
 
 def _decorator_name(node: ast.expr) -> str:
@@ -135,9 +136,11 @@ def _scan(tree: ast.Module) -> "dict[str, ast.AST]":
 
     A module-level name is a memo when a function mutates it in place (a
     `_MUTATORS` call, or a subscript store or delete) without having a
-    local of that name, or declares it ``global``; and a function is one
-    when a `_CACHES` decorator keeps its results. Mutation in module-level
-    code is construction, not memory, and is not counted.
+    local of that name, or declares it ``global``; a function is one when
+    a `_CACHES` decorator keeps its results; and a module whose function
+    stores into ``globals()`` is one, under the name ``globals()``.
+    Mutation in module-level code is construction, not memory, and is not
+    counted.
     """
     bound: "dict[str, ast.AST]" = {}
     for node in tree.body:
@@ -186,6 +189,14 @@ def _scan(tree: ast.Module) -> "dict[str, ast.AST]":
                 and isinstance(node.value, ast.Name)
             ):
                 name = node.value.id
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "globals"
+            ):
+                found["globals()"] = node
             if name in bound and (name in declared or name not in local):
                 found[name] = bound[name]
         for name in declared & bound.keys():
@@ -241,9 +252,10 @@ def test_the_scan_finds_each_shape():
         "def b(k):\n    TABLE[k] = 1\n"
         "def c():\n    global COUNT\n    COUNT += 1\n"
         "def d():\n    SHADOW = set()\n    SHADOW.add(1)\n"
+        "def g(v):\n    globals()['LAZY'] = v\n"
         "@functools.lru_cache(maxsize=None)\ndef e():\n    return 1\n"
     )
-    assert sorted(_scan(tree)) == ["COUNT", "SAID", "TABLE", "e"]
+    assert sorted(_scan(tree)) == ["COUNT", "SAID", "TABLE", "e", "globals()"]
 
 
 def test_every_process_memo_is_declared_or_explained():
@@ -266,6 +278,12 @@ def test_every_process_memo_is_declared_or_explained():
     assert not stale, f"_NOT_PER_PROCESS names what is not there: {stale}"
 
 
+def _import(module: str):
+    """The module `_modules` named *module*, a package by its ``__init__``."""
+    dotted = f"just_makeit.{module}".removesuffix(".__init__")
+    return importlib.import_module(dotted)
+
+
 def _fill(state) -> None:
     if isinstance(state, dict):
         state["gh-2244 sentinel"] = None
@@ -283,7 +301,7 @@ def _ids(keys) -> "list[str]":
 
 @pytest.mark.parametrize("module,name", _DECLARED, ids=_ids(_DECLARED))
 def test_run_cli_starts_each_declared_memo_empty(module, name, tmp_path):
-    state = getattr(importlib.import_module(f"just_makeit.{module}"), name)
+    state = getattr(_import(module), name)
     _fill(state)
     assert run_cli("--version", cwd=tmp_path).returncode == 0
     assert not state, f"{module}.{name} survived into the next command"
@@ -298,7 +316,7 @@ def test_scoped_state_is_put_back_by_a_command(module, name, tmp_path):
     node = _MEMOS[(module, name)]
     initial = ast.literal_eval(node.value)
     assert run_cli("--version", cwd=tmp_path).returncode == 0
-    mod = importlib.import_module(f"just_makeit.{module}")
+    mod = _import(module)
     assert getattr(mod, name) == initial
 
 
