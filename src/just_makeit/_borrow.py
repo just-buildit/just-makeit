@@ -127,6 +127,7 @@ from ._context._diagnostics import (
     reason_raise_c,
     status_row_message,
 )
+from ._keys import is_set, truthy
 
 
 def is_borrow(m: dict) -> bool:
@@ -139,7 +140,7 @@ def is_borrow(m: dict) -> bool:
     >>> is_borrow({"name": "steps"})
     False
     """
-    return bool(m.get("borrow"))
+    return truthy(m.get("borrow"))
 
 
 def lends(cfg: dict, component: str) -> "bool | str":
@@ -258,7 +259,7 @@ def is_writeable(m: dict) -> bool:
     >>> is_writeable({"borrow": True, "borrow_writeable": True})
     True
     """
-    return bool(m.get("borrow_writeable"))
+    return truthy(m.get("borrow_writeable"))
 
 
 def count_param(m: dict) -> str:
@@ -625,16 +626,18 @@ def _property_read(prop: dict, csym: str) -> str:
     readable = ("field", "expr")
     backing = [
         k
-        for k, v in prop.items()
-        if v
+        for k in prop
+        if is_set(prop, k)
         and k not in ("name", "type", "ctype", "doc", "writable", "mutable")
     ]
     if any(k not in readable for k in backing):
         return ""
     if prop.get("expr"):
         return f"({prop['expr']})"
-    if prop.get("field"):
-        return f"self->handle->{prop['field']}"
+    if truthy(prop.get("field")):
+        # `field = true` backs the property with the struct member of its
+        # own name, as its getset reads it; the key is a flag, not a name.
+        return f"self->handle->{prop['name']}"
     return f"{CSYM.property_getter(csym, prop.get('name', ''))}(self->handle)"
 
 
@@ -896,7 +899,7 @@ def why_not(
         # gh-2584: so does a `status_out` count method -- the cause its
         # kernel wrote when it refused the count.
         if (
-            (m.get("status_return") or method_status(m))
+            (truthy(m.get("status_return")) or method_status(m))
             and status_rows(m)
             and not status_fn(m)
         ):
@@ -910,7 +913,7 @@ def why_not(
         # would be recorded, exit 0, and dropped -- which is the whole
         # finding of this issue, one shape over.
         if status_fn(m) or status_rows(m):
-            if m.get("status_return") or method_status(m):
+            if truthy(m.get("status_return")) or method_status(m):
                 return (
                     f"method '{name}': `status_fn` names the function a "
                     f"BORROW asks why it returned NULL.\n"
@@ -932,7 +935,7 @@ def why_not(
             )
         return ""
     params = m.get("params") or []
-    if m.get("variable_output"):
+    if truthy(m.get("variable_output")):
         return (
             f"method '{name}': `borrow` and `variable_output` are different "
             f"answers to who owns the result.\n"

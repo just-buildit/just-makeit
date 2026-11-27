@@ -93,6 +93,7 @@ from ._parse import (
     enum_symbols as _enum_symbols,
     scalar_parse_c as _scalar_parse_c,
 )
+from .._keys import is_set, truthy
 
 
 # Scalar C-kind -> Python annotation, shared by make_methods_ctx's param/
@@ -457,7 +458,7 @@ def _kernel_call_block(
     then declares ``n_out``. Everything after that sees the same
     ``size_t n_out`` as before, so no later comparison mixes signedness.
     """
-    if m and m.get("error_negative"):
+    if m and truthy(m.get("error_negative")):
         return _nogil_call(
             count_type_of(m),
             "_rc",
@@ -528,7 +529,7 @@ def _count_refusal_c(
     body = len(pad) + 4
     lead = " " * body
     held = f"{lead}{release}\n" if release else ""
-    if m.get("error_negative"):
+    if truthy(m.get("error_negative")):
         return (
             f"{pad}if (_rc < 0) {{\n"
             f"{lead}{release}\n"
@@ -1001,8 +1002,8 @@ def _bench_method_block(
     """
     if (
         not C._truthy(m.get("bench", True))
-        or m.get("variable_output")
-        or m.get("varargs")
+        or truthy(m.get("variable_output"))
+        or truthy(m.get("varargs"))
         or m.get("out_type")  # gh-529: no out buffer in the timing loop
         or m.get("codec")  # gh-554: a codec-pack method has no C core to time
     ):
@@ -1023,10 +1024,10 @@ def _bench_method_block(
     return_type: str = _record.resolve_element(
         m.get("return_type", "float _Complex"), records
     )
-    batch: bool = m.get("batch", False)
+    batch: bool = truthy(m.get("batch", False))
     params: list[dict] = m.get("params", [])
     result_fields: list[dict] = m.get("result_fields", [])
-    single_record: bool = m.get("single", False)
+    single_record: bool = truthy(m.get("single", False))
     max_results: int = int(m.get("max_results", 64))
     # gh-1310: the bench face never heard about `borrow` (gh-1312). A borrow
     # returns a POINTER into the state's memory, so the generic sink below
@@ -1036,7 +1037,7 @@ def _bench_method_block(
     # rather than introducing it: the element is then a struct, and
     # `result_fields` would also send it down the list-of-records branch and
     # call a kernel signature that does not exist.
-    borrow_m: bool = bool(m.get("borrow"))
+    borrow_m: bool = truthy(m.get("borrow"))
     borrow_elem: str = (
         _borrow.element_type(m.get("record_dtype", ""), return_type)
         if borrow_m
@@ -2483,7 +2484,7 @@ def make_methods_ctx(
         _brief = "" if _brief_is_stub else _brief_text
 
         # ── varargs method (*args, **kwargs) ─────────────────────────────
-        if m.get("varargs"):
+        if truthy(m.get("varargs")):
             # gh-1881: the file `_method` WRITES, named by the one helper.
             # It was `f"{c_fn}_core.c"` -- the C symbol, which a `c_prefix`
             # moves and a file name never follows -- so a prefixed module's
@@ -2539,7 +2540,7 @@ def make_methods_ctx(
         # ── manual_stub method (hand-written C binding, jm emits nothing
         # C-side; only a placeholder .pyi entry the splice engine preserves
         # verbatim across regen — gh-428) ─────────────────────────────────
-        if m.get("manual_stub"):
+        if truthy(m.get("manual_stub")):
             # gh-1997: an `extra_methods` row of the same name registers the
             # binding and declares its signature, so its member stands in
             # for the placeholder -- one member, not two. The text stays
@@ -2588,15 +2589,15 @@ def make_methods_ctx(
         return_type: str = _record.resolve_element(
             m.get("return_type", "float _Complex"), records
         )
-        variable_output: bool = m.get("variable_output", False)
-        batch: bool = m.get("batch", False)
+        variable_output: bool = truthy(m.get("variable_output", False))
+        batch: bool = truthy(m.get("batch", False))
         multi_output: list[str] = m.get("multi_output", [])
         params: list[dict] = m.get("params", [])
         result_fields: list[dict] = m.get("result_fields", [])
         max_results: int = int(m.get("max_results", 64))
         # gh-244: return ONE named record (PyStructSequence) rather than a
         # list[tuple]. The C kernel returns the record struct by value.
-        single_record: bool = m.get("single", False)
+        single_record: bool = truthy(m.get("single", False))
         # gh-257 (`record_name`, the chosen public name) and gh-261
         # (`record_module`, the qualifier for the structseq's __module__) are
         # both read straight off `m` by `_record`, which the .pyi writers share
@@ -2611,7 +2612,7 @@ def make_methods_ctx(
         # than casting, copying and flattening it. The scalar path was the
         # only array surface still converting silently -- `out=` (gh-581)
         # and a record input already refused.
-        strict_in: bool = bool(m.get("strict"))
+        strict_in: bool = truthy(m.get("strict"))
         # gh-1159: the other reading of an empty result. `none_on_empty`
         # says "nothing to report"; this says "the kernel REFUSED". A
         # variable_output method has no status to carry -- its one return
@@ -2620,15 +2621,15 @@ def make_methods_ctx(
         # the caller carried on. For a framing object that is the worst
         # available answer: the frame comes back short, nothing raises,
         # and it surfaces far away as a bad decode.
-        error_on_empty: bool = m.get("error_on_empty", False)
+        error_on_empty: bool = truthy(m.get("error_on_empty", False))
         # Opt-in GIL release around the pure-C kernel (thread-per-shard
         # scaling). v1 covers the variable_output execute shapes.
-        nogil: bool = m.get("nogil", False)
+        nogil: bool = truthy(m.get("nogil", False))
         # gh-432: the C `int` return is a status code (0 = OK, non-zero =
         # failure) — bound as `-> None`, raising ValueError on failure (the
         # same contract the serializable set_state glue emits). Fixed-output
         # methods only.
-        status_return: bool = m.get("status_return", False)
+        status_return: bool = truthy(m.get("status_return", False))
         # gh-2574: the C local a refusal's sentence is in, or "" -- handed
         # to every kernel call (`_nogil_call`) and every refusal's raise.
         _mwhy = method_why(m)
@@ -2645,7 +2646,7 @@ def make_methods_ctx(
         # which claims the whole int: here a successful call still has a
         # number to give back, so the `.pyi` return annotation is unchanged
         # and only the failure path differs. The CLI rejects the two together.
-        error_negative: bool = m.get("error_negative", False)
+        error_negative: bool = truthy(m.get("error_negative", False))
         # The exception category and text for that failure. `error` reuses
         # gh-482's ERROR_CATEGORIES (already validated at declaration time),
         # so this renders a name jm has vetted rather than arbitrary C.
@@ -2660,17 +2661,17 @@ def make_methods_ctx(
         # gh-138: opt into the 5-arg `(..., out, size_t max_out)` form for a
         # variable_output method whose C API forwards an explicit output
         # capacity (the buffer cap jm already tracks for grow-on-demand).
-        pass_capacity: bool = m.get("pass_capacity", False)
+        pass_capacity: bool = truthy(m.get("pass_capacity", False))
         # gh-805 §D: the author asserts `max_out` is a true upper bound for
         # any call, so the binding allocates exactly it instead of clamping up
         # to the call's own length. See `_capacity_exprs` for why this is an
         # assertion rather than something jm can derive.
-        exact_max_out: bool = m.get("exact_max_out", False)
+        exact_max_out: bool = truthy(m.get("exact_max_out", False))
         # gh-2233: a void-input variable_output method that takes NO count.
         # The kernel is `fn(state, out[, max_out])`, its `_max_out(state)`
         # takes the state alone, and the Python call is `f()`. Validated at
         # load (`_config._no_count_errors`), so here it only selects shapes.
-        no_count: bool = bool(m.get("no_count", False))
+        no_count: bool = truthy(m.get("no_count", False))
         # gh-788 gap 1: the method writes rows of a POD C struct, and the
         # result is a numpy STRUCTURED array whose dtype IS that struct's
         # layout. The key names the struct (`dp_tlm_rec_t`); `result_fields`
@@ -3032,7 +3033,7 @@ def make_methods_ctx(
                     count=_stub_count_arg,
                     out=_stub_enable_out,
                     out_cols=bool(m.get("out_cols")),
-                    short_out=bool(m.get("short_out")),
+                    short_out=truthy(m.get("short_out")),
                 ),
                 authored_doc=m.get("doc") or "",
                 param_docs=authored_param_docs(m),
@@ -4047,7 +4048,7 @@ def make_methods_ctx(
                     exact_max_out,
                     _lazy_fallback,
                     _moc_state_only,
-                    short_out=bool(m.get("short_out")),
+                    short_out=truthy(m.get("short_out")),
                 )[1]
                 _out_zero = _reindent(
                     _zero_bound_guard(
@@ -5559,7 +5560,7 @@ def make_methods_ctx(
                         count=_stub_count_arg,
                         out=_stub_enable_out,
                         out_cols=bool(m.get("out_cols")),
-                        short_out=bool(m.get("short_out")),
+                        short_out=truthy(m.get("short_out")),
                     ),
                     authored_doc=m.get("doc") or "",
                     param_docs=authored_param_docs(m),
@@ -6013,7 +6014,7 @@ def validate_property_error(
             f"writable."
         )
     category = p.get("error") or ""
-    getter_status = bool(p.get("getter_status"))
+    getter_status = truthy(p.get("getter_status"))
     getter_keys = [k for k in _GETTER_ERROR_KEYS if p.get(k)]
     if (
         not category
@@ -6047,7 +6048,7 @@ def validate_property_error(
             f"getter_status = true if it is the getter that can fail "
             f"(gh-2538), or drop error."
         )
-    if p.get("field"):
+    if truthy(p.get("field")):
         raise Refusal(
             f"{where}: error needs a C setter whose return jm can test, and "
             f"field = true assigns the struct member directly. Drop field "
@@ -6204,7 +6205,7 @@ def _refuse_getter_status(
             f"error / error_message instead."
         )
     for key, how in _NO_GETTER_CALL:
-        if p.get(key):
+        if is_set(p, key):
             raise Refusal(
                 f"{where}: getter_status needs a C getter whose status jm "
                 f"can test, and {key} {how}. Drop {key} and implement "
@@ -6259,7 +6260,7 @@ def validate_container_property(component: str, p: dict) -> None:
             f"instead."
         )
     for clash in ("field", "buf_field", "expr", "enum"):
-        if p.get(clash):
+        if is_set(p, clash):
             raise ValueError(
                 f"{where}: `{clash}` cannot be combined with a "
                 f"container property -- the value comes from value_fn, not "
@@ -6320,12 +6321,12 @@ def validate_json_property(component: str, p: dict) -> None:
             f"that mutates the core instead."
         )
     for clash in _JSON_CLASHES:
-        if p.get(clash):
+        if is_set(p, clash):
             raise Refusal(
                 f"{where}: `{clash}` cannot be combined with a json property "
                 f"-- the value is the JSON text its getter returns."
             )
-    if p.get("getter_status"):
+    if truthy(p.get("getter_status")):
         # gh-2538: the status getter returns int and writes through an
         # out-pointer; a json getter's NULL is already its failure.
         raise Refusal(
@@ -6687,7 +6688,7 @@ def make_properties_ctx(
         pname: str = p["name"]
         ctype: str = p.get("type") or p.get("ctype", "size_t")
         writable: bool = C._truthy(p.get("writable"))
-        field: bool = p.get("field", False)
+        field: bool = truthy(p.get("field", False))
         buf_field: str = p.get("buf_field", "")
         len_field: str = p.get("len_field", "n")
         valid_field: str = p.get("valid_field", "")

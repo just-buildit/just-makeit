@@ -29,6 +29,7 @@ from . import _incpath as INC
 from ._init import _to_title
 from ._object import _regenerate_module
 from ._report import Refusal
+from ._keys import truthy
 
 
 _STUB_MARKER = "/* TODO: implement"
@@ -896,7 +897,7 @@ def _remove_property(
 
     print(f"just-makeit: removing property '{name}' from '{obj}'")
     print()
-    is_field = bool(entry.get("field"))
+    is_field = truthy(entry.get("field"))
     _drop_named_entry(props, name)
     if not props:
         cfg[obj].pop("properties", None)
@@ -1090,7 +1091,7 @@ def _remove_function(
     # now-orphaned declaration from the shared header.  Inline functions live
     # entirely in <mod>_core.h as a static-inline body, which we leave (the
     # user may have written real code there).
-    inline = bool(entry.get("inline"))
+    inline = truthy(entry.get("inline"))
     # gh-983: the cname names the native dir and the header, the dotted id is
     # the manifest key. This read the id for both, so removing a function from
     # a dotted module deleted nothing and stripped nothing — silently, since

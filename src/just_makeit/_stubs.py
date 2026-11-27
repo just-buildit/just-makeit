@@ -74,6 +74,7 @@ from ._docstring import (
     max_out_arity_key,
     max_out_is_state_only,
 )
+from ._keys import truthy
 
 # ── annotation maps ──────────────────────────────────────────────────────────
 
@@ -616,7 +617,9 @@ def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
     for comp in C.components(cfg):
         Component = C.resolved_class_name(cfg, comp)
         declared = {
-            m["name"] for m in C.methods(cfg, comp) if m.get("manual_stub")
+            m["name"]
+            for m in C.methods(cfg, comp)
+            if truthy(m.get("manual_stub"))
         }
         pairs |= {(Component, name) for name in declared}
         for v in C.views(cfg, comp):
@@ -630,7 +633,7 @@ def _manual_stub_pairs(cfg: dict) -> set[tuple[str, str]]:
                     continue
                 entry = own.get(name)
                 if entry is not None:
-                    if entry.get("manual_stub"):
+                    if truthy(entry.get("manual_stub")):
                         pairs.add((cls, name))
                 elif name in declared:
                     pairs.add((cls, name))
@@ -1984,7 +1987,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         # disagree about a file neither author touched.
         if _blk is not None and is_scaffold_doc(_blk, m_name):
             _blk = None
-        if m.get("varargs"):
+        if truthy(m.get("varargs")):
             # gh-1396: the one chain, shared with the binding and the report.
             _va_doc = method_doc(obj, m, doc_blocks, csym=csym)[0]
             lines += [
@@ -1993,7 +1996,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 "        " + docstring_literal(_va_doc),
             ]
             continue
-        if m.get("manual_stub"):
+        if truthy(m.get("manual_stub")):
             # gh-1997: the peer of the same skip in `make_methods_ctx` -- an
             # `extra_methods` row of this name types the member, below.
             if m_name in _extra_names:
@@ -2014,14 +2017,14 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         m_ret = m.get("return_type", "void")
         m_params = m.get("params", [])
         m_arg = m.get("arg_type", "void")
-        m_var = m.get("variable_output", False)
+        m_var = truthy(m.get("variable_output", False))
         m_multi = m.get("multi_output", [])
         m_result_fields = m.get("result_fields", [])
         m_py_return_type = m.get("py_return_type", "")
         # gh-2259: peer of the batch reading in `make_methods_ctx` -- a batch
         # binding reads a BLOCK and parses `x` (or a count) and `out=` and no
         # declared param, so this stub describes exactly that.
-        m_batch = bool(m.get("batch"))
+        m_batch = truthy(m.get("batch"))
         if m_batch:
             m_params = []
 
@@ -2124,7 +2127,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
         elif m_py_return_type:
             ret_ann = m_py_return_type
         elif m_result_fields and not _record.is_record_array(
-            m_var, m.get("record_dtype"), m.get("borrow")
+            m_var, m.get("record_dtype"), truthy(m.get("borrow"))
         ):
             # gh-244: a `single` method returns ONE record, not a list of them.
             # gh-646: and that record is a declared class, not a bare tuple —
@@ -2137,7 +2140,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             field_types = ", ".join(_py(f["type"]) for f in m_result_fields)
             ret_ann = (
                 _record.public_name(m)
-                if m.get("single")
+                if truthy(m.get("single"))
                 else f"list[tuple[{field_types}]]"
             )
         elif m_var:
@@ -2155,7 +2158,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                     else ndarrays[0]
                 ),
             )
-        elif m.get("status_return") or m_multi or m.get("out_type"):
+        elif truthy(m.get("status_return")) or m_multi or m.get("out_type"):
             # gh-529: peer of the `out_type` branch in
             # make_methods_ctx's return-annotation resolution -- a method
             # with out_type returns a fresh ndarray, not the scalar m_ret.
@@ -2201,7 +2204,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             variable_output=m_var,
             arg_type=m_arg,
             params=m_params,
-            no_count=m.get("no_count"),
+            no_count=truthy(m.get("no_count")),
         )
         # gh-1074: and what it is CALLED, from the same accessor the binding
         # and the standalone stub use. This file is the module-aggregated
@@ -2231,7 +2234,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             _outbuf.element(
                 variable_output=bool(m_var),
                 record_dtype=str(m.get("record_dtype", "") or "").strip(),
-                borrow=m.get("borrow"),
+                borrow=truthy(m.get("borrow")),
                 out_type=m.get("out_type") or "",
                 return_type=m_ret,
             ),
@@ -2306,7 +2309,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                 count=_stub_count_arg,
                 out=_stub_enable_out,
                 out_cols=bool(m.get("out_cols")),
-                short_out=bool(m.get("short_out")),
+                short_out=truthy(m.get("short_out")),
             ),
         )
         header = (
@@ -2329,7 +2332,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
                     if p["type"].endswith("[]"):
                         _stub_moc_name = f"{p['name']}_len"
                         break
-            elif not m.get("no_count"):
+            elif not truthy(m.get("no_count")):
                 # gh-2233: a `no_count` method's bound is the state's alone.
                 _stub_moc_name = "n"
             # gh-761: the header's prototype overrides all of the above, the
@@ -2563,7 +2566,7 @@ def fn_py_surface(
         # gh-2755: ONE record, the class `make_module_pyi` declares for it
         # -- the annotation a single-record method's stub carries.
         ret = _record.public_name(fn)
-    elif fn.get("check_return") and not out_type:
+    elif truthy(fn.get("check_return")) and not out_type:
         # gh-363: the int status is consumed by a raise-on-non-zero; the Python
         # surface is "succeeds or raises", i.e. returns None. With an output
         # (gh-1704) the raise guards the count and the output is still what

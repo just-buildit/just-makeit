@@ -43,6 +43,7 @@ from ._context._diagnostics import (
     reason_raise_c,
     WHY_LOCAL,
 )
+from ._keys import is_set
 
 _TMPL_DIR = Path(__file__).parent / "templates"
 
@@ -352,7 +353,7 @@ def module_fn_smoke_calls(
         # `params`, so the call below would be built short of the signature.
         # A `single` record is returned by value and adds none.
         if fn.get("out_type") or (
-            fn.get("result_fields") and not fn.get("single")
+            fn.get("result_fields") and not truthy(fn.get("single"))
         ):
             lines.append(
                 f"    /* TODO: {name}(...) writes into a caller-sized output"
@@ -1942,7 +1943,7 @@ def status_errors_why_not(fn: dict) -> str:
         return ""
     name = str(fn.get("name", "<function>"))
     if (
-        not fn.get("check_return")
+        not truthy(fn.get("check_return"))
         or fn.get("out_type")
         or (fn.get("result_fields"))
     ):
@@ -2032,7 +2033,7 @@ def scalar_out_why_not(fn: dict) -> str:
         (
             k
             for k in ("out_type", "result_fields", "variable_output")
-            if fn.get(k)
+            if is_set(fn, k)
         ),
         "",
     )
@@ -2045,7 +2046,7 @@ def scalar_out_why_not(fn: dict) -> str:
             "out = true."
         )
     ret = str(fn.get("return_type") or "void")
-    if ret != "void" and not fn.get("check_return"):
+    if ret != "void" and not truthy(fn.get("check_return")):
         return (
             f"function '{name}' declares out param '{first}' and returns "
             f"'{ret}'.\n"
@@ -2069,7 +2070,7 @@ def _out_length_keys(fn: dict) -> dict:
     """
     if not fn.get("out_type") or fn.get("result_fields"):
         return {}
-    vo = bool(fn.get("variable_output"))
+    vo = truthy(fn.get("variable_output"))
     return {
         "out_type": str(fn["out_type"]),
         "out_size": str(fn.get("out_size", "")) if vo else "",
@@ -2119,7 +2120,7 @@ def out_length_why_not(fn: dict) -> str:
     return _outbuf.length_why_not(
         f"function '{fn.get('name', '<function>')}'",
         list(fn.get("params") or []),
-        variable_output=bool(fn.get("variable_output")),
+        variable_output=truthy(fn.get("variable_output")),
         **keys,
     )
 
@@ -2806,9 +2807,9 @@ def make_functions_ctx(
                 result_fields=fn.get("result_fields", []),
                 max_results_param=fn.get("max_results_param", ""),
                 max_results=int(fn.get("max_results", 64)),
-                variable_output=bool(fn.get("variable_output")),
+                variable_output=truthy(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
-                check_return=bool(fn.get("check_return")),
+                check_return=truthy(fn.get("check_return")),
                 why=truthy(fn.get("why")),
                 status_errors=_borrow.status_rows(fn),
                 enums=enums,

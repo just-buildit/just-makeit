@@ -42,6 +42,7 @@ from ._init import (
     _inject_struct_field,
     declared_return,
 )
+from ._keys import is_set
 
 
 #: How a property spells an enum, for `T.enum_spelling_hint` (gh-2652): the
@@ -152,7 +153,7 @@ def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
             p
             for p in C.properties(cfg, comp)
             if truthy(p.get("writable"))
-            and not p.get("field")
+            and not truthy(p.get("field"))
             and p["name"] not in state
             and setter_return_type(p) == "void"
         ]
@@ -222,7 +223,7 @@ def getter_shape_mismatch(root: Path, cfg: dict) -> "list[str]":
             p
             for p in C.properties(cfg, comp)
             if not any(
-                p.get(k) for k in ("field", "expr", "buf_field", "capsule")
+                is_set(p, k) for k in ("field", "expr", "buf_field", "capsule")
             )
             and str(p.get("type", "")) in T._CTYPE_META
             and p["name"] not in state
@@ -240,7 +241,7 @@ def getter_shape_mismatch(root: Path, cfg: dict) -> "list[str]":
             if pat is None:
                 continue
             params = pat.search(text).group(0).split(fn, 1)[1]
-            if p.get("getter_status"):
+            if truthy(p.get("getter_status")):
                 # The status call passes two arguments; one is too few.
                 wrong = "," not in params
             else:
@@ -257,7 +258,7 @@ def getter_shape_mismatch(root: Path, cfg: dict) -> "list[str]":
                 f"`{comp}.{p['name']}` "
                 + (
                     "declares getter_status"
-                    if p.get("getter_status")
+                    if truthy(p.get("getter_status"))
                     else "does not declare getter_status"
                 )
                 + f", so its binding calls {fn}() as `{want}`, but"
@@ -351,7 +352,7 @@ def buffer_status_decls(p: dict, *, csym: str) -> list[str]:
     >>> buffer_status_decls({"name": "c", "buf_field": "corr"}, csym="dp_cor")
     []
     """
-    if not (p.get("buf_field") and p.get("getter_status")):
+    if not (p.get("buf_field") and truthy(p.get("getter_status"))):
         return []
     fn = CSYM.status_reader(csym, p)
     return [f"{getter_prototype(p, fn, csym, str(p.get('type', '')))};"]

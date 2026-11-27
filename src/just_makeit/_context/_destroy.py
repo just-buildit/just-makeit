@@ -69,6 +69,7 @@ from .._gluedoc import glue_methods
 from ._diagnostics import _c_string_literal
 from ._parse import _build_ml_doc
 from .._report import Refusal
+from .._keys import truthy
 
 # A method name is interpolated straight into a C string literal *and* into
 # Python stub source, so it is held to the Python identifier grammar.
@@ -570,7 +571,7 @@ def _exit_raise(
     ('OSError', 'hole')
     """
     if exit_method:
-        if not exit_method.get("status_return"):
+        if not truthy(exit_method.get("status_return")):
             return None
         return (
             exit_method.get("error") or "ValueError",
@@ -779,7 +780,7 @@ def make_destroy_ctx(
     # module fragment recognises a teardown jm wrote before the object
     # started or stopped releasing (`_object._relent_teardown`).
     if releases is None:
-        releases = any(m.get("nogil") for m in (methods or []))
+        releases = any(truthy(m.get("nogil")) for m in (methods or []))
     waits = releases and not lends
 
     if fallible:
