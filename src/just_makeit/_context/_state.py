@@ -411,6 +411,7 @@ def _build_no_state_init_ctx(
     # every value and every combination no path below could honour.
     _ranks = {param[0]: _coerce.array_rank(param) for param in params}
     _eps = {param[0]: _coerce.elements_per_sample(param) for param in params}
+    _params_by_name = {param[0]: param for param in params}
 
     def _rank_guard(
         aname: str, cleanup: str, indent: str = "    ", implied: int = 0
@@ -424,16 +425,15 @@ def _build_no_state_init_ctx(
         undeclared -- 2 for a ``T[][]``, guarded either way; gh-2537 made a
         declared ``rank = [1, 2]`` the one value that widens it.
         """
-        rank = _ranks.get(aname) or implied
-        if not rank:
-            return ""
-        return _coerce.array_rank_guard(
-            aname,
+        # gh-1999: with the elements_per_sample guard, through the one
+        # emitter every acquisition site calls.
+        return _coerce.array_shape_guard(
+            _params_by_name[aname],
             f"{aname}_arr",
-            rank,
             cleanup.strip(),
             fail="return -1;",
             indent=indent,
+            implied_rank=implied,
         )
 
     for param in params:
@@ -1856,10 +1856,12 @@ def _build_no_state_init_ctx(
     for aname, act, andim, _ in arr_ip:
         dt = _CTYPE_TO_DTYPE.get(act, "float32")
         npt = _NP_PY_TYPE.get(dt, "np.float32")
+        # gh-1999: one SAMPLE, which is `elements_per_sample` elements --
+        # the guard refuses any length that is not whole samples.
         py_create_parts.append(
             f"{aname}=np.zeros((1, 1), dtype={npt})"
             if andim == 2
-            else f"{aname}=np.zeros(1, dtype={npt})"
+            else f"{aname}=np.zeros({_eps[aname]}, dtype={npt})"
         )
     # Required scalars' seed value is the type's zero (the stub ctor never
     # validates, so the example still builds green) — gh-266.
