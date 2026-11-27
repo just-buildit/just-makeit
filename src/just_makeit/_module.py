@@ -77,23 +77,10 @@ def run(
     if module in C.modules(cfg):
         print(f"error: module '{module}' already exists.", file=sys.stderr)
         sys.exit(1)
-    # A dotted module's cname must not collide with another module's cname or
-    # a standalone component (they share native dirs / CMake targets).
-    if mp.cname in C.module_cnames(cfg) or mp.cname in C.components(cfg):
-        print(
-            f"error: module '{module}' collides with existing "
-            f"'{mp.cname}'. Modules, components, and nested-module cnames "
-            "share one namespace.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if module in C.components(cfg):
-        print(
-            f"error: '{module}' is already a standalone component. "
-            "Modules and components share the same namespace.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    # A module's cname must not collide with another module's cname or a
+    # component (they share native dirs / CMake targets). Not asked here:
+    # `C.save` below asks `C.namespace_errors`, the one rule (gh-2142),
+    # and refuses before any file of the module is written.
 
     pkg = C.project_name(cfg)
     Module = _to_title(mp.cname)
