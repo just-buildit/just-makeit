@@ -297,6 +297,26 @@ def test_author_code_inside_a_warning_block_survives(tmp_path) -> None:
     assert "DIAGNOSTICS (1)" in r.stdout, r.stdout
 
 
+def test_author_code_inside_a_warning_condition_survives(tmp_path) -> None:
+    """A condition jm does not render for the current manifest is the
+    author's: an edit inside it survives a message change, and
+    `status --check` fails on it."""
+    proj = _declare(tmp_path)
+    frag = _frag(proj, "acc")
+    text = frag.read_text("utf-8")
+    cond = "    if (self->handle->flag) {\n        if (PyErr_WarnEx("
+    assert text.count(cond) == 1, text
+    mine = cond.replace("flag)", "flag && author_gate())")
+    frag.write_text(text.replace(cond, mine), "utf-8")
+    _edit_manifest(proj)
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "author_gate()" in frag.read_text("utf-8")
+    r = run_cli("status", "--check", cwd=proj)
+    assert r.returncode != 0, r.stdout
+    assert "DIAGNOSTICS (1)" in r.stdout, r.stdout
+
+
 def test_a_first_declaration_replaces_the_default_block(tmp_path) -> None:
     """The undeclared `MemoryError` block is jm's render too, so a
     `create_error` first written in the manifest reaches the binding."""
