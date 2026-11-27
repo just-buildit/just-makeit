@@ -376,7 +376,12 @@ def _swap_raises_section(existing: str, reference: str) -> str:
     the whole docstring is then kept as hand-written (gh-805 §F), so this
     swaps only the section and nothing else in the doc.
 
-    Returns *existing* unchanged when either side has no such section.
+    The cases, by what the manifest declares now:
+
+    - both sides have a section: it is replaced by the reference's;
+    - only the fragment has one (the manifest dropped the translation): it
+      is removed, so the doc stops describing an exception the constructor
+      no longer raises;
 
     Examples
     --------
@@ -387,14 +392,18 @@ def _swap_raises_section(existing: str, reference: str) -> str:
     "RuntimeError\\n"
     "\\n"
     "Examples\\n"
-    >>> _swap_raises_section("no section here", ref) == "no section here"
+    >>> _swap_raises_section("no section here", "nor here") == "no section here"
     True
     """
     have = _RAISES_SECTION_RE.search(existing)
     want = _RAISES_SECTION_RE.search(reference)
-    if not have or not want:
-        return existing
-    return existing[: have.start()] + want.group(0) + existing[have.end() :]
+    if have and want:
+        return (
+            existing[: have.start()] + want.group(0) + existing[have.end() :]
+        )
+    if have:
+        return existing[: have.start()] + existing[have.end() :]
+    return existing
 
 
 def _tp_doc_span(text: str, mask: str) -> tuple | None:

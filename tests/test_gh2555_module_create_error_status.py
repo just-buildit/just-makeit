@@ -101,3 +101,63 @@ def test_apply_keeps_an_authors_own_function_in_the_fragment(tmp_path):
     assert "return x * 7 + 3; /* hand-written, must survive */" in (
         fragment.read_text(encoding="utf-8")
     )
+
+
+def _raises_lines(fragment):
+    """The class docstring's ``Raises`` lines, as they sit in the C source."""
+    return [
+        line
+        for line in fragment.read_text(encoding="utf-8").splitlines()
+        if "Raises" in line or "construction fails" in line
+    ]
+
+
+def test_apply_drops_a_raises_section_the_manifest_no_longer_declares(
+    tmp_path,
+):
+    proj = _scaffold_module_object(tmp_path)
+    fragment = proj / "native" / "src" / "dsp" / "dsp_ext_acc.c"
+    assert _raises_lines(fragment), "the scaffold should document Raises"
+    hits = _hand_edit(
+        proj,
+        [
+            ('create_error = "ValueError"\n', ""),
+            ('create_error_message = "old message"\n', ""),
+        ],
+    )
+    assert hits >= 1, "the manifest edit did not land; the test proves nothing"
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _raises_lines(fragment) == [], _raises_lines(fragment)
+    r = run_cli("status", "--check", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_apply_gains_a_raises_section_the_manifest_now_declares(tmp_path):
+    proj = tmp_path / "i3"
+    assert run_cli("new", "i3", cwd=tmp_path).returncode == 0
+    for args in (
+        ("module", "dsp"),
+        ("object", "acc", "--module", "dsp", "--init-param", "mode:int:0"),
+    ):
+        assert run_cli(*args, cwd=proj).returncode == 0
+    fragment = proj / "native" / "src" / "dsp" / "dsp_ext_acc.c"
+    assert _raises_lines(fragment) == [], _raises_lines(fragment)
+    hits = _hand_edit(
+        proj,
+        [
+            (
+                "[acc]\n",
+                '[acc]\ncreate_error = "ValueError"\n'
+                'create_error_message = "new message"\n',
+            ),
+        ],
+    )
+    assert hits >= 1, "the manifest edit did not land; the test proves nothing"
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = _raises_lines(fragment)
+    assert any("Raises" in line for line in lines), lines
+    assert any("new message" in line for line in lines), lines
+    r = run_cli("status", "--check", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
