@@ -551,6 +551,56 @@ def _is_generic_tp_doc(cur: str) -> bool:
     return bool(_GENERIC_TP_DOC_RE.match(_norm(cur)))
 
 
+#: The class-docstring sections the diagnostic keys write (gh-805 §F):
+#: ``create_error`` the ``Raises``, ``[[<obj>.warnings]]`` the ``Warns``.
+_DIAGNOSTIC_SECTIONS = frozenset({"Raises", "Warns"})
+
+
+def _sans_diagnostic_sections(field_text: str) -> str:
+    """*field_text*'s docstring without its `_DIAGNOSTIC_SECTIONS`, `_norm`ed.
+
+    A numpy section is a heading line over a rule of dashes, and runs to the
+    next one. *field_text* is a raw slot, as `_norm` reads it.
+
+    Examples
+    --------
+    >>> doc = ('"A type.\\\\n" "\\\\n" "Raises\\\\n" "------\\\\n"'
+    ...        ' "ValueError\\\\n" "    old\\\\n" "\\\\n"'
+    ...        ' "Examples\\\\n" "--------\\\\n" ">>> 1\\\\n"')
+    >>> _sans_diagnostic_sections(doc)
+    'Atype.Examples-------->>>1'
+    """
+    text = "".join(_STR_LIT_RE.findall(field_text)).replace("\\n", "\n")
+    lines = text.split("\n")
+    keep: list[str] = []
+    skip = False
+    for i, line in enumerate(lines):
+        rule = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        if line.strip() and re.fullmatch(r"-{3,}", rule):
+            skip = line.strip() in _DIAGNOSTIC_SECTIONS
+        if not skip:
+            keep.append(line)
+    return re.sub(r"\s+", "", "\n".join(keep).replace("\\t", ""))
+
+
+def _diagnostics_only(cur: str, der: str, fb: "str | None") -> bool:
+    """Whether class doc *cur* is jm's render but for its diagnostics.
+
+    gh-2555: the ``Raises`` and ``Warns`` sections are the manifest's
+    diagnostic keys and nothing else, so a ``tp_doc`` that is the derived
+    (*der*) or scaffold (*fb*) render apart from them is jm's render for an
+    older declaration. Without this a ``create_error_message`` edited in
+    the manifest reached the ``.pyi`` while ``help(Obj)`` kept the old one:
+    the text matched neither render and read as hand-written.
+    """
+    if _norm(cur) == _norm(der):
+        return False
+    sans = _sans_diagnostic_sections(cur)
+    return sans == _sans_diagnostic_sections(der) or (
+        fb is not None and sans == _sans_diagnostic_sections(fb)
+    )
+
+
 def _is_reclaimable_glue(name: str, cur: str, der: str) -> bool:
     """True when *name* is jm-owned glue whose slot still holds jm's old text.
 
@@ -827,6 +877,16 @@ def transplant_docs(
         if new_tp is None and _is_generic_tp_doc(ex_tp[2]) and ref_tp:
             if _norm(ref_tp[2]) != _norm(ex_tp[2]):
                 new_tp = ref_tp[2]
+        # gh-2555: and the class block jm rendered for an older diagnostic
+        # declaration -- its `Raises` / `Warns` the only difference.
+        if (
+            new_tp is None
+            and ref_tp
+            and _diagnostics_only(
+                ex_tp[2], ref_tp[2], fb_tp[2] if fb_tp else None
+            )
+        ):
+            new_tp = ref_tp[2]
         if new_tp is not None:
             edits.append((ex_tp[0], ex_tp[1], new_tp))
     else:
@@ -2472,6 +2532,278 @@ def init_kwargs_drift(existing: str, reference: str):
     return (added, removed, reordered, "; ".join(detail))
 
 
+# ── the constructor's diagnostics (gh-2555) ─────────────────────────────────
+
+#: One C token, a string literal WHOLE. `_C_TOKEN_RE` reads a masked text,
+#: where every literal is two quotes; here the literals are the point -- a
+#: diagnostic's message, and outside one the kwlist's names, which must not
+#: compare equal when they differ. Comments match so they can be dropped.
+_C_TOKEN_STR_RE = re.compile(
+    r"/\*.*?\*/|//[^\n]*"
+    r'|"(?:\\.|[^"\\\n])*"'
+    r"|'(?:\\.|[^'\\\n])*'"
+    r"|[A-Za-z_]\w*|\d[\w.]*|\S",
+    re.S,
+)
+
+
+def _c_tokens(text: str) -> "list[str]":
+    """*text* as C tokens: comments dropped, adjacent literals joined.
+
+    A formatter may re-wrap a long literal into two, and `_c_string_literal`
+    wraps jm's own, so the same message is one literal on one side and two
+    on the other; C concatenates them, and so does this.
+
+    >>> _c_tokens('f( "a" /* x */ "b" , 1);')
+    ['f', '(', '"ab"', ',', '1', ')', ';']
+    """
+    out: list[str] = []
+    for tok in _C_TOKEN_STR_RE.findall(text):
+        if tok.startswith(("/*", "//")):
+            continue
+        if tok[0] == '"' and out and out[-1][0] == '"':
+            out[-1] = out[-1][:-1] + tok[1:]
+            continue
+        out.append(tok)
+    return out
+
+
+def _closing(toks: "list[str]", at: int) -> int:
+    """Index of the token closing the ``(`` or ``{`` at *at*, or -1."""
+    open_, close = toks[at], {"(": ")", "{": "}"}[toks[at]]
+    depth = 0
+    for i in range(at, len(toks)):
+        if toks[i] == open_:
+            depth += 1
+        elif toks[i] == close:
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _diagnostic_shapes() -> "tuple[list[str], list[str]]":
+    """The token heads of jm's two constructor diagnostics.
+
+    Read off the emitters themselves (`make_errors_ctx`,
+    `make_warnings_ctx`), so the shape this module recognises is the shape
+    jm renders: ``if (!self->handle) {`` opens the create-failure block,
+    and ``{ if (PyErr_WarnEx`` follows each warning's condition.
+    """
+    from ._context._diagnostics import make_errors_ctx, make_warnings_ctx
+
+    fail = _c_tokens(make_errors_ctx("x", csym="x")["create_fail_block"])
+    warn = _c_tokens(
+        make_warnings_ctx(
+            "x", "X", [{"condition": "c", "category": "W", "message": "m"}]
+        )["init_warn_block"]
+    )
+    return (
+        fail[: fail.index("{") + 1],
+        warn[warn.index("{") : warn.index("PyErr_WarnEx") + 1],
+    )
+
+
+class _InitParts(NamedTuple):
+    """A constructor split into jm's diagnostics and everything else."""
+
+    #: Every other token, in order.
+    rest: tuple
+    #: The create-failure statement(s), each a token tuple.
+    fail: tuple
+    #: The post-construction warning statements, in order.
+    warns: tuple
+    #: Whether the ``_why`` local is declared and passed (gh-2552).
+    why: tuple
+
+
+def _init_parts(body: str) -> _InitParts:
+    """*body*, a ``tp_init``, with its manifest diagnostics taken out.
+
+    Three things in a constructor are rendered from the diagnostic keys
+    alone: the create-failure block (``create_error``,
+    ``create_error_message``, gh-482), the post-construction warnings
+    (``[[<obj>.warnings]]``, gh-481), and the ``_why`` local a
+    ``create_why`` constructor fills (gh-2552) -- its declaration and the
+    argument passing its address. Each is recognised by the shape its
+    emitter gives it, in tokens, so a formatter's layout does not hide it.
+
+    Examples
+    --------
+    >>> p = _init_parts(
+    ...     "static int\\nA_init(AObject *self)\\n{\\n"
+    ...     "    const char *_why = NULL;\\n"
+    ...     "    self->handle = a_create(1, &_why);\\n"
+    ...     "    if (!self->handle) {\\n"
+    ...     '        PyErr_SetString(PyExc_ValueError, "no");\\n'
+    ...     "        return -1;\\n    }\\n"
+    ...     "    if (self->handle->hot) {\\n"
+    ...     "        if (PyErr_WarnEx(PyExc_UserWarning, \\"hot\\", 1) < 0)\\n"
+    ...     "            return -1;\\n    }\\n"
+    ...     "    return 0;\\n}\\n"
+    ... )
+    >>> " ".join(p.rest[-15:])
+    '{ self - > handle = a_create ( 1 ) ; return 0 ; }'
+    >>> len(p.fail), len(p.warns), p.why
+    (1, 1, ('decl', 'arg'))
+    """
+    from ._context._diagnostics import WHY_C_ARG, WHY_DECL
+
+    fail_head, warn_head = _diagnostic_shapes()
+    why_decl, why_arg = _c_tokens(WHY_DECL), _c_tokens(WHY_C_ARG)
+    toks = _c_tokens(body)
+    rest: list[str] = []
+    fail: list[tuple] = []
+    warns: list[tuple] = []
+    why: list[str] = []
+    i = 0
+    while i < len(toks):
+        if toks[i : i + len(fail_head)] == fail_head:
+            end = _closing(toks, i + len(fail_head) - 1)
+            if end > 0:
+                fail.append(tuple(toks[i : end + 1]))
+                i = end + 1
+                continue
+        if toks[i] == "if" and toks[i + 1 : i + 2] == ["("]:
+            cond = _closing(toks, i + 1)
+            if (
+                cond > 0
+                and toks[cond + 1 : cond + 1 + len(warn_head)] == warn_head
+            ):
+                end = _closing(toks, cond + 1)
+                if end > 0:
+                    warns.append(tuple(toks[i : end + 1]))
+                    i = end + 1
+                    continue
+        if toks[i : i + len(why_decl)] == why_decl:
+            why.append("decl")
+            i += len(why_decl)
+            continue
+        if toks[i : i + len(why_arg)] == why_arg:
+            # The argument is appended LAST (`WHY_C_PARAM`), so the comma
+            # before it is its own: `f(a, &_why)` is `f(a)` without it.
+            if rest and rest[-1] == ",":
+                rest.pop()
+            why.append("arg")
+            i += len(why_arg)
+            continue
+        rest.append(toks[i])
+        i += 1
+    return _InitParts(tuple(rest), tuple(fail), tuple(warns), tuple(why))
+
+
+def _raised(stmts: tuple) -> str:
+    """What *stmts* raise or warn: each exception class and literal.
+
+    >>> _raised(((
+    ...     "if", "(", "!", "self", "->", "handle", ")", "{",
+    ...     "PyErr_SetString", "(", "PyExc_ValueError", ",", '"no"', ")",
+    ...     ";", "return", "-", "1", ";", "}"),))
+    'ValueError "no"'
+    >>> _raised(())
+    'nothing'
+    """
+    seen = [
+        t[len("PyExc_") :] if t.startswith("PyExc_") else t
+        for s in stmts
+        for t in s
+        if t.startswith("PyExc_") or t[0] == '"'
+    ]
+    return " ".join(dict.fromkeys(seen)) or "nothing"
+
+
+def init_diagnostics_drift(
+    existing: str, reference: str
+) -> "tuple[str, bool]":
+    """``(detail, jm_owned)`` for the constructor's diagnostics (gh-2555).
+
+    A module fragment is sacred, and `jm apply` keeps its ``tp_init`` as
+    the author's. But the parts `_init_parts` takes out are the manifest's
+    and nothing else: a ``create_error`` edited in the manifest reached the
+    ``.pyi`` while the binding went on raising the old exception, and
+    nothing reported it. The verb path never had this -- it always
+    re-renders ``_init`` (`_restore_c_function_bodies`) -- so this is the
+    `apply` half of one rule.
+
+    *detail* names what differs and is ``""`` exactly when the fragment's
+    diagnostics are the render's. *jm_owned* is whether the REST of the
+    constructor is the render's, token for token with its literals: then
+    the whole of it is jm's for some older declaration and `apply`
+    re-renders it (`reconcile_init_diagnostics`). Otherwise something else
+    in it -- a hand edit, a kwlist `init_kwargs_drift` reports -- is not
+    jm's to overwrite, and the drift is reported instead.
+
+    Examples
+    --------
+    >>> def init(raise_):
+    ...     return ("static int\\nA_init(AObject *self)\\n{\\n"
+    ...             "    self->handle = a_create();\\n"
+    ...             "    if (!self->handle) {\\n"
+    ...             f"        PyErr_SetString({raise_});\\n"
+    ...             "        return -1;\\n    }\\n    return 0;\\n}\\n")
+    >>> detail, jm_owned = init_diagnostics_drift(
+    ...     init('PyExc_ValueError, "old"'), init('PyExc_ValueError, "new"')
+    ... )
+    >>> print(detail, jm_owned)
+    create() failure raises ValueError "old", the manifest ValueError "new" True
+    >>> init_diagnostics_drift(init("x"), init("x"))
+    ('', False)
+    """
+    ex, ref = _init_body(existing), _init_body(reference)
+    if not ex or not ref:
+        return "", False
+    e, r = _init_parts(ex), _init_parts(ref)
+    detail = []
+    if e.fail != r.fail:
+        detail.append(
+            f"create() failure raises {_raised(e.fail)}, the manifest "
+            f"{_raised(r.fail)}"
+        )
+    if e.warns != r.warns:
+        detail.append(
+            f"construction warns {_raised(e.warns)}, the manifest "
+            f"{_raised(r.warns)}"
+        )
+    if e.why != r.why:
+        detail.append(
+            "create_why is "
+            + ("on" if r.why else "off")
+            + " in the manifest, "
+            + ("on" if e.why else "off")
+            + " here"
+        )
+    if not detail:
+        return "", False
+    return "; ".join(detail), e.rest == r.rest
+
+
+#: What to do about a constructor `reconcile_init_diagnostics` will not
+#: re-render: `apply`'s warning and `status`'s section both say it.
+INIT_DIAGNOSTICS_FIX = (
+    "Make its raise and warnings match the manifest by hand, or re-run "
+    "`jm error` / `jm warning` for the object: a verb re-renders the "
+    "constructor whole, edits included."
+)
+
+
+def reconcile_init_diagnostics(
+    existing: str, reference: str
+) -> "tuple[str, str, bool]":
+    """*existing* with a stale constructor re-rendered (gh-2555).
+
+    Returns ``(text, detail, repaired)``. *detail* is
+    `init_diagnostics_drift`'s; when the constructor is jm's but for its
+    diagnostics, *text* carries the render's ``tp_init`` and *repaired* is
+    True. Otherwise *text* is *existing* unchanged and a non-empty *detail*
+    is drift the caller reports.
+    """
+    detail, jm_owned = init_diagnostics_drift(existing, reference)
+    if not jm_owned:
+        return existing, detail, False
+    ex, ref = _init_body(existing), _init_body(reference)
+    return existing.replace(ex, ref, 1), detail, True
+
+
 def _splice_first_array(
     existing: str,
     reference: str,
@@ -3258,6 +3590,24 @@ def refresh_module_fragment_docs(
             )
             if _freed:
                 print(f"  update  {_rel}: {ctx['ComponentW']}_dealloc")
+            # gh-2555: the constructor's create-failure block, warnings and
+            # `_why` local are the diagnostic keys and nothing else. A kept
+            # `tp_init` that is jm's render but for them is jm's to
+            # re-render; one edited elsewhere is reported, gating, beside
+            # the kwlist drift above.
+            updated, _diag, _rerendered = reconcile_init_diagnostics(
+                updated, reference
+            )
+            if _rerendered:
+                print(f"  update  {_rel}: constructor ({_diag})")
+            elif _diag:
+                _report.warn(
+                    f"{_rel}: the constructor's diagnostics disagree with "
+                    f"the manifest [{_diag}]. jm re-renders them only in a "
+                    "constructor that is otherwise its own render, and "
+                    f"this one is not. {INIT_DIAGNOSTICS_FIX}",
+                    gates=True,
+                )
             _was = O._extract_c_function_bodies(updated)
             _own_names = O.jm_owned_functions(
                 cfg, ctx, reference, kept=_was, into=updated
