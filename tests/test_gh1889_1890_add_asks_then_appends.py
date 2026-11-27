@@ -95,6 +95,14 @@ doc = "Work buffer the author allocates in create_impl."
 opaque = true
 """
 
+#: What allocates `_ROWS`'s opaque `scratch` (gh-1906), in the `[o]` table.
+_CREATE_IMPL = '''create_impl = """
+obj->drive = drive;
+obj->scratch = calloc(4, sizeof(float));
+if (!obj->scratch) { free(obj); return NULL; }
+"""
+'''
+
 
 def test_the_rows_carry_every_state_key():
     """The fixture is complete by construction, not by memory."""
@@ -114,7 +122,12 @@ def rows_project(tmp_path):
     assert run_cli("new", "p", "--object", "o", cwd=tmp_path).returncode == 0
     proj = tmp_path / "p"
     frag = proj / "objects" / "o.toml"
-    frag.write_bytes(frag.read_bytes() + _ROWS.encode("utf-8"))
+    # gh-1906: an opaque row needs the create_impl that allocates it, or
+    # every apply refuses the object.
+    head = frag.read_text(encoding="utf-8")
+    assert head.count("[o]\n") == 1, head
+    head = head.replace("[o]\n", "[o]\n" + _CREATE_IMPL)
+    frag.write_bytes((head + _ROWS).encode("utf-8"))
     applied = run_cli("apply", cwd=proj)
     assert applied.returncode == 0, applied.stdout + applied.stderr
     assert _ROWS in frag.read_text(encoding="utf-8"), (
