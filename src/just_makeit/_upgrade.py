@@ -320,6 +320,65 @@ def _repair_complex_spelling(root: Path) -> "list[Path]":
     return changed
 
 
+def _respell_flags(root: Path) -> "list[str]":
+    """Respell every flag an older jm wrote as ``"True"`` / ``"False"``.
+
+    Before gh-2046 the manifest writer put a TOML bool through ``str()`` in
+    quotes, so a project that ran `split-objects`, `migrate-to-fragments`
+    or any whole-manifest rewrite on such a release says ``streamable =
+    "True"``. `_keys.truthy` reads only ``true``, so the feature was off in
+    silence, and `load` now refuses the spelling (`_keys.flag_errors`). Only
+    that writer produced it, so each becomes the bool it was (gh-2120).
+
+    Schema-independent, like the ``_Complex`` respell: the bug spans
+    releases at the current schema. It runs BEFORE anything loads the
+    manifest, because `load` refuses what it repairs. Each manifest file is
+    rewritten through tomlkit, so comments and layout stay, and only when a
+    key changed. The walk is `_keys.flag_values`, the one the refusal
+    reads, so the two agree on which keys are flags.
+
+    Returns one ``<file>: <path>.<key>`` line per respelled key; empty on
+    a manifest that has none, which is the second run of this.
+    """
+    import tomlkit
+
+    changed: "list[str]" = []
+    for path in C.manifest_files(root):
+        text = path.read_text(encoding="utf-8")
+        doc = tomlkit.loads(text)
+        hits = [
+            (where, table, key)
+            for where, table, key in _keys.flag_values(doc)
+            if isinstance(table[key], str)
+            and str(table[key]) in _keys.PYTHON_SPELLINGS
+        ]
+        if not hits:
+            continue
+        rel = path.relative_to(root).as_posix()
+        for where, table, key in hits:
+            table[key] = _keys.PYTHON_SPELLINGS[str(table[key])]
+            changed.append(f"{rel}: {'.'.join((*where, key))}")
+        _textio.write_text(path, tomlkit.dumps(doc))
+    return changed
+
+
+def _report_flag_respell(root: Path) -> None:
+    """Run :func:`_respell_flags` and say what it changed."""
+    fixed = _respell_flags(root)
+    if not fixed:
+        return
+    print(
+        f"respelled {len(fixed)} manifest flag(s) an older jm wrote as "
+        '"True" / "False" (gh-2120):'
+    )
+    for line in fixed:
+        print(f"  {line}")
+    print(
+        '  A "True" was read as false. Run `just-makeit apply` to generate '
+        "what it turns on.\n"
+    )
+
+
 # Migration table: schema N → N+1.
 # Keep migrations append-only; never modify an existing entry.
 MIGRATIONS: dict[int, list] = {
@@ -932,6 +991,8 @@ def _refuse_prefix_collisions(root: Path, cfg: dict) -> None:
 
 def run(root: Path) -> None:
     """Advance the project at *root* to CURRENT_SCHEMA."""
+    # gh-2120: first, since `load` refuses the spelling it repairs.
+    _report_flag_respell(root)
     cfg = C.load(root)
     if not cfg:
         print("error: no just-makeit.toml found.", file=sys.stderr)
