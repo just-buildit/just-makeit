@@ -112,7 +112,8 @@ def load_manifest(root) -> dict:
        conflicting redefinition is refused), and
        ``[[module.X.functions]]`` rows concatenate across fragments.
     3. Expands every ``[template.X]`` into its instance components and
-       every ``[[<obj>.init_groups]]`` into real ``init_params`` rows.
+       every ``[[<obj>.init_groups]]`` into real ``init_params`` rows,
+       and reads a method's ``extra_args`` as its synonym ``params``.
     4. Resolves an omitted ``[project] version`` from ``pyproject.toml``.
     5. Validates the result, refusing a manifest jm would refuse.
 

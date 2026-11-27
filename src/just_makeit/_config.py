@@ -225,7 +225,11 @@ def load(root: Path) -> dict:
     if _DEFERRED is not None:
         pending = _DEFERRED.get(_deferral_key(root))
         if pending is not None:
-            return _copy.deepcopy(pending)
+            served = _copy.deepcopy(pending)
+            # gh-2208: `save` cached the author's spelling; read it as the
+            # disk path below does. Both spellings were refused on the way in.
+            unify_params_synonym(served)
+            return served
     cfg = load_manifest(root)
     includes = cfg.pop("include", None)
     if includes:
@@ -251,6 +255,12 @@ def load(root: Path) -> dict:
     # gh-1310: templates first, so an instance's own `init_groups` expand
     # exactly as a hand-declared component's do.
     _expand_templates(cfg)
+    # gh-2208: a method's `extra_args` is read as `params` from here on, by
+    # every reader. After the template expansion, so an instance's rows are
+    # renamed too; ahead of every check below, which read `params`.
+    synonym_errors = unify_params_synonym(cfg)
+    if synonym_errors:
+        _refuse(synonym_errors)
     # gh-1310: after expansion, so a template's family keys are checked on
     # the instances they reach, each error naming one.
     family_errors = [
@@ -647,7 +657,7 @@ def _method_why_errors(cfg: dict, comp: str) -> "list[str]":
     )
 
     def names(m: dict) -> "list[str]":
-        rows = m.get("extra_args") or m.get("params") or []
+        rows = m.get("params") or []
         return [str(p.get("name", "")) for p in rows if isinstance(p, dict)]
 
     tables = [(f"[[{comp}.methods]]", methods(cfg, comp))]
@@ -2241,6 +2251,9 @@ def save(root: Path, cfg: dict) -> None:
     # sabotaging the writer guard and watching the suite stay green, which is
     # what a test asserting only `jm apply` could never see.
     cfg = _without_group_expansion(cfg)
+    # gh-2208: and the `extra_args` rename, ahead of the template fold so
+    # an instance compares against its template in the author's spelling.
+    cfg = _with_params_synonym(cfg)
     # gh-1310: and the template expansion, after the group fold so an
     # instance compares against its template with its groups folded too.
     cfg = _without_template_expansion(cfg)
@@ -2465,6 +2478,92 @@ def declared_methods(cfg: dict) -> "list[tuple[str, dict]]":
                     for m in v.get("methods") or []
                     if isinstance(m, dict)
                 ]
+    return out
+
+
+#: A method's synonym for ``params`` (gh-123), and the runtime key that
+#: remembers a row spelled it. `load` reads every ``extra_args`` row as
+#: ``params`` (`unify_params_synonym`) and `save` writes it back as the
+#: author spelled it (`_with_params_synonym`), so no reader in between ever
+#: sees two spellings (gh-2208).
+PARAMS_SYNONYM = "extra_args"
+PARAMS_SPELLED_KEY = "_params_spelled"
+
+
+def _renamed(row: dict, old: str, new: str) -> dict:
+    """*row* with key *old* renamed *new*, in *old*'s place."""
+    return {(new if k == old else k): v for k, v in row.items()}
+
+
+def unify_params_synonym(cfg: dict) -> "list[str]":
+    """Read every method row's ``extra_args`` as ``params``, in place.
+
+    gh-2208. ``extra_args`` is the synonym `jm method --extra-arg` and the
+    docs offer for ``params``. Only ``_apply._replay_method`` translated it,
+    so every other reader -- the glue re-render `apply` runs once the sacred
+    header carries an authored block, the ``.pyi`` writers, ``jm script``,
+    the load-time checks -- read ``params`` alone and dropped the argument:
+    the binding called the kernel with too few arguments and ``status``
+    agreed with it. One rename here, in the place every reader passes
+    through, is the whole translation; `save` folds it back
+    (`_with_params_synonym`), so the manifest keeps the author's spelling.
+
+    Walks `declared_methods` -- every object's and view's method rows, the
+    tables `_keys.METHOD_KEYS` describes. Idempotent: a row already read
+    carries no ``extra_args``.
+
+    Returns
+    -------
+    list of str
+        One refusal per row declaring both spellings: they name one list,
+        and which of two a reader took was a coin each reader tossed
+        differently.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"methods": [{"name": "m",
+    ...        "extra_args": [{"name": "k", "type": "int"}]}]}}
+    >>> unify_params_synonym(cfg)
+    []
+    >>> row = cfg["o"]["methods"][0]
+    >>> row["params"], row[PARAMS_SPELLED_KEY], "extra_args" in row
+    ([{'name': 'k', 'type': 'int'}], 'extra_args', False)
+    >>> unify_params_synonym({"o": {"methods": [{"name": "m",
+    ...     "params": [], "extra_args": []}]}})[0][:40]
+    "o.methods 'm' declares both params and e"
+    """
+    errors: "list[str]" = []
+    for table, m in declared_methods(cfg):
+        if PARAMS_SYNONYM not in m:
+            continue
+        if "params" in m:
+            errors.append(
+                f"{table} {m.get('name', '?')!r} declares both params and "
+                f"{PARAMS_SYNONYM}: they are one list under two names; "
+                f"declare it once."
+            )
+            continue
+        unified = _renamed(m, PARAMS_SYNONYM, "params")
+        m.clear()
+        m.update(unified, **{PARAMS_SPELLED_KEY: PARAMS_SYNONYM})
+    return errors
+
+
+def _with_params_synonym(cfg: dict) -> dict:
+    """*cfg* with each row `unify_params_synonym` renamed spelled back.
+
+    The `save` half of the gh-2208 pair, like `_without_group_expansion`:
+    the caller's dict is never mutated, because commands keep rendering
+    from it after they save. A manifest with no such row is returned as is.
+    """
+    if not any(PARAMS_SPELLED_KEY in m for _, m in declared_methods(cfg)):
+        return cfg
+    out = _copy.deepcopy(cfg)
+    for _, m in declared_methods(out):
+        if m.pop(PARAMS_SPELLED_KEY, None) == PARAMS_SYNONYM:
+            folded = _renamed(m, "params", PARAMS_SYNONYM)
+            m.clear()
+            m.update(folded)
     return out
 
 
@@ -6719,33 +6818,37 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
     ...     {"params": [{"name": "m", "type": "string_enum:a,b"}]},
     ...     "w")[0].startswith("w: param 'm': `type = ")
     True
-    >>> _param_type_errors({"extra_args": [{"name": "k", "type": "wat_t"}]},
+    >>> _param_type_errors({"params": [{"name": "k", "type": "wat_t"}],
+    ...                     PARAMS_SPELLED_KEY: "extra_args"},
     ...                    "'v' method 'run'")[0].splitlines()[0]
     "'v' method 'run': extra_arg 'k' has unknown type 'wat_t'."
     """
     errors: list[str] = []
-    # gh-1977: `extra_args` is a method's synonym for `params`, and the
-    # replay forwards whichever is set (`_apply._replay_method`). Reading
-    # only `params` let an `extra_args` type reach `_CTYPE_META` unchecked.
-    for key, noun in (("params", "param"), ("extra_args", "extra_arg")):
-        for pm in entry.get(key, []) or []:
-            # gh-2737: the init_param's enum spellings, which
-            # `_declared_type_error` accepts for the init_param's sake. Beside
-            # an `enum` key too: `type` is still the C type the prototype
-            # declares, and `string_enum:a,b mode` is not one.
-            spelled = _T.param_enum_spelling_error(
-                str(pm.get("name", "?")), str(pm.get("type", ""))
-            )
-            if spelled:
-                errors.append(f"{what}: {spelled}")
-                continue
-            err = _declared_type_error(
-                pm, f"{what}: {noun} {pm.get('name', '?')!r}"
-            ) or _param_default_error(
-                pm, f"{what}: {noun} {pm.get('name', '?')!r}"
-            )
-            if err:
-                errors.append(err)
+    # gh-1977: an `extra_args` row is named as the author spelled it; `load`
+    # read it as `params` and left the spelling on the row (gh-2208).
+    noun = (
+        "extra_arg"
+        if entry.get(PARAMS_SPELLED_KEY) == PARAMS_SYNONYM
+        else "param"
+    )
+    for pm in entry.get("params", []) or []:
+        # gh-2737: the init_param's enum spellings, which
+        # `_declared_type_error` accepts for the init_param's sake. Beside
+        # an `enum` key too: `type` is still the C type the prototype
+        # declares, and `string_enum:a,b mode` is not one.
+        spelled = _T.param_enum_spelling_error(
+            str(pm.get("name", "?")), str(pm.get("type", ""))
+        )
+        if spelled:
+            errors.append(f"{what}: {spelled}")
+            continue
+        err = _declared_type_error(
+            pm, f"{what}: {noun} {pm.get('name', '?')!r}"
+        ) or _param_default_error(
+            pm, f"{what}: {noun} {pm.get('name', '?')!r}"
+        )
+        if err:
+            errors.append(err)
     return errors
 
 
@@ -7273,7 +7376,7 @@ def _no_count_errors(entry: dict, what: str) -> list[str]:
             f'{what}: no_count needs arg_type = "void": an input\'s length '
             f"is the count, and the kernel is handed it."
         )
-    if entry.get("params") or entry.get("extra_args"):
+    if entry.get("params"):
         errors.append(
             f"{what}: no_count needs a method with no params: with params "
             f"jm synthesizes no count, so there is nothing to drop."
@@ -7855,7 +7958,7 @@ def view_member_doc_keys(cfg: dict, component: str) -> "dict[str, str]":
             variable_output=bool(m.get("variable_output")),
             multi_output=bool(m.get("multi_output")),
             has_arg=m.get("arg_type", "void") != "void",
-            params=list(m.get("params", []) or m.get("extra_args", [])),
+            params=list(m.get("params", [])),
         ):
             keys[f"{m['name']}_max_out"] = method_max_out_symbol(stem, m)
     return keys
@@ -8136,7 +8239,7 @@ def max_out_arity(m: dict) -> "str | None":
 
     decl, _name = _max_out_count_param(
         str(m.get("arg_type", "void") or "void"),
-        list(m.get("params") or m.get("extra_args") or []),
+        list(m.get("params") or []),
         bool(m.get("no_count")),
     )
     return f"(state{decl})"
