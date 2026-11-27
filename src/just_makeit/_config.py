@@ -3014,6 +3014,11 @@ def namespace_errors(cfg: dict) -> "list[str]":
     >>> e = namespace_errors({"module": {"dsp.f": {}, "dsp_f": {}}})
     >>> e[0].split(":")[0]
     "modules 'dsp.f' and 'dsp_f' share the C symbol stem 'dsp_f'"
+    >>> e = namespace_errors({"project": {"name": "p"},
+    ...                       "module": {"dsp.f": {"objects": []}},
+    ...                       "dsp": {}})
+    >>> e[0].split(" --")[0]
+    "the standalone component 'dsp' and module 'dsp.f' both claim the Python name 'p.dsp': the module makes it a package, which hides the component's extension"
     >>> e = namespace_errors({"project": {"c_prefix": "p"},
     ...                       "filt": {}, "p_filt": {}})
     >>> e[0].split(":")[0]
@@ -3061,6 +3066,24 @@ def namespace_errors(cfg: dict) -> "list[str]":
             )
         else:
             component_at[s] = comp
+    # gh-2854: the Python side of the same namespace. A standalone
+    # component imports as `<pkg>.<comp>` (`<pkg>/<comp>.so`); a dotted
+    # module, or one with a `package`, makes `<pkg>/<top>/` a package --
+    # and the package wins the import, so the component's class is
+    # unreachable (`ImportError: cannot import name 'Dsp' from 'p.dsp'`)
+    # on a tree `status --check` called clean. A flat module named for the
+    # component is the stem clash above, so it is not reported twice.
+    pkg = cfg.get("project", {}).get("name", "")
+    standalone = {c for c in components(cfg) if not module_of(cfg, c)}
+    for m in modules(cfg):
+        top = module_package_resolved(cfg, m).split("/")[0]
+        if top != m and top in standalone:
+            errors.append(
+                f"the standalone component '{top}' and module '{m}' both"
+                f" claim the Python name '{pkg}.{top}': the module makes"
+                f" it a package, which hides the component's extension"
+                " -- rename one of them"
+            )
     return errors
 
 
