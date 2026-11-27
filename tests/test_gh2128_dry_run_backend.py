@@ -28,7 +28,13 @@ def test_a_make_scaffold_dry_run_names_make_not_cmake(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     # `make` resolves to an absolute path, as cmake's does, so match its tail.
     assert re.search(r"build:\s+\S*make PYTHON=", r.stdout), r.stdout
-    assert "cmake" not in r.stdout, r.stdout
+    # Only the backend's command lines are read: the header echoes the
+    # project path, which may hold "cmake" in any part (a TMPDIR named for
+    # it, gh-2843). A make build has no configure step, and its build line
+    # names no cmake executable.
+    steps = re.findall(r"^\s*(configure|build):\s*(.*)$", r.stdout, re.M)
+    assert [label for label, _ in steps] == ["build"], r.stdout
+    assert not re.search(r"(^|[\s/])cmake(\s|$)", steps[0][1]), r.stdout
 
 
 def test_a_cmake_scaffold_dry_run_uses_the_project_venv(
