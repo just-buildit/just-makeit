@@ -65,6 +65,11 @@ HALF = "num and den are one rate: give both, or neither"
 GAIN = "gain is a level: >= 0, and a range runs low to high"
 BITS = "bits holds at most 4"
 TAG = "tag 13 is reserved"
+MODE = "hi mode needs a rate"
+IQ = "an iq run may not start at 13"
+#: doppler's trigger is two enum fields; this one has no set_fn, so its
+#: plain setter and the constructor are what hold the struct whole.
+ENUMS = [{"name": "mode", "values": ["auto", "lo", "hi"]}]
 
 
 def _source(type_name: str) -> dict:
@@ -82,6 +87,8 @@ def _source(type_name: str) -> dict:
             },
             {"name": "gain", "type": "double", "default": "0.0"},
             {"name": "bits", "type": "uint8_t*", "bytes": True},
+            {"name": "mode", "type": "int", "enum": "mode", "default": "auto"},
+            {"name": "iq", "type": "float _Complex*", "complex": True},
             # gh-2864: an owned pointer whose live count is the leak oracle.
             {
                 "name": "tag",
@@ -146,7 +153,11 @@ def _delegated() -> dict:
 
 
 def _cfg(m: "dict | None" = None, mod: str = "win") -> dict:
-    return {"project": {"name": PKG}, "module": {mod: m or _module()}}
+    return {
+        "project": {"name": PKG},
+        "module": {mod: m or _module()},
+        "enum": ENUMS,
+    }
 
 
 def _body(text: str, head: str) -> str:
@@ -173,7 +184,9 @@ class TestTheKey:
         # The only seam: the bridge exists for it alone.
         m = _module()
         del m["source"]["fields"][1]["set_fn"]
-        del m["source"]["fields"][4]
+        m["source"]["fields"] = [
+            f for f in m["source"]["fields"] if f["name"] != "tag"
+        ]
         del m["source"]["computed"]
         assert _composer.seam_fns(_cfg(m), "win") == ["win_check"]
         ext = _composer.render_ext(_cfg(m), "win")
@@ -281,8 +294,9 @@ class TestInitIsTransactional:
     def test_a_refusal_frees_the_copy(self) -> None:
         init = self._init()
         # each attach's refusal, and the check's.
-        assert init.count("free(_n.bits);") == 3, init
-        assert init.count("tag_free((wtag_t *)_n.tag);") == 3, init
+        assert init.count("free(_n.bits);") == 4, init
+        assert init.count("free(_n.iq);") == 4, init
+        assert init.count("tag_free((wtag_t *)_n.tag);") == 4, init
         assert "if (!_attach_tag(&_n, tag)) {\n        free(_n.bits);" in init
 
     def test_the_same_without_a_check_fn(self) -> None:
@@ -444,6 +458,9 @@ typedef struct
   unsigned ranged;
   uint8_t *bits;
   size_t   n_bits;
+  int      mode;
+  float _Complex *iq;
+  size_t   n_iq;
   wtag_t  *tag;
 } wsrc_t;
 
@@ -514,6 +531,11 @@ win_create (const wseg_t *s, size_t n, int r, int c)
               memcpy (d->bits, s[i].sources[k].bits, d->n_bits);
             }}
           d->tag = d->tag ? tag_copy (d->tag) : NULL;
+          if (d->n_iq)
+            {{
+              d->iq = malloc (d->n_iq * sizeof *d->iq);
+              memcpy (d->iq, s[i].sources[k].iq, d->n_iq * sizeof *d->iq);
+            }}
         }}
     }}
   st->n = n;
@@ -547,6 +569,7 @@ win_destroy (win_state_t *st)
         {{
           free (st->segs[i].sources[k].bits);
           tag_free (st->segs[i].sources[k].tag);
+          free (st->segs[i].sources[k].iq);
         }}
       free (st->segs[i].sources);
     }}
@@ -645,6 +668,10 @@ win_check (const wsrc_t *s)
     return "{BITS}";
   if (s->tag && s->tag->v == 13)
     return "{TAG}";
+  if (s->mode == 2 && s->num == 0)
+    return "{MODE}";
+  if (s->n_iq && crealf (s->iq[0]) == 13.0f)
+    return "{IQ}";
   return NULL;
 }}
 
@@ -723,7 +750,8 @@ set_source_files_properties(cJSON.c PROPERTIES COMPILE_OPTIONS "-w")
 
 #: Each block is one face of the issue; a failure names it.
 _DRIVER = f"""\
-import json, pickle, sys
+import json, pickle, resource, sys
+import numpy as np
 sys.path.insert(0, "src")
 from {PKG}.win.win import Src, Seg, Win
 from {PKG}.wdl.wdl import DSrc, Dl
@@ -732,6 +760,8 @@ HALF = {HALF!r}
 GAIN = {GAIN!r}
 BITS = {BITS!r}
 TAG = {TAG!r}
+MODE = {MODE!r}
+IQ = {IQ!r}
 
 
 def refused(fn, why):
@@ -848,6 +878,74 @@ try:
 except ValueError as e:
     assert str(e) == TAG, e
 assert (r.tag, r.live) == ("5", base), (r.tag, r.live)
+
+# 8. gh-2864: a Segment's re-__init__ builds its source before it commits
+# a scalar of its own.
+sg = Seg(num=1, den=2, count=5, fs=3.0, tag="6")
+sbefore, sbase = (sg.fs, sg.count, sg.num, sg.den), sg.sources[0].live
+for kw, err, why in [
+    (dict(num=1, count=7, fs=9.0), ValueError, HALF),
+    (dict(num=1, den=2, count=7, fs=9.0, tag="13"), ValueError, TAG),
+    (dict(num=1, den=2, count="x", fs=9.0), TypeError, None),
+]:
+    try:
+        sg.__init__(**kw)
+    except err as e:
+        assert why is None or str(e) == why, (kw, str(e))
+    else:
+        raise AssertionError("segment re-init not refused: %r" % (kw,))
+    assert (sg.fs, sg.count, sg.num, sg.den) == sbefore, (kw, sbefore)
+    assert sg.sources[0].live == sbase, ("leaked", kw)
+sg.__init__(num=1, den=2, count=7, fs=9.0)
+assert (sg.fs, sg.count, sg.sources[0].fs) == (9.0, 7, 9.0)
+
+# 9. An enum field with no set_fn, and a complex field: the constructor and
+# the plain setter, the state unchanged after a refusal.
+refused(lambda: Src(mode="hi"), MODE)
+assert Src(num=1, den=2, mode="hi").mode == "hi"
+e = Src(mode="lo")
+refused(lambda: setattr(e, "mode", "hi"), MODE)
+assert e.mode == "lo", e.mode
+one = np.array([1 + 2j], dtype=np.complex64)
+bad = np.array([13, 1], dtype=np.complex64)
+refused(lambda: Src(iq=bad), IQ)
+c = Src(iq=one)
+refused(lambda: setattr(c, "iq", bad), IQ)
+assert np.array_equal(c.iq, one), c.iq
+c.__init__(num=1, den=2, iq=one)
+try:
+    c.__init__(iq=bad)
+except ValueError as err:
+    assert str(err) == IQ, err
+assert np.array_equal(c.iq, one) and (c.num, c.den) == (1, 2)
+
+
+# 10. No refusal leaks what it converted: each refused write of a 4 MiB
+# buffer, repeated, leaves the peak RSS where it was.
+def peak():
+    r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return r if sys.platform == "darwin" else r * 1024
+
+
+BIG_BITS = b"\x01" * (4 << 20)
+BIG_IQ = np.full(1 << 19, 13, dtype=np.complex64)
+host = Src(num=1, den=2, bits=b"\x01", iq=one)
+faces = [
+    ("bits ctor", lambda: Src(bits=BIG_BITS), BITS),
+    ("bits setter", lambda: setattr(host, "bits", BIG_BITS), BITS),
+    ("bits re-init", lambda: host.__init__(num=1, den=2, bits=BIG_BITS), BITS),
+    ("iq ctor", lambda: Src(iq=BIG_IQ), IQ),
+    ("iq setter", lambda: setattr(host, "iq", BIG_IQ), IQ),
+    ("iq re-init", lambda: host.__init__(num=1, den=2, iq=BIG_IQ), IQ),
+]
+for label, fn, why in faces:
+    for _ in range(2):
+        refused(fn, why)
+    before_rss = peak()
+    for _ in range(32):
+        refused(fn, why)
+    grown = peak() - before_rss
+    assert grown < 32 << 20, (label, "leaked", grown)
 print("CHECK_FN OK")
 """
 
@@ -857,11 +955,10 @@ def _run(cmd: list, cwd: Path) -> None:
     assert r.returncode == 0, (cmd, r.stdout[-4000:], r.stderr[-4000:])
 
 
-@pytest.fixture(scope="module")
-def project(tmp_path_factory) -> Path:
-    if base._NO_TOOLCHAIN:
-        pytest.skip("no cmake / C compiler")
-    tmp = tmp_path_factory.mktemp("gh2856")
+def _build(tmp: Path, generic: str, delegated: str, cli: dict) -> Path:
+    """The test project with the generic composer at module id *generic*
+    (its CLI table *cli*) and the delegated one at *delegated*, built
+    warning-clean so an undeclared call (implicit declaration) is red."""
     assert run_cli("new", PKG, cwd=tmp).returncode == 0
     proj = tmp / PKG
     inc = proj / "native" / "inc" / PKG / "win"
@@ -870,19 +967,27 @@ def project(tmp_path_factory) -> Path:
     backing = proj / "native" / "src" / "backing"
     backing.mkdir(parents=True, exist_ok=True)
     (backing / "win_core.c").write_text(_SOURCE, encoding="utf-8")
-    (backing / "win_check.c").write_text(_CHECK, encoding="utf-8")
+    # The seams include the generic module's bridge, wherever its id puts
+    # it (gh-2427: beside the module's own core).
+    bridge = _composer.bridge_h(generic, {"project": {"name": PKG}})
+    (backing / "win_check.c").write_text(
+        _CHECK.replace(f"{PKG}/win/win_bridge.h", f"{PKG}/{bridge}", 1),
+        encoding="utf-8",
+    )
     (backing / "cJSON.h").write_text(CJSON_H, encoding="utf-8")
     (backing / "cJSON.c").write_text(CJSON_C, encoding="utf-8")
     (backing / "CMakeLists.txt").write_text(_BACKING_CMAKE, encoding="utf-8")
     cfg = C.load(proj)
     cfg["project"]["c_deps"] = ["backing"]
     cfg["project"]["status_allow"] = ["CMakeLists.txt:backing_core"]
-    cfg.setdefault("module", {})["win"] = _module()
-    cfg["module"]["wdl"] = _delegated()
+    m = _module()
+    m["cli"] = cli
+    cfg.setdefault("module", {})[generic] = m
+    cfg["module"][delegated] = _delegated()
+    cfg["enum"] = ENUMS
     C.save(proj, cfg)
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
-    # Warning-clean, so an undeclared call (implicit declaration) is red.
     _run(
         [
             "cmake",
@@ -897,6 +1002,123 @@ def project(tmp_path_factory) -> Path:
     )
     _run(["cmake", "--build", "build", "--parallel", "4"], proj)
     return proj
+
+
+def _exe(project: Path, name: str) -> Path:
+    return next(
+        p
+        for p in (project / "build").rglob(name)
+        if p.is_file() and p.stat().st_mode & 0o111
+    )
+
+
+@pytest.fixture(scope="module")
+def project(tmp_path_factory) -> Path:
+    if base._NO_TOOLCHAIN:
+        pytest.skip("no cmake / C compiler")
+    # gh-2863: no `name`, so the default program name is built beside the
+    # extension of the same module.
+    return _build(
+        tmp_path_factory.mktemp("gh2856"), "win", "wdl", {"enabled": True}
+    )
+
+
+#: gh-2863: two dotted composers sharing the leaf `win`, the generic one's
+#: CLI named `win` -- the leaf, which is the `.so` basename and no longer a
+#: target. Under leaf targets this was three targets named `win`.
+_DOTTED_DRIVER = f"""\
+import sys
+sys.path.insert(0, "src")
+from {PKG}.dsp.win.win import Src
+from {PKG}.aux.win.win import Dl
+try:
+    Src(num=1)
+except ValueError as e:
+    assert str(e) == {HALF!r}, e
+else:
+    raise AssertionError("not refused")
+try:
+    Dl.from_json('{{"half": 1}}')
+except ValueError as e:
+    assert str(e) == {HALF!r}, e
+else:
+    raise AssertionError("not refused")
+print("DOTTED OK")
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(base._NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_dotted_composers_sharing_a_leaf_build(tmp_path: Path) -> None:
+    """gh-2863 for a dotted id: each composer's extension target is its
+    cname (`dsp_win`, `aux_win`) with OUTPUT_NAME `win`, so two of them and
+    a CLI named for the leaf configure, build and import side by side."""
+    proj = _build(
+        tmp_path, "dsp.win", "aux.win", {"enabled": True, "name": "win"}
+    )
+    cm = (proj / "native" / "src" / "dsp_win" / "CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "Python3_add_library(dsp_win MODULE" in cm
+    assert "    OUTPUT_NAME win\n" in cm
+    assert "add_executable(win dsp_win_cli.c)" in cm
+    driver = proj / "drive_dotted.py"
+    driver.write_text(_DOTTED_DRIVER, encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(driver)], cwd=proj, capture_output=True, text=True
+    )
+    assert r.returncode == 0 and "DOTTED OK" in r.stdout, r.stdout + r.stderr
+    r = subprocess.run(
+        [str(_exe(proj, "win")), "--num", "1"],
+        cwd=proj,
+        capture_output=True,
+        text=True,
+    )
+    assert (r.returncode, r.stderr.strip()) == (2, HALF), r.stderr
+
+
+def test_a_dotted_cli_name_is_checked_against_the_real_target() -> None:
+    """gh-2863: the count names the target each kind emits -- the cname --
+    so `dsp_win` is refused and the leaf `win` is not."""
+    from just_makeit import _targets
+
+    cfg = {
+        "project": {"name": PKG},
+        "module": {"dsp.win": _module()},
+        "enum": ENUMS,
+    }
+    cfg["module"]["dsp.win"]["cli"] = {"enabled": True, "name": "dsp_win"}
+    with pytest.raises(Refusal, match="CMP0002"):
+        _composer.cli_program(cfg, "dsp.win")
+    cfg["module"]["dsp.win"]["cli"]["name"] = "win"
+    assert _composer.cli_program(cfg, "dsp.win") == "win"
+    assert "dsp_win" in _targets.from_manifest(cfg)
+    assert "Python3_add_library(dsp_win MODULE" in _composer.render_cmake(
+        cfg, "dsp.win"
+    )
+
+
+@pytest.mark.parametrize("kind", ["capsule", "handle", "composer"])
+def test_every_kind_names_its_extension_target_by_cname(kind: str) -> None:
+    """gh-2863: the three kinds share `_capsule.extension_cmake`, so each
+    emits the cname `_targets.emitted` counts, and keeps the leaf `.so`."""
+    from just_makeit import _capsule, _handle
+
+    m = {"kind": kind, "backing": "x", "type_name": "H"}
+    if kind == "composer":
+        m = _module()
+    cfg = {"project": {"name": PKG}, "module": {"dsp.x": m}, "enum": ENUMS}
+    render = {
+        "capsule": _capsule.render_cmake,
+        "handle": _handle.render_cmake,
+        "composer": _composer.render_cmake,
+    }[kind]
+    text = render(cfg, "dsp.x")
+    assert "Python3_add_library(dsp_x MODULE WITH_SOABI dsp_x_ext.c)" in text
+    assert (
+        "set_target_properties(dsp_x PROPERTIES\n    OUTPUT_NAME x\n" in text
+    )
+    assert "Python3_add_library(x " not in text
 
 
 @pytest.mark.slow
@@ -926,15 +1148,20 @@ class TestEndToEnd:
             (["--num", "1", "--den", "2", "--bits", "11111"], BITS),
             (["--from-file", "whole.spec"], ""),
             (["--from-file", "half.spec"], HALF),
+            (["--mode", "hi"], MODE),
         ],
-        ids=["whole", "half", "set_fn-field", "bits", "file", "half-file"],
+        ids=[
+            "whole",
+            "half",
+            "set_fn-field",
+            "bits",
+            "file",
+            "half-file",
+            "enum",
+        ],
     )
     def test_the_cli(self, project: Path, args: list, why: str) -> None:
-        exe = next(
-            p
-            for p in (project / "build").rglob("win_cli")
-            if p.is_file() and p.stat().st_mode & 0o111
-        )
+        exe = _exe(project, "win_cli")
         r = subprocess.run(
             [str(exe), "--out", str(project / "out.bin"), *args],
             cwd=project,
