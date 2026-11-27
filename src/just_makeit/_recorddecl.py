@@ -302,18 +302,9 @@ def run(
         )
         sys.exit(1)
 
-    seen: set[str] = set()
-    for f in fields:
-        if f["name"] in seen:
-            print(
-                f"error: field '{f['name']}' is declared twice.\n"
-                "numpy takes the field names as a set; a repeat would "
-                "silently drop one column.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        seen.add(f["name"])
-
+    # A field named twice is refused by `C.save` below, through the one
+    # duplicate check every manifest write asks (gh-2805), before anything
+    # is written.
     entry: dict = (
         {"name": record_name, "type": elem_type}
         if elem_type
