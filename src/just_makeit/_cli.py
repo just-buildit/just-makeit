@@ -851,12 +851,18 @@ def main() -> None:
     A command that changes the project (`COMMANDS`, MUTATING) and does not
     return leaves the tree as it found it, whatever it had written by then:
     a refusal, an exit, a crash (gh-1867, gh-2040). `_undo` holds the
-    record, and returning is what commits it.
+    record, and returning is what commits it. A command that creates its
+    project (CREATES) that does not return leaves no project behind: it
+    names its root to `_undo.creating`, which removes it (gh-2111).
     """
     from ._report import Refusal
     from . import _undo
 
-    with _undo.guard(_project_changed_by(sys.argv[1:])):
+    args = sys.argv[1:]
+    with _undo.guard(
+        _project_changed_by(args),
+        creates=bool(args) and COMMANDS.get(args[0]) == CREATES,
+    ):
         try:
             _refuse_while_files_wait(sys.argv[1:])
             _main()
@@ -2293,7 +2299,8 @@ def _main() -> None:
 
 #: Writes a NEW project, in a subdirectory of the working directory. Not
 #: swept by the format pass, whose root is the working directory: `_new.run`
-#: formats its own tree.
+#: formats its own tree. One that fails leaves no project behind: `main`
+#: guards it, and the command names its root to `_undo.creating` (gh-2111).
 CREATES = "creates"
 
 #: Changes the project in the working directory. After one, the tree is the
