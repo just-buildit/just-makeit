@@ -1907,6 +1907,17 @@ constructor say why, below.
 Each object has a single failure translation, so re-running replaces it rather
 than accumulating. Remove it with `just-makeit remove error <obj> --object <obj>` — `error` takes no name because there is only ever one per object.
 
+You may also edit `create_error`, `create_error_message`, `create_why` or a
+`[[<object>.warnings]]` entry in the manifest and run `just-makeit apply`
+(gh-2555). A module object's binding fragment is
+[sacred](../configuration.md#who-owns-a-modules-binding-fragment), but its
+constructor's failure block, warnings and `_why` local are the manifest's.
+`apply` re-renders a constructor that is jm's own render apart from them,
+with the class docstring's `Raises` and `Warns`, and names each one. It
+leaves a constructor you edited anywhere else alone and warns, and
+`just-makeit status --check` fails on it (`DIAGNOSTICS`) until its raise
+and warnings match the manifest.
+
 ### Views inherit their parent's translation
 
 A view is a second Python class over the same C core, so declaring the error on
