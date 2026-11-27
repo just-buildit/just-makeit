@@ -494,3 +494,68 @@ def test_a_rebuild_refuses_to_drop_a_conditional_block(tmp_path):
     # --discard says it discards what the author wrote, and does.
     _ok("regenerate", "g", "--discard", "--force", cwd=proj)
     assert "__SSE2__" not in core_c.read_text(encoding="utf-8")
+
+
+def _kept_create(tmp_path: Path, old: str, new: str) -> Path:
+    """A collocated object removed with its core kept, the kept
+    definition of create() edited from *old* to *new* by the author."""
+    proj = _module(tmp_path)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _, core_c = _core(proj)
+    text = core_c.read_text(encoding="utf-8")
+    assert text.count(old) == 1, text
+    core_c.write_text(text.replace(old, new), encoding="utf-8")
+    _ok("remove", "object", "filt", "--force", cwd=proj)
+    return proj
+
+
+def test_a_renamed_parameter_is_not_a_new_signature(tmp_path):
+    # The author renamed create()'s parameter, body and all: the compiler
+    # sees the same signature, so the re-add keeps it.
+    proj = _kept_create(
+        tmp_path,
+        "p_filt_create(double gain)\n{",
+        "p_filt_create(double g)\n{",
+    )
+    _, core_c = _core(proj)
+    core_c.write_text(
+        core_c.read_text(encoding="utf-8").replace(
+            "obj->gain = gain;", "obj->gain = g;"
+        ),
+        encoding="utf-8",
+    )
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    assert "p_filt_create(double g)" in core_c.read_text(encoding="utf-8")
+    _status_ok(proj)
+    if not _SKIP:
+        _build_and_test(proj)
+
+
+def test_a_changed_parameter_type_is_refused(tmp_path):
+    proj = _kept_create(
+        tmp_path,
+        "p_filt_create(double gain)\n{",
+        "p_filt_create(float gain)\n{",
+    )
+    r = run_cli("object", "filt", "--module", "filt", cwd=proj)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "already defines p_filt_create" in r.stderr, r.stderr
+
+
+def test_discard_does_not_drop_the_modules_conditional_block(tmp_path):
+    # The collocated object's core is its module's too: a block in it is
+    # module code, which --discard (the object's bodies only) cannot drop.
+    # A standalone object's core is its own, and --discard drops it there.
+    proj = _module(tmp_path)
+    _ok("object", "filt", "--module", "filt", cwd=proj)
+    _, core_c = _core(proj)
+    with core_c.open("a", encoding="utf-8") as f:
+        f.write(_SSE.replace("p_g_sse", "p_filt_sse"))
+    before = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    r = run_cli("regenerate", "filt", "--discard", "--force", cwd=proj)
+    assert r.returncode == 1, r.stdout + r.stderr
+    said = " ".join(r.stderr.split())
+    assert "the block is module code, which --discard does not drop" in said
+    assert "--discard discards only the object's own bodies" in said
+    after = {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()}
+    assert after == before
