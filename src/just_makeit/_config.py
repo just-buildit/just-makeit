@@ -54,6 +54,7 @@ from typing import Callable, Iterator, NamedTuple
 
 from . import _types as _T
 from . import _incpath as INC
+from ._keys import is_set
 
 FILENAME = "just-makeit.toml"
 
@@ -835,7 +836,7 @@ def scalar_out_errors(cfg: dict) -> "list[str]":
         for p in m.get("params") or []:
             if isinstance(p, dict) and param_scalar_out(p):
                 # The key the row spells: `mutable` asks the same question.
-                key = "out" if p.get("out") else "mutable"
+                key = "out" if _truthy(p.get("out")) else "mutable"
                 errors.append(
                     f"[[{table}]] {m.get('name', '?')!r} param "
                     f"{p.get('name', '?')!r}: {key} = true on a scalar is "
@@ -3899,7 +3900,7 @@ def impl_key_errors(cfg: dict) -> "list[str]":
         opaque = [
             s.get("name", "?")
             for s in sec.get("state") or []
-            if isinstance(s, dict) and s.get("opaque")
+            if isinstance(s, dict) and _truthy(s.get("opaque"))
         ]
         if opaque and not (
             sec.get("create_impl") or sec.get("create_impl_file")
@@ -6323,7 +6324,7 @@ def _dep_name(d) -> str:
 
 def _dep_links(d) -> bool:
     """Whether a depends_on entry also owns the consuming target's link line."""
-    return bool(d.get("link")) if isinstance(d, dict) else False
+    return _truthy(d.get("link")) if isinstance(d, dict) else False
 
 
 def _dep_test_only(d) -> bool:
@@ -6340,7 +6341,7 @@ def _dep_test_only(d) -> bool:
     ``{name = "wfm_writer", test_only = true}`` keeps the dependency on the test
     and bench link lines and off everything the artifact is built from.
     """
-    return bool(d.get("test_only")) if isinstance(d, dict) else False
+    return _truthy(d.get("test_only")) if isinstance(d, dict) else False
 
 
 def depends_on(cfg: dict, component: str) -> list[str]:
@@ -7113,7 +7114,7 @@ def _arg_type_error(
     >>> _arg_type_error({"arg_type": "nope"}, "x").splitlines()[0]
     "x has unknown arg_type 'nope'."
     """
-    if any(entry.get(k) for k in ("varargs", "manual_stub", "codec")):
+    if any(is_set(entry, k) for k in ("varargs", "manual_stub", "codec")):
         return ""
     ctype = entry.get("arg_type", "void")
     if ctype == "void" or _usable_ctype(ctype):
@@ -7178,7 +7179,7 @@ def _out_type_error(entry: dict, what: str, *, function: bool = False) -> str:
     hint = ""
     if function:
         if elem == "str":
-            if entry.get("variable_output"):
+            if _truthy(entry.get("variable_output")):
                 return ""
             hint = (
                 "\n  'str' is a variable-output function's text result; it"
@@ -7192,10 +7193,10 @@ def _out_type_error(entry: dict, what: str, *, function: bool = False) -> str:
         # about the row the render will see.
         if _outbuf.element_why_not(
             what,
-            variable_output=bool(entry.get("variable_output")),
-            batch=bool(entry.get("batch")),
+            variable_output=_truthy(entry.get("variable_output")),
+            batch=_truthy(entry.get("batch")),
             record_dtype=entry.get("record_dtype", ""),
-            borrow=bool(entry.get("borrow")),
+            borrow=_truthy(entry.get("borrow")),
             out_type=elem,
             return_type=entry.get("return_type", "float _Complex"),
         ):
@@ -7288,7 +7289,7 @@ def _nogil_errors(entry: dict, what: str) -> list[str]:
       method's CPython function is yours. Release it there
       (Py_BEGIN_ALLOW_THREADS ... Py_END_ALLOW_THREADS) and drop nogil.
     """
-    if not entry.get("nogil"):
+    if not _truthy(entry.get("nogil")):
         return []
     return [
         f"{what}: nogil releases the GIL around a kernel call jm writes, "
@@ -7296,7 +7297,7 @@ def _nogil_errors(entry: dict, what: str) -> list[str]:
         "there\n  (Py_BEGIN_ALLOW_THREADS ... Py_END_ALLOW_THREADS) and drop "
         "nogil."
         for shape in NOGIL_UNWRITTEN_SHAPES
-        if entry.get(shape)
+        if is_set(entry, shape)
     ][:1]
 
 
@@ -7350,7 +7351,7 @@ def _out_cols_errors(entry: dict, what: str) -> list[str]:
             f"C expression, got {cols!r}."
         ]
     errors: list[str] = []
-    if not entry.get("variable_output"):
+    if not _truthy(entry.get("variable_output")):
         errors.append(
             f"{what}: out_cols needs variable_output = true: a fixed-size "
             f"result has no row count to derive from the kernel."
@@ -7430,12 +7431,12 @@ def _short_out_errors(entry: dict, what: str) -> list[str]:
 
     errors: list[str] = []
     why = _outbuf.why_not(
-        variable_output=bool(entry.get("variable_output")),
+        variable_output=_truthy(entry.get("variable_output")),
         multi_output=bool(entry.get("multi_output")),
         has_arg=str(entry.get("arg_type") or "void") != "void",
         params=list(entry.get("params") or []),
     )
-    if not entry.get("variable_output"):
+    if not _truthy(entry.get("variable_output")):
         errors.append(
             f"{what}: short_out needs variable_output = true: only a "
             f"variable_output method takes an out= buffer to relax."
@@ -7445,7 +7446,7 @@ def _short_out_errors(entry: dict, what: str) -> list[str]:
             f"{what}: short_out relaxes the out= buffer, and this method "
             f"has none ({why})."
         )
-    if not entry.get("pass_capacity"):
+    if not _truthy(entry.get("pass_capacity")):
         errors.append(
             f"{what}: short_out needs pass_capacity = true: only a kernel "
             f"told its buffer's real size can stop at it, and without that "
@@ -7507,7 +7508,7 @@ def _no_count_errors(entry: dict, what: str) -> list[str]:
     if not flag:
         return []
     errors: list[str] = []
-    if not entry.get("variable_output"):
+    if not _truthy(entry.get("variable_output")):
         errors.append(
             f"{what}: no_count needs variable_output = true: a fixed-size "
             f"result has no count to drop."
@@ -8095,8 +8096,8 @@ def view_member_doc_keys(cfg: dict, component: str) -> "dict[str, str]":
         keys[m["name"]] = sym
         # The predicate both `.pyi` generators and the binding emit the
         # accessor on; a batch method's `out=` has none (gh-2259).
-        if not m.get("batch") and _outbuf.enabled(
-            variable_output=bool(m.get("variable_output")),
+        if not _truthy(m.get("batch")) and _outbuf.enabled(
+            variable_output=_truthy(m.get("variable_output")),
             multi_output=bool(m.get("multi_output")),
             has_arg=m.get("arg_type", "void") != "void",
             params=list(m.get("params", [])),
@@ -8262,7 +8263,9 @@ def max_out_fn_why_not(m: dict, what: str) -> str:
     from ._borrow import _is_c_identifier
 
     sized = (
-        m.get("variable_output") and not m.get("borrow") and not m.get("batch")
+        _truthy(m.get("variable_output"))
+        and not _truthy(m.get("borrow"))
+        and not _truthy(m.get("batch"))
     )
     if not (sized or _record.is_record_list(m)):
         return (
@@ -8374,14 +8377,18 @@ def max_out_arity(m: dict) -> "str | None":
     >>> max_out_arity({"arg_type": "float"}) is None
     True
     """
-    if not m.get("variable_output") or m.get("borrow") or m.get("batch"):
+    if (
+        not _truthy(m.get("variable_output"))
+        or _truthy(m.get("borrow"))
+        or _truthy(m.get("batch"))
+    ):
         return None
     from ._method import _max_out_count_param
 
     decl, _name = _max_out_count_param(
         str(m.get("arg_type", "void") or "void"),
         list(m.get("params") or []),
-        bool(m.get("no_count")),
+        _truthy(m.get("no_count")),
     )
     return f"(state{decl})"
 
@@ -8728,7 +8735,7 @@ def state_vars(cfg: dict, component: str) -> list[tuple[str, str, str]]:
     return [
         (s["name"], s["type"], s.get("default", _T.state_default(s["type"])))
         for s in cfg.get(component, {}).get("state", [])
-        if not s.get("opaque")
+        if not _truthy(s.get("opaque"))
     ]
 
 
@@ -8740,7 +8747,7 @@ def opaque_fields(cfg: dict, component: str) -> list[tuple[str, str]]:
     return [
         (s["name"], s["type"])
         for s in cfg.get(component, {}).get("state", [])
-        if s.get("opaque")
+        if _truthy(s.get("opaque"))
     ]
 
 
@@ -8762,7 +8769,7 @@ def state_docs(cfg: dict, component: str) -> "dict[str, str]":
     return {
         str(s["name"]): str(s["doc"])
         for s in cfg.get(component, {}).get("state", [])
-        if s.get("doc") and not s.get("opaque")
+        if s.get("doc") and not _truthy(s.get("opaque"))
     }
 
 
@@ -8788,7 +8795,7 @@ def state_str_hints(cfg: dict, component: str) -> "dict[str, str]":
     return {
         str(s["name"]): str_hint(s)
         for s in cfg.get(component, {}).get("state", [])
-        if str_hint(s) and not s.get("opaque")
+        if str_hint(s) and not _truthy(s.get("opaque"))
     }
 
 
@@ -8803,7 +8810,7 @@ def no_ctor_names(cfg: dict, component: str) -> frozenset[str]:
     return frozenset(
         s["name"]
         for s in cfg.get(component, {}).get("state", [])
-        if s.get("no_ctor") and not s.get("opaque")
+        if _truthy(s.get("no_ctor")) and not _truthy(s.get("opaque"))
     )
 
 
@@ -8821,7 +8828,7 @@ def controllable_state_vars(
     return [
         (s["name"], s["type"])
         for s in cfg.get(component, {}).get("state", [])
-        if s.get("controllable") and not s.get("opaque")
+        if _truthy(s.get("controllable")) and not _truthy(s.get("opaque"))
     ]
 
 

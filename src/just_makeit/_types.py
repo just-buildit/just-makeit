@@ -1521,7 +1521,7 @@ def param_writable(p) -> bool:
     False
     """
     return isinstance(p, dict) and bool(
-        p.get("out") or truthy(p.get("mutable"))
+        truthy(p.get("out")) or truthy(p.get("mutable"))
     )
 
 

@@ -48,6 +48,7 @@ from . import _stubs as S
 from . import _incpath as INC
 from . import _csym as CSYM
 from ._init import _to_title
+from ._keys import truthy
 
 
 # `{identifier}` placeholders only — anything else passes through untouched.
@@ -1300,7 +1301,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             mod,
             m.get("arg_type", "void"),
             m.get("return_type", "float _Complex"),
-            bool(m.get("variable_output")),
+            truthy(m.get("variable_output")),
             list(m.get("multi_output", [])),
             # gh-432: pass params through as full dicts — the old
             # (name, type, default) tuple flattening silently dropped every
@@ -1309,13 +1310,13 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             params=[dict(p) for p in m.get("params", [])],
             out_type=m.get("out_type"),
             out_divisor=int(m.get("out_divisor", 1)),
-            batch=bool(m.get("batch")),
+            batch=truthy(m.get("batch")),
             # gh-2215: `jm method --no-bench` writes `bench = false`.
             no_bench=not C._truthy(m.get("bench", True)),
             impl_body=m_impl,
-            none_on_empty=bool(m.get("none_on_empty")),
-            strict=bool(m.get("strict")),  # gh-1426 B
-            error_on_empty=bool(m.get("error_on_empty")),
+            none_on_empty=truthy(m.get("none_on_empty")),
+            strict=truthy(m.get("strict")),  # gh-1426 B
+            error_on_empty=truthy(m.get("error_on_empty")),
             # gh-2012: named one by one like every key here, or the replay
             # declares a `size_t` kernel over a signed `_core.c` and drops
             # the refusal the binding raises.
@@ -1323,7 +1324,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             error_sentinel=m.get("error_sentinel", ""),
             result_fields=list(m.get("result_fields", [])),
             max_results=int(m.get("max_results", 64)),
-            single=bool(m.get("single")),
+            single=truthy(m.get("single")),
             record_name=m.get("record_name", ""),
             record_module=m.get("record_module", ""),
             record_doc=m.get("record_doc", ""),
@@ -1340,9 +1341,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # for the same reason -- this loop names keys one by one, so
             # an unnamed one is silently absent and the replayed method
             # loses its shape.
-            borrow=bool(m.get("borrow")),
+            borrow=truthy(m.get("borrow")),
             borrow_count=m.get("borrow_count", ""),
-            borrow_writeable=bool(m.get("borrow_writeable")),
+            borrow_writeable=truthy(m.get("borrow_writeable")),
             # gh-1418: same rule, same reason. Dropped here, `apply` would
             # rebuild a borrow whose NULL raises one blanket ValueError
             # again -- exit 0, and end-of-stream back to being an error.
@@ -1352,24 +1353,24 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             status_errors=m.get("status_errors") or None,
             py_return_type=m.get("py_return_type", ""),
             max_out=int(m.get("max_out", 0)),
-            varargs=bool(m.get("varargs")),
-            manual_stub=bool(m.get("manual_stub")),
-            pass_capacity=bool(m.get("pass_capacity")),
-            exact_max_out=bool(m.get("exact_max_out")),
+            varargs=truthy(m.get("varargs")),
+            manual_stub=truthy(m.get("manual_stub")),
+            pass_capacity=truthy(m.get("pass_capacity")),
+            exact_max_out=truthy(m.get("exact_max_out")),
             count_default=m.get("count_default", ""),
             count_name=m.get("count_name", ""),
-            no_count=bool(m.get("no_count")),  # gh-2233
+            no_count=truthy(m.get("no_count")),  # gh-2233
             out_cols=str(m.get("out_cols", "") or ""),
-            short_out=bool(m.get("short_out")),
-            nogil=bool(m.get("nogil")),
-            status_return=bool(m.get("status_return")),
+            short_out=truthy(m.get("short_out")),
+            nogil=truthy(m.get("nogil")),
+            status_return=truthy(m.get("status_return")),
             # gh-805 §A2/§B. `apply` enumerates method keys ONE BY ONE, so a
             # key not named here is silently absent from the replay — which
             # is how a previous key made `apply` rewrite the sacred _core.h
             # prototype to the wrong shape.
             fn=m.get("fn", ""),
             max_out_fn=m.get("max_out_fn", ""),  # gh-2680
-            error_negative=bool(m.get("error_negative")),
+            error_negative=truthy(m.get("error_negative")),
             # gh-2574: named here like every key, or the replay declares
             # the kernel without its trailing `const char **why`.
             why=C._truthy(m.get("why")),
@@ -1397,7 +1398,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             mod,
             p.get("type") or p.get("ctype", "size_t"),
             C._truthy(p.get("writable")),
-            field=bool(p.get("field")),
+            field=truthy(p.get("field")),
             buf_field=p.get("buf_field", ""),
             len_field=p.get("len_field", "n"),
             valid_field=p.get("valid_field", ""),
@@ -1426,7 +1427,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             error=p.get("error", ""),
             error_message=p.get("error_message", ""),
             # gh-2538: a getter that can fail.
-            getter_status=bool(p.get("getter_status")),
+            getter_status=truthy(p.get("getter_status")),
             # gh-2543: a writable property's getter failure.
             getter_error=p.get("getter_error", ""),
             getter_error_message=p.get("getter_error_message", ""),
@@ -1577,7 +1578,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 # a `<name>.c` that redefines the header body — a double
                 # definition the linker rejects. Peer to out_type/enum/default
                 # below: the replay must preserve every shape-bearing key.
-                inline=bool(fn.get("inline")),
+                inline=truthy(fn.get("inline")),
                 out_type=fn.get("out_type", ""),
                 result_fields=fn.get("result_fields", []),
                 max_results_param=fn.get("max_results_param", ""),
@@ -1586,9 +1587,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 # these the replayed temp manifest loses them and the rendered
                 # _ext.c under-allocates (out first, _dim = 1 / first array
                 # length) → heap overrun in the C kernel.
-                variable_output=bool(fn.get("variable_output")),
+                variable_output=truthy(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
-                check_return=bool(fn.get("check_return")),
+                check_return=truthy(fn.get("check_return")),
                 # gh-1706: the trailing `const char **why`. Unforwarded, the
                 # replay rendered a prototype without it and a binding that
                 # dropped the reason again.
@@ -1599,7 +1600,7 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 status_errors=fn.get("status_errors") or None,
                 # gh-2755: ONE record by value. Unforwarded, the replay
                 # rendered the list-of-records prototype and binding.
-                single=bool(fn.get("single")),
+                single=truthy(fn.get("single")),
                 record_name=fn.get("record_name", ""),
                 record_module=fn.get("record_module", ""),
                 record_doc=fn.get("record_doc", ""),
@@ -4025,7 +4026,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
         # gh-2543: a buffer view's status function, the one C call it makes.
         out += buffer_status_decls(p, csym=CSYM.stem(cfg, comp))
         if (
-            p.get("field")
+            truthy(p.get("field"))
             or p.get("expr")
             or p.get("buf_field")
             or p.get("codec")
@@ -4048,7 +4049,7 @@ def _property_accessor_decls(cfg: dict, comp: str) -> list[str]:
             C._truthy(p.get("writable")),
             csym=CSYM.stem(cfg, comp),
             setter_type=setter_return_type(p),  # gh-2182
-            getter_status=bool(p.get("getter_status")),  # gh-2538
+            getter_status=truthy(p.get("getter_status")),  # gh-2538
         )
     return out
 

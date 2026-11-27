@@ -254,7 +254,7 @@ def _emit_execute(backing: str, sym: str, method: dict) -> str:
         "size_t",
         "n_out",
         f"{sym}_{name}(w->state, in_data, n_in, out_data, max_out)",
-        bool(method.get("nogil")),
+        truthy(method.get("nogil")),
         owner="w",
         # gh-2273: both arrays are converted after `_get_wrap` ran.
         release="Py_DECREF(x_arr); Py_DECREF(out_arr);",
@@ -325,7 +325,7 @@ def _emit_void_method(backing: str, sym: str, method: dict) -> str:
         "",
         "",
         f"{sym}_{name}(w->state)",
-        bool(method.get("nogil")),
+        truthy(method.get("nogil")),
         owner="w",
         release="",
         why="",
@@ -512,7 +512,7 @@ _get_wrap(PyObject *cap)
 
     parts.append(_emit_create(backing, sym, init_params, module))
     for m in C.module_methods(cfg, module):
-        if m.get("caller_out") or m.get("arg_type"):
+        if truthy(m.get("caller_out")) or m.get("arg_type"):
             parts.append(_emit_execute(backing, sym, m))
         else:
             parts.append(_emit_void_method(backing, sym, m))
