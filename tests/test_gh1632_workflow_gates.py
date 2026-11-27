@@ -177,9 +177,9 @@ def test_main_has_a_nightly_full_run_of_its_own():
 # item 3): lint (mdformat reads the docs), coverage (the full suite, run as
 # coverage-shard jobs since gh-2078 and gated by `coverage`; tests read the
 # live tree), and the strict docs build. Plus the jobs that are not checks of
-# the diff at all.
+# the diff at all: `nightly-red` (gh-2773) only reports a red schedule run.
 _DOCS_CAN_BREAK = {"lint", "coverage-shard", "coverage", "docs"}
-_NOT_A_CHECK = {"changes", "ci-passed", "trigger-mirror"}
+_NOT_A_CHECK = {"changes", "ci-passed", "trigger-mirror", "nightly-red"}
 
 
 def test_a_docs_only_diff_skips_only_what_docs_cannot_break():
