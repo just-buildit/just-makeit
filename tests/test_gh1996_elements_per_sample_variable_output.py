@@ -478,14 +478,23 @@ def test_every_count_is_in_samples(shapes):
     for comp, m in _vo_methods(shapes):
         body = _function(src, f"{comp.capitalize()}_{m['name']}")
         for pname, e in _interleave_of(m).items():
-            # gh-1999's guard reads the ELEMENT count on purpose: its
-            # remainder test and the length its message names. Neither is
-            # a count of samples, so neither is held to the divisor here.
-            counted = re.sub(
-                rf"\(Py_ssize_t\)PyArray_SIZE\({pname}_arr\)"
-                rf"|PyArray_SIZE\({pname}_arr\) % {e} ",
+            # gh-1999's guard (`_coerce.array_multiple_guard`) reads the
+            # ELEMENT count on purpose: its remainder test and the length
+            # its message names. Exactly that one block is set aside --
+            # matched by its whole shape, message included, and required
+            # once where E > 1 -- so an undivided count anywhere else, in
+            # whatever spelling, is still held to the divisor here.
+            counted, guards = re.subn(
+                rf"if \(PyArray_SIZE\({pname}_arr\) % {e} != 0\) \{{"
+                rf"[^{{}}]*?\" elements_per_sample = {e}\",\s*"
+                rf"\(Py_ssize_t\)PyArray_SIZE\({pname}_arr\)\);[^{{}}]*\}}",
                 "",
                 body,
+            )
+            # E = 1 renders no guard: every length is a multiple of 1.
+            assert guards == (e != 1), (
+                f"{comp}.{m['name']}: want {int(e != 1)} gh-1999 guard on "
+                f"{pname}, found {guards}:\n{body}"
             )
             sizes = re.findall(
                 rf"PyArray_SIZE\({pname}_arr\)( / \d+)?", counted
