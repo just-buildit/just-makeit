@@ -2758,23 +2758,36 @@ def _is_rendered_fail(stmt: tuple) -> bool:
     return _with_literal(_c_tokens(ref), lits[0]) == stmt
 
 
-def _is_rendered_warn(stmt: tuple) -> bool:
+def _warn_condition(stmt: tuple) -> tuple:
+    """The ``if (...)`` head of warning statement *stmt*, as tokens."""
+    cond = _closing(list(stmt), 1)
+    return tuple(stmt[: cond + 1]) if cond > 0 else ()
+
+
+def _is_rendered_warn(stmt: tuple, conditions: "frozenset[tuple]") -> bool:
     """Whether warning statement *stmt* is one jm renders (gh-2555).
 
     `_is_rendered_fail`'s test for a ``[[<obj>.warnings]]`` entry: the
-    condition, class, message and stacklevel are read off the statement,
+    class, message and stacklevel are read off the statement,
     `make_warnings_ctx` renders them, and the two must agree token for
-    token.
+    token. The condition is NOT read back: it must be one of *conditions*,
+    the ``if`` heads jm renders for the CURRENT manifest's warnings
+    (`_warn_condition` of the reference's statements). A condition is the
+    author's C as often as a field (gh-601), so one jm does not render now
+    -- an edit inside it, or an older manifest's -- is the author's.
 
     Examples
     --------
     >>> from just_makeit._context._diagnostics import make_warnings_ctx
-    >>> jm = make_warnings_ctx("a", "A", [{"condition": "hot",
-    ...     "category": "UserWarning", "message": "hot", "stacklevel": 2}])
-    >>> _is_rendered_warn(tuple(_c_tokens(jm["init_warn_block"])))
+    >>> jm = tuple(_c_tokens(make_warnings_ctx("a", "A", [{
+    ...     "condition": "hot", "category": "UserWarning",
+    ...     "message": "hot", "stacklevel": 2}])["init_warn_block"]))
+    >>> now = frozenset({_warn_condition(jm)})
+    >>> _is_rendered_warn(jm, now)
     True
-    >>> _is_rendered_warn(tuple(_c_tokens(
-    ...     jm["init_warn_block"].replace("{", "{ log();", 1))))
+    >>> _is_rendered_warn(jm, frozenset())
+    False
+    >>> _is_rendered_warn(jm[:4] + ("&&", "gate", "(", ")") + jm[4:], now)
     False
     """
     from ._context._diagnostics import make_warnings_ctx
@@ -2784,6 +2797,8 @@ def _is_rendered_warn(stmt: tuple) -> bool:
     cats = [t for t in toks if t.startswith("PyExc_")]
     lits = [t for t in toks if t[:1] == '"']
     if cond < 0 or len(cats) != 1 or len(lits) != 1:
+        return False
+    if _warn_condition(stmt) not in conditions:
         return False
     at = toks.index(lits[0])
     level = toks[at + 2] if at + 2 < len(toks) else ""
@@ -2796,8 +2811,8 @@ def _is_rendered_warn(stmt: tuple) -> bool:
         "stacklevel": level,
     }
     ref = _c_tokens(make_warnings_ctx("x", "X", [entry])["init_warn_block"])
-    # The condition is the author's C either way (a field or an expression,
-    # gh-601); what jm renders is everything around it.
+    # The condition was judged above, against the current render; what is
+    # compared here is everything around it.
     ref = toks[: cond + 1] + ref[_closing(ref, 1) + 1 :]
     return _with_literal(ref, lits[0]) == stmt
 
@@ -2820,8 +2835,9 @@ def init_diagnostics_drift(
     constructor is jm's render for some declaration: the REST is the
     current render's, token for token with its literals, and every
     diagnostic block in it is one jm renders (`_is_rendered_fail`,
-    `_is_rendered_warn`) for the manifest it came from, whichever that
-    was. Then `apply` re-renders it (`reconcile_init_diagnostics`).
+    `_is_rendered_warn`): a failure block for whichever manifest wrote
+    it, a warning under a condition the current manifest renders. Then
+    `apply` re-renders it (`reconcile_init_diagnostics`).
     Otherwise something in it -- a statement the author added inside a
     failure block, a kwlist `init_kwargs_drift` reports -- is not jm's to
     overwrite, and the drift is reported instead.
@@ -2870,7 +2886,10 @@ def init_diagnostics_drift(
     jm_owned = (
         e.rest == r.rest
         and all(map(_is_rendered_fail, e.fail))
-        and all(map(_is_rendered_warn, e.warns))
+        and all(
+            _is_rendered_warn(w, frozenset(map(_warn_condition, r.warns)))
+            for w in e.warns
+        )
     )
     return "; ".join(detail), jm_owned
 
