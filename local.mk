@@ -14,7 +14,8 @@ LOCAL_TARGETS = start-here examples-clean install-deps-dev tool-install \
                 coverage-subprocess-check coverage-shard \
                 gates-index gates-declared-check \
                 doppler-pin-check consumer-smoke install-history-update \
-                ci-test-legs ci-pythons site-files test-compiled
+                ci-test-legs ci-pythons ci-nightly-red site-files \
+                test-compiled
 
 # The entry point for someone new to this repo. It is a SIGNPOST, not a copy:
 # every line either links to the source that owns that answer, or reports state
@@ -253,6 +254,14 @@ ci-test-legs: ## Print a CI run's legs (MATRIX, TRIM, EVENT, TESTED, LEGS_*)
 
 ci-pythons: ## Print the Pythons jm supports (the pyproject classifiers)
 	@python3 scripts/ci-test-legs.py pythons
+
+# gh-2773: a red nightly opens ONE issue labelled `nightly-red`, or comments
+# on the open one, and never closes anything. ci.yml's `nightly-red` job
+# runs this after `CI passed` fails on a schedule run; it reads the run from
+# the GITHUB_* variables Actions sets, and any event but `schedule` reports
+# nothing. tests/test_gh2773_nightly_red.py drives it with `gh` faked (GH).
+ci-nightly-red: ## Open or update the nightly-red issue for a red nightly run
+	@python3 scripts/nightly-red.py
 
 # The files the published site carries that the docs build does not make:
 # `install.sh` (what `curl -fsSL <site>/install.sh` fetches), its Windows

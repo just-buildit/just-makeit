@@ -1085,6 +1085,41 @@ jobs:
             esac
           done
 
+  # gh-2773: a red nightly opens ONE issue, or comments on the open one.
+  # The nightly gates no merge and no release, so its red was seen only by
+  # whoever opened the Actions tab; it is the run that catches a dependency
+  # release breaking jm with no PR in flight (`make test` never reads
+  # uv.lock). Dedup is the `nightly-red` label, nothing is ever closed, and
+  # the logic is `make ci-nightly-red` (scripts/nightly-red.py), which
+  # tests/test_gh2773_nightly_red.py drives with `gh` faked.
+  #
+  # `always()`: ci-changes-wiring-check requires it of a job after the
+  # aggregator, and without a status function GitHub ANDs in success(),
+  # which is false on exactly the run this reports. Red means `CI passed`
+  # failed, which it does for any required job not succeeding.
+  nightly-red:
+    name: Report a red nightly
+    needs: ci-passed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      always() && github.event_name == 'schedule' &&
+      needs.ci-passed.result == 'failure'
+    # The one job that may write issues; `actions: read` lists the run's
+    # failed jobs for the report.
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Open or update the nightly-red issue
+        # The run, event and commit come from the variables Actions sets
+        # in every step (GITHUB_EVENT_NAME, GITHUB_RUN_ID, GITHUB_SHA...).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make -s ci-nightly-red
+
   trigger-mirror:
     name: Trigger docs mirror refresh
     # Nudges just-buildit.github.io's mirror.yml (repository_dispatch:
