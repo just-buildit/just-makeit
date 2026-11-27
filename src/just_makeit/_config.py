@@ -284,6 +284,12 @@ def load(root: Path) -> dict:
     package_errors = module_package_errors(cfg)
     if package_errors:
         raise Refusal("\n".join(package_errors))
+    # gh-2142: a component named for another module's cname writes into
+    # that module's files; here, so `apply`'s replay of a hand-written
+    # manifest and `status` refuse it as `jm object` / `jm module` do.
+    clashes = namespace_errors(cfg)
+    if clashes:
+        _refuse(clashes)
     # gh-2215: a cycle of `object` init-param references leaks every object
     # in it and has no construction order. Here, so every command that
     # reads the manifest -- `status` included -- refuses it.
@@ -2237,6 +2243,10 @@ def save(root: Path, cfg: dict) -> None:
     dupes = duplicate_name_errors(cfg)
     if dupes:
         _refuse(dupes)
+    # gh-2142: and two owners of one native name, for the same reason.
+    clashes = namespace_errors(cfg)
+    if clashes:
+        _refuse(clashes)
     # gh-999: contract the group expansion, HERE, for the same reason `load`
     # expands there — this is the one place every manifest write passes
     # through. `save` and `load` are the symmetric pair: what `load` unfolds,
@@ -2924,6 +2934,86 @@ def collocated_object(cfg: dict, module: str) -> str | None:
     """
     cname = module_paths(module).cname
     return cname if cname in module_objects(cfg, module) else None
+
+
+def namespace_errors(cfg: dict) -> "list[str]":
+    """Every name two owners claim in the one native namespace (gh-2142).
+
+    A module's **cname** (its id with dots as underscores) and a component's
+    name are one namespace: each names a directory below ``native/src/``, a
+    CMake target, the C symbol stem and the Python extension module. Two
+    owners of one name write into each other's files -- an object named
+    for a module's cname was scaffolded into that module's directory,
+    exited 0, and left a project ``status --check`` called STALE and whose
+    import failed. The one exception is the collocated object
+    (:func:`collocated_object`, gh-1949): the object of module X named for
+    X's own cname, which IS the module's core by design.
+
+    The one rule, asked by `load` and `save` of the whole manifest and by
+    `jm module` / `jm object` of the manifest as it would read after their
+    change, before either writes; a verb that introduces a name asks it
+    this way rather than spelling its own copy. A manifest `load` has
+    accepted holds no clash, so whatever a verb's trial manifest reports
+    is its own.
+
+    Parameters
+    ----------
+    cfg : dict
+        The manifest, or a verb's trial of it.
+
+    Returns
+    -------
+    list of str
+        One sentence per clash, in manifest order; empty when none.
+
+    Examples
+    --------
+    >>> namespace_errors({"module": {"filt": {"objects": ["filt"]}},
+    ...                   "filt": {}})
+    []
+    >>> e = namespace_errors({"module": {"filt": {"objects": []}},
+    ...                       "filt": {}})
+    >>> e[0].split(":")[0]
+    "the standalone component 'filt' takes the native name of module 'filt'"
+    >>> e = namespace_errors({"module": {"a": {"objects": []},
+    ...                                  "b": {"objects": ["a"]}}, "a": {}})
+    >>> e[0].split(":")[0]
+    "component 'a' of module 'b' takes the native name of module 'a'"
+    >>> e = namespace_errors({"module": {"dsp.f": {}, "dsp_f": {}}})
+    >>> e[0].split(":")[0]
+    "modules 'dsp.f' and 'dsp_f' share the native name 'dsp_f'"
+    """
+    rule = (
+        "modules, components, and nested-module cnames share one "
+        "namespace (the native/src/ directory, the CMake target, the C "
+        "symbol stem), which only a module and its own collocated object "
+        "may share -- rename one of them"
+    )
+    owner: dict[str, str] = {}
+    errors: list[str] = []
+    for m in modules(cfg):
+        cname = module_paths(m).cname
+        if cname in owner:
+            errors.append(
+                f"modules '{owner[cname]}' and '{m}' share the native name "
+                f"'{cname}': {rule}"
+            )
+        else:
+            owner[cname] = m
+    for comp in components(cfg):
+        m = owner.get(comp)
+        if m is None:
+            continue
+        home = module_of(cfg, comp)
+        if home and collocated_object(cfg, home) == comp:
+            continue
+        who = (
+            f"component '{comp}' of module '{home}'"
+            if home
+            else f"the standalone component '{comp}'"
+        )
+        errors.append(f"{who} takes the native name of module '{m}': {rule}")
+    return errors
 
 
 def valid_identifier(name: str) -> bool:

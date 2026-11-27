@@ -3857,6 +3857,19 @@ def run(
         sys.exit(1)
 
     cfg = C.load(root)
+    # gh-2142: an object named for a module's cname writes into that
+    # module's directory -- refused, before anything is written, by the one
+    # rule `jm module` and `load` ask, of the manifest as it would read with
+    # this object in it. An unknown --module is left to its own error below.
+    if module is None or module in C.modules(cfg):
+        clashes = C.namespace_errors(
+            {
+                **C.with_module_member(cfg, module, object_name),
+                object_name: {},
+            }
+        )
+        if clashes:
+            raise _report.Refusal.of(clashes)
 
     # No --module -> standalone object (own .so)
     if module is None:
