@@ -27,6 +27,7 @@ from just_makeit._module import run as jm_module
 from just_makeit._new import run as jm_new
 from just_makeit._object import run as jm_object
 from just_makeit._remove import run as jm_remove
+from just_makeit._report import Refusal
 
 
 def _skip_reason():
@@ -186,8 +187,9 @@ class TestCollisions:
         root = tmp_path / "p"
         jm_new("p", root)
         jm_module(root, "a.b")
-        with pytest.raises(SystemExit):
-            jm_module(root, "a_b")  # same cname as a.b
+        # Same cname as a.b: refused by the one namespace rule (gh-2142).
+        with pytest.raises(Refusal, match="share one namespace"):
+            jm_module(root, "a_b")
 
     def test_siblings_share_parent(self, tmp_path):
         root = tmp_path / "p"
