@@ -74,14 +74,19 @@ LEGS = _load("ci_test_legs", PLANNER)
 #: The org standard's runner picker, vendored (just-buildit.github.io#203).
 PICK = _load("ci_runner", RUNNER)
 
-#: Every run that owes the whole matrix: a push its PR did not test
-#: (``changes.yml`` writes ``tested=false``, or nothing when it exits before
-#: asking), the nightly, a dispatch.
+#: A train PR's head ref: ``make train``'s default branch (gh-2832).
+TRAIN_REF = "train/2790-2791"
+
+#: Every run that owes the whole matrix, as (event, tested, head ref): a
+#: push its PR did not test (``changes.yml`` writes ``tested=false``, or
+#: nothing when it exits before asking), the nightly, a dispatch, and a
+#: train PR (gh-2832).
 FULL_RUNS = [
-    ("push", "false"),
-    ("push", ""),
-    ("schedule", ""),
-    ("workflow_dispatch", ""),
+    ("push", "false", ""),
+    ("push", "", ""),
+    ("schedule", "", ""),
+    ("workflow_dispatch", "", ""),
+    ("pull_request", "", TRAIN_REF),
 ]
 
 
@@ -155,10 +160,11 @@ def _key(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in v.split("."))
 
 
-def _owed(event: str, tested: str) -> "list[dict]":
+def _owed(event: str, tested: str, head_ref: str = "") -> "list[dict]":
     """What the planner keeps for a run on *event*, from the step's own
-    declaration -- the inputs the workflow hands it."""
-    return LEGS.owed(_declared(), _trim(), _middle(), event, tested)
+    declaration -- the inputs the workflow hands it. A ``pull_request``
+    with no *head_ref* is a plain PR's (gh-2832)."""
+    return LEGS.owed(_declared(), _trim(), _middle(), event, tested, head_ref)
 
 
 def _pairs(legs: "list[dict]") -> "set[tuple[str, str]]":
@@ -340,12 +346,14 @@ def test_the_prepublish_artifact_runs_the_released_pythons() -> None:
 class TestWhatEachRunOwes:
     """gh-2125: the legs each event's run keeps, from the real declaration."""
 
-    @pytest.mark.parametrize("event, tested", FULL_RUNS)
-    def test_a_full_run_owes_every_leg(self, event: str, tested: str) -> None:
-        legs = _owed(event, tested)
+    @pytest.mark.parametrize("event, tested, head_ref", FULL_RUNS)
+    def test_a_full_run_owes_every_leg(
+        self, event: str, tested: str, head_ref: str
+    ) -> None:
+        legs = _owed(event, tested, head_ref)
         assert _pairs(legs) == _full() and len(legs) == len(_full()), (
-            f"a {event} run (tested={tested!r}) must run the whole matrix; "
-            f"it would skip {sorted(_full() - _pairs(legs))}"
+            f"a {event} run (tested={tested!r}, ref={head_ref!r}) must run "
+            f"the whole matrix; it would skip {sorted(_full() - _pairs(legs))}"
         )
 
     def test_trim_names_an_os_the_matrix_runs(self) -> None:
@@ -357,7 +365,8 @@ class TestWhatEachRunOwes:
 
     def test_a_pr_runs_each_trimmed_os_at_its_edges(self) -> None:
         """The oldest and newest released Python, derived from the matrix,
-        so promoting a Python or raising the floor moves them by itself."""
+        so promoting a Python or raising the floor moves them by itself.
+        And only on Linux (gh-2832): a plain PR runs no other OS."""
         pr, full = _pairs(_owed("pull_request", "")), _full()
         for os_ in _trim():
             have = _released(full, os_)
@@ -365,9 +374,10 @@ class TestWhatEachRunOwes:
             if os_ in _middle():
                 want.add(sorted(have, key=_key)[len(have) // 2])
             assert _released(pr, os_) == want, (os_, sorted(pr))
-        kept = {(o, p) for o, p in full if o not in _trim()}
+        linux = {(o, p) for o, p in full if o.startswith("ubuntu-")}
+        kept = {(o, p) for o, p in linux if o not in _trim()}
         assert kept <= pr, f"a PR skips {sorted(kept - pr)}"
-        assert pr <= full
+        assert pr <= linux, f"a plain PR runs {sorted(pr - linux)}"
 
     def test_the_pr_legs_are_exactly_the_trimmed_set(self) -> None:
         """gh-2125 + the Linux trim: the PR's legs, written out. Adding a
@@ -378,17 +388,14 @@ class TestWhatEachRunOwes:
         pys = sorted(_classifiers(), key=_key)
         floor, newest = pys[0], pys[-1]
         middle = pys[len(pys) // 2]
-        mac_floor = min(_released(_full(), "macos-latest"), key=_key)
         assert _pairs(_owed("pull_request", "")) == {
             ("ubuntu-latest", floor),
             ("ubuntu-latest", middle),
             ("ubuntu-latest", newest),
             ("ubuntu-24.04-arm", floor),
             ("ubuntu-24.04-arm", newest),
-            ("macos-latest", mac_floor),
-            ("macos-latest", newest),
         }
-        assert len(_owed("pull_request", "")) == 7
+        assert len(_owed("pull_request", "")) == 5
 
     def test_middle_is_a_trimmed_os(self) -> None:
         """A MIDDLE os that is not trimmed would do nothing, silently."""
@@ -409,8 +416,9 @@ class TestWhatEachRunOwes:
 
     def test_every_python_runs_on_macos_before_a_release(self) -> None:
         """The issue's own gate: each Python in the matrix runs on every
-        trimmed OS in a run whose `CI passed` gates a release -- a PR plus
-        the push that lands it, or an untested push alone.
+        OS in a run whose `CI passed` gates a release -- a PR plus the push
+        that lands it, or an untested push alone. Every OS, not only the
+        trimmed ones: since gh-2832 a plain PR runs no macOS at all.
 
         The one exception allowed is the requires-python floor, and only by
         an `exclude`: on macOS that is 3.9, whose interpreter there is
@@ -426,12 +434,155 @@ class TestWhatEachRunOwes:
             ),
             "an untested push": _pairs(_owed("push", "false")),
         }
-        for os_ in _trim():
+        for os_ in _axes()[0]:
             for path, pairs in paths.items():
                 missing = set(pys) - {floor} - _released(pairs, os_)
                 assert not missing, (
                     f"{os_} never runs {sorted(missing, key=_key)} before a "
                     f"release on {path}"
+                )
+
+
+def _planned(
+    step: dict,
+    event: str,
+    head_ref: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> "dict[str, list[dict]]":
+    """Every ``<name>=`` line `make ci-test-legs` prints for *step* (a
+    `legs` step) on *event* from *head_ref*: its legs, [] when empty."""
+    for name, value in (step.get("env") or {}).items():
+        if not str(value).startswith("${{"):
+            monkeypatch.setenv(name, str(value))
+    monkeypatch.setenv("EVENT", event)
+    monkeypatch.setenv("TESTED", "")
+    monkeypatch.setenv("HEAD_REF", head_ref)
+    assert LEGS.main([]) == 0
+    out = {}
+    for line in capsys.readouterr().out.splitlines():
+        name, _, value = line.partition("=")
+        out[name] = json.loads(value)["include"] if value else []
+    return out
+
+
+def _artifact_legs_step() -> dict:
+    jobs = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))["jobs"]
+    return _step(jobs["legs"], "legs", "artifact.yml's legs job")
+
+
+class TestAPlainPrRunsLinuxAlone:
+    """gh-2832: every PR lands through a train, which tests the combined
+    tree, so a PR's own run keeps its Linux legs and nothing else; a
+    `train/*` PR, a push, the nightly and a dispatch keep what they did.
+    The planner decides, from the event and the head ref."""
+
+    @pytest.mark.parametrize(
+        "event, tested, head_ref, want",
+        [
+            ("pull_request", "", "gh-2832-fix", "plain"),
+            ("pull_request", "", TRAIN_REF, "full"),
+            ("push", "true", "", "rest"),
+            ("push", "false", "", "full"),
+            ("schedule", "", "", "full"),
+            ("workflow_dispatch", "", "", "full"),
+        ],
+        ids=[
+            "plain-pr",
+            "train-pr",
+            "tested-push",
+            "push",
+            "nightly",
+            "dispatch",
+        ],
+    )
+    def test_each_run_owes_its_legs(
+        self, event: str, tested: str, head_ref: str, want: str
+    ) -> None:
+        """Pinned per run. The plain PR's set is the table in
+        TestWhatEachRunOwes; a tested push owes exactly the rest, the safe
+        superset of what a train left (just-buildit.github.io#249)."""
+        pys = sorted(_classifiers(), key=_key)
+        plain = {
+            ("ubuntu-latest", pys[0]),
+            ("ubuntu-latest", pys[len(pys) // 2]),
+            ("ubuntu-latest", pys[-1]),
+            ("ubuntu-24.04-arm", pys[0]),
+            ("ubuntu-24.04-arm", pys[-1]),
+        }
+        expect = {
+            "plain": plain,
+            "full": _full(),
+            "rest": _full() - plain,
+        }[want]
+        legs = _owed(event, tested, head_ref)
+        assert _pairs(legs) == expect and len(legs) == len(expect), sorted(
+            _pairs(legs) ^ expect
+        )
+
+    def test_the_workflow_hands_the_planner_the_head_ref(self) -> None:
+        for step in (_legs_step(), _artifact_legs_step()):
+            env = step["env"]
+            assert env["HEAD_REF"] == "${{ github.head_ref }}"
+            assert env["EVENT"] == "${{ github.event_name }}"
+
+    @pytest.mark.parametrize("ref", ["gh-2832-fix", TRAIN_REF])
+    def test_every_planned_job_keeps_its_linux_legs_on_a_plain_pr(
+        self,
+        ref: str,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """Each LEGS_<NAME> list of ci.yml and artifact.yml: a plain PR
+        keeps exactly its Linux legs, a train every leg."""
+        steps = (_legs_step(), _artifact_legs_step())
+        for step in steps:
+            got = _planned(step, "pull_request", ref, monkeypatch, capsys)
+            for var, raw in step["env"].items():
+                if not var.startswith("LEGS_"):
+                    continue
+                name = var[len("LEGS_") :].lower()
+                every = LEGS.expand(
+                    LEGS.resolve(json.loads(raw), LEGS.pythons())
+                )
+                want = every
+                if ref != TRAIN_REF:
+                    want = [x for x in every if x["os"].startswith("ubuntu-")]
+                assert got[name] == want, (name, got[name])
+
+    def test_the_planned_jobs_are_the_ones_with_other_oses(self) -> None:
+        """The jobs that would run macOS or Windows on a PR read their legs
+        from the planner, and one with no Linux leg skips when empty."""
+        jobs = _jobs()
+        for job, out in (
+            ("examples-windows", "examples_windows"),
+            ("install-deps-smoke", "install_deps"),
+            ("consumer-smoke", "consumer"),
+        ):
+            assert jobs[job]["strategy"]["matrix"] == (
+                "${{ fromJSON(needs.toolchain.outputs.%s) }}" % out
+            ), job
+            assert jobs["toolchain"]["outputs"][out] == (
+                "${{ steps.legs.outputs.%s }}" % out
+            )
+            assert "toolchain" in jobs[job]["needs"], job
+        cond = " ".join(str(jobs["examples-windows"]["if"]).split())
+        assert "needs.toolchain.outputs.examples_windows != ''" in cond
+        art = yaml.safe_load(ARTIFACT_YML.read_text(encoding="utf-8"))
+        cond = " ".join(str(art["jobs"]["smoke-windows"]["if"]).split())
+        assert cond.endswith(
+            "&& (inputs.quick && needs.legs.outputs.windows_quick || "
+            "needs.legs.outputs.windows) != ''"
+        ), cond
+        # No other job in either file names a macOS or Windows runner in a
+        # matrix of its own: it would run on every plain PR.
+        for path in (CI_YML, ARTIFACT_YML):
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for name, job in doc["jobs"].items():
+                text = json.dumps((job.get("strategy") or {}).get("matrix"))
+                assert "macos" not in text and "windows" not in text, (
+                    path.name,
+                    name,
                 )
 
 
@@ -557,7 +708,8 @@ class TestTheParsersAreArmed:
         the legs `owed` keeps, and an empty value when there are none."""
         env = _legs_step()["env"]
         tested = "true" if event == "push" else ""
-        for name, value in dict(env, EVENT=event, TESTED=tested).items():
+        given = dict(env, EVENT=event, TESTED=tested, HEAD_REF="")
+        for name, value in given.items():
             monkeypatch.setenv(name, str(value))
         assert LEGS.main([]) == 0
         line = capsys.readouterr().out.splitlines()[0]
@@ -714,12 +866,22 @@ class TestEachMacosLegsRunner:
     STOCK = {"install-deps-smoke", "consumer-smoke"}
 
     def _macos_jobs(self) -> "dict[tuple[str, str], dict]":
+        """Every job that can run a macOS leg: one naming macOS itself, or
+        one whose matrix is a `legs` step's LEGS_<NAME> that does
+        (gh-2832 moved install-deps-smoke and consumer-smoke there)."""
+        planned = {
+            "needs.toolchain.outputs.%s" % k[len("LEGS_") :].lower()
+            for k, v in (_legs_step().get("env") or {}).items()
+            if k.startswith("LEGS_") and "macos" in str(v)
+        }
         out = {}
         for path in (CI_YML, ARTIFACT_YML):
             text = yaml.safe_load(path.read_text(encoding="utf-8"))
             for name, job in text["jobs"].items():
+                strategy = json.dumps(job.get("strategy") or {})
                 if (
-                    "macos" in json.dumps(job.get("strategy") or {})
+                    "macos" in strategy
+                    or any(ref in strategy for ref in planned)
                     or ("macos" in str(job.get("runs-on")))
                     or name in ("test", "examples", "smoke")
                 ):

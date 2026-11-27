@@ -85,6 +85,11 @@ jobs:
       examples: ${{ steps.runners.outputs.examples }}
       # Windows is hosted only, so its legs skip ci-runner.
       examples_windows: ${{ steps.legs.outputs.examples_windows }}
+      # gh-2832: the jobs that test installing onto a stock runner, planned
+      # so a plain PR runs their Linux legs alone. Hosted always, so they
+      # skip ci-runner too.
+      install_deps: ${{ steps.legs.outputs.install_deps }}
+      consumer: ${{ steps.legs.outputs.consumer }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -510,7 +515,12 @@ jobs:
     # 14 runs. clang-cl, not cl.exe: MSVC's own compiler has no `_Complex`.
     name: Examples (windows-latest, clang-cl, ${{ matrix.python-version }})
     needs: [changes, toolchain]
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    # A plain PR plans no Windows leg (gh-2832), and GitHub refuses an empty
+    # matrix, so the job skips on an empty one instead.
+    if: >-
+      needs.changes.outputs.src == 'true' &&
+      needs.changes.outputs.code != 'false' &&
+      needs.toolchain.outputs.examples_windows != ''
     runs-on: windows-latest
     timeout-minutes: 30
     # Its Pythons, from the classifiers (the toolchain job's `legs` step,
@@ -628,14 +638,14 @@ jobs:
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
-    needs: changes
+    needs: [changes, toolchain]
     if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
+      # LEGS_INSTALL_DEPS in the toolchain job's `legs` step (gh-2832).
+      matrix: ${{ fromJSON(needs.toolchain.outputs.install_deps) }}
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -892,22 +902,9 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { name: ubuntu-latest, os: ubuntu-latest, image: "2404" }
-          # The 24.04 image is a multi-arch index: this pulls its arm64 half.
-          - { name: ubuntu-24.04-arm, os: ubuntu-24.04-arm, image: "2404" }
-          - { name: macos-latest, os: macos-latest }
-          # freedesktop pkg-config 0.29, where 24.04 has pkgconf.
-          - name: "ubuntu-22.04, pkg-config 0.29"
-            os: ubuntu-latest
-            image: "2204"
-          # The floor every generated project declares, baked into the 22.04
-          # image by docker/ci-extra.sh (amd64 only, as Kitware ships it).
-          - name: "CMake 3.16.3"
-            os: ubuntu-latest
-            image: "2204"
-            cmake: "3.16.3"
+      # LEGS_CONSUMER in the toolchain job's `legs` step (gh-2832), which
+      # says why each leg is there.
+      matrix: ${{ fromJSON(needs.toolchain.outputs.consumer) }}
 
     steps:
       - uses: actions/checkout@v7.0.1

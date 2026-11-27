@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Which CI legs a run owes, on the Pythons jm declares (gh-2125, gh-2626).
+"""Which CI legs a run owes, on the Pythons jm declares (gh-2125, gh-2626,
+gh-2832).
 
 The Pythons jm supports are declared ONCE: the ``Programming Language ::
 Python :: 3.N`` classifiers in ``pyproject.toml`` (:func:`pythons`). No
@@ -14,26 +15,32 @@ from the classifiers. That step runs this, as ``make ci-test-legs``, and the
 ``test`` job reads what it prints with ``fromJSON``. It expands the matrix
 the way GitHub does and keeps the legs this run owes:
 
-``pull_request``
-    Every leg, except that an OS named in ``TRIM`` runs only its floor and
-    its newest Python, plus the middle one if the OS is also named in
-    ``MIDDLE``. macOS bounded PR throughput: its runner pool is a quarter
-    of the org's, and its five legs were ~100 of a run's ~340 job-minutes.
-    The free plan's ~20 concurrent jobs then bounded it for the Linux legs
-    too (queue waits averaged ~400s on every runner label), so they are
-    trimmed the same way.
+a plain PR (``pull_request``, head ref not under :data:`TRAIN_PREFIX`)
+    The Linux legs only (:func:`linux`), and of those, an OS named in
+    ``TRIM`` runs only its floor and its newest Python, plus the middle one
+    if the OS is also named in ``MIDDLE``. Every PR lands through a train
+    (``make train``), which cancels the PR's run and tests the combined
+    tree once, so a PR's macOS and Windows legs cost the most and gated
+    nothing the train did not gate again: nine PR runs once held the
+    release's pre-publish macOS legs in the queue for over an hour
+    (gh-2832). The free plan's ~20 concurrent jobs bound the Linux legs
+    too (queue waits averaged ~400s on every runner label), hence the trim.
+    ``CI passed`` on a plain PR certifies this set and no more.
+a train PR (head ref ``train/...``)
+    Every leg: it is what lands.
 a ``push`` whose tree its PR already tested (``TESTED=true``)
-    Exactly the legs that PR trimmed, and nothing else. gh-1801 lets such a
-    push skip what its PR ran; it may not skip what its PR did not run, or
-    the trimmed Pythons would be tested only by the nightly, which gates no
-    release. So ``CI passed`` on every ``main`` commit -- what
-    ``release.yml`` reads -- still certifies the whole matrix on that tree,
-    from the PR's legs plus these.
+    Every leg a plain PR skips, and nothing else. gh-1801 lets such a push
+    skip what its PR ran; it may not skip what its PR did not run, or those
+    legs would be tested only by the nightly, which gates no release. So
+    ``CI passed`` on every ``main`` commit -- what ``release.yml`` reads --
+    still certifies the whole matrix on that tree. The push cannot tell a
+    train's tree (which ran everything) from a plain PR's, so it owes the
+    superset; just-buildit.github.io#249 is the precise version.
 anything else
     Every leg: a push to ``main`` the PR did not test, the nightly, a
-    dispatch.
+    dispatch. A PR that must run everything without a train is dispatched.
 
-The PR legs and a tested push's legs partition the matrix: neither
+A plain PR's legs and a tested push's legs partition the matrix: neither
 overlaps the other, and together they are all of it.
 
 A leg that is about ONE Python rather than all of them names it by its
@@ -58,16 +65,21 @@ run exactly what the workflow runs:
     ``github.event_name``.
 ``TESTED``
     ``changes.yml``'s ``tested`` output: ``true`` only on such a push.
+``HEAD_REF``
+    ``github.head_ref``: the PR's branch, which says whether it is a train.
 ``LEGS_<NAME>``
-    Another job's legs, JSON: a matrix whose Pythons are tokens. Printed,
-    resolved and expanded but never trimmed, as ``<name>=`` (lower case):
-    every event owes them. ci.yml's ``examples`` jobs are planned this way
-    (gh-2626), and artifact.yml's pre-publish smoke legs.
+    Another job's legs, JSON: a matrix whose Pythons are tokens (or that
+    names none). Resolved and expanded but never trimmed, and printed as
+    ``<name>=`` (lower case). A plain PR keeps only its Linux legs; every
+    other event owes all of them. ci.yml's ``examples``,
+    ``install-deps-smoke`` and ``consumer-smoke`` jobs are planned this
+    way, and artifact.yml's pre-publish smoke legs, which see the calling
+    run's event and head ref.
 
 Prints ``matrix={"include": [...]}`` for ``$GITHUB_OUTPUT``, or ``matrix=``
 when nothing is owed: GitHub refuses an empty matrix, so the ``test`` job
 skips on an empty output instead. Then a ``<name>=`` line per
-``LEGS_<NAME>``, in name order. With the argument ``pythons`` it prints the
+``LEGS_<NAME>``, in name order, empty in the same way. With the argument ``pythons`` it prints the
 declared Pythons instead, one line, oldest first (``make ci-pythons``).
 
 Examples
@@ -79,14 +91,22 @@ Examples
 [('linux', '3.9'), ('linux', '3.10'), ('linux', '3.11'), ('mac', '3.10'), \
 ('mac', '3.11')]
 >>> m["python-version"].append("3.12")
->>> pairs(owed(m, ["mac"], [], "pull_request", ""))
-[('linux', '3.9'), ('linux', '3.10'), ('linux', '3.11'), ('linux', '3.12'), \
-('mac', '3.10'), ('mac', '3.12')]
->>> pairs(owed(m, ["mac"], [], "push", "true"))
-[('mac', '3.11')]
->>> pairs(owed(m, ["linux"], ["linux"], "pull_request", ""))[:3]
-[('linux', '3.9'), ('linux', '3.11'), ('linux', '3.12')]
->>> len(owed(m, ["mac"], [], "schedule", "")) == len(expand(m))
+>>> m["os"] = ["ubuntu-latest", "macos-latest"]
+>>> m["exclude"] = [{"os": "macos-latest", "python-version": "3.9"}]
+
+A plain PR runs Linux alone, trimmed to its edges and middle; the push
+that lands it owes the rest; a train runs everything:
+
+>>> trim, mid = ["ubuntu-latest"], ["ubuntu-latest"]
+>>> pairs(owed(m, trim, mid, "pull_request", "", "fix-it"))
+[('ubuntu-latest', '3.9'), ('ubuntu-latest', '3.11'), \
+('ubuntu-latest', '3.12')]
+>>> pairs(owed(m, trim, mid, "push", "true"))
+[('ubuntu-latest', '3.10'), ('macos-latest', '3.10'), \
+('macos-latest', '3.11'), ('macos-latest', '3.12')]
+>>> len(owed(m, trim, mid, "pull_request", "", "train/1-2")) == 7
+True
+>>> len(owed(m, trim, mid, "schedule", "")) == len(expand(m))
 True
 
 The tokens, against a declared list:
@@ -126,6 +146,16 @@ CLASSIFIER = re.compile(r"^Programming Language :: Python :: (3\.\d+)$")
 
 #: A Python named by its place among the declared ones.
 TOKENS = ("oldest", "middle", "newest", "next")
+
+#: The head-ref prefix of a train PR: ``make train``'s default branch,
+#: ``train/<n>-<n>...`` (scripts/train.py, vendored). A train given a
+#: ``TRAIN_BRANCH`` outside it is planned as a plain PR, and runs Linux
+#: alone.
+TRAIN_PREFIX = "train/"
+
+#: The runner-label prefix of a Linux leg: every Linux label CI uses,
+#: hosted or arm (``ubuntu-latest``, ``ubuntu-24.04``, ``ubuntu-24.04-arm``).
+LINUX_PREFIX = "ubuntu-"
 
 
 def _version(leg: Leg) -> "tuple[int, ...]":
@@ -312,25 +342,50 @@ def trimmed(
     return out
 
 
+def linux(leg: Leg) -> bool:
+    """Whether *leg* runs on Linux: its ``os`` label is an ``ubuntu-`` one.
+
+    The one answer to "is this a cheap leg", for the ``test`` matrix and
+    every ``LEGS_<NAME>`` list alike.
+    """
+    return str(leg["os"]).startswith(LINUX_PREFIX)
+
+
+def plain_pr(event: str, head_ref: str) -> bool:
+    """Whether a run on *event* from *head_ref* is a plain PR's: a
+    ``pull_request`` whose branch is not a train's (:data:`TRAIN_PREFIX`).
+    """
+    return event == "pull_request" and not head_ref.startswith(TRAIN_PREFIX)
+
+
 def owed(
     matrix: "dict[str, Any]",
     trim: "List[str]",
     middle: "List[str]",
     event: str,
     tested: str,
+    head_ref: str = "",
 ) -> "List[Leg]":
-    """The legs a run on *event* owes; see the module docstring."""
+    """The legs a run on *event* owes; see the module docstring.
+
+    A plain PR's legs are the Linux legs less the trimmed ones; a tested
+    push owes exactly the others, so the two partition the matrix.
+    """
     legs = expand(matrix)
     skip = trimmed(legs, trim, middle)
+    pr = [x for x in legs if linux(x) and x not in skip]
     if tested == "true":
-        return skip
-    if event == "pull_request":
-        return [x for x in legs if x not in skip]
+        return [x for x in legs if x not in pr]
+    if plain_pr(event, head_ref):
+        return pr
     return legs
 
 
 def _names(legs: "List[Leg]") -> str:
-    return ", ".join(f"{x['os']} {x['python-version']}" for x in legs)
+    return ", ".join(
+        " ".join(str(x[k]) for k in ("os", "python-version") if k in x)
+        for x in legs
+    )
 
 
 def main(argv: "List[str] | None" = None) -> int:
@@ -346,6 +401,7 @@ def main(argv: "List[str] | None" = None) -> int:
             os.environ.get("MIDDLE", "").split(),
             os.environ.get("EVENT", ""),
             os.environ.get("TESTED", ""),
+            os.environ.get("HEAD_REF", ""),
         )
         value = json.dumps({"include": legs}) if legs else ""
         print(f"matrix={value}")
@@ -353,10 +409,14 @@ def main(argv: "List[str] | None" = None) -> int:
             f"ci-test-legs: {len(legs)} leg(s): {_names(legs)}",
             file=sys.stderr,
         )
+    pr = plain_pr(os.environ.get("EVENT", ""), os.environ.get("HEAD_REF", ""))
     for var in sorted(k for k in os.environ if k.startswith("LEGS_")):
         legs = expand(resolve(json.loads(os.environ[var]), pys))
+        if pr:
+            legs = [x for x in legs if linux(x)]
         name = var[len("LEGS_") :].lower()
-        print(f"{name}={json.dumps({'include': legs})}")
+        value = json.dumps({"include": legs}) if legs else ""
+        print(f"{name}={value}")
         print(f"ci-test-legs: {name}: {_names(legs)}", file=sys.stderr)
     return 0
 

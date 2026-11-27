@@ -84,6 +84,12 @@ jobs:
       - name: Which Python each smoke leg runs
         id: legs
         env:
+          # gh-2832: the CALLING run's event and branch (a workflow_call
+          # sees its caller's), so ci.yml's plain-PR call plans its Linux
+          # legs alone and the Windows leg waits for the train. A release,
+          # a dispatch and a workflow_run plan every leg.
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
           LEGS_SMOKE: >-
             {"os": ["ubuntu-latest", "macos-latest"],
             "include": [{"os": "ubuntu-latest", "python-version": "oldest",
@@ -818,10 +824,14 @@ jobs:
   smoke-windows:
     name: Smoke test (windows-latest, clang-cl, py${{ matrix.python-version }})
     needs: legs
+    # A plain PR's plan holds no Windows leg (gh-2832), and GitHub refuses
+    # an empty matrix, so the job skips on an empty one instead.
     if: >
-      inputs.wheel-artifact != '' ||
+      (inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.conclusion == 'success') &&
+      (inputs.quick && needs.legs.outputs.windows_quick ||
+      needs.legs.outputs.windows) != ''
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
