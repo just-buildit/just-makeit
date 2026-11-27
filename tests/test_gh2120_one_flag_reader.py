@@ -263,13 +263,23 @@ def test_a_string_false_flag_is_off(tmp_path, spelling, on):
     setter and ``required = "false"`` made a defaulted init param
     required. Each spelling against its bool, on both faces."""
     root = _gain_project(tmp_path, writable=spelling, required=spelling)
-    ext = (root / "native/src/g/g_ext.c").read_text(encoding="utf-8")
-    pyi = (root / "src/p/g.pyi").read_text(encoding="utf-8")
-    assert ("G_setprop_level" in ext) is on, ext
-    assert ("@level.setter" in pyi) is on, pyi
-    init = "def __init__(self, gain: float) -> None"
-    optional = "def __init__(self, gain: float = 1.0) -> None"
-    assert (init if on else optional) in pyi, pyi
+
+    def check(after: str) -> None:
+        ext = (root / "native/src/g/g_ext.c").read_text(encoding="utf-8")
+        pyi = (root / "src/p/g.pyi").read_text(encoding="utf-8")
+        assert ("G_setprop_level" in ext) is on, (after, ext)
+        assert ("@level.setter" in pyi) is on, (after, pyi)
+        init = "def __init__(self, gain: float) -> None"
+        optional = "def __init__(self, gain: float = 1.0) -> None"
+        assert (init if on else optional) in pyi, (after, pyi)
+
+    check("apply")
+    # A command that regenerates the object's glue without `apply`'s
+    # replay, which rebuilds each property from the manifest first: the
+    # properties context reads the manifest rows themselves.
+    r = run_cli("property", "g", "other", "--type", "double", cwd=root)
+    assert r.returncode == 0, r.stderr
+    check("property")
 
 
 # --- source scans (registration-free) ---------------------------------------
@@ -360,20 +370,94 @@ def test_exemptions_still_exist():
     ) - seen
 
 
-#: Functions that test a FLAG_KEYS-named key for truth on a dict jm built
-#: itself, not on a manifest row, each with why. Keyed by (file, function).
-_NOT_A_MANIFEST_ROW = {
-    # `f` is a CLI flag record from `_value_flag` / the string-enum branch
-    # of `_app_flags`, whose `required` is always a Python bool (slot 8 of
-    # `_config.init_params` is read through `_truthy` at its source).
-    ("_app.py", "_argparse_block"),
-    ("_app.py", "_c_argv_parser"),
+#: Reads of a FLAG_KEYS-named key that are not ``truthy(...)``, each
+#: legitimately raw, each with why. Keyed by (file, enclosing function,
+#: the read's source), so an exemption covers that one read and nothing
+#: else the function does.
+_RAW_READ_OK = {
+    # jm's own CLI flag records (`_value_flag`, the string-enum branch of
+    # `_app_flags`): `required` there is always a Python bool, built from
+    # slot 8 of `_config.init_params`, which reads it through `_truthy`.
+    ("_app.py", "_argparse_block", "f.get('required')"),
+    ("_app.py", "_c_argv_parser", "f.get('required')"),
+    # The bool-only load validators: each reads the raw value to refuse
+    # anything but a TOML bool, naming it -- `truthy` would hide the
+    # value they exist to report.
+    ("_config.py", "_why_key_errors", "mod['create_why']"),
+    ("_config.py", "_why_key_errors", "fn['why']"),
+    ("_config.py", "_create_why_errors", "table['create_why']"),
+    (
+        "_context/_diagnostics.py",
+        "method_status_out_errors",
+        "m['status_out']",
+    ),
+    ("_context/_diagnostics.py", "method_why_errors", "m['why']"),
+    ("_context/_parse.py", "required_errors", "p[REQUIRED_KEY]"),
+    ("_retain.py", "errors", "p[KEY]"),
+    # `[project.bench]` is the benchmark settings TABLE, not a method's
+    # `bench = false` opt-out (`_keys._FLAG_NAMED_TABLES`).
+    ("_apply.py", "_replay", "cfg.get('project', {}).get('bench')"),
+    (
+        "_config.py",
+        "project_bench_block_sizes",
+        "cfg.get('project', {}).get('bench', {})",
+    ),
+    ("_config.py", "bench_timeout", "cfg.get('project', {}).get('bench', {})"),
+    # `NATIVE_FILES` maps a generated native file's role to its place; its
+    # `bench` row is a path, not a manifest value.
+    ("_hollow.py", "unrun_benches", "INC.NATIVE_FILES['bench']"),
 }
 
 
-def _flag_key(node: ast.AST, consts: "dict[str, str]") -> "str | None":
-    """The ``FLAG_KEYS`` key *node* reads -- ``x.get(k[, d])`` or
-    ``x[k]``, *k* a literal or a module-level string constant -- or None."""
+def _module_tuples(tree: ast.Module) -> "dict[str, tuple[str, ...]]":
+    """Module-level ``NAME = ("a", "b", ...)`` string tuples / lists."""
+    out = {}
+    for node in tree.body:
+        if (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and isinstance(node.value, (ast.Tuple, ast.List))
+            and all(
+                isinstance(e, ast.Constant) and isinstance(e.value, str)
+                for e in node.value.elts
+            )
+        ):
+            targets = (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    out[t.id] = tuple(e.value for e in node.value.elts)
+    return out
+
+
+def _loop_keys(tree: ast.Module) -> "dict[tuple[str, str], set[str]]":
+    """``(function, loop variable)`` -> the FLAG_KEYS keys it takes, for
+    every ``for <var> in <MODULE_TUPLE>`` whose tuple names one: a read
+    ``table.get(<var>)`` in that loop reads those flags."""
+    tuples = _module_tuples(tree)
+    out: "dict[tuple[str, str], set[str]]" = {}
+    for owner, node in _enclosing(tree):
+        if (
+            isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and isinstance(node.iter, ast.Name)
+            and node.iter.id in tuples
+        ):
+            flags = set(tuples[node.iter.id]) & _keys.FLAG_KEYS
+            if flags:
+                out.setdefault((owner, node.target.id), set()).update(flags)
+    return out
+
+
+def _flag_key(
+    node: ast.AST,
+    consts: "dict[str, str]",
+    owner: str = "",
+    loops: "dict[tuple[str, str], set[str]] | None" = None,
+) -> "str | None":
+    """The ``FLAG_KEYS`` key *node* reads -- ``x.get(k[, d])`` or a load
+    of ``x[k]``, *k* a literal, a module-level string constant, or a loop
+    variable over a module tuple that names a flag -- or None."""
     k: object = None
     if (
         isinstance(node, ast.Call)
@@ -382,83 +466,76 @@ def _flag_key(node: ast.AST, consts: "dict[str, str]") -> "str | None":
         and node.args
     ):
         k = node.args[0]
-    elif isinstance(node, ast.Subscript):
+    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
         k = node.slice
     if isinstance(k, ast.Constant) and isinstance(k.value, str):
-        key = k.value
-    elif isinstance(k, ast.Name):
-        key = consts.get(k.id)
-    else:
-        return None
-    return key if key in _keys.FLAG_KEYS else None
+        return k.value if k.value in _keys.FLAG_KEYS else None
+    if isinstance(k, ast.Name):
+        if k.id in consts:
+            key = consts[k.id]
+            return key if key in _keys.FLAG_KEYS else None
+        hit = (loops or {}).get((owner, k.id))
+        if hit:
+            return sorted(hit)[0]
+    return None
 
 
-def _truth_tested(tree: ast.AST):
-    """Yield ``(function name, node)`` for every expression Python tests
-    for truth: an ``if`` / ``while`` / ternary / ``assert`` test, an
-    ``and`` / ``or`` operand, a ``not`` operand, a comprehension filter,
-    and the argument of ``bool()`` (the element of ``any()`` / ``all()``
-    over a comprehension)."""
-    for owner, node in _enclosing(tree):
-        if isinstance(node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
-            yield owner, node.test
-        elif isinstance(node, ast.BoolOp):
-            for v in node.values:
-                yield owner, v
-        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-            yield owner, node.operand
-        elif isinstance(node, ast.comprehension):
-            for cond in node.ifs:
-                yield owner, cond
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in ("bool", "any", "all")
-            and node.args
-        ):
-            arg = node.args[0]
-            if isinstance(arg, (ast.GeneratorExp, ast.ListComp)):
-                yield owner, arg.elt
-            else:
-                yield owner, arg
+def _is_truthy_call(node: "ast.AST | None") -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    f = node.func
+    name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+    return name in ("truthy", "_truthy")
 
 
-def _bare_flag_reads(tree: ast.Module) -> "list[tuple[str, int, str]]":
-    """``(function, line, source)`` of every bare truth test of a
-    ``FLAG_KEYS`` key in *tree*."""
+def _raw_flag_reads(tree: ast.Module) -> "list[tuple[str, int, str]]":
+    """``(function, line, source)`` of every read of a ``FLAG_KEYS`` key
+    in *tree* that is not the first argument of ``truthy`` / ``_truthy``."""
     consts = _module_strings(tree)
-    return [
-        (owner, node.lineno, ast.unparse(node))
-        for owner, node in _truth_tested(tree)
-        if _flag_key(node, consts)
-    ]
+    loops = _loop_keys(tree)
+    parent: "dict[int, ast.AST]" = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    out = []
+    for owner, node in _enclosing(tree):
+        if not _flag_key(node, consts, owner, loops):
+            continue
+        up = parent.get(id(node))
+        if _is_truthy_call(up) and up.args and up.args[0] is node:
+            continue
+        out.append((owner, node.lineno, ast.unparse(node)))
+    return out
 
 
-def test_no_flag_is_read_bare_outside_truthy():
+def test_no_flag_is_read_raw_outside_truthy():
     """``if p.get("writable"):`` reads ``writable = "false"`` -- a spelling
-    load accepts -- as on, and a capsule property grew a setter it was
-    declared without. Every truth test of a flag goes through ``truthy``;
-    a ``truthy(x.get(k))`` call is not itself a truth test, so it passes."""
+    load accepts -- as on, and so does ``w = p.get("writable", False)``
+    tested three hundred lines later. Every read of a flag's value goes
+    through ``truthy``; what legitimately reads it raw is named in
+    ``_RAW_READ_OK`` with why."""
     found = [
         f"{rel}:{line} {src}"
         for rel, tree in _sources()
-        for owner, line, src in _bare_flag_reads(tree)
-        if (rel, owner) not in _NOT_A_MANIFEST_ROW
+        for owner, line, src in _raw_flag_reads(tree)
+        if (rel, owner, src) not in _RAW_READ_OK
     ]
     assert not found, (
-        'a flag tested for truth bare, which reads the string "false" as '
-        "on; read it through `_keys.truthy`:\n  " + "\n  ".join(found)
+        'a flag read raw, which reads the string "false" as on; read it '
+        "through `_keys.truthy` (`_keys.is_set` in a loop over keys):\n  "
+        + "\n  ".join(found)
     )
 
 
-def test_bare_read_exemptions_still_exist():
-    """An exemption whose function no longer reads a flag bare is stale."""
+def test_raw_read_exemptions_still_exist():
+    """An exemption whose read is gone is stale; drop it."""
     seen = {
-        (rel, owner)
+        (rel, owner, src)
         for rel, tree in _sources()
-        for owner, _line, _src in _bare_flag_reads(tree)
+        for owner, _line, src in _raw_flag_reads(tree)
     }
-    assert _NOT_A_MANIFEST_ROW <= seen, _NOT_A_MANIFEST_ROW - seen
+    assert _RAW_READ_OK <= seen, _RAW_READ_OK - seen
 
 
 @pytest.mark.parametrize(
@@ -467,30 +544,38 @@ def test_bare_read_exemptions_still_exist():
         "def f(p):\n    if p.get('writable'):\n        pass\n",
         "def f(p):\n    return bool(p.get('required'))\n",
         "def f(p):\n    return [a for a in p if a.get('writable')]\n",
-        "def f(p):\n    return any(a.get('writable') for a in p)\n",
         "def f(p):\n    return 1 if p['why'] else 0\n",
-        "def f(p):\n    return not p.get('mutable', False)\n",
-        "K = 'status_out'\ndef f(p):\n    return p.get(K) and 1\n",
+        "def f(p):\n    w = p.get('writable', False)\n    return w\n",
+        "def f(m):\n    so = m.get('status_out')\n    if so:\n        pass\n",
+        "K = 'status_out'\ndef f(p):\n    return p.get(K)\n",
+        "KS = ('out_size', 'why')\n"
+        "def f(fn):\n    for k in KS:\n        if fn.get(k):\n"
+        "            return k\n",
     ],
 )
-def test_the_bare_scan_is_armed(src):
-    """Each truth-test shape is found."""
-    assert len(_bare_flag_reads(ast.parse(src))) == 1
+def test_the_raw_scan_is_armed(src):
+    """Each shape of a raw read is found."""
+    assert len(_raw_flag_reads(ast.parse(src))) == 1
 
 
 @pytest.mark.parametrize(
     "src",
     [
         "def f(p):\n    if truthy(p.get('writable')):\n        pass\n",
-        "def f(p):\n    return [a for a in p if truthy(a.get('writable'))]\n",
-        "def f(p):\n    return bool(truthy(p.get('required')))\n",
-        # Not a flag key, and not a truth test.
+        "def f(p):\n    return C._truthy(p.get('required'))\n",
+        "def f(p):\n    p['writable'] = True\n",
+        "def f(p):\n    return 'why' in p\n",
         "def f(p):\n    if p.get('doc'):\n        pass\n",
-        "def f(p):\n    return p.get('writable', False)\n",
+        "KS = ('out_size', 'doc')\n"
+        "def f(fn):\n    for k in KS:\n        if fn.get(k):\n"
+        "            return k\n",
+        "KS = ('out_size', 'why')\n"
+        "def f(fn):\n    for k in KS:\n        if is_set(fn, k):\n"
+        "            return k\n",
     ],
 )
-def test_the_bare_scan_passes_a_read_through_truthy(src):
-    assert _bare_flag_reads(ast.parse(src)) == []
+def test_the_raw_scan_passes_a_read_through_truthy(src):
+    assert _raw_flag_reads(ast.parse(src)) == []
 
 
 def _module_strings(tree: ast.Module) -> "dict[str, str]":
@@ -508,19 +593,36 @@ def _module_strings(tree: ast.Module) -> "dict[str, str]":
     return out
 
 
+#: The reader that takes its key from its caller: ``_keys.is_set(table,
+#: key)``, for a loop over a list of keys. Its own ``truthy`` call names no
+#: key; each call of it names one (resolved below), and counts as a read.
+_KEY_FROM_CALLER = {("_keys.py", "is_set")}
+
+
 def _truthy_keys() -> "tuple[set[str], list[str]]":
-    """Every key the source reads through ``truthy`` / ``_truthy``, and
-    every such read whose key cannot be named."""
+    """Every key the source reads through ``truthy`` / ``_truthy`` (or
+    ``is_set``, whose key a loop over a module tuple names), and every
+    such read whose key cannot be named."""
     keys: "set[str]" = set()
     unnamed: "list[str]" = []
     for rel, tree in _sources():
         consts = _module_strings(tree)
-        for node in ast.walk(tree):
+        loops = _loop_keys(tree)
+        for owner, node in _enclosing(tree):
             if not isinstance(node, ast.Call):
                 continue
             f = node.func
             name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+            if name == "is_set" and len(node.args) == 2:
+                k = node.args[1]
+                if isinstance(k, ast.Name) and (owner, k.id) in loops:
+                    keys |= loops[(owner, k.id)]
+                    continue
+                unnamed.append(f"{rel}:{node.lineno} {ast.unparse(node)}")
+                continue
             if name not in ("truthy", "_truthy") or not node.args:
+                continue
+            if (rel, owner) in _KEY_FROM_CALLER:
                 continue
             arg = node.args[0]
             key = None
