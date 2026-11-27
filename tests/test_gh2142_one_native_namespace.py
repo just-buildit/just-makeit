@@ -222,3 +222,16 @@ def test_a_shared_c_stem_in_a_manifest_is_refused(tmp_path):
     with pytest.raises(Refusal, match="C symbol stem 'p_filt'"):
         load_manifest(root)
     _refused(root, "status", "--check")
+
+
+def test_a_member_sharing_its_own_modules_stem_is_refused(tmp_path):
+    """Only the module's COLLOCATED object (`collocated_object`) may share
+    its stem. A member `p_filt` of module `filt` under `c_prefix = "p"` is
+    not that object -- the collocated one is `filt` -- yet it derives the
+    module's `p_filt` stem, so it is refused like any other clash. Widening
+    the exception to "an object of the same module" lets it through."""
+    root = _project(tmp_path / "p", ["module", "filt"])
+    _refused(root, "object", "p_filt", "--module", "filt")
+    r = run_cli("object", "p_filt", "--module", "filt", cwd=root)
+    (line,) = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert "C symbol stem 'p_filt'" in line, line
