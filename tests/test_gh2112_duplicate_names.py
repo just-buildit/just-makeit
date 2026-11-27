@@ -108,8 +108,16 @@ def test_jm_new_refuses_before_the_project_exists(tmp_path: Path) -> None:
              "--param", "a:int"),
             "module 'm' function 'f' params: 'a'",
         ),
+        (
+            ("function", "r", "--module", "m", "--return-type", "r_t",
+             "--result-field", "a:int", "--result-field", "a:int"),
+            "module 'm' function 'r' result_fields: 'a'",
+        ),
     ],
-    ids=["state", "init-param", "method-param", "result-field", "fn-param"],
+    ids=[
+        "state", "init-param", "method-param", "result-field", "fn-param",
+        "fn-result-field",
+    ],
 )  # fmt: skip
 def test_every_verb_refuses_and_leaves_the_tree(proj, args, names) -> None:
     _refused(proj, *args, names=names)
@@ -151,6 +159,34 @@ def test_load_refuses_it_on_its_own(proj: Path) -> None:
 
     _with_duplicate_state(proj)
     with pytest.raises(Refusal, match="'s' state: 'n' is declared twice"):
+        C.load(proj)
+
+
+def test_load_refuses_one_made_by_two_init_groups(proj: Path) -> None:
+    """gh-2799: the check sees the expanded ``init_params``.
+
+    Two ``[[s.init_groups]]`` rows with one group and one prefix each make
+    ``a_gain``. ``load`` asked the check before ``_expand_init_groups``, so
+    it returned ``init_params ['a_gain', 'a_gain']`` and only a later
+    ``save`` refused it; every read-only reader took it.
+    """
+    from just_makeit import _config as C
+    from just_makeit._report import Refusal
+
+    manifest = proj / "just-makeit.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + '\n[[group]]\nname = "geom"\n'
+        'fields = [{ name = "gain", type = "double" }]\n',
+        encoding="utf-8",
+    )
+    frag = proj / "objects" / "s.toml"
+    row = '\n[[s.init_groups]]\ngroup = "geom"\nprefix = "a"\n'
+    frag.write_text(
+        frag.read_text(encoding="utf-8") + row + row, encoding="utf-8"
+    )
+    with pytest.raises(
+        Refusal, match="'s' init_params: 'a_gain' is declared twice"
+    ):
         C.load(proj)
 
 

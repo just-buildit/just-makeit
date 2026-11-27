@@ -280,10 +280,6 @@ def load(root: Path) -> dict:
     cycles = object_ref_cycles(cfg)
     if cycles:
         raise Refusal("\n".join(cycles))
-    # gh-2112: a name twice in one C struct or parameter list.
-    dupes = duplicate_name_errors(cfg)
-    if dupes:
-        _refuse(dupes)
     # gh-2259: a generating source's delegated generator methods, asked
     # only of a manifest with a composer to ask about.
     if any(is_composer_module(cfg, m) for m in modules(cfg)):
@@ -299,6 +295,12 @@ def load(root: Path) -> dict:
         if set_fn_errs:
             _refuse(set_fn_errs)
     _expand_init_groups(cfg)
+    # gh-2112: a name twice in one C struct or parameter list. After the
+    # group expansion (gh-2799), so two `init_groups` rows making one name
+    # are refused here as `save` refuses them, not only by a later write.
+    dupes = duplicate_name_errors(cfg)
+    if dupes:
+        _refuse(dupes)
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
     # wrong guess -- accepted as truthy, it rendered a two-argument call to
     # a one-argument reader and failed at C compile, far from this line.
