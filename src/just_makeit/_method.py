@@ -1797,8 +1797,8 @@ def _signature_differences(
     arrive already typed, and normalising only one of them is how a comparison
     like this reports differences that do not exist.
 
-    `extra_args` has no row of its own because `_apply._replay_method` already
-    funnels it into `params` — comparing both would ask the same question
+    `extra_args` has no row of its own because `_config.load` already reads
+    it as `params` (gh-2208) — comparing both would ask the same question
     twice and answer it differently when only one is set.
     """
 

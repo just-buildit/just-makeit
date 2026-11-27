@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from _jmrun import run_cli
+from just_makeit import _config as C
 from just_makeit import _keys
 
 _CONST = "OFDM_CP_DEFAULT"
@@ -85,6 +86,12 @@ def test_doppler_shape_is_refused_by_apply(tmp_path):
     assert "cyclic_prefix: int = ...)" in stub.read_text(encoding="utf-8")
 
 
+def _loaded(cfg: dict) -> dict:
+    """*cfg* with the synonyms `C.load` reads, read."""
+    assert C.unify_params_synonym(cfg) == []
+    return cfg
+
+
 #: One manifest per refused parameter kind, the row placed where that
 #: kind's table lives. Keyed by `_keys.KIND_KEYS` name, so a parameter
 #: table the derivation gains fails `test_every_refused_kind_has_a_case`
@@ -92,7 +99,10 @@ def test_doppler_shape_is_refused_by_apply(tmp_path):
 _CASES = {
     "param": [
         lambda r: {"o": {"methods": [{"name": "m", "params": [r]}]}},
-        lambda r: {"o": {"methods": [{"name": "m", "extra_args": [r]}]}},
+        # The synonym, as `C.load` hands it on (gh-2208).
+        lambda r: _loaded(
+            {"o": {"methods": [{"name": "m", "extra_args": [r]}]}}
+        ),
         # gh-504's view: its method rows were walked by nothing.
         lambda r: {
             "o": {

@@ -12,7 +12,9 @@ and ``apply`` with a bare ``KeyError``:
   ever checking itself;
 - a method's ``multi_output`` (``_CTYPE_META[rt]["zero"]``);
 - a method's ``extra_args``, the synonym of ``params`` the replay forwards
-  when it is set (``_param_type_errors`` read only ``params``).
+  when it is set (``_param_type_errors`` read only ``params``). Since
+  gh-2208 ``C.load`` reads it as ``params`` for every face, and the
+  refusal still names it ``extra_arg``.
 
 ``--out-type`` and ``--multi-output`` each held an inline membership test, on
 two command lines apiece; ``_types.is_out_type`` and
@@ -39,6 +41,13 @@ GATE: each row the command line refuses -- the issue's four, ``extra_args``,
       type is covered; every spelling the shared predicates accept passes
       the manifest gate; and ``jm method`` / ``jm object`` / ``jm function``
       refuse exactly the spellings the manifest refuses.
+
+GATE (gh-2208): an ``extra_args`` method whose header declaration carries an
+      authored block -- a standalone object and a module object -- applies,
+      reports clean, names ``k`` in every ``.pyi``, and compiles, imports and
+      answers a call passing ``k``; a save writes ``extra_args`` back, a
+      deferred load reads it as a load from disk does, and a row with both
+      spellings is refused.
 """
 
 from __future__ import annotations
@@ -47,6 +56,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from _compilers import default_cc
 
 try:
     import tomllib
@@ -61,6 +71,8 @@ from just_makeit import _types as T
 #: A spelling no table registers, distinctive enough that a ``KeyError``
 #: naming it can only come from the probe.
 PROBE = "gh1977_unregistered_t"
+
+_NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
 #: A plain method: a scalar in, a scalar out, nothing that changes its shape.
 BASE_METHOD = {"name": "m", "arg_type": "float", "return_type": "float"}
@@ -450,6 +462,154 @@ def test_accepted_rows_apply_and_report_clean(blank, tmp_path):
     )
     _run_ok(root, "apply")
     _run_ok(root, "status", "--check")
+
+
+#: gh-2208: the C body each ``m3`` kernel gets, so a call that passes ``k``
+#: has an answer only ``k`` can give.
+_SCALE_BODY = "(void)state;\n    return x * (float)k;"
+
+#: gh-2208: the project's own test, which calls each ``m3`` with ``k`` and
+#: leaves a file behind when it ran, so a run that never collected it is
+#: told apart from a run that passed it.
+_CALLS_K = """\
+from pathlib import Path
+
+from p import O
+from p.vm import Vo
+
+
+def test_m3_takes_k():
+    assert O().m3(2.0, 3) == 6.0
+    assert Vo().m3(2.0, 5) == 10.0
+    Path(__file__).with_suffix(".ran").write_text("ok", encoding="utf-8")
+"""
+
+
+@pytest.mark.skipif(_NO_TOOLCHAIN, reason="no cmake / C compiler")
+def test_extra_args_survive_an_authored_header_block(blank, tmp_path):
+    """gh-2208, built: an ``extra_args`` method keeps its argument once its
+    header declaration carries an authored Doxygen block.
+
+    That block makes the header "enriched", which sends ``apply`` into its
+    post-replay glue re-render. Only the replay translated ``extra_args``,
+    so the re-render bound ``m3(x)`` against ``m3(state, x, k)``: the project
+    stopped compiling, the ``.pyi`` dropped ``k``, and ``status --check``,
+    rendering the same way, exited 0. A standalone object (``o``) and a
+    module object (``vo``), each compiled, imported and called with ``k``.
+    """
+    root = _copy(blank, tmp_path)
+    row = {
+        "name": "m3",
+        "arg_type": "float",
+        "return_type": "float",
+        "extra_args": [{"name": "k", "type": "int32_t"}],
+    }
+    _write_row(root, "method", row)
+    with open(root / "objects" / "vo.toml", "a", encoding="utf-8") as fh:
+        fh.write("\n[[vo.methods]]\n" + _row_text(row))
+    _run_ok(root, "apply")
+    for comp in ("o", "vo"):
+        (header,) = root.rglob(f"{comp}_core.h")
+        decl = f"float {comp}_m3({comp}_state_t *state, float x, int32_t k);"
+        text = header.read_text(encoding="utf-8")
+        assert text.count(decl) == 1, (decl, text)
+        header.write_text(
+            text.replace(decl, "/**\n * @brief Scale x by k.\n */\n" + decl),
+            encoding="utf-8",
+        )
+        (core,) = root.rglob(f"{comp}_core.c")
+        stub = "(void)state; (void)x; (void)k;\n    return (float)0.0f;"
+        body = core.read_text(encoding="utf-8")
+        assert body.count(stub) == 1, body
+        core.write_text(body.replace(stub, _SCALE_BODY), encoding="utf-8")
+    _run_ok(root, "apply")
+    _run_ok(root, "status", "--check")
+    # The manifest keeps the author's spelling: `load` reads the synonym,
+    # and `save` writes it back as it was.
+    assert "extra_args" in (root / "objects" / "o.toml").read_text("utf-8")
+    stubs = "".join(
+        p.read_text("utf-8") for p in sorted((root / "src").rglob("*.pyi"))
+    )
+    # Every class carrying m3 -- O, Vo, and the view over Vo -- names k.
+    with_k = stubs.count("def m3(self, x: float, k: int)")
+    assert with_k >= 2 and stubs.count("def m3(") == with_k, stubs
+    probe = root / "src" / "p" / "tests" / "test_gh2208_calls_k.py"
+    probe.write_text(_CALLS_K, encoding="utf-8")
+    out = run_cli("test", cwd=root)
+    assert out.returncode == 0, out.stdout[-3000:] + out.stderr[-3000:]
+    assert probe.with_suffix(".ran").is_file(), out.stdout[-3000:]
+
+
+def _with_m3(blank: Path, tmp_path: Path) -> Path:
+    root = _copy(blank, tmp_path)
+    _write_row(
+        root,
+        "method",
+        {
+            "name": "m3",
+            "arg_type": "float",
+            "return_type": "float",
+            "extra_args": [{"name": "k", "type": "int32_t"}],
+        },
+    )
+    return root
+
+
+def test_a_save_writes_the_synonym_back(blank, tmp_path):
+    """gh-2208: `load` reads ``extra_args`` as ``params``; a command that
+    saves the manifest writes the row back as the author spelled it."""
+    root = _with_m3(blank, tmp_path)
+    assert C.load(root)["o"]["methods"][-1]["params"][0]["name"] == "k"
+    _run_ok(
+        root, "method", "o", "m4", "--arg-type", "float", "--return-type",
+        "float",
+    )  # fmt: skip
+    m3 = _loaded_row(root, "method", "m3")
+    assert m3["extra_args"] == [{"name": "k", "type": "int32_t"}], m3
+    assert "params" not in m3 and C.PARAMS_SPELLED_KEY not in m3, m3
+
+
+def test_script_replays_the_synonyms_argument(blank, tmp_path):
+    """gh-2208's class: ``jm script`` read ``params`` alone, so the command
+    it reconstructed for an ``extra_args`` method declared no argument."""
+    r = run_cli("script", cwd=_with_m3(blank, tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    (m3,) = [c for c in r.stdout.split("\n\n") if " o m3 " in c]
+    assert "--param k:int32_t" in m3, m3
+
+
+def test_a_deferred_load_reads_the_synonym_as_disk_does(blank, tmp_path):
+    """gh-2208: inside `deferred_save` a load is served from the cache
+    `save` filled, which holds the author's spelling; it must read as the
+    same manifest a load from disk gives (gh-764's contract)."""
+    root = _with_m3(blank, tmp_path)
+    want = C.load(root)
+    with C.deferred_save():
+        C.save(root, C.load(root))
+        assert C.load(root) == want
+
+
+def test_both_spellings_on_one_row_are_refused(blank, tmp_path):
+    """gh-2208: ``params`` and ``extra_args`` name one list; a row with
+    both is refused rather than read one way by one face and the other
+    way by another."""
+    root = _copy(blank, tmp_path)
+    _write_row(
+        root,
+        "method",
+        {
+            "name": "m3",
+            "arg_type": "float",
+            "return_type": "float",
+            "params": [{"name": "j", "type": "int32_t"}],
+            "extra_args": [{"name": "k", "type": "int32_t"}],
+        },
+    )
+    before = _snapshot(root)
+    r = run_cli("apply", cwd=root)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "declares both params and extra_args" in r.stderr, r.stderr
+    assert _snapshot(root) == before
 
 
 # -- the command lines ask the same predicate ------------------------------

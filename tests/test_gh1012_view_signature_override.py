@@ -488,8 +488,9 @@ def test_every_signature_key_has_a_comparison():
     it compares. The alternative — a key nobody compares — is exactly gh-1011:
     a declared difference that reaches no face and no diagnostic.
 
-    `extra_args` is the one exclusion, and it is not a waiver: `_replay_method`
-    funnels it into `params`, so comparing both would ask one question twice.
+    `extra_args` is the one exclusion, and it is not a waiver: `C.load`
+    reads it as `params` (gh-2208), so comparing both would ask one question
+    twice.
     """
     compared = set(_SIGNATURE_COERCIONS)
     assert METHOD_SIGNATURE_KEYS - compared - {"extra_args"} == set()
