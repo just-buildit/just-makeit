@@ -24,6 +24,8 @@ GATE: PYTHON is never empty and always names a runnable Python 3, including
       when uv finds no interpreter; it is never the checkout's .venv.
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
