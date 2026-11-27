@@ -58,9 +58,15 @@ HAS_PR_WATCH = 1
 # --no-project` still discovers a .venv above the cwd, so a checkout's own
 # venv became the default; `uv python find --system` answers without it.
 # Its one consumer, DOCS_PREPARE (scripts/copy_examples.py), is stdlib-only,
-# so any base interpreter serves. tests/test_gh2170_python_default.py runs
-# this exact expression from a directory that holds a .venv.
-PYTHON     ?= $(shell uv python find --system 2>/dev/null || python3)
+# so any base interpreter serves. The fallback NAMES python3 (`command -v`),
+# never runs it: a bare `|| python3` executed the interpreter, which read its
+# program from stdin, printed nothing and left PYTHON empty -- in CI, where
+# `uv python find --system` finds no interpreter for .python-version's 3.12,
+# so make ran scripts/copy_examples.py as a program. `$(or ...,python3)` keeps
+# it from ever being empty. tests/test_gh2170_python_default.py expands
+# PYTHON through make itself, from a .venv checkout and with uv finding none.
+PYTHON     ?= $(or $(shell uv python find --system 2>/dev/null \
+                || command -v python3),python3)
 UV          = uv
 BENCH_TAG  ?= $(shell git describe --tags --dirty 2>/dev/null || date +%Y%m%d)
 
