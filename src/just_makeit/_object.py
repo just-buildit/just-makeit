@@ -3782,14 +3782,24 @@ def _top_level_definitions(text: str) -> "dict[str, str]":
     }
 
 
-def _signature(definition: str) -> str:
-    """A definition's head -- everything before its body's ``{`` -- with
-    comments dropped and whitespace collapsed, for comparing two."""
+def _signature(definition: str) -> "list[str]":
+    r"""A definition's head -- everything before its body's ``{`` -- as C
+    tokens, comments dropped, for comparing two whatever their layout.
+
+    One line or two, ``T *f(`` or ``T * f(`` or ``T*\nf(``: a formatter's
+    choice (LLVM and Google styles join the type to the name) is not a
+    different signature.
+
+    >>> _signature("p_t *\np_create(double gain)\n{}") == _signature(
+    ...     "p_t * p_create(double  gain) {}")
+    True
+    >>> _signature("int f(int a) {}") == _signature("int f(long a) {}")
+    False
+    """
     from ._docsync import _code_mask
 
     head = _code_mask(definition)
-    head = head[: head.index("{")]
-    return " ".join(head.split())
+    return re.findall(r"\w+|[^\s\w]", head[: head.index("{")])
 
 
 def _module_fn_names(cfg: dict, module: str) -> "frozenset[str]":
@@ -3844,27 +3854,29 @@ def _carry(
     previous object's -- an accessor for a state field since removed -- and
     goes with it, as it did when the whole core was rebuilt.
 
-    A module function's definition (*fns*, its C names) is the author's
-    whatever the render holds: the render of a ``--functions-in-core`` or
-    ``--inline`` function is a stub, and ``--discard`` discards the
-    object's bodies, not the module's. Its old definition replaces the
-    render's.
+    A module function's definition and declaration (*fns*, its C names)
+    are the author's whatever the render holds: the render of a
+    ``--functions-in-core`` or ``--inline`` function is a stub, the
+    render's prototype has no documentation, and ``--discard`` discards the
+    object's bodies, not the module's. Its old item -- with the comment
+    above it, the Doxygen the ``.pyi`` docstring is read from -- replaces
+    the render's.
 
     *header* is the ``_core.h`` (closed by its C++ wrapper and guard) as
     opposed to the ``_core.c`` (closed by nothing).
     """
     text = path.read_text(encoding="utf-8")
     old_items = _top_level_items(old)
-    old_fn_defs = {
-        n: it.text
+    old_fn_items = {
+        (it.kind, n): it.text
         for it in old_items
-        if it.kind == "def"
+        if it.kind in ("def", "decl")
         for n in it.names & fns
     }
     for it in _top_level_items(text):
-        if it.kind == "def":
-            for n in it.names & old_fn_defs.keys():
-                text = text.replace(it.text, old_fn_defs[n], 1)
+        for n in it.names & fns:
+            if (it.kind, n) in old_fn_items:
+                text = text.replace(it.text, old_fn_items[(it.kind, n)], 1)
     ours = frozenset(CSYM.declared(text))
     keep = [
         it
@@ -3878,9 +3890,10 @@ def _carry(
     if cond:
         raise _report.Refusal(
             f"{path} holds a conditional block jm cannot carry into the"
-            f" collocated object's render: {'; '.join(cond)}. Move that"
-            " block to a header of your own and include it, then run this"
-            " again (gh-2843)."
+            f" collocated object's render: {'; '.join(cond)}. Move the"
+            " block, with what it guards, to a file of your own -- a header"
+            " you include, or a .c your CMakeLists compiles -- then run"
+            " this again (gh-2843)."
         )
     includes = [it.text for it in keep if it.kind == "include"]
     front = [
@@ -3915,6 +3928,23 @@ def _carry(
     _textio.write_text(path, text)
 
 
+def lost_conditionals(old: str, new: str) -> "list[str]":
+    """The conditional directives of *old* (``#if``, ``#ifdef`` ...) that
+    *new* -- its rebuild -- no longer holds (gh-2843).
+
+    A conditional block cannot be lifted like a function body: what it
+    guards moves with it or not at all. `jm regenerate` restores the
+    hand-written bodies it can name and nothing else, so a block guarding
+    definitions (``#ifdef __SSE2__ ... #endif``) was dropped with no word.
+    """
+    have = {it.text for it in _top_level_items(new) if it.kind == "cond"}
+    return [
+        it.text
+        for it in _top_level_items(old)
+        if it.kind == "cond" and it.text not in have
+    ]
+
+
 def carry_module_core(
     cfg: dict,
     comp: str,
@@ -3923,7 +3953,7 @@ def carry_module_core(
     old_h: "str | None",
     core_c: Path,
     old_c: "str | None",
-) -> None:
+) -> bool:
     """Carry what a collocated object's core held, beside the object's own
     code, into the fresh render of it at *core_h* / *core_c* (gh-2843).
 
@@ -3931,13 +3961,20 @@ def carry_module_core(
     state`) for the object whose core is its module's: the render replaces
     the object's share, and every other item -- a module function's
     declaration, the author's helper -- is carried (:func:`_carry`).
+
+    Returns True when either file changed: what `apply` derived from the
+    render (the ``.pyi`` and the runtime ``__doc__`` read the header's
+    Doxygen) is then stale, and the caller derives it again.
     """
     owned = _object_share(cfg, comp, module)
     fns = _module_fn_names(cfg, module)
-    if old_h is not None and core_h.exists():
-        _carry(core_h, old_h, owned, fns, header=True)
-    if old_c is not None and core_c.exists():
-        _carry(core_c, old_c, owned, fns, header=False)
+    changed = False
+    for path, old, header in ((core_h, old_h, True), (core_c, old_c, False)):
+        if old is not None and path.exists():
+            before = path.read_text(encoding="utf-8")
+            _carry(path, old, owned, fns, header=header)
+            changed |= path.read_text(encoding="utf-8") != before
+    return changed
 
 
 def _keep_module_core_c(
