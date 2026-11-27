@@ -171,3 +171,54 @@ def test_collocated_is_not_refused(tmp_path, module):
         ["object", _cname(module), "--module", module],
     )
     _ok(root, "status", "--check")
+
+
+#: Two names that derive one C symbol stem under `jm new p`'s default
+#: `c_prefix = "p"`: `_csym.stem` keeps a name already starting `p_`, so
+#: `filt` and `p_filt` both derive `p_filt_create` / `P_FILT_CORE_H`.
+PREFIXED_PAIR = ("filt", "p_filt")
+
+#: Each pairing of the verbs that declare a stem owner, in both orders:
+#: object against object, object against module, module against module.
+STEM_PAIRINGS = (
+    ("object", "object"),
+    ("object", "module"),
+    ("module", "object"),
+    ("module", "module"),
+)
+
+
+@pytest.mark.parametrize("swap", (False, True), ids=("filt-first", "p-first"))
+@pytest.mark.parametrize(
+    "first,second", STEM_PAIRINGS, ids=["-".join(p) for p in STEM_PAIRINGS]
+)
+def test_a_shared_c_stem_is_refused(tmp_path, first, second, swap):
+    """F1 of the gh-2142 review: names differing only by the `<p>_` that
+    `_csym.stem` adds are one stem, so the second verb is refused before
+    it writes, naming both names and the stem -- not left to `apply` /
+    `status`, which met it only as `P_FILT_CORE_H` derived twice."""
+    a, b = PREFIXED_PAIR[::-1] if swap else PREFIXED_PAIR
+    root = _project(tmp_path / "p", [first, a])
+    cfg = C.load(root)
+    from just_makeit import _csym
+
+    assert _csym.stem(cfg, a) == _csym.stem(cfg, b) == "p_filt", cfg
+    _refused(root, second, b)
+    r = run_cli(second, b, cwd=root)
+    (line,) = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert f"'{a}'" in line and f"'{b}'" in line, line
+    assert "C symbol stem 'p_filt'" in line, line
+
+
+def test_a_shared_c_stem_in_a_manifest_is_refused(tmp_path):
+    """The manifest-side half: `load` refuses two components a hand edit
+    gave one stem, so `status` and `apply` say so in the same words."""
+    root = _project(tmp_path / "p", ["object", "filt"])
+    manifest = root / C.FILENAME
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "\n[p_filt]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(Refusal, match="C symbol stem 'p_filt'"):
+        load_manifest(root)
+    _refused(root, "status", "--check")

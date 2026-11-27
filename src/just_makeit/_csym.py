@@ -74,7 +74,10 @@ def stem(owner: INC.Owner, name: str) -> str:
     ``<prefix>_``, which is used as is: doppler's ``dp_tlm`` stays
     ``dp_tlm_create``, not ``dp_dp_tlm_create``. The collision that rule can
     open -- ``x`` and ``dp_x`` both deriving ``dp_x_create`` -- is refused
-    over the whole derived set by :func:`duplicates`.
+    between two components or modules by
+    :func:`~just_makeit._config.namespace_errors`, at every manifest load
+    and before `jm object` / `jm module` write (gh-2142), and over the
+    whole derived set by :func:`duplicates`.
 
     >>> stem({"project": {"name": "p"}}, "fir")
     'fir'

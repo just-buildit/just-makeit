@@ -397,9 +397,12 @@ c_prefix = "dp"      # written without the joining underscore
 | a module function `mix` -> `dp_mix` (in C only)                                              | `<pkg>_version`                                                          |
 
 A name that already starts with `dp_` is not prefixed again: a component
-`dp_tlm` keeps `dp_tlm_create`. So `apply` refuses a project in which two
-names derive one symbol -- `x` and `dp_x` both deriving `dp_x_create`, or a
-method and a module function that meet -- naming both.
+`dp_tlm` keeps `dp_tlm_create`. So two components or modules named `x`
+and `dp_x` share the stem `dp_x`: `jm object` and `jm module` refuse the
+second of them, and every command refuses a manifest holding both, naming
+the two names and the stem (gh-2142). `apply` refuses any other pair of
+names that derive one symbol -- a method and a module function that meet
+-- naming both.
 
 A consumer includes both packages' headers and calls each by its prefix:
 
