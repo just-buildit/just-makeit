@@ -32,6 +32,12 @@ from . import _render as R
 from . import _procglobal
 from . import _types as T
 from . import _incpath as INC
+from ._context._diagnostics import (
+    property_declared_raise,
+    property_raises_doc,
+    setter_call_c,
+)
+from ._context._methods import validate_setter_error
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import (
     _build_ml_doc,
@@ -359,6 +365,15 @@ _fn_{backing}_destroy(PyObject *mod, PyObject *args)
 def _emit_getset(backing: str, sym: str, prop: dict, module: str) -> str:
     name, ptype = prop["name"], prop["type"]
     where = f"capsule module '{module}' properties row '{name}'"
+    # gh-2214: `error` needs the setter call it tests.
+    validate_setter_error(
+        where,
+        prop,
+        no_setter=""
+        if prop.get("writable")
+        else "a read-only property has no setter. Add writable = true, or"
+        " drop error.",
+    )
     value = _to_py(
         ptype, f"{CSYM.property_getter(sym, name)}(w->state)", where
     )
@@ -389,6 +404,14 @@ _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
             label=name,
             meta=scalar_meta(ptype, where),
         )
+        # gh-2214: with `error` the setter's int is tested, and a refusal
+        # raises from this free function, which returns a PyObject *.
+        setter = CSYM.property_setter(sym, name)
+        set_call = setter_call_c(
+            f"{setter}(_w->state, {name})",
+            property_declared_raise(prop, setter),
+            fail="return NULL;",
+        )
         out += f"""
 static PyObject *
 _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
@@ -398,8 +421,7 @@ _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
     if (!PyArg_ParseTuple(args, "OO", &_cap_obj, &_value_obj)) return NULL;
 {parse}    _wrap_t *_w = _get_wrap(_cap_obj);
     if (!_w) return NULL;
-    {sym}_set_{name}(_w->state, {name});
-    Py_RETURN_NONE;
+{set_call}    Py_RETURN_NONE;
 }}
 """
     return out
@@ -588,6 +610,19 @@ def _fn_doc_lines(cfg: dict, module: str, fn: str) -> list[str]:
     for p in C.module_properties(cfg, module):
         if fn in (f"{backing}_get_{p['name']}", f"{backing}_set_{p['name']}"):
             doc = str(p.get("doc") or "")
+        if fn == f"{backing}_set_{p['name']}" and p.get("writable"):
+            # gh-2214: a setter that may refuse documents what it raises,
+            # from the pair `_emit_getset` raises with.
+            setter = CSYM.property_setter(
+                CSYM.backing_stem(cfg, backing), p["name"]
+            )
+            raises = property_raises_doc(p, setter)
+            if raises:
+                return render_numpy_doc(
+                    None, fn, [], "None",
+                    override=_fn_signature(cfg, module, fn),
+                    indent=4, authored_doc=doc, raises=raises,
+                )  # fmt: skip
     lines = authored_doc_lines(doc)
     return authored_docstring(lines, 4) if lines else []
 

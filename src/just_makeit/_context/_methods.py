@@ -80,6 +80,7 @@ from ._diagnostics import (
     property_getter_raise,
     property_raises_doc,
     raises_doc,
+    setter_call_c,
     setter_return_type,
     status_rows_raises_doc,
 )
@@ -6021,13 +6022,7 @@ def validate_property_error(
     where = f"{component}.{p['name']}"
     setter = CSYM.property_setter(csym, p["name"])
     for key in ("error", "getter_error"):
-        named = p.get(key) or ""
-        if named and named not in C.ERROR_CATEGORIES:
-            raise Refusal(
-                f"{where}: {key} {named!r} is not a known exception "
-                f"category. Choose one of: "
-                f"{', '.join(sorted(C.ERROR_CATEGORIES))}."
-            )
+        _refuse_unknown_category(where, key, p.get(key) or "")
     if getter_keys and not getter_status:
         raise Refusal(
             f"{where}: {getter_keys[0]} names what a failing getter raises, "
@@ -6041,10 +6036,7 @@ def validate_property_error(
         if not category and not p.get("error_message"):
             return  # a writable property whose setter cannot refuse
     if not category:
-        raise Refusal(
-            f"{where}: error_message is the text a refused assignment raises "
-            f'with, so it needs error as well (e.g. error = "ValueError").'
-        )
+        raise Refusal(_message_without_error(where))
     if not p.get("writable"):
         raise Refusal(
             f"{where}: error is raised when the setter refuses a value, and "
@@ -6064,6 +6056,84 @@ def validate_property_error(
             f"accessor of the state field '{p['name']}', which jm declares "
             f"returning void, so there is no status to test. Give the "
             f"property its own name and declare its setter returning int."
+        )
+
+
+def _refuse_unknown_category(where: str, key: str, named: str) -> None:
+    """Refuse an exception name `_config.ERROR_CATEGORIES` does not list.
+
+    ``PyExc_<name>`` is emitted verbatim into C, so an unknown name would be
+    a compile error in the generated binding rather than a manifest error.
+    """
+    if named and named not in C.ERROR_CATEGORIES:
+        raise Refusal(
+            f"{where}: {key} {named!r} is not a known exception "
+            f"category. Choose one of: "
+            f"{', '.join(sorted(C.ERROR_CATEGORIES))}."
+        )
+
+
+def _message_without_error(where: str) -> str:
+    """The refusal of an ``error_message`` that names no ``error``."""
+    return (
+        f"{where}: error_message is the text a refused assignment raises "
+        f'with, so it needs error as well (e.g. error = "ValueError").'
+    )
+
+
+def validate_setter_error(where: str, row: dict, *, no_setter: str) -> None:
+    """Refuse a kind module setter's ``error`` pair it cannot honour.
+
+    gh-2214: the rules `validate_property_error` applies to an object
+    property's setter (gh-2182), for the three faces whose setter is a C
+    function the AUTHOR writes -- a handle getter field's ``writable_fn``,
+    a capsule module's writable property and a composer setting's
+    ``setter_fn``. Each declares ``error`` / ``error_message`` on its own
+    row with the object face's meaning: the C setter returns ``int`` and a
+    non-zero return raises ``error`` (`property_declared_raise` reads the
+    pair). Refused, before anything is written:
+
+    - an ``error`` that is not a known exception category;
+    - an ``error_message`` without ``error``, the text of an exception
+      nothing raises;
+    - either key where the row has no setter call to test.
+
+    Parameters
+    ----------
+    where : str
+        How the refusal names the row.
+    row : dict
+        The manifest row carrying the pair.
+    no_setter : str
+        ``""`` when the row calls a C setter; otherwise why it has none and
+        what to change, which completes the refusal's sentence.
+
+    Raises
+    ------
+    Refusal
+        Naming the row and what to change.
+
+    Examples
+    --------
+    >>> validate_setter_error("m.g", {"name": "g"}, no_setter="")
+    >>> validate_setter_error("m.g", {"error": "ValueError"}, no_setter="")
+    >>> try:
+    ...     validate_setter_error(
+    ...         "m.g", {"error": "ValueError"}, no_setter="it has none.")
+    ... except Refusal as e:
+    ...     print(e)
+    m.g: error is raised when the setter refuses a value, and it has none.
+    """
+    category = row.get("error") or ""
+    if not category and not row.get("error_message"):
+        return
+    _refuse_unknown_category(where, "error", category)
+    if not category:
+        raise Refusal(_message_without_error(where))
+    if no_setter:
+        raise Refusal(
+            f"{where}: error is raised when the setter refuses a value, "
+            f"and {no_setter}"
         )
 
 
@@ -6942,19 +7012,13 @@ def make_properties_ctx(
                 )
             if field:
                 assign_line = f"    self->handle->{pname} = v;\n"
-            elif setter_raise is not None:
+            else:
                 # gh-2182: the C setter may refuse the value. Its return is
                 # tested the way a `status_return` method's is, through the
-                # one raise emitter -- `return -1;` because a setter slot
-                # returns int, not a PyObject *.
-                assign_line = (
-                    f"    int _rc = {setter_fn}(self->handle, v);\n"
-                    f"    if (_rc != 0) {{\n"
-                    + _rc_raise_c(*setter_raise, fail="return -1;")
-                    + "    }\n"
+                # one raise emitter every setter face shares (gh-2214).
+                assign_line = setter_call_c(
+                    f"{setter_fn}(self->handle, v)", setter_raise
                 )
-            else:
-                assign_line = f"    {setter_fn}(self->handle, v);\n"
             if not field and pname not in state_var_names:
                 _set_ret = setter_return_type(p)
                 _set_doc = (
