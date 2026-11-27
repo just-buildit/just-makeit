@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit import _composer
+from just_makeit import _config as C
 from just_makeit import _types as T
 
 
@@ -686,17 +687,24 @@ class TestSourceComputed:
 
     def test_name_colliding_with_field_is_rejected(self):
         """A computed name shadowing a stored field (or fs) is a manifest error
-        — both would emit a getset row for the same attribute — so reject it."""
-        for clash in ("freq", "fs"):
-            cfg = _cfg()
-            cfg["module"]["wfm_compose"]["source"]["computed"] = [
-                {"name": clash, "type": "double", "fn": "f"}
-            ]
-            try:
-                _composer.render_source_type(cfg, "wfm_compose")
-                raise AssertionError(f"expected rejection for {clash!r}")
-            except ValueError as e:
-                assert "collides with a stored field" in str(e)
+        — both would emit a getset row for the same attribute — so reject it.
+        A stored field is the duplicate-name check's (gh-2804), asked by every
+        command before it renders; ``fs`` is no row, so it is the renderer's.
+        """
+        cfg = _cfg()
+        cfg["module"]["wfm_compose"]["source"]["computed"] = [
+            {"name": "freq", "type": "double", "fn": "f"}
+        ]
+        assert any(
+            "'freq' is declared twice" in e
+            for e in C.duplicate_name_errors(cfg)
+        )
+        cfg["module"]["wfm_compose"]["source"]["computed"][0]["name"] = "fs"
+        try:
+            _composer.render_source_type(cfg, "wfm_compose")
+            raise AssertionError("expected rejection for 'fs'")
+        except ValueError as e:
+            assert "collides with the source's fs" in str(e)
 
 
 class TestSourceGenerates:

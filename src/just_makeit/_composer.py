@@ -2677,19 +2677,17 @@ def _source_computed(cfg: dict, module: str) -> list[dict]:
     Optional ``doc`` (getset docstring). Generic — mirrors ``generates``'s
     project-C-function seam; returns ``[]`` when none are declared.
 
-    A computed name that collides with a stored field (or the always-present
-    ``fs``) is a manifest error — both would emit a getset row for the same
-    attribute and the second would silently shadow the first — so it is
-    rejected here (a derived quantity must not share a stored field's name)."""
+    A computed name repeating a stored field or another computed property
+    is refused by ``_config.duplicate_name_errors`` (gh-2804), one row over
+    both lists, before anything renders. The always-present ``fs`` is no
+    row in either, so a computed property named for it is refused here:
+    both would emit ``<Source>_get_fs``."""
     computed = list(C.composer_source(cfg, module).get("computed", []))
-    if computed:
-        taken = {f["name"] for f in _source_fields(cfg, module)} | {"fs"}
-        clash = sorted(c["name"] for c in computed if c["name"] in taken)
-        if clash:
-            raise ValueError(
-                "computed source property name collides with a stored field: "
-                + ", ".join(clash)
-            )
+    if any(c["name"] == "fs" for c in computed):
+        raise ValueError(
+            "computed source property name collides with the source's fs: "
+            "fs is the source type's own property; rename the computed one"
+        )
     return computed
 
 
