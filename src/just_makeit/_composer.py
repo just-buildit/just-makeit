@@ -1570,8 +1570,9 @@ def _replace_c(
     B freed a buffer thread A's generator was reading, and left the
     generator, built from the OLD config, in place.
 
-    This is the one place a field is replaced, for the property setter and
-    for ``__init__`` alike:
+    This is the one place the property setter replaces a field
+    (``__init__`` converts every field into a copy of its own and commits
+    it whole, gh-2864):
 
     1. the new value is converted into a COPY of the source struct whose
        member is cleared -- converting can run Python (``__array__``,
@@ -1599,10 +1600,8 @@ def _replace_c(
         and no generator to drop.
     check : str, optional
         gh-2856: :func:`check_c`'s block against ``&_t``, whose failure
-        frees the converted buffer and returns 0. With it the function
-        takes a third argument, ``int check``: the property setter passes
-        1, so the copy is checked whole before anything is installed, and
-        ``__init__`` passes 0, since it checks once after every field.
+        frees the converted buffer and returns 0, so the copy is checked
+        whole before anything is installed.
 
     Examples
     --------
@@ -1641,16 +1640,11 @@ def _replace_c(
             "    }\n"
         )
     install = "".join(f"    self->src.{m} = _t.{m};\n" for m, _ in members)
-    param, checked = "", ""
-    if check:
-        param = ", int check"
-        checked = "    if (check)\n" + check
     return (
-        f"static int\n{tname}_replace_{name}({obj} *self, PyObject *value"
-        f"{param})\n"
+        f"static int\n{tname}_replace_{name}({obj} *self, PyObject *value)\n"
         f"{{\n    {struct} _t = self->src;\n{clear}"
         f"    if (!{attach})\n        return 0;\n"
-        f"{checked}{commit}    {free.format(src='self->src')}\n{install}"
+        f"{check}{commit}    {free.format(src='self->src')}\n{install}"
         "    return 1;\n}\n"
     )
 
@@ -3000,8 +2994,10 @@ def render_source_type(cfg: dict, module: str) -> str:
         if fn
     )
 
-    def _attach_call(f: dict, dst: str, n_dst: str) -> str:
-        """The call converting ``value`` into field *f*'s buffer.
+    def _attach_call(
+        f: dict, dst: str, n_dst: str, value: str = "value"
+    ) -> str:
+        """The call converting *value* into field *f*'s buffer.
 
         gh-2696: while some field coerces, the coercer takes a fourth
         argument -- the name of a bit_pattern field, by which it refuses an
@@ -3012,7 +3008,7 @@ def render_source_type(cfg: dict, module: str) -> str:
         bits = ""
         if bits_coerce:
             bits = f', "{f["name"]}"' if is_bit_pattern(f) else ", NULL"
-        return f"{call}({dst}, {n_dst}, value{bits})"
+        return f"{call}({dst}, {n_dst}, {value}{bits})"
 
     parts: list[str] = []
 
@@ -3085,13 +3081,34 @@ def render_source_type(cfg: dict, module: str) -> str:
     addrs_s = ", ".join(addrs)
 
     # post-parse: validate enums into the struct ints, assign scalars, attach
-    # bytes.
+    # bytes -- all into `_n`, a copy of the source (gh-2864). Nothing is
+    # committed until every field has converted and `check_fn` (gh-2856)
+    # has passed, so a refused `__init__` -- re-run on a live source too --
+    # leaves the source as it was. The copy's owned members start cleared,
+    # so a refusal frees exactly what this call converted into it.
     assign: list[str] = []
-    # gh-2856: an owned buffer's replace checks its copy for the setter
-    # (1) and not for `__init__` (0), which checks once after every field.
-    has_check = bool(check_fn(cfg, module))
-    no_check = ", 0" if has_check else ""
-    do_check = ", 1" if has_check else ""
+    attach: list[str] = []
+    # Per owned member: clearing it in `_n`, and freeing it from a struct.
+    owned_clear: list[str] = []
+    owned_free: list[str] = []
+    for f in fields:
+        if _field_is_buffer(f):
+            _p, _l = buffer_members(f)
+            _cfree = "(void *)" if buffer_is_relocated(f) else ""
+            owned_clear += [f"    _n.{_p} = NULL;", f"    _n.{_l} = 0;"]
+            owned_free.append(f"free({_cfree}{{src}}.{_p});")
+        elif _field_is_owned_ptr(f):
+            op = owned_ptr(cfg, f)
+            owned_clear.append(f"    _n.{op.member} = NULL;")
+            owned_free.append(
+                f"{op.free_fn}(({op.ctype}){{src}}.{op.member});"
+            )
+
+    def _release(src: str) -> str:
+        """The statements freeing every owned member of *src*."""
+        return "".join(f.format(src=src) + "\n" for f in owned_free)
+
+    init_fail = _release("_n") + "return -1;"
     for f in fields:
         n = f["name"]
         if _field_is_enum(f):
@@ -3104,20 +3121,23 @@ def render_source_type(cfg: dict, module: str) -> str:
                 fail="return -1;",
                 indent="        ",
             )
-            assign.append(f"    {{\n{_v}\n        self->src.{n} = _i;\n    }}")
+            assign.append(f"    {{\n{_v}\n        _n.{n} = _i;\n    }}")
         elif f.get("bytes"):
             # Per-field destination: several bytes fields on one source
             # (e.g. a DSSS burst's acq_code/data_code/sync + payload) must
             # each land in their own struct arrays, not all in `bits`.
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
-            assign.append(
-                f"    if (!{tname}_replace_{n}(self, {n}{no_check}))\n"
-                "        return -1;"
+            attach.append(
+                f"    if (!{_attach_call(f, f'{_cast}&_n.{_p}', f'&_n.{_l}', n)})"
+                " {\n" + textwrap.indent(init_fail, " " * 8) + "\n    }"
             )
         elif f.get("complex") or _field_is_owned_ptr(f):
-            assign.append(f"""    if (!{tname}_replace_{n}(self, {n}{no_check}))
-        return -1;""")
+            attach.append(
+                f"    if (!_attach_{n}(&_n, {n})) {{\n"
+                + textwrap.indent(init_fail, " " * 8)
+                + "\n    }"
+            )
         elif f.get("_ranged"):
             ct = f["type"]
             default = f.get("default", "0")
@@ -3126,20 +3146,25 @@ def render_source_type(cfg: dict, module: str) -> str:
                 f,
                 _number_meta(ct, _row(module, "source.fields", n)),
                 n,
-                f"self->src.{n}",
-                "self->src.ranged",
+                f"_n.{n}",
+                "_n.ranged",
                 "return -1;",
                 indent="        ",
             )
+            # gh-2864: an absent pair is the scalar default, so a re-init
+            # does not keep the range a previous call set.
             assign.append(f"""    if ({n} != NULL) {{
 {parse}    }} else {{
-        self->src.{n} = ({ct}){default};
+        _n.{n} = ({ct}){default};
+        _n.ranged &= ~(unsigned){f["_ranged"]};
     }}""")
         else:
             assign.append(
-                (f"{convs[n]}\n" if convs[n] else "")
-                + f"    self->src.{n} = {n};"
+                (f"{convs[n]}\n" if convs[n] else "") + f"    _n.{n} = {n};"
             )
+    # Every conversion that can refuse with nothing allocated runs first;
+    # then the owned buffers, each refusal freeing what came before it.
+    assign = [f"    {struct} _n = self->src;", *owned_clear, *assign, *attach]
     assign_s = "\n".join(assign)
 
     store_bits = """    *dst   = buf;
@@ -3433,9 +3458,21 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 ),
             )
 
-    # gh-2856: the whole struct, once every field is in it. A refusal
-    # raises from the constructor, so `Synth(...)` returns no object.
-    init_check = check_c(cfg, module, "&self->src", "return -1;")
+    # gh-2856: the whole struct, once every field is in it -- the copy,
+    # so a refusal leaves a live source as it was (gh-2864).
+    init_check = check_c(cfg, module, "&_n", init_fail)
+    # gh-2864: the commit. Only now does it wait for a running `steps()`
+    # and drop the generator built from the config being replaced; then
+    # the old owned members go, and the copy is the source.
+    commit = ""
+    if gen:
+        commit = (
+            _inflight.wait("self", init_fail.replace("\n", " "), "    ")
+            + f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); "
+            "self->_gen = NULL; }\n"
+        )
+    commit += textwrap.indent(_release("self->src"), "    ")
+    commit += "    self->src = _n;\n    self->fs = fs;\n"
     parts.append(
         attach_bytes_c
         + f"""{host_attach}{replace_c}
@@ -3449,9 +3486,8 @@ static int
             {addrs_s}, &fs)) {{
 {parse_fail}
     }}
-{parse_ok}    self->fs = fs;
-{(_inflight.wait("self", "return -1;", "    ") + f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); self->_gen = NULL; }}" + chr(10)) if gen else ""}{assign_s}
-{init_check}    return 0;
+{parse_ok}{assign_s}
+{init_check}{commit}    return 0;
 }}
 """
     )
@@ -3540,7 +3576,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {tname}_replace_{n}(self, value{do_check}) ? 0 : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -3571,7 +3607,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {tname}_replace_{n}(self, value{do_check}) ? 0 : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -3597,7 +3633,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    return {tname}_replace_{n}(self, value{do_check}) ? 0 : -1;
+    return {tname}_replace_{n}(self, value) ? 0 : -1;
 }}""")
             getset_rows.append(
                 f'    {{"{n}", (getter){tname}_get_{n}, '
@@ -6674,7 +6710,7 @@ def _cli_cmake_block(
     if not cli.get("enabled"):
         return ""
     mp = C.module_paths(module)
-    prog = cli.get("name", module)
+    prog = cli_program(cfg, module)
     libs = "".join(f"    {lib}\n" for lib in link_cores + extra)
     return f"""
 # {prog} — generated c-face composer CLI (gh-287). Pure C; no Python.
@@ -8697,6 +8733,55 @@ def composer_cli(cfg: dict, module: str) -> dict:
     backing parser), and the ``jm app`` output axes (``--sample_type`` /
     ``--file-type`` / ``--endian``). Generic — reusable by any composer."""
     return dict(cfg.get("module", {}).get(module, {}).get("cli", {}))
+
+
+def cli_name(cfg: dict, module: str) -> str:
+    """:func:`cli_program`'s name before its collision check: the one
+    spelling of the default, which :func:`_targets.emitted` counts too."""
+    name = composer_cli(cfg, module).get("name")
+    return name or f"{C.module_paths(module).cname}_cli"
+
+
+def cli_program(cfg: dict, module: str) -> str:
+    """The CMake target (and program) name of *module*'s c-face CLI.
+
+    ``[module.X.cli] name`` when given, else ``<cname>_cli`` -- the stem of
+    the ``<cname>_cli.c`` it builds (gh-2863). The default was the module
+    id, which is the module's own extension target
+    (``Python3_add_library(<leaf> ...)``), so every CLI declared without a
+    ``name`` was a second target of that name and cmake refused to
+    configure (CMP0002). A target name is global, so a ``name`` that jm
+    also emits elsewhere is refused here, through the one count of what jm
+    emits (:func:`_targets.collisions`).
+
+    Raises
+    ------
+    Refusal
+        The name is a target jm already emits for this project.
+
+    Examples
+    --------
+    >>> cfg = {"project": {"name": "p"},
+    ...        "module": {"win": {"kind": "composer",
+    ...                           "cli": {"enabled": True}}}}
+    >>> cli_program(cfg, "win")
+    'win_cli'
+    >>> cfg["module"]["win"]["cli"]["name"] = "wingen"
+    >>> cli_program(cfg, "win")
+    'wingen'
+    """
+    from . import _targets
+
+    prog = cli_name(cfg, module)
+    if prog in _targets.collisions(cfg):
+        raise Refusal(
+            f"[module.{module}.cli] name = {prog!r} is a CMake target jm "
+            "already emits for this project, and a target name is global: "
+            "cmake would refuse to configure it (CMP0002). Name the program "
+            "something else, or drop `name` for the default "
+            f"`{C.module_paths(module).cname}_cli` (gh-2863)."
+        )
+    return prog
 
 
 def _cli_enum_flag(f: dict, enums: dict) -> "tuple[str, str]":

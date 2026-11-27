@@ -64,6 +64,7 @@ PKG = "chkp"
 HALF = "num and den are one rate: give both, or neither"
 GAIN = "gain is a level: >= 0, and a range runs low to high"
 BITS = "bits holds at most 4"
+TAG = "tag 13 is reserved"
 
 
 def _source(type_name: str) -> dict:
@@ -81,7 +82,17 @@ def _source(type_name: str) -> dict:
             },
             {"name": "gain", "type": "double", "default": "0.0"},
             {"name": "bits", "type": "uint8_t*", "bytes": True},
+            # gh-2864: an owned pointer whose live count is the leak oracle.
+            {
+                "name": "tag",
+                "type": "wtag_t *",
+                "copy_fn": "tag_copy",
+                "free_fn": "tag_free",
+                "parse_fn": "tag_parse",
+                "format_fn": "tag_format",
+            },
         ],
+        "computed": [{"name": "live", "type": "int", "fn": "tag_live"}],
         "ranged": [{"name": "gain", "flag": "R_GAIN"}],
     }
 
@@ -108,7 +119,9 @@ def _module() -> dict:
         "segment": _segment("Seg"),
         "oo": {"composer_type_name": "Win"},
         "json": {"enabled": True},
-        "cli": {"enabled": True, "name": "wincli"},
+        # gh-2863: no `name`, so the default program name is built
+        # beside the extension of the same module.
+        "cli": {"enabled": True},
         "extra_link_libs": ["backing_core"],
     }
 
@@ -160,6 +173,8 @@ class TestTheKey:
         # The only seam: the bridge exists for it alone.
         m = _module()
         del m["source"]["fields"][1]["set_fn"]
+        del m["source"]["fields"][4]
+        del m["source"]["computed"]
         assert _composer.seam_fns(_cfg(m), "win") == ["win_check"]
         ext = _composer.render_ext(_cfg(m), "win")
         assert '#include "win/win_bridge.h"' in ext
@@ -187,9 +202,107 @@ class TestEveryFaceCallsIt:
         init = _body(
             _composer.render_source_type(_cfg(), "win"), "Src_init(SrcObject"
         )
-        at = init.index("const char *_chk = win_check(&self->src);")
-        assert at > init.index("Src_replace_bits(self, bits, 0)")
-        assert at > init.index("self->src.gain = _lo;")
+        at = init.index("const char *_chk = win_check(&_n);")
+        assert at > init.index("_attach_bytes(&_n.bits, &_n.n_bits, bits)")
+        assert at > init.index("_attach_tag(&_n, tag)")
+        assert at > init.index("_n.gain = _lo;")
+
+    def test_the_cli_flags_and_from_file(self) -> None:
+        cli = _composer.render_cli(_cfg(), "win")
+        flags = cli.index("win_check(&src);")
+        assert cli.index("src.num = num;") < flags < cli.index("seg.sources")
+        assert 'fprintf(stderr, "%s\\n", _chk);' in cli
+        assert (
+            "free(src.bits);\n                tag_free((wtag_t *)src.tag);\n"
+            "                return 2;"
+        ) in cli
+        assert cli.index("c = win_from_file(from_file);") < cli.index(
+            "win_check(&_cs[_ci].sources[_ck]);"
+        )
+
+    def test_the_cli_default_name_is_not_the_extension(self) -> None:
+        """gh-2863: the default was the module id, the extension's target."""
+        from just_makeit import _targets
+
+        cfg = _cfg()
+        assert _composer.cli_program(cfg, "win") == "win_cli"
+        assert "add_executable(win_cli win_cli.c)" in (
+            _composer.render_cmake(cfg, "win")
+        )
+        assert _targets.collisions(cfg) == {}
+        assert "win_cli" in _targets.from_manifest(cfg)
+
+    def test_a_cli_name_jm_already_emits_is_refused(self) -> None:
+        m = _module()
+        m["cli"]["name"] = "win"
+        with pytest.raises(Refusal, match="CMP0002"):
+            _composer.render_cmake(_cfg(m), "win")
+
+    def test_the_constructor_docstring_names_the_refusal(self) -> None:
+        docs = _composer.type_doc_lines(_cfg(), "win")
+        for t in ("Src", "Seg"):
+            text = "\n".join(docs[t])
+            assert "Raises" in text and "``win_check``" in text, text
+
+
+class TestInitIsTransactional:
+    """gh-2864: `__init__` converts into a copy and commits it whole."""
+
+    def _init(self, m: "dict | None" = None) -> str:
+        return _body(
+            _composer.render_source_type(_cfg(m), "win"), "Src_init(SrcObject"
+        )
+
+    def test_every_field_lands_in_the_copy(self) -> None:
+        init = self._init()
+        assert "self->src." not in init.split("free(self->src.bits);")[0]
+        for line in (
+            "wsrc_t _n = self->src;",
+            "_n.bits = NULL;",
+            "_n.n_bits = 0;",
+            "_n.tag = NULL;",
+            "_n.num = num;",
+        ):
+            assert line in init, line
+
+    def test_commit_after_the_check_frees_the_old_members(self) -> None:
+        init = self._init()
+        order = [
+            "win_check(&_n);",
+            "free(self->src.bits);",
+            "tag_free((wtag_t *)self->src.tag);",
+            "self->src = _n;",
+            "self->fs = fs;",
+            "return 0;",
+        ]
+        at = [init.index(s) for s in order]
+        assert at == sorted(at), init
+
+    def test_a_refusal_frees_the_copy(self) -> None:
+        init = self._init()
+        # each attach's refusal, and the check's.
+        assert init.count("free(_n.bits);") == 3, init
+        assert init.count("tag_free((wtag_t *)_n.tag);") == 3, init
+        assert "if (!_attach_tag(&_n, tag)) {\n        free(_n.bits);" in init
+
+    def test_the_same_without_a_check_fn(self) -> None:
+        m = _module()
+        del m["source"]["check_fn"]
+        init = self._init(m)
+        assert "_chk" not in init
+        assert init.index("self->src = _n;") > init.index("_attach_tag(&_n")
+
+    def test_an_absent_range_clears_its_flag(self) -> None:
+        assert (
+            "_n.ranged &= ~(unsigned)R_GAIN;"
+            in self._init().split("} else {\n        _n.gain = (double)0.0;")[
+                1
+            ]
+        )
+
+
+class TestTheSettersAndReaders:
+    """gh-2856: the setters, the record and a delegated reader."""
 
     def test_a_plain_setter_checks_a_copy_and_commits_on_null(self) -> None:
         src = _composer.render_source_type(_cfg(), "win")
@@ -214,14 +327,13 @@ class TestEveryFaceCallsIt:
         rep = _body(src, "Src_replace_bits(SrcObject")
         order = [
             "_attach_bytes(&_t.bits",
-            "if (check)",
             "const char *_chk = win_check(&_t);",
             "free(_t.bits);\n            return 0;",
             "free(self->src.bits);",
         ]
         at = [rep.index(s) for s in order]
         assert at == sorted(at), rep
-        assert "return Src_replace_bits(self, value, 1) ? 0 : -1;" in src
+        assert "return Src_replace_bits(self, value) ? 0 : -1;" in src
 
     def test_a_set_fn_field_calls_set_fn_only(self) -> None:
         body = _body(
@@ -250,22 +362,6 @@ class TestEveryFaceCallsIt:
             ]
             at = [body.index(s) for s in order]
             assert at == sorted(at), body
-
-    def test_the_cli_flags_and_from_file(self) -> None:
-        cli = _composer.render_cli(_cfg(), "win")
-        flags = cli.index("win_check(&src);")
-        assert cli.index("src.num = num;") < flags < cli.index("seg.sources")
-        assert 'fprintf(stderr, "%s\\n", _chk);' in cli
-        assert "free(src.bits);\n                return 2;" in cli
-        assert cli.index("c = win_from_file(from_file);") < cli.index(
-            "win_check(&_cs[_ci].sources[_ck]);"
-        )
-
-    def test_the_constructor_docstring_names_the_refusal(self) -> None:
-        docs = _composer.type_doc_lines(_cfg(), "win")
-        for t in ("Src", "Seg"):
-            text = "\n".join(docs[t])
-            assert "Raises" in text and "``win_check``" in text, text
 
 
 class TestRefusals:
@@ -333,6 +429,12 @@ _HEADER = """\
 
 #define R_GAIN 1u
 
+/* An owned pointer: tag_live counts the ones alive. */
+typedef struct
+{
+  int v;
+} wtag_t;
+
 typedef struct
 {
   int      num;
@@ -342,7 +444,11 @@ typedef struct
   unsigned ranged;
   uint8_t *bits;
   size_t   n_bits;
+  wtag_t  *tag;
 } wsrc_t;
+
+wtag_t *tag_copy (const wtag_t *t);
+void    tag_free (wtag_t *t);
 
 typedef struct
 {
@@ -407,6 +513,7 @@ win_create (const wseg_t *s, size_t n, int r, int c)
               d->bits = malloc (d->n_bits);
               memcpy (d->bits, s[i].sources[k].bits, d->n_bits);
             }}
+          d->tag = d->tag ? tag_copy (d->tag) : NULL;
         }}
     }}
   st->n = n;
@@ -437,7 +544,10 @@ win_destroy (win_state_t *st)
   for (size_t i = 0; i < st->n; i++)
     {{
       for (size_t k = 0; k < st->segs[i].n_sources; k++)
-        free (st->segs[i].sources[k].bits);
+        {{
+          free (st->segs[i].sources[k].bits);
+          tag_free (st->segs[i].sources[k].tag);
+        }}
       free (st->segs[i].sources);
     }}
   free (st->segs);
@@ -521,6 +631,9 @@ wdl_to_json (const wseg_t *s, size_t n, int r, int c)
 _CHECK = f"""\
 #include "{PKG}/win/win_bridge.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+
 const char *
 win_check (const wsrc_t *s)
 {{
@@ -530,7 +643,54 @@ win_check (const wsrc_t *s)
     return "{GAIN}";
   if (s->n_bits > 4)
     return "{BITS}";
+  if (s->tag && s->tag->v == 13)
+    return "{TAG}";
   return NULL;
+}}
+
+static int live = 0;
+
+wtag_t *
+tag_copy (const wtag_t *t)
+{{
+  wtag_t *c = malloc (sizeof *c);
+  *c        = *t;
+  live++;
+  return c;
+}}
+
+void
+tag_free (wtag_t *t)
+{{
+  if (t)
+    live--;
+  free (t);
+}}
+
+wtag_t *
+tag_parse (const char *s)
+{{
+  wtag_t t;
+  char  *end;
+  t.v = (int)strtol (s, &end, 10);
+  if (!*s || *end)
+    return NULL;
+  return tag_copy (&t);
+}}
+
+char *
+tag_format (const wtag_t *t)
+{{
+  char *s = malloc (16);
+  snprintf (s, 16, "%d", t->v);
+  return s;
+}}
+
+int
+tag_live (const wsrc_t *s)
+{{
+  (void)s;
+  return live;
 }}
 
 /* Keeps the pair whole -- except at 99, where it stores den alone and
@@ -571,6 +731,7 @@ from {PKG}.wdl.wdl import DSrc, Dl
 HALF = {HALF!r}
 GAIN = {GAIN!r}
 BITS = {BITS!r}
+TAG = {TAG!r}
 
 
 def refused(fn, why):
@@ -649,6 +810,44 @@ for cls in (Src, Seg):
         pass
     else:
         raise AssertionError(f"{{cls.__name__}} pickled: check __setstate__")
+# 7. gh-2864: a refused re-__init__ -- by check_fn, by a coercion, by an
+# owned pointer's parser -- leaves the source exactly as it was, and frees
+# what it converted (`live` counts the tags alive); a successful one frees
+# the buffers it replaces.
+def state(x):
+    return (x.num, x.den, x.gain, x.bits, x.tag, x.fs)
+
+
+r = Src(num=1, den=2, gain=(0.5, 1.0), bits=b"\\x01\\x00", tag="7", fs=8.0)
+before, base = state(r), r.live
+for kw, err, why in [
+    (dict(num=5), ValueError, HALF),
+    (dict(num=1, den=2, bits=b"\\x01" * 5, tag="9"), ValueError, BITS),
+    (dict(num=1, den=2, tag="13"), ValueError, TAG),
+    (dict(num=1, den=2, bits=b"\\x01", tag="x"), ValueError, None),
+    (dict(num=1, den=2, tag="9", gain=(1.0, "x")), TypeError, None),
+    (dict(num=1, den=2, tag="9", bits=7), TypeError, None),
+]:
+    try:
+        r.__init__(**kw)
+    except err as e:
+        assert why is None or str(e) == why, (kw, str(e))
+    else:
+        raise AssertionError("re-init not refused: %r" % (kw,))
+    assert state(r) == before, (kw, state(r), before)
+    assert r.live == base, ("a refused re-init leaked or freed", kw, r.live)
+r.__init__(num=3, den=4, bits=b"\\x01", tag="8")
+assert state(r) == (3, 4, 0.0, b"\\x01", "8", 1e6), state(r)
+assert r.live == base, ("the replaced tag was not freed", r.live, base)
+r.__init__()
+assert (r.bits, r.tag, r.live) == (None, None, base - 1), (r.tag, r.live)
+# A refused setter frees its copy too.
+r.tag = "5"
+try:
+    r.tag = "13"
+except ValueError as e:
+    assert str(e) == TAG, e
+assert (r.tag, r.live) == ("5", base), (r.tag, r.live)
 print("CHECK_FN OK")
 """
 
@@ -733,7 +932,7 @@ class TestEndToEnd:
     def test_the_cli(self, project: Path, args: list, why: str) -> None:
         exe = next(
             p
-            for p in (project / "build").rglob("wincli")
+            for p in (project / "build").rglob("win_cli")
             if p.is_file() and p.stat().st_mode & 0o111
         )
         r = subprocess.run(

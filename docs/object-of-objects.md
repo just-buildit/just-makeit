@@ -551,7 +551,10 @@ generic value that round-trips through the setter and the record.
 `render_source_type` emits a `PyTypeObject` wrapping the backing C struct
 (`source.struct`) plus a standalone `fs`:
 
-- a keyword `tp_init` parsing every field (defaults from the manifest);
+- a keyword `tp_init` parsing every field (defaults from the manifest) into a
+    copy of the struct, committed only once every field has converted and
+    `check_fn` has passed, so a refused re-`__init__` leaves a live source,
+    its buffers and owned pointers as they were (gh-2864);
 - per-field getset: **enum fields cross as validated strings** (int↔name via the
     SSOT table; an invalid value raises `ValueError` on both init *and*
     assignment), scalars as numbers, the `bytes` field as Python `bytes`;
@@ -722,7 +725,7 @@ A source can hand work back to the project as plain C, with no CPython in it:
 
     | face                                         | when                                                                                     |
     | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
-    | `Synth(...)`, a factory, an inline `Segment` | after every field is assigned, so `Synth(...)` returns no object                         |
+    | `Synth(...)`, a factory, an inline `Segment` | on a copy holding every field, committed only when it passes (gh-2864)                   |
     | a property setter without `set_fn`           | on a copy of the struct, committed only on `NULL`: a refused assignment changes nothing  |
     | generic `from_json` / `from_file`            | on each source of the record, before the composer is built                               |
     | delegated `from_json_fn` / `from_file_fn`    | on each source of the state the project's reader built, which is destroyed on a sentence |
@@ -923,7 +926,9 @@ refuses them without `to_json_fn`. The same carriage on a module function is
 ### 4.8 The CLI face
 
 With `[module.X.cli] enabled = true` the composer gets an opt-in **standalone C
-command-line tool** (`render_cli`): a pure-C `main()` — no Python — that
+command-line tool** (`render_cli`), built as `[X.cli] name` or, by default,
+`<cname>_cli` (never the module id, which is the extension's own target,
+gh-2863): a pure-C `main()` — no Python — that
 
 - builds the composer from **source/segment-field flags** (`--type`, `--freq`,
     `--num_samples`, …) or from a JSON spec via `--from-file`, which calls the
@@ -1291,7 +1296,7 @@ return raises it from the generated setter, gh-2214).
 | `[X.json]`          | `enabled`; optional `to_json_fn`/`from_json_fn`/`from_file_fn`/`to_json_trailing`/`from_json_why`/`from_file_why` (delegation), `header`/`include_dir` (generated path)                                                                                                                                                                                                                                                                                                                             |
 | `[X.composer]`      | `stream`, `to_dict`; optional `realtime = {clock_create, pace, destroy, header}` to pace `stream()` in C (gh-317)                                                                                                                                                                                                                                                                                                                                                                                   |
 | `[[X.settings]]`    | a post-construction setting `{name, setter_fn, getter_fn, type, enum?, error?, error_message?}` — a scalar the backing exposes through a setter/getter pair and that is set once, after `create_fn` returns and before the first `execute()`. Becomes a constructor kwarg AND a read/write attribute; a string-valued one resolves through its `[[enum]]` SSOT (gh-1126). With `error`, `setter_fn` returns `int` and a non-zero return raises it, from the attribute and the kwarg alike (gh-2214) |
-| `[X.cli]`           | `enabled`, `name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `[X.cli]`           | `enabled`, `name` (the program and its CMake target; default `<cname>_cli`, and a name jm already emits as a target is refused, gh-2863)                                                                                                                                                                                                                                                                                                                                                            |
 
 A **field** entry (`source.fields`/`segment.fields`):
 `{ name, type, enum?, default?, bytes?, complex?, c_ptr?, c_len?, coerce?, coerce_str_fn?, get_fn?, set_fn?, aliases?, doc? }`

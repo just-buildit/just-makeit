@@ -93,7 +93,8 @@ class TestOneHelperPerFunction:
             # (gh-2274: each field's replace calls the shared helper on a
             # copy of the source; the constructor and setter call replace.)
             assert f'_coerce_{HOST}(&_t.{n}, &_t.n_{n}, value, "{n}")' in s
-            assert f"if (!Synth_replace_{n}(self, {n}))" in s
+            # gh-2864: the constructor, into its copy `_n`.
+            assert f'_coerce_{HOST}(&_n.{n}, &_n.n_{n}, {n}, "{n}")' in s
             assert f"return Synth_replace_{n}(self, value) ? 0 : -1;" in s
 
     def test_two_distinct_fns_get_two_helpers(self) -> None:
