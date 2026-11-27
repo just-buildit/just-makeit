@@ -311,38 +311,54 @@ def test_run_cli_starts_each_declared_memo_empty(module, name, tmp_path):
 _SCOPED = sorted(k for k, why in _NOT_PER_PROCESS.items() if why == SCOPED)
 
 
-#: Commands that each reach a different way out of `_undo.guard` (the
-#: scope most SCOPED rows are reset by): a creating command refused before
-#: it writes, one that succeeds, and a mutating one that succeeds. A
-#: command that never opens the guard (`--version`) checks nothing for
-#: those rows (gh-2852).
+#: Commands that together reach every scope a SCOPED row is reset by.
+#: `_undo.guard` resets `_undo._active` and `_undo._awaiting_root`: a
+#: creating command refused before it writes, one that succeeds, and a
+#: mutating one that succeeds each leave it a different way. `apply`'s
+#: replay context managers reset the rest (`_config._DEFERRED`,
+#: `_REPLAY_GRAPH`, `_SCRATCH_WRITES`, `_object._DEFERRED_REGEN`). A
+#: command that opens neither (`--version`) checks nothing (gh-2852).
+#: Each row: id, the commands in order, the last one's exit code, and a
+#: phrase its stderr must hold (so a refusal is the expected one).
 _SCOPED_RUNS = (
-    ("refused new", (("new", "p"), ("new", "p")), 1),
-    ("new", (("new", "p"),), 0),
-    ("mutating", (("new", "p"), ("object", "g")), 0),
+    (
+        "refused new",
+        (("new", "p"), ("new", "p")),
+        1,
+        "already exists and is not empty",
+    ),
+    ("new", (("new", "p"),), 0, ""),
+    ("mutating", (("new", "p"), ("object", "g")), 0, ""),
+    ("apply", (("new", "p"), ("object", "g"), ("apply",)), 0, ""),
 )
 
 
 @pytest.mark.parametrize(
-    "runs,last_rc",
-    [(r, rc) for _, r, rc in _SCOPED_RUNS],
-    ids=[i for i, _, _ in _SCOPED_RUNS],
+    "runs,last_rc,says",
+    [(r, rc, says) for _, r, rc, says in _SCOPED_RUNS],
+    ids=[i for i, _, _, _ in _SCOPED_RUNS],
 )
 @pytest.mark.parametrize("module,name", _SCOPED, ids=_ids(_SCOPED))
 def test_scoped_state_is_put_back_by_a_command(
-    module, name, tmp_path, runs, last_rc
+    module, name, tmp_path, runs, last_rc, says
 ):
     """What `SCOPED` claims: after a command, the initial value is back --
-    after each way a command leaves `_undo.guard`, not only one that
-    never enters it."""
+    after each way out of each scope that resets a row, not only after a
+    command that enters none of them."""
     node = _MEMOS[(module, name)]
     initial = ast.literal_eval(node.value)
+
+    def cwd(argv: "tuple[str, ...]") -> Path:
+        # `new` runs beside the project; every other verb runs inside it.
+        return tmp_path if argv[0] == "new" else tmp_path / "p"
+
     *setup, last = runs
     for argv in setup:
-        assert run_cli(*argv, cwd=tmp_path).returncode == 0, argv
-    cwd = tmp_path / "p" if last[0] != "new" else tmp_path
-    r = run_cli(*last, cwd=cwd)
+        r = run_cli(*argv, cwd=cwd(argv))
+        assert r.returncode == 0, (argv, r.stdout + r.stderr)
+    r = run_cli(*last, cwd=cwd(last))
     assert r.returncode == last_rc, (last, r.stdout + r.stderr)
+    assert says in r.stderr, (last, r.stderr)
     mod = _import(module)
     assert getattr(mod, name) == initial
 
