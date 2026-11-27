@@ -311,12 +311,38 @@ def test_run_cli_starts_each_declared_memo_empty(module, name, tmp_path):
 _SCOPED = sorted(k for k, why in _NOT_PER_PROCESS.items() if why == SCOPED)
 
 
+#: Commands that each reach a different way out of `_undo.guard` (the
+#: scope most SCOPED rows are reset by): a creating command refused before
+#: it writes, one that succeeds, and a mutating one that succeeds. A
+#: command that never opens the guard (`--version`) checks nothing for
+#: those rows (gh-2852).
+_SCOPED_RUNS = (
+    ("refused new", (("new", "p"), ("new", "p")), 1),
+    ("new", (("new", "p"),), 0),
+    ("mutating", (("new", "p"), ("object", "g")), 0),
+)
+
+
+@pytest.mark.parametrize(
+    "runs,last_rc",
+    [(r, rc) for _, r, rc in _SCOPED_RUNS],
+    ids=[i for i, _, _ in _SCOPED_RUNS],
+)
 @pytest.mark.parametrize("module,name", _SCOPED, ids=_ids(_SCOPED))
-def test_scoped_state_is_put_back_by_a_command(module, name, tmp_path):
-    """What `SCOPED` claims: after a command, the initial value is back."""
+def test_scoped_state_is_put_back_by_a_command(
+    module, name, tmp_path, runs, last_rc
+):
+    """What `SCOPED` claims: after a command, the initial value is back --
+    after each way a command leaves `_undo.guard`, not only one that
+    never enters it."""
     node = _MEMOS[(module, name)]
     initial = ast.literal_eval(node.value)
-    assert run_cli("--version", cwd=tmp_path).returncode == 0
+    *setup, last = runs
+    for argv in setup:
+        assert run_cli(*argv, cwd=tmp_path).returncode == 0, argv
+    cwd = tmp_path / "p" if last[0] != "new" else tmp_path
+    r = run_cli(*last, cwd=cwd)
+    assert r.returncode == last_rc, (last, r.stdout + r.stderr)
     mod = _import(module)
     assert getattr(mod, name) == initial
 
