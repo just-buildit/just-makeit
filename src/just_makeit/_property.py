@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from . import _config as C
+from ._keys import truthy
 from . import _csym as CSYM
 from . import _glue
 from . import _linkcheck
@@ -150,7 +151,7 @@ def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
         props = [
             p
             for p in C.properties(cfg, comp)
-            if p.get("writable")
+            if truthy(p.get("writable"))
             and not p.get("field")
             and p["name"] not in state
             and setter_return_type(p) == "void"

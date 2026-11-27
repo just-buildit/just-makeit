@@ -28,6 +28,7 @@ from ._types import (
 )
 from . import _coerce
 from . import _config as C
+from ._keys import truthy
 from . import _enumc
 from . import _record
 from . import _borrow
@@ -368,7 +369,7 @@ def module_fn_smoke_calls(
             args = [
                 f"&{p['name']}" if param_scalar_out(p) else z
                 for p, z in zip(params, zeros)
-            ] + (["NULL"] if fn.get("why") else [])
+            ] + (["NULL"] if truthy(fn.get("why")) else [])
             lines.append(f"    /* {name}: verify it runs without crashing */")
             call = f"(void){name}({', '.join(args)});"
             if outs:
@@ -2808,7 +2809,7 @@ def make_functions_ctx(
                 variable_output=bool(fn.get("variable_output")),
                 out_size=fn.get("out_size", ""),
                 check_return=bool(fn.get("check_return")),
-                why=bool(fn.get("why")),
+                why=truthy(fn.get("why")),
                 status_errors=_borrow.status_rows(fn),
                 enums=enums,
                 c_name=c_name,

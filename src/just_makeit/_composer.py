@@ -2605,7 +2605,9 @@ def create_why(cfg: dict, module: str) -> bool:
     >>> create_why({"module": {"m": {}}}, "m")
     False
     """
-    return bool(cfg.get("module", {}).get(module, {}).get("create_why"))
+    return _keys.truthy(
+        cfg.get("module", {}).get(module, {}).get("create_why")
+    )
 
 
 def _create_call(cfg: dict, module: str, args: str, why: str) -> str:

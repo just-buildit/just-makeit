@@ -25,6 +25,7 @@ from pathlib import Path
 from . import _coerce
 from . import _inflight
 from . import _config as C
+from ._keys import truthy
 from . import _csym as CSYM
 from ._builtins import require_scope_names
 from . import _modplatforms
@@ -370,7 +371,7 @@ def _emit_getset(backing: str, sym: str, prop: dict, module: str) -> str:
         where,
         prop,
         no_setter=""
-        if prop.get("writable")
+        if truthy(prop.get("writable"))
         else "a read-only property has no setter. Add writable = true, or"
         " drop error.",
     )
@@ -388,7 +389,7 @@ _fn_{backing}_get_{name}(PyObject *mod, PyObject *args)
     return {value};
 }}
 """
-    if prop.get("writable"):
+    if truthy(prop.get("writable")):
         # gh-1952 / gh-2144: the value parses as one object and converts
         # through the setter faces' one conversion, at its row's width and
         # range-checked. It parsed straight into the declared type.
@@ -438,7 +439,7 @@ def _fn_list(cfg: dict, module: str) -> list[str]:
     names.append(f"{backing}_destroy")
     for p in C.module_properties(cfg, module):
         names.append(f"{backing}_get_{p['name']}")
-        if p.get("writable"):
+        if truthy(p.get("writable")):
             names.append(f"{backing}_set_{p['name']}")
     return names
 
@@ -610,7 +611,7 @@ def _fn_doc_lines(cfg: dict, module: str, fn: str) -> list[str]:
     for p in C.module_properties(cfg, module):
         if fn in (f"{backing}_get_{p['name']}", f"{backing}_set_{p['name']}"):
             doc = str(p.get("doc") or "")
-        if fn == f"{backing}_set_{p['name']}" and p.get("writable"):
+        if fn == f"{backing}_set_{p['name']}" and truthy(p.get("writable")):
             # gh-2214: a setter that may refuse documents what it raises,
             # from the pair `_emit_getset` raises with.
             setter = CSYM.property_setter(
@@ -832,7 +833,7 @@ def render_pyi(cfg: dict, module: str) -> str:
             f"def {backing}_get_{pn}({_params(f'state: {state_t}')})"
             f" -> {_pyi_scalar(pt)}:",
         )
-        if p.get("writable"):
+        if truthy(p.get("writable")):
             _def(
                 f"{backing}_set_{pn}",
                 f"def {backing}_set_{pn}("

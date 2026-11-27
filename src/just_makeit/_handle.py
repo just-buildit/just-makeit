@@ -34,6 +34,7 @@ from typing import NamedTuple, TYPE_CHECKING
 from . import _borrow
 from . import _capsule
 from . import _coerce
+from ._keys import truthy
 from . import _inflight
 from . import _config as C
 from . import _csym as CSYM
@@ -599,7 +600,7 @@ def _method_kwargs(m: dict) -> bool:
         # arguments after it (gh-2211) it parses with keywords, as (b) and
         # (d) do once they carry trailing scalars.
         return len(margs) > 1
-    if any(a.get("writable") for a in arrays) and ret_arr:
+    if any(truthy(a.get("writable")) for a in arrays) and ret_arr:
         # (d) array-in + writable array-out. Bare form is positional; with
         # trailing scalars (gh-582) it parses with keywords exactly as (b)
         # does. This MUST track _emit_method's (d) branch — registering the
@@ -734,9 +735,11 @@ def py_args(m: dict) -> list:
     margs = list(m.get("args", []))
     arrays = _array_args(m)
     returns = m.get("returns")
-    writable = [a for a in arrays if a.get("writable")]
+    writable = [a for a in arrays if truthy(a.get("writable"))]
     if writable and returns and str(returns).endswith("[]"):
-        lead = [a for a in arrays if not a.get("writable")][:1] + writable[:1]
+        lead = [a for a in arrays if not truthy(a.get("writable"))][
+            :1
+        ] + writable[:1]
     else:
         lead = arrays[:1]
     return lead + [a for a in margs if not any(a is b for b in lead)]
@@ -976,7 +979,7 @@ def method_locals(m: dict) -> "frozenset[str]":
             for a in margs[1:]
             if not a.get("enum")
         ) | frozenset({"dims", "arr", "out", "got"})
-    if ret_arr and any(a.get("writable") for a in array_in):
+    if ret_arr and any(truthy(a.get("writable")) for a in array_in):
         return raw | frozenset(  # (d)
             {
                 "n_in",
@@ -1339,9 +1342,9 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     # gh-582: a control-port variant of an existing (d) method — a streaming
     # block plus a couple of loop controls — is the block form of a shape that
     # already existed, so the missing scalars were a gap rather than a decision.
-    writable_out = [a for a in array_in if a.get("writable")]
+    writable_out = [a for a in array_in if truthy(a.get("writable"))]
     if writable_out and returns and str(returns).endswith("[]"):
-        ins = [a for a in array_in if not a.get("writable")]
+        ins = [a for a in array_in if not truthy(a.get("writable"))]
         if len(writable_out) > 1 or len(ins) != 1:
             raise NotImplementedError(
                 f"handle method '{name}': shape (d) takes exactly one input "
@@ -2788,7 +2791,7 @@ def _arg_array_ann(a: dict) -> str:
     declared dtype; a ``writable`` arg is the caller's buffer (gh-1733).
     """
     return T.array_param_annotation(
-        str(a["type"]), writable=bool(a.get("writable"))
+        str(a["type"]), writable=truthy(a.get("writable"))
     )
 
 
@@ -2804,7 +2807,7 @@ def py_face(m: dict, enums: "dict | None" = None) -> PyFace:
     margs = list(m.get("args", []))
     returns = m.get("returns")
     arrays = [a for a in margs if str(a.get("type", "")).endswith("[]")]
-    writable_out = [a for a in arrays if a.get("writable")]
+    writable_out = [a for a in arrays if truthy(a.get("writable"))]
     ret_arr = bool(returns) and str(returns).endswith("[]")
     if returns == "bytes":
         # (f) scalar/string args -> bytes (len from handle, gh-565).

@@ -46,6 +46,7 @@ import re
 from pathlib import Path
 
 from . import _incpath as INC
+from ._keys import truthy
 from ._docstring import TRIPLE_QUOTE
 
 #: The template slots whose value depends on the project's symbol stem.
@@ -339,7 +340,7 @@ def property_c_names(stem_: str, p: dict) -> "tuple[str, ...]":
     if p.get("field") or p.get("expr") or p.get("capsule"):
         return ()
     out = [property_getter(stem_, name)]
-    if p.get("writable"):
+    if truthy(p.get("writable")):
         out.append(property_setter(stem_, name))
     return tuple(out)
 
