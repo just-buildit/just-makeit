@@ -3678,6 +3678,204 @@ def _regenerate_module_now(
         _linkcheck.write(root, cfg, _obj)
 
 
+def _top_level_definitions(text: str) -> "dict[str, str]":
+    r"""Every function *text* defines at file scope, by name, with the text
+    of its definition (the comment above it included).
+
+    gh-2843 item 1. :func:`_extract_c_function_bodies` reads only the house
+    style -- the return type on its own line -- and skips a one-line
+    signature on purpose, so the generated ``void <stem>_steps(`` is never
+    "hand-patched". Merging a render into a file needs every definition
+    whatever its layout, so this reads structure from the comment- and
+    string-blind :func:`_docsync._code_mask`: an item ends at a file-scope
+    ``;`` or at the ``}`` closing a body, and a body whose head ends in a
+    parameter list is a function named by the identifier before that list.
+    Preprocessor lines separate items, and an ``extern "C" { ... }`` block
+    is transparent: a header's declarations sit inside one.
+
+    >>> d = _top_level_definitions(
+    ...     "#include <x.h>\n/* doc */\nint\nf(void)\n{\n    return 1;\n}\n"
+    ...     "void g(int a,\n       int b) { (void)a; }\n"
+    ...     "typedef struct { int (*cb)(void); } t;\nint h(void);\n"
+    ... )
+    >>> sorted(d)
+    ['f', 'g']
+    >>> d["f"].splitlines()[0]
+    '/* doc */'
+    >>> sorted(_top_level_definitions(
+    ...     'extern "C" {\nstatic inline int\nk(void)\n{\n    return 0;\n}\n}\n'
+    ... ))
+    ['k']
+    """
+    from ._docsync import _code_mask
+
+    mask = _code_mask(text)
+    out: dict[str, str] = {}
+    depth = start = i = extern = 0
+    while i < len(mask):
+        c = mask[i]
+        line_start = mask.rfind("\n", 0, i) + 1
+        if depth == 0 and c == "#" and not mask[line_start:i].strip():
+            # A preprocessor line, continuations included, ends an item.
+            j = i
+            while (j := mask.find("\n", j)) != -1 and mask[j - 1] == "\\":
+                j += 1
+            i = start = len(mask) if j == -1 else j + 1
+            continue
+        if (
+            c == "{"
+            and depth == 0
+            and re.search(r"\bextern\s*\"\s*\"\s*$", mask[start:i])
+        ):
+            extern += 1
+            start = i + 1
+        elif c == "}" and depth == 0 and extern:
+            extern -= 1
+            start = i + 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                head = mask[start : mask.index("{", start)].rstrip()
+                if head.endswith(")"):
+                    # The identifier before the head's last parameter list.
+                    k, d = len(head) - 1, 0
+                    while k >= 0:
+                        d += {")": 1, "(": -1}.get(head[k], 0)
+                        if d == 0:
+                            break
+                        k -= 1
+                    m = re.search(r"(\w+)\s*$", head[:k])
+                    if m:
+                        out[m.group(1)] = text[start : i + 1].strip()
+                    start = i + 1
+        elif c == ";" and depth == 0:
+            start = i + 1
+        i += 1
+    return out
+
+
+def _meaningful_lines(text: str) -> "list[str]":
+    """The lines of C *text* that are code: stripped, without blank lines
+    or comments. What `_keep_module_core_h` requires to survive."""
+    code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    code = re.sub(r"//[^\n]*", "", code)
+    return [ln.strip() for ln in code.splitlines() if ln.strip()]
+
+
+def _keep_module_core_h(
+    path: Path, old: str, comp: str, family: "C.CoreFamily | None"
+) -> None:
+    """Carry what a module's ``_core.h`` held into its collocated object's.
+
+    gh-2843 item 1. ``jm object m --module m`` renders the object's header
+    over the module's own ``m_core.h``. That header already held the
+    declarations ``jm function`` injected and anything the author wrote,
+    and the render dropped them: ``m_ext.c`` then called a function nothing
+    declared, and ``status --check`` reported the header STALE on a tree
+    the verb had just written.
+
+    Carried back, each through the code that already does it:
+
+    - every prototype, by :func:`_init._inject_decls_into_core_h` -- what
+      `apply` uses to give a header the declarations it lacks, so a
+      prototype the render already has is not duplicated;
+    - every function definition (a ``static inline`` one from ``jm
+      function --inline``, or the author's), by
+      :func:`_top_level_definitions`, before the header's close;
+    - every ``#include``, after the render's own.
+
+    Anything else of the old header's code that would still be lost -- a
+    macro, a typedef -- is refused, naming it: the module's header is
+    sacred, and silently dropping a line of it is what this fixes. `_undo`
+    puts the tree back.
+    """
+    from ._init import _core_h_decl_lines, _inject_decls_into_core_h
+
+    _inject_decls_into_core_h(
+        path, comp, _core_h_decl_lines(old), family=family
+    )
+    text = path.read_text(encoding="utf-8")
+    new_bodies = _top_level_definitions(text)
+    bodies = [
+        body
+        for name, body in _top_level_definitions(old).items()
+        if name not in new_bodies
+    ]
+    if bodies:
+        close = "#ifdef __cplusplus\n}\n#endif"
+        at = text.rindex(close) if close in text else text.rindex("#endif")
+        text = text[:at] + "\n\n".join(bodies) + "\n\n" + text[at:]
+    includes = [
+        ln
+        for ln in old.splitlines()
+        if ln.startswith("#include") and ln not in text
+    ]
+    if includes:
+        last = max(
+            text.rindex(ln)
+            for ln in text.splitlines()
+            if ln.startswith("#include")
+        )
+        end = text.index("\n", last) + 1
+        text = text[:end] + "".join(f"{ln}\n" for ln in includes) + text[end:]
+    have = set(_meaningful_lines(text))
+    lost = [ln for ln in _meaningful_lines(old) if ln not in have]
+    if lost:
+        raise _report.Refusal(
+            f"{path} holds code the object's header would drop, which jm"
+            f" cannot place: {'; '.join(lost)}. Move it to a header of your"
+            " own and include that, then run this again (gh-2843)."
+        )
+    _textio.write_text(path, text)
+
+
+def _keep_module_core_c(path: Path, rendered: str) -> None:
+    """Give a module's existing ``_core.c`` what its collocated object's
+    render defines, without re-rendering it.
+
+    gh-2843 item 1. ``jm object m --module m`` wrote the object's
+    ``m_core.c`` over the module's, and the author's own functions in it
+    were gone with no prompt. ``_core.c`` is the author's: jm only ever
+    ADDS to it a definition it lacks -- the rule `apply` keeps for the same
+    file (gh-1294). So each definition the object's render has and the file
+    lacks (:func:`_top_level_definitions`, which reads the one-line
+    ``steps`` signature too) is appended from the render, with any ``#include`` the render has and the file
+    lacks, and nothing the file holds is touched.
+    """
+    existing = path.read_text(encoding="utf-8")
+    have = _top_level_definitions(existing)
+    add = [
+        body
+        for name, body in _top_level_definitions(rendered).items()
+        if name not in have
+    ]
+    includes = [
+        ln
+        for ln in rendered.splitlines()
+        if ln.startswith("#include") and ln not in existing
+    ]
+    text = existing
+    if includes:
+        head = "".join(f"{ln}\n" for ln in includes)
+        lines = [
+            ln
+            for ln in text.splitlines(keepends=True)
+            if ln.startswith("#include")
+        ]
+        if lines:
+            end = text.index(lines[-1]) + len(lines[-1])
+            text = text[:end] + head + text[end:]
+        else:
+            text = head + text
+    if add:
+        text = text.rstrip() + "\n\n" + "\n\n".join(add) + "\n"
+    if text != existing:
+        _textio.write_text(path, text)
+        print(f"  update  {path}")
+
+
 def run(
     root: Path,
     object_name: str,
@@ -4236,11 +4434,26 @@ def run(
     if comp != C.collocated_object(layout_owner, module):
         INC.refuse_occupied(root, layout_owner, comp)
     core_h_path = INC.core_h(root, comp, layout_owner)
+    # gh-2843 item 1: the collocated object's core IS its module's, which
+    # may already hold the module's function declarations and the author's
+    # own C. The object's render replaces the header, then what the module's
+    # header held is carried back (`_keep_module_core_h`); `_core.c` is
+    # only appended to (`_keep_module_core_c`), never re-rendered.
+    collocated = comp == C.collocated_object(layout_owner, module)
+    old_core_h = (
+        core_h_path.read_text(encoding="utf-8")
+        if collocated and core_h_path.exists()
+        else None
+    )
     _write(
         core_h_path,
         r(R.COMPONENT_CORE_H),
         "update" if core_h_path.exists() else "create",
     )
+    if old_core_h is not None:
+        _keep_module_core_h(
+            core_h_path, old_core_h, comp, C.core_family(layout_owner, comp)
+        )
     if impl_body is not None and not no_step:
         from . import _impl as I
 
@@ -4257,17 +4470,20 @@ def run(
     # object ended up with an INTERFACE library AND a source file.
     if not header_only:
         core_c_path = INC.src_path(root, comp, layout_owner) / f"{comp}_core.c"
-        _write(
-            core_c_path,
-            r(R.COMPONENT_CORE_C),
-            "update" if core_c_path.exists() else "create",
-        )
+        if collocated and core_c_path.exists():
+            _keep_module_core_c(core_c_path, r(R.COMPONENT_CORE_C))
+        else:
+            _write(
+                core_c_path,
+                r(R.COMPONENT_CORE_C),
+                "update" if core_c_path.exists() else "create",
+            )
     # gh-2114: the collocated object's CMakeLists IS the module's own file,
     # which `_regenerate_module` below renders whole -- this object's core
     # included -- after asking `apply`'s questions of it. Writing it here
     # first erased an author's OBJECT library before that ask could see it,
     # so the module's render is that file's one writer.
-    if comp != C.collocated_object(layout_owner, module):
+    if not collocated:
         obj_cmake_path = (
             INC.src_path(root, comp, layout_owner) / "CMakeLists.txt"
         )
