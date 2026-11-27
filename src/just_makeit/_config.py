@@ -3565,6 +3565,99 @@ def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
     return out
 
 
+# The C bodies a manifest section may supply inline, each beside the
+# `_file` companion that lifts it from a file instead (`_apply._resolve_impl`
+# reads both). An object reads all four; a method and a module function read
+# only the first.
+IMPL_PAIRS = (
+    ("impl", "impl_file"),
+    ("create_impl", "create_impl_file"),
+    ("reset_impl", "reset_impl_file"),
+    ("destroy_impl", "destroy_impl_file"),
+)
+
+
+def impl_key_errors(cfg: dict) -> "list[str]":
+    """Every C-body declaration `apply` could not honour, as a refusal.
+
+    gh-1906. Two rules, over the MERGED manifest:
+
+    - A body and its ``_file`` companion (:data:`IMPL_PAIRS`) set together
+      on one section -- an object, a method of it or of one of its views,
+      or a module function. One body or the other, never both.
+    - An object with an ``opaque = true`` state field and neither
+      ``create_impl`` nor ``create_impl_file``. The generated ``create()``
+      assigns no opaque field, and the struct is ``calloc``'d, so the field
+      ships NULL and the first call through it dereferences that.
+
+    Both were asked only of the fragment ``jm apply <path>`` composed, so
+    the same fragment already under ``objects/`` applied through a bare
+    ``jm apply`` -- and ``jm status --check`` passed it -- while the
+    exclusivity half lived on in a second copy in ``_apply._resolve_impl``.
+    Asked by ``apply`` -- bare, and of a fragment before it is copied into
+    ``objects/`` -- and by ``status``, before any write. Not by `load`: apply's replay builds a scratch manifest
+    verb by verb, and an opaque field reaches it one verb before its
+    ``create_impl`` body does, so `load` would refuse every opaque object.
+
+    >>> impl_key_errors({"o": {"state": [
+    ...     {"name": "p", "type": "float *", "opaque": True}]}})[0][:43]
+    "object 'o': opaque state field(s) [p] need "
+    >>> impl_key_errors({"o": {"create_impl": "x", "state": [
+    ...     {"name": "p", "type": "float *", "opaque": True}]}})
+    []
+    >>> impl_key_errors({"o": {"methods": [
+    ...     {"name": "m", "impl": "x", "impl_file": "f.c::g"}]}})
+    ["object 'o' method 'm': `impl` and `impl_file` are mutually exclusive \
+-- set one or the other."]
+    """
+
+    def both(who: str, sec: dict, pairs) -> "list[str]":
+        return [
+            f"{who}: `{ik}` and `{fk}` are mutually exclusive"
+            " -- set one or the other."
+            for ik, fk in pairs
+            if sec.get(ik) and sec.get(fk)
+        ]
+
+    out: "list[str]" = []
+    for comp in components(cfg):
+        sec = cfg.get(comp)
+        if not isinstance(sec, dict):
+            continue
+        who = f"object '{comp}'"
+        out += both(who, sec, IMPL_PAIRS)
+        opaque = [
+            s.get("name", "?")
+            for s in sec.get("state") or []
+            if isinstance(s, dict) and s.get("opaque")
+        ]
+        if opaque and not (
+            sec.get("create_impl") or sec.get("create_impl_file")
+        ):
+            out.append(
+                f"{who}: opaque state field(s) [{', '.join(opaque)}] need"
+                " `create_impl` or `create_impl_file` to initialize them --"
+                " the generated create() assigns no opaque field, so each"
+                " would be NULL."
+            )
+        owners = [(who, sec)] + [
+            (f"{who} view '{v.get('class_name')}'", v)
+            for v in sec.get("views") or []
+            if isinstance(v, dict)
+        ]
+        for owner, osec in owners:
+            for m in osec.get("methods") or []:
+                if isinstance(m, dict):
+                    what = f"{owner} method '{m.get('name')}'"
+                    out += both(what, m, IMPL_PAIRS[:1])
+    for mod in modules(cfg):
+        for fn in module_functions(cfg, mod):
+            if isinstance(fn, dict):
+                what = f"module '{mod}' function '{fn.get('name')}'"
+                out += both(what, fn, IMPL_PAIRS[:1])
+    return out
+
+
 def object_ref_cycles(cfg: dict) -> "list[str]":
     """Every cycle in the ``object`` init-param graph, as a refusal.
 

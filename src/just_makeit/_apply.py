@@ -74,15 +74,11 @@ def _resolve_impl(
     """Honour `<impl_key>` / `<impl_file_key>` / `replace` on a TOML section.
 
     Returns the resolved body (interpolated + substituted) or None when
-    neither key is set.  Raises ValueError on mutual-exclusion violations.
+    neither key is set. Both set is refused before the replay reaches here,
+    by `_config.impl_key_errors` (gh-1906), the one copy of that rule.
     The *replace* dict is only honoured for the default impl/impl_file pair."""
     inline = section.get(impl_key)
     file_ref = section.get(impl_file_key)
-    if inline and file_ref:
-        raise ValueError(
-            f"{label}: `{impl_key}` and `{impl_file_key}` are mutually "
-            f"exclusive — set one or the other."
-        )
     if not inline and not file_ref:
         return None
 
@@ -4296,43 +4292,15 @@ def _reconcile_bench_cmake(root: Path, cfg: dict) -> list[Path]:
 _INCLUDE_LINE = 'include = ["objects/*.toml"]\n'
 
 
-def _validate_fragment_impl_keys(fragment: dict, label: str) -> None:
-    """Check impl/impl_file mutual-exclusion on every section in *fragment*
-    before any side-effects happen.  Covers impl, create_impl, reset_impl,
-    and destroy_impl pairs."""
-    _impl_pairs = [
-        ("impl", "impl_file"),
-        ("create_impl", "create_impl_file"),
-        ("reset_impl", "reset_impl_file"),
-        ("destroy_impl", "destroy_impl_file"),
-    ]
-    for key in C.components(fragment):
-        value = fragment[key]
-        if not isinstance(value, dict):
-            continue
-        for ik, ifk in _impl_pairs:
-            if value.get(ik) and value.get(ifk):
-                raise ValueError(
-                    f"{label}: object {key}: `{ik}` and `{ifk}` are "
-                    f"mutually exclusive — set one or the other."
-                )
-        opaque_state = [s for s in value.get("state", []) if s.get("opaque")]
-        if opaque_state and not (
-            value.get("create_impl") or value.get("create_impl_file")
-        ):
-            names = ", ".join(s.get("name", "?") for s in opaque_state)
-            raise ValueError(
-                f"{label}: object {key}: opaque state field(s) [{names}] "
-                f"require `create_impl` or `create_impl_file` to initialize "
-                f"them — the auto-generated create() would leave them "
-                f"uninitialized."
-            )
-        for m in value.get("methods", []):
-            if m.get("impl") and m.get("impl_file"):
-                raise ValueError(
-                    f"{label}: {key}.{m.get('name', '?')}: `impl` and "
-                    f"`impl_file` are mutually exclusive."
-                )
+def _refuse_impl_keys(cfg: dict) -> None:
+    """Refuse *cfg* when :func:`_config.impl_key_errors` finds anything.
+
+    gh-1906. Raises a :class:`_report.Refusal` naming every problem; the
+    CLI prints each as one ``error:`` line and exits 1.
+    """
+    errors = C.impl_key_errors(cfg)
+    if errors:
+        C._refuse(errors)
 
 
 def _fragment_already_included(root: Path, fragment_path: Path) -> bool:
@@ -4375,14 +4343,19 @@ def _compose_fragment(root: Path, fragment_path: Path) -> Path:
 
     already_included = _fragment_already_included(root, fragment_path)
 
+    merged = C.load(root)
     if not already_included:
         # Test-merge against the current resolved cfg to surface conflicts
         # before we touch any files. _merge_fragment raises ValueError naming
         # the conflicting object and the recommended remedy.
         # Skip when already_included: the "conflict" is the glob loading the
         # fragment itself, which is the expected state.
-        C._merge_fragment(C.load(root), fragment, fragment_path)
-    _validate_fragment_impl_keys(fragment, str(fragment_path))
+        C._merge_fragment(merged, fragment, fragment_path)
+    # gh-1906: the one C-body validator `_apply_manifest` asks too, here of
+    # the manifest the fragment would make, so a refused fragment is never
+    # copied into `objects/` -- by a library caller too, which has no
+    # command undo to put the copy back.
+    _refuse_impl_keys(merged)
 
     # Collect module-routing directives and validate before side-effects.
     module_directives: list[tuple[str, str]] = []
@@ -4538,6 +4511,9 @@ def run(
         print(f"just-makeit: composing fragment {fragment}")
         try:
             _compose_fragment(root, fragment)
+        except _report.Refusal as e:
+            print(e.report(), file=sys.stderr)
+            sys.exit(1)
         except (FileNotFoundError, FileExistsError, ValueError) as e:
             print(f"error: {e}", file=sys.stderr)
             sys.exit(1)
@@ -4567,6 +4543,10 @@ def _apply_manifest(
     (gh-1867). The `jm_version` stamp follows even those (gh-1660).
     """
     cfg = C.load(root)
+    # gh-1906: a C body `apply` could not honour -- an opaque field with no
+    # `create_impl`, a body and its `_file` together -- before any write, on
+    # a bare apply as on a fragment's.
+    _refuse_impl_keys(cfg)
     # gh-1310: a family member whose family header is missing, before anything
     # is written -- jm cannot write that file, and every member would render
     # an `#include` of nothing.
