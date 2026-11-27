@@ -129,6 +129,17 @@ def test_apply_drops_a_raises_section_the_manifest_no_longer_declares(
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _raises_lines(fragment) == [], _raises_lines(fragment)
+    # The line after the removed section keeps the indent of its neighbours,
+    # so the removal leaves no stray indentation behind (gh-2555).
+    text_lines = fragment.read_text(encoding="utf-8").splitlines()
+
+    def indent_of(literal):
+        # The class docstring comes first in the fragment, so its own
+        # `Parameters` and `Examples` lines are the first to match.
+        line = next(ln for ln in text_lines if ln.strip() == literal)
+        return line[: len(line) - len(line.lstrip())]
+
+    assert indent_of('"Examples\\n"') == indent_of('"Parameters\\n"')
     r = run_cli("status", "--check", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
 

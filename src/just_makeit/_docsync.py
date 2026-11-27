@@ -364,7 +364,12 @@ def _insert_tp_doc(
 
 #: The ``Raises`` section of a class docstring, as it sits in a C string
 #: literal: from its ``"Raises\n"`` line to the blank line that ends it.
-_RAISES_SECTION_RE = re.compile(r'"Raises\\n"\n.*?\n\s*"\\n"\n', re.S)
+#: Anchored at its line's start, so the section takes its own continuation
+#: indent with it; otherwise a removal leaves that indent on the line after
+#: (gh-2555's re-indent).
+_RAISES_SECTION_RE = re.compile(
+    r'^[ \t]*"Raises\\n"\n.*?\n\s*"\\n"\n', re.S | re.M
+)
 
 
 def _swap_raises_section(existing: str, reference: str) -> str:
