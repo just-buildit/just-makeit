@@ -330,7 +330,35 @@ _SCOPED_RUNS = (
     ("new", (("new", "p"),), 0, ""),
     ("mutating", (("new", "p"), ("object", "g")), 0, ""),
     ("apply", (("new", "p"), ("object", "g"), ("apply",)), 0, ""),
+    # `apply` refused part-way through its replay: `deferred_save` and
+    # `deferred_module_regen` put their memo back in an `except` branch
+    # that only a refusal reaches.
+    (
+        "refused apply",
+        (
+            ("new", "p"),
+            ("object", "g"),
+            ("property", "g", "level", "--type", "double"),
+            ("_edit",),
+            ("apply",),
+        ),
+        1,
+        "Drop writable",
+    ),
 )
+
+
+def _make_level_a_writable_buffer(root: Path) -> None:
+    """The `_edit` step: declare property `level` both a buffer field and
+    writable, a pair `apply` refuses while it replays the manifest."""
+    frag = root / "objects" / "g.toml"
+    text = frag.read_text(encoding="utf-8")
+    anchor = 'name = "level"\n'
+    assert text.count(anchor) == 1, text
+    frag.write_text(
+        text.replace(anchor, anchor + 'buf_field = "gain"\nwritable = true\n'),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.parametrize(
@@ -354,6 +382,9 @@ def test_scoped_state_is_put_back_by_a_command(
 
     *setup, last = runs
     for argv in setup:
+        if argv == ("_edit",):
+            _make_level_a_writable_buffer(tmp_path / "p")
+            continue
         r = run_cli(*argv, cwd=cwd(argv))
         assert r.returncode == 0, (argv, r.stdout + r.stderr)
     r = run_cli(*last, cwd=cwd(last))
