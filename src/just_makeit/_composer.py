@@ -75,6 +75,7 @@ from ._docstring import (
     summary_docstring,
 )
 from ._pyfmt import reflow_pyi
+from ._keys import is_set, truthy
 
 # ── C type / format helpers ──────────────────────────────────────────────────
 
@@ -121,7 +122,7 @@ def _field_fmt(field: dict) -> str:
         return "O"  # scalar or (lo, hi) — decoded post-parse
     if field.get("enum"):
         return "s"
-    if field.get("bytes") or field.get("complex"):
+    if truthy(field.get("bytes")) or truthy(field.get("complex")):
         return "O"  # opaque: a bytes buffer / a numpy complex64 array
     if _field_is_owned_ptr(field):
         return "O"  # gh-1711: None, its text, or a capsule -- post-parse
@@ -159,7 +160,7 @@ def _field_is_buffer(field: dict) -> bool:
     """An owned heap array crossing as a Python object — a ``bytes`` pattern or
     a ``complex`` (complex64) stream. Both store a pointer and a length in the
     source struct (see :func:`buffer_members`) and need a free in dealloc."""
-    return bool(field.get("bytes") or field.get("complex"))
+    return bool(truthy(field.get("bytes")) or truthy(field.get("complex")))
 
 
 def buffer_members(field: dict) -> "tuple[str, str]":
@@ -217,7 +218,7 @@ def is_bit_pattern(field: dict) -> bool:
     >>> is_bit_pattern({"name": "p", "bytes": True})
     False
     """
-    return bool(field.get("bytes")) and field.get("coerce") == "bit_pattern"
+    return truthy(field.get("bytes")) and field.get("coerce") == "bit_pattern"
 
 
 #: What a bit_pattern field is, as every refusal of a non-bit element says
@@ -454,7 +455,7 @@ def get_fn(field: dict) -> str:
     ''
     """
     fn = field.get("get_fn") or ""
-    if fn and (field.get("complex") or _field_is_owned_ptr(field)):
+    if fn and (truthy(field.get("complex")) or _field_is_owned_ptr(field)):
         raise Refusal(
             f"composer field '{field.get('name', '<unnamed>')}': "
             f'`get_fn = "{fn}"` reads a scalar through '
@@ -480,7 +481,7 @@ def get_fn_prototype(field: dict, struct: str) -> str:
     'size_t rd(const s_t *, double, uint8_t *, size_t);'
     """
     fn = get_fn(field)
-    if field.get("bytes"):
+    if truthy(field.get("bytes")):
         return f"size_t {fn}(const {struct} *, double, uint8_t *, size_t);"
     return f"{field['type']} {fn}(const {struct} *, double);"
 
@@ -753,7 +754,7 @@ def _get_fn_seams(cfg: dict, module: str) -> "list[_Seam]":
                         "most max elements, returning the count (out NULL, "
                         "max 0 sizes; get_fn, gh-2718)."
                     )
-                    if f.get("bytes")
+                    if truthy(f.get("bytes"))
                     else f"/* Read {where} field `{f['name']}` at rate fs"
                     " (get_fn, gh-2710). */",
                 )
@@ -817,9 +818,9 @@ def set_fn(field: dict, module: str = "", where: str = "") -> str:
         return ""
     kind = (
         "a `bytes`"
-        if field.get("bytes")
+        if truthy(field.get("bytes"))
         else "a `complex`"
-        if field.get("complex")
+        if truthy(field.get("complex"))
         else "an owned-pointer"
         if _field_is_owned_ptr(field)
         else "a ranged"
@@ -1117,7 +1118,7 @@ def _field_is_owned_ptr(field: dict) -> bool:
     four functions it lacks, instead of reaching the scalar path as a field
     with no `type`.
     """
-    return any(field.get(k) for k in _keys.COMPOSER_OWNED_PTR_KEYS)
+    return any(is_set(field, k) for k in _keys.COMPOSER_OWNED_PTR_KEYS)
 
 
 def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
@@ -1140,12 +1141,12 @@ def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
     """
     name = field.get("name", "<unnamed>")
     where = f"composer source field '{name}'"
-    missing = [k for k in OWNED_PTR_FNS if not field.get(k)]
+    missing = [k for k in OWNED_PTR_FNS if not is_set(field, k)]
     if missing:
         # Name the keys the author wrote (gh-1227): they are what made this
         # an owned pointer, and a message about functions alone would not
         # say why a field with `object` on it needs any.
-        wrote = [k for k in _keys.COMPOSER_OWNED_PTR_KEYS if field.get(k)]
+        wrote = [k for k in _keys.COMPOSER_OWNED_PTR_KEYS if is_set(field, k)]
         raise Refusal(
             f"{where}: `{'`, `'.join(wrote)}` declares an owned pointer, "
             f"which names all four host functions "
@@ -1200,7 +1201,7 @@ def owned_ptr(cfg: dict, field: dict) -> OwnedPtr:
         free_fn=field["free_fn"],
         parse_fn=field["parse_fn"],
         format_fn=field["format_fn"],
-        parse_why=bool(field.get("parse_why")),
+        parse_why=truthy(field.get("parse_why")),
     )
 
 
@@ -2398,7 +2399,7 @@ def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
             "it is one of the generator's built-in members, which the source "
             "does not delegate"
         )
-    if m.get("varargs") or m.get("manual_stub"):
+    if truthy(m.get("varargs")) or truthy(m.get("manual_stub")):
         return (
             "its binding is hand-written in the generator's own extension, "
             "so jm has none to render onto the source"
@@ -2562,8 +2563,8 @@ def json_why(cfg: dict, module: str) -> "dict[str, bool]":
     """
     jtbl = cfg.get("module", {}).get(module, {}).get("json", {})
     return {
-        "from_json": bool(jtbl.get("from_json_why")),
-        "from_file": bool(jtbl.get("from_file_why")),
+        "from_json": truthy(jtbl.get("from_json_why")),
+        "from_file": truthy(jtbl.get("from_file_why")),
     }
 
 
@@ -2839,7 +2840,7 @@ def render_source_type(cfg: dict, module: str) -> str:
                 indent="        ",
             )
             assign.append(f"    {{\n{_v}\n        self->src.{n} = _i;\n    }}")
-        elif f.get("bytes"):
+        elif truthy(f.get("bytes")):
             # Per-field destination: several bytes fields on one source
             # (e.g. a DSSS burst's acq_code/data_code/sync + payload) must
             # each land in their own struct arrays, not all in `bits`.
@@ -2848,7 +2849,7 @@ def render_source_type(cfg: dict, module: str) -> str:
             assign.append(
                 f"    if (!{tname}_replace_{n}(self, {n}))\n        return -1;"
             )
-        elif f.get("complex") or _field_is_owned_ptr(f):
+        elif truthy(f.get("complex")) or _field_is_owned_ptr(f):
             assign.append(f"""    if (!{tname}_replace_{n}(self, {n}))
         return -1;""")
         elif f.get("_ranged"):
@@ -3030,7 +3031,7 @@ def render_source_type(cfg: dict, module: str) -> str:
     # One _attach_<name> per complex64 stream field — coerce a numpy complex64
     # array (or None) into an owned src-><name> / src->n_<name>.
     for f in fields:
-        if not f.get("complex"):
+        if not truthy(f.get("complex")):
             continue
         cn = f["name"]
         # gh-1184: a complex stream is the same owned pointer/length pair a
@@ -3114,7 +3115,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
     for f in fields:
         n = f["name"]
         gd = gen["destroy_fn"] if gen else ""
-        if f.get("bytes"):
+        if truthy(f.get("bytes")):
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             _cfree = "(void *)" if buffer_is_relocated(f) else ""
@@ -3128,7 +3129,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 "free(" + _cfree + "{src}." + _p + ");",
                 gd,
             )
-        elif f.get("complex"):
+        elif truthy(f.get("complex")):
             _p, _l = buffer_members(f)
             _cfree = "(void *)" if buffer_is_relocated(f) else ""
             replace_c += "\n" + _replace_c(
@@ -3216,7 +3217,7 @@ static int
                 f'    {{"{n}", (getter){tname}_get_{n}, '
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
-        elif f.get("bytes"):
+        elif truthy(f.get("bytes")):
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             # gh-2718: a field naming `get_fn` reads through it, so a member
@@ -3292,7 +3293,7 @@ static int
                 f'    {{"{n}", (getter){tname}_get_{n}, '
                 f"(setter){tname}_set_{n}, {_field_doc_c(f)}, NULL}},"
             )
-        elif f.get("complex"):
+        elif truthy(f.get("complex")):
             _p, _l = buffer_members(f)
             getset_fns.append(f"""static PyObject *
 {tname}_get_{n}({obj} *self, void *closure)
@@ -3573,7 +3574,7 @@ def _segment_fields(cfg: dict, module: str) -> list[dict]:
         # ownership of its own, so none of the four faces exists here; left
         # unrefused, the keys would be read by nobody and the member bound
         # to nothing.
-        wrote = [k for k in _keys.COMPOSER_OWNED_PTR_KEYS if f.get(k)]
+        wrote = [k for k in _keys.COMPOSER_OWNED_PTR_KEYS if is_set(f, k)]
         if wrote:
             raise ValueError(
                 f"composer segment field '{f.get('name', '<unnamed>')}': "
@@ -3595,7 +3596,7 @@ def _segment_flat_fields(cfg: dict, module: str) -> list[dict]:
     that collides with a segment-level getset (``sources`` or a segment scalar)
     is skipped so the segment's own attribute always wins. Returns ``[]`` when
     the segment does not opt in."""
-    if not C.composer_segment(cfg, module).get("flat_sources"):
+    if not truthy(C.composer_segment(cfg, module).get("flat_sources")):
         return []
     taken = {"sources"} | {f["name"] for f in _segment_fields(cfg, module)}
     return [
@@ -5089,7 +5090,7 @@ static PyObject *
     # Feature 3 — a generated stream() iterator (drains execute into blocks),
     # so a project drops its hand-written `for blk in c.stream(n):` wrapper.
     stream_code = stream_row = ""
-    if C.composer_stream(cfg, module).get("stream"):
+    if truthy(C.composer_stream(cfg, module).get("stream")):
         # gh-317 feature 1: an optional `realtime = fs` that paces the iterator
         # to an fs-Hz clock between blocks, IN the .so — so a project drops its
         # hand-written `paced()` helper over a SampleClock. The clock is opaque
@@ -5263,7 +5264,7 @@ static PyObject *
     # bytes), it is the generic introspection primitive any sidecar — SigMF,
     # BLUE, a CSV manifest — is built from in Python; jm generates none of those.
     to_dict_code = to_dict_row = ""
-    if C.composer_stream(cfg, module).get("to_dict"):
+    if truthy(C.composer_stream(cfg, module).get("to_dict")):
         seg_keys = "".join(
             f'"{f["name"]}", '
             for f in C.composer_segment(cfg, module).get("fields", [])
@@ -6296,7 +6297,7 @@ static struct PyModuleDef _moduledef = {{
         f"    if (PyType_Ready(&{t}Type) < 0) return NULL;" for t in types
     )
     # The stream() iterator is an internal type — readied but not module-exposed.
-    if C.composer_stream(cfg, module).get("stream"):
+    if truthy(C.composer_stream(cfg, module).get("stream")):
         cn = C.composer_oo(cfg, module).get("composer_type_name", "Composer")
         ready += f"\n    if (PyType_Ready(&{cn}StreamType) < 0) return NULL;"
     add = "\n".join(
@@ -6388,7 +6389,11 @@ def _field_is_numeric(f: dict) -> bool:
     or a ranged ``… | tuple`` of them) — i.e. anything that is not an enum
     string, a ``bytes`` buffer, or a ``complex`` stream. Used to decide whether
     a docstring default is rendered bare (``0.0``) or quoted (``"tone"``)."""
-    return not f.get("enum") and not f.get("bytes") and not f.get("complex")
+    return (
+        not f.get("enum")
+        and not truthy(f.get("bytes"))
+        and not truthy(f.get("complex"))
+    )
 
 
 def _pyi_field_type(f: dict) -> str:
@@ -6397,9 +6402,9 @@ def _pyi_field_type(f: dict) -> str:
         return f.get("_py_accepts", "str | None")
     if f.get("enum"):
         return "str"
-    if f.get("bytes"):
+    if truthy(f.get("bytes")):
         return "bytes | None"
-    if f.get("complex"):
+    if truthy(f.get("complex")):
         # gh-1724: a complex stream is an array argument, spelled by the one
         # helper every face calls.
         return f"{T.array_param_annotation('float _Complex')} | None"
@@ -6487,7 +6492,9 @@ def _pyi_doc_lines(
         # owned pointer with none starts as ``None``.
         dflt = kind_doc_default(f, _field_is_numeric(f))
         if not dflt and (
-            f.get("bytes") or f.get("complex") or _field_is_owned_ptr(f)
+            truthy(f.get("bytes"))
+            or truthy(f.get("complex"))
+            or _field_is_owned_ptr(f)
         ):
             dflt = "None"
         type_line = defaulted_ann(f"{f['name']} : {ann}", dflt)
@@ -6697,7 +6704,7 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
     if tl_t:
         out[f"{seg_t}.add"] = one(f"Append segments; return a {tl_t}.")
         out[f"{tl_t}.add"] = one("Append and return self.")
-    if stream.get("stream"):
+    if truthy(stream.get("stream")):
         # `realtime` is a SAMPLE RATE in Hz, and saying so is the whole job
         # of its entry: the natural misread (a 0.0-1.0 scale factor) is
         # silent -- 1.0 asks for one sample per second, so the first block
@@ -6729,7 +6736,7 @@ def member_doc_lines(cfg: dict, module: str) -> "dict[str, list[str]]":
             ],
             8,
         )
-    if stream.get("to_dict"):
+    if truthy(stream.get("to_dict")):
         out[f"{cname}.to_dict"] = one(
             "Serialise the resolved composition (repeat, continuous, "
             "segments) to a dict."
@@ -6838,7 +6845,7 @@ def render_pyi(cfg: dict, module: str) -> str:
     seg_fields = _segment_fields(cfg, module)
     src_sig = _pyi_field_sig(src_fields)
     seg_scalar_sig = _pyi_field_sig(seg_fields)
-    has_stream = bool(C.composer_stream(cfg, module).get("stream"))
+    has_stream = truthy(C.composer_stream(cfg, module).get("stream"))
     # gh-560: a Timeline's `__iter__` is annotated too, so Iterator is needed
     # whenever a timeline exists — not only for the composer's stream().
     typing_imports = "Any, Iterator" if (has_stream or tl_t) else "Any"
@@ -7045,7 +7052,7 @@ def render_pyi(cfg: dict, module: str) -> str:
         if (_em.get("type") or cname) != cname:
             continue
         lines.extend(_extramethods.pyi_member(_em))
-    if C.composer_stream(cfg, module).get("stream"):
+    if truthy(C.composer_stream(cfg, module).get("stream")):
         rt_arg = (
             ", realtime: float = ..." if realtime_clock(cfg, module) else ""
         )
@@ -7054,7 +7061,7 @@ def render_pyi(cfg: dict, module: str) -> str:
             " -> Iterator[NDArray[np.complex64]]:",
             *docs[f"{cname}.stream"],
         ]
-    if C.composer_stream(cfg, module).get("to_dict"):
+    if truthy(C.composer_stream(cfg, module).get("to_dict")):
         lines += [
             "    def to_dict(self) -> dict:",
             *docs[f"{cname}.to_dict"],
@@ -7856,7 +7863,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             buffer_members(f)[0],
         )
         for f in src_fields
-        if f.get("bytes")
+        if truthy(f.get("bytes"))
     ] + [
         # gh-1711: a parsed owned pointer has no other owner either.
         "{0.free_fn}(({0.ctype})segs[j].{1}[k].{0.member});".format(
@@ -7898,7 +7905,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_ser = []
     for f in src_fields:
         n = f["name"]
-        if f.get("complex"):
+        if truthy(f.get("complex")):
             continue  # complex streams aren't generic-JSON serializable
         if f.get("enum"):
             e = f["enum"]
@@ -7906,7 +7913,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
                 f'        cJSON_AddStringToObject(so, "{n}", '
                 f"{_enumc.name_expr(e, f'src->{n}', C.enums(cfg))});"
             )
-        elif f.get("bytes"):
+        elif truthy(f.get("bytes")):
             # gh-1184: `src->bits` / `src->n_bits` were HARDCODED here, so a
             # bytes field under any other name emitted C referring to members
             # the struct does not have. That is gh-560's bug, still live in
@@ -7970,7 +7977,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     # gh-2718: a bytes `get_fn` renders at the segment's rate, so the
     # source's record is handed it -- and only then, so a record without
     # one is unchanged.
-    _src_gen = any(f.get("bytes") and get_fn(f) for f in src_fields)
+    _src_gen = any(truthy(f.get("bytes")) and get_fn(f) for f in src_fields)
     src_fs_param = ", double fs" if _src_gen else ""
     src_fs_arg = ", g->fs" if _src_gen else ""
 
@@ -7998,7 +8005,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
     src_parse = []
     for f in src_fields:
         n = f["name"]
-        if f.get("complex"):
+        if truthy(f.get("complex")):
             continue  # complex streams aren't generic-JSON serializable
         if f.get("enum"):
             e = f["enum"]
@@ -8008,7 +8015,7 @@ def render_json_funcs(cfg: dict, module: str) -> str:
             int _v = _enum_index(_enum_{e}, _s ? _s : "{f.get("default", "")}");
             src->{n} = _v < 0 ? 0 : _v;
         }}""")
-        elif f.get("bytes"):
+        elif truthy(f.get("bytes")):
             # gh-1184: the load half had the same hardcoded `bits`/`n_bits`
             # the store half did, so a round trip through JSON wrote one
             # field's array back into another's members.
@@ -8463,7 +8470,7 @@ def render_cli(cfg: dict, module: str) -> str:
     decls, parse, assign = [], [], []
     for f in src_fields:
         n = f["name"]
-        if f.get("complex"):
+        if truthy(f.get("complex")):
             continue  # complex streams can't cross a generated CLI flag
         if _field_is_enum(f):
             decl, case = _cli_enum_flag(f, enums)  # gh-2140
@@ -8499,7 +8506,7 @@ def render_cli(cfg: dict, module: str) -> str:
             return 2;
         }}
     }}""")
-        elif f.get("bytes"):
+        elif truthy(f.get("bytes")):
             # gh-1184: and the c-face CLI, the third copy of the same pair.
             _cp, _cl = buffer_members(f)
             decls.append(f"    const char *{n} = NULL;")
@@ -8603,7 +8610,7 @@ def render_cli(cfg: dict, module: str) -> str:
             buffer_members(f)[0],
         )
         for f in src_fields
-        if f.get("bytes")
+        if truthy(f.get("bytes"))
     ) + "".join(
         "        {0.free_fn}(({0.ctype})src.{0.member});\n".format(
             owned_ptr(cfg, f)

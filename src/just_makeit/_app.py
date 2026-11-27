@@ -346,7 +346,7 @@ def _ctor_flags(cfg: dict, component: str) -> list[dict]:
                 out.append(_init_param_flag(p))
         return out
     state = cfg.get(component, {}).get("state", [])
-    no_ctor = {s["name"] for s in state if s.get("no_ctor")}
+    no_ctor = {s["name"] for s in state if truthy(s.get("no_ctor"))}
     out = []
     for n, t, d in C.state_vars(cfg, component):
         if n in no_ctor:

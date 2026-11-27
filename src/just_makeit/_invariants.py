@@ -73,6 +73,7 @@ from ._context._state import _unseedable_required
 from . import _textio
 from . import _types as T
 from . import _incpath as INC
+from ._keys import truthy
 
 
 class Pair:
@@ -141,9 +142,13 @@ def _reads(m: dict, element: str) -> bool:
     False
     """
     if str(m.get("record_dtype") or "") == element:
-        return bool(m.get("variable_output") or m.get("borrow"))
+        return bool(
+            truthy(m.get("variable_output")) or truthy(m.get("borrow"))
+        )
     if str(m.get("return_type") or "") == element:
-        return bool(m.get("variable_output") or m.get("borrow"))
+        return bool(
+            truthy(m.get("variable_output")) or truthy(m.get("borrow"))
+        )
     return False
 
 
@@ -168,7 +173,7 @@ def pairs(cfg: dict, comp: str) -> "list[Pair]":
             for r in readers:
                 # gh-2233: a `no_count` reader is `f()`; a count passed to
                 # it would be read as its `out=` buffer and refused.
-                args = "" if r.get("no_count") else "len(x)"
+                args = "" if truthy(r.get("no_count")) else "len(x)"
                 out.append(Pair(name, ctype, w, r["name"], args))
     return out
 

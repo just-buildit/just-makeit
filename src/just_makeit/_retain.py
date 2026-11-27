@@ -209,7 +209,7 @@ def shape_refusal(m: dict) -> str:
     >>> shape_refusal({"name": "f", "variable_output": True})
     ''
     """
-    if m.get("varargs") or m.get("manual_stub"):
+    if truthy(m.get("varargs")) or truthy(m.get("manual_stub")):
         return (
             "its binding is hand-written, so jm writes no call to keep it "
             "after"

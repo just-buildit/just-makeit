@@ -55,6 +55,7 @@ from _compilers import default_cc
 from _jmrun import run_cli
 from just_makeit import _keys
 from just_makeit._method import _SIGNATURE_COERCIONS
+from just_makeit._keys import truthy
 from test_gh2259_batch_method_faces import SHAPES
 
 #: Every key whose reading depends on the shape, read off the registry.
@@ -68,13 +69,13 @@ def _cli(key: str) -> "list[str]":
     """The ``jm method`` flag(s) declaring *key*."""
     flag = "--" + key.replace("_", "-")
     coerce, _default = _SIGNATURE_COERCIONS[key]
-    return [flag] if coerce is bool else [flag, _SAMPLES[key]]
+    return [flag] if coerce is truthy else [flag, _SAMPLES[key]]
 
 
 def _toml(key: str) -> str:
     """The manifest spelling of the same declaration."""
     coerce, _default = _SIGNATURE_COERCIONS[key]
-    return "true" if coerce is bool else f'"{_SAMPLES[key]}"'
+    return "true" if coerce is truthy else f'"{_SAMPLES[key]}"'
 
 
 def _flags(key: str, shape: str) -> "list[str]":
