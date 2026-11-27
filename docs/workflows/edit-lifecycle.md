@@ -39,7 +39,9 @@ Six of these have more to them:
     `if(VAR) … endif()` block is carried across. Anything else goes in
     `<dir>_extra.cmake` beside it, which the file includes and jm never
     writes -- an OBJECT library of your own included: `apply` refuses to
-    rewrite a file that declares one, rather than erase it (gh-1840).
+    rewrite a file that declares one, rather than erase it (gh-1840), and so
+    does every verb that rewrites a module's own file -- `jm object   --module`, `jm function`, `jm method`, `jm remove` -- which also names
+    any other statement of yours it drops (gh-2114).
 - **`<comp>_core.c`** is never rewritten by `apply`. A *structural* change
     rebuilds it with `jm regenerate`, which lifts your hand-written bodies out
     and splices them back in by function name (`--discard` for a clean reset
