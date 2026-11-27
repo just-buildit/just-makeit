@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 
 from ._inflight import INFLIGHT_C
-from ._keys import INIT_PARAM_FIELDS, SHAPE_KEYS
+from ._keys import INIT_PARAM_FIELDS, SHAPE_KEYS, truthy
 
 # The C function parameter type a path arg presents to user C code: the callee
 # gets a borrowed C string and must copy it before returning (see path_release).
@@ -1125,7 +1125,7 @@ def str_hint_errors(cfg: dict) -> "list[str]":
                 f"parameter's refusal of a str, and {name} is "
                 f"{p.get('type', '?')!r}; drop the key"
             )
-        elif param_writable(p) or p.get("writable") or pre_empted:
+        elif param_writable(p) or truthy(p.get("writable")) or pre_empted:
             what = pre_empted or "an out buffer"
             why = _NEVER_SHOWN_WHY.get(what, _NEVER_SHOWN_DEFAULT)
             errors.append(
