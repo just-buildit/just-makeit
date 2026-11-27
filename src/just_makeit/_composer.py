@@ -6367,7 +6367,7 @@ def _cli_cmake_block(
     """CMake for the optional standalone c-face CLI (a pure-C tool — no Python,
     so it sits outside the BUILD_PYTHON guard)."""
     cli = composer_cli(cfg, module)
-    if not cli.get("enabled"):
+    if not C._truthy(cli.get("enabled")):
         return ""
     mp = C.module_paths(module)
     prog = cli.get("name", module)
@@ -7420,7 +7420,7 @@ def materialize(
         root / "src" / pkg / out_pkg / f"{mp.leaf}.pyi",
         render_pyi(cfg, module),
     )
-    if composer_cli(cfg, module).get("enabled"):
+    if C._truthy(composer_cli(cfg, module).get("enabled")):
         _write(
             INC.src_path(root, mp.cname, cfg) / f"{mp.cname}_cli.c",
             render_cli(cfg, module),
