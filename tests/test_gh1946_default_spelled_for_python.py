@@ -31,6 +31,18 @@ GATE: every scalar type in the vocabulary, given a default in each C form
       whose every Python spelling stores what the C default stores; a form
       Python has no spelling of is refused where it is declared, on the
       command line and in a manifest; and no module strips a C suffix itself.
+
+gh-2137 extends it from "Python has no spelling" to "C has no reading": a
+``bool`` spelled ``TRUE``, a suffix C refuses for its constant (``1f``,
+``1.5u``), a value outside the type's range (``300`` for a ``uint8_t``).
+Each was written into the generated C verbatim and failed at compile or
+test time. The same one check, ``_types.literal_default_error``, refuses
+them; the range oracle here is numpy's, not jm's own reader.
+
+GATE: every scalar type's invalid spellings, one per class, are refused on
+      the command line and by ``apply`` with the tree byte-identical, through
+      every declaring verb; and each type's boundary values build in the
+      one-build test above.
 """
 
 from __future__ import annotations
@@ -44,6 +56,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 from _compilers import default_cc
 
@@ -95,12 +108,98 @@ REFUSED = (
     ("double _Complex", "08 * I"),
 )
 
+
+def _invalid(ct: str) -> "list[tuple[str, str]]":
+    """gh-2137: spellings C has no reading of for *ct*, with their class.
+
+    Derived from the vocabulary per type: ``spelling`` for a ``bool``,
+    ``suffix`` for every number, ``range`` one past each end of an integer
+    type (numpy's range, not jm's) and past a floating type's largest, and
+    ``constant`` for a 64-bit end no unsuffixed decimal constant holds.
+    """
+    if ct == "bool":
+        return [("TRUE", "spelling"), ("True", "spelling")]
+    dt = _np(ct)
+    out = [("1f", "suffix"), ("7lL", "suffix")]
+    if dt.kind == "c":
+        out += [("1.5u * I", "suffix"), ("0.5 + 1e999 * I", "range")]
+    else:
+        out += [("1.5u", "suffix")]
+    if dt.kind in "iu":
+        info = np.iinfo(dt)
+        out += [(str(int(info.max) + 1), "range")]
+        out += [(str(int(info.min) - 1), "range")]
+        for end in (int(info.min), int(info.max)):
+            if abs(end) > 2**63 - 1:
+                out += [(str(end), "constant")]
+    elif dt.kind == "f":
+        out += [("1e999", "range")]
+    if (
+        dt.itemsize == 4
+        and dt.kind == "f"
+        or dt.itemsize == 8
+        and (dt.kind == "c")
+    ):
+        out += [("1e39", "range")]  # binary32: past FLT_MAX
+    return out
+
+
+def _tree(root: Path) -> "dict[str, bytes]":
+    """Every file under *root*, by path: what a refusal must leave alone."""
+    return {
+        str(f.relative_to(root)): f.read_bytes()
+        for f in sorted(root.rglob("*"))
+        if f.is_file()
+    }
+
+
+def _set_default(proj: Path, value: str, was: str = "3") -> None:
+    """Replace the one ``default = "<was>"`` in the project's fragments."""
+    old = f'default = "{was}"'
+    hits = [f for f in proj.rglob("*.toml") if old in f.read_text("utf-8")]
+    assert len(hits) == 1, hits
+    text = hits[0].read_text("utf-8")
+    assert text.count(old) == 1, text
+    hits[0].write_text(text.replace(old, f'default = "{value}"'), "utf-8")
+
+
 #: gh-1947's trigger, leading a MODULE object so its stub's doctest shows it.
 MODULE_STATES = (
     ("z", "float _Complex", "0.1"),
     ("f", "float", "0.1"),
     ("w", "double _Complex", "0.1f - 0.2L * I"),
 )
+
+
+def _np(ct: str) -> np.dtype:
+    """*ct*'s storage, as numpy names it: the range oracle (gh-2137)."""
+    return np.dtype(T._CTYPE_META[ct]["py_type"].removeprefix("np."))
+
+
+def _bounds(ct: str) -> "tuple[str, ...]":
+    """gh-2137: *ct*'s extreme values, which must still build.
+
+    An integer type's least and greatest, from ``np.iinfo``; a floating
+    one's greatest finite, from ``np.finfo``, as its own literal and as the
+    imaginary part of a complex one.
+    """
+    if ct == "bool":
+        return ()
+    dt = _np(ct)
+    if dt.kind in "iu":
+        # C has no decimal constant past LLONG_MAX without a `u` suffix,
+        # so the 64-bit greatest takes one and the 64-bit least has no
+        # literal at all (`_invalid` holds both bare spellings).
+        info = np.iinfo(dt)
+        lo, hi = int(info.min), int(info.max)
+        top = f"{hi}U" if hi > 2**63 - 1 else str(hi)
+        bottom = str(max(lo, -(2**63 - 1)))
+        return tuple(dict.fromkeys((bottom, top)))
+    # Python reads a literal as a double, so a long double's is a double's.
+    big = repr(float(min(np.finfo(dt).max, np.finfo(np.float64).max)))
+    if dt.kind == "c":
+        return (f"{big} * I",)
+    return (big, f"-{big}")
 
 
 def _forms(ct: str) -> "tuple[str, ...]":
@@ -111,7 +210,7 @@ def _forms(ct: str) -> "tuple[str, ...]":
     forms = FORMS[meta["kind"]]
     if meta["kind"] == "int" and not meta["py_type"].startswith("np.uint"):
         forms += NEGATIVE
-    return forms
+    return forms + _bounds(ct)
 
 
 #: Every scalar type a state field may carry, from the vocabulary. Complex
@@ -128,6 +227,9 @@ FIELDS = [
         (ct, form) for ct in SCALARS for form in _forms(ct)
     )
 ]
+
+
+INVALID = [(ct, form, why) for ct in SCALARS for form, why in _invalid(ct)]
 
 
 def _no_toolchain() -> "str | None":
@@ -266,6 +368,94 @@ def test_a_default_python_cannot_spell_is_refused_where_declared(
     assert f"state field 'v': default `{form}`" in r.stderr, r.stderr
 
 
+def test_every_class_is_covered():
+    """Never vacuous: each gh-2137 class, on every scalar type it fits."""
+    whys = {why for _, _, why in INVALID}
+    assert whys == {"spelling", "suffix", "range", "constant"}, whys
+    numeric = [ct for ct in SCALARS if ct != "bool"]
+    for ct in numeric:
+        assert {"suffix", "range"} <= {w for c, _, w in INVALID if c == ct}
+    assert ("uint8_t", "256", "range") in INVALID
+    assert ("int64_t", "-9223372036854775808", "constant") in INVALID
+    built = [(c, f) for _, c, f in FIELDS]
+    for bound in (("uint8_t", "255"), ("int8_t", "-128"), ("float", "1e-3")):
+        assert bound in built, bound
+    assert ("uint64_t", "18446744073709551615U") in built
+
+
+@pytest.mark.parametrize("ct, form, why", INVALID)
+def test_a_default_c_cannot_read_is_refused_where_declared(
+    tmp_path, ct, form, why
+):
+    """gh-2137: on the command line before writing; a manifest, on apply."""
+    r = run_cli(
+        "new", "p", "--object", "g", "--state", f"v:{ct}:{form}", cwd=tmp_path
+    )
+    assert r.returncode == 1, (why, r.stdout + r.stderr)
+    said = f"error: state field 'v': default `{form}`"
+    assert said in r.stderr, r.stderr
+    assert f"`{ct}`" in r.stderr or ct == "bool", r.stderr
+    assert not (tmp_path / "p").exists()
+
+    r = run_cli(
+        "new", "p", "--object", "g", "--state", f"v:{ct}:3", cwd=tmp_path
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    proj = tmp_path / "p"
+    _set_default(proj, form)
+    before = _tree(proj)
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 1, (why, r.stdout + r.stderr)
+    assert f"state field 'v': default `{form}`" in r.stderr, r.stderr
+    assert _tree(proj) == before
+
+
+#: gh-2137: one of each class, through the verbs that are not `--state`.
+VERB_CASES = (
+    ("bool", "TRUE"),
+    ("int", "1f"),
+    ("double", "1.5u"),
+    ("uint8_t", "300"),
+    ("int8_t", "-129"),
+)
+
+
+@pytest.mark.parametrize("ct, form", VERB_CASES)
+@pytest.mark.parametrize("verb", ("init_param", "method", "function"))
+def test_every_declaring_verb_refuses_what_c_cannot_read(
+    tmp_path, verb, ct, form
+):
+    """An init-param, a method and a function param: CLI and manifest."""
+    r = run_cli("new", "p", "--object", "g", cwd=tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    proj = tmp_path / "p"
+    r = run_cli("module", "m", cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    good = "1" if ct == "bool" else "3"
+    argv = {
+        "init_param": ("object", "k", "--init-param", "n:{t}:{d}"),
+        "method": ("method", "g", "x", "--param", "n:{t}={d}"),
+        "function": ("function", "f", "--module", "m", "--param", "n:{t}={d}"),
+    }[verb]
+    said = "init_param 'n'" if verb == "init_param" else "param 'n'"
+
+    before = _tree(proj)
+    r = run_cli(*(a.format(t=ct, d=form) for a in argv), cwd=proj)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"error: {said}: default `{form}`" in r.stderr, r.stderr
+    assert _tree(proj) == before
+
+    # The same declaration, hand-written into the manifest.
+    r = run_cli(*(a.format(t=ct, d=good) for a in argv), cwd=proj)
+    assert r.returncode == 0, r.stdout + r.stderr
+    _set_default(proj, form, was=good)
+    before = _tree(proj)
+    r = run_cli("apply", cwd=proj)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"{said}: default `{form}`" in r.stderr, r.stderr
+    assert _tree(proj) == before
+
+
 def test_every_declaring_verb_refuses_it(tmp_path):
     """An init-param, a method param and a function param, as the state."""
     r = run_cli("new", "p", "--object", "g", cwd=tmp_path)
@@ -282,8 +472,8 @@ def test_every_declaring_verb_refuses_it(tmp_path):
         assert f"error: {said}: default `" in r.stderr, (argv, r.stderr)
     assert sorted(p.read_text("utf-8") for p in proj.rglob("*.toml")) == before
 
-    # A method param in a manifest has no check of its own: the one
-    # function every Python face reads refuses it.
+    # A method param in a manifest: refused at load, naming the param
+    # (gh-2137; before it the Python-face backstop caught it, unnamed).
     r = run_cli("method", "g", "m", "--param", "k:int=3", cwd=proj)
     assert r.returncode == 0, r.stdout + r.stderr
     frag = proj / "objects" / "g.toml"
@@ -292,7 +482,7 @@ def test_every_declaring_verb_refuses_it(tmp_path):
     frag.write_text(text.replace('default = "3"', 'default = "08"'), "utf-8")
     r = run_cli("apply", cwd=proj)
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "error: default `08` is not a C number" in r.stderr, r.stderr
+    assert "param 'k': default `08` is not a C number" in r.stderr, r.stderr
 
 
 def _suffix_strips(source: str) -> "list[int]":

@@ -721,6 +721,126 @@ def held_default_py(ctype: str, default: str) -> "str | None":
     return None if value is None else repr(_store(ctype, value))
 
 
+#: gh-2137: the suffixes C accepts, by the constant they end. An integer
+#: constant takes ``u`` and one of ``l`` / ``ll`` (the two letters of
+#: ``ll`` in one case), in either order; a floating constant one of ``f``
+#: and ``l``. :data:`_C_NUMERIC_LITERAL` reads any run of the letters, so
+#: ``1f`` and ``1.5u`` -- which C refuses -- read as numbers without this.
+_C_INT_SUFFIX = _re.compile(r"(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?")
+_C_FLOAT_SUFFIX = _re.compile(r"[fFlL]?")
+
+
+def _constant_error(text: str) -> str:
+    """Why a numeric literal is no C constant, else ``""``.
+
+    gh-2137. Which constant a literal is -- integer or floating -- is its
+    spelling's, not the declared type's: ``2U`` is an integer constant C
+    converts into a ``double``, and ``1f`` no constant at all. Its suffix
+    must be one that constant takes, and an integer constant's magnitude
+    must fit the widest type it may have: ``unsigned long long`` for a hex,
+    an octal or a ``u``-suffixed one, ``long long`` for a decimal without
+    ``u`` -- so ``18446744073709551615`` has no type, and neither has the
+    ``9223372036854775808`` that ``-9223372036854775808`` negates (C99
+    6.4.4.1; GCC reads both as unsigned, with a warning).
+
+    >>> [_constant_error(t) for t in ("7lu", "7LLU", "0x1F", "1E3f", "2.L")]
+    ['', '', '', '', '']
+    >>> print(_constant_error("1f"))
+    `f` is not a suffix of an integer constant (`1` has no point or exponent), which takes `u` and `l` or `ll`.
+    >>> print(_constant_error("1.5u"))
+    `u` is not a suffix of a floating constant, which takes `f` or `l`.
+    >>> [_constant_error(t) for t in ("18446744073709551615U", "0x1p3")]
+    ['', '']
+    >>> print(_constant_error("-9223372036854775808"))
+    `9223372036854775808` is too large for a decimal integer constant without a `u` suffix, which is signed: its largest is 9223372036854775807.
+    """
+    m = _C_NUMERIC_LITERAL.match(text)
+    if m is None:
+        return ""
+    value, suffix = m.group("value"), m.group("suffix")
+    body = value.lstrip("+-")
+    integer = body[:2] in ("0x", "0X") or not (set(body) & set(".eE"))
+    if integer and not _C_INT_SUFFIX.fullmatch(suffix):
+        return (
+            f"`{suffix}` is not a suffix of an integer constant (`{value}`"
+            " has no point or exponent), which takes `u` and `l` or `ll`."
+        )
+    if not integer and not _C_FLOAT_SUFFIX.fullmatch(suffix):
+        return (
+            f"`{suffix}` is not a suffix of a floating constant, which takes"
+            " `f` or `l`."
+        )
+    py = _py_number(body)
+    if not integer or py is None:
+        return ""
+    magnitude = _ast.literal_eval(py)
+    decimal = py.isdigit()
+    if magnitude > 2**64 - 1:
+        return f"`{body}` is too large for any C integer constant."
+    if decimal and "u" not in suffix.lower() and magnitude > 2**63 - 1:
+        return (
+            f"`{body}` is too large for a decimal integer constant without"
+            " a `u` suffix, which is signed: its largest is"
+            f" {2**63 - 1}."
+        )
+    return ""
+
+
+def _int_range(ctype: str) -> "tuple[int, int]":
+    """The values integer *ctype* holds, read off its row's numpy type.
+
+    gh-2137. The row's ``py_type`` names the width and the sign
+    (``np.uint8``); ``np.intp`` / ``np.uintp`` are pointer-wide, 64 bits on
+    every platform jm builds for. ``limits`` names the same range for C.
+
+    >>> _int_range("uint8_t"), _int_range("int")
+    ((0, 255), (-2147483648, 2147483647))
+    >>> _int_range("size_t")[1] == 2**64 - 1
+    True
+    """
+    m = _re.fullmatch(r"np\.(u?)int(\d+|p)", _CTYPE_META[ctype]["py_type"])
+    assert m is not None, ctype
+    bits = 64 if m.group(2) == "p" else int(m.group(2))
+    if m.group(1):
+        return 0, 2**bits - 1
+    return -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+
+
+def _range_error(ctype: str, default: str, value: "int | float | complex"):
+    """Why *value* (C's reading of *default*) is not a *ctype* value.
+
+    gh-2137. ``""`` when it is: an integer within the type's range, or a
+    floating or complex value that stays finite once stored.
+    """
+    shown = default.strip()
+    if isinstance(value, int) and int_limits(ctype) is not None:
+        lo, hi = _int_range(ctype)
+        if lo <= value <= hi:
+            return ""
+        # Below an unsigned floor, `-1` meaning every bit set: the ceiling.
+        macro = _CTYPE_META[ctype]["limits"][value > hi or lo == 0]
+        return (
+            f"default `{shown}` is out of range for `{ctype}` [{lo}, {hi}]:"
+            " C stores a different value, and the binding refuses it as an"
+            f" argument. Write a value in that range, or the C constant"
+            f" `{macro}`."
+        )
+    if isinstance(value, int):
+        return ""
+    held = _store(ctype, value)
+    parts = (
+        (value.real, value.imag) if isinstance(value, complex) else (value,)
+    )
+    stored = (held.real, held.imag) if isinstance(held, complex) else (held,)
+    if all(_math.isfinite(x) for x in parts + stored):
+        return ""
+    return (
+        f"default `{shown}` is out of range for `{ctype}`: it exceeds the"
+        " largest finite value the type holds. Write a value in range, or a"
+        " C constant (`INFINITY`)."
+    )
+
+
 def literal_default_error(ctype: str, default: str) -> str:
     """Why a numeric *default* has no Python spelling for *ctype*, else ``""``.
 
@@ -738,6 +858,19 @@ def literal_default_error(ctype: str, default: str) -> str:
     a method or function parameter, on the command line and in a manifest --
     and by :func:`~._context._types._py_default`, which every Python face
     reads, rather than rendered into Python that fails.
+
+    gh-2137: and one C has no reading of, which jm wrote into the C faces
+    verbatim, failing at compile or test time:
+
+    * a ``bool`` spelled ``TRUE`` / ``True`` -- every Python face read it as
+      a bool literal, and C has no such name;
+    * a suffix C refuses for the constant it ends (``1f``, ``1.5u``);
+    * a value outside the declared type's range: ``300`` for a ``uint8_t``,
+      ``-1`` for any unsigned type (its every-bits-set value is the
+      ``*_MAX`` constant), ``1e39`` for a ``float``.
+
+    A C expression jm cannot evaluate -- ``UINT8_MAX``, ``M_PI``,
+    ``(float)x`` -- is not a literal and is not this function's.
 
     A default that is not a numeric literal at all is not this function's
     business: a C constant is :func:`is_c_only_default`'s, and an init-param
@@ -757,25 +890,55 @@ def literal_default_error(ctype: str, default: str) -> str:
     ''
     >>> print(literal_default_error("size_t", "1e3"))
     default `1e3` is not an integer, and `size_t` holds one: C converts it to 1000, and Python refuses a float for an integer parameter. Write it as an integer literal (`1000`).
+    >>> print(literal_default_error("uint8_t", "300"))
+    default `300` is out of range for `uint8_t` [0, 255]: C stores a different value, and the binding refuses it as an argument. Write a value in that range, or the C constant `UINT8_MAX`.
+    >>> print(literal_default_error("bool", "TRUE"))
+    default `TRUE` is not a C bool: C spells it in lower case, and jm writes the default into C as declared. Write `true`.
     >>> print(literal_default_error("int", "09"))
-    default `09` is not a C number: a leading 0 makes an integer octal, and 8 and 9 are not octal digits. Write it without the leading zero.
+    default `09` is not a C number for `int`: a leading 0 makes an integer octal, and 8 and 9 are not octal digits. Write it without the leading zero.
     """
     meta = _CTYPE_META.get(ctype)
-    if meta is None or ctype == "bool" or not default.strip():
+    if meta is None or not default.strip():
         return ""
+    shown = default.strip()
+    if ctype == "bool":
+        # gh-2137: a case-variant of a bool literal reads as one on every
+        # Python face (`bool_default_py`) while C is written as declared.
+        # C has no `TRUE` or `True`: refused, as gh-1946 refused `1e3`
+        # rather than respelling it, naming the one spelling C accepts.
+        if shown in BOOL_LITERALS or shown.lower() not in BOOL_LITERALS:
+            return ""
+        return (
+            f"default `{shown}` is not a C bool: C spells it in lower case,"
+            " and jm writes the default into C as declared. Write"
+            f" `{shown.lower()}`."
+        )
     kind = meta["kind"]
     octal = (
-        f"default `{default.strip()}` is not a C number: a leading 0 makes"
+        f"default `{shown}` is not a C number for `{ctype}`: a leading 0 makes"
         " an integer octal, and 8 and 9 are not octal digits. Write it"
         " without the leading zero."
     )
     if kind == "complex":
-        bad = _C_COMPLEX_LITERAL.match(default) and (
-            _complex_readings(default) is None
-        )
-        return octal if bad else ""
+        m = _C_COMPLEX_LITERAL.match(default)
+        if not m:
+            return ""
+        for part in m.groups():
+            why = _constant_error(part or "")
+            if why:
+                return f"default `{shown}` is not valid C for `{ctype}`: {why}"
+        readings = _complex_readings(default)
+        if readings is None:
+            return octal
+        return _range_error(ctype, default, readings[1])
     if kind not in ("int", "float") or not _C_NUMERIC_LITERAL.match(default):
         return ""
+    why = _constant_error(default)
+    if why and int_limits(ctype) is not None and "too large" in why:
+        macro = meta["limits"][not shown.startswith("-")]
+        why += f" Write the C constant `{macro}`."
+    if why:
+        return f"default `{shown}` is not valid C for `{ctype}`: {why}"
     value = c_literal_value(default)
     if value is None:
         return octal
@@ -789,7 +952,7 @@ def literal_default_error(ctype: str, default: str) -> str:
             " Write it as an integer literal"
             + (f" (`{int(value)}`)." if whole else ".")
         )
-    return ""
+    return _range_error(ctype, default, value)
 
 
 #: The one ``const char *`` default that is not text: the null pointer.
