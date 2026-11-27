@@ -3489,6 +3489,52 @@ parameter, so the scaffold would not compile."]
             what = f"module '{mod}' function '{fn.get('name')}'"
             out += rows_of(f"{what} params", fn.get("params"))
             out += rows_of(f"{what} result_fields", fn.get("result_fields"))
+        out += _kind_duplicate_errors(cfg, mod)
+    return out
+
+
+def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
+    """:func:`duplicate_name_errors` for a handle, capsule or composer.
+
+    gh-2800. These kinds render their own C, and each list here is one
+    declaration in it: a handle's ``create_args`` (its ``tp_init``), a
+    method's ``args``, a factory's ``init_params``; a capsule's
+    ``init_params`` (its ``create``); a composer source's and segment's
+    ``fields`` (a ``tp_init`` and a struct) and a serializer's ``params``.
+    Each *where* starts with the owner the kind's ``arg_scopes`` names
+    (gh-1525), which is how ``tests/test_gh2800_kind_module_duplicates.py``
+    holds this to every scope a kind declares.
+
+    >>> _kind_duplicate_errors({"module": {"h": {"kind": "handle",
+    ...     "create_args": [{"name": "n"}, {"name": "n"}]}}}, "h")[0][:44]
+    "handle module 'h' create_args: 'n' is declar"
+    """
+    rows_of = duplicate_row_errors
+    kind = module_kind(cfg, mod)
+    who = f"{kind} module '{mod}'"
+    out: "list[str]" = []
+    if kind == "capsule":
+        rows = cfg.get("module", {}).get(mod, {}).get("init_params")
+        out += rows_of(f"{who} init_params", rows)
+    elif kind == "handle":
+        out += rows_of(f"{who} create_args", handle_create_args(cfg, mod))
+        for m in handle_methods(cfg, mod):
+            if isinstance(m, dict):
+                what = f"{who} method '{m.get('name')}' args"
+                out += rows_of(what, m.get("args"))
+        for f in handle_factories(cfg, mod):
+            if isinstance(f, dict):
+                what = f"{who} factory '{f.get('name')}' init_params"
+                out += rows_of(what, f.get("init_params"))
+    elif kind == "composer":
+        src = composer_source(cfg, mod).get("fields")
+        out += rows_of(f"{who} source fields", src)
+        seg = composer_segment(cfg, mod).get("fields")
+        out += rows_of(f"{who} segment fields", seg)
+        for s in composer_serializers(cfg, mod):
+            if isinstance(s, dict):
+                what = f"{who} serializer '{s.get('name')}' params"
+                out += rows_of(what, s.get("params"))
     return out
 
 
