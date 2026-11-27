@@ -12,6 +12,7 @@ part:
 
 | seam | declared by | what you write |
 | --- | --- | --- |
+| say whether a source config is whole | `[module.X.source] check_fn` | `const char *fn(const <struct> *)` |
 | build the generator from a source config | `[module.X.source.generates] bridge_fn` | `<c_prefix>_<gen>_state_t *fn(const <struct> *, double)` (here `studio_clip_state_t`) |
 | say why that build refused (optional) | `[module.X.source.generates] bridge_error_fn` | `const char *fn(const <struct> *, double)` |
 | derive a read-only property | `[[module.X.source.computed]] fn` | `<type> fn(const <struct> *)` |
@@ -24,7 +25,7 @@ inside the generated `_ext.c`, so a C test or benchmark could reach a
 signature jm owns only by writing a second copy of it. The same header also
 carries a `bit_pattern` field's `coerce_str_fn` (gh-1709) and an owned-pointer
 field's `copy_fn` / `free_fn` / `parse_fn` / `format_fn` (gh-1711); this
-example uses only the three above.
+example uses only the four above.
 
 That header is the one file this example is really about, and step 8 uses it
 the way it is meant to be used: from a translation unit that includes nothing
@@ -322,6 +323,11 @@ extra_link_libs = ["backing_core"]
 object = "clip"
 struct = "clip_t"
 type_name = "Clip"
+# ── seam 0: say whether a source config is whole ──────────────────────────
+# Called on every write that does not go through a field's set_fn -- the
+# constructor, each property setter, a JSON record -- so a Clip can never
+# hold a configuration the project would refuse (gh-2856).
+check_fn = "clip_check"
 
 [[module.playlist.source.fields]]
 name = "gain"
@@ -384,7 +390,7 @@ if __name__ == "__main__":
     main()
 ```
 
-The two seams are five lines of that table. Everything else describes the
+The seams are a handful of lines of that table. Everything else describes the
 types jm will emit, and the `fields` list is the keystone: one ordered list of
 `{name, type, default}` per source and segment drives the C struct
 marshalling, the getset slots, and the constructor keywords all at once.
@@ -409,6 +415,11 @@ The first of those is the gh-998 file, and it is the only header a composer
 module emits:
 
 ```c
+/* Whether a source struct is whole: NULL, or a static sentence raised as
+ * ValueError by every face that writes it without a field's set_fn
+ * (check_fn, gh-2856). */
+const char *clip_check(const clip_t *);
+
 /* Build the composed generator from a source config (source -> generator). */
 studio_clip_state_t *clip_from_source(const clip_t *, double);
 
@@ -428,7 +439,7 @@ with none gets no header at all, because there would be nothing to say.
 
 ---
 
-## 5. Write the two seams
+## 5. Write the seams
 
 `native/src/backing/playlist_bridge.c`:
 
@@ -441,6 +452,17 @@ with none gets no header at all, because there would be nothing to say.
  * against jm's declarations by the compiler rather than by eye.
  */
 #include "studio/playlist/playlist_bridge.h"
+
+/* Seam 0 — is this config whole? NULL if so, else a sentence jm raises
+ * as ValueError. Every face that writes a Clip calls it, and a setter
+ * calls it on a COPY, so a refused assignment leaves the Clip unchanged. */
+const char *
+clip_check (const clip_t *src)
+{
+  if (src->gain > 100.0)
+    return "a clip's gain is a level, at most 100";
+  return NULL;
+}
 
 /* Seam 1 — source config to running generator. A real one would derive
  * increments from `fs`; this one just carries the level across, and refuses
@@ -481,7 +503,18 @@ That is what makes the split safe: if the manifest renames `bridge_fn`, or a
 computed property changes type, this file stops compiling instead of quietly
 linking against a signature that no longer matches.
 
-`clip_why_not` is the optional third seam (gh-1307). A bridge returns NULL
+`clip_check` is the source's validator (gh-2856). It sees the whole
+struct, so it can refuse a combination no single field's type can express
+(doppler's rate is two enums that must be given together). jm calls it on
+every write that sets fields directly: the `Clip(...)` constructor (and so
+an inline `Track(gain=...)`), each property setter, a generic `from_json`
+record and the c-face CLI. A setter writes to a copy and commits only when
+the check passes, so `clip.gain = 200.0` raises and the clip keeps its old
+gain. It is not the bridge's check: `bridge_error_fn` is asked only when a
+generator is built, and may refuse a config that is valid but not yet
+complete.
+
+`clip_why_not` is the optional bridge error seam (gh-1307). A bridge returns NULL
 for configuration reasons far more often than for memory, and a bare NULL
 reached Python as `RuntimeError: clip_from_source returned NULL` whatever the
 reason. The error function is asked only after a refusal, with the same
@@ -597,6 +630,29 @@ try:
 except AttributeError:
     print("           .duration = 1.0 -> AttributeError (read-only)")
 
+# ── seam 0: the validator every write face calls ─────────────────────────
+# clip_check refuses a gain over 100, at construction...
+try:
+    Clip(gain=200.0)
+    raise AssertionError("expected clip_check to refuse")
+except ValueError as exc:
+    print(f"Clip(gain=200.0)         -> ValueError: {exc}")
+    assert str(exc) == "a clip's gain is a level, at most 100"
+# ...and at assignment, where the clip keeps the gain it had.
+try:
+    clip.gain = 200.0
+    raise AssertionError("expected clip_check to refuse")
+except ValueError as exc:
+    print(f"  clip.gain = 200.0      -> ValueError: {exc}")
+assert clip.gain == 5.0, clip.gain
+print(f"  ...and clip.gain       -> {clip.gain}  (unchanged)")
+# An inline Track builds its Clip through the same constructor.
+try:
+    Track(gain=200.0, dur=4)
+    raise AssertionError("expected clip_check to refuse")
+except ValueError as exc:
+    print(f"Track(gain=200.0, dur=4) -> ValueError: {exc}")
+
 # ── seam 1: standalone generation through the bridge ─────────────────────
 # Clip.steps() has no kernel of its own; it calls clip_from_source() to build
 # a studio_clip_state_t and then drives the generator jm never had to know about.
@@ -654,6 +710,10 @@ Clip(gain=2.0).gain      -> 2.0
            .duration     -> 4.0   (clip_duration, in C)
   after gain = 5.0       -> 10.0  (recomputed, not stored)
            .duration = 1.0 -> AttributeError (read-only)
+Clip(gain=200.0)         -> ValueError: a clip's gain is a level, at most 100
+  clip.gain = 200.0      -> ValueError: a clip's gain is a level, at most 100
+  ...and clip.gain       -> 5.0  (unchanged)
+Track(gain=200.0, dur=4) -> ValueError: a clip's gain is a level, at most 100
 Clip(gain=7.0).steps(3)  -> [7.+0.j 7.+0.j 7.+0.j]   (via clip_from_source)
 Clip(gain=-1.0).steps(1) -> ValueError: a clip's gain must be >= 0
 Mix(Track.sum(2,3,dur=4)).execute(8) -> [5.+0.j 5.+0.j 5.+0.j 5.+0.j]

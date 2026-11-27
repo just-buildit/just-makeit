@@ -96,6 +96,8 @@ def run(root: Path) -> None:
         "studio_clip_state_t *clip_from_source(const clip_t *, double);" in bt
     )
     assert "double clip_duration(const clip_t *);" in bt
+    # gh-2856: the source's validator is a seam like the others.
+    assert "const char *clip_check(const clip_t *);" in bt
     # Self-contained: a consumer must not have to work out the include order.
     assert '#include "studio/playlist/playlist_core.h"' in bt
     assert '#include "studio/clip/clip_core.h"' in bt

@@ -708,15 +708,49 @@ A source can hand work back to the project as plain C, with no CPython in it:
     `NULL` every scalar is copied back. Each source in that copy is
     shallow: a write to its scalars is discarded, but its `bytes` and
     owned-pointer members point at the live source's buffers, so `fn` must
-    not write through or free them. Only the setter calls `fn`: the constructor, `from_json` and
-    the record set every field at once and keep their own check of the
-    whole struct. A `bytes`, `complex`, owned-pointer or ranged field has
-    no single value to hand over, so the key is refused there when the
-    manifest loads.
+    not write through or free them. Only the setter calls `fn`: the
+    constructor, `from_json` and the record set every field at once, and
+    check the whole struct through the source's `check_fn` (below). A
+    `bytes`, `complex`, owned-pointer or ranged field has no single value
+    to hand over, so the key is refused there when the manifest loads.
+
+- **`check_fn = "<fn>"`** on `[module.X.source]` (gh-2856) validates the
+    whole source struct: `const char *fn(const <source.struct> *)` returns
+    `NULL` when the struct is whole, or a static sentence saying why not,
+    which jm raises as `ValueError`. Every face that writes source fields
+    without going through a field's `set_fn` calls it:
+
+    | face                                         | when                                                                                     |
+    | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
+    | `Synth(...)`, a factory, an inline `Segment` | after every field is assigned, so `Synth(...)` returns no object                         |
+    | a property setter without `set_fn`           | on a copy of the struct, committed only on `NULL`: a refused assignment changes nothing  |
+    | generic `from_json` / `from_file`            | on each source of the record, before the composer is built                               |
+    | delegated `from_json_fn` / `from_file_fn`    | on each source of the state the project's reader built, which is destroyed on a sentence |
+    | c-face CLI                                   | on the flags' source before `create`, and on each source `--from-file` built; exit 2     |
+
+    A field naming `set_fn` calls only `set_fn`: the project's writer owns
+    the struct's wholeness there, and should write through the same check,
+    so jm does not call `check_fn` again after it. This is how a pair that
+    must be given together is refused at construction rather than at the
+    first `steps()`:
+
+    ```toml
+    [module.wfm_compose.source]
+    check_fn = "dp_wfm_source_rate_why"
+    ```
+
+    `Synth(type="ofdm", constellation="bpsk")` then raises the sentence,
+    where before it built half a pair that `bridge_error_fn` refused later.
+    `check_fn` is not `bridge_error_fn`: that one is the full build check,
+    asked when a generator is built, and may refuse a source that is valid
+    but not yet complete. A composer source has no `__setstate__` (it is
+    not picklable), so there is no pickle face to check. A `check_fn` that
+    is not a string, or that sits on any composer table but
+    `[module.X.source]`, is refused when the manifest loads.
 
 jm writes the prototype of every seam (these, a field's `coerce_str_fn`,
-`get_fn` and `set_fn`, the source's `fs_get_fn`, and an owned-pointer field's
-four host
+`get_fn` and `set_fn`, the source's `fs_get_fn` and `check_fn`, and an
+owned-pointer field's four host
 functions) into a generated
 `native/inc/<pkg>/<cname>/<cname>_bridge.h`, which the binding includes. The
 file is written only when at least one seam exists, so a C test or benchmark
@@ -1248,7 +1282,7 @@ return raises it from the generated setter, gh-2214).
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create_fn`         | the create every face calls, `<state_t> *fn(segs, n, repeat, continuous)`; default `<backing>_create`, used as written (gh-1758)                                                                                                                                                                                                                                                                                                                                                                    |
 | `create_why`        | the create takes a trailing `const char **why`; every face that creates raises or prints its reason (gh-1755)                                                                                                                                                                                                                                                                                                                                                                                       |
-| `[X.source]`        | `object`, `struct`, `type_name`, `fields[]`; optional `computed[]`, `generates` and `fs_get_fn` (the straight-C seams, §4.3) and `ranged`                                                                                                                                                                                                                                                                                                                                                           |
+| `[X.source]`        | `object`, `struct`, `type_name`, `fields[]`; optional `computed[]`, `generates`, `fs_get_fn` and `check_fn` (the straight-C seams, §4.3) and `ranged`                                                                                                                                                                                                                                                                                                                                               |
 | `[X.segment]`       | `type_name`, `struct`, `fields[]`; optional `sources_member`/`count_member` (default `sources`/`n_sources`), `flat_sources` (a one-source segment proxies that source's fields as read-only attributes), `ranged`                                                                                                                                                                                                                                                                                   |
 | `ranged`            | on `[X.source]` / `[X.segment]`: `[{name, flag}, …]`, fields that also take a `(lo, hi)` pair, redrawn uniformly each repeat; the struct carries a `<name>_hi` companion. Each bound converts at the field's own type, so an integer one keeps every bit and is refused out of range (gh-2224)                                                                                                                                                                                                      |
 | `[X.timeline]`      | `type_name` (the `Timeline` type is emitted only when it is set)                                                                                                                                                                                                                                                                                                                                                                                                                                    |
