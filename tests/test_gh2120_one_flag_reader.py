@@ -413,91 +413,222 @@ _RAW_READ_OK = {
     # `NATIVE_FILES` maps a generated native file's role to its place; its
     # `bench` row is a path, not a manifest value.
     ("_hollow.py", "unrun_benches", "INC.NATIVE_FILES['bench']"): 1,
+    (
+        "_object.py",
+        "_write_module_test_and_bench",
+        "INC.NATIVE_FILES[kind]",
+    ): 1,
+    # `jm method`'s own keyword arguments (`_args = dict(locals())`), read
+    # by name over `_SIGNATURE_COERCIONS`, whose keys mix flag-named ones
+    # (`why`, `status_out`) with the rest: Python values from the CLI or
+    # the replay, never a manifest spelling.
+    ("_method.py", "run", "_args[k]"): 2,
 }
 
 
-def _module_tuples(tree: ast.Module) -> "dict[str, tuple[str, ...]]":
-    """Module-level ``NAME = ("a", "b", ...)`` string tuples / lists."""
-    out = {}
+#: A value the resolver cannot spell from the source.
+_UNKNOWN = object()
+
+
+def _module_assigns(tree: ast.Module) -> "dict[str, ast.AST]":
+    """Module-level ``NAME = <expr>`` (or ``NAME: T = <expr>``) values."""
+    out: "dict[str, ast.AST]" = {}
     for node in tree.body:
         if (
-            isinstance(node, (ast.Assign, ast.AnnAssign))
-            and isinstance(node.value, (ast.Tuple, ast.List))
-            and all(
-                isinstance(e, ast.Constant) and isinstance(e.value, str)
-                for e in node.value.elts
-            )
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
         ):
-            targets = (
-                node.targets if isinstance(node, ast.Assign) else [node.target]
-            )
-            for t in targets:
-                if isinstance(t, ast.Name):
-                    out[t.id] = tuple(e.value for e in node.value.elts)
+            out[node.targets[0].id] = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and node.value is not None
+            and isinstance(node.target, ast.Name)
+        ):
+            out[node.target.id] = node.value
     return out
 
 
-_ALL_TUPLES: "dict[str, tuple[str, ...]]" = {}
+_GLOBALS: "dict[str, ast.AST]" = {}
 
 
-def _all_tuples() -> "dict[str, tuple[str, ...]]":
-    """Every module-level string tuple in the source, by name, so an
-    iterable spelled ``_keys.SOME_KEYS`` resolves as well as a bare
-    ``SOME_KEYS``."""
-    if not _ALL_TUPLES:
+def _globals() -> "dict[str, ast.AST]":
+    """Every module-level constant in the source, by name (the first
+    module to define a name wins), so ``_keys.SOME_KEYS`` resolves as
+    well as a bare ``SOME_KEYS``."""
+    if not _GLOBALS:
         for _rel, tree in _sources():
-            _ALL_TUPLES.update(_module_tuples(tree))
-    return _ALL_TUPLES
+            for name, value in _module_assigns(tree).items():
+                _GLOBALS.setdefault(name, value)
+    return _GLOBALS
 
 
-def _iter_keys(
-    node: ast.AST, local: "dict[str, tuple[str, ...]]"
-) -> "set[str]":
-    """The string keys an iterable *node* yields, as far as the source
-    spells them: a module tuple by name (``KEYS``, ``_keys.KEYS``), an
-    inline tuple / list / set literal, ``tuple()`` / ``list()`` /
-    ``sorted()`` / ``set()`` / ``frozenset()`` / ``reversed()`` of one,
-    and ``A + B`` / ``A | B``. Anything else yields nothing."""
-    if isinstance(node, ast.Name):
-        return set(local.get(node.id) or _all_tuples().get(node.id, ()))
-    if isinstance(node, ast.Attribute):
-        return set(_all_tuples().get(node.attr, ()))
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return {
-            e.value
-            for e in node.elts
-            if isinstance(e, ast.Constant) and isinstance(e.value, str)
-        }
-    if (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id
-        in ("tuple", "list", "sorted", "set", "frozenset", "reversed")
-        and len(node.args) == 1
-    ):
-        return _iter_keys(node.args[0], local)
-    if isinstance(node, ast.BinOp) and isinstance(
-        node.op, (ast.Add, ast.BitOr)
-    ):
-        return _iter_keys(node.left, local) | _iter_keys(node.right, local)
-    return set()
+_ITERABLE_CALLS = ("tuple", "list", "sorted", "set", "frozenset", "reversed")
+
+
+def _value(node: ast.AST, env: "dict[str, ast.AST]", seen=()):
+    """The Python value *node* spells, as far as the source does, or
+    ``_UNKNOWN``: a constant; a tuple / list / set / dict literal; a name
+    (the function's own single assignment, then the module's, then any
+    source module's) or an attribute (any source module's); one of
+    :data:`_ITERABLE_CALLS` over one; ``.keys()`` / ``.items()`` /
+    ``.values()`` of a dict; and ``+`` / ``|`` / ``&`` / ``-``."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return tuple(_value(e, env, seen) for e in node.elts)
+    if isinstance(node, ast.Set):
+        vals = [_value(e, env, seen) for e in node.elts]
+        return _UNKNOWN if _UNKNOWN in vals else frozenset(vals)
+    if isinstance(node, ast.Dict):
+        out = {}
+        for k, v in zip(node.keys, node.values):
+            key = _UNKNOWN if k is None else _value(k, env, seen)
+            if key is _UNKNOWN or not _hashable(key):
+                return _UNKNOWN
+            out[key] = _value(v, env, seen)
+        return out
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        name = node.id if isinstance(node, ast.Name) else node.attr
+        if name in seen:
+            return _UNKNOWN
+        local = env if isinstance(node, ast.Name) else {}
+        src = local.get(name, _globals().get(name))
+        if src is None:
+            return _UNKNOWN
+        return _value(src, local, (*seen, name))
+    if isinstance(node, ast.Call):
+        f = node.func
+        if isinstance(f, ast.Name) and f.id in _ITERABLE_CALLS:
+            if len(node.args) != 1:
+                return _UNKNOWN
+            items = _elements(_value(node.args[0], env, seen))
+            if items is _UNKNOWN:
+                return _UNKNOWN
+            if f.id in ("set", "frozenset"):
+                if any(i is _UNKNOWN or not _hashable(i) for i in items):
+                    return _UNKNOWN
+                return frozenset(items)
+            return tuple(items)
+        if (
+            isinstance(f, ast.Attribute)
+            and f.attr in ("keys", "items", "values")
+            and not node.args
+        ):
+            d = _value(f.value, env, seen)
+            if not isinstance(d, dict):
+                return _UNKNOWN
+            return tuple(getattr(d, f.attr)())
+        return _UNKNOWN
+    if isinstance(node, ast.BinOp):
+        a = _value(node.left, env, seen)
+        b = _value(node.right, env, seen)
+        if a is _UNKNOWN or b is _UNKNOWN:
+            return _UNKNOWN
+        if isinstance(node.op, ast.Add):
+            if isinstance(a, tuple) and isinstance(b, tuple):
+                return a + b
+            return _UNKNOWN
+        sa, sb = _elements(a), _elements(b)
+        if sa is _UNKNOWN or sb is _UNKNOWN:
+            return _UNKNOWN
+        if not all(_hashable(i) for i in (*sa, *sb)):
+            return _UNKNOWN
+        sa, sb = frozenset(sa), frozenset(sb)
+        if isinstance(node.op, ast.BitOr):
+            return sa | sb
+        if isinstance(node.op, ast.BitAnd):
+            return sa & sb
+        if isinstance(node.op, ast.Sub):
+            return sa - sb
+    return _UNKNOWN
+
+
+def _hashable(value: object) -> bool:
+    try:
+        hash(value)
+    except TypeError:
+        return False
+    return True
+
+
+def _elements(value: object):
+    """What iterating *value* yields (a dict's keys), or ``_UNKNOWN``."""
+    if isinstance(value, dict):
+        return list(value)
+    if isinstance(value, (tuple, frozenset)):
+        return list(value)
+    return _UNKNOWN
+
+
+def _bind(target: ast.AST, items) -> "dict[str, object]":
+    """``{name: set of values | _UNKNOWN}`` for a loop *target* over
+    *items*: a name takes every item, a tuple target takes each item's
+    value at its position."""
+    if isinstance(target, ast.Name):
+        if items is _UNKNOWN or _UNKNOWN in items:
+            return {target.id: _UNKNOWN}
+        return {target.id: {i for i in items if _hashable(i)}}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        out: "dict[str, object]" = {}
+        width = len(target.elts)
+        for pos, sub in enumerate(target.elts):
+            col = _UNKNOWN
+            if items is not _UNKNOWN and all(
+                isinstance(i, tuple) and len(i) == width for i in items
+            ):
+                col = [i[pos] for i in items]
+            out.update(_bind(sub, col))
+        return out
+    return {}
+
+
+def _local_envs(tree: ast.Module) -> "dict[str, dict[str, ast.AST]]":
+    """Per function, its own ``name = <expr>`` assignments; a name
+    assigned more than once is left out, so it resolves as unknown
+    rather than as one of its values."""
+    envs: "dict[str, dict[str, ast.AST]]" = {}
+    twice: "set[tuple[str, str]]" = set()
+    for owner, node in _enclosing(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            env = envs.setdefault(owner, {})
+            name = node.targets[0].id
+            if name in env:
+                twice.add((owner, name))
+            env[name] = node.value
+    for owner, name in twice:
+        envs[owner].pop(name, None)
+        # Shadow the module's value too: the name is the function's.
+        envs[owner][name] = ast.Constant(value=_UNKNOWN)
+    return envs
 
 
 def _loop_keys(tree: ast.Module) -> "dict[tuple[str, str], set[str]]":
     """``(function, loop variable)`` -> the FLAG_KEYS keys it takes, for
-    every ``for`` loop and comprehension whose iterable names one (see
-    :func:`_iter_keys`): a read ``table.get(<var>)`` there reads those
-    flags."""
-    local = _module_tuples(tree)
+    every ``for`` loop and comprehension whose iterable resolves (see
+    :func:`_value`) to keys that include one: a read ``table.get(<var>)``
+    there reads those flags. An iterable that does not resolve yields
+    nothing -- this scan is fail-open by decision (gh-2120: failing
+    closed flagged 378 reads keyed by C types, component names and
+    symbols)."""
+    envs = _local_envs(tree)
+    module = _module_assigns(tree)
     out: "dict[tuple[str, str], set[str]]" = {}
     for owner, node in _enclosing(tree):
         if not isinstance(node, (ast.For, ast.comprehension)):
             continue
-        if not isinstance(node.target, ast.Name):
-            continue
-        flags = _iter_keys(node.iter, local) & _keys.FLAG_KEYS
-        if flags:
-            out.setdefault((owner, node.target.id), set()).update(flags)
+        env = {**module, **envs.get(owner, {})}
+        items = _elements(_value(node.iter, env))
+        for name, vals in _bind(node.target, items).items():
+            if vals is _UNKNOWN:
+                continue
+            flags = {v for v in vals if isinstance(v, str)} & _keys.FLAG_KEYS
+            if flags:
+                out.setdefault((owner, name), set()).update(flags)
     return out
 
 
@@ -621,6 +752,19 @@ def test_raw_read_exemptions_still_exist():
         "            return flag\n",
         "def f(fn):\n    for k in ['doc'] + ['why']:\n        fn[k]\n",
         "def f(fn):\n    return {k: fn.get(k) for k in sorted({'retain'})}\n",
+        # gh-2120 review of ca897841: a tuple of pairs bound by position,
+        # a dict literal, a tuple assigned in the function, and a set
+        # expression over a module constant reached by attribute.
+        "def f(m):\n    for key, flag in (('why', '--why'),):\n"
+        "        if m.get(key):\n            return flag\n",
+        "def f(p):\n    for key in {'writable': 'set'}:\n"
+        "        if p.get(key):\n            return key\n",
+        "def f(p):\n    setters = ('writable',)\n    for k in setters:\n"
+        "        if p.get(k):\n            return k\n",
+        "def f(m):\n    for key in _keys.BOOL_ONLY_FLAGS & {'why'}:\n"
+        "        m.get(key)\n",
+        "D = {'why': 1, 'doc': 2}\n"
+        "def f(m):\n    for key, _v in D.items():\n        m.get(key)\n",
     ],
 )
 def test_the_raw_scan_is_armed(src):
@@ -642,6 +786,10 @@ def test_the_raw_scan_is_armed(src):
         "KS = ('out_size', 'why')\n"
         "def f(fn):\n    for k in KS:\n        if is_set(fn, k):\n"
         "            return k\n",
+        "def f(m):\n    for key, flag in (('doc', '--doc'),):\n"
+        "        if m.get(key):\n            return flag\n",
+        "def f(m):\n    for key in _keys.BOOL_ONLY_FLAGS - {'why', 'create_why',"
+        " 'status_out', 'retain'}:\n        m.get(key)\n",
     ],
 )
 def test_the_raw_scan_passes_a_read_through_truthy(src):
