@@ -1,5 +1,21 @@
 ## [Unreleased]
 
+## [0.138.2] — 2026-11-26
+
+### Fixed
+
+- **`jm status --check` fails when a method's `_core.c` definition lacks its new `why` / `status_out` parameter (gh-2588).** Adding `why = true` or `status_out = true` to an existing standalone object's method made `apply` refresh the header's prototype, but the author's definition kept the old signature, so the build failed on conflicting types while `status --check` exited 0. The WHY check now reads the author's definitions too: inline in the header, and in every `.c` of the component's source directory. `apply` warns and `status` fails naming that file, with the definition (`defined:`) beside what the manifest renders. Removing the key is caught the same way.
+
+- **A `string_enum:` type whose choices mix bound and unbound constants is refused, not a traceback (gh-2744).** `--init-param 'kind:string_enum:lo,hi=lo'` read the trailing `=lo` as the constant bound to `hi`, and `lo` as the only choice without one. The reader indexed a constant that did not exist and raised `IndexError`. The flag now refuses the spec and names the unbound choice, the bound one, and the spelling of a default: `name:string_enum:lo,hi:lo`. The manifest refuses the same spec in any table's `type` key, so a hand-edited TOML row is caught at `jm apply` with the same sentence. A spec whose choices all bind a constant, or none does, is unchanged.
+
+- **A record result over a struct nothing defines is no longer silent (gh-2760).** `jm method` and `jm function` with `--single` or `--result-field` and a `--return-type` struct that no header defines scaffolded a tree that did not compile, and said only "Implement ...". They now print the NOTE `--record-dtype` already printed (gh-1319): the struct to declare, with its fields as a typedef to paste. jm still does not write the struct into the sacred header, and does not refuse, because a record from a system header (such as `div_t`) is valid and invisible to jm. A struct defined in the component's header, or in a project header it includes, draws no note. A forward `typedef struct tag name;` alone still does, since the binding needs the complete type.
+
+- **A module with a list-of-records function builds its C smoke test (gh-2765).** `jm function` with `result_fields` (and no `single`) declares `size_t f(<params>, <struct> *result, size_t max_results)`, but the generated `native/tests/test_<module>_core.c` called `f(<params>)`, so `make` failed with "too few arguments". The two parameters jm adds are not in the manifest's `params`. The smoke test now leaves a TODO for such a function, as it already did for an `out_type` buffer (gh-1060), since the record struct and its capacity are the author's to choose. A `single` record function is still called.
+
+- **Struct member docs follow a quoted include the way the compiler does (gh-2779, gh-2781).** jm reads a record's field docs from the project headers a component's or module's header includes, but resolved each quoted include under `native/inc` only. A sibling spelled `#include "scene.h"` compiled and was never read, so its fields rendered undocumented. Each include now resolves beside the header that includes it first, then under `native/inc`, at every level. A quoted include that resolves outside `native/inc` (an absolute path, or a `../` that climbs out) is no longer read. A test now holds the existing rule that a header's own definition of a struct beats an included one.
+
+- **Adding `why` to an existing method converges in one `apply`, and its docstring is unchanged (gh-2788).** `apply` documents jm's own `@param why` when it refreshes the declaration's Doxygen block (gh-1722), and that description counted as the author's. The untouched skeleton's placeholder `@brief stat.` became the method's docstring, and only on a second `apply`, so `status --check` reported the binding and stub STALE after the first. jm's own `why` description is now part of the skeleton.
+
 ## [0.138.1] — 2026-11-24
 
 ### Fixed
