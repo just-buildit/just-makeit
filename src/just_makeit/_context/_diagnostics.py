@@ -1181,6 +1181,54 @@ def property_declared_raise(p: dict, setter: str) -> "tuple[str, str] | None":
     return _raise_pair(p, setter)
 
 
+def setter_call_c(
+    call: str,
+    pair: "tuple[str, str] | None",
+    *,
+    pad: int = 4,
+    fail: str = "return -1;",
+) -> str:
+    """The statement a binding calls a C setter with, testing it if declared.
+
+    *pair* is `property_declared_raise`'s answer for the row. ``None`` keeps
+    the bare call -- the render every setter had before it could refuse.
+    With a pair, the ``int`` the setter returns is tested against 0 and a
+    non-zero one raises through `_rc_raise_c`, the emitter every
+    status-checking member uses. One emitter for every face that calls a C
+    setter: an object property (gh-2182), a handle getter field's
+    ``writable_fn``, a capsule module's property and a composer setting's
+    ``setter_fn`` (gh-2214), three of which discarded the return.
+
+    *fail* leaves the function once the exception is set: a setter slot or
+    an ``initproc`` returns ``int`` (``return -1;``); a capsule module's
+    setter is a free function returning ``PyObject *`` (``return NULL;``).
+    *pad* is the column of the call.
+
+    Examples
+    --------
+    >>> print(setter_call_c("acc_set_a(s, v)", None), end="")
+        acc_set_a(s, v);
+    >>> print(setter_call_c("acc_set_a(s, v)", ("ValueError", "bad a")),
+    ...       end="")
+        int _rc = acc_set_a(s, v);
+        if (_rc != 0) {
+            PyErr_Format(PyExc_ValueError, "%s (rc=%lld)",
+                         "bad a",
+                         (long long)_rc);
+            return -1;
+        }
+    """
+    at = " " * pad
+    if pair is None:
+        return f"{at}{call};\n"
+    return (
+        f"{at}int _rc = {call};\n"
+        f"{at}if (_rc != 0) {{\n"
+        + _rc_raise_c(*pair, indent=pad + 17, pad=pad + 4, fail=fail)
+        + f"{at}}}\n"
+    )
+
+
 def property_getter_raise(p: dict, getter: str) -> "tuple[str, str] | None":
     """What a failing getter raises, for ``getter_status = true`` (gh-2538).
 

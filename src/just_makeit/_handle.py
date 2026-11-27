@@ -47,7 +47,7 @@ from . import _procglobal
 from . import _incpath as INC
 from ._stubs import positional_only
 from ._context import _diagnostics
-from ._context._methods import set_state_check_c
+from ._context._methods import set_state_check_c, validate_setter_error
 from ._context._modpath import module_docstring_lines, module_m_doc
 from ._context._parse import _build_ml_doc
 from ._context._types import kind_doc_default
@@ -1862,14 +1862,80 @@ def _field_doc(cfg: dict, module: str, g: dict, f: dict) -> str:
     return str(own or "")
 
 
-def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
+def _field_summary(
+    g_block: "DoxyBlock | None", f: dict, enum_reg: dict[str, list[str]]
+) -> str:
+    """The summary line of a decoded-getter property's docstring.
+
+    A single-field getter's ``@brief`` (*g_block*, ``None`` otherwise),
+    unless the field decodes an enum, whose choices only the manifest
+    knows; else the synthesized `_pyi_prop_doc` line (gh-374).
+    """
+    enum_name: str | None = f.get("enum")
+    if g_block is not None and g_block.brief and not enum_name:
+        return g_block.brief
+    ann = "str" if enum_name else _pyi_scalar(f["type"])
+    return _pyi_prop_doc(f["name"], ann, enum_name, enum_reg)
+
+
+def _field_setter_doc(
+    cfg: dict,
+    module: str,
+    g: dict,
+    f: dict,
+    doc_blocks: "dict[str, str] | None",
+    *,
+    runtime: bool,
+) -> list[str]:
+    """A refusing ``writable_fn`` field's docstring, on either face (gh-2214).
+
+    ``[]`` unless the field declares ``error``, so every other field keeps
+    the one-line docstring it had. With it, the property documents what an
+    assignment raises, from `_diagnostics.property_raises_doc` -- the pair
+    `render_getsets` raises with -- through the renderers an object
+    property's ``Raises`` goes through, so the runtime text is the stub's
+    without its indent.
+    """
+    set_fn = f.get("writable_fn") or ""
+    raises = _diagnostics.property_raises_doc(f, set_fn) if set_fn else []
+    if not raises:
+        return []
+    from ._docstring import render_numpy_doc, render_runtime_doc
+
+    fields = g.get("fields", [])
+    g_block = (
+        _method_block(doc_blocks or {}, g.get("fn"), None)
+        if len(fields) == 1
+        else None
+    )
+    summary = _field_summary(g_block, f, C.enums(cfg))
+    authored = _field_doc(cfg, module, g, f)
+    if runtime:
+        return render_runtime_doc(
+            None, f["name"], [], "None", summary,
+            authored_doc=authored, raises=raises,
+        )  # fmt: skip
+    return render_numpy_doc(
+        None, f["name"], [], "None", summary,
+        indent=8, authored_doc=authored, raises=raises,
+    )  # fmt: skip
+
+
+def render_getsets(
+    cfg: dict, module: str, doc_blocks: "dict[str, str] | None" = None
+) -> tuple[str, str]:
     """Emit the decoded-getter getter functions + the getset table.
 
     Returns ``(funcs, table_name)``. For each ``getters[]`` entry we call the
     shared C getter ``fn(self->h, &tmp)`` once per property access (or read a
     cached ``tmp`` resolved in ``tp_init`` when ``cache = true``), then decode
     each declared field. This getter→struct→named-fields decode is the new code;
-    the getset *table* shape mirrors the composer's read-only getsets."""
+    the getset *table* shape mirrors the composer's read-only getsets.
+
+    A ``writable_fn`` field declaring ``error`` / ``error_message`` (gh-2214)
+    tests the setter's ``int`` and raises on a non-zero one, the object
+    property's contract (gh-2182); *doc_blocks* gives its runtime docstring
+    the summary the ``.pyi`` beside it uses."""
     tname = C.handle_type_name(cfg, module)
     obj = f"{tname}Object"
     funcs: list[str] = []
@@ -1954,9 +2020,23 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             # A field naming a `writable_fn` also emits a (setter) slot calling
             # set_fn(self->h, v) with v coerced from the PyObject (#311).
             set_fn = f.get("writable_fn")
+            # gh-2214: `error` needs the setter call it tests.
+            validate_setter_error(
+                f_where,
+                f,
+                no_setter=""
+                if set_fn
+                else "this field names no writable_fn, so it has no setter."
+                " Add writable_fn, or drop error.",
+            )
             # gh-1499: the property's `doc`, the text `render_pyi` puts on the
             # same member. NULL (as before) when none is declared.
             _doc_c = authored_c_doc(_field_doc(cfg, module, g, f))
+            _refusing = _field_setter_doc(
+                cfg, module, g, f, doc_blocks, runtime=True
+            )
+            if _refusing:
+                _doc_c = _build_ml_doc(_refusing)
             if set_fn:
                 # gh-2144: the setter faces' one conversion -- at the row's
                 # width, range-checked. It parsed straight into the type.
@@ -1967,6 +2047,11 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
                     "return -1;",
                     label=n,
                     meta=_capsule.scalar_meta(f["type"], f_where),
+                )
+                # gh-2214: with `error`, the setter's int is tested.
+                set_call = _diagnostics.setter_call_c(
+                    f"{set_fn}(self->h, v)",
+                    _diagnostics.property_declared_raise(f, set_fn),
                 )
                 funcs.append(f"""static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
@@ -1981,8 +2066,7 @@ def render_getsets(cfg: dict, module: str) -> tuple[str, str]:
             "cannot delete '{n}'");
         return -1;
     }}
-{parse}{_inflight.recheck("self", "k(self->h)", "", f"{tname} is closed", fail="-1")}    {set_fn}(self->h, v);
-    return 0;
+{parse}{_inflight.recheck("self", "k(self->h)", "", f"{tname} is closed", fail="-1")}{set_call}    return 0;
 }}
 """)
                 rows.append(
@@ -2187,7 +2271,7 @@ static PyObject *
     methods = "\n".join(
         _emit_method(cfg, module, m) for m in C.handle_methods(cfg, module)
     )
-    getsets, getset_name = render_getsets(cfg, module)
+    getsets, getset_name = render_getsets(cfg, module, doc_blocks)
 
     # gh-1113: every author-declared method used to register with a NULL
     # `ml_doc`, so `help(Sink.drain)` was empty on EVERY handle module while
@@ -2989,16 +3073,19 @@ def render_pyi(
         for f in g_fields:
             enum_name: str | None = f.get("enum")
             ann = "str" if enum_name else _pyi_scalar(f["type"])
-            if g_block is not None and g_block.brief and not enum_name:
-                doc = g_block.brief
-            else:
-                doc = _pyi_prop_doc(f["name"], ann, enum_name, enum_reg)
+            doc = _field_summary(g_block, f, enum_reg)
             lines.append("    @property")
             lines.append(f"    def {f['name']}(self) -> {ann}:")
             # gh-1499: a manifest `doc` outranks both, laid out as written;
             # `render_getsets` puts the same text on the runtime getset.
             authored = authored_doc_lines(_field_doc(cfg, module, g, f))
-            if authored:
+            refusing = _field_setter_doc(
+                cfg, module, g, f, doc_blocks, runtime=False
+            )
+            if refusing:
+                # gh-2214: a setter that may refuse documents what it raises.
+                lines.extend(refusing)
+            elif authored:
                 lines.extend(authored_docstring(authored, 8))
             else:
                 lines.append("        " + docstring_literal(doc))
