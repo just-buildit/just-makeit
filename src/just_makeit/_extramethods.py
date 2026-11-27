@@ -36,6 +36,7 @@ from pathlib import Path
 
 from . import _incpath as INC
 from ._docstring import authored_c_doc, authored_doc_lines, authored_docstring
+from ._keys import truthy
 
 #: The calling convention a row gets when it declares none -- the common
 #: shape of a hand-written accessor, and the composer's default since gh-1190.
@@ -424,7 +425,9 @@ def manifest_errors(root: Path, cfg: dict) -> "list[str]":
                     "  jm generates that member, so a second row would"
                     " shadow it; rename the row."
                 )
-            elif name in declared and not declared[name].get("manual_stub"):
+            elif name in declared and not truthy(
+                declared[name].get("manual_stub")
+            ):
                 errors.append(
                     f"{label}: [[{comp}.methods]] declares {name!r} too, and"
                     " jm generates its binding.\n"

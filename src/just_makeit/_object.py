@@ -82,6 +82,7 @@ from ._context._parse import _build_ml_doc
 from ._context._destroy import PARK_FIELD
 from . import _inflight
 from ._perprocess import per_process
+from ._keys import truthy
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
 # temp tree whose headers carry only template Doxygen. Docstring derivation
@@ -379,7 +380,7 @@ def _load_doc_blocks(
         C.method_max_out_symbol(stem, m)
         for m in C.methods(manifest, obj)
         + [m for v in C.views(manifest, obj) for m in C.view_methods(v)]
-        if _record.is_record_list(m) or m.get("no_count")
+        if _record.is_record_list(m) or truthy(m.get("no_count"))
     }
     _declared = declared_max_outs(text, _named) & _lists
     if _declared:
@@ -514,14 +515,16 @@ def inert_pass_capacity(
         return []
     inert: list[tuple[str, str]] = []
     for m in C.methods(cfg, obj):
-        if not m.get("pass_capacity") or m.get("exact_max_out"):
+        if not truthy(m.get("pass_capacity")) or truthy(
+            m.get("exact_max_out")
+        ):
             continue
         # gh-2233: a `no_count` method's state-only bound IS its per-call
         # bound -- the call has no count -- so its `pass_capacity` is live
         # (`_context._methods`' `_moc_state_only`), not in the seam.
-        if m.get("no_count"):
+        if truthy(m.get("no_count")):
             continue
-        if not m.get("variable_output"):
+        if not truthy(m.get("variable_output")):
             continue
         name = m.get("name", "")
         c_fn = C.method_c_symbol(CSYM.stem(cfg, obj), m)
@@ -3066,7 +3069,7 @@ def _relent_teardown(
         return ()
     obj = ctx["component"]
     lends = _borrow.lends(cfg, obj)
-    releases = any(m.get("nogil") for m in C.methods(cfg, obj))
+    releases = any(truthy(m.get("nogil")) for m in C.methods(cfg, obj))
     others = [
         _extract_c_function_bodies(
             R.render_module_ext_fragment(
@@ -3264,7 +3267,9 @@ def _regenerate_module_now(
         fn_srcs = []
     else:
         fn_srcs = [
-            f"{fn['name']}.c" for fn in functions if not fn.get("inline")
+            f"{fn['name']}.c"
+            for fn in functions
+            if not truthy(fn.get("inline"))
         ]
     core_srcs = " ".join([f"{cname}_core.c", *fn_srcs])
     # Collocated case: when an object shares the module name (e.g. module="fft",

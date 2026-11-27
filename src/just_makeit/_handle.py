@@ -60,6 +60,7 @@ from ._context._parse import (
     scalar_parse_c,
     scalar_raw_locals,
 )
+from ._keys import is_set
 
 if TYPE_CHECKING:
     from ._docstring import DoxyBlock
@@ -458,7 +459,7 @@ def render_tp_init(cfg: dict, module: str) -> str:
     reinit_wait = (
         "        self->closed = 1;\n"
         + _inflight.wait("self", "self->closed = 0; return -1;")
-        if any(m.get("nogil") for m in C.handle_methods(cfg, module))
+        if any(truthy(m.get("nogil")) for m in C.handle_methods(cfg, module))
         else ""
     )
     # gh-2346: a handle whose pointer was lent cannot be rebuilt in place --
@@ -810,11 +811,11 @@ def raises_instead_of_returning(m: dict) -> bool:
     ...      "args": [{"name": "x", "type": "float[]"}]})
     True
     """
-    if not (m.get("error") or m.get("status_return")):
+    if not (m.get("error") or truthy(m.get("status_return"))):
         return False
     if _data_return(m.get("returns")):
         return False
-    return bool(m.get("status_return")) or not _array_args(m)
+    return truthy(m.get("status_return")) or not _array_args(m)
 
 
 def _check_error_decl(m: dict, name: str, returns: "str | None") -> None:
@@ -859,7 +860,7 @@ def _check_error_decl(m: dict, name: str, returns: "str | None") -> None:
     """
     from ._report import Refusal
 
-    declared = [k for k in ("error", "status_return") if m.get(k)]
+    declared = [k for k in ("error", "status_return") if is_set(m, k)]
     rows = _borrow.status_rows(m)
     if rows and not declared:
         # gh-2470: the rows map a STATUS; with neither key the return is a
@@ -896,7 +897,7 @@ def _check_error_decl(m: dict, name: str, returns: "str | None") -> None:
             f" {keys}, or move the check into a separate status method."
         )
     if (
-        m.get("status_return")
+        truthy(m.get("status_return"))
         and T._CTYPE_META.get(str(returns), {}).get("kind") != "int"
     ):
         raise Refusal(
@@ -1144,7 +1145,7 @@ def _emit_method(cfg: dict, module: str, m: dict) -> str:
     name, fn = m["name"], m["fn"]
     margs = list(m.get("args", []))
     returns = m.get("returns")
-    nogil = bool(m.get("nogil"))
+    nogil = truthy(m.get("nogil"))
     # gh-2272: counted, so close() waits for a released call to finish.
     gil_open = _inflight.opening("self") if nogil else ""
     gil_close = _inflight.closing("self") if nogil else ""
@@ -1962,7 +1963,7 @@ def render_getsets(
         if g.get("fn"):
             out_t = g["out"]
             scalar = _scalar_out(g)
-            if g.get("cache"):
+            if truthy(g.get("cache")):
                 table_fetch = f"    {out_t} tmp = self->_g{gi};"
             elif scalar:
                 table_fetch = f"""    {out_t} tmp;
@@ -2123,7 +2124,7 @@ def _cache_fetch(cfg: dict, module: str) -> str:
     object's stashed struct (fixed metadata read once)."""
     out = []
     for gi, g in enumerate(C.handle_getters(cfg, module)):
-        if g.get("cache"):
+        if truthy(g.get("cache")):
             if _scalar_out(g):
                 out.append(f"    self->_g{gi} = {g['fn']}(self->h);")
             else:
@@ -2158,10 +2159,12 @@ def render_type(
     cache_fields = "".join(
         f"    {g['out']} _g{gi};\n"
         for gi, g in enumerate(C.handle_getters(cfg, module))
-        if g.get("cache")
+        if truthy(g.get("cache"))
     )
     # gh-2272: the in-flight count, on a handle with a GIL-free method.
-    releases = any(m.get("nogil") for m in C.handle_methods(cfg, module))
+    releases = any(
+        truthy(m.get("nogil")) for m in C.handle_methods(cfg, module)
+    )
     inflight_field = _inflight.struct_field() if releases else ""
     # gh-2346: a handle that publishes a capsule records each lend, so that
     # close() can leave the teardown to dealloc (see `close` below).
@@ -3045,7 +3048,7 @@ def render_pyi(
     init_params = []
     for a in create_args:
         ann = _pyi_arg_ann(a, enum_reg)
-        if "default" in a or a.get("kwonly"):
+        if "default" in a or truthy(a.get("kwonly")):
             init_params.append(f"{a['name']}: {ann} = ...")
         else:
             init_params.append(f"{a['name']}: {ann}")

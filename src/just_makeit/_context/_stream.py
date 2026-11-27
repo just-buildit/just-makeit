@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from .._docstring import docstring_literal
 from .._types import _CTYPE_META
+from .._keys import truthy
 
 # Keys consumed by templates/c/src/component_ext.c and templates/py/
 # component.pyi.  All empty == not streamable (or no resolvable producer).
@@ -64,7 +65,7 @@ def _resolve_producer(
     ``stream()`` is simply not emitted until one is added.
     """
     for m in methods:
-        if m.get("variable_output"):
+        if truthy(m.get("variable_output")):
             return m["name"], m.get("return_type", "float _Complex")
     if arg_type == "void" and return_type != "void":
         return "steps", return_type

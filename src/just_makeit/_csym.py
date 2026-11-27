@@ -332,9 +332,11 @@ def property_c_names(stem_: str, p: dict) -> "tuple[str, ...]":
         )
     if p.get("buf_field"):
         return (
-            (property_status(stem_, name),) if p.get("getter_status") else ()
+            (property_status(stem_, name),)
+            if truthy(p.get("getter_status"))
+            else ()
         )
-    if p.get("field") or p.get("expr") or p.get("capsule"):
+    if truthy(p.get("field")) or p.get("expr") or p.get("capsule"):
         return ()
     out = [property_getter(stem_, name)]
     if truthy(p.get("writable")):
@@ -498,7 +500,7 @@ def property_accessors(cfg: dict) -> "dict[str, str]":
             if not (isinstance(prop, dict) and prop.get("name")):
                 continue
             out[property_getter(st, str(prop["name"]))] = st
-            if prop.get("buf_field") and prop.get("getter_status"):
+            if prop.get("buf_field") and truthy(prop.get("getter_status")):
                 out[property_status(st, str(prop["name"]))] = st  # gh-2543
             if T.is_container_type(str(prop.get("type", ""))):
                 names = container_accessors(st, prop)

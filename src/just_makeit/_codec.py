@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from . import _types as T
 from ._report import Refusal
+from ._keys import truthy
 
 
 class CodecError(Refusal):
@@ -69,7 +70,7 @@ def discriminant_ctype(cdc: dict) -> str:
 
 def entry_is_bytes(entry: dict) -> bool:
     """True for the raw-bytes / string branch (packed raw, decoded ``str``)."""
-    return bool(entry.get("bytes"))
+    return truthy(entry.get("bytes"))
 
 
 def entry_py(entry: dict) -> str:
@@ -346,7 +347,7 @@ def render_pack(
     # `_s`) above the released block, under the GIL.
     from ._context._methods import _nogil_call, _reindent
 
-    nogil = bool(m.get("nogil"))
+    nogil = truthy(m.get("nogil"))
     # gh-2273: the item conversions above run `__index__` / `__float__`, which
     # is Python; the recheck releases what the call holds. The scalar path
     # borrows its string from the argument and holds nothing.

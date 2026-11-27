@@ -59,6 +59,7 @@ from ._context._diagnostics import (
     method_status_out_errors,
     method_why_errors,
 )
+from ._keys import is_set, truthy
 
 # gh-805 §B: the return types on which `_rc < 0` is a meaningful test.
 # Enumerated rather than derived from `_CTYPE_META[...]["kind"] == "int"`,
@@ -425,12 +426,14 @@ def result_shape(m: dict) -> str:
     'fixed'
     """
     for key in ("varargs", "manual_stub", "codec", "batch", "variable_output"):
-        if m.get(key):
+        if is_set(m, key):
             return key
     if m.get("result_fields") and not _record.is_record_array(
-        m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+        truthy(m.get("variable_output")),
+        m.get("record_dtype"),
+        truthy(m.get("borrow")),
     ):
-        return "single" if m.get("single") else "records"
+        return "single" if truthy(m.get("single")) else "records"
     return "borrow" if _borrow.is_borrow(m) else "fixed"
 
 
@@ -496,7 +499,7 @@ def method_input(m: dict) -> str:
         variable_output=shape == "variable_output",
         arg_type=arg_type,
         params=params,
-        no_count=m.get("no_count"),
+        no_count=truthy(m.get("no_count")),
     ):
         return "count"
     return ""
@@ -586,7 +589,7 @@ def shape_keys_why_not(method: str, m: dict) -> str:
     who = f"method '{method}'"
     shape = result_shape(m)
     for key, reads in _keys.RESULT_SHAPE_KEYS.items():
-        if not m.get(key) or shape in reads:
+        if not is_set(m, key) or shape in reads:
             continue
         if key == "status_return" and shape in _NO_STATUS:
             return (
@@ -601,7 +604,7 @@ def shape_keys_why_not(method: str, m: dict) -> str:
         )
     rt = str(m.get("return_type") or "float _Complex")
     if (
-        m.get("status_return")
+        truthy(m.get("status_return"))
         and T._CTYPE_META.get(rt, {}).get("kind") != "int"
     ):
         return (
@@ -613,7 +616,7 @@ def shape_keys_why_not(method: str, m: dict) -> str:
     stray = [
         k
         for k, want in _keys.INPUT_SIDE_KEYS.items()
-        if m.get(k) and want != side
+        if is_set(m, k) and want != side
     ]
     if not stray:
         return ""
@@ -1702,7 +1705,8 @@ def _shape_prototype(
 #: Every entry is `key -> (coercion, default-when-absent)`, and the pair is the
 #: point: a manifest that omits `nogil` and a caller that passes `nogil=False`
 #: describe the same method, so comparing the raw `entry.get(key)` against the
-#: argument would report a difference that is not one. That false positive is
+#: argument would report a difference that is not one. A flag coerces through
+#: `truthy` (gh-2120): `bool` read `nogil = "false"` as on. That false positive is
 #: the failure mode a gh-1011 fix is most likely to introduce — refusing a
 #: doc-only override because the parent's TOML simply did not mention a key.
 #:
@@ -1712,22 +1716,22 @@ def _shape_prototype(
 _SIGNATURE_COERCIONS: dict = {
     "arg_type": (str, "void"),
     "return_type": (str, "float _Complex"),
-    "variable_output": (bool, False),
+    "variable_output": (truthy, False),
     "multi_output": (list, []),
     "params": (list, []),
     "out_type": (lambda v: v or "", None),
     "out_divisor": (int, 1),
-    "batch": (bool, False),
-    "none_on_empty": (bool, False),
-    "strict": (bool, False),
-    "error_on_empty": (bool, False),
+    "batch": (truthy, False),
+    "none_on_empty": (truthy, False),
+    "strict": (truthy, False),
+    "error_on_empty": (truthy, False),
     # gh-2012: the kernel's count type is in the C prototype, and the
     # sentinel decides what the binding raises on -- both part of the call.
     "count_type": (lambda v: v or DEFAULT_COUNT_TYPE, DEFAULT_COUNT_TYPE),
     "error_sentinel": (str, ""),
     "result_fields": (list, []),
     "max_results": (int, 64),
-    "single": (bool, False),
+    "single": (truthy, False),
     "record_name": (str, ""),
     "record_module": (str, ""),
     "record_dtype": (str, ""),
@@ -1741,9 +1745,9 @@ _SIGNATURE_COERCIONS: dict = {
     # the kernel lends or fills, `borrow_count` which argument sizes the
     # view, `borrow_writeable` what the caller may do with it. Two objects
     # differing in any of them differ in the C symbol they need.
-    "borrow": (bool, False),
+    "borrow": (truthy, False),
     "borrow_count": (str, ""),
-    "borrow_writeable": (bool, False),
+    "borrow_writeable": (truthy, False),
     # gh-1418: also part of the call -- `status_fn` is a second C symbol the
     # binding invokes, and the rows decide which exceptions it can raise.
     "status_fn": (str, ""),
@@ -1752,23 +1756,23 @@ _SIGNATURE_COERCIONS: dict = {
     "release_count": (str, ""),
     "py_return_type": (str, ""),
     "max_out": (int, 0),
-    "varargs": (bool, False),
-    "manual_stub": (bool, False),
-    "pass_capacity": (bool, False),
-    "exact_max_out": (bool, False),
-    "short_out": (bool, False),
+    "varargs": (truthy, False),
+    "manual_stub": (truthy, False),
+    "pass_capacity": (truthy, False),
+    "exact_max_out": (truthy, False),
+    "short_out": (truthy, False),
     "count_default": (str, ""),
     "count_name": (str, ""),
-    "no_count": (bool, False),
+    "no_count": (truthy, False),
     "out_cols": (str, ""),
-    "nogil": (bool, False),
-    "status_return": (bool, False),
-    "error_negative": (bool, False),
+    "nogil": (truthy, False),
+    "status_return": (truthy, False),
+    "error_negative": (truthy, False),
     # gh-2574: the kernel takes a trailing `const char **why` -- part of
     # its C signature, so two methods differing in it differ in the call.
-    "why": (bool, False),
+    "why": (truthy, False),
     # gh-2584: the kernel takes `int *status` -- part of its signature too.
-    "status_out": (bool, False),
+    "status_out": (truthy, False),
     "error": (str, ""),
     "error_message": (str, ""),
     "codec": (str, ""),

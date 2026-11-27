@@ -35,6 +35,7 @@ from typing import NamedTuple
 from . import _types as T
 from ._keys import is_set
 from ._docstring import struct_member_doc
+from ._keys import truthy
 
 
 class RecordField(NamedTuple):
@@ -83,7 +84,7 @@ def parse_result_field(val: str) -> dict:
 
 def is_record(m: dict) -> bool:
     """True when *m* returns ONE named record (a ``PyStructSequence``)."""
-    return bool(m.get("single")) and bool(m.get("result_fields"))
+    return truthy(m.get("single")) and bool(m.get("result_fields"))
 
 
 def is_record_list(m: dict) -> bool:
@@ -112,7 +113,9 @@ def is_record_list(m: dict) -> bool:
         bool(m.get("result_fields"))
         and not is_record(m)
         and not is_record_array(
-            m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+            truthy(m.get("variable_output")),
+            m.get("record_dtype"),
+            truthy(m.get("borrow")),
         )
     )
 
@@ -316,7 +319,7 @@ def c_struct(m: dict) -> str:
     """
     if m.get("record_dtype"):
         return str(m["record_dtype"])
-    if m.get("single"):
+    if truthy(m.get("single")):
         rt = str(m.get("return_type") or "").strip()
         return rt[len("struct ") :].strip() if rt.startswith("struct ") else rt
     return ""
@@ -1084,7 +1087,9 @@ def returns_fields(
     []
     """
     if not is_record_array(
-        m.get("variable_output"), m.get("record_dtype"), m.get("borrow")
+        truthy(m.get("variable_output")),
+        m.get("record_dtype"),
+        truthy(m.get("borrow")),
     ):
         return []
     flds = fields(m, doc_blocks, records)
@@ -1301,12 +1306,12 @@ def single_why_not(m: dict, what: str, type_keys: bool = False) -> str:
     >>> single_why_not({"single": True, "result_fields": [{}]}, "f")
     ''
     """
-    if m.get("single") and not m.get("result_fields"):
+    if truthy(m.get("single")) and not m.get("result_fields"):
         return (
             f"{what}: single = true (--single) needs result_fields "
             "(--result-field): they are the record's columns."
         )
-    if m.get("single"):
+    if truthy(m.get("single")):
         return ""
     keys = RECORD_TYPE_KEYS if type_keys else ("record_doc",)
     for key in keys:
@@ -1355,7 +1360,7 @@ which the C function returns by value. Drop one of the two.
     """
     what = f"function {str(fn.get('name') or '?')!r}"
     why = single_why_not(fn, what, type_keys=True)
-    if why or not fn.get("single"):
+    if why or not truthy(fn.get("single")):
         return why
     for key in SINGLE_FUNCTION_UNREAD_KEYS:
         if is_set(fn, key):

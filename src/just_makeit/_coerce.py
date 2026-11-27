@@ -1035,7 +1035,7 @@ def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, str, bool]]":
         add(
             f"[[{comp}.state]]",
             body.get("state"),
-            lambda p: _OPAQUE_STATE if p.get("opaque") else "",
+            lambda p: _OPAQUE_STATE if truthy(p.get("opaque")) else "",
             parse_array_type,
         )
         records = _config.records(cfg, comp)
@@ -1050,7 +1050,7 @@ def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, str, bool]]":
 
         for m in body.get("methods") or []:
             if isinstance(m, dict):
-                strict = bool(m.get("strict"))
+                strict = truthy(m.get("strict"))
                 add(
                     f"[[{comp}.methods.params]]",
                     m.get("params"),
