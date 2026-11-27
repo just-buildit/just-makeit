@@ -16,6 +16,7 @@ from typing import Callable
 
 from . import _color as Color
 from . import _config as C
+from ._report import Refusal
 from . import _render as T
 from . import _incpath as INC
 from . import _pins
@@ -439,6 +440,18 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-2112: a state name given twice, refused before the project exists,
+    # by the check `load` and `save` make of every manifest. Asked here
+    # because a refusal at the object's save left a half-made project.
+    _dupes = [
+        e
+        for obj in object_names or []
+        for e in C.duplicate_row_errors(
+            f"'{obj}' state", [{"name": v[0]} for v in state_vars or []]
+        )
+    ]
+    if _dupes:
+        raise Refusal.of(_dupes)
 
     ctx = _make_project_ctx(project, version=version, pytest_=pytest_)
     ctx.update(INC.ctx_slots(owner))
