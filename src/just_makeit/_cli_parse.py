@@ -350,8 +350,9 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
     if T.is_enum_ref(ctype) or T.is_string_enum_type(ctype):
         # An enum's default is one of its choice strings, and it has no
         # `_CTYPE_META` zero: no default is the manifest's own spelling of
-        # "the first choice", so the CLI persists exactly what a hand-written
-        # `[[obj.init_params]]` table without a `default` key would.
+        # "required" (gh-2743), so the CLI persists exactly what a
+        # hand-written `[[obj.init_params]]` table without a `default` key
+        # would.
         default = parts[2] if len(parts) >= 3 else ""
     elif T.is_array_param_type(ctype):
         # gh-826: this used to be `default = ""` unconditionally — an array

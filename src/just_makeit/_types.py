@@ -1336,9 +1336,28 @@ def default_type_error(ctype: str, default: str) -> str:
 
     >>> default_type_error("int", "1.5").split(":")[0]
     'default `1.5` is not an integer, and `int` holds one'
+
+    gh-2743: a string enum's default is one of its choices. Any other value
+    built a constructor that refused every call omitting the argument, and
+    left the generated tests no choice to seed the C test with (gh-2565).
+
+    >>> default_type_error("string_enum:lo,hi", "hi")
+    ''
+    >>> print(default_type_error("string_enum:lo,hi", "mid"))
+    default `mid` is not one of the choices "lo", "hi". Name one of them, or drop the default to make the parameter required.
     """
     if not default.strip():
         return ""
+    if is_string_enum_type(ctype):
+        choices = string_enum_choices(ctype)
+        if default in choices:
+            return ""
+        named = ", ".join(f'"{c}"' for c in choices)
+        return (
+            f"default `{default}` is not one of the choices {named}. Name"
+            " one of them, or drop the default to make the parameter"
+            " required."
+        )
     meta = _CTYPE_META.get(ctype)
     if meta is None:
         return ""
