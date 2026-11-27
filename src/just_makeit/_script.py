@@ -707,7 +707,7 @@ def _method_flags(m: dict, module: str | None) -> list[str]:
 
     # gh-2215: `jm method --no-bench` writes `bench = false`; dropped here,
     # the replayed method was benchmarked again.
-    if m.get("bench") is False:
+    if not _truthy(m.get("bench", True)):
         parts.append(_bool_flag("--no-bench"))
 
     if m.get("variable_output"):
