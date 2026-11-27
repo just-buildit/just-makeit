@@ -199,8 +199,9 @@ def test_the_runtime_doc_says_it_too(applied, rel):
 #: A ``string_enum:`` init param with and without a default, and the exact
 #: ``__init__`` both producers must write for it.
 INIT_CASES = {
+    # gh-2743: no default means required, so no `= ...` either.
     "mode:string_enum:fast,hq": (
-        'def __init__(self, mode: Literal["fast", "hq"] = ...) -> None: ...'
+        'def __init__(self, mode: Literal["fast", "hq"]) -> None: ...'
     ),
     "mode:string_enum:fast,hq:hq": (
         'def __init__(self, mode: Literal["fast", "hq"] = "hq") -> None: ...'
