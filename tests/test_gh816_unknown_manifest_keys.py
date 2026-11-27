@@ -234,9 +234,9 @@ class TestScope:
 
 class TestWarningEmission:
     def test_it_writes_to_the_stream_and_dedupes(self, capsys):
-        import just_makeit._keys as K
+        from just_makeit import _perprocess
 
-        K._SEEN.clear()
+        _perprocess.fresh()
         cfg = {"meter": {"methods": [{"name": "m", "check_return": True}]}}
         first = warn_unknown_keys(cfg)
         second = warn_unknown_keys(cfg)
@@ -246,14 +246,14 @@ class TestWarningEmission:
 
     def test_load_reports_it(self, tmp_path, capsys):
         """The whole point: an ordinary command surfaces it."""
-        import just_makeit._keys as K
+        from just_makeit import _perprocess
 
         (tmp_path / C.FILENAME).write_text(
             '[project]\nname = "p"\n\n[meter]\narg_type = "float"\n\n'
             '[[meter.methods]]\nname = "set_truth"\ncheck_return = true\n',
             encoding="utf-8",
         )
-        K._SEEN.clear()
+        _perprocess.fresh()
         C.load(tmp_path)
         assert "check_return" in capsys.readouterr().err
 

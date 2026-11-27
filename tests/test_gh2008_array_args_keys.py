@@ -29,7 +29,6 @@ import pytest
 from _jmrun import run_cli, warning_lines
 
 from just_makeit import _config as C
-from just_makeit import _keys
 from just_makeit._keys import (
     ARRAY_ARG_KEYS,
     KIND_KEYS,
@@ -130,7 +129,6 @@ def test_apply_reports_the_issue_trigger_and_still_exits_0(tmp_path):
         '[[o.array_args]]\nname = "w"\ntype = "float32"\nrank = 1\n',
         encoding="utf-8",
     )
-    _keys._SEEN.clear()
     r = run_cli("apply", str(frag), cwd=tmp_path / "p")
     assert r.returncode == 0, r.stderr
     hits = [

@@ -1797,24 +1797,18 @@ def default_raw_errors(cfg: dict) -> "list[str]":
     ]
 
 
-#: Warnings already emitted this process, so a command that loads the manifest
-#: several times (``jm apply`` loads the real tree and its temp scaffold) says
-#: each thing once.
-_SEEN: set = set()
-
-
 def warn_unknown_keys(cfg: dict, stream=None) -> list:
     """Print one ``warning:`` line per unrecognised key, deduplicated.
 
     Returns the messages emitted (for tests). Emits nothing — and costs one
-    dict walk — for a manifest jm generated, which is the common case.
+    dict walk — for a manifest jm generated, which is the common case. Once
+    per process (`_report.warn` ``once``): a command that loads the manifest
+    several times (``jm apply`` loads the real tree and its temp scaffold)
+    says each thing once.
     """
     out = []
     for unknown in unknown_keys(cfg):
         text = unknown.message()
-        if text in _SEEN:
-            continue
-        _SEEN.add(text)
-        _report.warn(text, gates=False, stream=stream)
-        out.append(text)
+        if _report.warn(text, gates=False, stream=stream, once=True):
+            out.append(text)
     return out

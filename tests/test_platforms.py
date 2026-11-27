@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from just_makeit import _config as C
+from just_makeit import _perprocess
 from just_makeit import _status
 from just_makeit._apply import run as jm_apply
 from just_makeit._module import run as jm_module
@@ -73,9 +74,9 @@ def _cmakes(root: Path) -> "list[str]":
 
 
 @pytest.fixture(autouse=True)
-def _fresh_notice(monkeypatch):
+def _fresh_notice():
     """The notice is once per process; each test starts unsaid."""
-    monkeypatch.setattr(C, "_RETIRED_PLATFORMS_SAID", set())
+    _perprocess.fresh()
 
 
 class TestNothingIsEmitted:
@@ -93,7 +94,7 @@ class TestNothingIsEmitted:
     def test_the_key_still_loads_and_says_so_once(self, tmp_path, capsys):
         root = _scaffold(tmp_path / "p", _WINDOWS)
         capsys.readouterr()
-        C._RETIRED_PLATFORMS_SAID.clear()
+        _perprocess.fresh()
         C.load(root)
         C.load(root)
         err = capsys.readouterr().err
