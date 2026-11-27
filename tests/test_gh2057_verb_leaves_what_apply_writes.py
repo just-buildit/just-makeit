@@ -1770,3 +1770,26 @@ def test_a_verb_that_fails_after_writing_writes_nothing(
         f" {sname}: {'delete it from' if wrote else 'it belongs in'}"
         " WRITES_NOTHING"
     )
+
+
+@pytest.mark.parametrize("name", sorted(NEW_CASES))
+def test_a_new_that_fails_after_writing_leaves_nothing(
+    tmp_path, monkeypatch, name
+):
+    """(d) for the CREATES command: a `jm new` that fails where it would
+    have succeeded leaves the working directory as it found it, with no
+    project in it (gh-2111). The ways out and the kinds of root are held
+    in `test_gh2111_failed_new_leaves_nothing.py`."""
+    from just_makeit import _undo
+    from just_makeit._report import Refusal
+
+    def fail() -> None:
+        raise Refusal("injected: the command failed after its last write")
+
+    monkeypatch.setattr(_undo, "commit", fail)
+    r = run_cli("new", "p", *NEW_CASES[name], cwd=tmp_path)
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert r.returncode == 1 and errors == [
+        "error: injected: the command failed after its last write"
+    ], (r.stdout + r.stderr)[-3000:]
+    assert list(tmp_path.iterdir()) == [], (r.stdout + r.stderr)[-3000:]

@@ -22,6 +22,7 @@ from . import _incpath as INC
 from . import _pins
 from ._docstring import docstring_literal
 from . import _pythons
+from . import _undo
 
 
 #: The one way a generated Makefile installs a package into ``$(PYTHON)``
@@ -440,6 +441,10 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-2111: from here on the root is this command's. Under `jm new` a
+    # failure on any way out removes what it wrote there, or the directory
+    # itself when it did not exist; elsewhere this records nothing.
+    _undo.creating(root)
     # gh-2112: a state name given twice, refused before the project exists,
     # by the check `load` and `save` make of every manifest. Asked here
     # because a refusal at the object's save left a half-made project.
