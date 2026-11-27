@@ -29,11 +29,24 @@ The record is the bytes of every file :func:`_apply.walk` reaches -- the
 walk `apply` already reads in full to report what it changed -- held for
 the length of one command. Measured 2026-10-08 on doppler, a large jm
 project: 3649 files, 76 MB, read in about 60 ms from a warm cache.
+
+A command that CREATES its project (`jm new`) has no tree to record: its
+root is a directory that did not exist, or was empty, before it ran, and
+where that is only the command knows, once it has read its argv. So
+`_cli.main` opens the guard with no root, and the command names it through
+:func:`creating` before it writes there. A root that did not exist is
+simpler to put back than a snapshot: everything under it is the command's,
+so it is removed, with any parent the command made on the way to it. A
+directory that existed is never removed; an empty one is recorded like any
+other root, so the files the command wrote into it go and it stays
+(gh-2111: a refused `jm new` left 38 files behind, and the next `jm new`
+refused the non-empty directory they were in).
 """
 
 from __future__ import annotations
 
 import contextlib
+import shutil
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -46,6 +59,9 @@ class Undo:
     root : Path
         The project root. Every file :func:`_apply.walk` reaches under it
         is read, and every directory it yields recorded, on construction.
+        A root that does not exist yet is one the command creates:
+        everything it then holds is the command's, and :meth:`rollback`
+        removes it, with every parent made on the way to it (gh-2111).
 
     Examples
     --------
@@ -68,12 +84,30 @@ class Undo:
     >>> undo.commit()
     >>> undo.rollback()
     0
+
+    A root that did not exist goes, with the parents made on the way to
+    it:
+
+    >>> made = root / "a" / "b" / "p"
+    >>> undo = Undo(made)
+    >>> made.mkdir(parents=True)
+    >>> _ = (made / "x.c").write_bytes(b"")
+    >>> undo.rollback(), (root / "a").exists()
+    (1, False)
     """
 
     def __init__(self, root: Path) -> None:
         from ._apply import walk
 
         self._root = root
+        #: When the root is one the command creates, the outermost of it
+        #: and its parents that did not exist: every entry under it is the
+        #: command's, and it goes whole.
+        self._owned: "Optional[Path]" = None
+        if not root.exists():
+            self._owned = root
+            while not self._owned.parent.exists():
+                self._owned = self._owned.parent
         self._files: "Optional[dict[Path, bytes]]" = {}
         self._dirs: "set[Path]" = set()
         for base, names in walk(root):
@@ -96,6 +130,8 @@ class Undo:
 
         if self._files is None:
             return 0
+        if self._owned is not None:
+            return self._remove_owned()
         dirs: "set[Path]" = set()
         files: "set[Path]" = set()
         for base, names in walk(self._root):
@@ -119,39 +155,97 @@ class Undo:
         self._files = None
         return changed
 
+    @property
+    def root(self) -> Path:
+        """The root this record was taken of."""
+        return self._root
+
+    @property
+    def creates(self) -> bool:
+        """True when the root is one the command creates (gh-2111)."""
+        return self._owned is not None
+
+    def _remove_owned(self) -> int:
+        """Remove the root the command created, and every parent it made
+        on the way to it; return how many files the command had written.
+
+        Every entry is the command's, build trees and caches included, so
+        nothing is walked selectively.
+        """
+        owned = self._owned
+        assert owned is not None
+        self._files = None
+        if not owned.exists():
+            return 0
+        if not owned.is_dir():
+            owned.unlink()
+            return 1
+        removed = sum(1 for p in owned.rglob("*") if not p.is_dir())
+        shutil.rmtree(owned)
+        return removed
+
 
 #: The record the running command keeps, while :func:`guard` holds one.
 _active: "Optional[Undo]" = None
 
+#: True while a guard opened for a command that creates its project waits
+#: for :func:`creating` to name the root.
+_awaiting_root = False
+
 
 @contextlib.contextmanager
-def guard(root: "Optional[Path]") -> Iterator[None]:
+def guard(root: "Optional[Path]", *, creates: bool = False) -> Iterator[None]:
     """Run the block as one change to the project at *root*: kept when the
     block calls :func:`commit`, put back on any other way out.
 
     ``None`` guards nothing -- a command that does not change the project
-    in the working directory, or a directory that holds no project.
+    in the working directory, or a directory that holds no project --
+    unless *creates*: the command creates its project, at a root it names
+    through :func:`creating` once its argv says where (gh-2111).
 
     When putting it back changed anything, one line on stdout says so,
     under the ``update`` lines it takes back: the refusal may name a file
     the command had deleted, which is back. Not on stderr, whose last line
     stays the refusal for whatever reads it.
     """
-    global _active
-    if root is None:
+    global _active, _awaiting_root
+    if root is None and not creates:
         yield
         return
-    _active = undo = Undo(root)
+    _active = None if root is None else Undo(root)
+    _awaiting_root = root is None
     try:
         yield
     finally:
-        _active = None
-        restored = undo.rollback()
-        if restored:
+        undo, _active, _awaiting_root = _active, None, False
+        restored = undo.rollback() if undo is not None else 0
+        if restored and undo is not None and undo.creates:
+            print(
+                f"just-makeit: removed {undo.root} and the {restored}"
+                " file(s) this command had written there; it did not exist"
+                " before it ran."
+            )
+        elif restored:
             print(
                 f"just-makeit: put back the {restored} file(s) this command"
                 " had changed; the project is as it was before it ran."
             )
+
+
+def creating(root: Path) -> None:
+    """The running command is about to write its new project at *root*.
+
+    Called by `_new.run` once it has refused a root that is not empty and
+    before it writes there. Under the guard `_cli.main` opens for a command
+    that creates its project, *root* is recorded: a root that did not exist
+    is removed on any way out but :func:`commit`, and one that existed,
+    empty, gets the per-file record every root does (gh-2111). Anywhere else -- `apply`'s replay
+    into a scratch directory, a caller of the Python API -- it does
+    nothing: the guard there, if any, records the project it changes.
+    """
+    global _active, _awaiting_root
+    if _awaiting_root:
+        _active, _awaiting_root = Undo(root), False
 
 
 def commit() -> None:
