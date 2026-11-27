@@ -2693,23 +2693,113 @@ def _init_parts(body: str) -> _InitParts:
 
 
 def _raised(stmts: tuple) -> str:
-    """What *stmts* raise or warn: each exception class and literal.
+    """What *stmts* raise or warn: each exception class and its literal.
+
+    Only the literal passed beside a ``PyExc_*`` is the message; any other
+    string in the block -- an author's own call -- is not what it raises.
 
     >>> _raised(((
     ...     "if", "(", "!", "self", "->", "handle", ")", "{",
+    ...     "log", "(", '"mine"', ")", ";",
     ...     "PyErr_SetString", "(", "PyExc_ValueError", ",", '"no"', ")",
     ...     ";", "return", "-", "1", ";", "}"),))
     'ValueError "no"'
     >>> _raised(())
     'nothing'
     """
-    seen = [
-        t[len("PyExc_") :] if t.startswith("PyExc_") else t
-        for s in stmts
-        for t in s
-        if t.startswith("PyExc_") or t[0] == '"'
-    ]
+    seen: list[str] = []
+    for s in stmts:
+        for i, t in enumerate(s):
+            if not t.startswith("PyExc_"):
+                continue
+            seen.append(t[len("PyExc_") :])
+            lit = s[i + 2] if i + 2 < len(s) else ""
+            if s[i + 1 : i + 2] == (",",) and lit[:1] == '"':
+                seen.append(lit)
     return " ".join(dict.fromkeys(seen)) or "nothing"
+
+
+def _with_literal(toks: "list[str]", lit: str) -> tuple:
+    """*toks* with the placeholder literal ``"m"`` replaced by *lit*."""
+    return tuple(lit if t == '"m"' else t for t in toks)
+
+
+def _is_rendered_fail(stmt: tuple) -> bool:
+    """Whether create-failure block *stmt* is one jm renders (gh-2555).
+
+    The declaration is read back off the block -- its exception class, its
+    message literal, whether it reads ``_why`` -- and `make_errors_ctx`
+    renders that declaration; the block is jm's only when the two agree
+    token for token. So a block jm wrote for the manifest it came from,
+    old or current, passes, and one holding anything of the author's --
+    a call, a second raise -- does not.
+
+    Examples
+    --------
+    >>> from just_makeit._context._diagnostics import make_errors_ctx
+    >>> jm = make_errors_ctx("a", "ValueError", "no", csym="a")
+    >>> _is_rendered_fail(tuple(_c_tokens(jm["create_fail_block"])))
+    True
+    >>> mine = jm["create_fail_block"].replace(
+    ...     "PyErr_SetString", 'log("x");\\n PyErr_SetString', 1)
+    >>> _is_rendered_fail(tuple(_c_tokens(mine)))
+    False
+    """
+    from ._context._diagnostics import WHY_LOCAL, make_errors_ctx
+
+    cats = {t for t in stmt if t.startswith("PyExc_")}
+    lits = [t for t in stmt if t[:1] == '"']
+    if len(cats) != 1 or len(set(lits)) != 1:
+        return False
+    (cat,) = cats
+    ref = make_errors_ctx(
+        "x", cat[len("PyExc_") :], "m", csym="x", why=WHY_LOCAL in stmt
+    )["create_fail_block"]
+    return _with_literal(_c_tokens(ref), lits[0]) == stmt
+
+
+def _is_rendered_warn(stmt: tuple) -> bool:
+    """Whether warning statement *stmt* is one jm renders (gh-2555).
+
+    `_is_rendered_fail`'s test for a ``[[<obj>.warnings]]`` entry: the
+    condition, class, message and stacklevel are read off the statement,
+    `make_warnings_ctx` renders them, and the two must agree token for
+    token.
+
+    Examples
+    --------
+    >>> from just_makeit._context._diagnostics import make_warnings_ctx
+    >>> jm = make_warnings_ctx("a", "A", [{"condition": "hot",
+    ...     "category": "UserWarning", "message": "hot", "stacklevel": 2}])
+    >>> _is_rendered_warn(tuple(_c_tokens(jm["init_warn_block"])))
+    True
+    >>> _is_rendered_warn(tuple(_c_tokens(
+    ...     jm["init_warn_block"].replace("{", "{ log();", 1))))
+    False
+    """
+    from ._context._diagnostics import make_warnings_ctx
+
+    toks = list(stmt)
+    cond = _closing(toks, 1)
+    cats = [t for t in toks if t.startswith("PyExc_")]
+    lits = [t for t in toks if t[:1] == '"']
+    if cond < 0 or len(cats) != 1 or len(lits) != 1:
+        return False
+    at = toks.index(lits[0])
+    level = toks[at + 2] if at + 2 < len(toks) else ""
+    if not level.isdigit():
+        return False
+    entry = {
+        "condition": "c",
+        "category": cats[0][len("PyExc_") :],
+        "message": "m",
+        "stacklevel": level,
+    }
+    ref = _c_tokens(make_warnings_ctx("x", "X", [entry])["init_warn_block"])
+    # The condition is the author's C either way (a field or an expression,
+    # gh-601); what jm renders is everything around it.
+    ref = toks[: cond + 1] + ref[_closing(ref, 1) + 1 :]
+    return _with_literal(ref, lits[0]) == stmt
 
 
 def init_diagnostics_drift(
@@ -2726,12 +2816,15 @@ def init_diagnostics_drift(
     `apply` half of one rule.
 
     *detail* names what differs and is ``""`` exactly when the fragment's
-    diagnostics are the render's. *jm_owned* is whether the REST of the
-    constructor is the render's, token for token with its literals: then
-    the whole of it is jm's for some older declaration and `apply`
-    re-renders it (`reconcile_init_diagnostics`). Otherwise something else
-    in it -- a hand edit, a kwlist `init_kwargs_drift` reports -- is not
-    jm's to overwrite, and the drift is reported instead.
+    diagnostics are the render's. *jm_owned* is whether the whole
+    constructor is jm's render for some declaration: the REST is the
+    current render's, token for token with its literals, and every
+    diagnostic block in it is one jm renders (`_is_rendered_fail`,
+    `_is_rendered_warn`) for the manifest it came from, whichever that
+    was. Then `apply` re-renders it (`reconcile_init_diagnostics`).
+    Otherwise something in it -- a statement the author added inside a
+    failure block, a kwlist `init_kwargs_drift` reports -- is not jm's to
+    overwrite, and the drift is reported instead.
 
     Examples
     --------
@@ -2774,7 +2867,12 @@ def init_diagnostics_drift(
         )
     if not detail:
         return "", False
-    return "; ".join(detail), e.rest == r.rest
+    jm_owned = (
+        e.rest == r.rest
+        and all(map(_is_rendered_fail, e.fail))
+        and all(map(_is_rendered_warn, e.warns))
+    )
+    return "; ".join(detail), jm_owned
 
 
 #: What to do about a constructor `reconcile_init_diagnostics` will not
