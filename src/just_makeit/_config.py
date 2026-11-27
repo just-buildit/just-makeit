@@ -3532,6 +3532,18 @@ def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
     (gh-1525), which is how ``tests/test_gh2800_kind_module_duplicates.py``
     holds this to every scope a kind declares.
 
+    gh-2804: the kinds' member names too, where each name renders one C
+    function, so a repeat is ``redefinition of 'Ring_get_used'``: a
+    handle's ``methods`` (``<Type>_<name>``), its ``factories``
+    (``<leaf>_<name>``) and its getter fields, every ``getters`` table's
+    together, as they share one getset (``<Type>_get_<name>``); a
+    capsule's ``methods`` (``_fn_<backing>_<name>``); a composer's
+    ``serializers`` (``<Composer>_<name>``), and its source's ``computed``
+    properties beside its ``fields``, one getset on the source type
+    (``<Source>_get_<name>``).
+    ``tests/test_gh2804_kind_member_duplicates.py`` derives its cases from
+    the rendered C.
+
     >>> _kind_duplicate_errors({"module": {"h": {"kind": "handle",
     ...     "create_args": [{"name": "n"}, {"name": "n"}]}}}, "h")[0][:44]
     "handle module 'h' create_args: 'n' is declar"
@@ -3541,8 +3553,9 @@ def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
     who = f"{kind} module '{mod}'"
     out: "list[str]" = []
     if kind == "capsule":
-        rows = cfg.get("module", {}).get(mod, {}).get("init_params")
-        out += rows_of(f"{who} init_params", rows)
+        sec = cfg.get("module", {}).get(mod, {})
+        out += rows_of(f"{who} init_params", sec.get("init_params"))
+        out += rows_of(f"{who} methods", sec.get("methods"))
     elif kind == "handle":
         out += rows_of(f"{who} create_args", handle_create_args(cfg, mod))
         for m in handle_methods(cfg, mod):
@@ -3553,15 +3566,28 @@ def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
             if isinstance(f, dict):
                 what = f"{who} factory '{f.get('name')}' init_params"
                 out += rows_of(what, f.get("init_params"))
+        out += rows_of(f"{who} methods", handle_methods(cfg, mod))
+        out += rows_of(f"{who} factories", handle_factories(cfg, mod))
+        props = [
+            f
+            for g in handle_getters(cfg, mod)
+            if isinstance(g, dict)
+            for f in g.get("fields") or []
+        ]
+        out += rows_of(f"{who} getters fields", props)
     elif kind == "composer":
-        src = composer_source(cfg, mod).get("fields")
-        out += rows_of(f"{who} source fields", src)
+        src = composer_source(cfg, mod)
+        # One row for both: a computed property is a getset member beside
+        # the stored fields, and a field twice is reported once, not twice.
+        rows = list(src.get("fields") or []) + list(src.get("computed") or [])
+        out += rows_of(f"{who} source fields and computed", rows)
         seg = composer_segment(cfg, mod).get("fields")
         out += rows_of(f"{who} segment fields", seg)
         for s in composer_serializers(cfg, mod):
             if isinstance(s, dict):
                 what = f"{who} serializer '{s.get('name')}' params"
                 out += rows_of(what, s.get("params"))
+        out += rows_of(f"{who} serializers", composer_serializers(cfg, mod))
     return out
 
 
