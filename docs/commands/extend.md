@@ -208,7 +208,10 @@ a `(4, 19)` array reaches a 1-D contract as 76 flat elements. Two manifest
 keys say otherwise (gh-805 §C). `rank = 1` refuses any other rank with
 `ValueError: name must be a 1-D array`; `elements_per_sample = 2` makes
 `name_len` count samples of two elements, for interleaved I/Q in an
-`int16_t[]` (see [Memory ownership](../memory-ownership.md)). Both work on a
+`int16_t[]` (see [Memory ownership](../memory-ownership.md)), and refuses a
+length that is not whole samples with
+`ValueError: name has 5 elements, not a multiple of elements_per_sample = 2`
+(gh-1999) rather than drop the partial one. Both work on a
 method param, a module-function param and an init param (gh-2004), where
 the count is the length `create()` receives:
 
