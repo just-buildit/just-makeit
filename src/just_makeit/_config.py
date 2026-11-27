@@ -6629,6 +6629,10 @@ def _param_default_error(entry: dict, what: str) -> str:
     ...     {"name": "p", "type": "path", "default": "NULL"}, "w"
     ... ).splitlines()[0]
     "w is a 'path' param and cannot declare a default."
+    >>> _param_default_error(
+    ...     {"name": "k", "type": "uint8_t", "default": "300"}, "w"
+    ... ).split(" [")[0]
+    'w: default `300` is out of range for `uint8_t`'
     """
     dflt = str(entry.get("default") or "").strip()
     ctype = str(entry.get("type", ""))
@@ -6646,7 +6650,10 @@ def _param_default_error(entry: dict, what: str) -> str:
             f"{what} is a {ctype!r} param and cannot declare a default.\n"
             "  Drop `default`, so the caller always passes one."
         )
-    return ""
+    # gh-2137: the literal check `--param` asks on the command line, here
+    # at load, so a manifest's refusal names the param too.
+    why = _T.literal_default_error(ctype, dflt)
+    return f"{what}: {why}" if why else ""
 
 
 def _declared_type_error(entry: dict, what: str) -> str:
