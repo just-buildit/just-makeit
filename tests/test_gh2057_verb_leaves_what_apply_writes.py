@@ -1486,15 +1486,19 @@ def test_every_flag_has_a_case():
 
 
 def test_the_whole_matrix_has_an_execution_home():
-    """`FULL_ENV` is set on a leg that exists, on the step that runs
-    `make test`: a matrix that runs nowhere is a gate that gates nothing.
-    Read by hand, as `test_own_ci_matrix` reads the matrix."""
+    """The switch that exports `FULL_ENV` (gh-2174: CI_FULL) is set on a leg
+    that exists, on the step that runs `make test`: a matrix that runs
+    nowhere is a gate that gates nothing. Read by hand, as
+    `test_own_ci_matrix` reads the matrix."""
     block = _job_block(CI_YML.read_text(encoding="utf-8"), "test")
     steps = re.split(r"\n      - ", block)
     (suite,) = [s for s in steps if s.startswith("run: make test\n")]
-    m = re.search(rf"\n {{8}}env:\n {{10}}{FULL_ENV}: (.*?)(?=\n {{0,8}}\S|$)",
-                  suite, re.S)  # fmt: skip
-    assert m, f"the `make test` step sets no {FULL_ENV}"
+    m = re.search(
+        r"\n {8}env:\n(?: {10}#[^\n]*\n)* {10}CI_FULL: (.*?)(?=\n {0,8}\S|$)",
+        suite,
+        re.S,
+    )
+    assert m, "the `make test` step sets no CI_FULL"
     expr = " ".join(m.group(1).split())
     assert expr == "${{ matrix.verb_gate_full && '1' || '' }}", expr
     # The leg the `legs` step marks: exactly one, and one a PR runs, so the

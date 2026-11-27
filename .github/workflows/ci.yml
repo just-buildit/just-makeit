@@ -388,7 +388,8 @@ jobs:
         # `verb_gate_full`: ubuntu-latest at the middle Python, which the
         # PR trim keeps, so it moves with the classifiers (gh-2626).
         env:
-          JM_VERB_GATE_FULL: ${{ matrix.verb_gate_full && '1' || '' }}
+          # gh-2174: CI_FULL exports JM_VERB_GATE_FULL (see the Makefile).
+          CI_FULL: ${{ matrix.verb_gate_full && '1' || '' }}
         # `macos-latest, 3.9` failed once on the 0.38.2 release commit with the
         # log ending at 99% and NO pytest summary, so there was no way to tell
         # which test died -- only that the job exited 1.
@@ -492,7 +493,8 @@ jobs:
         # recorded on (see tests/_downstream_gates.py, SHRINK): the one the
         # `legs` step marks `shrink`.
         env:
-          JM_GATE_A_SHRINK: ${{ matrix.shrink && '1' || '' }}
+          # gh-2174: CI_FULL exports JM_GATE_A_SHRINK (see the Makefile).
+          CI_FULL: ${{ matrix.shrink && '1' || '' }}
           # gh-1377: a doppler that cannot be fetched fails the run instead
           # of silently skipping nco_tone's build and kitchen_sink's `tone`.
           JM_REQUIRE_DOPPLER: "1"
