@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from just_makeit import _config as C  # noqa: E402
-from just_makeit import _keys  # noqa: E402
+from just_makeit import _keys, _perprocess  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from _jmrun import run_cli  # noqa: E402
@@ -127,7 +127,7 @@ def _project(root: Path, kind: str, table: str, row: dict) -> None:
 
 def _apply(root: Path) -> str:
     out = io.StringIO()
-    _keys._SEEN.clear()
+    _perprocess.fresh()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         apply_run(root)
     return out.getvalue()

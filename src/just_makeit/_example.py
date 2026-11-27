@@ -125,9 +125,14 @@ def run_cli(
     -----
     Two things a child had for free, kept here:
 
-    - **An empty manifest cache** (gh-2095). ``_incpath._CFG_CACHE`` follows
-      jm's own writes, but a hand edit the caller made since the last
-      command is not one; it is cleared so the manifest is read fresh.
+    - **Empty per-process state** (gh-2095, gh-2244). Every memo jm keeps
+      for one process -- the manifest cache, the warnings already said --
+      is declared through `_perprocess.per_process`, and
+      `_perprocess.fresh` empties all of it before each call. A hand edit
+      the caller made since the last command is read fresh, and a warning
+      an earlier call printed is printed again: otherwise a test asserting
+      a warning is ABSENT passes having been told nothing (gh-2115's
+      ``out_cols`` check was blind that way).
     - **Capture at the file descriptor**, not only ``sys.stdout``. jm shells
       out to cmake, ctest and pytest, and a child writes to fd 1, which
       ``contextlib.redirect_stdout`` does not touch. That output would
@@ -147,10 +152,10 @@ def run_cli(
     >>> bool(r.stdout.strip())
     True
     """
-    from just_makeit import _incpath
+    from just_makeit import _perprocess
     from just_makeit._cli import main
 
-    _incpath._CFG_CACHE.clear()
+    _perprocess.fresh()
 
     def capture() -> "IO[str]":
         # Line-buffered, so this process's lines and its children's, which

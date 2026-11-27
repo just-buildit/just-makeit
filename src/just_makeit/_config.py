@@ -8862,9 +8862,6 @@ WINDOWS_PLATFORM_RETIRED = (
 )
 
 
-_RETIRED_PLATFORMS_SAID: "set[str]" = set()
-
-
 def warn_retired_platforms(cfg: dict) -> bool:
     """Say so, once per process, when a manifest still lists ``windows``.
     Advisory: the project builds either way, so nothing here should fail a
@@ -8872,13 +8869,9 @@ def warn_retired_platforms(cfg: dict) -> bool:
     the same reason `_keys.warn_unknown_keys` deduplicates."""
     if "windows" not in (p.lower() for p in project_platforms(cfg)):
         return False
-    if WINDOWS_PLATFORM_RETIRED in _RETIRED_PLATFORMS_SAID:
-        return False
-    _RETIRED_PLATFORMS_SAID.add(WINDOWS_PLATFORM_RETIRED)
     from . import _report
 
-    _report.warn(WINDOWS_PLATFORM_RETIRED, gates=False)
-    return True
+    return _report.warn(WINDOWS_PLATFORM_RETIRED, gates=False, once=True)
 
 
 _DEFAULT_BENCH_BLOCK_SIZES = [1024, 65536]

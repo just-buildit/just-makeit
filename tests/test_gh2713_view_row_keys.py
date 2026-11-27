@@ -34,7 +34,6 @@ import pytest
 from _jmrun import run_cli, warning_lines
 
 import just_makeit
-from just_makeit import _keys
 from just_makeit._keys import KIND_KEYS, VIEW_KEYS, unknown_keys
 
 SRC = Path(just_makeit.__file__).parent
@@ -283,7 +282,6 @@ def test_apply_reports_the_issue_trigger_and_still_exits_0(tmp_path):
         text.replace(anchor, anchor + 'exclude_propertys = ["level"]\n'),
         encoding="utf-8",
     )
-    _keys._SEEN.clear()
     r = run_cli("apply", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
     hits = [

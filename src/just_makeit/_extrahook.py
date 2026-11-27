@@ -120,11 +120,6 @@ def describe(hook: Path, ext_c: Path) -> str:
     )
 
 
-#: Deduplicated per process, like `_keys._SEEN`: `apply` loads the real tree
-#: and its temp scaffold, and a reader should hear each thing once.
-_SEEN: set[str] = set()
-
-
 def warn_unwired_hooks(
     root: Path, stream=None, cfg: "dict | None" = None
 ) -> list[str]:
@@ -135,15 +130,16 @@ def warn_unwired_hooks(
     reading it -- and a gate that refuses suppression is right only while its
     finding CAN be fixed. Marking this as drift would turn every downstream
     with such a file permanently red over a feature jm has not built.
+
+    Once per process (`_report.warn` ``once``), like
+    `_keys.warn_unknown_keys`: `apply` loads the real tree and its temp
+    scaffold, and a reader should hear each thing once.
     """
     from . import _report
 
     out: list[str] = []
     for hook, ext_c in unwired_hooks(root, cfg):
         text = describe(hook, ext_c)
-        if text in _SEEN:
-            continue
-        _SEEN.add(text)
-        _report.warn(text, gates=False, stream=stream)
-        out.append(text)
+        if _report.warn(text, gates=False, stream=stream, once=True):
+            out.append(text)
     return out

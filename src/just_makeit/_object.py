@@ -81,6 +81,7 @@ from ._docstring import (
 from ._context._parse import _build_ml_doc
 from ._context._destroy import PARK_FIELD
 from . import _inflight
+from ._perprocess import per_process
 
 # When `jm apply` regenerates glue, it replays the scaffold into a throwaway
 # temp tree whose headers carry only template Doxygen. Docstring derivation
@@ -110,9 +111,11 @@ _LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
 # Keyed on identity AND stat, because a test (or a user mid-session) can
 # rewrite a header between two applies in one process; a path-only key would
 # serve the pre-edit text and the edit would look like it did nothing.
+# Per process (gh-2244): the in-process runner empties it before each
+# command, as a new process would start.
 _MEMBER_DOC_CACHE: dict[
     tuple[Path, int, int], tuple[dict, str, dict, dict]
-] = {}
+] = per_process({})
 
 
 def _header_member_docs(
