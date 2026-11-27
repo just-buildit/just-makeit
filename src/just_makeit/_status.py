@@ -77,6 +77,7 @@ import json
 import shutil
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 from . import _apply
@@ -588,6 +589,10 @@ def run(
     # declares (`getter_status`, a setter's `error`): the conversion
     # silently does nothing at runtime. Same shape, same allow hatch.
     property_entries: list[tuple[str, str, bool]] = []
+    # gh-2555: a constructor whose create-failure block, warnings or
+    # `_why` local disagree with the manifest. `apply` re-renders one that
+    # is otherwise jm's; this is the one it cannot, or has not yet.
+    diagnostic_entries: list[tuple[str, str, bool]] = []
     # gh-2581: (path, member, {label: why}) for a sacred fragment's member
     # lacking a SAFETY guard jm's render has (`_docsync.missing_guards`).
     # Gates, never allowed: a missing guard is not a choice an author makes.
@@ -1030,6 +1035,18 @@ def run(
                                 _is_allowed(rel_posix, allow_patterns),
                             )
                         )
+                    _diag, _ = _docsync.init_diagnostics_drift(
+                        before.decode("utf-8", "replace"),
+                        after.decode("utf-8", "replace"),
+                    )
+                    if _diag:
+                        diagnostic_entries.append(
+                            (
+                                rel_posix,
+                                _diag,
+                                _is_allowed(rel_posix, allow_patterns),
+                            )
+                        )
                     _rec = _docsync.record_drift(
                         before.decode("utf-8", "replace"),
                         after.decode("utf-8", "replace"),
@@ -1263,6 +1280,9 @@ def run(
         # gh-2538: gating on gh-823's test -- the property is documented to
         # raise and the extension never does.
         + sum(1 for e in property_entries if not e[2])
+        # gh-2555: gating on gh-823's test -- the `.pyi` documents an
+        # exception or warning the extension does not raise.
+        + sum(1 for e in diagnostic_entries if not e[2])
         + (_wide if _strict else 0)
         # gh-806: gates, unconditionally. The failure mode is a **green** CI
         # run — a scaffold that compiles, passes and is counted while the real
@@ -1416,6 +1436,10 @@ def run(
                     "property_status_drift": [
                         {"path": p, "detail": d, "allowed": a}
                         for (p, d, a) in property_entries
+                    ],
+                    "diagnostics_drift": [
+                        {"path": p, "detail": d, "allowed": a}
+                        for (p, d, a) in diagnostic_entries
                     ],
                     # gh-806: the file, why it is jm-shaped, and how much
                     # content is going unbuilt — the last of those is what
@@ -2866,6 +2890,29 @@ def run(
         )
         print()
 
+    if diagnostic_entries:
+        print(
+            f"DIAGNOSTICS ({len(diagnostic_entries)}) — a constructor raises "
+            "or warns what the manifest no longer declares:"
+        )
+        for path, detail, _allowed in diagnostic_entries:
+            print(f"  {'~' if _allowed else '!'} {path}")
+            print(f"      {detail}")
+            if _allowed:
+                print("      (allowed by status_allow — not counted)")
+        print(
+            textwrap.fill(
+                "The .pyi documents the manifest's exception and warnings; "
+                "the extension raises the ones its constructor was rendered "
+                "with. `jm apply` re-renders a constructor that is otherwise "
+                "jm's own (gh-2555). " + _docsync.INIT_DIAGNOSTICS_FIX,
+                width=79,
+                initial_indent="  ",
+                subsequent_indent="  ",
+            )
+        )
+        print()
+
     if kwargs_entries:
         print(
             f"KWARGS ({len(kwargs_entries)}) — the constructor's keyword "
@@ -2923,6 +2970,7 @@ def run(
         # no slot for.
         and not any(not e[2] for e in record_entries)
         and not any(not e[2] for e in property_entries)  # gh-2538
+        and not any(not e[2] for e in diagnostic_entries)  # gh-2555
         # gh-806: same treatment as the gating kwargs drift above. Saying
         # "OK — up to date" over a tree where a real test suite sits unbuilt
         # is the precise sentence this issue is about; the exit code alone
@@ -3102,6 +3150,12 @@ def run(
                 f", {sum(1 for e in property_entries if not e[2])} "
                 "property-status (!)"
                 if any(not e[2] for e in property_entries)
+                else ""
+            )
+            + (
+                f", {sum(1 for e in diagnostic_entries if not e[2])} "
+                "diagnostics-drift (!)"
+                if any(not e[2] for e in diagnostic_entries)
                 else ""
             )
             + (
