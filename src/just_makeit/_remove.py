@@ -210,18 +210,38 @@ def _own_part(d: Path, others: "list[Path]") -> "list[Path]":
 def _object_paths(
     root: Path, cfg: dict, pkg: str, obj: str, module: str | None
 ) -> list[Path]:
-    """Return every generated path that belongs to object *obj*."""
+    """Return every generated path that belongs to object *obj*.
+
+    gh-2141: the collocated object -- the one named for its module's cname
+    (:func:`_config.collocated_object`) -- shares the module's own native
+    directories: ``native/src/<cname>/`` holds the module's CMakeLists and
+    aggregator, and ``<cname>_core.h`` / ``<cname>_core.c`` are the
+    module's core as much as the object's. None of that is the object's to
+    take, so neither directory is listed: the core stays where it is, for
+    the module to build, and its declarations are the author's to delete
+    (sacred, never spliced; the caller says so). Its binding fragment goes
+    through ``binding_sources`` like any member's. The C test, link table
+    and bench are the module core's too while the module has functions
+    (gh-1479's keep, from the other side), and go with the object
+    otherwise.
+    """
     from . import _invariants
 
+    shared = module is not None and C.collocated_object(cfg, module) == obj
+    harness = not (shared and module and C.module_functions(cfg, module))
     paths = [
         # Its header directory, wherever the layout puts it (gh-2427), and
         # never another component's below it.
-        *_header_dir_paths(root, cfg, obj),
+        *([] if shared else _header_dir_paths(root, cfg, obj)),
         # ...and its source directory, by the same rule (gh-2459).
-        *_src_dir_paths(root, cfg, obj),
+        *([] if shared else _src_dir_paths(root, cfg, obj)),
         # The C test, the gh-1361 link table and the C bench, where the
         # project's layout puts them (gh-2423).
-        *(INC.native_path(root, kind, obj, cfg) for kind in INC.NATIVE_FILES),
+        *(
+            INC.native_path(root, kind, obj, cfg)
+            for kind in INC.NATIVE_FILES
+            if harness
+        ),
         # gh-1978: jm's element contract (gh-1404). Left behind, it imported
         # the removed class, and the project's Python tests failed to
         # collect on a tree `status --check` called clean.
@@ -437,6 +457,8 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         )
         sys.exit(1)
     module = C.component_module(cfg, obj)
+    # gh-2141: the object named for its module shares the module's core.
+    shared = module is not None and C.collocated_object(cfg, module) == obj
 
     core_h = INC.core_h(root, obj, cfg)
     if C.is_no_step(cfg, obj):
@@ -502,6 +524,15 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         _regenerate_module(root, cfg, host, pkg)
     print()
     print(f"Done!  Object '{obj}' removed.")
+    if shared:
+        # gh-2141: its core is the module's (`_object_paths`), so it stays,
+        # still holding the object's C -- sacred, never spliced.
+        print(
+            f"  note: {core_h.relative_to(root).as_posix()} and its _core.c"
+            f" are module"
+            f" '{module}''s core and stay; delete '{obj}''s declarations"
+            " and bodies from them by hand."
+        )
 
 
 def _prune_parent_packages(
