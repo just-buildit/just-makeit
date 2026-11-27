@@ -89,6 +89,8 @@ _REPRESENTATIVE: dict[str, object] = {
     "ranged": [{"name": "freq", "flag": "WFM_RANGE_FREQ"}],
     # gh-2747: the resolver the source type's `fs` read goes through
     "fs_get_fn": "wfm_fs",
+    # gh-2856: the whole-struct validator every write face calls
+    "check_fn": "wfm_source_why",
     # source.generates
     "generator": "nco",
     "bridge_fn": "wfm_bridge",

@@ -27,6 +27,29 @@ try:
 except AttributeError:
     print("           .duration = 1.0 -> AttributeError (read-only)")
 
+# ── seam 0: the validator every write face calls ─────────────────────────
+# clip_check refuses a gain over 100, at construction...
+try:
+    Clip(gain=200.0)
+    raise AssertionError("expected clip_check to refuse")
+except ValueError as exc:
+    print(f"Clip(gain=200.0)         -> ValueError: {exc}")
+    assert str(exc) == "a clip's gain is a level, at most 100"
+# ...and at assignment, where the clip keeps the gain it had.
+try:
+    clip.gain = 200.0
+    raise AssertionError("expected clip_check to refuse")
+except ValueError as exc:
+    print(f"  clip.gain = 200.0      -> ValueError: {exc}")
+assert clip.gain == 5.0, clip.gain
+print(f"  ...and clip.gain       -> {clip.gain}  (unchanged)")
+# An inline Track builds its Clip through the same constructor.
+try:
+    Track(gain=200.0, dur=4)
+    raise AssertionError("expected clip_check to refuse")
+except ValueError as exc:
+    print(f"Track(gain=200.0, dur=4) -> ValueError: {exc}")
+
 # ── seam 1: standalone generation through the bridge ─────────────────────
 # Clip.steps() has no kernel of its own; it calls clip_from_source() to build
 # a studio_clip_state_t and then drives the generator jm never had to know about.
