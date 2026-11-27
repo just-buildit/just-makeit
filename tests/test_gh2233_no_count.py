@@ -606,7 +606,10 @@ def test_every_load_rule_refuses_its_shape(extra, needle):
     generator shape that is otherwise accepted, so a rule that stops firing
     fails here by name. The CLI and `apply` both ask this function."""
     assert C._no_count_errors(dict(_GENERATOR), "m") == []
-    errs = C._no_count_errors({**_GENERATOR, **extra}, "m")
+    # The row as `C.load` hands it: `extra_args` read as `params` (gh-2208).
+    row = {**_GENERATOR, **extra}
+    assert C.unify_params_synonym({"o": {"methods": [row]}}) == []
+    errs = C._no_count_errors(row, "m")
     assert len(errs) == 1 and needle in errs[0], errs
 
 

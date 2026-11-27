@@ -1689,7 +1689,8 @@ def unknown_keys(cfg: dict) -> list:
             owner = table.removesuffix(".methods")
             where = f"{owner}.{entry.get('name', '?')}"
             found += _check("method", where, entry)
-            for p in _entries(entry, "params") + _entries(entry, "extra_args"):
+            # `C.load` read `extra_args` as `params` (gh-2208).
+            for p in _entries(entry, "params"):
                 found += _check("param", f"{where}({p.get('name', '?')})", p)
         # gh-1997: a typo on a hand-written method's row is the one that
         # silently drops its flags or its stub's signature.

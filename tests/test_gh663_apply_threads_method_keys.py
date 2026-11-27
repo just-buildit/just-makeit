@@ -34,7 +34,8 @@ _EXEMPT = {
     "name",
     "arg_type",
     "return_type",
-    # Read under either spelling and passed as `params=`.
+    # One list: `C.load` reads `extra_args` as `params` (gh-2208), which
+    # the replay passes as `params=`.
     "extra_args",
     "params",
     # The body's provenance: `_resolve_impl(m, ...)` reads all three off the

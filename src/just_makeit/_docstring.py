@@ -2532,8 +2532,8 @@ def authored_param_docs(entry: dict) -> "dict[str, str]":
     """``{param name: its manifest doc}`` for a method or function entry.
 
     gh-1493: `doc` on a param was accepted by `_keys` and read by nothing.
-    ``extra_args`` is the synonym `_cli` documents for ``params``, so both
-    are read.
+    ``extra_args``, the synonym `_cli` documents for ``params``, reaches here
+    as ``params``: `_config.load` reads it so (gh-2208).
 
     Examples
     --------
@@ -2541,9 +2541,7 @@ def authored_param_docs(entry: dict) -> "dict[str, str]":
     ...                                 {"name": "x"}]})
     {'k': 'Gain.'}
     """
-    rows = list(entry.get("params") or []) + list(
-        entry.get("extra_args") or []
-    )
+    rows = list(entry.get("params") or [])
     return {
         str(r["name"]): str(r["doc"])
         for r in rows
