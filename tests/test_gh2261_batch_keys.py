@@ -146,7 +146,8 @@ def test_apply_refuses_every_key_a_batch_row_does_not_read(project, key):
     assert r.returncode == 1, f"{key}: accepted\n{r.stdout}{r.stderr}"
     assert "Traceback" not in r.stderr, r.stderr
     assert len(_error_lines(r.stderr)) == 1, r.stderr
-    # `apply` funnels `extra_args` into `params`, so that is what it names.
+    # `C.load` reads `extra_args` as `params` (gh-2208), so that is what
+    # the batch table names.
     named = {"extra_args": "params"}.get(key, key)
     if "no effect on a batch method" in r.stderr:
         assert f"{named} has no effect" in r.stderr, r.stderr

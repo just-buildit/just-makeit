@@ -103,7 +103,7 @@ def retained(m: dict) -> "list[dict]":
     >>> [p["name"] for p in retained(m)]
     ['t']
     """
-    params = m.get("extra_args") or m.get("params") or []
+    params = m.get("params") or []
     return [p for p in params if isinstance(p, dict) and is_retained(p)]
 
 
@@ -241,7 +241,7 @@ def errors(cfg: dict) -> "list[str]":
 
     out: "list[str]" = []
     for table, m in declared_methods(cfg):
-        params = m.get("extra_args") or m.get("params") or []
+        params = m.get("params") or []
         for p in params:
             if not isinstance(p, dict) or KEY not in p:
                 continue

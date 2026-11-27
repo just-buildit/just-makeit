@@ -1309,9 +1309,8 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             # gh-432: pass params through as full dicts — the old
             # (name, type, default) tuple flattening silently dropped every
             # other per-param key (capsule, header, out) on the replay path.
-            params=[
-                dict(p) for p in (m.get("extra_args") or m.get("params", []))
-            ],
+            # gh-2208: `C.load` has already read `extra_args` as `params`.
+            params=[dict(p) for p in m.get("params", [])],
             out_type=m.get("out_type"),
             out_divisor=int(m.get("out_divisor", 1)),
             batch=bool(m.get("batch")),
