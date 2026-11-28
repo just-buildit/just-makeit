@@ -426,6 +426,38 @@ def _provision_worker_env() -> None:
     # environment is run by that environment's interpreter.
 
 
+@pytest.fixture(autouse=True)
+def _cmake_configures_name_their_interpreter(monkeypatch):
+    """Fail any test whose cmake configure names no interpreter (gh-2857).
+
+    Every process a test starts goes through ``subprocess.Popen`` --
+    ``run``, ``call``, ``check_call`` and ``check_output`` construct one --
+    so the argv is checked as it runs (`_cmake.unnamed_configure`), whatever
+    the test's spelling. ``pytest.fail`` raises an ``OutcomeException``,
+    not an ``Exception``, so a test's own ``except Exception`` cannot
+    swallow it. Per test and stateless, so xdist workers cannot double
+    count.
+    """
+    from _cmake import unnamed_configure
+
+    real = subprocess.Popen
+
+    class _Guarded(real):  # type: ignore[misc, valid-type]
+        def __init__(self, args, *a, **kw):
+            argv = unnamed_configure(args)
+            if argv is not None:
+                pytest.fail(
+                    "a cmake configure names no interpreter, so CMake builds"
+                    " the extension for the first python3 on PATH (gh-2857):"
+                    f" pass `_cmake.PYTHON3_ARG` (or -DBUILD_PYTHON=OFF):"
+                    f" {argv}",
+                    pytrace=False,
+                )
+            super().__init__(args, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "Popen", _Guarded)
+
+
 def pytest_configure(config):
     """Isolate this worker before anything collects or builds."""
     _provision_worker_env()
