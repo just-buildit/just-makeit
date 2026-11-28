@@ -64,6 +64,7 @@ from test_gh2144_int_range_refused import (
 from just_makeit import _capsule, _composer, _handle
 from just_makeit import _config as C
 from just_makeit import _types as T
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -639,7 +640,7 @@ def test_every_module_kind_refuses_a_value_its_type_cannot_hold(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         proj,

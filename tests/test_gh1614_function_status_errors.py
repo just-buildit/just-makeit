@@ -39,6 +39,7 @@ from just_makeit import _borrow  # noqa: E402
 from just_makeit import _keys  # noqa: E402
 from just_makeit import _render as R  # noqa: E402
 from just_makeit import _script  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _PARAMS = [{"name": "n", "type": "int"}]
 _ROWS = [
@@ -404,7 +405,7 @@ def _build(dest: Path) -> None:
             str(dest),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "--parallel", "4"],
     ):

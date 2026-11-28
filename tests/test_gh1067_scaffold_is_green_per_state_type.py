@@ -49,6 +49,7 @@ from just_makeit._context._types import (  # noqa: E402
 )
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._types import _CTYPE_META  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -106,7 +107,7 @@ def test_an_untouched_scaffold_passes_its_own_tests(ctype, tmp_path):
             str(root),
             "-B",
             str(root / "build"),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         capture_output=True,
         text=True,

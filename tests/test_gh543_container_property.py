@@ -59,6 +59,7 @@ from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
 from just_makeit._script import _property_flags
 from _jm_stub import drop_jm_stubs  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -595,7 +596,7 @@ class TestBuildAndRun:
 
         build = root / "build"
         cfg = subprocess.run(
-            ["cmake", "-S", str(root), "-B", str(build)],
+            ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
             capture_output=True,
             text=True,
             timeout=600,

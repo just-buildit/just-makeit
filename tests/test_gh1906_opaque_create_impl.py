@@ -35,6 +35,7 @@ from _jmrun import run_cli
 
 from just_makeit import _config as C
 from just_makeit._apply import run as apply_run
+from _cmake import PYTHON3_ARG
 
 _SKIP_BUILD = (
     "cmake not found"
@@ -162,8 +163,7 @@ def _cmake_build(root: Path) -> None:
             str(root),
             "-B",
             str(root / "build"),
-            # The interpreter the import below runs under.
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(root / "build"), "-j", "4"],
     ):

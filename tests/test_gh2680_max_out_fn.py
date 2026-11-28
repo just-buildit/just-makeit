@@ -47,6 +47,7 @@ import pytest
 
 from _jmrun import run_cli, script_round_trip
 from just_makeit import _config as C
+from _cmake import PYTHON3_ARG
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "just_makeit"
 
@@ -1017,8 +1018,7 @@ def probe(authored: Path, tmp_path_factory) -> dict:
         assert n == 1, (rel, fn)
         _write(proj, rel, text)
     for cmd in (
-        ["cmake", "-S", ".", "-B", "build",
-         f"-DPython3_EXECUTABLE={sys.executable}"],
+        ["cmake", "-S", ".", "-B", "build", PYTHON3_ARG],
         ["cmake", "--build", "build"],
         ["ctest", "--test-dir", "build", "--output-on-failure"],
         [sys.executable, "-c", _PROBE],

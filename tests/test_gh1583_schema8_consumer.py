@@ -41,6 +41,7 @@ import pytest
 from _compilers import WINDOWS_CONSUMER_GAP
 from _jmrun import run_cli
 from just_makeit._new import run as new_run
+from _cmake import PYTHON3_ARG
 
 #: package -> its one component.
 PROJECTS = {"alpha": "acore", "beta": "bcore"}
@@ -170,7 +171,18 @@ def test_find_package_consumer_of_both_links_and_runs(world):
         "target_link_libraries(c PRIVATE alpha::alpha beta::beta)\n",
         encoding="utf-8",
     )
-    _run(["cmake", "-S", ".", "-B", "b", f"-DCMAKE_PREFIX_PATH={pfx}"], cons)
+    _run(
+        [
+            "cmake",
+            "-S",
+            ".",
+            "-B",
+            "b",
+            PYTHON3_ARG,
+            f"-DCMAKE_PREFIX_PATH={pfx}",
+        ],
+        cons,
+    )
     _run(["cmake", "--build", "b"], cons)
     # A DLL is found on PATH, not through an rpath (gh-1570).
     env = dict(os.environ)

@@ -26,6 +26,7 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit import _docsync
+from _cmake import PYTHON3_ARG
 
 #: Each class's diagnostics before and after the manifest edit. ``Pulse``
 #: declares none of its own and inherits ``acc``'s.
@@ -177,7 +178,7 @@ def probe(applied) -> dict:
     _give_bodies(proj / "native" / "src" / "acc" / "acc_core.c")
     for cmd in (
         ["cmake", "-S", ".", "-B", "build",
-         f"-DPython3_EXECUTABLE={sys.executable}"],
+         PYTHON3_ARG],
         ["cmake", "--build", "build"],
     ):  # fmt: skip
         r = subprocess.run(cmd, cwd=proj, capture_output=True, text=True)

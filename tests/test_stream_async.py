@@ -27,6 +27,7 @@ from _compilers import default_cc
 from just_makeit import _config as C
 from just_makeit._new import run as jm_new
 from just_makeit._object import run as jm_object
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -112,7 +113,7 @@ class TestAsyncRuntime:
         )
         build = root / "build"
         cfg = subprocess.run(
-            ["cmake", "-S", str(root), "-B", str(build)],
+            ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
             capture_output=True,
             text=True,
             timeout=600,

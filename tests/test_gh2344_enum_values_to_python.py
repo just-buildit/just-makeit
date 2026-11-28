@@ -31,6 +31,7 @@ import pytest
 
 from _compilers import default_cc
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 ENUM_NAME = "ENG_STATE"
 VALUES = ["searching", "refining", "tracking", "idle", "lost"]
@@ -124,7 +125,7 @@ def _build_and_import(root: Path, leaf: str):
             str(root),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         capture_output=True,
         text=True,

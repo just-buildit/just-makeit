@@ -23,6 +23,7 @@ from just_makeit._method import run as jm_method
 from just_makeit._module import run as jm_module
 from just_makeit._new import run as jm_new
 from just_makeit._object import run as jm_object
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -149,7 +150,7 @@ class TestStreamModuleRuntime:
         root = _module_with_objects(tmp_path / "p", monkeypatch)
         build = root / "build"
         cfg = subprocess.run(
-            ["cmake", "-S", str(root), "-B", str(build)],
+            ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
             capture_output=True,
             text=True,
             timeout=600,

@@ -28,6 +28,7 @@ from just_makeit._new import run as jm_new
 from just_makeit._object import run as jm_object
 from just_makeit._remove import run as jm_remove
 from just_makeit._report import Refusal
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -227,7 +228,7 @@ class TestBuildImport:
     def _build(self, root):
         build = root / "build"
         cfg = subprocess.run(
-            ["cmake", "-S", str(root), "-B", str(build)],
+            ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
             capture_output=True,
             text=True,
             timeout=600,

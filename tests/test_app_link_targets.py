@@ -35,6 +35,7 @@ from _compilers import default_cc
 
 from _jmrun import run_cli
 from just_makeit import _render as R
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -107,7 +108,7 @@ def test_every_app_links_only_c_libraries(project: Path) -> None:
 def test_every_app_builds(project: Path) -> None:
     build = project / "build"
     cfg = subprocess.run(
-        ["cmake", "-S", str(project), "-B", str(build)],
+        ["cmake", "-S", str(project), "-B", str(build), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=900,

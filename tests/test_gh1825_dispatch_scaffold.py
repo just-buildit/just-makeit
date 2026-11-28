@@ -41,6 +41,7 @@ import pytest
 from _compilers import default_cc
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -93,8 +94,7 @@ def _build(root: Path) -> Path:
     """Configure and build *root* for THIS interpreter; the package dir."""
     build = root / "build"
     for cmd in (
-        ["cmake", "-S", str(root), "-B", str(build)]
-        + [f"-DPython3_EXECUTABLE={sys.executable}"],
+        ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
         ["cmake", "--build", str(build)],
     ):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)

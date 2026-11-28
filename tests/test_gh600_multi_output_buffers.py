@@ -58,6 +58,7 @@ from just_makeit._method import _methods_c_stub_variable
 from just_makeit._method import run as method_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
+from _cmake import PYTHON3_ARG
 
 MULTI = {
     "name": "steps_ovf",
@@ -241,7 +242,7 @@ class TestRuntime:
                 str(dest),
                 "-B",
                 str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             ["cmake", "--build", str(build)],
         ):

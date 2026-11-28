@@ -29,6 +29,7 @@ import pytest
 from _compilers import default_cc
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -121,7 +122,7 @@ def test_the_shape_builds_and_takes_what_its_stub_says(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         ["cmake", "--build", "build", "--parallel", "4"],

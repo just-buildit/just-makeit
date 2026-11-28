@@ -69,6 +69,7 @@ import pytest
 from _compilers import WINDOWS_CONSUMER_GAP
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 
 # gh-1570: run on the Windows leg, skipped there by a registered reason.
@@ -265,7 +266,7 @@ def _find_package(
         f"target_link_libraries(c PRIVATE {TARGETS[linkage]})\n",
         encoding="utf-8",
     )
-    _run(["cmake", "-S", ".", "-B", "b", *where], cons)
+    _run(["cmake", "-S", ".", "-B", "b", PYTHON3_ARG, *where], cons)
     _run(["cmake", "--build", "b"], cons)
     # A moved or staged tree needs the loader told, on this route as on
     # pkg-config's: the macOS install name is absolute (gh-1594) and names
@@ -487,7 +488,15 @@ def test_zero_x_version_matching(world, request_, found):
         encoding="utf-8",
     )
     out = _run(
-        ["cmake", "-S", ".", "-B", "b", f"-DCMAKE_PREFIX_PATH={lay.prefix}"],
+        [
+            "cmake",
+            "-S",
+            ".",
+            "-B",
+            "b",
+            PYTHON3_ARG,
+            f"-DCMAKE_PREFIX_PATH={lay.prefix}",
+        ],
         cons,
     ).stdout
     assert f"FOUND={1 if found else 0}" in out, out

@@ -34,6 +34,7 @@ from just_makeit import _config as C
 sys.path.insert(0, str(Path(__file__).parent))
 import test_gh2710_composer_field_get_fn as base  # noqa: E402
 from test_gh1711_composer_owned_pointer import CJSON_C, CJSON_H  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 PKG = base.PKG
 
@@ -161,7 +162,7 @@ def build(
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         proj,

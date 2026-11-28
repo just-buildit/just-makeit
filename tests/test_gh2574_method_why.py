@@ -43,6 +43,7 @@ import pytest
 from _jmrun import run_cli, script_round_trip
 from just_makeit import _ctorsig
 from just_makeit._context import _diagnostics as D
+from _cmake import PYTHON3_ARG
 
 #: The sentence each kernel writes on its ``mode == 1`` refusal.
 SAID = {
@@ -623,8 +624,7 @@ def _give_bodies(path: Path, fns: "list[str]") -> None:
 
 def _cmake(proj: Path) -> None:
     for cmd in (
-        ["cmake", "-S", ".", "-B", "build",
-         f"-DPython3_EXECUTABLE={sys.executable}"],
+        ["cmake", "-S", ".", "-B", "build", PYTHON3_ARG],
         ["cmake", "--build", "build"],
         ["ctest", "--test-dir", "build", "--output-on-failure"],
     ):  # fmt: skip

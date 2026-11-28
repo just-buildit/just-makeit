@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from test_gh1711_composer_owned_pointer import CJSON_C, CJSON_H  # noqa: E402
 from test_gh2139_composer_json_64bit import RANGE  # noqa: E402
 from test_gh2236_composer_json_narrowing import _iinfo, _slug  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -341,7 +342,7 @@ def test_a_number_the_field_cannot_hold_is_refused(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             f"-DCMAKE_C_FLAGS=-Wall -Wextra -Werror {SANITIZE}",
         ],
         proj,

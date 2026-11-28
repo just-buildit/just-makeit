@@ -52,6 +52,7 @@ from just_makeit._method import run as method_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._types import _CTYPE_META, record_tuple_build
+from _cmake import PYTHON3_ARG
 
 # Registered in _CTYPE_META but absent from the old _PYBUILD_FMT.
 ACCIDENTALLY_OK = ["bool", "int8_t", "int16_t", "uint8_t", "uint16_t"]
@@ -313,7 +314,7 @@ class TestRuntime:
                 str(dest),
                 "-B",
                 str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             ["cmake", "--build", str(build)],
         ):

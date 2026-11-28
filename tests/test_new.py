@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import README_BY_BACKEND, run
+from _cmake import PYTHON3_ARG
 
 _STRAY_PLACEHOLDER = re.compile(r"<<(?!IMPLEMENT:)")
 
@@ -667,7 +668,7 @@ class TestNewBuild:
                 "-S",
                 ".",
                 "-DCMAKE_BUILD_TYPE=Release",
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             cwd=root,
             capture_output=True,

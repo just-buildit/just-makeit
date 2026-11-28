@@ -36,6 +36,7 @@ from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
 from _jm_stub import drop_jm_stubs  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _CODEC = {
     "discriminant": "char",
@@ -221,7 +222,7 @@ def test_build_and_decode(tmp_path):
             str(d),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

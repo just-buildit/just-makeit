@@ -20,6 +20,7 @@ from _compilers import default_cc, find_compiler
 
 from just_makeit import _cli_object
 from just_makeit._new import run as new_run
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -50,7 +51,7 @@ def test_preset_scaffold_compiles(preset, tmp_path, monkeypatch):
 
     build = root / "build"
     cfg = subprocess.run(
-        ["cmake", "-S", str(root), "-B", str(build)],
+        ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,
@@ -112,7 +113,7 @@ def test_array_return_variable_output_compiles(tmp_path, monkeypatch):
 
     build = root / "build"
     cfg = subprocess.run(
-        ["cmake", "-S", str(root), "-B", str(build)],
+        ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,
@@ -456,7 +457,7 @@ def test_scaffold_builds_warning_clean(shape, cc, tmp_path):
 
     build = root / "build"
     cfg = subprocess.run(
-        ["cmake", "-S", str(root), "-B", str(build)]
+        ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG]
         + [f"-DCMAKE_C_COMPILER={exe}", f"-DCMAKE_C_FLAGS={_WARN_FLAGS}"],
         capture_output=True,
         text=True,

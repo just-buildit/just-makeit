@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 pytestmark = pytest.mark.skipif(
     not shutil.which("cmake"), reason="cmake not found"
@@ -174,8 +175,7 @@ def built(tmp_path_factory) -> Path:
     assert r.returncode == 0, r.stdout + r.stderr
 
     for cmd in (
-        ["cmake", "-S", ".", "-B", "build",
-         f"-DPython3_EXECUTABLE={sys.executable}"],
+        ["cmake", "-S", ".", "-B", "build", PYTHON3_ARG],
         ["cmake", "--build", "build"],
     ):  # fmt: skip
         r = subprocess.run(cmd, cwd=proj, capture_output=True, text=True)
