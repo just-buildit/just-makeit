@@ -1435,7 +1435,9 @@ def run(
     destroy_impl_body: str | None = None,
     init_params: list[tuple[str, str, str]] = (),
     # gh-2401: the manifest's `init_post_parse`, manifest-only, so only
-    # `jm apply`'s replay passes it (`_apply._object_kwargs`).
+    # `jm apply`'s replay passes it (`_apply._object_kwargs`). Persisted
+    # into the replay's manifest, not rendered: the binding `apply` writes
+    # is `_glue.component_ctx`'s, re-rendered after the replay.
     init_post_parse_impl: str = "",
     opaque_fields: list[tuple[str, str]] = (),
     opaque_state: bool = False,
@@ -1589,10 +1591,6 @@ def run(
             array_args=array_args,
             no_state=no_state,
             init_params=init_params,
-            # gh-2401: the replay's render of a standalone binding is the
-            # one `jm apply` writes when the file is missing; without this
-            # the snippet the manifest declares reached no `tp_init`.
-            init_post_parse_impl=init_post_parse_impl,
             opaque_fields=opaque_fields,
             no_ctor_names=no_ctor_names,
             create_fn=create_fn,
