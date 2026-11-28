@@ -1,5 +1,156 @@
 ## [Unreleased]
 
+## [0.139.0] — 2026-11-28
+
+### Added
+
+- **A composer source names a whole-struct validator: `check_fn`
+    (gh-2856).** The constructor, `from_json` and the record assigned
+    source fields directly and called no project code, so doppler's
+    `Synth(type="ofdm", constellation="bpsk")` built half a rate pair that
+    only the first `steps()` refused. `[module.X.source] check_fn = "<fn>"`
+    names `const char *fn(const <source.struct> *)`, declared in
+    `<cname>_bridge.h` beside the other seams: `NULL` is whole, a sentence
+    is raised as `ValueError`. Every face that writes fields without a
+    field's `set_fn` calls it through one emitter: the source constructor
+    (so a factory and an inline `Segment`), each property setter, the
+    generic JSON record, a delegated `from_json_fn` / `from_file_fn` (each
+    source of the state it built) and the c-face CLI (exit 2). A setter
+    writes to a copy and commits only when the check passes, so a refused
+    assignment leaves the source as it was; a field with `set_fn` calls
+    only `set_fn`. A `check_fn` that is not a string, or that sits on any
+    composer table but `[module.X.source]`, is refused when the manifest
+    loads.
+
+### Fixed
+
+- **A bare `jm apply` and `jm status` refuse an opaque state field with no `create_impl` (gh-1906).** Only `jm apply <fragment-path>` asked, and only of the fragment it was handed: the same fragment already under `objects/` applied through a bare `jm apply`, and `jm status --check` passed it, shipping a `create()` that leaves the pointer NULL. One validator, `impl_key_errors`, now asks it of the merged manifest on every apply and status before anything is written, in one `error:` line that says NULL rather than "uninitialized". It also holds the rule that a body and its `_file` companion are never set together, on an object, a method or a module function, and the second copy of that rule inside the replay is gone.
+
+- **An edit a `jm apply` discards is named on every app face (gh-1912).** `jm app` and every `jm apply` regenerate an app's source wholesale, so an author's edit is gone after the next apply. Only the C app said so (gh-962). The console and pep723 apps overwrote the file with no warning. The check now sits in the one write path all three faces use, so each one names the discarded file, and an untouched re-run stays quiet.
+
+- **An interleaved array whose length is not a whole number of samples is
+    refused** (gh-1999). `elements_per_sample = E` divided an array's
+    element count into the kernel's sample count with nothing checking that
+    it divides, so a 5-element `int16_t[]` with `E = 2` reached the kernel
+    as 2 samples and the fifth element was dropped without a word. A method
+    param, a module function param and a constructor `init_param` now
+    raise a `ValueError` naming the param, its length and E before the
+    kernel runs. The generated docstring examples pass whole samples
+    (`4 * E` elements). An `out=` buffer is not held to the multiple:
+    spare room there is legal.
+
+- **A `jm new` that fails leaves no project behind (gh-2111).** `jm new` wrote the project and only then scaffolded the objects and modules it was given, so a refusal in that second half (`jm new p --object o --object o`, or `--module m --module m`) exited 1 and left a half-made project of 30-odd files, which the next `jm new p` then refused as a non-empty directory. Every way out of `jm new` but success (a refusal, an exit, a crash) now removes the project directory it created, and any parent directory it made on the way to it. A directory that existed before the command, empty, is never removed: the files written into it go, and it stays.
+
+- **A verb no longer silently erases your statements from a module's own CMakeLists (gh-2114).** `jm object x --module m`, `jm function`, `jm method` and `jm remove object` all rewrite `native/src/m/CMakeLists.txt` whole, and none of them went through the check `jm apply` makes before it does the same. Neither did `jm object m --module m`, which adds the module's collocated object: it wrote its own render over the module's file before any check could look. An `add_library(m_helper OBJECT ...)` you added there was erased with no message, and so was any other statement. Any root line wiring the library was left naming a target that no longer exists, which cmake rejects at configure time. Each of these verbs now asks the same questions `apply` asks, through the same code. It refuses to erase an OBJECT library, leaves the project as it was, and names the `m_extra.cmake` hook the library belongs in. For any other statement it drops, it prints gh-1351's warning naming the statement and the hook. Both messages name the command you ran, such as `` `jm object` ``.
+
+- **A manifest flag an older jm wrote as `"True"` is respelled by `jm upgrade`, and refused until it is (gh-2120).** Before gh-2046, a whole-manifest rewrite (`jm split-objects`, `jm migrate-to-fragments`) wrote `streamable = true` back as `streamable = "True"`, and nothing read that as true: a streamable producer lost `stream()` and `__iter__` from its `.pyi` and `_ext.c`, while `apply` and `status --check` exited 0 and `jm upgrade` said "already up to date". Now `jm upgrade` respells every `"True"` / `"False"` flag to the bool it was, at any schema, keeping comments. Every command refuses a flag holding any value but `true`, `false`, `"true"` or `"false"`, naming the key, and names `jm upgrade` for the old spelling. Every flag is read the same way, too: `process_global` accepted `"1"` and a property's `writable` accepted `"yes"`, and both are refused now, while a method's `bench = "false"` now opts out as `bench = false` does. And `"false"` is off wherever a flag is read: a property declared `writable = "false"` got a setter, and an init param declared `required = "false"` was required, because those readers tested the string for truth. The same holds for every boolean manifest key, not only the ones jm already treated as flags: a method's `nogil = "False"` loaded, was not respelled, and released the GIL, and `variable_output`, `single`, `borrow`, `strict`, a property's `getter_status`, a composer field's `bytes` and the rest read `"false"` as on. They are flags now, refused and respelled like the others. A boolean key spelled as any other string (`field = "g"`, `check_return = "negative"`), or holding a list or an inline table in a row, used to read as on; it is now refused at load, naming the key. `jm upgrade` respells only the Python spellings `"True"` and `"False"`, so any other value is yours to correct.
+
+- **A default C cannot read for its type is refused where it is declared (gh-2137).** jm accepted `--state a:bool:TRUE`, `--state b:uint8_t:300` and `--state c:int:1f` and wrote each into the generated C as declared, where it failed: `TRUE` is undeclared, `300` does not fit a `uint8_t`, and `1f` is no C constant. The same held for `1.5u`, `-1` for an unsigned type, `1e39` for a `float`, and the bare `18446744073709551615`, which no unsuffixed decimal constant holds. The one check that already refused a default Python cannot spell (gh-1946) now also refuses a `bool` that is not lower case, a suffix C refuses for its constant, and a value outside the type's range. A state field, an init param, and a method or function param are refused on the command line and in a hand-written manifest, in one `error:` line that names the field and its type, and the project is left as it was. A C constant such as `UINT8_MAX` or `M_PI` is still accepted as before.
+
+- **Removing a module's collocated object leaves the module its core (gh-2141).** `jm remove object filt` on the object named for its module (`jm module filt && jm object filt --module filt`) deleted the module's own `native/src/filt/` and `native/inc/<pkg>/filt/` whole, then wrote the module's CMakeLists and `_ext.c` back into the emptied directory: `jm status --check` reported `filt_core.h` and `filt_core.c` MISSING and cmake could not configure. Those directories and that core are the module's, so the removal now takes only what is the object's own (its binding fragment, its tests and benches) and leaves the core, with your C in it, for the module to build. It prints a note that the object's declarations and bodies in the core are yours to delete, and its confirmation no longer warns that hand-written code in that core will be deleted. While the module has functions, its C test and bench stay too, since they are the module core's, and the note says they still call the removed object's `create()` and `step()`; the object's link table (`test_filt_symbols.c`) goes. A member that `depends_on` the removed object now has the core wired where `jm apply` puts it, so `status --check` stays clean. `jm add --force`, `jm regenerate` and `jm remove state` on the collocated object still rebuild its core, as they did before.
+
+- **An object named for another module's cname is refused** (gh-2142).
+    `jm module X` refused a name a component already held, but nothing
+    asked the other order: `jm object a --module b` beside a module `a`
+    exited 0 under `layout = "nested"` and left a manifest `apply` and
+    `status` could not replay, and in the flat layout the same command, a
+    standalone `jm object filt` beside a module `filt`, or a hand-written
+    manifest holding either, stopped only at the occupied-directory check
+    with a message about files rather than names. Manifest load and save
+    now refuse two modules, two components, or a component and a module
+    whose C symbol stem is one -- other than a module and its own
+    collocated object -- so `jm object`, `jm module`, `apply` and
+    `status --check` all refuse with one `error:` line naming both and
+    the stem, before anything is written. The stem is `_csym.stem`'s, so
+    under `c_prefix = "p"` the names `filt` and `p_filt` clash too, in
+    any order of `jm object` and `jm module`; before, only `apply` and
+    `status` caught that, as `P_FILT_CORE_H` derived twice.
+
+- **Recovering a project that already holds such a clash**, which every
+    command now refuses at load, `jm remove` included. When the two names
+    differ (`filt` and `p_filt`), comment out `c_prefix` in
+    `just-makeit.toml`, run `just-makeit remove object p_filt -f` (or
+    `remove module`), and restore the line. When they are one name (a
+    nested `a` in module `b` beside module `a`), delete the object's
+    `[a]` table or `objects/a.toml`, its entry in `[module.b] objects`,
+    and the files jm wrote for it (`native/src/b/a/`,
+    `native/inc/<pkg>/b/a/`, `native/tests/b/a/`, `native/benchmarks/b/a/`,
+    `native/src/b/b/b_ext_a.c`, `src/<pkg>/b/tests/test_a.py`), then run
+    `just-makeit apply`. Either way, re-add the object under a new name.
+
+- **A method's `extra_args` reaches every face, not only the replay**
+    (gh-2208). `extra_args` is the manifest's synonym for `params`, and
+    only `apply`'s replay translated it. Documenting the method in the
+    sacred header (or declaring a state-only `*_max_out`) sends `apply`
+    into a second render that read `params` alone, so the binding called
+    the kernel without the argument and the project stopped compiling; the
+    `.pyi` dropped it, `jm status --check` agreed, and `jm script`
+    reconstructed the method without it. `load` now reads `extra_args` as
+    `params` once, for every reader, and a save writes the row back as the
+    author spelled it. A row declaring both `params` and `extra_args` is
+    refused, naming it: each reader used to pick one, not all the same one.
+
+- **A handle field's, capsule property's or composer setting's setter can
+    refuse a value** (gh-2214). Each called the author's C setter and
+    discarded what it returned, so assigning a value the core refused
+    succeeded in Python while the attribute kept its old value. Each row
+    now takes an object property's pair (gh-2182): with
+    `error = "<Exception>"` (and optionally `error_message`) the setter --
+    a getter field's `writable_fn`, a capsule `<backing>_set_<prop>`, a
+    composer `setter_fn` -- returns `int`, and a non-zero return raises it,
+    with the return code appended. A composer setting passed to the
+    constructor is refused the same way. Both docstring faces document the
+    exception. `error` where there is no setter, an unknown exception, or
+    `error_message` alone is refused before anything is written. A row
+    declaring neither key renders as before.
+
+- **Each command the in-process runner drives starts as a new `jm` process (gh-2244).** `just_makeit._example.run_cli`, which the bundled examples and jm's own test suite use to run many commands in one Python process, kept three once-per-process warning memos across calls: an unknown manifest key, an unwired `*_extra.c` hook and a retired `windows` platform each printed for the first command and never again. An example's transcript could lose a warning, and a test asserting a warning was absent passed whether or not jm printed it. Every such memo is now declared through `_perprocess.per_process`, and the runner empties all of them before each call; within one command a warning is still said once.
+
+- **`jm apply` re-renders a module constructor whose `create_error` or warnings changed in the manifest (gh-2555).** A module object's or a view's binding fragment is kept by `apply`, and its `tp_init` with it. So editing `create_error`, `create_error_message`, `create_why` or a `[[<obj>.warnings]]` entry in the manifest updated the `.pyi` while the built class went on raising the old exception and emitting the old warning, `help()` kept the old `Raises` and `Warns` text, and `jm status --check` passed. `apply` now re-renders a constructor and class docstring that are jm's own render apart from those diagnostics, and names each one it rewrites. A constructor edited anywhere else, a statement inside its failure or warning block included, is left alone, and `apply` warns about it. `status --check` now fails on it in a new `DIAGNOSTICS` section. A standalone object was never affected: `apply` regenerates its whole `_ext.c`.
+
+- **A `string_enum:` init param with no default is required, and the C tests seed every string enum with its default (gh-2743, gh-2565).** With no `default`, the binding parsed the param as optional with `""` as its value, then refused `""`. So every call that left it out raised `ValueError`, the scaffold's own pytest included, while both `.pyi` stubs showed `= ...`. No default now means required: the constructor raises `TypeError` when the param is missing, both stubs and the app flags (C and console) show it as required, and the generated tests pass a choice. The C smoke test and bench used to seed index 0, so a param declared `default = "slow"` was built as `"fast"` in C. They now seed the declared default, through its bound constant when the spec binds one, and a required param gets the first choice, the same value the Python tests pass. A `default` that is not one of the choices is refused where it is declared.
+
+- **Two `init_groups` rows making one init param name are refused when the manifest is read (gh-2799).** The duplicate-name check ran before `[[<obj>.init_groups]]` expanded, so two rows with the same group and prefix loaded as `init_params ['a_gain', 'a_gain']`: `apply` and `status --check` still refused it, but only when the replay saved, and a read-only reader of the manifest took it. The check now runs on the expanded list, so every command refuses it in the same `error:` line as a param written out twice.
+
+- **A name declared twice in a handle, capsule or composer module's parameter list is refused too (gh-2800).** The gh-2112 check covered objects, views and plain-module functions, but not the module kinds that render their own C: a `kind = "handle"` module's `create_args`, a handle method's `args`, a handle factory's `init_params`, a `kind = "capsule"` module's `init_params`, and a `kind = "composer"` module's source fields, segment fields and serializer `params`. A name in any of them twice was applied without a word and failed in the compiler (`redefinition of 'capacity'`, `duplicate member 'dur'`). Every command now refuses it with the same `error:` line as an object's duplicate, naming the module, the list and the name.
+
+- **A member named twice in a handle, capsule or composer module is refused (gh-2804).** The gh-2112/gh-2800 check covered the module kinds' parameter lists but not their member lists, and several of those render one C function per name: a handle's `methods`, `factories` and getter fields (every `[[module.X.getters]]` table's together), a capsule's `methods`, and a composer's `serializers` and source `computed` properties. A name in any of them twice was applied without a word and failed in the compiler (`redefinition of 'Ring_get_used'`, `redefinition of 'Clip_get_duration'`). A computed property named after a stored source field was refused, but mid-render, with a traceback. Every command now refuses each of them with the same `error:` line as any other duplicate, naming the module, the list and the name, and leaves the project as it was.
+
+- **A column named twice in a `jm record` declaration is refused in a hand-written manifest too (gh-2805).** The gh-2112 check walked a method's inline `result_fields` but not the fields of a `[[<obj>.records]]` declaration. A repeat there applied cleanly and compiled, and every method speaking the record raised `ValueError: name already used as a name or title` on its first call. Every command now refuses it in one `error:` line naming the object, the record and the column, and leaves the project as it was. `jm record --field a:int32_t --field a:int32_t` gives the same line, from the same check.
+
+- **A module's collocated object keeps what the module's core held (gh-2843).** `jm object m --module m` rendered the object's `m_core.h` and `m_core.c` over the module's own: a module function declared before the object lost its declaration (`m_ext.c` then called a function nothing declared, and `jm status --check` reported the header STALE), and any function you had written into `m_core.c` was gone with no prompt. Worse, `jm regenerate`, `jm add --force` and `jm remove state --force` on that object deleted the module's whole `native/src/m/` directory, taking a module function's hand-written `<fn>.c` body and your own code in `m_core.c` with it, on exit 0. Now the object's rebuild replaces only the object's own code in the shared core: what it renders wins for the names it declares, the previous object's stale accessors go, and everything else in the files is kept whole, with its comments: a module function's declaration and body (also under `--discard`, which discards the object's bodies, not the module's), your helpers, macros, typedefs and `#include`s. Adding the object back after `jm remove object` keeps the kept core, and is refused with the definitions named when the core still holds the previous object's code with another signature. A module function's documentation survives too, in the header and in the `.pyi` docstring derived from it, and a kept definition reformatted onto one line (as LLVM and Google styles write it), or with a parameter renamed, is not mistaken for another signature; a changed type still is. A conditional block (`#ifdef ...`) cannot be carried: in the collocated object's core it is module code, so it is refused with the file named even under `--discard`, and `jm regenerate` without `--discard` now refuses to drop one from any object's core rather than losing it silently. The tree is left as it was; move the block, with what it guards, to a file of your own (a header you include, or a `.c` your CMakeLists compiles), or pass `--discard`.
+
+- **The bundled examples configure for the Python that imports them (gh-2857).** The `record_shapes` and `errors_warnings` walkthroughs told you to run a bare `cmake -B build -S .`, and the `ring_buffer` example configured one, so CMake built the extension for the first `python3` on `PATH`: on a machine with more than one, the `.so` was built for the wrong interpreter and the import failed. Each now names it (`-DPython3_EXECUTABLE="$(command -v python3)"` in the walkthroughs).
+
+- **A composer CLI with no `name` builds (gh-2863).** `[module.X.cli]`'s
+    program was named after the module by default, which is the module's
+    own extension target, so cmake refused to configure every CLI declared
+    without a `name` (CMP0002). The default is now `<cname>_cli`, the stem
+    of the `<cname>_cli.c` it builds, the CLI is counted among the targets
+    jm emits, and a `name` jm already emits as a target is refused naming
+    it. A capsule, handle or composer module's extension target is now its
+    cname, the `.so` keeping the leaf through `OUTPUT_NAME`, as an object
+    module's always has: under a dotted id the target was the leaf, which
+    the target count did not know, so two modules `a.win` and `b.win` were
+    two targets named `win`. A flat id renders as before.
+
+- **A refused composer source `__init__` leaves the source as it was
+    (gh-2864).** The source `tp_init` assigned each field straight into the
+    live struct, so a re-`__init__` refused part-way (a `check_fn`
+    sentence, an enum name, a ranged pair, a bytes value or an owned
+    pointer's parser) left the fields before the refusal written and freed
+    the buffers it had replaced. It now converts every field into a copy,
+    checks it, and only then waits for a running `steps()`, drops the
+    generator, frees the old buffers and owned pointers and commits; a
+    refusal frees what it converted. A re-`__init__` that omits a ranged
+    field also clears that field's range, rather than keeping the pair a
+    previous call set. A `Segment` re-`__init__` parses its own scalars into
+    a copy too, and commits them only once the source it wraps is built.
+
+- **No pipeline under pipefail ends in a reader that stops early.** `cmd | grep -q`, `| head -1` and their kin exit before `cmd` has finished writing; `cmd` then takes SIGPIPE, and under `set -o pipefail` the pipeline fails although the reader got its answer, by timing alone. `jm-install-deps`' cmake version check, `jm-docker-e2e`'s version and wheel reads, `install.sh`, the CI workflows and the consumer smoke script carried 32 such lines; each now reads all of its input (`grep ... >/dev/null`, `sed -n 1p`). `make lint` holds the tree to it through `lint-pipefail-readers`, which runs canonical's vendored `scripts/pipefail-readers.py`.
+
+- **A test run whose xdist workers cannot set up now fails, naming why, and a killed run no longer leaks their environments (found reviewing #2865).** Each worker builds a private environment in `pytest_configure` (gh-879). When `TMPDIR` was out of space or inodes, that raised, the worker died before it was handed a test, xdist replaced it until its restarts ran out, and the controller printed `no tests ran` and exited 0: a gate with its fix sabotaged read green. A worker that goes down with an error now fails the run, and the message says the temp directory is out of space or inodes (ENOSPC) with the `df -h` / `df -i` to check. A worker's environment was removed only on a clean exit, so every killed or cancelled run left one per worker (72 in one `/tmp`, about 600 files each). Each is now named for its worker's pid, and a run's workers remove the ones whose pid is gone before they make their own.
+
 ## [0.138.3] — 2026-11-27
 
 ### Fixed
