@@ -95,6 +95,11 @@ def _install_smoke(proj: Path) -> None:
             "-S",
             ".",
             f"-DCMAKE_PREFIX_PATH={install_prefix}",
+            # A C-only consumer reads no Python, but every configure names
+            # the interpreter (gh-2857); the flag keeps CMake from warning
+            # that it went unused.
+            f"-DPython3_EXECUTABLE={sys.executable}",
+            "--no-warn-unused-cli",
         ],
         cwd=consumer,
     )
