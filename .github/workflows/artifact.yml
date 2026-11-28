@@ -164,6 +164,31 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # gh-2172: the leg's Python reaches its steps only as the `python`,
+      # `python3` and `pip` on PATH, so the leg asks each whether it is the
+      # Python its name says, through the one comparison
+      # (tests/_legpython.py), fetched alone into its own directory as
+      # msvc-env.sh is below. tests/test_gh2172_ci_leg_python.py refuses a
+      # Python-named smoke job without this step first.
+      - name: Fetch the leg-Python check
+        uses: actions/checkout@v7.0.1
+        with:
+          path: .jm-ci
+          sparse-checkout: tests/_legpython.py
+          sparse-checkout-cone-mode: false
+
+      - name: This leg runs the Python it names
+        shell: bash
+        run: |
+          want="${{ matrix.python-version }}"
+          python .jm-ci/tests/_legpython.py "$want"
+          python3 .jm-ci/tests/_legpython.py "$want"
+          shown="$(pip --version)"
+          case "$shown" in
+            *"(python $want)"*) ;;
+            *) echo "error: pip is not Python $want's: $shown" >&2; exit 1 ;;
+          esac
+
       - name: Download the built wheel
         if: inputs.wheel-artifact != ''
         uses: actions/download-artifact@v8.0.1
@@ -845,17 +870,25 @@ jobs:
       # environment (INCLUDE / LIB / the linker).
       # This job tests the built wheel, not the source tree, so it has no
       # checkout. It fetches only the vendored msvc-env.sh (which replaced
-      # ilammy/msvc-dev-cmd, node20 and unmaintained), into its own
-      # directory, so nothing else from the repo is on disk.
+      # ilammy/msvc-dev-cmd, node20 and unmaintained) and the leg-Python
+      # check (gh-2172), into their own directory, so nothing else from the
+      # repo is on disk.
       - name: Fetch msvc-env.sh
         uses: actions/checkout@v7.0.1
         with:
           path: .jm-ci
-          sparse-checkout: scripts/msvc-env.sh
+          sparse-checkout: |
+            scripts/msvc-env.sh
+            tests/_legpython.py
           sparse-checkout-cone-mode: false
 
       - name: MSVC developer environment (x64)
         run: .jm-ci/scripts/msvc-env.sh x64
+
+      # gh-2172: the steps below call `python` alone (a Windows `python3` is
+      # the Store alias); see the Linux job.
+      - name: This leg runs the Python it names
+        run: python .jm-ci/tests/_legpython.py "${{ matrix.python-version }}"
 
       # gh-2610: the `visual_studio_uv` example's venv step is `uv sync`, run
       # as written on Windows, and uv is that page's prerequisite. Only uv:
