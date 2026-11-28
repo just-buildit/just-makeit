@@ -197,3 +197,45 @@ def test_a_pidless_env_is_reaped_only_once_a_day_old(tmp_path):
     assert rc == 0, out
     assert fresh.is_dir(), "a live old-style environment was reaped"
     assert not old.exists(), "a day-old pid-less environment survived"
+
+
+class _FakeKernel32:
+    """``OpenProcess`` / ``GetExitCodeProcess`` as Windows answers them."""
+
+    def __init__(self, handle: int, exit_code: int = 0) -> None:
+        self.handle, self.exit_code, self.closed = handle, exit_code, False
+
+    def OpenProcess(self, access, inherit, pid):  # noqa: N802 (Win32 name)
+        return self.handle
+
+    def GetExitCodeProcess(self, handle, ref):  # noqa: N802
+        ref._obj.value = self.exit_code
+        return 1
+
+    def CloseHandle(self, handle):  # noqa: N802
+        self.closed = True
+        return 1
+
+
+@pytest.mark.parametrize(
+    "handle, exit_code, last_error, alive",
+    [
+        # Another user's process: it exists, so it is never reaped.
+        (0, 0, 5, True),
+        # No such process (ERROR_INVALID_PARAMETER): gone.
+        (0, 0, 87, False),
+        (7, 259, 0, True),  # opened, STILL_ACTIVE
+        (7, 0, 0, False),  # opened, exited
+    ],
+    ids=["access-denied", "no-such-pid", "still-active", "exited"],
+)
+def test_windows_liveness(handle, exit_code, last_error, alive):
+    """The Windows branch of `conftest._pid_alive`, decided on any OS: the
+    error is read through ``get_last_error`` (ctypes' saved copy), and
+    ACCESS_DENIED is alive, the safe direction for a reaper."""
+    import conftest
+
+    k32 = _FakeKernel32(handle, exit_code)
+    got = conftest._pid_alive_windows(4242, k32, lambda: last_error)
+    assert got is alive
+    assert k32.closed is bool(handle), "an opened handle must be closed"
