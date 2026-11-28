@@ -85,6 +85,10 @@ jobs:
       examples: ${{ steps.runners.outputs.examples }}
       # Windows is hosted only, so its legs skip ci-runner.
       examples_windows: ${{ steps.legs.outputs.examples_windows }}
+      # gh-2832: `pr`, `tested` or `full`, and the smoke jobs' legs.
+      scope: ${{ steps.legs.outputs.scope }}
+      install_deps_smoke: ${{ steps.stock.outputs.install_deps_smoke }}
+      consumer_smoke: ${{ steps.stock.outputs.consumer_smoke }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -197,11 +201,20 @@ jobs:
       # run. Not macOS or arm at the newest: the C API is the platform-
       # neutral half, and those pools are the scarce ones. `shrink` marks
       # the one leg Gate A's ratchet shrinks on (tests/_downstream_gates.py).
+      #
+      # gh-2832: a plain PR runs only the PR_OS legs, of every job planned
+      # here: every PR lands through a train (`make train`), which is a
+      # `train/*` PR (HEAD_REF) and runs everything. A tested push runs what
+      # a plain PR skipped, a dispatch everything. LEGS_INSTALL_DEPS_SMOKE
+      # and LEGS_CONSUMER_SMOKE are those jobs' legs, planned here so a
+      # plain PR runs no macOS leg anywhere.
       - name: Which test legs this run owes
         id: legs
         env:
           EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
           TESTED: ${{ needs.changes.outputs.tested }}
+          PR_OS: ubuntu-latest ubuntu-24.04-arm
           TRIM: macos-latest ubuntu-latest ubuntu-24.04-arm
           MIDDLE: ubuntu-latest
           MATRIX: >-
@@ -219,6 +232,24 @@ jobs:
             {"include": [
             {"os": "windows-latest", "python-version": "middle"},
             {"os": "windows-latest", "python-version": "newest"}]}
+          LEGS_INSTALL_DEPS_SMOKE: >-
+            {"os": ["ubuntu-latest", "macos-latest", "ubuntu-24.04-arm"]}
+          # consumer-smoke's legs: a Linux leg names a pinned image (`image`,
+          # a pin key); freedesktop pkg-config 0.29 is 22.04's, where 24.04
+          # has pkgconf; CMake 3.16.3 is the floor every generated project
+          # declares, baked into the 22.04 image by docker/ci-extra.sh
+          # (amd64 only, as Kitware ships it). The 24.04 image is a
+          # multi-arch index, so the arm leg pulls its arm64 half.
+          LEGS_CONSUMER_SMOKE: >-
+            {"include": [
+            {"name": "ubuntu-latest", "os": "ubuntu-latest", "image": "2404"},
+            {"name": "ubuntu-24.04-arm", "os": "ubuntu-24.04-arm",
+            "image": "2404"},
+            {"name": "macos-latest", "os": "macos-latest"},
+            {"name": "ubuntu-22.04, pkg-config 0.29", "os": "ubuntu-latest",
+            "image": "2204"},
+            {"name": "CMake 3.16.3", "os": "ubuntu-latest", "image": "2204",
+            "cmake": "3.16.3"}]}
         run: make -s ci-test-legs >> "$GITHUB_OUTPUT"
 
       # just-buildit.github.io#203: `make ci-runner` gives every leg a
@@ -242,6 +273,22 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           printf 'matrix=%s\nexamples=%s\n' "$LEGS" "$EXAMPLES" \
+            | make -s ci-runner CI_RUNNER_WORKFLOW=.github/workflows/ci.yml \
+            >> "$GITHUB_OUTPUT"
+
+      # gh-2832: the install-deps and consumer smoke legs, which test
+      # installing onto a stock runner, so they stay HOSTED: this step
+      # passes no JB_SELF_HOSTED_MACOS, and `make ci-runner` gives every
+      # leg its own `os` (just-buildit.github.io#203 -- its `runs_on` is
+      # what a fork's PR may read, as self-hosted-check requires).
+      - name: Which runner each smoke leg gets (hosted)
+        id: stock
+        env:
+          INSTALL_DEPS_SMOKE: ${{ steps.legs.outputs.install_deps_smoke }}
+          CONSUMER_SMOKE: ${{ steps.legs.outputs.consumer_smoke }}
+        run: |
+          printf 'install_deps_smoke=%s\nconsumer_smoke=%s\n' \
+            "$INSTALL_DEPS_SMOKE" "$CONSUMER_SMOKE" \
             | make -s ci-runner CI_RUNNER_WORKFLOW=.github/workflows/ci.yml \
             >> "$GITHUB_OUTPUT"
 
@@ -429,7 +476,13 @@ jobs:
   examples:
     name: Examples (${{ matrix.os }}, ${{ matrix.python-version }})
     needs: [changes, toolchain]
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    # gh-2832: also on a tested push, which owes the legs a plain PR
+    # skipped; and skipped when the planner owes none.
+    if: >-
+      ((needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
+      needs.changes.outputs.tested == 'true') &&
+      needs.toolchain.outputs.examples != ''
     # Planned with the test legs (the toolchain job's `legs` step).
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 30
@@ -512,7 +565,12 @@ jobs:
     # 14 runs. clang-cl, not cl.exe: MSVC's own compiler has no `_Complex`.
     name: Examples (windows-latest, clang-cl, ${{ matrix.python-version }})
     needs: [changes, toolchain]
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    # gh-2832: not on a plain PR (a train runs it); see `examples`.
+    if: >-
+      ((needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
+      needs.changes.outputs.tested == 'true') &&
+      needs.toolchain.outputs.examples_windows != ''
     runs-on: windows-latest
     timeout-minutes: 30
     # Its Pythons, from the classifiers (the toolchain job's `legs` step,
@@ -630,14 +688,19 @@ jobs:
 
   install-deps-smoke:
     name: jm-install-deps (${{ matrix.os }})
-    needs: changes
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
-    runs-on: ${{ matrix.os }}
+    needs: [changes, toolchain]
+    # gh-2832: its legs are planned (LEGS_INSTALL_DEPS_SMOKE): a plain PR
+    # runs the Linux ones, a tested push the rest.
+    if: >-
+      ((needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
+      needs.changes.outputs.tested == 'true') &&
+      needs.toolchain.outputs.install_deps_smoke != ''
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, ubuntu-24.04-arm]
+      matrix: ${{ fromJSON(needs.toolchain.outputs.install_deps_smoke) }}
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -871,8 +934,14 @@ jobs:
   consumer-smoke:
     name: Consumer smoke (${{ matrix.name }})
     needs: [changes, toolchain]
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
-    runs-on: ${{ matrix.os }}
+    # gh-2832: its legs are planned (LEGS_CONSUMER_SMOKE, which says what
+    # each is): a plain PR runs the Linux ones, a tested push the rest.
+    if: >-
+      ((needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
+      needs.changes.outputs.tested == 'true') &&
+      needs.toolchain.outputs.consumer_smoke != ''
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 35
     # gh-2625: a Linux leg runs in a pinned CI image (`image`, a pin key)
     # that already holds cmake, pkg-config and the compilers: they are this
@@ -894,22 +963,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { name: ubuntu-latest, os: ubuntu-latest, image: "2404" }
-          # The 24.04 image is a multi-arch index: this pulls its arm64 half.
-          - { name: ubuntu-24.04-arm, os: ubuntu-24.04-arm, image: "2404" }
-          - { name: macos-latest, os: macos-latest }
-          # freedesktop pkg-config 0.29, where 24.04 has pkgconf.
-          - name: "ubuntu-22.04, pkg-config 0.29"
-            os: ubuntu-latest
-            image: "2204"
-          # The floor every generated project declares, baked into the 22.04
-          # image by docker/ci-extra.sh (amd64 only, as Kitware ships it).
-          - name: "CMake 3.16.3"
-            os: ubuntu-latest
-            image: "2204"
-            cmake: "3.16.3"
+      matrix: ${{ fromJSON(needs.toolchain.outputs.consumer_smoke) }}
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -953,7 +1007,11 @@ jobs:
   wheel:
     name: Build the wheel
     needs: changes
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    # gh-2832: also on a tested push, for the Windows artifact leg it owes.
+    if: >-
+      (needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
+      needs.changes.outputs.tested == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -969,8 +1027,14 @@ jobs:
 
   artifact-smoke:
     name: Artifact smoke
-    needs: [changes, wheel]
-    if: needs.changes.outputs.src == 'true' && needs.changes.outputs.code != 'false'
+    needs: [changes, toolchain, wheel]
+    # gh-2832: a plain PR runs the Linux leg only and a tested push the
+    # Windows leg only (`only`, from the planner's scope); a train, a
+    # dispatch and an untested push run both.
+    if: >-
+      (needs.changes.outputs.src == 'true' &&
+       needs.changes.outputs.code != 'false') ||
+      needs.changes.outputs.tested == 'true'
     # artifact.yml's `plan` job asks for `actions: read` (make ci-runner
     # counts this repo's queued jobs), and a callee can ask for no more
     # than its caller grants; the rest is the repo's restricted default.
@@ -982,6 +1046,9 @@ jobs:
     with:
       wheel-artifact: dist-pr
       quick: true
+      only: >-
+        ${{ needs.toolchain.outputs.scope == 'pr' && 'linux'
+        || needs.toolchain.outputs.scope == 'tested' && 'windows' || '' }}
 
   # gh-1643: the Codespaces image, built and smoke-tested on every run that
   # is more than a version bump, and published from main. docker.yml had
@@ -1053,8 +1120,14 @@ jobs:
       RESULTS: ${{ join(needs.*.result, ' ') }}
       DOCS: ${{ needs.docs.result }}
       # gh-2125: what a push whose tree its PR tested still runs as a test --
-      # the legs that PR trimmed, and the job that says which.
-      OWED: ${{ needs.toolchain.result }} ${{ needs.test.result }}
+      # the legs that PR trimmed, and the job that says which. gh-2832: and
+      # every other job a plain PR runs only in part.
+      OWED: >-
+        ${{ needs.toolchain.result }} ${{ needs.test.result }}
+        ${{ needs.examples.result }} ${{ needs.examples-windows.result }}
+        ${{ needs.install-deps-smoke.result }}
+        ${{ needs.consumer-smoke.result }} ${{ needs.wheel.result }}
+        ${{ needs.artifact-smoke.result }}
     steps:
       - run: |
           # Bump-only PRs skip the matrix (src=false) — that is expected and
