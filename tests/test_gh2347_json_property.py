@@ -158,7 +158,9 @@ class TestDiagnostics:
     )
     def test_conflicting_backing(self, clash):
         with pytest.raises(ValueError, match=f"`{clash}` cannot be combined"):
-            validate_json_property("rdr", {**ANN, clash: "x"})
+            # `field` is a flag (gh-2120): it backs the property as `true`.
+            value = True if clash == "field" else "x"
+            validate_json_property("rdr", {**ANN, clash: value})
 
     def test_error_is_refused(self):
         with pytest.raises(ValueError, match="no setter"):
