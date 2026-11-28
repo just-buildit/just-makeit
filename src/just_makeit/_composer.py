@@ -863,8 +863,8 @@ def _store_c(
     raising its sentence as ``ValueError`` (gh-2753), else assigned to
     *member*. Indented for a setter body; ``return -1;`` on a refusal.
 
-    gh-2856: with *check* -- :func:`check_c`'s block against ``&_c`` -- a
-    field without ``set_fn`` is written to ``_c``, a copy of the *struct*
+    gh-2856: with *check* -- :func:`check_c`'s block against ``&_jm_copy`` -- a
+    field without ``set_fn`` is written to ``_jm_copy``, a copy of the *struct*
     *struct_ptr* points at, which is checked and committed only when the
     check passes. A field with ``set_fn`` ignores *check*: the project's
     writer owns the struct's wholeness.
@@ -879,21 +879,21 @@ def _store_c(
             return -1;
         }
     >>> print(_store_c({"name": "r"}, "self->src.r", "&self->src", "_i",
-    ...                "s_t", "    CHECK(&_c);\\n"))
-        s_t _c = self->src;
-        _c.r = _i;
-        CHECK(&_c);
-        self->src = _c;
+    ...                "s_t", "    CHECK(&_jm_copy);\\n"))
+        s_t _jm_copy = self->src;
+        _jm_copy.r = _i;
+        CHECK(&_jm_copy);
+        self->src = _jm_copy;
     """
     fn = set_fn(field)
     if not fn and check:
         live = struct_ptr.removeprefix("&")
-        copy = "_c" + member.removeprefix(live)
+        copy = "_jm_copy" + member.removeprefix(live)
         return (
-            f"    {struct} _c = {live};\n"
+            f"    {struct} _jm_copy = {live};\n"
             f"    {copy} = {value};\n"
             f"{check}"
-            f"    {live} = _c;"
+            f"    {live} = _jm_copy;"
         )
     if not fn:
         return f"    {member} = {value};"
@@ -1592,7 +1592,7 @@ def _replace_c(
         The struct members the field lives in (``c_ptr`` / ``c_len`` may name
         a nested path), each with the value that means "empty".
     attach : str
-        The call converting ``value`` into ``_t``, as an expression.
+        The call converting ``value`` into ``_jm_copy``, as an expression.
     free : str
         The statement freeing a buffer, with ``{src}`` for the struct it is
         read from.
@@ -1601,7 +1601,7 @@ def _replace_c(
         ``generates``; ``""`` otherwise, when there is nothing to wait for
         and no generator to drop.
     check : str, optional
-        gh-2856: :func:`check_c`'s block against ``&_t``, whose failure
+        gh-2856: :func:`check_c`'s block against ``&_jm_copy``, whose failure
         frees the converted buffer and returns 0, so the copy is checked
         whole before anything is installed.
 
@@ -1609,29 +1609,29 @@ def _replace_c(
     --------
     >>> print(_replace_c("S", "SObject", "s_t", "bits",
     ...     [("bits", "NULL"), ("n_bits", "0")],
-    ...     "_attach_bytes(&_t.bits, &_t.n_bits, value)",
+    ...     "_attach_bytes(&_jm_copy.bits, &_jm_copy.n_bits, value)",
     ...     "free({src}.bits);", ""), end="")
     static int
     S_replace_bits(SObject *self, PyObject *value)
     {
-        s_t _t = self->src;
-        _t.bits = NULL;
-        _t.n_bits = 0;
-        if (!_attach_bytes(&_t.bits, &_t.n_bits, value))
+        s_t _jm_copy = self->src;
+        _jm_copy.bits = NULL;
+        _jm_copy.n_bits = 0;
+        if (!_attach_bytes(&_jm_copy.bits, &_jm_copy.n_bits, value))
             return 0;
         free(self->src.bits);
-        self->src.bits = _t.bits;
-        self->src.n_bits = _t.n_bits;
+        self->src.bits = _jm_copy.bits;
+        self->src.n_bits = _jm_copy.n_bits;
         return 1;
     }
     """
-    clear = "".join(f"    _t.{m} = {z};\n" for m, z in members)
+    clear = "".join(f"    _jm_copy.{m} = {z};\n" for m, z in members)
     commit = ""
     if gen_destroy:
         commit = (
             _inflight.wait(
                 "self",
-                free.format(src="_t") + " return 0;",
+                free.format(src="_jm_copy") + " return 0;",
                 "    ",
             )
             + "    if (self->_gen) {\n"
@@ -1641,10 +1641,12 @@ def _replace_c(
             "        self->_gen = NULL;\n"
             "    }\n"
         )
-    install = "".join(f"    self->src.{m} = _t.{m};\n" for m, _ in members)
+    install = "".join(
+        f"    self->src.{m} = _jm_copy.{m};\n" for m, _ in members
+    )
     return (
         f"static int\n{tname}_replace_{name}({obj} *self, PyObject *value)\n"
-        f"{{\n    {struct} _t = self->src;\n{clear}"
+        f"{{\n    {struct} _jm_copy = self->src;\n{clear}"
         f"    if (!{attach})\n        return 0;\n"
         f"{check}{commit}    {free.format(src='self->src')}\n{install}"
         "    return 1;\n}\n"
@@ -3085,25 +3087,28 @@ def render_source_type(cfg: dict, module: str) -> str:
     addrs_s = ", ".join(addrs)
 
     # post-parse: validate enums into the struct ints, assign scalars, attach
-    # bytes -- all into `_n`, a copy of the source (gh-2864). Nothing is
+    # bytes -- all into `_jm_copy`, a copy of the source (gh-2864). Nothing is
     # committed until every field has converted and `check_fn` (gh-2856)
     # has passed, so a refused `__init__` -- re-run on a live source too --
     # leaves the source as it was. The copy's owned members start cleared,
     # so a refusal frees exactly what this call converted into it.
     assign: list[str] = []
     attach: list[str] = []
-    # Per owned member: clearing it in `_n`, and freeing it from a struct.
+    # Per owned member: clearing it in `_jm_copy`, and freeing it from a struct.
     owned_clear: list[str] = []
     owned_free: list[str] = []
     for f in fields:
         if _field_is_buffer(f):
             _p, _l = buffer_members(f)
             _cfree = "(void *)" if buffer_is_relocated(f) else ""
-            owned_clear += [f"    _n.{_p} = NULL;", f"    _n.{_l} = 0;"]
+            owned_clear += [
+                f"    _jm_copy.{_p} = NULL;",
+                f"    _jm_copy.{_l} = 0;",
+            ]
             owned_free.append(f"free({_cfree}{{src}}.{_p});")
         elif _field_is_owned_ptr(f):
             op = owned_ptr(cfg, f)
-            owned_clear.append(f"    _n.{op.member} = NULL;")
+            owned_clear.append(f"    _jm_copy.{op.member} = NULL;")
             owned_free.append(
                 f"{op.free_fn}(({op.ctype}){{src}}.{op.member});"
             )
@@ -3112,7 +3117,7 @@ def render_source_type(cfg: dict, module: str) -> str:
         """The statements freeing every owned member of *src*."""
         return "".join(f.format(src=src) + "\n" for f in owned_free)
 
-    init_fail = _release("_n") + "return -1;"
+    init_fail = _release("_jm_copy") + "return -1;"
     for f in fields:
         n = f["name"]
         if _field_is_enum(f):
@@ -3125,7 +3130,7 @@ def render_source_type(cfg: dict, module: str) -> str:
                 fail="return -1;",
                 indent="        ",
             )
-            assign.append(f"    {{\n{_v}\n        _n.{n} = _i;\n    }}")
+            assign.append(f"    {{\n{_v}\n        _jm_copy.{n} = _i;\n    }}")
         elif truthy(f.get("bytes")):
             # Per-field destination: several bytes fields on one source
             # (e.g. a DSSS burst's acq_code/data_code/sync + payload) must
@@ -3133,12 +3138,12 @@ def render_source_type(cfg: dict, module: str) -> str:
             _p, _l = buffer_members(f)
             _cast = "(uint8_t **)" if buffer_is_relocated(f) else ""
             attach.append(
-                f"    if (!{_attach_call(f, f'{_cast}&_n.{_p}', f'&_n.{_l}', n)})"
+                f"    if (!{_attach_call(f, f'{_cast}&_jm_copy.{_p}', f'&_jm_copy.{_l}', n)})"
                 " {\n" + textwrap.indent(init_fail, " " * 8) + "\n    }"
             )
         elif truthy(f.get("complex")) or _field_is_owned_ptr(f):
             attach.append(
-                f"    if (!_attach_{n}(&_n, {n})) {{\n"
+                f"    if (!_attach_{n}(&_jm_copy, {n})) {{\n"
                 + textwrap.indent(init_fail, " " * 8)
                 + "\n    }"
             )
@@ -3150,8 +3155,8 @@ def render_source_type(cfg: dict, module: str) -> str:
                 f,
                 _number_meta(ct, _row(module, "source.fields", n)),
                 n,
-                f"_n.{n}",
-                "_n.ranged",
+                f"_jm_copy.{n}",
+                "_jm_copy.ranged",
                 "return -1;",
                 indent="        ",
             )
@@ -3159,16 +3164,22 @@ def render_source_type(cfg: dict, module: str) -> str:
             # does not keep the range a previous call set.
             assign.append(f"""    if ({n} != NULL) {{
 {parse}    }} else {{
-        _n.{n} = ({ct}){default};
-        _n.ranged &= ~(unsigned){f["_ranged"]};
+        _jm_copy.{n} = ({ct}){default};
+        _jm_copy.ranged &= ~(unsigned){f["_ranged"]};
     }}""")
         else:
             assign.append(
-                (f"{convs[n]}\n" if convs[n] else "") + f"    _n.{n} = {n};"
+                (f"{convs[n]}\n" if convs[n] else "")
+                + f"    _jm_copy.{n} = {n};"
             )
     # Every conversion that can refuse with nothing allocated runs first;
     # then the owned buffers, each refusal freeing what came before it.
-    assign = [f"    {struct} _n = self->src;", *owned_clear, *assign, *attach]
+    assign = [
+        f"    {struct} _jm_copy = self->src;",
+        *owned_clear,
+        *assign,
+        *attach,
+    ]
     assign_s = "\n".join(assign)
 
     store_bits = """    *dst   = buf;
@@ -3411,7 +3422,10 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
     def _replace_check(free: str) -> str:
         """gh-2856: the copy's check, freeing what was converted into it."""
         return check_c(
-            cfg, module, "&_t", free.format(src="_t") + "\nreturn 0;"
+            cfg,
+            module,
+            "&_jm_copy",
+            free.format(src="_jm_copy") + "\nreturn 0;",
         )
 
     for f in fields:
@@ -3427,7 +3441,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 struct,
                 n,
                 [(_p, "NULL"), (_l, "0")],
-                _attach_call(f, f"{_cast}&_t.{_p}", f"&_t.{_l}"),
+                _attach_call(f, f"{_cast}&_jm_copy.{_p}", f"&_jm_copy.{_l}"),
                 "free(" + _cfree + "{src}." + _p + ");",
                 gd,
                 _replace_check("free(" + _cfree + "{src}." + _p + ");"),
@@ -3441,7 +3455,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 struct,
                 n,
                 [(_p, "NULL"), (_l, "0")],
-                f"_attach_{n}(&_t, value)",
+                f"_attach_{n}(&_jm_copy, value)",
                 "free(" + _cfree + "{src}." + _p + ");",
                 gd,
                 _replace_check("free(" + _cfree + "{src}." + _p + ");"),
@@ -3454,7 +3468,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
                 struct,
                 n,
                 [(op.member, "NULL")],
-                f"_attach_{n}(&_t, value)",
+                f"_attach_{n}(&_jm_copy, value)",
                 f"{op.free_fn}(({op.ctype})" + "{src}." + op.member + ");",
                 gd,
                 _replace_check(
@@ -3464,7 +3478,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
 
     # gh-2856: the whole struct, once every field is in it -- the copy,
     # so a refusal leaves a live source as it was (gh-2864).
-    init_check = check_c(cfg, module, "&_n", init_fail)
+    init_check = check_c(cfg, module, "&_jm_copy", init_fail)
     # gh-2864: the commit. Only now does it wait for a running `steps()`
     # and drop the generator built from the config being replaced; then
     # the old owned members go, and the copy is the source.
@@ -3476,7 +3490,7 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
             "self->_gen = NULL; }\n"
         )
     commit += textwrap.indent(_release("self->src"), "    ")
-    commit += "    self->src = _n;\n    self->fs = fs;\n"
+    commit += "    self->src = _jm_copy;\n    self->fs = fs;\n"
     parts.append(
         attach_bytes_c
         + f"""{host_attach}{replace_c}
@@ -3501,7 +3515,7 @@ static int
     getset_rows: list[str] = []
     # gh-2856: what a plain setter runs against its copy `_c` before it
     # commits; "" without a `check_fn`.
-    chk = check_c(cfg, module, "&_c", "return -1;")
+    chk = check_c(cfg, module, "&_jm_copy", "return -1;")
     for f in fields:
         n = f["name"]
         # gh-2753: a `set_fn` on a field with no single value is refused
@@ -3656,14 +3670,14 @@ static int
                 f,
                 meta,
                 "value",
-                f"_c.{n}" if chk else dst,
-                "_c.ranged" if chk else "self->src.ranged",
+                f"_jm_copy.{n}" if chk else dst,
+                "_jm_copy.ranged" if chk else "self->src.ranged",
                 "return -1;",
             )
             if chk:
                 parse = (
-                    f"    {struct} _c = self->src;\n{parse}{chk}"
-                    "    self->src = _c;\n"
+                    f"    {struct} _jm_copy = self->src;\n{parse}{chk}"
+                    "    self->src = _jm_copy;\n"
                 )
             _body = (
                 f"    if (self->src.ranged & {flag})\n{pair}\n"
@@ -4015,7 +4029,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
 
     def _members(at: str) -> "list[str]":
         """Every scalar member the segment object carries, spelled at
-        *at* (``self->`` or the init's copy ``_s.``)."""
+        *at* (``self->`` or the init's copy ``_jm_copy.``)."""
         return (
             [f"{at}{f['name']}" for f in fields]
             + ([f"{at}ranged"] if ranged_fields else [])
@@ -4090,12 +4104,16 @@ def render_segment_type(cfg: dict, module: str) -> str:
             f"{dele}        }}\n    }}"
         )
 
-    # gh-2864: `__init__` parses every scalar into `_s`, a copy, and
+    # gh-2864: `__init__` parses every scalar into `seg_copy`, a copy, and
     # commits it only once the source it wraps has been built, so a refused
     # re-`__init__` (a bad scalar, or the source type refusing its fields)
-    # leaves a live segment as it was.
+    # leaves a live segment as it was. gh-2878: its name is `_jm_`-reserved,
+    # because each field's parse block below opens a scope of its own (an
+    # enum's declares `const char *_s`), and a copy those can name is
+    # shadowed: the field's store then writes into the block's local.
+    seg_copy = "_jm_copy"
     init_extracts = "\n".join(
-        _extract_block(f, delete=True, at="_s.") for f in fields
+        _extract_block(f, delete=True, at=f"{seg_copy}.") for f in fields
     )
     sum_extracts = "\n".join(_extract_block(f, delete=False) for f in fields)
 
@@ -4138,7 +4156,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
         "        return -1;\n"
         "    }\n"
         "    if (!_fs_pos) {\n"
-        "        PyObject *_fs = PyFloat_FromDouble((double)_s.fs);\n"
+        f"        PyObject *_fs = PyFloat_FromDouble((double){seg_copy}.fs);\n"
         '        int _r = _fs ? PyDict_SetItemString(kw, "fs", _fs) : -1;\n'
         "        Py_XDECREF(_fs);\n"
         "        if (_r < 0) {\n"
@@ -4151,7 +4169,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     )
     fs_back = (
         "    if (_fs_pos)\n"
-        f"        _s.fs = ({seg_fs_row['type']})"
+        f"        {seg_copy}.fs = ({seg_fs_row['type']})"
         f"(({src_tname}Object *)one)->fs;\n"
         if seg_fs_row
         else ""
@@ -4160,10 +4178,14 @@ def render_segment_type(cfg: dict, module: str) -> str:
     # gh-2864: the copy the scalars are parsed into (only its scalar
     # members are used), and its commit once the source is built.
     # A segment with no fields has no copy to make (-Wunused-variable).
-    init_defaults = f"    {obj} _s;\n" + _set_defaults("_s.") if fields else ""
+    init_defaults = (
+        f"    {obj} {seg_copy};\n" + _set_defaults(f"{seg_copy}.")
+        if fields
+        else ""
+    )
     init_commit = "".join(
         f"    {d} = {c};\n"
-        for d, c in zip(_members("self->"), _members("_s."))
+        for d, c in zip(_members("self->"), _members(f"{seg_copy}."))
     )
     # tp_init — single-source inline: forward leftover args/kwds to the source
     # type, wrap the one source.
@@ -4251,7 +4273,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     # doppler's `ofdm` makes a segment's `fs` the channel bandwidth -- can
     # give it. The resolver is called into `_gv` and the transient array
     # freed before anything returns; a non-source element or OOM raises.
-    _snap_copy = _segment_copy_c(fields, "_seg.", "self->", " " * 4)
+    _snap_copy = _segment_copy_c(fields, "_jm_seg.", "self->", " " * 4)
     _sources_fn = _segment_sources_fn(cfg, module)
     _src_struct = C.composer_source(cfg, module)["struct"]
     _sources_member = seg.get("sources_member", "sources")
@@ -4261,15 +4283,15 @@ def render_segment_type(cfg: dict, module: str) -> str:
         # The segment as its struct, sources and all; *fail* on a foreign
         # source or OOM. The caller frees `_srcs`.
         return (
-            f"    {seg['struct']} _seg;\n"
-            "    memset(&_seg, 0, sizeof _seg);\n"
+            f"    {seg['struct']} _jm_seg;\n"
+            "    memset(&_jm_seg, 0, sizeof _jm_seg);\n"
             f"{_snap_copy}\n"
             "    size_t _ns;\n"
             f"    {_src_struct} *_srcs = {_sources_fn}(self->sources, &_ns);\n"
             "    if (!_srcs)\n"
             f"        {fail}\n"
-            f"    _seg.{_sources_member} = _srcs;\n"
-            f"    _seg.{_count_member} = _ns;\n"
+            f"    _jm_seg.{_sources_member} = _srcs;\n"
+            f"    _jm_seg.{_count_member} = _ns;\n"
         )
 
     def _snapshot(f: dict) -> str:
@@ -4277,7 +4299,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
             return ""
         return (
             _snap_build("return NULL;") + f"    {f['type']} _gv = "
-            f"{_read_acc(f, '', '&_seg', 'self->fs')};\n"
+            f"{_read_acc(f, '', '&_jm_seg', 'self->fs')};\n"
             "    free(_srcs);\n"
         )
 
@@ -4293,7 +4315,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
     # transient shallow copy: a write to a source's scalar is discarded, but
     # its `bytes` and owned-pointer members alias the live source's buffers,
     # so `set_fn` must not write through or free them.
-    _copy_back = _segment_copy_c(fields, "self->", "_seg.", " " * 4)
+    _copy_back = _segment_copy_c(fields, "self->", "_jm_seg.", " " * 4)
 
     def _seg_store(f: dict, value: str) -> str:
         fn = set_fn(f)
@@ -4301,7 +4323,7 @@ def render_segment_type(cfg: dict, module: str) -> str:
             return f"    self->{f['name']} = {value};"
         return (
             _snap_build("return -1;")
-            + f"    const char *_why = {fn}(&_seg, {value});\n"
+            + f"    const char *_why = {fn}(&_jm_seg, {value});\n"
             "    free(_srcs);\n"
             "    if (_why) {\n"
             "        PyErr_SetString(PyExc_ValueError, _why);\n"

@@ -130,9 +130,9 @@ class TestTheSnapshotCarriesTheSources:
         get = seg.split("Seg_get_fs(", 1)[1].split("\n}\n", 1)[0]
         order = [
             "_Seg_sources_c(self->sources, &_ns);",
-            "_seg.sources = _srcs;",
-            "_seg.n_sources = _ns;",
-            "double _gv = win_seg_fs(&_seg, self->fs);",
+            "_jm_seg.sources = _srcs;",
+            "_jm_seg.n_sources = _ns;",
+            "double _gv = win_seg_fs(&_jm_seg, self->fs);",
             "free(_srcs);",
             "return PyFloat_FromDouble(_gv);",
         ]

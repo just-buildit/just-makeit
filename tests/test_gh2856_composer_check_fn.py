@@ -114,7 +114,13 @@ def _segment(type_name: str) -> dict:
         "fields": [
             {"name": "fs", "type": "double", "default": "1e6"},
             {"name": "count", "type": "size_t", "default": "100"},
+            # gh-2878: an enum and a ranged field on the SEGMENT, whose
+            # parse blocks declare their own locals inside `__init__`'s
+            # copy -- the build below is -Werror=shadow.
+            {"name": "pick", "type": "int", "enum": "mode", "default": "lo"},
+            {"name": "off", "type": "double", "default": "0.0"},
         ],
+        "ranged": [{"name": "off", "flag": "S_OFF"}],
     }
 
 
@@ -216,10 +222,12 @@ class TestEveryFaceCallsIt:
         init = _body(
             _composer.render_source_type(_cfg(), "win"), "Src_init(SrcObject"
         )
-        at = init.index("const char *_chk = win_check(&_n);")
-        assert at > init.index("_attach_bytes(&_n.bits, &_n.n_bits, bits)")
-        assert at > init.index("_attach_tag(&_n, tag)")
-        assert at > init.index("_n.gain = _lo;")
+        at = init.index("const char *_chk = win_check(&_jm_copy);")
+        assert at > init.index(
+            "_attach_bytes(&_jm_copy.bits, &_jm_copy.n_bits, bits)"
+        )
+        assert at > init.index("_attach_tag(&_jm_copy, tag)")
+        assert at > init.index("_jm_copy.gain = _lo;")
 
     def test_the_cli_flags_and_from_file(self) -> None:
         cli = _composer.render_cli(_cfg(), "win")
@@ -271,21 +279,21 @@ class TestInitIsTransactional:
         init = self._init()
         assert "self->src." not in init.split("free(self->src.bits);")[0]
         for line in (
-            "wsrc_t _n = self->src;",
-            "_n.bits = NULL;",
-            "_n.n_bits = 0;",
-            "_n.tag = NULL;",
-            "_n.num = num;",
+            "wsrc_t _jm_copy = self->src;",
+            "_jm_copy.bits = NULL;",
+            "_jm_copy.n_bits = 0;",
+            "_jm_copy.tag = NULL;",
+            "_jm_copy.num = num;",
         ):
             assert line in init, line
 
     def test_commit_after_the_check_frees_the_old_members(self) -> None:
         init = self._init()
         order = [
-            "win_check(&_n);",
+            "win_check(&_jm_copy);",
             "free(self->src.bits);",
             "tag_free((wtag_t *)self->src.tag);",
-            "self->src = _n;",
+            "self->src = _jm_copy;",
             "self->fs = fs;",
             "return 0;",
         ]
@@ -295,24 +303,29 @@ class TestInitIsTransactional:
     def test_a_refusal_frees_the_copy(self) -> None:
         init = self._init()
         # each attach's refusal, and the check's.
-        assert init.count("free(_n.bits);") == 4, init
-        assert init.count("free(_n.iq);") == 4, init
-        assert init.count("tag_free((wtag_t *)_n.tag);") == 4, init
-        assert "if (!_attach_tag(&_n, tag)) {\n        free(_n.bits);" in init
+        assert init.count("free(_jm_copy.bits);") == 4, init
+        assert init.count("free(_jm_copy.iq);") == 4, init
+        assert init.count("tag_free((wtag_t *)_jm_copy.tag);") == 4, init
+        assert (
+            "if (!_attach_tag(&_jm_copy, tag)) {\n        free(_jm_copy.bits);"
+            in init
+        )
 
     def test_the_same_without_a_check_fn(self) -> None:
         m = _module()
         del m["source"]["check_fn"]
         init = self._init(m)
         assert "_chk" not in init
-        assert init.index("self->src = _n;") > init.index("_attach_tag(&_n")
+        assert init.index("self->src = _jm_copy;") > init.index(
+            "_attach_tag(&_jm_copy"
+        )
 
     def test_an_absent_range_clears_its_flag(self) -> None:
         assert (
-            "_n.ranged &= ~(unsigned)R_GAIN;"
-            in self._init().split("} else {\n        _n.gain = (double)0.0;")[
-                1
-            ]
+            "_jm_copy.ranged &= ~(unsigned)R_GAIN;"
+            in self._init().split(
+                "} else {\n        _jm_copy.gain = (double)0.0;"
+            )[1]
         )
 
 
@@ -322,16 +335,16 @@ class TestTheSettersAndReaders:
     def test_a_plain_setter_checks_a_copy_and_commits_on_null(self) -> None:
         src = _composer.render_source_type(_cfg(), "win")
         for name, store in (
-            ("num", "_c.num = _v;"),
-            ("gain", "_c.gain = _lo;"),
+            ("num", "_jm_copy.num = _v;"),
+            ("gain", "_jm_copy.gain = _lo;"),
         ):
             body = _body(src, f"Src_set_{name}(SrcObject")
             order = [
-                "wsrc_t _c = self->src;",
+                "wsrc_t _jm_copy = self->src;",
                 store,
-                "const char *_chk = win_check(&_c);",
+                "const char *_chk = win_check(&_jm_copy);",
                 "PyErr_SetString(PyExc_ValueError, _chk);",
-                "self->src = _c;",
+                "self->src = _jm_copy;",
             ]
             at = [body.index(s) for s in order]
             assert at == sorted(at), body
@@ -341,9 +354,9 @@ class TestTheSettersAndReaders:
         src = _composer.render_source_type(_cfg(), "win")
         rep = _body(src, "Src_replace_bits(SrcObject")
         order = [
-            "_attach_bytes(&_t.bits",
-            "const char *_chk = win_check(&_t);",
-            "free(_t.bits);\n            return 0;",
+            "_attach_bytes(&_jm_copy.bits",
+            "const char *_chk = win_check(&_jm_copy);",
+            "free(_jm_copy.bits);\n            return 0;",
             "free(self->src.bits);",
         ]
         at = [rep.index(s) for s in order]
@@ -443,6 +456,7 @@ _HEADER = """\
 #include <stdint.h>
 
 #define R_GAIN 1u
+#define S_OFF 1u
 
 /* An owned pointer: tag_live counts the ones alive. */
 typedef struct
@@ -474,6 +488,10 @@ typedef struct
   size_t  n_sources;
   double  fs;
   size_t  count;
+  int     pick;
+  double  off;
+  double  off_hi;
+  unsigned ranged;
 } wseg_t;
 
 typedef struct win_state win_state_t;
@@ -900,6 +918,20 @@ for kw, err, why in [
 sg.__init__(num=1, den=2, count=7, fs=9.0)
 assert (sg.fs, sg.count, sg.sources[0].fs) == (9.0, 7, 9.0)
 
+# gh-2878: the segment's own enum and ranged fields land in the copy and
+# are committed -- the enum's parse string is not the copy -- and a refused
+# one leaves the segment as it was.
+sp = Seg(num=1, den=2, pick="hi", off=(1.0, 2.0))
+assert (sp.pick, sp.off) == ("hi", (1.0, 2.0)), (sp.pick, sp.off)
+assert Seg(num=1, den=2).pick == "lo", "the enum default"
+try:
+    sp.__init__(num=1, den=2, pick="nope")
+except ValueError:
+    pass
+else:
+    raise AssertionError("bad pick not refused")
+assert (sp.pick, sp.off) == ("hi", (1.0, 2.0)), (sp.pick, sp.off)
+
 # 9. An enum field with no set_fn, and a complex field: the constructor and
 # the plain setter, the state unchanged after a refusal.
 refused(lambda: Src(mode="hi"), MODE)
@@ -997,7 +1029,9 @@ def _build(tmp: Path, generic: str, delegated: str, cli: dict) -> Path:
             "-B",
             "build",
             PYTHON3_ARG,
-            "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
+            # gh-2878: a local jm declares inside a block must not hide
+            # one it declared outside it -- the copy a field writes into.
+            "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror -Wshadow -Werror=shadow",
         ],
         proj,
     )

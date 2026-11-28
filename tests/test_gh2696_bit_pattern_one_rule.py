@@ -370,9 +370,9 @@ def test_each_field_passes_the_coercer_what_it_is() -> None:
     cfg = {"project": {"name": PKG}, "module": {"mix": _module()}}
     text = _composer.render_source_type(cfg, "mix")
     for n in BIT_FIELDS:
-        assert f'&_t.n_{n}, value, "{n}")' in text, n
+        assert f'&_jm_copy.n_{n}, value, "{n}")' in text, n
     for n in PLAIN_FIELDS:
-        assert f"&_t.n_{n}, value, NULL)" in text, n
+        assert f"&_jm_copy.n_{n}, value, NULL)" in text, n
     assert "return _attach_bytes(dst, n_dst, obj, bits);" in text
     json_text = _composer.render_json_funcs(cfg, "mix")
     for n in BIT_FIELDS:
