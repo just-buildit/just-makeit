@@ -40,7 +40,7 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit._context._diagnostics import declared_raise
-from just_makeit._keys import METHOD_KEYS
+from just_makeit._keys import FLAG_KEYS, METHOD_KEYS
 
 _ARR = ("--arg-type", "float[]")
 _VO = (*_ARR, "--return-type", "float", "--variable-output")
@@ -99,8 +99,15 @@ PLAIN = [
 
 
 def _refusal_keys() -> "set[str]":
-    """Every method key whose presence alone makes `declared_raise` answer."""
-    return {k for k in METHOD_KEYS if declared_raise({"name": "m", k: "1"})}
+    """Every method key whose presence alone makes `declared_raise` answer.
+
+    Each key is set to a value that means "on" for it: a flag (gh-2120)
+    is on only as ``true``, any other key by a non-empty value."""
+    return {
+        k
+        for k in METHOD_KEYS
+        if declared_raise({"name": "m", k: True if k in FLAG_KEYS else "1"})
+    }
 
 
 def test_the_table_covers_every_refusal_declared_raise_reads():
