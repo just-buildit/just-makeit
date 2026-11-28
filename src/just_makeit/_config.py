@@ -219,6 +219,41 @@ def _resolve_deferred_version(cfg: dict, root: Path) -> None:
     proj[VERSION_DEFERRED_KEY] = True
 
 
+def _unfold(cfg: dict, root: Path) -> "list[str]":
+    """Apply every unfolding `load` does to a merged manifest, in place.
+
+    gh-2846. `load` and `save` are a symmetric pair: what `load` unfolds,
+    `save` folds back (the ``_without_*`` / ``_with_*`` calls in `save`), so
+    the manifest on disk is always the author's declaration. A load served
+    from `deferred_save`'s cache holds what `save` cached -- the FOLDED form
+    -- and ran none of them, so it differed from a load of the same
+    manifest from disk (gh-764's rule that it must not): an object's
+    ``init_groups`` expanded to no ``init_params``, a template's instances
+    were absent. One function, called by both paths, means a new unfolding
+    added here reaches both, and ``tests/test_gh2846_*.py`` holds it to the
+    folds `save` performs.
+
+    In this order, each step reading the one before it: the templates (so
+    an instance's own ``init_groups`` expand as a hand-declared
+    component's do, gh-1310); a method's ``extra_args`` read as ``params``
+    (gh-2208; after the templates, so an instance's rows are renamed too);
+    every ``[[<obj>.init_groups]]`` row instantiated into ``init_params``
+    (gh-999); an omitted ``[project] version`` read from ``pyproject.toml``
+    (gh-1283).
+
+    Returns
+    -------
+    list of str
+        The ``extra_args`` / ``params`` refusals (`unify_params_synonym`);
+        a template that cannot expand refuses here itself.
+    """
+    _expand_templates(cfg)
+    synonym_errors = unify_params_synonym(cfg)
+    _expand_init_groups(cfg)
+    _resolve_deferred_version(cfg, root)
+    return synonym_errors
+
+
 def load(root: Path) -> dict:
     """Read the manifest and merge every included fragment into one dict
     (schema 6+). For a single-file project (no `include` key) the result
@@ -231,9 +266,11 @@ def load(root: Path) -> dict:
         pending = _DEFERRED.get(_deferral_key(root))
         if pending is not None:
             served = _copy.deepcopy(pending)
-            # gh-2208: `save` cached the author's spelling; read it as the
-            # disk path below does. Both spellings were refused on the way in.
-            unify_params_synonym(served)
+            # gh-2846: `save` cached the FOLDED form (the author's
+            # declaration); unfold it as the disk path below does, through
+            # the same function. The checks `load` runs after it were run on
+            # the way in, by the load that produced what was saved.
+            _unfold(served, root)
             return served
     cfg = load_manifest(root)
     includes = cfg.pop("include", None)
@@ -265,13 +302,10 @@ def load(root: Path) -> dict:
     # replay, the handle generator, `jm bind` — and an expansion behind one
     # accessor would reach some of them and not others. That is the shape this
     # repo keeps finding a half-wired feature in.
-    # gh-1310: templates first, so an instance's own `init_groups` expand
-    # exactly as a hand-declared component's do.
-    _expand_templates(cfg)
-    # gh-2208: a method's `extra_args` is read as `params` from here on, by
-    # every reader. After the template expansion, so an instance's rows are
-    # renamed too; ahead of every check below, which read `params`.
-    synonym_errors = unify_params_synonym(cfg)
+    # gh-2846: every unfolding, in one function the cached path runs too, so
+    # a load from `deferred_save`'s cache and one from disk cannot differ.
+    # Ahead of every check below, which read the unfolded manifest.
+    synonym_errors = _unfold(cfg, root)
     if synonym_errors:
         _refuse(synonym_errors)
     # gh-1310: after expansion, so a template's family keys are checked on
@@ -329,7 +363,6 @@ def load(root: Path) -> dict:
         check_fn_errs = check_fn_errors(cfg)
         if check_fn_errs:
             _refuse(check_fn_errs)
-    _expand_init_groups(cfg)
     # gh-2112: a name twice in one C struct or parameter list. After the
     # group expansion (gh-2799), so two `init_groups` rows making one name
     # are refused here as `save` refuses them, not only by a later write.
@@ -401,9 +434,6 @@ def load(root: Path) -> dict:
     set_state_errors = _set_state_status_errors_errors(cfg)
     if set_state_errors:
         _refuse(set_state_errors)
-    # gh-1283: an omitted `[project] version` defers to `pyproject.toml`.
-    # After the fragment merge, so a split-layout project resolves the same.
-    _resolve_deferred_version(cfg, root)
     from ._keys import (
         default_raw_errors,
         project_field_key_errors,
