@@ -506,7 +506,9 @@ def pytest_configure(config):
     from _legpython import mismatch
 
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        why = mismatch(os.environ, tuple(sys.version_info))
+        why = mismatch(
+            os.environ.get("UV_PYTHON", ""), tuple(sys.version_info)
+        )
         if why:
             raise pytest.UsageError(why)
     _provision_worker_env()
