@@ -54,6 +54,7 @@ from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._status import run as status_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 GUARDED = "timing_core"
 PLAIN = "clockc_core"
@@ -203,7 +204,7 @@ class TestItConfiguresWhenTheGuardIsFalse:
         root = _project(tmp_path, guard="if(FALSE)  # the guard is false here")
         _silent(apply_run, root)
         r = subprocess.run(
-            ["cmake", "-B", "build", "-S", "."],
+            ["cmake", "-B", "build", "-S", ".", PYTHON3_ARG],
             cwd=root,
             capture_output=True,
             text=True,
