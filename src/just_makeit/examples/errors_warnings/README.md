@@ -321,7 +321,8 @@ step shows is jm's glue reading those, which is why none of this needed a
 ## 4. Build
 
 ```sh
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
+    -DPython3_EXECUTABLE="$(command -v python3)"
 cmake --build build --parallel 4
 ctest --test-dir build --output-on-failure
 ```
