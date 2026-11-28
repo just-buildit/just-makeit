@@ -184,13 +184,6 @@ def _example_sources() -> "list[tuple[Path, str, ast.Module]]":
     return out
 
 
-#: Example configures of a project that builds no Python -- the guard's
-#: `builds_python` reads that from the tree at run time; the static scan
-#: names it here. fir_filter's installed-library consumer is
-#: `project(smoke C)`.
-_C_ONLY_EXAMPLE_CONFIGURES = frozenset({("fir_filter", "CMAKE_PREFIX_PATH")})
-
-
 def test_every_configure_names_the_interpreter_or_builds_no_extension():
     """The fast early warning, over the tests and the bundled examples'
     walkthroughs. The guard that cannot miss a spelling is the runtime one
@@ -200,12 +193,6 @@ def test_every_configure_names_the_interpreter_or_builds_no_extension():
     for f, src, tree in _example_sources():
         for node, elts in configures(tree):
             seen += 1
-            seg = ast.get_source_segment(src, node) or ""
-            if any(
-                f.parent.name == ex and key in seg
-                for ex, key in _C_ONLY_EXAMPLE_CONFIGURES
-            ):
-                continue
             if not _names_the_interpreter(elts):
                 unnamed.append(
                     f"examples/{f.parent.name}/test.py:{node.lineno}"

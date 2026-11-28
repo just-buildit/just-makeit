@@ -43,59 +43,6 @@ NOT_CONFIGURE = (
 )
 
 
-_PYTHON_CMAKE = ("find_package(python3", "python3_add_library")
-
-
-def _source_dir(rest: "list[str]", cwd: "object") -> "str":
-    """The source directory a configure reads: ``-S dir``, ``-Sdir``, or a
-    positional argument, else the working directory."""
-    import os
-
-    it = iter(range(len(rest)))
-    for i in it:
-        a = rest[i]
-        if a == "-S" and i + 1 < len(rest):
-            return rest[i + 1]
-        if a.startswith("-S") and len(a) > 2:
-            return a[2:]
-        if a in ("-B", "-G", "-T", "-A", "-C", "-D", "-U") and i + 1 < len(
-            rest
-        ):
-            next(it, None)  # that flag's value, not a positional
-            continue
-        if not a.startswith("-"):
-            return a
-    return os.fspath(cwd) if cwd is not None else os.getcwd()
-
-
-def builds_python(source: "object") -> bool:
-    """Whether the CMake project at *source* builds a Python extension: any
-    ``CMakeLists.txt`` or ``.cmake`` file in it (a build tree's excepted)
-    asks for ``find_package(Python3 ...)`` or ``Python3_add_library``.
-
-    A C-only consumer -- ``project(smoke C)`` linking an installed library
-    -- has no interpreter to name, and naming one would claim it builds
-    Python (gh-2857). Read from the tree, not from a list of exemptions.
-    """
-    from pathlib import Path
-
-    root = Path(source)
-    if not root.is_dir():
-        return True  # cannot tell: keep the guard
-    for f in root.rglob("*"):
-        if f.name != "CMakeLists.txt" and f.suffix != ".cmake":
-            continue
-        if any((p / "CMakeCache.txt").exists() for p in f.parents):
-            continue  # a build tree's generated files
-        try:
-            text = f.read_text(encoding="utf-8", errors="replace").lower()
-        except OSError:
-            continue
-        if any(k in text for k in _PYTHON_CMAKE):
-            return True
-    return False
-
-
 def unnamed_configure(args: object, cwd: object = None) -> "list[str] | None":
     """The argv, if *args* -- what a test hands ``subprocess`` -- is a cmake
     configure that builds the extension for no interpreter it names.
@@ -107,11 +54,14 @@ def unnamed_configure(args: object, cwd: object = None) -> "list[str] | None":
     test building for the first ``python3`` on ``PATH``. The argv as it
     runs has no spelling left.
 
-    *args* is a sequence or a string (``shell=True``); *cwd* is the
-    process's working directory. A configure passes when it names an
-    interpreter (``-DPython3_EXECUTABLE=...``, this one or another on
-    purpose), builds no extension (``-DBUILD_PYTHON=OFF``), or configures a
-    project whose CMake builds no Python at all (:func:`builds_python`).
+    *args* is a sequence or a string (``shell=True``); *cwd* is accepted
+    for the caller's convenience and not read. A configure passes only when
+    it names an interpreter (``-DPython3_EXECUTABLE=...``, this one or
+    another on purpose) or says it builds no extension
+    (``-DBUILD_PYTHON=OFF``). There is no exemption read from the project's
+    CMake: inferring "builds no Python" from source text fails open
+    (``find_package(Python)``, pybind11, an include outside the tree ...),
+    and naming the interpreter costs a C-only project nothing.
 
     >>> unnamed_configure(["/usr/bin/cmake", "-S", "/no/such/src", "-B", "b"])
     ['/usr/bin/cmake', '-S', '/no/such/src', '-B', 'b']
@@ -149,11 +99,5 @@ def unnamed_configure(args: object, cwd: object = None) -> "list[str] | None":
         a.startswith("-DPython3_EXECUTABLE=") or a == "-DBUILD_PYTHON=OFF"
         for a in rest
     ):
-        return None
-    import os
-
-    base = os.fspath(cwd) if cwd is not None else os.getcwd()
-    # A relative source is the PROCESS's, not this one's.
-    if not builds_python(os.path.join(base, _source_dir(rest, cwd))):
         return None
     return [str(a) for a in argv]
