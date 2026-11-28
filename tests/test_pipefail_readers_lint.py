@@ -75,3 +75,38 @@ def test_pre_commit_dispatches_to_it() -> None:
     assert re.search(
         r"(?m)^\s+entry: make -s lint-pipefail-readers\s*$", cfg
     ), "no hook dispatches to `make -s lint-pipefail-readers`"
+
+
+def _hook() -> dict[str, object]:
+    import yaml
+
+    cfg = yaml.safe_load(
+        (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    )
+    hooks = [
+        h
+        for repo in cfg["repos"]
+        for h in repo["hooks"]
+        if h.get("entry") == "make -s lint-pipefail-readers"
+    ]
+    assert len(hooks) == 1, hooks
+    return hooks[0]
+
+
+def test_the_hook_fires_on_what_decides_the_scan() -> None:
+    # pre-commit selects by `re.search(files, path)`. A commit that only
+    # re-vendors the rules or edits the recipe changes the verdict, so it
+    # must fire the hook too, not just a change to the shell it reads.
+    files = str(_hook()["files"])
+    for path in (
+        "install.sh",
+        ".github/workflows/ci.yml",
+        "scripts/pipefail-readers.py",
+        "Makefile",
+        "local.mk",
+    ):
+        assert re.search(files, path), (files, path)
+    # ...and not on everything: on pyproject.toml it would be one more hook
+    # a version bump triggers, which test_release_bump_is_complete replays.
+    for path in ("pyproject.toml", "src/just_makeit/_cli.py", "docs/x.md"):
+        assert not re.search(files, path), (files, path)
