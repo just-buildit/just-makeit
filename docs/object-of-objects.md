@@ -584,7 +584,13 @@ A source can hand work back to the project as plain C, with no CPython in it:
     new one, so a `bridge_fn` that borrows a buffer never reads a freed one;
     the next `steps()` builds from the new configuration. A value that is
     refused leaves the field as it was; it used to clear it, so a caller that
-    relied on that must assign `None` to clear the field (gh-2274).
+    relied on that must assign `None` to clear the field (gh-2274). Assigning
+    any other field, or `fs`, does the same without a buffer to free: it
+    waits for a running `steps()`, writes the value, and drops the generator,
+    so the next `steps()` renders the new value from its start rather than
+    continuing the old generator's (gh-2758). A `set_fn` that refuses writes
+    nothing and keeps the generator where it was. `reset()` still rewinds the
+    generator without rebuilding it.
 
 - **`methods = ["prod", ...]`** in the same table (gh-2259) puts named
     methods of the generator object on the source type too:
