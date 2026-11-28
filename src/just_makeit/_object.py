@@ -4749,7 +4749,7 @@ def run(
         ),
         # gh-2514: the benchmark's own path, held to 79 columns.
         "bench_run": R.bench_run(
-            f"src/{pkg}/{_out_pkg}/benchmarks/bench_{comp}.py",
+            f"src/{pkg}/{_out_pkg}/{C.PY_BENCH_DIR}/bench_{comp}.py",
             C.is_pytest_benchmark(cfg),
         ),
     }
@@ -4757,7 +4757,7 @@ def run(
     def r_py(tmpl):
         return R.render_scaffold_py(tmpl, _py_ctx)
 
-    tests_init = pkg_mod_dir / "tests" / "__init__.py"
+    tests_init = pkg_mod_dir / C.PY_TESTS_DIR / "__init__.py"
     if not tests_init.exists():
         _write(tests_init, R.TESTS_INIT_PY)
     test_py_tmpl = (
@@ -4770,17 +4770,17 @@ def run(
     )
     # gh-1489: born owned, as the standalone test is (`_init`).
     _write(
-        pkg_mod_dir / "tests" / f"test_{comp}.py",
+        pkg_mod_dir / C.PY_TESTS_DIR / f"test_{comp}.py",
         R.owned_scaffold(r_py(test_py_tmpl), f"test_{comp}.py"),
     )
-    benchmarks_init = pkg_mod_dir / "benchmarks" / "__init__.py"
+    benchmarks_init = pkg_mod_dir / C.PY_BENCH_DIR / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
     # gh-1528: born owned, as the standalone benchmark is (`_init`).
     # gh-2316: and declined the same way.
     if not no_python_bench:
         _write(
-            pkg_mod_dir / "benchmarks" / f"bench_{comp}.py",
+            pkg_mod_dir / C.PY_BENCH_DIR / f"bench_{comp}.py",
             R.owned_scaffold(r_py(bench_py_tmpl), f"bench_{comp}.py"),
         )
 

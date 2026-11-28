@@ -1012,11 +1012,9 @@ def test_a_standalone_above_a_dotted_module_is_refused(tmp_path):
     (root / "modules" / "rx_ss.toml").write_text(
         text.replace('"rxx.ss"', '"rx.ss"'), encoding="utf-8"
     )
-    r = run_cli("status", "--check", cwd=root)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert "claim the Python name 'p.rx'" in " ".join(
-        (r.stdout + r.stderr).split()
-    )
+    with pytest.raises(ValueError) as e:
+        C.load(root)
+    assert "claim the Python name 'p.rx'" in " ".join(str(e.value).split())
 
 
 # ── B2: a composer's bridge header under nested ─────────────────────────────

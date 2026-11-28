@@ -424,7 +424,7 @@ def _with(cfg: dict, layout: str) -> dict:
 # ── 5. remove takes only its own part ──────────────────────────────────────
 
 
-def test_remove_keeps_a_component_s_c_below_the_removed_one(tmp_path):
+def test_a_standalone_above_a_dotted_module_is_refused_here_too(tmp_path):
     """A standalone ``rx`` above every member of ``[module."rx.ss"]`` was the
     one shape that put a component's C below another's here. It no longer
     reaches `jm remove`: ``p/rx.so`` and the package ``p/rx/`` claim one
@@ -450,11 +450,9 @@ def test_remove_keeps_a_component_s_c_below_the_removed_one(tmp_path):
     (root / "modules" / "rx_ss.toml").write_text(
         text.replace('"rxx.ss"', '"rx.ss"'), encoding="utf-8"
     )
-    r = run_cli("status", "--check", cwd=root)
-    assert r.returncode != 0, (r.stdout, r.stderr)
-    assert "claim the Python name 'p.rx'" in " ".join(
-        (r.stdout + r.stderr).split()
-    )
+    with pytest.raises(ValueError) as e:
+        C.load(root)
+    assert "claim the Python name 'p.rx'" in " ".join(str(e.value).split())
 
 
 # ── 6. the record, not the tree (review of #2481) ──────────────────────────
