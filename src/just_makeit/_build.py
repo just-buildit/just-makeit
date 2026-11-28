@@ -16,12 +16,8 @@ from pathlib import Path
 
 from . import _config as C
 from . import _incpath as INC
+from . import _testrun
 from ._bench import _project_python
-
-# gh-1950. pytest exits 5 when it collects nothing. A functions-only module
-# builds an extension and generates no Python suite, so 5 is a shape, not a
-# failure. `run_generated_pytest` reads it the same way.
-_NO_TESTS_COLLECTED = 5
 
 # gh-1896. Packaging runs under the PROJECT's interpreter, because
 # just_buildit lives in the project's environment, not in jm's own (a
@@ -158,30 +154,45 @@ def _run_python_tests(root: Path, extra: list[str]) -> bool:
 
     gh-1896: ``sys.executable`` here was jm's own, so a ``jm test`` run from
     an installed tool ran the project's tests without its numpy or pytest.
-    gh-1950: a project with no Python tests (only module functions) collects
-    nothing, and pytest's exit 5 for that is a pass. Only pytest says 5; the
-    unittest fallback's empty run already exits 0.
+
+    gh-2642: a run that collects nothing FAILS, under pytest and under the
+    unittest fallback alike. Every project carries
+    ``src/<pkg>/tests/test_project.py`` (gh-2640), so an empty run means the
+    tests are gone. gh-1950 once read it as a pass, for a functions-only
+    module with no test; gh-2127 gave that module a contract test.
     """
     python = _project_python(root)
-    if _has_pytest(python):
-        cmd = [python, "-m", "pytest", "src/", "-v", *extra]
-        label = "pytest"
-        passing = (0, _NO_TESTS_COLLECTED)
-    else:
-        cmd = [python, "-m", "unittest", "discover", "-s", "src/", "-v"]
-        label = "unittest discover"
-        passing = (0,)
-
-    print(f"just-makeit: {label}: {shlex.join(cmd)}", flush=True)
     # gh-1832. Untimed, as the `jm-run-tests` precedent leaves its tests.
-    returncode = subprocess.run(cmd, cwd=str(root)).returncode
-    if returncode == _NO_TESTS_COLLECTED:
+    if _has_pytest(python):
+        args = ["src/", "-v", *extra]
         print(
-            "just-makeit: pytest collected no tests (a project of only module "
-            "functions has none); passing.",
+            f"just-makeit: pytest: {shlex.quote(python)} -m pytest "
+            f"{shlex.join(args)}",
             flush=True,
         )
-    return returncode in passing
+        run = _testrun.pytest(
+            [python, "-m"], args, empty_passes=False, cwd=str(root)
+        )
+        label = "pytest"
+    else:
+        print(
+            f"just-makeit: unittest discover: {shlex.quote(python)} "
+            "-m unittest discover -s src/ -v",
+            flush=True,
+        )
+        run = _testrun.unittest(
+            python, "src/", empty_passes=False, cwd=str(root)
+        )
+        label = "unittest"
+    if run.collected_nothing:
+        print(
+            f"error: {label} ran no tests. Every project has "
+            "src/<pkg>/tests/test_project.py, so an empty run means the "
+            "tests are gone, and passing it would prove nothing.",
+            file=sys.stderr,
+            flush=True,
+        )
+    return run.passed
 
 
 def run_generated_pytest(proj: Path) -> bool:
@@ -199,20 +210,22 @@ def run_generated_pytest(proj: Path) -> bool:
     where the other example gates live and where a PR can fail on it.
 
     Distinct from :func:`_run_python_tests`, which is ``jm test``'s, and the
-    three differences are all about being a gate rather than a command:
+    two differences are both about being a gate rather than a command:
 
     * ``PYTHONPATH=src`` — the compiled extension lands in ``src/<pkg>/``, and
       a gate runs against a tree nobody has installed;
     * **no extension, no verdict.** A scaffold that was never built cannot
       import, and failing it would report "the generated tests fail" for a
-      project whose tests were never the question;
-    * exit **5** (no tests collected) passes. A functions-only module builds an
-      extension and generates no pytest suite; that is a shape, not a failure.
+      project whose tests were never the question.
+
+    Exit 5 (no tests collected) FAILS (gh-2642): a built project always
+    carries a test (gh-2640's smoke test, gh-2127's contract test), so a
+    suite that collects nothing has lost its tests.
 
     Returns
     -------
     bool
-        True when the suite passed, was absent, or had nothing to collect.
+        True when the suite passed, or there is no built project to test.
     """
     src_dir = proj / "src"
     if not src_dir.is_dir():
@@ -222,20 +235,13 @@ def run_generated_pytest(proj: Path) -> bool:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(src_dir)
     # gh-1832. Untimed: the gate reads the suite's verdict, not a budget.
-    r = subprocess.run(
-        [
-            _project_python(proj),
-            "-m",
-            "pytest",
-            str(src_dir),
-            "--tb=short",
-            "-q",
-            "--no-header",
-        ],
+    return _testrun.pytest(
+        [_project_python(proj), "-m"],
+        [str(src_dir), "--tb=short", "-q", "--no-header"],
+        empty_passes=False,
         env=env,
         cwd=str(proj),
-    )
-    return r.returncode in (0, _NO_TESTS_COLLECTED)
+    ).passed
 
 
 def cmd_test(rest: list[str]) -> None:

@@ -74,8 +74,16 @@ class TestItFailsWhenTheGeneratedSuiteFails:
         )
         assert run_generated_pytest(proj) is True
 
+    def test_no_tests_collected_is_a_failure(self, tmp_path):
+        """pytest exit 5 FAILS since gh-2642: a built project always carries
+        a test, so a suite that collects nothing has lost its tests. (It was
+        a pass for gh-1950's functions-only module, which gh-2127 gave a
+        contract test.)"""
+        proj = _project(tmp_path, "# no tests here\n")
+        assert run_generated_pytest(proj) is False
 
-class TestTheThreeThingsThatAreNotFailures:
+
+class TestTheTwoThingsThatAreNotFailures:
     """Each is a shape, not a defect, and failing them would make the gate
     report "the generated tests fail" for a project whose tests were never
     the question."""
@@ -95,12 +103,6 @@ class TestTheThreeThingsThatAreNotFailures:
             """,
             ext=False,
         )
-        assert run_generated_pytest(proj) is True
-
-    def test_no_tests_collected_is_not_a_failure(self, tmp_path):
-        """pytest exit 5. A functions-only module builds an extension and
-        generates no pytest suite."""
-        proj = _project(tmp_path, "# no tests here\n")
         assert run_generated_pytest(proj) is True
 
 
