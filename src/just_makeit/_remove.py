@@ -936,35 +936,66 @@ def _remove_state(
     print(f"Done!  State field '{name}' removed.")
 
 
+def _owner(cfg: dict, obj: str, view: str) -> "tuple[dict, str]":
+    """The manifest table a member of *obj* -- or of its view *view* --
+    lives in, and how the messages name it (gh-2066).
+
+    A view's own methods, properties, warnings and create_error sit in its
+    ``[[<obj>.views]]`` entry, where `jm method`/`property`/`warning`/
+    `error --view` put them; everything else about removing one is the
+    object's member removal, so each `_remove_*` reads its list from here.
+    Exits 1 naming the declared views when *view* is not one of them.
+    """
+    if obj not in C.components(cfg):
+        print(f"error: object '{obj}' not found.", file=sys.stderr)
+        sys.exit(1)
+    if not view:
+        return cfg.setdefault(obj, {}), f"object '{obj}'"
+    entry = C._find_view(cfg, obj, view)
+    if entry is None:
+        declared = [v.get("class_name") for v in C.views(cfg, obj)]
+        print(
+            f"error: object '{obj}' has no view '{view}'."
+            + (f" Declared: {declared}" if declared else " None declared."),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return entry, f"view '{view}' of '{obj}'"
+
+
 def _remove_method(
-    root: Path, cfg: dict, obj: str, name: str, force: bool
+    root: Path, cfg: dict, obj: str, name: str, force: bool, view: str = ""
 ) -> None:
     # gh-1591: the C names these messages point at.
     csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
-    if obj not in C.components(cfg):
-        print(f"error: object '{obj}' not found.", file=sys.stderr)
-        sys.exit(1)
-    methods = cfg.get(obj, {}).get("methods", [])
+    owner, where = _owner(cfg, obj, view)
+    methods = owner.get("methods", [])
     if not any(m.get("name") == name for m in methods):
         print(
-            f"error: method '{name}' not found on object '{obj}'.",
+            f"error: method '{name}' not found on {where}.",
             file=sys.stderr,
         )
         sys.exit(1)
-    if not _confirm(f"Remove method '{name}' from object '{obj}'?", force):
+    if not _confirm(f"Remove method '{name}' from {where}?", force):
         print("Aborted.")
         return
 
-    print(f"just-makeit: removing method '{name}' from '{obj}'")
+    print(f"just-makeit: removing method '{name}' from {where}")
     print()
-    # The C function the method bound, read before the entry goes.
-    sym = C.method_c_symbol(
-        csym, next(m for m in methods if m.get("name") == name)
+    entry = next(m for m in methods if m.get("name") == name)
+    # The C function the method bound, read before the entry goes. A view's
+    # entry reusing a parent method's name without `fn` overrides its doc
+    # and binds the parent's, which stays (gh-2498); any other binds its own.
+    binds = (
+        not view
+        or bool(entry.get("fn"))
+        or name not in {m.get("name") for m in cfg[obj].get("methods", [])}
     )
+    sym = C.method_c_symbol(csym, entry)
     _drop_named_entry(methods, name)
     if not methods:
-        cfg[obj].pop("methods", None)
+        owner.pop("methods", None)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 
@@ -972,8 +1003,12 @@ def _remove_method(
     print()
     print(
         f"Done!  Method '{name}' removed."
-        f"\n  note: {csym}_{name}() remains in {obj}_core.c — delete it by hand."
-        + _bench_still_calls(root, obj, sym)
+        + (
+            f"\n  note: {sym}() remains in {obj}_core.c — delete it by hand."
+            + _bench_still_calls(root, obj, sym)
+            if binds
+            else ""
+        )
     )
 
 
@@ -1000,49 +1035,64 @@ def _bench_still_calls(root: Path, obj: str, sym: str) -> str:
 
 
 def _remove_property(
-    root: Path, cfg: dict, obj: str, name: str, force: bool
+    root: Path, cfg: dict, obj: str, name: str, force: bool, view: str = ""
 ) -> None:
     # gh-1591: the C names these messages point at.
     csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
-    if obj not in C.components(cfg):
-        print(f"error: object '{obj}' not found.", file=sys.stderr)
-        sys.exit(1)
-    props = cfg.get(obj, {}).get("properties", [])
+    owner, where = _owner(cfg, obj, view)
+    props = owner.get("properties", [])
     entry = next((p for p in props if p.get("name") == name), None)
     if entry is None:
         print(
-            f"error: property '{name}' not found on object '{obj}'.",
+            f"error: property '{name}' not found on {where}.",
             file=sys.stderr,
         )
         sys.exit(1)
-    if not _confirm(f"Remove property '{name}' from object '{obj}'?", force):
+    if not _confirm(f"Remove property '{name}' from {where}?", force):
         print("Aborted.")
         return
 
-    print(f"just-makeit: removing property '{name}' from '{obj}'")
+    print(f"just-makeit: removing property '{name}' from {where}")
     print()
     is_field = truthy(entry.get("field"))
     _drop_named_entry(props, name)
     if not props:
-        cfg[obj].pop("properties", None)
+        owner.pop("properties", None)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 
     _regenerate_object_bindings(root, cfg, obj, pkg, name)
     print()
-    note = (
-        f"\n  note: the '{name}' field remains in {csym}_state_t "
-        f"({obj}_core.h) — delete it by hand."
-        if is_field
-        else f"\n  note: {CSYM.property_getter(csym, name)}()/{csym}_set_{name}() remain in "
-        f"{obj}_core.c — delete them by hand."
+    # The C the property bound: its getter, and its setter only when it
+    # was writable. A view's entry reusing a parent property's name
+    # overrides its doc and binds the parent's, which stays (gh-2066).
+    fns = [CSYM.property_getter(csym, name)] + (
+        [CSYM.property_setter(csym, name)]
+        if truthy(entry.get("writable"))
+        else []
     )
+    overrides = bool(view) and name in {
+        p.get("name") for p in cfg[obj].get("properties", [])
+    }
+    if is_field:
+        note = (
+            f"\n  note: the '{name}' field remains in {csym}_state_t "
+            f"({obj}_core.h) — delete it by hand."
+        )
+    elif overrides:
+        note = ""
+    else:
+        note = (
+            f"\n  note: {'()/'.join(fns)}() "
+            f"remain{'s' if len(fns) == 1 else ''} in {obj}_core.c — "
+            f"delete {'it' if len(fns) == 1 else 'them'} by hand."
+        )
     print(f"Done!  Property '{name}' removed.{note}")
 
 
 def _remove_warning(
-    root: Path, cfg: dict, obj: str, name: str, force: bool
+    root: Path, cfg: dict, obj: str, name: str, force: bool, view: str = ""
 ) -> None:
     """Drop a declared ``[[<obj>.warnings]]`` entry (gh-490).
 
@@ -1057,32 +1107,30 @@ def _remove_warning(
     # gh-1591: the C names these messages point at.
     csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
-    if obj not in C.components(cfg):
-        print(f"error: object '{obj}' not found.", file=sys.stderr)
-        sys.exit(1)
-    warnings = cfg.get(obj, {}).get("warnings", [])
+    owner, where = _owner(cfg, obj, view)
+    warnings = owner.get("warnings", [])
     entry = next((w for w in warnings if w.get("condition") == name), None)
     if entry is None:
         declared = [w.get("condition") for w in warnings]
         print(
-            f"error: no warning on '{obj}' with condition '{name}'."
+            f"error: no warning on {where} with condition '{name}'."
             + (f" Declared: {declared}" if declared else " None declared."),
             file=sys.stderr,
         )
         sys.exit(1)
     if not _confirm(
-        f"Remove the {entry.get('category', 'UserWarning')} on '{obj}' "
+        f"Remove the {entry.get('category', 'UserWarning')} on {where} "
         f"when {name}?",
         force,
     ):
         print("Aborted.")
         return
 
-    print(f"just-makeit: removing warning on '{obj}' when {name}")
+    print(f"just-makeit: removing warning on {where} when {name}")
     print()
     warnings.remove(entry)
     if not warnings:
-        cfg[obj].pop("warnings", None)
+        owner.pop("warnings", None)
     C.save(root, cfg)
     print(f"  update  {root / C.FILENAME}")
 
@@ -1154,6 +1202,121 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
     print(
         f"Done!  create_error removed — {csym}_create() failures now report "
         f"MemoryError."
+    )
+
+
+def _remove_view_create_error(
+    root: Path, cfg: dict, obj: str, view: str, force: bool
+) -> None:
+    """Drop a view's OWN ``create_error`` translation (gh-2066).
+
+    The mirror of `jm error --view`, which gives the view one of its own
+    (gh-580). A view without one inherits its parent's
+    (`_config.view_create_error`), so this reverts the view to the parent's
+    translation -- MemoryError only when the parent declares none, where a
+    view's own ``create_why`` then has nothing to raise through and is
+    refused, as `_remove_create_error` refuses the parent's (gh-2552).
+    """
+    pkg = C.project_name(cfg)
+    entry, where = _owner(cfg, obj, view)
+    if "create_error" not in entry and "create_error_message" not in entry:
+        print(
+            f"error: {where} declares no create_error of its own (it "
+            f"inherits '{obj}''s).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    inherited = C.create_error(cfg, obj)
+    if C.view_create_why(entry) and not inherited:
+        raise Refusal(
+            f"view '{view}' declares create_why, raised as its own "
+            f"create_error, and '{obj}' declares none to inherit. Drop "
+            "create_why from the manifest and run `jm apply` first."
+        )
+    then = f"'{obj}''s {inherited}" if inherited else "MemoryError"
+    if not _confirm(
+        f"Remove the {entry.get('create_error') or 'create()'} translation "
+        f"on {where}? Failures will report {then}.",
+        force,
+    ):
+        print("Aborted.")
+        return
+
+    print(f"just-makeit: removing create_error from {where}")
+    print()
+    entry.pop("create_error", None)
+    entry.pop("create_error_message", None)
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+
+    _regenerate_object_bindings(root, cfg, obj, pkg)
+    print()
+    print(
+        f"Done!  create_error removed — '{view}' failures now report {then}."
+    )
+
+
+def _remove_view(
+    root: Path, cfg: dict, obj: str, class_name: str, force: bool
+) -> None:
+    """Take out the view *class_name* over *obj* (gh-2066).
+
+    The mirror of `jm view`: its ``[[<obj>.views]]`` entry -- with the
+    methods, properties, warnings and translation it declares of its own --
+    and its binding fragment, which `_linkcheck.binding_sources` names
+    wherever the view registers (gh-2516). The modules that render it are
+    regenerated, so their aggregator, stub and ``__init__.py`` lose the
+    class. Like every remove, the sacred C stays: the view's constructor
+    and each function its own methods bind, named in the closing note.
+    """
+    from ._linkcheck import binding_sources
+
+    pkg = C.project_name(cfg)
+    entry, where = _owner(cfg, obj, class_name)
+    views = C.views(cfg, obj)
+    frag = binding_sources(root, cfg, obj)[1 + views.index(entry)]
+    home = C.view_create_core(cfg, obj, entry)
+    csym = CSYM.stem(cfg, obj)
+    # Where each lives: the constructor in the core that owns it (gh-2681),
+    # a method's `fn` in the parent's.
+    left = {home: [entry["create_fn"]]}
+    parents = {m.get("name") for m in cfg[obj].get("methods", [])}
+    left.setdefault(obj, []).extend(
+        C.method_c_symbol(csym, m)
+        for m in C.view_methods(entry)
+        if m.get("fn") or m.get("name") not in parents
+    )
+    if not _confirm(f"Remove {where} and its binding?", force):
+        print("Aborted.")
+        return
+
+    print(f"just-makeit: removing {where}")
+    print()
+    module = C.component_module(cfg, obj)
+    hosts = [C.view_module(cfg, obj, entry)]
+    _rm(frag)
+    cfg[obj]["views"] = [v for v in cfg[obj]["views"] if v is not entry]
+    if not cfg[obj]["views"]:
+        cfg[obj].pop("views")
+    C.save(root, cfg)
+    print(f"  update  {root / C.FILENAME}")
+
+    # The parent's module, which regenerates every module still registering
+    # one of its views -- and the one that registered this view, which may
+    # no longer be among them (gh-2516).
+    _regenerate_module(root, cfg, module, pkg)
+    for host in hosts:
+        if host != module:
+            _regenerate_module(root, cfg, host, pkg)
+    print()
+    print(
+        f"Done!  View '{class_name}' removed."
+        + "".join(
+            f"\n  note: {'(), '.join(fns)}() "
+            f"remain{'s' if len(fns) == 1 else ''} in {core}_core.c — "
+            f"delete {'it' if len(fns) == 1 else 'them'} by hand."
+            for core, fns in left.items()
+        )
     )
 
 
@@ -1331,6 +1494,12 @@ def _regenerate_object_bindings(
         _glue.regenerate_standalone(root, cfg, obj, pkg)
 
 
+#: The member kinds a view declares of its own, through the add verbs'
+#: `--view` (gh-504, gh-509, gh-580), so `jm remove <kind> --view` takes
+#: out (gh-2066). The view itself is `jm remove view`.
+VIEW_KINDS = ("method", "property", "warning", "error")
+
+
 def run(
     root: Path,
     kind: str,
@@ -1338,6 +1507,7 @@ def run(
     module: str | None = None,
     object_name: str | None = None,
     force: bool = False,
+    view: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -1347,6 +1517,14 @@ def run(
         )
         sys.exit(1)
     cfg = C.load(root)
+    # gh-2066: `--view` addresses a view's own member, as the add verbs'
+    # `--view` declared it; only the kinds a view has take it.
+    if view and kind not in VIEW_KINDS:
+        print(
+            f"error: --view applies to {', '.join(VIEW_KINDS)}, not '{kind}'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if kind == "state":
         if not object_name:
@@ -1367,7 +1545,7 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        _remove_method(root, cfg, object_name, name, force)
+        _remove_method(root, cfg, object_name, name, force, view)
     elif kind == "property":
         if not object_name:
             print(
@@ -1375,7 +1553,7 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        _remove_property(root, cfg, object_name, name, force)
+        _remove_property(root, cfg, object_name, name, force, view)
     elif kind == "warning":
         if not object_name:
             print(
@@ -1384,7 +1562,7 @@ def run(
             )
             sys.exit(1)
         # `name` is the warning's condition — see _remove_warning.
-        _remove_warning(root, cfg, object_name, name, force)
+        _remove_warning(root, cfg, object_name, name, force, view)
     elif kind == "error":
         if not object_name:
             print(
@@ -1392,7 +1570,19 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        _remove_create_error(root, cfg, object_name, force)
+        if view:
+            _remove_view_create_error(root, cfg, object_name, view, force)
+        else:
+            _remove_create_error(root, cfg, object_name, force)
+    elif kind == "view":
+        # gh-2066: by its class name, as `jm view <obj> <ClassName>` added it.
+        if not object_name:
+            print(
+                "error: 'remove view' requires --object <obj>.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _remove_view(root, cfg, object_name, name, force)
     elif kind == "function":
         if not module:
             print(

@@ -327,9 +327,10 @@ def test_an_element_nothing_speaks_is_freely_redeclared(tmp_path):
     assert run_cli("status", "--check", cwd=root).returncode == 0
 
 
-def test_a_view_member_is_refused_without_a_route(tmp_path):
-    """`jm remove` cannot take out a view's method, so no route is printed
-    for one: a refusal never prints a command that cannot run."""
+def test_a_view_members_route_is_printed_and_followed(tmp_path):
+    """A view's own method speaking the element is taken out and added
+    back with `--view`, as `jm script` replays it (gh-2066): the refusal
+    printed no route for one while `jm remove` had no `--view`."""
     _ok(tmp_path, "new", "p")
     root = tmp_path / "p"
     _ok(root, "module", "mod")
@@ -344,8 +345,14 @@ def test_a_view_member_is_refused_without_a_route(tmp_path):
 
     assert r.returncode == 1, r.stdout + r.stderr
     assert "V.w2" in r.stderr, r.stderr
-    assert "just-makeit" not in r.stderr, r.stderr
+    assert "remove method w2 --object o --view V" in r.stderr, r.stderr
     assert _tree(root) == before
+    _follow(root, _route(r.stderr))
+    s = run_cli("status", "--check", cwd=root)
+    assert s.returncode == 0, s.stdout
+    (view,) = C.views(C.load(root), "o")
+    (w2,) = C.view_methods(view)
+    assert w2["arg_type"] == "sample[]", w2
 
 
 def test_only_jm_record_writes_an_element_declaration():
