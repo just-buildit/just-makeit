@@ -22,7 +22,7 @@ if [[ "${VERSION}" == "local" ]]; then
     MODE="local"
     VERSION=""
 elif [[ -z "${VERSION}" ]]; then
-    VERSION="$(grep '^version' "$ROOT/pyproject.toml" | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+    VERSION="$(grep '^version' "$ROOT/pyproject.toml" | sed -n 1p | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
 fi
 
 echo "════════════════════════════════════════════════════════════════"
@@ -44,7 +44,7 @@ if [[ "$MODE" == "local" ]]; then
     pip install just-buildit --quiet 2>/dev/null || true
     python -m build --wheel --no-isolation -q 2>/dev/null || \
         uv build --wheel --no-build-isolation -q
-    WHEEL_FILE="$(ls -t "$ROOT"/dist/just_makeit-*.whl | head -1)"
+    WHEEL_FILE="$(ls -t "$ROOT"/dist/just_makeit-*.whl | sed -n 1p)"
     echo "  wheel: $WHEEL_FILE"
     DOCKER_EXTRA_ARGS+=(-v "${WHEEL_FILE}:/just_makeit.whl")
 fi
@@ -83,9 +83,9 @@ else
         echo "  not on PyPI yet, retry ${i}/20..."
         sleep 30
     done
-    pip show just-makeit | grep -q "Version: ${VERSION}"
+    pip show just-makeit | grep "Version: ${VERSION}" >/dev/null
 fi
-just-makeit --version 2>/dev/null || just-makeit help | head -1
+just-makeit --version 2>/dev/null || just-makeit help | sed -n 1p
 echo "  just-makeit installed ok"
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -151,9 +151,9 @@ cmake --install my_fir/build
 
 step "Verify C consumers — pkg-config"
 PREFIX="$HOME/fir_prefix"
-LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
+LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | sed -n 1p)
 export PKG_CONFIG_PATH
-PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-fir.pc" -exec dirname {} \; | head -1)
+PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-fir.pc" -exec dirname {} \; | sed -n 1p)
 
 cat > /tmp/fir_consumer.c << 'CEOF'
 #include "my_fir.h"
@@ -349,9 +349,9 @@ cmake --install build
 
 step "Verify filter_module C consumers"
 PREFIX="$HOME/filters_prefix"
-LIB_DIR=$(find "$PREFIX" -name "libmy_filters.*" -exec dirname {} \; | head -1)
+LIB_DIR=$(find "$PREFIX" -name "libmy_filters.*" -exec dirname {} \; | sed -n 1p)
 export PKG_CONFIG_PATH
-PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-filters.pc" -exec dirname {} \; | head -1)
+PKG_CONFIG_PATH=$(find "$PREFIX" -name "my-filters.pc" -exec dirname {} \; | sed -n 1p)
 
 cat > /tmp/filters_consumer.c << 'CEOF'
 #include "my_filters.h"

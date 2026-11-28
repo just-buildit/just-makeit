@@ -33,7 +33,7 @@ FLOOR_DIR=/opt/cmake-$FLOOR_CMAKE
 # image without the floor prints nothing: its fingerprint stays dpkg's alone.
 if [ "${1:-}" = --fingerprint ]; then
     if [ -x "$FLOOR_DIR/bin/cmake" ]; then
-        printf 'cmake-floor\t%s\n' "$("$FLOOR_DIR/bin/cmake" --version | head -1)"
+        printf 'cmake-floor\t%s\n' "$("$FLOOR_DIR/bin/cmake" --version | sed -n 1p)"
     fi
     exit 0
 fi
@@ -55,7 +55,7 @@ mv "/opt/$tarball" "$FLOOR_DIR"
 rm -f /tmp/cmake.tgz
 
 # The assertion: an image whose floor CMake does not run is never published.
-got=$("$FLOOR_DIR/bin/cmake" --version | head -1)
+got=$("$FLOOR_DIR/bin/cmake" --version | sed -n 1p)
 [ "$got" = "cmake version $FLOOR_CMAKE" ] || {
     echo "ci-extra: $FLOOR_DIR/bin/cmake reports '$got'" >&2
     exit 1

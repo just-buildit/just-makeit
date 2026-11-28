@@ -132,7 +132,7 @@ jobs:
           docker run --rm jm-examples-linux:ci bash -c '
             set -euo pipefail
             PC_DIR=$(find /home/just-makeit/examples/my_fir/install \
-                          -type d -name pkgconfig 2>/dev/null | head -1)
+                          -type d -name pkgconfig 2>/dev/null | sed -n 1p)
             if [ -z "$PC_DIR" ]; then
               echo "ERROR: no pkgconfig dir found under my_fir/install" >&2
               exit 1
