@@ -1547,7 +1547,7 @@ MANIFEST_C_KEYS = IMPL_KEYS + C_EXPR_KEYS + C_TYPE_KEYS
 #: "ntaps"`` a module function -- names a symbol the prefix removes, so
 #: `apply` and `jm upgrade` REFUSE it, before writing, with the new spelling
 #: to use (:func:`author_named`, gh-1671). Every ``fn`` / ``*_fn`` key of
-#: `_keys`, and a kind property's ``getter`` / ``setter``;
+#: `_keys`, and a handle field's ``getter``;
 #: ``tests/test_gh1671_default_and_author_named.py`` holds this to `_keys`.
 AUTHOR_NAMED_KEYS = (
     "fn",

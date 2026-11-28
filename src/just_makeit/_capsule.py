@@ -25,7 +25,7 @@ from pathlib import Path
 from . import _coerce
 from . import _inflight
 from . import _config as C
-from ._keys import truthy
+from ._keys import KIND_PROPERTY_DEAD_KEYS, truthy
 from . import _csym as CSYM
 from ._builtins import require_scope_names
 from . import _modplatforms
@@ -371,6 +371,19 @@ _fn_{backing}_destroy(PyObject *mod, PyObject *args)
 def _emit_getset(backing: str, sym: str, prop: dict, module: str) -> str:
     name, ptype = prop["name"], prop["type"]
     where = f"capsule module '{module}' properties row '{name}'"
+    # gh-2813: a row naming its own function was accepted and ignored.
+    _dead = [k for k in KIND_PROPERTY_DEAD_KEYS if k in prop]
+    if _dead:
+        raise Refusal(
+            f"{where}: `{'`, `'.join(_dead)}` is not read -- the binding "
+            f"always calls {CSYM.property_getter(sym, name)}()"
+            + (
+                f" and {CSYM.property_setter(sym, name)}()"
+                if truthy(prop.get("writable"))
+                else ""
+            )
+            + ". Name the C functions that way, or drop the key."
+        )
     # gh-2214: `error` needs the setter call it tests.
     validate_setter_error(
         where,

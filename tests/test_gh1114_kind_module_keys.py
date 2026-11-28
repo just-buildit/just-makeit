@@ -436,9 +436,6 @@ def _every_capsule_table_key_module():
                         "writable": True,
                         "doc": "d",
                         "enum": "e",
-                        "getter": "gg",
-                        "setter": "ss",
-                        "fn": "f",
                     }
                 ],
             }
