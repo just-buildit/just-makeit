@@ -77,7 +77,14 @@ def _pin_keys(jobs: dict) -> "list[str]":
 
 
 def _consumer_legs(jobs: dict) -> "list[dict]":
-    return jobs["consumer-smoke"]["strategy"]["matrix"]["include"]
+    """consumer-smoke's legs, as the planner declares them (gh-2832): the
+    toolchain job's `legs` step, which the job's matrix reads."""
+    import json
+
+    matrix = jobs["consumer-smoke"]["strategy"]["matrix"]
+    assert matrix == "${{ fromJSON(needs.toolchain.outputs.consumer_smoke) }}"
+    (step,) = [s for s in jobs["toolchain"]["steps"] if s.get("id") == "legs"]
+    return json.loads(step["env"]["LEGS_CONSUMER_SMOKE"])["include"]
 
 
 def test_the_toolchain_job_reads_keys_the_pin_has():

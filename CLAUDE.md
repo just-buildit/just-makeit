@@ -545,12 +545,17 @@ just-buildit/.github README under "Makefile standard".
     contained the replaced tip and passed `CI passed`; if so the push skips
     what its PR ran (`src=false`), and `docker` still publishes
     (`tested == 'true'`). Fail-safe: any doubt runs everything.
-- A PR runs macOS and ubuntu-24.04-arm at their oldest and newest Python
-    only, and ubuntu-latest at those and the middle one (gh-2125; the Linux
-    trim cut a PR's `test` legs from 16 to 7 for the free plan's ~20-job
-    pool); the push that lands it runs the legs it trimmed, so `CI passed`
-    on `main` still certifies the whole matrix. `tests/test_own_ci_matrix.py` holds
-    each event's legs.
+- Every PR lands through a train (`make train`), so a plain PR runs only the
+    cheap legs (gh-2832): the `PR_OS` (Linux) legs of every planned job --
+    `test` with ubuntu-24.04-arm at its oldest and newest Python and
+    ubuntu-latest at those and the middle one (gh-2125), the examples, the
+    install-deps and consumer smokes, artifact.yml's Linux leg -- and no
+    macOS or Windows leg anywhere. A `train/*` PR (`HEAD_REF`), a dispatch
+    and the nightly run everything; the push that lands a tree runs what a
+    plain PR skipped, so `CI passed` on `main` still certifies the whole
+    matrix (the superset until just-buildit.github.io#249 says which PR a
+    push merged). A PR that lands without a train gets the full matrix by
+    a dispatch. `tests/test_own_ci_matrix.py` holds each run's legs.
 - A docs-only diff (gh-1801 item 3) skips every `ci.yml` job but `lint`,
     `coverage` (the full suite: `coverage-shard` jobs, then one gate,
     gh-2078) and `docs`: `changes.yml` runs
