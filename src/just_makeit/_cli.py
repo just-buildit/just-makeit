@@ -1546,6 +1546,7 @@ def _main() -> None:
         component = None
         force = False
         state_vars: list[tuple[str, str, str]] = []
+        flags: list[str] = []
         remaining = args[1:]
         i = 0
         while i < len(remaining):
@@ -1563,6 +1564,7 @@ def _main() -> None:
             elif tok in ("--state", "--param"):
                 var, i = parse_state_flag(remaining, i)
                 state_vars.append(var)
+                flags.append(tok)
             else:
                 print(f"error: unexpected argument '{tok}'", file=sys.stderr)
                 sys.exit(1)
@@ -1574,7 +1576,7 @@ def _main() -> None:
             )
             sys.exit(1)
 
-        _add.run(Path.cwd(), component, state_vars, force=force)
+        _add.run(Path.cwd(), component, state_vars, force=force, flags=flags)
 
     elif cmd == "perf":
         _no_arguments(cmd, args[1:])
