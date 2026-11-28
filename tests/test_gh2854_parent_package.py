@@ -224,3 +224,13 @@ def test_a_capsule_modules_packages_are_owned_or_reserved(tmp_path):
     apply_run(root)
     assert (root / "src" / "proj" / "ddc").is_dir()
     assert unaccounted(root) == []
+
+
+def test_the_sweep_refuses_a_project_that_wrote_no_package(tmp_path):
+    # An empty answer must mean "checked, all accounted for", never
+    # "nothing there to check": a project whose src/<pkg>/ went missing
+    # fails the sweep instead of passing it.
+    root = _project(tmp_path, ("object", "g"))
+    shutil.rmtree(root / "src" / "p")
+    with pytest.raises(AssertionError, match="was never written"):
+        unaccounted(root)

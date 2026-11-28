@@ -22,7 +22,14 @@ def unaccounted(root: Path) -> "list[str]":
     cfg = C.load(root)
     src = root / "src" / C.project_name(cfg)
     if not src.is_dir():
-        return []
+        # Absent output is not a pass. jm has no C-only project shape --
+        # every `jm new` writes `src/<pkg>/` (its `__init__.py` and
+        # `tests/`) -- so a tree without it is a writer that failed, and an
+        # empty answer here would sweep it as checked.
+        raise AssertionError(
+            f"{root}: the manifest declares package {C.project_name(cfg)!r}"
+            f" but {src.relative_to(root)}/ was never written"
+        )
     owned = set(C.module_package_dirs(cfg)) | {
         c for c in C.components(cfg) if not C.module_of(cfg, c)
     }
