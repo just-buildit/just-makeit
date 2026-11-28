@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from . import _pins
 from . import _incpath as INC
+from . import _testrun
 from . import _textio
 
 import contextlib
@@ -480,17 +481,12 @@ def _python_bench_files(
     skipped as before, so only the listing's cost changes, not the result.
     """
     try:
-        r = subprocess.run(
-            [
-                python,
-                "-m",
-                "pytest",
-                "src/",
-                "--collect-only",
-                "-q",
-                "-o",
-                _PYTHON_BENCH_FILES,
-            ],
+        # gh-1950: nothing collected is a project with no Python benchmarks,
+        # which a project that ships only C benchmarks legitimately is.
+        listing = _testrun.pytest(
+            [python, "-m"],
+            ["src/", "--collect-only", "-q", "-o", _PYTHON_BENCH_FILES],
+            empty_passes=True,
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -509,13 +505,12 @@ def _python_bench_files(
         names = _PYTHON_BENCH_FILES.split("=", 1)[1].split()
         found = sorted(p for pat in names for p in (root / "src").rglob(pat))
         return [p.relative_to(root).as_posix() for p in found]
-    # gh-1950's exit 5: pytest collected nothing, which is a project with no
-    # Python benchmarks, not a failure. Any other non-zero exit means a file
-    # did not collect (an import or syntax error), and the listing above
-    # holds only the files that did. Returning it would drop that file's
-    # results with no error; the failure is the precedent a manifest
-    # component's failed build sets: name it and stop.
-    if r.returncode not in (0, 5):
+    # Any failing exit means a file did not collect (an import or syntax
+    # error), and the listing above holds only the files that did. Returning
+    # it would drop that file's results with no error; the failure is the
+    # precedent a manifest component's failed build sets: name it and stop.
+    r = listing.proc
+    if not listing.passed:
         broken = sorted(set(_COLLECT_ERROR_RE.findall(r.stdout + r.stderr)))
         names = ", ".join(broken) or "a file under src/"
         print(
@@ -555,23 +550,17 @@ def _file_nodes(
     returned when it does not finish in time.
     """
     try:
-        r = subprocess.run(
-            [
-                python,
-                "-m",
-                "pytest",
-                path,
-                "--collect-only",
-                "-q",
-                "-o",
-                _PYTHON_BENCH_FILES,
-            ],
+        # The ids are read off the listing; a file with none lists none.
+        r = _testrun.pytest(
+            [python, "-m"],
+            [path, "--collect-only", "-q", "-o", _PYTHON_BENCH_FILES],
+            empty_passes=True,
             cwd=str(root),
             capture_output=True,
             text=True,
             env=child_pytest_env(),
             timeout=timeout,
-        )
+        ).proc
     except subprocess.TimeoutExpired:
         return None
     return [
@@ -704,10 +693,7 @@ def _run_one(
     """
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "py.json"
-        cmd = [
-            python,
-            "-m",
-            "pytest",
+        args = [
             *targets,
             "--benchmark-only",
             f"--benchmark-json={report}",
@@ -720,12 +706,16 @@ def _run_one(
             flush=True,
         )
         try:
-            rc = subprocess.run(
-                cmd,
+            # gh-1950: nothing collected is no Python benchmark, not a
+            # failure; the missing JSON below says so.
+            run = _testrun.pytest(
+                [python, "-m"],
+                args,
+                empty_passes=True,
                 cwd=str(root),
                 timeout=timeout,
                 env=child_pytest_env(),
-            ).returncode
+            )
         except subprocess.TimeoutExpired:
             if timed_out is not None:
                 for target in targets:
@@ -737,7 +727,8 @@ def _run_one(
                     )
                     timed_out.append(f"pytest {target}")
             return _TIMED_OUT
-        if rc not in (0, 5):
+        if not run.passed:
+            rc = run.proc.returncode
             _report_failed(
                 f"pytest {' '.join(targets)} ({_exit_status(rc)})",
                 ["pytest's own report, above, names what failed"],

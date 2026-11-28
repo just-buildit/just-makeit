@@ -36,9 +36,10 @@ def run_tests() -> None:
     should bound its own wall-clock (`timeout-minutes:`); a test runner
     capping the tests is a truncation dressed as a failure.
     """
-    import subprocess
+    from . import _testrun
 
-    result = subprocess.run(
+    # gh-2642: a run that collects nothing is not a pass.
+    run = _testrun.pytest(
         [
             "uv",
             "run",
@@ -53,9 +54,8 @@ def run_tests() -> None:
             "just-buildit",
             "--with",
             "tomlkit",
-            "pytest",
-            "-v",
-            *sys.argv[1:],
         ],
+        ["-v", *sys.argv[1:]],
+        empty_passes=False,
     )
-    sys.exit(result.returncode)
+    sys.exit(0 if run.passed else run.proc.returncode or 1)

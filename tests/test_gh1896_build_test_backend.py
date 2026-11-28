@@ -11,6 +11,8 @@ Three properties of ``_build``, each reproduced on ``main`` before the fix:
 * **gh-1950** -- a project of only module functions collects no pytest tests,
   and pytest's exit 5 for that is a shape, not a failure. ``jm test`` read it
   as a failure, where ``run_generated_pytest`` already read it as a pass.
+  (gh-2127 gave that module a contract test, and since gh-2642 an empty
+  run fails again: ``tests/test_gh2642_empty_run_fails.py``.)
 * **gh-1832** -- no fixed budget on any subprocess ``jm build`` / ``jm test``
   starts. A cold build on a slow board took 603 s against a 600 s literal.
 
@@ -213,15 +215,15 @@ def test_functions_only_module_passes_jm_test(tmp_path, spy):
 
     The issue's repro (gh-1950) exited 1 with ``collected 0 items``. Since
     gh-2127 the module gets a contract test that calls each wrapper, so the
-    suite collects it and it passes. The empty-suite exit 5 is still a pass
-    for a project with no tests at all, and is covered where that happens.
+    suite collects it and it passes. A suite that collects nothing fails
+    since gh-2642, covered in ``tests/test_gh2642_empty_run_fails.py``.
     """
     proj = _functions_only_module(tmp_path)
 
     r = run_cli("test", cwd=proj)
 
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "collected no tests" not in r.stdout
+    assert "ran no tests" not in r.stderr
     assert "passed" in r.stdout
 
 
