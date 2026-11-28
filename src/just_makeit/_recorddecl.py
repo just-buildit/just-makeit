@@ -36,6 +36,7 @@ from pathlib import Path
 from . import _config as C
 from . import _csym as CSYM
 from . import _glue
+from . import _object
 from . import _record
 from . import _report
 from . import _script
@@ -361,6 +362,46 @@ def run(
         )
         if why:
             raise _report.Refusal(why)
+    # gh-2889: a struct's declaration is in scope for EVERY component's
+    # members (`C.record_scope`), so a member anywhere that still states
+    # these columns itself would be a second copy -- refused, naming each,
+    # as `jm method` refuses it from the other side (`restated_columns`).
+    # And every component whose members return the struct is re-rendered
+    # below, not only this one.
+    elsewhere: "list[str]" = []
+    fn_modules: "list[str]" = []
+    if not elem_type:
+        restating = [
+            f"'{comp}.{m.get('name', '?')}'"
+            for comp in C.components(cfg)
+            for m in list(C.methods(cfg, comp))
+            + [n for v in C.views(cfg, comp) for n in C.view_methods(v)]
+            if _record.restated_columns(m, [entry])
+        ]
+        if restating:
+            raise _report.Refusal(
+                f"{', '.join(restating)} state{'s' if len(restating) == 1 else ''}"
+                f" the columns of '{record_name}' in their own result_fields,"
+                " which this declaration replaces: drop those result_fields"
+                " from the manifest and declare the record in the same"
+                " edit, then run `jm apply` (gh-2889)."
+            )
+        elsewhere = [
+            comp
+            for comp in C.components(cfg)
+            if comp != object_name and speakers(cfg, comp, record_name)
+        ]
+        # A module function returning the struct binds in its module's
+        # `_ext.c`, which no component above need own: a functions-only
+        # module, or one whose objects never name the struct.
+        fn_modules = [
+            mod
+            for mod in C.modules(cfg)
+            if any(
+                _record.c_struct(f) == record_name
+                for f in C.module_functions(cfg, mod)
+            )
+        ]
     for i, existing in enumerate(rows):
         if str(existing.get("name") or "") == record_name:
             rows[i] = entry
@@ -374,6 +415,22 @@ def run(
     cols = ", ".join(f"{f['name']}:{f['type']}" for f in fields)
     print(f"  type    {elem_type}" if elem_type else f"  fields  {cols}")
     print()
+    # gh-2889: every other component returning the struct reads these
+    # columns too, so its glue moves with this one's.
+    redone: "set[str]" = set()
+    for comp in elsewhere:
+        mod = C.component_module(cfg, comp)
+        if mod in redone:
+            continue
+        _glue.regenerate(root, cfg, comp, mod, C.project_name(cfg))
+        if mod:
+            redone.add(mod)
+    for mod in fn_modules:
+        if mod not in redone and not (
+            who and mod == C.component_module(cfg, object_name)
+        ):
+            _object._regenerate_module(root, cfg, mod, C.project_name(cfg))
+            redone.add(mod)
     if who:
         # gh-2055: the same C type, so every member keeps its prototype and
         # only jm's glue moves -- the binding, the stub, the contract.

@@ -2684,7 +2684,7 @@ def _source_delegated(cfg: dict, module: str) -> dict:
         doc_blocks=cfg.get(gname, {}).get("_doc_blocks", {}),
         codecs=C.codecs(cfg),
         enums=C.enums(cfg),
-        records=C.records(cfg, gname),
+        records=C.record_scope(cfg, gname),
         properties=C.properties(cfg, gname),
         csym=gctx["csym"],
         host=host,
@@ -2732,7 +2732,9 @@ def _delegation_refusal(cfg: dict, gname: str, m: dict) -> str:
             "it retains a capsule param, whose owner must outlive the "
             "generator, and the source destroys and rebuilds its generator"
         )
-    if _record.is_record(m):
+    # gh-2889: a record the generator's methods return by a declared struct
+    # is a record all the same.
+    if _record.is_record(_record.resolved(m, C.record_scope(cfg, gname))):
         return (
             "it returns a record type the generator's module publishes, "
             "which a second module cannot publish as the same type"

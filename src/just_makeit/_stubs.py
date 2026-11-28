@@ -1607,7 +1607,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
     state_vars = C.state_vars(cfg, obj)
     arg_type = C.arg_type(cfg, obj)
     return_type = C.return_type(cfg, obj)
-    obj_methods = C.methods(cfg, obj)
+    obj_methods = C.resolved_methods(cfg, obj)  # gh-2889
     obj_props = C.properties(cfg, obj)
     # gh-1997: the methods the author wrote in the object's `_extra.c`.
     _extra_rows = C.extra_methods(cfg, obj)
@@ -2400,7 +2400,7 @@ def _obj_stub(cfg: dict, obj: str, pkg: str = "", module: str = "") -> str:
             raises=_raises_doc(m),
             none_when=_empty_is_none_doc(m),
             ret_fields=_record.returns_fields(
-                m, doc_blocks, C.records(cfg, obj)
+                m, doc_blocks, C.record_scope(cfg, obj)
             ),
             # gh-1292: the skeleton, as every other face of the same member
             # renders it -- the standalone stub and BOTH runtime docs. Without
@@ -3609,7 +3609,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
     # cannot be written until the body exists; it goes here, laid out by
     # `import_head` (gh-2571).
     _head_slot = len(parts)
-    functions = C.module_functions(cfg, module)
+    functions = C.resolved_functions(cfg, module)  # gh-2889
     # gh-384: header Doxygen for free functions, stashed transiently on cfg by
     # build_component_ctxs() (mirrors the per-object _doc_blocks). Empty when
     # the module has no header / hand-written function comments.
@@ -3632,7 +3632,7 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
         [
             (m, cfg.get(obj, {}).get("_doc_blocks", {}))
             for obj in objects
-            for m in C.methods(cfg, obj)
+            for m in C.resolved_methods(cfg, obj)
         ]
         # Then every home view's own methods, after ALL the objects, as the
         # aggregator registers them (`build_component_ctxs` appends the
@@ -3645,14 +3645,14 @@ def make_module_pyi(cfg: dict, module: str, root=None) -> str:
             for obj in objects
             for v in C.views(cfg, obj)
             if C.view_module(cfg, obj, v) == module
-            for n in C.view_methods(v)
+            for n in C.resolved_methods(cfg, obj, C.view_methods(v))
         ]
         # gh-2516: a view over another module's object returns what its
         # overlay's methods do, the parent's and its own.
         + [
             (m, vcfg[synth].get("_doc_blocks", {}))
             for synth, vcfg in _foreign
-            for m in C.methods(vcfg, synth)
+            for m in C.resolved_methods(cfg, synth, C.methods(vcfg, synth))
         ]
         # gh-2755: and a module function returning one record.
         + [(fn, fn_doc_blocks) for fn in functions]

@@ -26,6 +26,7 @@ from . import _fncontract
 from ._extrahook import KEPT_SUFFIXES as _HOOK_SUFFIXES
 from . import _glue
 from . import _incpath as INC
+from . import _record
 from ._init import _to_title
 from ._object import _regenerate_module
 from ._report import Refusal
@@ -456,6 +457,7 @@ def _remove_object(root: Path, cfg: dict, obj: str, force: bool) -> None:
         print(f"error: object '{obj}' not found.", file=sys.stderr)
         sys.exit(1)
     _refuse_what_an_app_names(cfg, f"object '{obj}'", objects={obj})
+    _refuse_what_reads_its_records(cfg, f"object '{obj}'", [obj])
     # gh-2681: a view another object owns that this object's core constructs
     # (`create_core`) would be left calling a function nothing defines, in a
     # manifest `apply` then refuses. The route is the view's own edit.
@@ -681,6 +683,9 @@ def _remove_module(root: Path, cfg: dict, module: str, force: bool) -> None:
             (module, f["name"]) for f in C.module_functions(cfg, module)
         },
     )
+    _refuse_what_reads_its_records(
+        cfg, f"module '{module}'", list(objects), module
+    )
     # gh-2516: a view another module's object registers HERE names this
     # module in its parent's manifest table. Removing the module would leave
     # that entry naming nothing, which `apply` refuses; the route is the
@@ -815,6 +820,60 @@ def _refuse_what_an_app_names(
         + ", ".join(f"`jm remove app {n}`" for n in naming)
         + "."
     )
+
+
+def _refuse_what_reads_its_records(
+    cfg: dict, what: str, objects: "list[str]", module: str = ""
+) -> None:
+    """Refuse to remove a struct record another member reads (gh-2889).
+
+    A struct one component declares is in every component's scope
+    (`_config.record_scope`), so a ``single`` method, view method or module
+    function elsewhere may take its columns from it and state none of its
+    own. Removing the declaring *objects* (or *module*, its functions with
+    it) would leave each of those a record without columns, which `load`
+    refuses -- after the remove had begun. The route is the readers' own
+    removal, named per member, and nothing is written: this runs first.
+    """
+    structs = {
+        str(r.get("name") or "")
+        for o in objects
+        for r in C.records(cfg, o)
+        if r.get("fields")
+    }
+    if not structs:
+        return
+    routes: "list[str]" = []
+    for comp in C.components(cfg):
+        if comp in objects:
+            continue
+        rows = [(m, "") for m in C.methods(cfg, comp)] + [
+            (m, str(v.get("class_name") or ""))
+            for v in C.views(cfg, comp)
+            for m in C.view_methods(v)
+        ]
+        routes += [
+            f"`jm remove method {m['name']} --object {comp}"
+            + (f" --view {v}`" if v else "`")
+            for m, v in rows
+            if not m.get("result_fields") and _record.c_struct(m) in structs
+        ]
+    for mod in C.modules(cfg):
+        if mod == module:
+            continue
+        routes += [
+            f"`jm remove function {f['name']} --module {mod}`"
+            for f in C.module_functions(cfg, mod)
+            if not f.get("result_fields") and _record.c_struct(f) in structs
+        ]
+    if routes:
+        names = ", ".join(f"'{s}'" for s in sorted(structs))
+        raise Refusal(
+            f"{what} declares the record {names}, which "
+            f"{len(routes)} member(s) elsewhere return and read their "
+            "columns from; removing it would leave them none. Remove them "
+            f"first: {', '.join(routes)} (gh-2889)."
+        )
 
 
 def _remove_app(root: Path, cfg: dict, name: str, force: bool) -> None:

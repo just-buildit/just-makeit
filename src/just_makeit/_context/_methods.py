@@ -2339,6 +2339,11 @@ def make_methods_ctx(
     whose ``Raises`` gain ``host.raises``, so a delegated method reads as
     the generator's own plus what building the generator can raise.
     """
+    # gh-2889: a `single` method returning a declared record struct --
+    # this component's or another's -- carries no columns of its own; every
+    # face below (the wrapper, its descriptor, the `.pyi` class, the
+    # registration, the bench) reads them from the declaration.
+    methods = [_record.resolved(m, records) for m in methods]
 
     _EMPTY: dict = {
         "method_decls": "",

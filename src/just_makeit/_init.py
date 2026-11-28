@@ -1846,7 +1846,9 @@ def run(
     # gh-131 already blanked four of `reset`'s five; the `_core.c` body was
     # the one nothing suppressed.
     for _slot in overridden_builtin_slots(
-        ctx["component"], declared_methods, ctx
+        ctx["component"],
+        C.resolved_methods(cfg, component, list(declared_methods or [])),
+        ctx,
     ):
         ctx[_slot] = ""
 

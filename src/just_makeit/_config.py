@@ -372,7 +372,7 @@ def load(root: Path) -> dict:
     # gh-2112: a name twice in one C struct or parameter list. After the
     # group expansion (gh-2799), so two `init_groups` rows making one name
     # are refused here as `save` refuses them, not only by a later write.
-    dupes = duplicate_name_errors(cfg)
+    dupes = duplicate_name_errors(cfg) + shared_record_errors(cfg)
     if dupes:
         _refuse(dupes)
     # gh-1722: a `why` key is a switch, and a function NAME is the natural
@@ -914,7 +914,9 @@ def function_record_errors(cfg: dict) -> "list[str]":
     for mid in modules(cfg):
         for fn in module_functions(cfg, mid):
             if isinstance(fn, dict):
-                why = _record.function_single_why_not(fn)
+                why = _record.function_single_why_not(
+                    fn, record_scope(cfg, "")
+                )
                 if why:
                     errors.append(f"[[module.{mid}.functions]] {why}")
         # gh-1268's refusal, for the whole extension module: two records
@@ -956,16 +958,19 @@ def module_record_regs(
     out: list = []
     if not module:
         prefix = resolved_class_name(cfg, object_name)
-        out += _record.registrations(methods(cfg, object_name), prefix)
+        out += _record.registrations(
+            resolved_methods(cfg, object_name), prefix
+        )
         for view in views(cfg, object_name):
             out += _record.registrations(
-                view_methods(view), view.get("class_name") or prefix
+                resolved_methods(cfg, object_name, view_methods(view)),
+                view.get("class_name") or prefix,
             )
         return out
     own = module_objects(cfg, module)
     for obj in own:
         out += _record.registrations(
-            methods(cfg, obj), resolved_class_name(cfg, obj)
+            resolved_methods(cfg, obj), resolved_class_name(cfg, obj)
         )
     for parent, view in module_views(cfg, module):
         prefix = view.get("class_name") or resolved_class_name(cfg, parent)
@@ -976,8 +981,10 @@ def module_record_regs(
 
             synth, vcfg = view_overlay(cfg, parent, view)
             rows = methods(vcfg, synth)
-        out += _record.registrations(rows, prefix)
-    out += _record.function_registrations(module_functions(cfg, module))
+        out += _record.registrations(
+            resolved_methods(cfg, parent, rows), prefix
+        )
+    out += _record.function_registrations(resolved_functions(cfg, module))
     return out
 
 
@@ -2295,7 +2302,7 @@ def save(root: Path, cfg: dict) -> None:
     if cycles:
         raise Refusal("\n".join(cycles))
     # gh-2112: and a name declared twice in one C list, for the same reason.
-    dupes = duplicate_name_errors(cfg)
+    dupes = duplicate_name_errors(cfg) + shared_record_errors(cfg)
     if dupes:
         _refuse(dupes)
     # gh-2142: and two owners of one native name, for the same reason.
@@ -7958,7 +7965,8 @@ def manifest_type_errors(cfg: dict) -> list[str]:
             errors.extend(_no_count_errors(entry, what))
 
     for mod in modules(cfg):
-        for fn in module_functions(cfg, mod):
+        # gh-2889: resolved, as a method's are below.
+        for fn in resolved_functions(cfg, mod):
             # A function's out_type forces the C return to void and makes
             # return_type inert (see _render.fn_c_decl), so it exempts too.
             _check(
@@ -8015,7 +8023,10 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         # the CLI's own hatch follows (`_cli_method.py`).
         comp_records = records(cfg, comp)
         comp_elements = frozenset(record_names(cfg, comp))
-        for m in methods(cfg, comp):
+        # gh-2889: resolved, so a `single` returning a declared struct --
+        # this component's or another's -- carries its columns, and its
+        # struct `return_type` is exempt as a restated one is.
+        for m in resolved_methods(cfg, comp):
             _check(
                 m,
                 f"{comp!r} method {m.get('name', '?')!r}",
@@ -8026,7 +8037,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
             )
         for v in views(cfg, comp):
             vname = v.get("class_name", "?")
-            for m in view_methods(v):
+            for m in resolved_methods(cfg, comp, view_methods(v)):
                 # A view is a second Python class over ONE C core, so it
                 # speaks the elements its parent component declares.
                 _check(
@@ -8104,6 +8115,127 @@ def records(cfg: dict, component: str) -> list[dict]:
     buffer used to restate the columns, and a restatement is what drifts.
     """
     return list(cfg.get(component, {}).get("records", []))
+
+
+def record_scope(cfg: dict, component: str) -> list[dict]:
+    """The records a member of *component* may name (gh-2889).
+
+    Its own declarations (:func:`records`), scalar elements included, then
+    every STRUCT record another component declares. A struct is the C type
+    the author writes once, in one sacred header, and two objects returning
+    it -- doppler's receiver ``status()`` and its pool's
+    ``status(receiver)``, both ``async_dsss_receiver_status_t`` -- describe
+    the same bytes, so the columns are read from the one declaration
+    (:func:`_record.resolved`). A scalar element is an alias its component
+    gives a width (gh-1404), so another component's is not in scope. A
+    struct name is declared by one component only
+    (:func:`shared_record_errors`), so the lookup is never ambiguous.
+
+    >>> cfg = {"rx": {"records": [{"name": "st_t", "fields": [{}]},
+    ...                           {"name": "sample", "type": "float"}]},
+    ...        "pool": {"records": [{"name": "sample", "type": "double"}]}}
+    >>> [(r["name"], r.get("type")) for r in record_scope(cfg, "pool")]
+    [('sample', 'double'), ('st_t', None)]
+    """
+    own = records(cfg, component)
+    names = {str(r.get("name") or "") for r in own}
+    out = list(own)
+    for comp in components(cfg):
+        if comp == component:
+            continue
+        for rec in records(cfg, comp):
+            name = str(rec.get("name") or "")
+            if (
+                isinstance(rec, dict)
+                and rec.get("fields")
+                and name not in names
+            ):
+                names.add(name)
+                out.append(rec)
+    return out
+
+
+def resolved_methods(
+    cfg: dict, component: str, rows: "list[dict] | None" = None
+) -> list[dict]:
+    """*component*'s method rows -- or *rows*, a view's -- each through
+    :func:`_record.resolved` in the component's :func:`record_scope`.
+
+    gh-2889. The form every face that renders a record from a method table
+    reads, so a ``single`` method naming a declared struct, its own
+    component's or another's, renders that declaration's columns.
+
+    >>> cfg = {"rx": {"records": [{"name": "st_t",
+    ...                            "fields": [{"name": "n", "type": "int"}]}]},
+    ...        "pool": {"methods": [{"name": "status", "single": True,
+    ...                              "return_type": "st_t"}]}}
+    >>> resolved_methods(cfg, "pool")[0]["result_fields"]
+    [{'name': 'n', 'type': 'int'}]
+    """
+    from . import _record
+
+    scope = record_scope(cfg, component)
+    return [
+        _record.resolved(m, scope)
+        for m in (methods(cfg, component) if rows is None else rows)
+    ]
+
+
+def resolved_functions(
+    cfg: dict, module: str, rows: "list[dict] | None" = None
+) -> list[dict]:
+    """*module*'s function rows -- or *rows* -- each through
+    :func:`_record.resolved` against every declared struct (gh-2889).
+
+    The function twin of :func:`resolved_methods`. A module function
+    belongs to no component, so its scope is every component's STRUCT
+    records (``record_scope(cfg, "")``): a function returning a struct an
+    object declares reads the same columns the object's methods do.
+
+    >>> cfg = {"rx": {"records": [{"name": "st_t",
+    ...                            "fields": [{"name": "n", "type": "int"}]}]},
+    ...        "module": {"m": {"functions": [{"name": "f", "single": True,
+    ...                                        "return_type": "st_t"}]}}}
+    >>> resolved_functions(cfg, "m")[0]["result_fields"]
+    [{'name': 'n', 'type': 'int'}]
+    """
+    from . import _record
+
+    scope = record_scope(cfg, "")
+    return [
+        _record.resolved(f, scope)
+        for f in (module_functions(cfg, module) if rows is None else rows)
+    ]
+
+
+def shared_record_errors(cfg: dict) -> "list[str]":
+    """A struct record declared by two components (gh-2889).
+
+    :func:`record_scope` puts every component's struct records in scope
+    for every other, so the columns of a struct are declared once; two
+    declarations of one struct are two answers, which is the drift the
+    lookup exists to end. One sentence per repeat, naming both owners.
+
+    >>> shared_record_errors({"a": {"records": [{"name": "s", "fields": [1]}]},
+    ...                       "b": {"records": [{"name": "s", "fields": [1]}]}})[0][:40]
+    "record 's' is declared by both 'a' and '"
+    """
+    owner: "dict[str, str]" = {}
+    out: "list[str]" = []
+    for comp in components(cfg):
+        for rec in records(cfg, comp):
+            if not isinstance(rec, dict) or not rec.get("fields"):
+                continue
+            name = str(rec.get("name") or "")
+            if name in owner and owner[name] != comp:
+                out.append(
+                    f"record {name!r} is declared by both {owner[name]!r} and"
+                    f" {comp!r}: a struct's columns are declared once, and"
+                    " every member returning it reads them from there"
+                    " (gh-2889). Drop one declaration."
+                )
+            owner.setdefault(name, comp)
+    return out
 
 
 def record(cfg: dict, component: str, name: str) -> dict:

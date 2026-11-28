@@ -612,10 +612,59 @@ def column_rows(m: dict, records: "list[dict] | None" = None) -> list[dict]:
     >>> column_rows({"result_fields": n})
     [{'name': 'n', 'type': 'uint64_t'}]
     """
-    rec = declared(records, str(m.get("record_dtype") or ""))
+    rec = declared_struct(m, records)
     if rec:
         return list(rec.get("fields", []))
     return list(m.get("result_fields", []))
+
+
+def declared_struct(m: dict, records: "list[dict] | None") -> dict:
+    """The declared STRUCT record *m*'s result is, or ``{}`` (gh-2889).
+
+    The struct is the one :func:`c_struct` names: a ``record_dtype``'s
+    element, a ``single`` method's by-value ``return_type``. *records* is
+    the method's scope (`_config.record_scope`), where another
+    component's struct records are visible, so two objects returning one
+    struct read one declaration. A scalar element names no columns.
+
+    >>> recs = [{"name": "st_t", "fields": [{"name": "n", "type": "int"}]}]
+    >>> declared_struct({"single": True, "return_type": "st_t"}, recs)["name"]
+    'st_t'
+    >>> declared_struct({"single": True, "return_type": "other_t"}, recs)
+    {}
+    """
+    rec = declared(records, c_struct(m))
+    return rec if rec.get("fields") else {}
+
+
+def resolved(m: dict, records: "list[dict] | None") -> dict:
+    """*m*, with a ``single`` result's columns read from its declaration.
+
+    gh-2889, the ONE resolver. A ``single`` method returns its
+    ``return_type`` struct by value; when that struct is a declared record
+    (:func:`declared_struct`, project-wide through *records*), the method
+    carries no ``result_fields`` of its own -- :func:`restated_columns`
+    refuses them -- and every face that renders the record (the binding,
+    both ``.pyi`` producers, the record registrations, the docs gaps)
+    reads this row instead of the manifest's. Any other row is returned
+    unchanged, so a consumer may map every method through it.
+
+    A ``record_dtype`` row is left to :func:`column_rows`, which its faces
+    already ask (gh-1407): its ``result_fields`` also decides the
+    list-of-records branch, which must not see the declaration's.
+
+    >>> recs = [{"name": "st_t", "fields": [{"name": "n", "type": "int"}]}]
+    >>> resolved({"single": True, "return_type": "st_t"}, recs)["result_fields"]
+    [{'name': 'n', 'type': 'int'}]
+    >>> resolved({"name": "m"}, recs)
+    {'name': 'm'}
+    """
+    if not truthy(m.get("single")) or m.get("result_fields"):
+        return m
+    rec = declared_struct(m, records)
+    if not rec:
+        return m
+    return {**m, "result_fields": [dict(f) for f in rec["fields"]]}
 
 
 def restated_columns(m: dict, records: "list[dict] | None" = None) -> str:
@@ -646,10 +695,11 @@ def restated_columns(m: dict, records: "list[dict] | None" = None) -> str:
       so both directions describe the same bytes. Change the columns with
       `just-makeit record <obj> iq16_t --field <name>:<type> ...`.
     """
-    name = str(m.get("record_dtype") or "")
+    name = c_struct(m)
     if not name or not m.get("result_fields"):
         return ""
-    if not declared(records, name):
+    # gh-2889: a `single` method's by-value struct is the same declaration.
+    if not declared_struct(m, records):
         return ""
     return (
         f"method {str(m.get('name') or '?')!r}: record {name!r} already"
@@ -1278,7 +1328,12 @@ def function_registrations(
 RECORD_TYPE_KEYS = ("record_name", "record_module", "record_doc")
 
 
-def single_why_not(m: dict, what: str, type_keys: bool = False) -> str:
+def single_why_not(
+    m: dict,
+    what: str,
+    type_keys: bool = False,
+    records: "list[dict] | None" = None,
+) -> str:
     """Why *m*'s ``single`` declaration describes no record, or ``""``.
 
     One refusal for every face that returns one record (gh-2755): a
@@ -1286,7 +1341,9 @@ def single_why_not(m: dict, what: str, type_keys: bool = False) -> str:
     line and the manifest load.
 
     - ``single`` with no ``result_fields`` has no columns to build the
-      record from (gh-244).
+      record from (gh-244) -- unless its ``return_type`` struct is a
+      declared record in *records* (gh-2889, :func:`declared_struct`),
+      which is where its columns then come from.
     - ``record_doc`` with no ``single`` documents a type that does not
       exist (gh-646).
     - with *type_keys*, ``record_name`` and ``record_module`` too. A
@@ -1306,10 +1363,21 @@ def single_why_not(m: dict, what: str, type_keys: bool = False) -> str:
     >>> single_why_not({"single": True, "result_fields": [{}]}, "f")
     ''
     """
-    if truthy(m.get("single")) and not m.get("result_fields"):
+    if (
+        truthy(m.get("single"))
+        and not m.get("result_fields")
+        and not declared_struct(m, records)
+    ):
         return (
             f"{what}: single = true (--single) needs result_fields "
             "(--result-field): they are the record's columns."
+            + (
+                " Or declare the struct once, for every method returning"
+                f" it: `just-makeit record <obj> {c_struct(m)} --field"
+                " <name>:<type> ...` (gh-2889)."
+                if c_struct(m)
+                else ""
+            )
         )
     if truthy(m.get("single")):
         return ""
@@ -1338,7 +1406,9 @@ SINGLE_FUNCTION_UNREAD_KEYS = (
 )
 
 
-def function_single_why_not(fn: dict) -> str:
+def function_single_why_not(
+    fn: dict, records: "list[dict] | None" = None
+) -> str:
     """Why module function *fn*'s record declaration cannot be honoured.
 
     gh-2755. :func:`single_why_not`, with the record's type keys refused
@@ -1359,7 +1429,12 @@ def function_single_why_not(fn: dict) -> str:
 which the C function returns by value. Drop one of the two.
     """
     what = f"function {str(fn.get('name') or '?')!r}"
-    why = single_why_not(fn, what, type_keys=True)
+    # gh-2889: a declared struct supplies the columns; a restatement of
+    # them beside it is a second copy, refused as a method's is.
+    restated = restated_columns(fn, records)
+    if restated:
+        return restated
+    why = single_why_not(fn, what, type_keys=True, records=records)
     if why or not truthy(fn.get("single")):
         return why
     for key in SINGLE_FUNCTION_UNREAD_KEYS:

@@ -1039,7 +1039,7 @@ def str_hint_rows(cfg: dict) -> "list[tuple[str, dict, str, bool]]":
             lambda p: _OPAQUE_STATE if truthy(p.get("opaque")) else "",
             parse_array_type,
         )
-        records = _config.records(cfg, comp)
+        records = _config.record_scope(cfg, comp)
 
         def method_why(p: dict, strict: bool) -> str:
             ptype = str(p.get("type", ""))

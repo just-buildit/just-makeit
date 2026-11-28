@@ -175,7 +175,9 @@ def component_ctx(
     # slots the comparison reads (gh-131's `builtin_reset_decl`). Applied
     # after, so the built-in's glue goes only once the method's is in place.
     _override_slots = overridden_builtin_slots(
-        object_name, C.methods(cfg, object_name), ctx
+        object_name,
+        C.resolved_methods(cfg, object_name),
+        ctx,  # gh-2889
     )
     ctx.update(
         Ctx.make_methods_ctx(
@@ -199,7 +201,7 @@ def component_ctx(
                 else frozenset()
             ),
             enums=C.enums(cfg),  # gh-1021
-            records=C.records(cfg, object_name),  # gh-1405
+            records=C.record_scope(cfg, object_name),  # gh-1405, gh-2889
             properties=C.properties(cfg, object_name),  # gh-1426
             csym=ctx["csym"],
             extra_methods=C.extra_methods(cfg, object_name),  # gh-1997

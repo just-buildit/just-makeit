@@ -1462,6 +1462,30 @@ the same columns, since the binding reads each one's offset from it (gh-2055).
 A duplicate column is refused: numpy takes the field names as a set and would
 silently drop one.
 
+A declared struct is also the record a `--single` method or module function
+returns by value (gh-2889). Give `--single --return-type <struct>` with no
+`--result-field`, and the columns come from the declaration -- this
+component's or any other's, so two objects returning one C struct state its
+columns once:
+
+```sh
+just-makeit record rx rx_status_t --field locked:int --field snr:double
+just-makeit method rx status --module m --single --return-type rx_status_t
+just-makeit method pool status --single --return-type rx_status_t
+```
+
+A column added with `just-makeit record rx rx_status_t ...` then reaches every
+binding and stub that returns the struct, each under its own module's Python
+type name. A struct is declared by one component only, and a `--result-field`
+restating a declared struct's columns is refused, either way round. A member
+returning another component's struct needs that component's header: give it
+`depends_on` (an object) or include the header in the module's `_core.h` (a
+module function).
+
+The declaring object, or its module, cannot be removed while a member
+elsewhere still returns the struct: the refusal names each of those members'
+`just-makeit remove`, to run first.
+
 Changing the C type an element stands for -- a scalar's `--type`, or a switch
 between scalar and struct -- is **refused** while any member speaks it. It
 changes their C prototypes, and jm never rewrites your definitions of them, so
