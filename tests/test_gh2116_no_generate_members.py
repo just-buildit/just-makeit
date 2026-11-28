@@ -30,9 +30,12 @@ GATE: every command `_cli.COMMANDS` classifies MUTATING -- read from the
         byte-identical, `jm apply` then exits 0 and leaves them so too, and
         a second `apply` changes nothing at all.
 
-      `jm remove` of a member is held to the same, ratcheted as a strict
-      xfail: `_remove.py` belongs to another lane of the wave that fixed
-      this, which fixes it there and deletes the mark.
+      `jm remove function` is held to the same, ratcheted as a strict
+      xfail: it writes the module's function files outside the module
+      render, in `_remove.py`, which belongs to another lane of the wave
+      that fixed this; that fix deletes the mark. (`jm remove method` and
+      `property` write only through the module render, whose writes ask
+      `C.may_write_module_file`, and pass.)
 """
 
 from __future__ import annotations
@@ -65,12 +68,15 @@ EDITED = {
     "src/p/mod/mod.pyi": AUTHOR_PY,
 }
 
-#: Why `jm remove` of a member is a strict xfail: a ratchet, deleted by
-#: the fix in `_remove.py`.
+#: Why `jm remove function` is a strict xfail: a ratchet, deleted by the
+#: fix in `_remove.py`.
 _REMOVE_WHY = (
-    "gh-2116: `jm remove` of a `no_generate` module's member rewrites the"
+    "gh-2116: `jm remove function` on a `no_generate` module rewrites the"
     " module's files; `_remove.py` is another lane's"
 )
+
+#: The ratcheted case, by its argv's leading words.
+_RATCHETED = ("remove", "function")
 
 #: Each MUTATING command -> the cases run on the shape. Held to
 #: `_cli.COMMANDS` by `test_every_mutating_command_has_a_case`.
@@ -281,7 +287,7 @@ def _params() -> list:
             id=" ".join(case),
             marks=(
                 [pytest.mark.xfail(strict=True, reason=_REMOVE_WHY)]
-                if verb == "remove"
+                if case[:2] == _RATCHETED
                 else []
             ),
         )
@@ -327,3 +333,19 @@ def test_a_command_leaves_a_no_generate_module_alone(shape, tmp_path, argv):
     assert again.returncode == 0, (again.stdout + again.stderr)[-3000:]
     changed = _changed(applied, _tree(root))
     assert not changed, f"a second `jm apply` changed {changed}"
+
+
+def test_the_module_render_asks_before_each_write(shape, tmp_path):
+    """Below the refusal, the module render's own writes -- fragment,
+    aggregator, CMakeLists, ``__init__.py``, ``.pyi`` -- each ask
+    `C.may_write_module_file`, the one predicate a later clause
+    (``status_allow``, gh-2843) joins. Called directly: every verb that
+    reaches it on this shape refuses first."""
+    from just_makeit import _object
+
+    root = tmp_path / "p"
+    shutil.copytree(shape, root, symlinks=True)
+    before = _tree(root)
+    _object._regenerate_module_now(root, C.load(root), "mod", "p")
+    changed = _changed(before, _tree(root), owned=True)
+    assert not changed, f"the module render rewrote {changed}"
