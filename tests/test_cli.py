@@ -430,7 +430,7 @@ class TestArrayParamCLI:
             cwd=dest,
         )
         assert r.returncode == 1
-        assert "array element type" in r.stderr
+        assert "is not a supported type" in r.stderr
 
     def test_function_array_param_accepted(self, tmp_path):
         dest = tmp_path / "proj"
@@ -459,7 +459,7 @@ class TestArrayParamCLI:
             cwd=dest,
         )
         assert r.returncode == 1
-        assert "array element type" in r.stderr
+        assert "is not a supported type" in r.stderr
 
     def test_method_bad_scalar_param_type_still_exits_1(self, tmp_path):
         dest = self._setup_module(tmp_path)
