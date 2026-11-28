@@ -241,3 +241,34 @@ def test_the_check_is_the_objects_predicate() -> None:
     assert len(re.findall(r"\\bvoid\\b\(\?!", text)) == 1, (
         "the `void`-not-`void *` test is spelled once"
     )
+
+
+# -- a capsule property key nothing reads ------------------------------------
+
+
+@pytest.mark.parametrize("key", ["setter", "getter", "fn"])
+def test_a_capsule_property_key_nothing_reads_is_refused(
+    tmp_path, key
+) -> None:
+    """``setter`` / ``getter`` / ``fn`` sat in the vocabulary but no reader
+    used them: the binding calls ``<backing>_set_<name>`` whatever they
+    say. Accepted and ignored, they read as a choice jm made."""
+    proj = _project(tmp_path, "capsule", "void", error=False)
+    cfg = C.load(proj)
+    cfg["module"]["cb"]["properties"][0][key] = "other_fn"
+    C.save(proj, cfg)
+    for args in (("apply",), ("status", "--check")):
+        r = run_cli(*args, cwd=proj)
+        assert r.returncode != 0, (args, r.stdout + r.stderr)
+        err = " ".join((r.stdout + r.stderr).split())
+        assert f"`{key}` is not read" in err, err
+        assert "cb_set_q()" in err, err
+    cfg["module"]["cb"]["properties"][0].pop(key)
+    C.save(proj, cfg)
+    _ok("apply", cwd=proj)
+
+
+def test_the_vocabulary_lists_no_key_the_capsule_refuses() -> None:
+    from just_makeit import _keys
+
+    assert not set(_keys.KIND_PROPERTY_DEAD_KEYS) & _keys.KIND_PROPERTY_KEYS
