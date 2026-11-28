@@ -271,12 +271,12 @@ def _object_paths(
         # override rather than a directory named after the module.
         sub = root / "src" / pkg / C.module_package_resolved(cfg, module)
         paths += [
-            sub / "tests" / f"test_{obj}.py",
+            sub / C.PY_TESTS_DIR / f"test_{obj}.py",
         ]
     else:
         paths += [
             root / "src" / pkg / f"{obj}.pyi",
-            root / "src" / pkg / "tests" / f"test_{obj}.py",
+            root / "src" / pkg / C.PY_TESTS_DIR / f"test_{obj}.py",
         ]
     return paths
 

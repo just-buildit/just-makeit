@@ -1930,7 +1930,8 @@ def run(
     )
     ctx["class_import"] = R.class_import(pkg, ctx["Component"])
     ctx["bench_run"] = R.bench_run(
-        f"src/{pkg}/benchmarks/bench_{comp}.py", C.is_pytest_benchmark(cfg)
+        f"src/{pkg}/{C.PY_BENCH_DIR}/bench_{comp}.py",
+        C.is_pytest_benchmark(cfg),
     )
     init_py_tmpl = R.PACKAGE_INIT_PY
 
@@ -2036,18 +2037,20 @@ def run(
         )
 
     _write(root / "src" / pkg / f"{comp}.pyi", R.render_component_pyi(ctx))
-    _write(root / "src" / pkg / "tests" / "__init__.py", R.TESTS_INIT_PY)
+    _write(
+        root / "src" / pkg / C.PY_TESTS_DIR / "__init__.py", R.TESTS_INIT_PY
+    )
     # gh-1489: born owned -- `apply` keeps it in step with the constructor
     # until the author deletes the token and takes it over.
     _write(
-        root / "src" / pkg / "tests" / f"test_{comp}.py",
+        root / "src" / pkg / C.PY_TESTS_DIR / f"test_{comp}.py",
         R.owned_scaffold(
             R.render_scaffold_py(pytest_tmpl, ctx), f"test_{comp}.py"
         ),
     )
 
     # Python benchmark
-    benchmarks_init = root / "src" / pkg / "benchmarks" / "__init__.py"
+    benchmarks_init = root / "src" / pkg / C.PY_BENCH_DIR / "__init__.py"
     if not benchmarks_init.exists():
         _write(benchmarks_init, "")
     # gh-1528: born owned too -- it constructs the object, so it goes stale
@@ -2055,7 +2058,7 @@ def run(
     # object declines it, and then the replay renders none to restore.
     if not no_python_bench:
         _write(
-            root / "src" / pkg / "benchmarks" / f"bench_{comp}.py",
+            root / "src" / pkg / C.PY_BENCH_DIR / f"bench_{comp}.py",
             R.owned_scaffold(
                 R.render_scaffold_py(bench_py_tmpl, ctx), f"bench_{comp}.py"
             ),

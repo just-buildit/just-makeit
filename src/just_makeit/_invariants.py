@@ -288,7 +288,7 @@ def file_for(root: Path, cfg: dict, comp: str, module: str = "") -> Path:
     for part in C.module_package_resolved(cfg, module).split("/"):
         if part:
             base = base / part
-    return base / "tests" / f"test_{comp}_invariants.py"
+    return base / C.PY_TESTS_DIR / f"test_{comp}_invariants.py"
 
 
 def kernel_is_stub(core_c: str, fn: str) -> bool:

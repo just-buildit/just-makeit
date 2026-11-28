@@ -2955,6 +2955,19 @@ def collocated_object(cfg: dict, module: str) -> str | None:
     return cname if cname in module_objects(cfg, module) else None
 
 
+#: The Python test package jm writes in every package directory it fills:
+#: ``src/<pkg>/tests/``, and ``<module package>/tests/`` for each module.
+PY_TESTS_DIR = "tests"
+#: The Python benchmark package beside it (``src/<pkg>/benchmarks/`` ...).
+PY_BENCH_DIR = "benchmarks"
+#: Every package directory jm writes below a package directory it fills,
+#: whatever the manifest declares. The writers (`_new`, `_init`,
+#: :func:`python_bench_file`) read these names, and
+#: :func:`namespace_errors` reserves them (gh-2854): a component or module
+#: there is hidden by jm's own package.
+PACKAGE_DIRS = (PY_TESTS_DIR, PY_BENCH_DIR)
+
+
 def namespace_errors(cfg: dict) -> "list[str]":
     """Every C symbol stem two owners claim in the one native namespace
     (gh-2142).
@@ -3083,6 +3096,40 @@ def namespace_errors(cfg: dict) -> "list[str]":
                 f" claim the Python name '{pkg}.{top}': the module makes"
                 f" it a package, which hides the component's extension"
                 " -- rename one of them"
+            )
+    # ...and jm's own packages (`PACKAGE_DIRS`): `src/<pkg>/tests/` and
+    # `benchmarks/`, and the same two in every module's package directory.
+    # A standalone `tests` (`<pkg>/tests.so`) or a module whose package path
+    # passes through one is hidden by, or mixed into, jm's package.
+    packages = sorted(
+        {module_package_resolved(cfg, m) for m in modules(cfg)} - {""}
+    )
+    reserved = {
+        f"{base}{d}"
+        for base in ["", *(f"{p}/" for p in packages)]
+        for d in PACKAGE_DIRS
+    }
+    for comp in sorted(standalone & reserved):
+        errors.append(
+            f"the standalone component '{comp}' takes the name of jm's own"
+            f" package '{pkg}.{comp}' (src/{pkg}/{comp}/), which hides its"
+            " extension -- rename it"
+        )
+    for m in modules(cfg):
+        parts = module_package_resolved(cfg, m).split("/")
+        hit = next(
+            (
+                "/".join(parts[: i + 1])
+                for i in range(len(parts))
+                if "/".join(parts[: i + 1]) in reserved
+            ),
+            None,
+        )
+        if hit:
+            errors.append(
+                f"module '{m}' puts its package in jm's own package"
+                f" '{pkg}.{hit.replace('/', '.')}' (src/{pkg}/{hit}/)"
+                " -- rename it, or give it another `package`"
             )
     return errors
 
@@ -4288,7 +4335,7 @@ def python_bench_file(
     for part in module_package_resolved(cfg, module).split("/"):
         if part:
             base = base / part
-    return base / "benchmarks" / f"bench_{component}.py"
+    return base / PY_BENCH_DIR / f"bench_{component}.py"
 
 
 def declined_python_benches(root: Path, cfg: dict) -> "list[str]":

@@ -69,7 +69,7 @@ def smoke_test_rel(pkg: str) -> str:
     >>> smoke_test_rel("demo")
     'src/demo/tests/test_project.py'
     """
-    return f"src/{pkg}/tests/{SMOKE_TEST}"
+    return f"src/{pkg}/{C.PY_TESTS_DIR}/{SMOKE_TEST}"
 
 
 #: The smoke test's version check, by how the package's ``__init__.py``
@@ -620,7 +620,10 @@ def run(
     # gh-2640: born owned, like each component's scaffolded test (gh-1489):
     # `apply` renders it whole while the token is there, so it follows the
     # manifest's version, and deleting the token makes it the author's.
-    _write(root / "src" / project / "tests" / "__init__.py", T.TESTS_INIT_PY)
+    _write(
+        root / "src" / project / C.PY_TESTS_DIR / "__init__.py",
+        T.TESTS_INIT_PY,
+    )
     _write(root / smoke_test_rel(project), _smoke_test_text(root, project, r))
     print()
 
