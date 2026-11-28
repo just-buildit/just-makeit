@@ -626,6 +626,38 @@ def _param_name_type(param) -> "tuple[str, str]":
     return str(param[0]), (str(param[1]) if len(param) > 1 else "")
 
 
+#: The name a method binds its ``arg_type`` input to (gh-2027).
+INPUT_NAME = "x"
+
+
+def input_locals(arg_type: str) -> "frozenset[str]":
+    """The C names a method's ``arg_type`` input claims in its binding.
+
+    The input is not a param, so :func:`param_name_clash` never saw it, yet
+    it is parsed into ``x`` and listed in the keyword table like one, and
+    its derived locals follow the param rules: ``x_obj`` / ``x_arr`` /
+    ``x_raw`` / ``x_len`` for an array, ``x_raw`` / ``x_obj`` for a scalar
+    the format char cannot parse directly. ``void`` takes nothing.
+
+    >>> sorted(input_locals("void"))
+    []
+    >>> sorted(input_locals("double"))
+    ['x']
+    >>> sorted(input_locals("float[]"))
+    ['x', 'x_arr', 'x_len', 'x_obj', 'x_raw']
+    """
+    if not arg_type or arg_type == "void":
+        return frozenset()
+    from ._context._parse import scalar_raw_locals
+
+    out = {INPUT_NAME}
+    if arg_type.endswith("[]"):
+        out.update(INPUT_NAME + suffix for suffix in ARRAY_PARAM_SUFFIXES)
+    else:
+        out |= scalar_raw_locals([(INPUT_NAME, arg_type)])
+    return frozenset(out)
+
+
 def result_local(params) -> str:
     """The C name a method wrapper stores its scalar result in.
 
@@ -648,6 +680,7 @@ def param_name_clash(
     outbuf: bool = False,
     multi_output: bool = False,
     declares: "frozenset[str]" = frozenset(),
+    arg_type: str = "void",
 ) -> "str | None":
     """Why *name* cannot be a param of this binding, or ``None``.
 
@@ -668,6 +701,10 @@ def param_name_clash(
         Further identifiers this one wrapper declares beside its params --
         the locals a module kind's own emitter writes (gh-1525), already
         spelled out, derived names included (a handle's ``x_raw``).
+    arg_type
+        The method's own input type (gh-2027). A method that is not
+        ``void`` reads its input as ``x``, so a param named ``x`` or one of
+        the names the input expands to is a second declaration of it.
 
     Returns
     -------
@@ -688,6 +725,10 @@ def param_name_clash(
     True
     >>> param_name_clash("w", [("w", "double")], declares=frozenset({"w"}))
     "'w' is a local the generated wrapper declares"
+    >>> param_name_clash("x", [("x", "double")], arg_type="float")[:38]
+    "'x' is a local this method's input use"
+    >>> param_name_clash("x", [("x", "double")]) is None
+    True
     """
     if name in WRAPPER_SIGNATURE:
         return (
@@ -738,6 +779,12 @@ def param_name_clash(
         return f"'{name}' is one of the extra outputs this binding returns"
     if name in declares:
         return f"'{name}' is a local the generated wrapper declares"
+    if name in input_locals(arg_type):
+        return (
+            f"'{name}' is a local this method's input uses: its arg_type"
+            f" '{arg_type}' is read as '{INPUT_NAME}'. Name the param"
+            f" something else, or make the input a param (arg_type void)"
+        )
     return None
 
 
@@ -753,6 +800,7 @@ def require_param_names(
     outbuf: bool = False,
     multi_output: bool = False,
     declares: "frozenset[str]" = frozenset(),
+    arg_type: str = "void",
 ) -> None:
     """Exit 1 when a param of *owner* collides with a name jm's C declares.
 
@@ -773,6 +821,7 @@ def require_param_names(
             outbuf=outbuf,
             multi_output=multi_output,
             declares=declares,
+            arg_type=arg_type,
         )
         if why:
             print(

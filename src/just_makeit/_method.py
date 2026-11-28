@@ -2035,6 +2035,10 @@ def run(
         params,
         outbuf=bool(variable_output or out_type),
         multi_output=bool(multi_output),
+        # gh-2027: the input is read as `x`, a binding local like any param.
+        # A manual stub, a varargs method and a codec method have no input
+        # of jm's to collide with.
+        arg_type="void" if (manual_stub or varargs or codec) else arg_type,
     )
     # gh-788: `record_dtype` is only meaningful as the element type of a
     # variable-output result, and the dtype cannot be built without the

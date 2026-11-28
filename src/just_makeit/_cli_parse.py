@@ -168,6 +168,16 @@ def parse_init_param_flag(remaining: list[str], i: int) -> tuple[tuple, int]:
 
             raise Refusal(f"--init-param '{spec}': {err}")
 
+    # gh-2132: an array init-param's element needs a numpy dtype, as a
+    # method's does; the manifest asks the same predicate. A constructor's
+    # `T[][]` is legal (two extents), so only the element is judged.
+    if T.is_array_param_type(ctype):
+        arr_why = T.array_type_error(ctype, allow_2d=True)
+        if arr_why:
+            from ._report import Refusal
+
+            raise Refusal(f"--init-param '{spec}': {arr_why}")
+
     # Optional array syntax: name:type:optional[:create_fn]
     if len(parts) >= 3 and parts[2].lower() == "optional":
         if not T.is_array_param_type(ctype):
