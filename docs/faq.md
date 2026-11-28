@@ -237,8 +237,12 @@ ______________________________________________________________________
 
 ## Why does `make test` use `unittest` instead of pytest?
 
-By default the generated tests use `python -m unittest discover` so that no
-extra dependencies are required. If you want pytest:
+By default the generated tests run under unittest discovery so that no extra
+dependencies are required. The recipe runs it through a one-line
+`python -c "..."` rather than `python -m unittest discover`, because before
+Python 3.12 `unittest discover` exits 0 when it finds no test at all; the
+generated `make test`, like `jm test`, fails a run that ran nothing, on every
+Python (gh-2642). If you want pytest:
 
 ```sh
 just-makeit new my_project --object obj --pytest

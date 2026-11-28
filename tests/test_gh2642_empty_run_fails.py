@@ -17,6 +17,7 @@ the source, so a new runner cannot skip it.
 from __future__ import annotations
 
 import ast
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -207,3 +208,31 @@ class TestOneRunner:
             _testrun.pytest([sys.executable, "-m"], ["--version"])
         done = subprocess.CompletedProcess([], _testrun.NO_TESTS_COLLECTED)
         assert not _testrun.Outcome(done, empty_passes=False).passed
+
+
+class TestTheGeneratedRecipe:
+    """The generated ``make test``'s unittest recipe reads an empty run as
+    `_testrun` does: it renders `UNITTEST_SNIPPET` itself, so there is one
+    declaration, and an empty run fails under the interpreter running this
+    suite -- which on a 3.9 to 3.11 leg is where `unittest discover` alone
+    passed it."""
+
+    @pytest.mark.parametrize("backend", ["cmake", "make"])
+    def test_the_makefile_runs_the_snippet(self, tmp_path, backend):
+        r = run_cli("new", "p", "--build-system", backend, cwd=tmp_path)
+        assert r.returncode == 0, r.stdout + r.stderr
+        mk = (tmp_path / "p" / "Makefile").read_text(encoding="utf-8")
+        assert _testrun.unittest_recipe("$(PYTHON)", "src") in mk, mk
+
+    def test_an_empty_make_test_fails(self, tmp_path):
+        if shutil.which("make") is None:
+            pytest.fail("needs make on PATH")
+        root = _empty_project(tmp_path, "--build-system", "make")
+        r = subprocess.run(
+            ["make", "test", f"PYTHON={sys.executable}"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "Ran 0 tests" in r.stderr, r.stderr

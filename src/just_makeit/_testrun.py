@@ -28,19 +28,33 @@ from typing import Any
 #: with it too, so one reading covers both runners.
 NO_TESTS_COLLECTED = 5
 
-#: ``unittest discover -s <argv[1]> -v`` that exits `NO_TESTS_COLLECTED` when
-#: no test ran, 0 when every test passed, and 1 otherwise -- Python 3.12's
-#: reading, on every Python.
-UNITTEST_SNIPPET = """\
-import sys, unittest
-prog = unittest.main(
-    module=None,
-    exit=False,
-    argv=["unittest", "discover", "-s", sys.argv[1], "-v"],
+#: ``unittest discover -s <argv[1]> -p "test_*.py" -v`` that exits
+#: `NO_TESTS_COLLECTED` when no test ran, 0 when every test passed, and 1
+#: otherwise -- Python 3.12's reading, on every Python. ONE line with only
+#: single quotes inside, because it has two readers: :func:`unittest` passes
+#: it as ``-c``, and the generated Makefile's ``make test`` recipe
+#: (`unittest_recipe`) spells it in double quotes, which ``sh`` and ``cmd``
+#: read alike.
+UNITTEST_SNIPPET = (
+    "import sys, unittest; "
+    "r = unittest.main(module=None, exit=False, argv=['unittest', "
+    "'discover', '-s', sys.argv[1], '-p', 'test_*.py', '-v']).result; "
+    "sys.exit(5 if not r.testsRun else 0 if r.wasSuccessful() else 1)"
 )
-result = prog.result
-sys.exit(5 if not result.testsRun else 0 if result.wasSuccessful() else 1)
-"""
+
+
+def unittest_recipe(python: str, start: str) -> str:
+    """The shell command that runs `UNITTEST_SNIPPET` over *start*.
+
+    What the generated Makefile's ``make test`` writes (gh-2642), so the
+    project's own recipe and ``jm test`` read an empty run alike.
+
+    Examples
+    --------
+    >>> unittest_recipe("$(PYTHON)", "src").startswith('$(PYTHON) -c "')
+    True
+    """
+    return f'{python} -c "{UNITTEST_SNIPPET}" {start}'
 
 
 @dataclass(frozen=True)
@@ -130,7 +144,7 @@ def unittest(
     empty_passes: bool,
     **kwargs: Any,
 ) -> Outcome:
-    """Run ``unittest discover -s <start> -v`` and return its `Outcome`.
+    """Run ``unittest discover -s <start> -p "test_*.py" -v``; its `Outcome`.
 
     Through `UNITTEST_SNIPPET`, so an empty run exits `NO_TESTS_COLLECTED`
     before Python 3.12 as well as after.

@@ -7,6 +7,7 @@
 from _compilers import default_cc
 from _jminc import INC_ROOT  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
+from just_makeit import _testrun  # noqa: E402
 import re
 import sys
 from pathlib import Path
@@ -400,7 +401,7 @@ class TestMakeTestRunner:
 
     def test_cmake_default_uses_unittest(self, tmp_path):
         mk = self._makefile(tmp_path)
-        assert "unittest discover" in mk
+        assert _testrun.UNITTEST_SNIPPET in mk
 
     def test_cmake_default_no_pytest_invocation(self, tmp_path):
         mk = self._makefile(tmp_path)
@@ -414,13 +415,13 @@ class TestMakeTestRunner:
 
     def test_cmake_pytest_flag_no_unittest(self, tmp_path):
         mk = self._makefile(tmp_path, pytest_=True)
-        assert "unittest discover" not in mk
+        assert _testrun.UNITTEST_SNIPPET not in mk
 
     # ── Plain Makefile (--build-system make) ──────────────────────────────
 
     def test_make_default_uses_unittest(self, tmp_path):
         mk = self._makefile_simple(tmp_path)
-        assert "unittest discover" in mk
+        assert _testrun.UNITTEST_SNIPPET in mk
 
     def test_make_default_no_pytest_invocation(self, tmp_path):
         mk = self._makefile_simple(tmp_path)
@@ -432,7 +433,7 @@ class TestMakeTestRunner:
 
     def test_make_pytest_flag_no_unittest(self, tmp_path):
         mk = self._makefile_simple(tmp_path, pytest_=True)
-        assert "unittest discover" not in mk
+        assert _testrun.UNITTEST_SNIPPET not in mk
 
     # ── No double-tab orphan line ──────────────────────────────────────────
 
