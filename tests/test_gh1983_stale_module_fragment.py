@@ -186,3 +186,32 @@ def test_add_remove_readd_builds_and_passes(tmp_path):
     assert s.returncode == 0, s.stdout
     r = run_cli("test", cwd=root)
     assert r.returncode == 0, (r.stdout + r.stderr)[-4000:]
+
+
+def test_a_view_named_for_an_object_of_its_module_is_refused(tmp_path):
+    """Two members, one fragment: a view's id is its lowercased class
+    name, an object's its name, and both rendered into one
+    ``<cname>_ext_<id>.c`` that the aggregator included twice -- a tree
+    that did not build while `status --check` called it clean. Refused by
+    `namespace_errors`, so at the verb (its `save`) and at `load` alike."""
+    root = _project(tmp_path, "flat", "m")
+    # The object's class renamed, as gh-1277's shape has it, so the view's
+    # class name is free and only its fragment collides.
+    cfg = C.load(root)
+    cfg["o"]["class_name"] = "Builder"
+    C.save(root, cfg)
+    before = _tree(root)
+    r = run_cli(
+        "view", "k", "O", "--module", "m", "--create-fn", "k_mk_o",
+        cwd=root,
+    )  # fmt: skip
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "both bind through m_ext_o.c" in r.stderr, r.stderr
+    assert _tree(root) == before
+
+    cfg = C.load(root)
+    cfg["k"]["views"] = [{"class_name": "O", "create_fn": "k_mk_o"}]
+    text = (root / C.FILENAME).read_text(encoding="utf-8")
+    with pytest.raises(Exception, match="both bind through m_ext_o.c"):
+        C.save(root, cfg)
+    assert (root / C.FILENAME).read_text(encoding="utf-8") == text

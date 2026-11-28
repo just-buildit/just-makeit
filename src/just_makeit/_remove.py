@@ -936,7 +936,7 @@ def _remove_state(
     print(f"Done!  State field '{name}' removed.")
 
 
-def _owner(cfg: dict, obj: str, view: str) -> "tuple[dict, str]":
+def _owner(cfg: dict, obj: str, view_class: str) -> "tuple[dict, str]":
     """The manifest table a member of *obj* -- or of its view *view* --
     lives in, and how the messages name it (gh-2066).
 
@@ -949,27 +949,32 @@ def _owner(cfg: dict, obj: str, view: str) -> "tuple[dict, str]":
     if obj not in C.components(cfg):
         print(f"error: object '{obj}' not found.", file=sys.stderr)
         sys.exit(1)
-    if not view:
+    if not view_class:
         return cfg.setdefault(obj, {}), f"object '{obj}'"
-    entry = C._find_view(cfg, obj, view)
-    if entry is None:
+    view_row = C._find_view(cfg, obj, view_class)
+    if view_row is None:
         declared = [v.get("class_name") for v in C.views(cfg, obj)]
         print(
-            f"error: object '{obj}' has no view '{view}'."
+            f"error: object '{obj}' has no view '{view_class}'."
             + (f" Declared: {declared}" if declared else " None declared."),
             file=sys.stderr,
         )
         sys.exit(1)
-    return entry, f"view '{view}' of '{obj}'"
+    return view_row, f"view '{view_class}' of '{obj}'"
 
 
 def _remove_method(
-    root: Path, cfg: dict, obj: str, name: str, force: bool, view: str = ""
+    root: Path,
+    cfg: dict,
+    obj: str,
+    name: str,
+    force: bool,
+    view_class: str = "",
 ) -> None:
     # gh-1591: the C names these messages point at.
     csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
-    owner, where = _owner(cfg, obj, view)
+    owner, where = _owner(cfg, obj, view_class)
     methods = owner.get("methods", [])
     if not any(m.get("name") == name for m in methods):
         print(
@@ -988,7 +993,7 @@ def _remove_method(
     # entry reusing a parent method's name without `fn` overrides its doc
     # and binds the parent's, which stays (gh-2498); any other binds its own.
     binds = (
-        not view
+        not view_class
         or bool(entry.get("fn"))
         or name not in {m.get("name") for m in cfg[obj].get("methods", [])}
     )
@@ -1035,12 +1040,17 @@ def _bench_still_calls(root: Path, obj: str, sym: str) -> str:
 
 
 def _remove_property(
-    root: Path, cfg: dict, obj: str, name: str, force: bool, view: str = ""
+    root: Path,
+    cfg: dict,
+    obj: str,
+    name: str,
+    force: bool,
+    view_class: str = "",
 ) -> None:
     # gh-1591: the C names these messages point at.
     csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
-    owner, where = _owner(cfg, obj, view)
+    owner, where = _owner(cfg, obj, view_class)
     props = owner.get("properties", [])
     entry = next((p for p in props if p.get("name") == name), None)
     if entry is None:
@@ -1072,7 +1082,7 @@ def _remove_property(
         if truthy(entry.get("writable"))
         else []
     )
-    overrides = bool(view) and name in {
+    overrides = bool(view_class) and name in {
         p.get("name") for p in cfg[obj].get("properties", [])
     }
     if is_field:
@@ -1092,7 +1102,12 @@ def _remove_property(
 
 
 def _remove_warning(
-    root: Path, cfg: dict, obj: str, name: str, force: bool, view: str = ""
+    root: Path,
+    cfg: dict,
+    obj: str,
+    name: str,
+    force: bool,
+    view_class: str = "",
 ) -> None:
     """Drop a declared ``[[<obj>.warnings]]`` entry (gh-490).
 
@@ -1107,7 +1122,7 @@ def _remove_warning(
     # gh-1591: the C names these messages point at.
     csym = CSYM.stem(cfg, obj)
     pkg = C.project_name(cfg)
-    owner, where = _owner(cfg, obj, view)
+    owner, where = _owner(cfg, obj, view_class)
     warnings = owner.get("warnings", [])
     entry = next((w for w in warnings if w.get("condition") == name), None)
     if entry is None:
@@ -1206,7 +1221,7 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
 
 
 def _remove_view_create_error(
-    root: Path, cfg: dict, obj: str, view: str, force: bool
+    root: Path, cfg: dict, obj: str, view_class: str, force: bool
 ) -> None:
     """Drop a view's OWN ``create_error`` translation (gh-2066).
 
@@ -1218,7 +1233,7 @@ def _remove_view_create_error(
     refused, as `_remove_create_error` refuses the parent's (gh-2552).
     """
     pkg = C.project_name(cfg)
-    entry, where = _owner(cfg, obj, view)
+    entry, where = _owner(cfg, obj, view_class)
     if "create_error" not in entry and "create_error_message" not in entry:
         print(
             f"error: {where} declares no create_error of its own (it "
@@ -1229,7 +1244,7 @@ def _remove_view_create_error(
     inherited = C.create_error(cfg, obj)
     if C.view_create_why(entry) and not inherited:
         raise Refusal(
-            f"view '{view}' declares create_why, raised as its own "
+            f"view '{view_class}' declares create_why, raised as its own "
             f"create_error, and '{obj}' declares none to inherit. Drop "
             "create_why from the manifest and run `jm apply` first."
         )
@@ -1252,7 +1267,7 @@ def _remove_view_create_error(
     _regenerate_object_bindings(root, cfg, obj, pkg)
     print()
     print(
-        f"Done!  create_error removed — '{view}' failures now report {then}."
+        f"Done!  create_error removed — '{view_class}' failures now report {then}."
     )
 
 
@@ -1507,7 +1522,7 @@ def run(
     module: str | None = None,
     object_name: str | None = None,
     force: bool = False,
-    view: str = "",
+    view_class: str = "",
 ) -> None:
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
@@ -1519,7 +1534,7 @@ def run(
     cfg = C.load(root)
     # gh-2066: `--view` addresses a view's own member, as the add verbs'
     # `--view` declared it; only the kinds a view has take it.
-    if view and kind not in VIEW_KINDS:
+    if view_class and kind not in VIEW_KINDS:
         print(
             f"error: --view applies to {', '.join(VIEW_KINDS)}, not '{kind}'.",
             file=sys.stderr,
@@ -1545,7 +1560,7 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        _remove_method(root, cfg, object_name, name, force, view)
+        _remove_method(root, cfg, object_name, name, force, view_class)
     elif kind == "property":
         if not object_name:
             print(
@@ -1553,7 +1568,7 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        _remove_property(root, cfg, object_name, name, force, view)
+        _remove_property(root, cfg, object_name, name, force, view_class)
     elif kind == "warning":
         if not object_name:
             print(
@@ -1562,7 +1577,7 @@ def run(
             )
             sys.exit(1)
         # `name` is the warning's condition — see _remove_warning.
-        _remove_warning(root, cfg, object_name, name, force, view)
+        _remove_warning(root, cfg, object_name, name, force, view_class)
     elif kind == "error":
         if not object_name:
             print(
@@ -1570,8 +1585,10 @@ def run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        if view:
-            _remove_view_create_error(root, cfg, object_name, view, force)
+        if view_class:
+            _remove_view_create_error(
+                root, cfg, object_name, view_class, force
+            )
         else:
             _remove_create_error(root, cfg, object_name, force)
     elif kind == "view":

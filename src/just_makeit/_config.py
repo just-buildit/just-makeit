@@ -3148,6 +3148,26 @@ def namespace_errors(cfg: dict) -> "list[str]":
                 f" '{pkg}.{hit.replace('/', '.')}' (src/{pkg}/{hit}/)"
                 " -- rename it, or give it another `package`"
             )
+    # gh-1983: and a module's binding fragments, `<cname>_ext_<id>.c` -- an
+    # object's id is its name, a view's its lowercased class name
+    # (`view_frag_id`). Two members of one id are rendered into one file,
+    # which the aggregator includes twice: a view `Frame` over an object
+    # `frame` (renamed `FrameBuilder`) built `unknown type name
+    # 'FrameBuilderObject'` on a tree `status --check` called clean.
+    for m in modules(cfg):
+        cname = module_paths(m).cname
+        frag_at = {o: f"object '{o}'" for o in module_objects(cfg, m)}
+        for parent, v in module_views(cfg, m):
+            fid = view_frag_id(v)
+            who = f"view '{v.get('class_name')}' of '{parent}'"
+            if fid in frag_at:
+                errors.append(
+                    f"{frag_at[fid]} and {who} in module '{m}' both bind"
+                    f" through {cname}_ext_{fid}.c, the fragment named for"
+                    " the lowercased class name -- rename the view"
+                )
+            else:
+                frag_at[fid] = who
     return errors
 
 
@@ -8148,6 +8168,20 @@ def add_view(cfg: dict, component: str, view: dict) -> dict:
     """Append a view entry to the component's views list (gh-504)."""
     cfg.setdefault(component, {}).setdefault("views", []).append(view)
     return cfg
+
+
+def view_frag_id(view: dict) -> str:
+    """The id of *view*'s binding fragment, ``<cname>_ext_<id>.c`` (gh-504).
+
+    Its lowercased ``class_name``: distinct from the parent's, whose
+    fragment id is the component name, unless the class is named for an
+    object of its module -- which :func:`namespace_errors` refuses
+    (gh-1983). The one derivation; ``_object._view_frag_id`` reads it.
+
+    >>> view_frag_id({"class_name": "BurstAcq"})
+    'burstacq'
+    """
+    return str(view["class_name"]).lower()
 
 
 def view_module(cfg: dict, component: str, view: dict) -> str:
