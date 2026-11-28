@@ -20,6 +20,7 @@ from ._report import Refusal
 from . import _render as T
 from . import _incpath as INC
 from . import _pins
+from . import _testrun
 from ._docstring import docstring_literal
 from . import _pythons
 from . import _undo
@@ -166,8 +167,10 @@ def _make_project_ctx(
     else:
         ensure_win = ""
         ensure_unix = ""
-        cmd_win = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
-        cmd_unix = '$(PYTHON) -m unittest discover -s src -p "test_*.py" -v'
+        # gh-2642: `unittest discover` alone exits 0 on an empty run before
+        # Python 3.12; the snippet `jm test` runs fails it on every Python.
+        cmd_win = _testrun.unittest_recipe("$(PYTHON)", "src")
+        cmd_unix = cmd_win
 
     return {
         "package": project,

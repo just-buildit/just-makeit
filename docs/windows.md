@@ -120,7 +120,9 @@ ctest --preset windows-release
 ```
 
 The build writes the extension (`.pyd`) into `src\<package>\`, next to its
-`.pyi`, so the last line imports it from there. `cmake --list-presets` shows
+`.pyi`, so the last line imports it from there. Before Python 3.12 that line
+exits 0 even when it finds no test; `make test` and `jm test` fail such a run
+on every Python (gh-2642). `cmake --list-presets` shows
 the rest: `windows-debug` and `windows-relwithdebinfo`. Preset builds go to
 `out\build\<preset>\`, which the generated `.gitignore` ignores.
 
