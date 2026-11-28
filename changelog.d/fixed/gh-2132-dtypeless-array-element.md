@@ -7,5 +7,7 @@
     spoken as `s[]` did the same; and so did an `--init-param` `a:bool[]`.
     All of them ask `_types.array_type_error` now (a method's params and
     `arg_type`, a function's params, an init-param of an object or a view,
-    and a handle or capsule array), and the refusal names the spelling that
-    works (`uint8_t[]`, `int32_t[]`, `double _Complex[]`).
+    and, at manifest load, a handle method's `args` and `returns` and a
+    capsule method's `arg_type` and `return_type`), and the refusal names
+    the spelling that works (`uint8_t[]`, `int32_t[]`,
+    `double _Complex[]`).
