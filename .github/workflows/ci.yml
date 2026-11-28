@@ -717,7 +717,7 @@ jobs:
       # was the suite or the runner until a draft PR printed this line: the
       # job log names the image and the region, never the hardware.
       - name: Runner CPU
-        run: lscpu | grep -m1 'Model name'
+        run: lscpu | grep 'Model name' | sed -n 1p
 
       # `make`, not a bespoke pytest line: the Makefile is the SSOT for how a
       # tool runs. gh-978's COVERAGE_ENV (absolute COVERAGE_PROCESS_START and

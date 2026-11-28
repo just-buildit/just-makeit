@@ -183,7 +183,7 @@ jobs:
             # gh-1392: read pip's output in full. `pip show | grep -q` closes
             # the pipe under pip, which on Windows is exit 120, not SIGPIPE.
             shown="$(pip show "just-makeit")"
-            printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
+            printf '%s\n' "$shown" | grep "Version: ${VERSION#v}" >/dev/null
           fi
 
       - name: Install just-makeit from PyPI (with retry)
@@ -196,7 +196,7 @@ jobs:
           RELEASE_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
           VERSION="${INPUT_VERSION:-${RELEASE_TITLE#Release }}"
-          if ! printf '%s' "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+          if ! printf '%s' "$VERSION" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+' >/dev/null; then
             echo "::error::no release version to test: '$VERSION'"
             exit 1
           fi
@@ -206,7 +206,7 @@ jobs:
             sleep 30
           done
           shown="$(pip show "just-makeit")"          # gh-1392: not a pipe
-          printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
+          printf '%s\n' "$shown" | grep "Version: ${VERSION#v}" >/dev/null
 
       # pytest belongs to the ENVIRONMENT, not to the steps that happen to
       # need it today. It was installed per-step (ce15733, 2026-05-16) until
@@ -356,8 +356,8 @@ jobs:
       - name: Verify C consumers (pkg-config + CMake find_package)
         run: |
           PREFIX="$HOME/fir_prefix"
-          LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | head -1)
-          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my_fir.pc" -exec dirname {} \; | head -1)
+          LIB_DIR=$(find "$PREFIX" -name "libmy_fir.*" -exec dirname {} \; | sed -n 1p)
+          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my_fir.pc" -exec dirname {} \; | sed -n 1p)
 
           cat > /tmp/fir_consumer.c << 'EOF'
           #include "my_fir/my_fir.h"
@@ -581,8 +581,8 @@ jobs:
       - name: Verify filter_module C consumers (pkg-config + CMake find_package)
         run: |
           PREFIX="$HOME/filters_prefix"
-          LIB_DIR=$(find "$PREFIX" -name "libmy_filters.*" -exec dirname {} \; | head -1)
-          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my_filters.pc" -exec dirname {} \; | head -1)
+          LIB_DIR=$(find "$PREFIX" -name "libmy_filters.*" -exec dirname {} \; | sed -n 1p)
+          export PKG_CONFIG_PATH=$(find "$PREFIX" -name "my_filters.pc" -exec dirname {} \; | sed -n 1p)
 
           cat > /tmp/filters_consumer.c << 'EOF'
           #include "my_filters/my_filters.h"
@@ -878,7 +878,7 @@ jobs:
             # gh-1392: read pip's output in full. `pip show | grep -q` closes
             # the pipe under pip, which on Windows is exit 120, not SIGPIPE.
             shown="$(python -m pip show "just-makeit")"
-            printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
+            printf '%s\n' "$shown" | grep "Version: ${VERSION#v}" >/dev/null
           fi
 
       - name: Install just-makeit from PyPI (with retry)
@@ -889,7 +889,7 @@ jobs:
           RELEASE_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
           VERSION="${INPUT_VERSION:-${RELEASE_TITLE#Release }}"
-          if ! printf '%s' "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+          if ! printf '%s' "$VERSION" | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+' >/dev/null; then
             echo "::error::no release version to test: '$VERSION'"
             exit 1
           fi
@@ -900,7 +900,7 @@ jobs:
             sleep 30
           done
           shown="$(python -m pip show "just-makeit")"  # gh-1392: not a pipe
-          printf '%s\n' "$shown" | grep -q "Version: ${VERSION#v}"
+          printf '%s\n' "$shown" | grep "Version: ${VERSION#v}" >/dev/null
 
       # CC / CMAKE_GENERATOR for THIS step only: the examples call `cmake -B
       # build` themselves, as a Windows user running them by hand would, and

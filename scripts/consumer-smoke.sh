@@ -84,10 +84,10 @@ if [[ -n ${CONSUMER_CMAKE_VERSION:-} ]]; then
             | tar -xz -C "$WORK"
         PATH="$WORK/cmake-$v-Linux-x86_64/bin:$PATH"
     fi
-    [[ $(cmake --version | head -1) == "cmake version $v" ]] \
-        || die "wanted CMake $v, got: $(cmake --version | head -1)"
+    [[ $(cmake --version | sed -n 1p) == "cmake version $v" ]] \
+        || die "wanted CMake $v, got: $(cmake --version | sed -n 1p)"
 fi
-say "$(cmake --version | head -1); pkg-config $(pkg-config --version)"
+say "$(cmake --version | sed -n 1p); pkg-config $(pkg-config --version)"
 
 # A hint already in the environment would make this pass for the wrong
 # reason: the point is what works WITHOUT one. The loader path too (gh-1869):
@@ -294,7 +294,7 @@ target_link_libraries(both_static PRIVATE $name::${name}-static
 EOF
     runs() { # program, expected output
         local out
-        out=$("$1" 2>&1) || { echo "  exited $?: $out" | head -3; return 1; }
+        out=$("$1" 2>&1) || { echo "  exited $?: $out" | sed -n 1,3p; return 1; }
         [[ $out == "$2" ]] || { echo "  printed '$out', not $2"; return 1; }
     }
     check() { # label, program, expected output, [ratchet id]
@@ -416,7 +416,7 @@ int main (void)
 EOF
 delta_runs() { # program
     local out
-    out=$("$1" 2>&1) || { echo "  exited $?: $out" | head -3; return 1; }
+    out=$("$1" 2>&1) || { echo "  exited $?: $out" | sed -n 1,3p; return 1; }
     [[ $out == "30,5,7" ]] || { echo "  printed '$out', not 30,5,7"; return 1; }
 }
 say "consume delta"
@@ -453,7 +453,7 @@ int main (void)
 EOF
 ext_only_runs() { # program
     local out
-    out=$("$1" 2>&1) || { echo "  exited $?: $out" | head -3; return 1; }
+    out=$("$1" 2>&1) || { echo "  exited $?: $out" | sed -n 1,3p; return 1; }
     [[ $out == "30" ]] || { echo "  printed '$out', not 30"; return 1; }
 }
 ext_only_pc() {
@@ -592,7 +592,7 @@ prefixed_include() {
     # shellcheck disable=SC2046 # splitting the flags IS the usage
     $CC -c "$tu" $(pkg-config --cflags beta alpha) -o "$WORK/side-by-side.o" \
         2>"$WORK/side-by-side.err" \
-        || { sed 's/^/  /' "$WORK/side-by-side.err" | head -5; return 1; }
+        || { sed 's/^/  /' "$WORK/side-by-side.err" | sed -n 1,5p; return 1; }
 }
 
 say "packages side by side"
@@ -639,7 +639,7 @@ twofir() { # label, extra link words...
     shift
     # shellcheck disable=SC2046,SC2086 # splitting the flags IS the usage
     $CC "$WORK/twofir.c" "$@" -o "$exe" 2>"$exe.err" \
-        || { sed 's/^/  /' "$exe.err" | head -5; return 1; }
+        || { sed 's/^/  /' "$exe.err" | sed -n 1,5p; return 1; }
     out=$("$exe" 2>&1) || { echo "  exited: $out"; return 1; }
     [[ $out == "2,2000" ]] || { echo "  printed '$out', not 2,2000"; return 1; }
 }
