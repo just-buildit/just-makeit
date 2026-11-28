@@ -142,9 +142,10 @@ ______________________________________________________________________
 
 `TestMakeTestRunner` in `test_new.py` asserts:
 
-- Default (no `--pytest`): `unittest discover` present, `pytest src/` absent,
-    no orphan tab-only recipe line.
-- With `--pytest`: `pytest src/` present, `unittest discover` absent.
+- Default (no `--pytest`): `_testrun.UNITTEST_SNIPPET` present (unittest
+    discovery that fails a run of no tests on every Python, gh-2642),
+    `pytest src/` absent, no orphan tab-only recipe line.
+- With `--pytest`: `pytest src/` present, the snippet absent.
 
 Both the CMake `Makefile` and the `--build-system make` `Makefile` are covered. Update
 these assertions if you intentionally change the runner logic.
