@@ -36,45 +36,63 @@ _ROWS = {
 }
 
 
-def _project(tmp_path: Path, kind: str, ty: str, value: str) -> Path:
-    """A project whose object `o` has one row of *kind* with the TOML
-    value *value* (unquoted text, so `true` is a TOML bool)."""
-    tmp_path.mkdir(exist_ok=True)
-    r = run_cli("new", "p", "--object", "o", cwd=tmp_path)
+def _tree(root: Path) -> "dict[str, str]":
+    """Every file `apply` may write under *root*, by relative path."""
+    return {
+        str(p.relative_to(root)): p.read_text(encoding="utf-8")
+        for sub in ("native", "src", "objects")
+        for p in sorted((root / sub).rglob("*"))
+        if p.suffix in {".c", ".h", ".pyi", ".py", ".txt", ".toml"}
+    }
+
+
+@pytest.fixture(scope="module")
+def project(tmp_path_factory):
+    """ONE project, applied; each case rewrites `objects/o.toml` in place
+    and puts it back (a `jm new` per case cost two minutes)."""
+    tmp = tmp_path_factory.mktemp("gh2820")
+    r = run_cli("new", "p", "--object", "o", cwd=tmp)
     assert r.returncode == 0, r.stderr
-    root = tmp_path / "p"
+    root = tmp / "p"
     frag = root / "objects" / "o.toml"
-    text = frag.read_text(encoding="utf-8")
+    return root, frag, frag.read_text(encoding="utf-8")
+
+
+def _set(project, kind: str, ty: str, value: str) -> None:
+    """Write the fragment with one row of *kind* defaulting to *value*
+    (unquoted text, so `true` is a TOML bool)."""
+    _root, frag, base = project
     row = _ROWS[kind].format(ty=ty) + f"default = {value}\n"
-    frag.write_text(text + "\n" + row, encoding="utf-8")
-    return root
+    frag.write_text(base + "\n" + row, encoding="utf-8")
+
+
+def _restore(project) -> None:
+    root, frag, base = project
+    frag.write_text(base, encoding="utf-8")
+    assert run_cli("apply", cwd=root).returncode == 0
 
 
 @pytest.mark.parametrize("kind", sorted(_ROWS))
 @pytest.mark.parametrize("value", ["true", "false"])
-def test_a_bool_default_is_accepted_on_a_bool_row(tmp_path, kind, value):
-    """`default = true` on a bool row applies, and is the C `true`."""
-    root = _project(tmp_path, kind, "bool", value)
+def test_a_bool_default_is_accepted_on_a_bool_row(project, kind, value):
+    """`default = true` on a bool row applies, and renders every generated
+    file as the same row written the way jm writes it (`"true"`)."""
+    root = project[0]
+    _set(project, kind, "bool", value)
     r = run_cli("apply", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Traceback" not in r.stderr
     r = run_cli("status", "--check", cwd=root)
     assert r.returncode == 0, r.stdout + r.stderr
-    # The oracle is the same project written the way jm writes it: the
-    # bool respelled `"true"` must render every generated file identically.
-    twin = _project(tmp_path / "twin", kind, "bool", f'"{value}"')
-    run_cli("apply", cwd=twin)
-    assert _tree(root) == _tree(twin)
-
-
-def _tree(root: Path) -> "dict[str, str]":
-    """Every generated source file under *root*, by relative path."""
-    return {
-        str(p.relative_to(root)): p.read_text(encoding="utf-8")
-        for sub in ("native", "src")
-        for p in sorted((root / sub).rglob("*"))
-        if p.suffix in {".c", ".h", ".pyi", ".py", ".txt"}
-    }
+    got = _tree(root)
+    # The manifest text differs by design; the oracle is what it renders.
+    got.pop("objects/o.toml")
+    _set(project, kind, "bool", f'"{value}"')
+    assert run_cli("apply", cwd=root).returncode == 0
+    want = _tree(root)
+    want.pop("objects/o.toml")
+    assert got == want
+    _restore(project)
 
 
 @pytest.mark.parametrize("kind", sorted(_ROWS))
@@ -83,15 +101,19 @@ def _tree(root: Path) -> "dict[str, str]":
     [("int", "5"), ("double", "1.5"), ("int", "true"), ("bool", "[1]")],
 )
 def test_any_other_non_string_default_is_one_refusal_line(
-    tmp_path, kind, ty, value
+    project, kind, ty, value
 ):
     """A number, a list, or a bool on a non-bool row is refused in one
     `error:` line naming the row -- through `apply` and `status --check`,
-    never a traceback."""
-    root = _project(tmp_path, kind, ty, value)
+    never a traceback -- and `apply` writes nothing."""
+    root = project[0]
+    _set(project, kind, ty, value)
+    before = _tree(root)
     for cmd in (("apply",), ("status", "--check")):
         r = run_cli(*cmd, cwd=root)
         assert r.returncode != 0, cmd
         assert "Traceback" not in r.stderr, r.stderr
         assert "default = " in r.stderr and "w]" in r.stderr, r.stderr
         assert "must be a string" in r.stderr, r.stderr
+    assert _tree(root) == before
+    _restore(project)
