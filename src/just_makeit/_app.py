@@ -61,7 +61,6 @@ from ._context._diagnostics import WHY_C_ARG, WHY_DECL, WHY_LOCAL
 from ._docstring import TRIPLE_QUOTE, class_import_path
 from ._object import _fmt_from_import
 from ._pyfmt import call_lines, str_kwarg_lines
-from ._init import _to_title
 from ._init import _write as _write_guarded
 
 
@@ -314,16 +313,19 @@ def _ctor_flags(cfg: dict, component: str) -> list[dict]:
     them (the awgn/ddc/no_state pattern), and otherwise from the `--state`
     ctor vars (the simple-object pattern) — mirroring how create() is generated
     (gh-184). A string-enum init param becomes a `choice` flag (its C arg is the
-    enum index `int`); array init params have no scalar CLI form and are
-    skipped (the body must supply them).
+    enum index `int`). A param with no CLI form -- an array, a path, a byte
+    buffer, a foreign handle -- gets no flag: the app leaves it to the
+    binding's default, and the C call passes the seed the smoke test does
+    (:func:`_ctor_c_args`). One the binding REQUIRES has no default to leave
+    it to, so the app is refused (:func:`_unflagged_required`, gh-2564).
     """
     init = C.init_params(cfg, component)
     if init:
         out = []
         for p in init:
             name, ct, dflt = p[0], p[1], p[2]
-            if T.is_array_param_type(ct):
-                continue  # arrays aren't CLI scalars
+            if _no_cli_form(p):
+                continue
             if T.is_string_enum_type(ct):
                 out.append(
                     {
@@ -355,6 +357,53 @@ def _ctor_flags(cfg: dict, component: str) -> list[dict]:
             {"name": n, "type": t, "default": d, "help": "", "ctor": True}
         )
     return out
+
+
+def _no_cli_form(p: tuple) -> bool:
+    """Whether init param *p* is one no command-line flag can spell.
+
+    An array (gh-2564), a filesystem ``path``, an opaque ``bytes`` buffer
+    and a foreign handle (a ``capsule``, or an ``object`` reference, which
+    resolves to one) -- every kind but a scalar and a string enum.
+
+    >>> _no_cli_form(("taps", "float[]", "[]"))
+    True
+    >>> _no_cli_form(("gain", "float", "1.0"))
+    False
+    """
+    ct = p[1]
+    return (
+        T.is_array_param_type(ct)
+        or ct in ("path", "bytes")
+        or bool(len(p) > 10 and p[10])
+    )
+
+
+def _unflagged_required(cfg: dict, component: str) -> "list[str]":
+    """The constructor parameters *component*'s app cannot supply (gh-2564).
+
+    A parameter with no CLI form (:func:`_no_cli_form`) that the binding
+    also cannot do without: an array with neither ``default = "[]"`` nor
+    ``optional`` dispatch, a path, a byte buffer, a handle, and every
+    ``--array-arg``. The app is regenerated whole, so nothing written into
+    it could supply one: the C face would pass the smoke test's ``NULL``
+    and the Python face would leave a required argument out.
+
+    >>> cfg = {"o": {"init_params": [
+    ...     {"name": "taps", "type": "float[]"},
+    ...     {"name": "win", "type": "float[]", "default": "[]"}]}}
+    >>> _unflagged_required(cfg, "o")
+    ['taps']
+    """
+    init = C.init_params(cfg, component)
+    if init:
+        return [
+            p[0]
+            for p in init
+            if _no_cli_form(p)
+            and not (T.is_array_param_type(p[1]) and (p[2] or p[6]))
+        ]
+    return [name for name, _dtype in C.array_args(cfg, component)]
 
 
 def _value_flag(
@@ -509,11 +558,17 @@ def _argparse_block(flags: list[dict]) -> str:
         pytype = _PYTYPE.get(f["type"], "str")
         pydef = _py_default(f["default"], f["type"]) if f["default"] else None
         # gh-2557: an unset flag the call leaves out is documented by the
-        # binding's own default, the C spelling, not by `None`.
-        helptext = _flag_help(
-            f["name"],
-            f["help"],
-            f["c_default"] if f.get("omit_unset") else pydef,
+        # binding's own default, the C spelling, not by `None`. gh-2564: a
+        # required one has no default to document, as a required choice
+        # has none (gh-2743).
+        helptext = (
+            f["help"] or f["name"]
+            if f.get("required")
+            else _flag_help(
+                f["name"],
+                f["help"],
+                f["c_default"] if f.get("omit_unset") else pydef,
+            )
         )
         if f.get("required"):
             spec = "required=True"
@@ -832,15 +887,33 @@ def _py_io_loop(
 
 
 # ── C generation ─────────────────────────────────────────────────────────────
-def _ctor_c_args(flags: list[dict], parsed: bool) -> str:
-    """C constructor args. When `parsed`, a CLI-parseable ctor flag passes its
-    parsed local by name; otherwise (and for non-parseable types) the default
-    literal is passed inline (commented)."""
+def _ctor_c_args(flags: list[dict], parsed: bool, seeds: "list[tuple]") -> str:
+    """C constructor args, one per create() parameter, in prototype order.
+
+    *seeds* is the component's ``c_create_seeds`` (gh-2564): every
+    parameter the prototype declares, with the value the C smoke test
+    passes it -- the ONE reading of create()'s parameter list, so the
+    app's call cannot drop one, as it dropped an array's pointer and
+    length. A parameter with a ctor flag is given the flag: when `parsed`,
+    a CLI-parseable one passes its parsed local by name; otherwise (and
+    for non-parseable types) the default literal is passed inline
+    (commented). A parameter with no flag passes its seed: an omittable
+    array's ``NULL, 0``. The trailing `why` (named None) is the caller's
+    (:func:`_build_ctx`).
+
+    >>> _ctor_c_args([{"name": "g", "type": "float", "ctor": True}], True,
+    ...              [("g", "1.0"), ("taps", "NULL, 0")])
+    'g, NULL, 0'
+    """
+    by_name = {f["name"]: f for f in flags if f["ctor"]}
     parts = []
-    for f in flags:
-        if not f["ctor"]:
+    for pname, seed in seeds:
+        if pname is None:
             continue
-        if parsed and f["type"] in _C_PARSE:
+        f = by_name.get(pname)
+        if f is None:
+            parts.append(seed)
+        elif parsed and f["type"] in _C_PARSE:
             # gh-1450: a choice flag's local is its INDEX (that is what
             # --record prints through), so a constant-bound one maps it.
             parts.append(
@@ -1048,6 +1121,11 @@ def _c_argv_parser(
         chunks += ["", "\n".join(opens)]
     return "\n".join(chunks)
 
+
+#: The targets an ``[[app]]`` row may name, one per face (module
+#: docstring): what `jm app --target` accepts, and what the gh-2564 gate
+#: renders, builds and runs every app source through.
+TARGETS = ("c", "console", "pep723")
 
 _APP_BLOCK = 4096
 
@@ -1707,17 +1785,44 @@ def _build_fn_ctx(
         "py_call": _py_call(
             f"    result = {function}(", fn_flags, keyword=False
         ),
-        # gh-2514: each face's import of the function, held to 79 columns
-        # by the one rule every import jm writes follows.
-        "fn_import_console": _fmt_from_import(module, [function], marker=""),
-        "fn_import_pep723": _fmt_from_import(
-            f"{pkg}.{module}", [function], relative=False, marker=""
-        ),
+        # gh-2063: each face's import of the function, from where the
+        # package re-exports it, as an object app's import of its class.
+        **_imports(cfg, module, function),
         "description_arg": str_kwarg_lines(
             "        ",
             "description",
             f"{pkg}: {function}() command-line tool.",
         ),
+    }
+
+
+def _imports(cfg: dict, module: "str | None", name: str) -> "dict[str, str]":
+    """Each Python face's import of *name*, the class or function its app
+    calls, from *module* (None for a standalone object).
+
+    gh-2063: both read the one answer to "which package re-exports it",
+    `_config.module_package_resolved` (gh-2054). That package's
+    ``__init__.py`` is what imports *name* from the extension, and it is
+    where a console app's ``cli.py`` is written (:func:`_console_module`),
+    so the console face imports from its own package, ``from . import``;
+    the PEP 723 script, outside the package, by the absolute path
+    `_docstring.class_import_path` spells. Each is held to 79 columns by
+    the rule every import jm writes follows (gh-2514). A function app
+    spelled its module id instead: ``from .dsp.filters import`` inside
+    ``dsp/filters/``, and the id's path where the module declares
+    ``package``.
+
+    >>> cfg = {"project": {"name": "p"},
+    ...        "module": {"m": {"package": "other"}}}
+    >>> sorted(_imports(cfg, "m", "fx").values())
+    ['from . import fx', 'from p.other import fx']
+    """
+    path = class_import_path(
+        C.project_name(cfg), C.module_package_resolved(cfg, module or "")
+    )
+    return {
+        "import_console": _fmt_from_import("", [name], marker=""),
+        "import_pep723": R.class_import(path, name),
     }
 
 
@@ -1768,7 +1873,9 @@ def _cmd_usage(name: str, commands: list[dict]) -> str:
 
 
 def _py_command_fns(commands: list[dict]) -> str:
-    return "\n\n".join(
+    """Each command's ``_cmd_<name>`` stub, two blank lines apart: the
+    layout ``ruff format`` keeps between top-level functions (gh-2577)."""
+    return "\n\n\n".join(
         f"def _cmd_{c['name']}(args: argparse.Namespace) -> None:\n"
         f"    # <<IMPLEMENT: {c['name']}>>\n"
         f"    _ = args"
@@ -1842,15 +1949,9 @@ def _build_ctx(
 ) -> dict[str, str]:
     pkg = C.project_name(cfg)
     version = C.project_version(cfg)
-    Component = _to_title(component)
-    # gh-187: the pep723 face imports the class by absolute path; for a module
-    # object that's the module's package, not `<pkg>`. `package` stays the
-    # pip distribution name (dependency line); `import_pkg` is the import
-    # path. gh-2054: the PACKAGE, which is the module id's path only while
-    # the module declares no `package`.
-    import_pkg = class_import_path(
-        pkg, C.module_package_resolved(cfg, module or "")
-    )
+    # gh-2063: the class the package re-exports -- its `class_name` when it
+    # declares one -- not the title-cased component.
+    Component = C.resolved_class_name(cfg, component)
 
     all_flags = _ctor_flags(cfg, component) + _extra_flags(flags)
     arg_t = C.arg_type(cfg, component)
@@ -1876,9 +1977,15 @@ def _build_ctx(
         else f'        fprintf(stderr, "error: {_failed}\\n");'
     )
 
+    # gh-2564: create()'s parameters, from the one list its smoke test is
+    # built from.
+    from ._glue import component_ctx
+
+    seeds = component_ctx(cfg, component, pkg)["c_create_seeds"]
+
     def _create_call(parsed: bool) -> str:
         a = ", ".join(
-            [x for x in (_ctor_c_args(all_flags, parsed),) if x] + _why
+            [x for x in (_ctor_c_args(all_flags, parsed, seeds),) if x] + _why
         )
         return f"{create_name}({a})" if a else f"{create_name}()"
 
@@ -2042,10 +2149,9 @@ def _build_ctx(
         "name": name,
         "project": pkg,
         "package": pkg,
-        "import_pkg": import_pkg,
-        # gh-2514: the PEP 723 face's import of the class, and the
-        # parser's description, each held to 79 columns where it is made.
-        "class_import": R.class_import(import_pkg, Component),
+        # gh-2514: the parser's description, held to 79 columns where it
+        # is made; gh-2063: each face's import of the class.
+        **_imports(cfg, module, Component),
         "description_arg": str_kwarg_lines(
             "        ",
             "description",
@@ -2086,6 +2192,30 @@ def _object_of(cfg: dict, entry: dict) -> str:
     return entry.get("object") or C.components(cfg)[0]
 
 
+def _entry_module(cfg: dict, entry: dict) -> "str | None":
+    """The module holding what *entry*'s app calls, or None.
+
+    gh-1902, gh-2578: read off the manifest, never off the row's
+    ``module`` alone. An object belongs to at most one module, and
+    `_config.module_of` is the one reverse lookup; a function is found
+    by :func:`_find_fn`, which searches every module when the row names
+    none. Every face that names the module reads this: each Python face's
+    import (:func:`_imports`), and where a console app's ``cli.py`` goes
+    (:func:`_console_module`). Without it a module object's app run with
+    no ``--module`` imported its class from the package root, which does
+    not re-export it. A multi-command app calls nothing, so it has none.
+
+    >>> cfg = {"module": {"m": {"objects": ["fir"]}}, "fir": {}}
+    >>> _entry_module(cfg, {"target": "c", "name": "t", "object": "fir"})
+    'm'
+    """
+    if entry.get("function") is not None:
+        return _find_fn(cfg, entry["function"], entry.get("module") or None)[0]
+    if entry.get("commands"):
+        return None
+    return C.module_of(cfg, _object_of(cfg, entry)) or None
+
+
 def _missing(cfg: dict, entry: dict) -> "str | None":
     """Why *entry*'s app cannot be rendered from *cfg*, or None if it can.
 
@@ -2121,7 +2251,40 @@ def _missing(cfg: dict, entry: dict) -> "str | None":
         return "no components found — run 'just-makeit object' first."
     if object_ is not None and object_ not in C.components(cfg):
         return f"object '{object_}' not found."
+    obj = _object_of(cfg, entry)
+    # gh-1902: a `--module` naming another module than the object's is a
+    # claim the manifest contradicts, and the import it asked for names a
+    # package that does not re-export the class.
+    declared, owner = entry.get("module") or None, _entry_module(cfg, entry)
+    if declared is not None and declared != owner:
+        where = f"module '{owner}'" if owner else "no module"
+        return (
+            f"object '{obj}' is in {where}, not module '{declared}';"
+            " drop `--module`: jm reads the object's module from the"
+            " manifest."
+        )
+    # gh-2564: a constructor parameter no flag can supply and the binding
+    # cannot do without.
+    unflagged = _unflagged_required(cfg, obj)
+    if unflagged:
+        names = ", ".join(f"'{n}'" for n in unflagged)
+        return (
+            f"object '{obj}' requires constructor parameter(s) {names},"
+            " which have no command-line form (an array, a path, a byte"
+            " buffer or a handle), and the app is regenerated whole, so"
+            " nothing written into it could supply them. Give an array"
+            ' `default = "[]"` to make it omittable.'
+        )
     return None
+
+
+def _exit_if_missing(cfg: dict, entry: dict) -> None:
+    """Exit 1 naming why *entry*'s app cannot be rendered
+    (:func:`_missing`), if it cannot."""
+    why = _missing(cfg, entry)
+    if why is not None:
+        print(f"error: {why}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _link_target(cfg: dict, entry: dict) -> str:
@@ -2150,10 +2313,7 @@ def _plan(
     *root* is the project: the PEP 723 face declares the project's own
     ``requires-python``, read from its ``pyproject.toml`` (gh-2631).
     """
-    why = _missing(cfg, entry)
-    if why is not None:
-        print(f"error: {why}", file=sys.stderr)
-        sys.exit(1)
+    _exit_if_missing(cfg, entry)
     name = entry["name"]
     if entry.get("function") is not None:
         # ── module-function app ──────────────────────────────────────────
@@ -2173,7 +2333,7 @@ def _plan(
             entry["target"],
             flags=entry.get("flags", []),
             argc_argv=argc_argv,
-            module=entry.get("module"),
+            module=_entry_module(cfg, entry),
         )
         tmpls = (R.APP_MAIN_C, R.APP_CONSOLE_CLI, R.APP_PEP723)
     return {**ctx, "requires_python": _pythons.requires_python(root)}, tmpls
@@ -2191,7 +2351,9 @@ def _console_module(root: Path, cfg: dict, entry: dict) -> "tuple[Path, str]":
     scaffold did not write.
     """
     pkg = C.project_name(cfg)
-    module_dir = C.module_package_resolved(cfg, entry.get("module") or "")
+    module_dir = C.module_package_resolved(
+        cfg, _entry_module(cfg, entry) or ""
+    )
     cli_dir = root / "src" / pkg
     for part in module_dir.split("/"):
         if part:
@@ -2399,7 +2561,7 @@ def run(
         )
         sys.exit(1)
 
-    if target not in ("c", "console", "pep723"):
+    if target not in TARGETS:
         print(
             f"error: unknown target '{target}'. Use c, console, or pep723.",
             file=sys.stderr,
@@ -2409,6 +2571,9 @@ def run(
     entry = _declare(
         cfg, target, name, object_, function_, module, flags, commands
     )
+    # Asked before anything is declared or printed; `_plan` asks again for
+    # `apply`'s replay of a row this did not write.
+    _exit_if_missing(cfg, entry)
     _refuse_a_taken_name(cfg, entry, named=name is not None)
     _refuse_a_shared_module(root, cfg, entry)
     # Persisted before codegen: the C App block is rendered from every C

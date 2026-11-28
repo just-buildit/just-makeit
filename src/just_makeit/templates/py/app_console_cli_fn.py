@@ -8,7 +8,7 @@ Install:  pip install -e .   Run:  <<name>> --help
 
 import argparse
 
-<<fn_import_console>>
+<<import_console>>
 
 
 def _make_parser() -> argparse.ArgumentParser:
