@@ -40,6 +40,7 @@ from just_makeit._app import run as app_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 #: `#include "foo.c"` — a .c pulled textually into another TU rather than
 #: compiled on its own. Anchored to the quoted form: the angle-bracket
@@ -185,8 +186,8 @@ class TestCompileDatabaseCoverage:
                 str(root),
                 "-B",
                 str(build),
+                PYTHON3_ARG,
                 "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-                f"-DPython3_EXECUTABLE={sys.executable}",
             ],
             capture_output=True,
             text=True,

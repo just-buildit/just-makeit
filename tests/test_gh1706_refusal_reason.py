@@ -48,6 +48,7 @@ from just_makeit import _render as R  # noqa: E402
 from just_makeit import _script  # noqa: E402
 from just_makeit._context._diagnostics import reason_raise_c  # noqa: E402
 from just_makeit._stubs import _fn_stub  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _SPEC = [{"name": "spec", "type": "const char *"}]
 
@@ -371,7 +372,7 @@ def _build(dest: Path) -> None:
             str(dest),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "--parallel", "4"],
     ):

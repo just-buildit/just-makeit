@@ -56,6 +56,7 @@ from just_makeit import _config as C
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_gh1711_composer_owned_pointer import CJSON_C, CJSON_H  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -462,7 +463,7 @@ def built(tmp_path_factory: pytest.TempPathFactory) -> Path:
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         proj,

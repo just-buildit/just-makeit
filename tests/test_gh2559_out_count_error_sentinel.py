@@ -40,6 +40,7 @@ import pytest
 from _compilers import default_cc
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason() -> "str | None":
@@ -157,8 +158,7 @@ def built(tmp_path_factory) -> Path:
     build = root / "build"
     for cmd in (
         [
-            "cmake", "-S", str(root), "-B", str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            "cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):  # fmt: skip

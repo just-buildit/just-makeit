@@ -50,6 +50,7 @@ from _jmrun import run_cli
 
 from just_makeit import _config as C
 from just_makeit import _textio
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason() -> "str | None":
@@ -245,8 +246,7 @@ def _build(base: Path) -> "tuple[Path, dict]":
     )
     build = root / "build"
     for cmd in (
-        ["cmake", "-S", str(root), "-B", str(build)]
-        + [f"-DPython3_EXECUTABLE={sys.executable}", *flags],
+        ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG, *flags],
         ["cmake", "--build", str(build)],
     ):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)

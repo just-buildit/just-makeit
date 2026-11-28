@@ -68,6 +68,7 @@ from _jmrun import run_cli
 from just_makeit import _config as C
 from just_makeit import _types as T
 from just_makeit._context._parse import INT_RANGE_GUARD_RE, scalar_narrow_c
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -425,7 +426,7 @@ def test_every_face_refuses_a_value_its_type_cannot_hold(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         proj,

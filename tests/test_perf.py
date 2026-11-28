@@ -21,6 +21,7 @@ from just_makeit._new import run as new_run
 from just_makeit._init import run as init_run
 from just_makeit._perf import run as perf_run
 from just_makeit._config import load, is_perf
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -494,6 +495,7 @@ class TestStepStepsFmaConsistency:
                 str(root),
                 "-B",
                 str(build),
+                PYTHON3_ARG,
                 "-DENABLE_SIMD=ON",
             ],
             capture_output=True,

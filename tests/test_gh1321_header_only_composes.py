@@ -44,6 +44,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _no_toolchain():
@@ -263,7 +264,7 @@ class TestTheResultCompilesAndImports:
         root = _ring(tmp_path / "p", module=module)
         _add_method(root)
         for args in (
-            ["cmake", "-S", str(root), "-B", str(root / "build")],
+            ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
             ["cmake", "--build", str(root / "build")],
         ):
             r = subprocess.run(

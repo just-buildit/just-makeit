@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 from _compilers import default_cc
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason() -> "str | None":
@@ -160,7 +161,7 @@ def built(applied):
             str(applied),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

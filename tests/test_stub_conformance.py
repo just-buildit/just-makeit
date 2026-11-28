@@ -51,6 +51,7 @@ from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._property import run as property_run
 from just_makeit._view import run as view_run
+from _cmake import PYTHON3_ARG
 
 
 # ── skip guard ──────────────────────────────────────────────────────────────
@@ -93,7 +94,7 @@ def _build(root: Path) -> None:
             str(root),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

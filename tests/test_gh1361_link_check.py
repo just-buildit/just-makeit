@@ -44,6 +44,7 @@ from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
 from just_makeit._remove import run as remove_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
@@ -146,6 +147,7 @@ def _build_test(root: Path, build: str, cflags: str, ldflags: str):
             str(root),
             "-B",
             str(bdir),
+            PYTHON3_ARG,
             f"-DCMAKE_BUILD_TYPE={build}",
             f"-DCMAKE_C_FLAGS={cflags}",
             f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}",

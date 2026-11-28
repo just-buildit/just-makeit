@@ -64,6 +64,7 @@ from just_makeit import _config as C  # noqa: E402
 from just_makeit import _csym as CSYM  # noqa: E402
 from just_makeit._context import _methods as M  # noqa: E402
 from just_makeit._object import _load_doc_blocks  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
@@ -369,7 +370,7 @@ def probe(project) -> dict:
             str(project),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         # Everything: the extensions, and the C tests whose symbol table

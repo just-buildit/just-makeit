@@ -47,6 +47,7 @@ from just_makeit import _config as C  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _no_toolchain():
@@ -252,7 +253,7 @@ class TestTheUntouchedScaffoldBuildsAndRuns:
     def _built(root: Path):
         _project(root)
         c = subprocess.run(
-            ["cmake", "-S", str(root), "-B", str(root / "build")],
+            ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
             capture_output=True,
             text=True,
             timeout=900,

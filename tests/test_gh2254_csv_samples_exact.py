@@ -41,6 +41,7 @@ import numpy as np
 import pytest
 from _compilers import default_cc
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -160,7 +161,7 @@ def test_csv_reads_back_exactly_on_both_faces(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         proj,
     )

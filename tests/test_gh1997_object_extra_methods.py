@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _csym as CSYM  # noqa: E402
 from just_makeit import _keys  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 #: Stands for "the core's own reset()", resolved per project.
 CORE_RESET = "<core reset>"
@@ -149,9 +150,7 @@ def _cmake_build(root: Path) -> None:
             str(root),
             "-B",
             str(root / "build"),
-            # The interpreter the import below runs under, so the extension
-            # is built for its ABI and found by its numpy.
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(root / "build"), "-j", "4"],
     ):

@@ -34,6 +34,7 @@ from just_makeit import _borrow  # noqa: E402
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _silent(fn, *a, **k):
@@ -170,7 +171,7 @@ class TestBuiltAndRun:
             text = text[:start] + "\n" + body + text[j:]
         c.write_text(text, encoding="utf-8")
         for cmd in (
-            ["cmake", "-S", str(root), "-B", str(root / "build")],
+            ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
             ["cmake", "--build", str(root / "build"), "--target", "ring"],
         ):
             r = subprocess.run(

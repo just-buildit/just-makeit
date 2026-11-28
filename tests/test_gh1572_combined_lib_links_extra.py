@@ -32,6 +32,7 @@ import pytest
 
 from _jmrun import run_cli
 from just_makeit import _config as C
+from _cmake import PYTHON3_ARG
 
 _EXT_CMAKE = """\
 cmake_minimum_required(VERSION 3.16)
@@ -77,6 +78,7 @@ def _cmake_install(src: Path, build: Path, pfx: Path, *extra: str) -> None:
             str(src),
             "-B",
             str(build),
+            PYTHON3_ARG,
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DCMAKE_INSTALL_PREFIX={pfx}",
             *extra,
@@ -218,6 +220,7 @@ def test_an_installed_consumer_links(installed, target):
             ".",
             "-B",
             "b",
+            PYTHON3_ARG,
             f"-DCMAKE_PREFIX_PATH={pfx};{ext_pfx}",
         ],
         cons,

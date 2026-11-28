@@ -31,6 +31,7 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _no_toolchain():
@@ -275,7 +276,7 @@ def test_collocated_composed_dep_builds_e2e(tmp_path):
         encoding="utf-8",
     )
     cfg = subprocess.run(
-        ["cmake", "-S", str(dest), "-B", str(dest / "build")],
+        ["cmake", "-S", str(dest), "-B", str(dest / "build"), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,
@@ -505,7 +506,7 @@ def test_apply_reconcile_object_test_links_e2e(tmp_path):
     _set_depends_on(dest, "tone", ["extra"])
     _silent(apply_run, dest)
     cfg = subprocess.run(
-        ["cmake", "-S", str(dest), "-B", str(dest / "build")],
+        ["cmake", "-S", str(dest), "-B", str(dest / "build"), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,

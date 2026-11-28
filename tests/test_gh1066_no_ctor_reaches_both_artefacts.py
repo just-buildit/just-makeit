@@ -52,6 +52,7 @@ from just_makeit._error import run as error_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._warning import run as warning_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -207,7 +208,7 @@ def test_the_project_compiles(tmp_path):
             str(proj),
             "-B",
             str(proj / "build"),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         capture_output=True,
         text=True,

@@ -22,6 +22,7 @@ from just_makeit import _config as C
 from just_makeit._new import run as new_run
 
 from _jmrun import JmRun, run_cli
+from _cmake import PYTHON3_ARG
 
 
 _HAS_CF = shutil.which("clang-format") is not None
@@ -323,7 +324,7 @@ def test_formatted_project_builds(tmp_path):
     root = tmp_path / "p"
     new_run("p", root, object_names=["widget"], c_style="clang-format")
     cfg = subprocess.run(
-        ["cmake", "-S", str(root), "-B", str(root / "build")],
+        ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,

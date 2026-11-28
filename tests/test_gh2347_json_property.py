@@ -45,6 +45,7 @@ from just_makeit._property import plain_accessor_decls
 from just_makeit._property import run as property_run
 from just_makeit._script import _property_flags
 from _jm_stub import drop_jm_stubs  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -426,7 +427,7 @@ class TestBuildAndRun:
         apply_run(root)
         build = root / "build"
         for cmd in (
-            ["cmake", "-S", str(root), "-B", str(build)],
+            ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
             ["cmake", "--build", str(build)],
         ):
             res = subprocess.run(

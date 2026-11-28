@@ -52,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -232,7 +233,7 @@ class TestItActuallyRuns:
                 str(root),
                 "-B",
                 str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
                 "-DCMAKE_BUILD_TYPE=Release",
             ],
             capture_output=True,

@@ -55,6 +55,7 @@ from just_makeit._method import run as method_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._script import run as script_run
+from _cmake import PYTHON3_ARG
 
 _SKIP = (
     "" if shutil.which("cmake") and default_cc() else "cmake/cc not available"
@@ -258,7 +259,7 @@ class TestExactMaxOutRuntime:
                 str(dest),
                 "-B",
                 str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             ["cmake", "--build", str(build)],
         ):

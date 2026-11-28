@@ -59,6 +59,7 @@ from just_makeit._function import run as function_run  # noqa: E402
 from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _no_toolchain():
@@ -138,7 +139,7 @@ def _every_shape(dest):
 
 def _configure(root):
     return subprocess.run(
-        ["cmake", "-S", str(root), "-B", str(root / "build")],
+        ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=900,

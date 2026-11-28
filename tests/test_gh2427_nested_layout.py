@@ -67,6 +67,7 @@ from just_makeit import _composer
 from just_makeit import _config as C
 from just_makeit import _incpath as INC
 from just_makeit import _procglobal
+from _cmake import PYTHON3_ARG
 
 PKG = Path(__file__).resolve().parent.parent / "src" / "just_makeit"
 
@@ -602,7 +603,7 @@ def test_the_nested_project_builds_and_imports(nested, tmp_path):
             str(nested),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "-j4"],
         ["ctest", "--test-dir", str(build), "--output-on-failure"],
@@ -1084,7 +1085,7 @@ def _builds(root: Path, tmp_path: Path) -> None:
             str(root),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "-j4"],
     ):

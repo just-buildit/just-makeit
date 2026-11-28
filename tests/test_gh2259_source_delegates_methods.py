@@ -47,6 +47,7 @@ from _jmrun import run_cli
 from just_makeit import _composer
 from just_makeit import _keys
 from just_makeit import _config as C
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -799,7 +800,7 @@ def test_the_source_runs_its_generators_methods(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ]
     )
