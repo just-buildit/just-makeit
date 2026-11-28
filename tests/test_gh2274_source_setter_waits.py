@@ -102,8 +102,10 @@ class TestTheRenderedReplace:
     def test_the_new_value_is_converted_into_a_copy(self):
         for name, body in _replaces(_render(_gen_cfg())).items():
             head = body[: body.index("_attach_")]
-            assert "_t = self->src;" in head, (name, body)
-            assert "self->src." not in head.split("_t = self->src;")[1], body
+            assert "_jm_copy = self->src;" in head, (name, body)
+            assert (
+                "self->src." not in head.split("_jm_copy = self->src;")[1]
+            ), body
 
 
 #: Run in the built project: a source whose ``steps()`` sleeps 150 ms a
