@@ -22,6 +22,7 @@ These scans hold the suite to it:
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -38,8 +39,13 @@ def _sources() -> "list[tuple[Path, str, ast.Module]]":
     return out
 
 
-#: A cmake invocation carrying one of these is not a configure.
-_NOT_CONFIGURE = frozenset({"--build", "--install", "-E", "-P", "--preset"})
+#: A cmake invocation carrying one of these is not a configure. Every
+#: other one IS (the scan is closed): a new spelling of a configure --
+#: an f-string `-S{src}`, a positional `cmake <src>` -- is caught without
+#: this file learning it.
+_NOT_CONFIGURE = frozenset(
+    {"--build", "--install", "-E", "-P", "--preset", "--version", "--help"}
+)
 
 
 def _is_cmake(node: ast.expr) -> bool:
@@ -49,7 +55,8 @@ def _is_cmake(node: ast.expr) -> bool:
     if isinstance(node, ast.Constant):
         return node.value == "cmake"
     if isinstance(node, ast.Name):
-        return "cmake" in node.id.lower()
+        # The program itself, not anything named after it (`cmakelists`).
+        return re.fullmatch(r"_?cmake(_exe|_bin|_path)?", node.id.lower())
     if isinstance(node, ast.Call):
         if any(_is_cmake(a) for a in node.args):  # which("cmake"), str(cmake)
             return True
@@ -57,11 +64,47 @@ def _is_cmake(node: ast.expr) -> bool:
 
 
 def _strings(elts: "list[ast.expr]") -> "set[str]":
-    return {
-        e.value
-        for e in elts
-        if isinstance(e, ast.Constant) and isinstance(e.value, str)
-    }
+    """The literal strings among *elts*, and each f-string's literal head
+    (`f"--build={b}"` reads as `--build=`)."""
+    out = set()
+    for e in elts:
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            out.add(e.value)
+        elif isinstance(e, ast.JoinedStr) and e.values:
+            head = e.values[0]
+            if isinstance(head, ast.Constant):
+                out.add(str(head.value))
+    return out
+
+
+def _a_command_line(elts: "list[ast.expr]") -> bool:
+    """Whether `[cmake, *elts[1:]]` reads as a command, not a list of words.
+
+    A flag (``-S``, ``-DX=1``...) makes it one. With none, it needs a
+    positional that reads as a path -- ``..``, ``.``, a computed one
+    (``str(src)``) -- because ``("cmake", "make")`` and ``PROBED = ("cmake",
+    "cc", ...)`` are tool names, not ``cmake make``. A list whose only
+    arguments are forwarded (``["cmake", *args]``) is a helper's body: its
+    call sites pass the command line, and are read there.
+    """
+    rest = elts[1:]
+    if not rest or all(isinstance(e, ast.Starred) for e in rest):
+        return False
+    if any(f.startswith("-") for f in _strings(rest)):
+        return True
+    for e in rest:
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            if e.value in (".", "..") or "/" in e.value or "." in e.value:
+                return True
+        elif not isinstance(e, ast.Starred):
+            return True
+    return False
+
+
+def _not_configure(flags: "set[str]") -> bool:
+    return any(
+        f == n or f.startswith(n + "=") for f in flags for n in _NOT_CONFIGURE
+    )
 
 
 def _callee(call: ast.Call) -> str:
@@ -72,29 +115,32 @@ def _callee(call: ast.Call) -> str:
 def configures(tree: ast.Module) -> "list[tuple[ast.AST, list[ast.expr]]]":
     """Every cmake CONFIGURE in *tree*, with the arguments it passes.
 
-    Any spelling the suite has used: a list or a tuple, `-S` or `-B` first,
-    the program `"cmake"`, `shutil.which("cmake")` or a variable holding
-    it -- and the arguments a test hands a helper named for cmake
-    (`_cmake(proj, "-B", ...)`). A configure is a cmake command with a
-    source or build directory (`-S`, `-B`, attached or not) and none of
-    `_NOT_CONFIGURE`.
+    CLOSED (ruling on #2871): every cmake invocation is a configure unless
+    it carries one of `_NOT_CONFIGURE`. An invocation is a list or a tuple
+    whose program is `"cmake"`, `shutil.which("cmake")`, `str()` of it or a
+    variable named for it; or the arguments a test hands a helper named for
+    cmake, when one of them is a flag (`_cmake(proj, "-B", ...)` -- not
+    `render_cmake(cfg, name)`, which takes no command line). So a source
+    given positionally (`cmake ..`) or as an f-string (`f"-S{src}"`) is a
+    configure without this function knowing the spelling.
     """
     out = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
+            if isinstance(getattr(node, "ctx", None), ast.Store):
+                continue  # `cmake, pyproject = ...` unpacks, it runs nothing
             elts = list(node.elts)
-            if not _is_cmake(elts[0]):
+            if not _is_cmake(elts[0]) or not _a_command_line(elts):
                 continue
         elif isinstance(node, ast.Call) and "cmake" in _callee(node).lower():
             if _callee(node) == "which":
                 continue
             elts = list(node.args)
+            if not any(f.startswith("-") for f in _strings(elts)):
+                continue
         else:
             continue
-        flags = _strings(elts)
-        if flags & _NOT_CONFIGURE:
-            continue
-        if any(f.startswith(("-S", "-B")) for f in flags):
+        if not _not_configure(_strings(elts)):
             out.append((node, elts))
     return out
 
@@ -151,6 +197,9 @@ def test_the_scan_sees_every_spelling():
         "a variable": '[cmake, "-S", str(root), "-B", str(build)]',
         "str() of it": '[str(cmake), "-B", "b", "-S", "."]',
         "a helper's arguments": '_cmake(proj, "-B", "build", "-S", ".")',
+        "f-string attached flags": '["cmake", f"-S{src}", f"-B{b}"]',
+        "a positional source": '["cmake", str(src)]',
+        "cmake ..": '["cmake", ".."]',
     }
     for what, code in spellings.items():
         tree = ast.parse(code)
@@ -163,8 +212,18 @@ def test_the_scan_sees_every_spelling():
         '["cmake", "--install", "b", "--prefix", "p"]',
         '["cmake", "-E", "copy", "a", "b"]',
         '["cmake", "-P", "s.cmake"]',
+        '["cmake", "--preset", "dev"]',
+        '["cmake", "--version"]',
+        '["cmake", f"--build={b}"]',
         '["python", "-B", "x.py"]',
         'shutil.which("cmake")',
+        'render_cmake(cfg, "ddc_fn")',
+        '("cmake", "make")',
+        'PROBED = ("cmake", "cc", "pkg-config", "patchelf")',
+        "cmake, pyproject = a, b",
+        '_cmakelint.check([cmakelists], "generated project")',
+        '[cmake_version, "3.16"]',
+        '["cmake", *args]',
     ):
         assert configures(ast.parse(code)) == [], code
 
