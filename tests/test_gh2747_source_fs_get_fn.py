@@ -112,7 +112,8 @@ class TestSynthFs:
         assert "return PyFloat_FromDouble(win_src_fs(&self->src, " in get
         assert src.count("win_src_fs(") == 1
         # The setter and the constructor keep the stored member.
-        assert "self->fs = PyFloat_AsDouble(value);" in src
+        assert "double _v = PyFloat_AsDouble(value);" in src
+        assert "    self->fs = _v;\n" in src
         assert "    self->fs = fs;\n" in src
         assert "win_src_fs" not in _composer.render_json_funcs(_cfg(), "win")
 
