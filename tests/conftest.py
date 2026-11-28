@@ -164,7 +164,9 @@ def _pid_alive(pid: int) -> bool:
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED
         if not handle:
-            return False
+            # ERROR_ACCESS_DENIED: the process exists and is someone
+            # else's. Alive is the safe answer; anything else is gone.
+            return kernel32.GetLastError() == 5
         code = ctypes.c_ulong()
         ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
         kernel32.CloseHandle(handle)
@@ -193,6 +195,11 @@ def _reap_stale_worker_envs(tmp: Path) -> "list[Path]":
     pid that no longer exists is removed, and one named without a pid (an
     older checkout's) once it is a day old. A live peer's is never
     touched, because its pid exists; a reused pid only postpones the reap.
+
+    One shared ``/tmp`` seen from two pid namespaces -- a container with the
+    host's ``/tmp`` bind-mounted -- breaks that: a live peer's pid from the
+    other namespace looks dead here, and its environment would be removed
+    under it. Give such a run its own ``TMPDIR``.
 
     Returns the directories removed.
     """
@@ -577,9 +584,10 @@ def pytest_sessionfinish(session, exitstatus):
             line = next((ln for ln in lines if "ENOSPC" in ln), lines[-1])
             print(f"  [{wid}] {line}")
         print(
-            "\nA worker that dies in setup is handed no tests, and xdist "
-            "reports what\nis left as a pass. Each worker's full error is "
-            "above.\n"
+            "\nA worker that crashes is a broken run, whatever the rest "
+            "report: one that\ndies in setup is handed no tests at all, "
+            "and xdist can then report what is\nleft as a pass. Each "
+            "worker's full error is above.\n"
         )
         session.exitstatus = pytest.ExitCode.INTERNAL_ERROR
         return
