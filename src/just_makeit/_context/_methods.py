@@ -38,6 +38,7 @@ from .._types import (
 from .._docstring import (
     defaulted_ann,
     docstring_literal,
+    ensure_np_import,
     EnumAnn,
     method_doc,
     name_summary,
@@ -3007,7 +3008,8 @@ def make_methods_ctx(
             # The demo's own leading blank separates it from the section
             # above; the heading takes that slot instead.
             body = lines[1:] if lines and not lines[0].strip() else lines
-            return ["", "Examples", "--------", *body]
+            # gh-2844: the one place every method demo passes through.
+            return ["", "Examples", "--------", *ensure_np_import(body)]
 
         def _runtime_doc(default_summary: str) -> list[str]:
             """This method's runtime numpy block, summary resolved.

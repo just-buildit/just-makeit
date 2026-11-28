@@ -220,6 +220,59 @@ def import_demo_lines(import_line: str, indent: str = "    ") -> list[str]:
     ]
 
 
+_NP_USE_RE = re.compile(r"\bnp\.")
+_NP_IMPORT_LINE = "    >>> import numpy as np"
+
+
+def ensure_np_import(lines: list[str]) -> list[str]:
+    """Add ``>>> import numpy as np`` to a synthesized demo that needs it.
+
+    gh-2844. A constructor example for an object with an array init-param
+    spells ``W(h=np.zeros(1, dtype=np.float32))``, but each demo builder
+    decided on its own whether to import numpy -- by whether the METHOD
+    took an array, not by whether the example USED ``np``. ``step`` of a
+    scalar object read ``NameError: name 'np' is not defined`` as a
+    doctest. This is the one answer: when any line of the demo reads
+    ``np.`` and nothing imports it first, the import goes in once, just
+    before the first statement that uses it (so after a package import,
+    and never between a ``>>>`` line and its ``...`` continuation).
+
+    Parameters
+    ----------
+    lines : list of str
+        Doctest lines at the docstring's 4-space indent; prose lines
+        without a prompt are ignored.
+
+    Returns
+    -------
+    list of str
+        *lines* unchanged when no ``np.`` is used or numpy is already
+        imported ahead of its first use; otherwise a copy with the import.
+
+    Examples
+    --------
+    >>> ensure_np_import(["    >>> obj = W(h=np.zeros(1))"])
+    ['    >>> import numpy as np', '    >>> obj = W(h=np.zeros(1))']
+    >>> ensure_np_import(["    >>> x = 1"])
+    ['    >>> x = 1']
+    >>> ok = ["    >>> import numpy as np", "    >>> np.zeros(1)"]
+    >>> ensure_np_import(ok) == ok
+    True
+    """
+    start = None  # index of the ">>>" line opening the current statement
+    for i, ln in enumerate(lines):
+        body = ln.lstrip()
+        if body.startswith(">>>"):
+            start = i
+            if body == ">>> import numpy as np":
+                return lines
+        elif not body.startswith("..."):
+            continue
+        if _NP_USE_RE.search(body) and start is not None:
+            return [*lines[:start], _NP_IMPORT_LINE, *lines[start:]]
+    return lines
+
+
 def ctor_demo_lines(Component: str, py_create_args: str) -> list[str]:
     """The ``>>> obj = Component(...)`` demo, wrapped if it does not fit.
 

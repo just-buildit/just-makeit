@@ -63,6 +63,7 @@ from ._docstring import (
     docstring_body,
     class_import_line,
     ctor_demo_lines,
+    ensure_np_import,
     import_demo_lines,
     method_doc,
     name_summary,
@@ -1257,7 +1258,8 @@ def _build_class_docstring(
         ]
 
     ex.append("")
-    return _close(ex)
+    # gh-2844: an array init-param's constructor line reads `np.`.
+    return _close(ensure_np_import(ex))
 
 
 def class_docstring_block(
