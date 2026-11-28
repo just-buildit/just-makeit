@@ -22,13 +22,46 @@ from . import _config as C
 from . import _regenerate
 from ._remove import _confirm
 
+#: What each `jm add` flag adds, in the words every message of this command
+#: uses for it -- the refusal, the banner and the prompt. ``--param`` is
+#: the help's "constructor parameter": the row is a state field all the
+#: same, but the author asked for a parameter, and a message calling it
+#: "state" named something they did not ask for.
+FLAG_NOUNS: "dict[str, str]" = {
+    "--state": "state",
+    "--param": "constructor parameter",
+}
+
+
+def what_is_added(flags: "list[str] | None") -> str:
+    """The noun a message names for rows added by *flags*, read from
+    :data:`FLAG_NOUNS` in the order the flags were first given.
+
+    >>> what_is_added(["--param"])
+    'constructor parameter'
+    >>> what_is_added(["--state", "--param", "--state"])
+    'state and constructor parameter'
+    >>> what_is_added(None)
+    'state'
+    """
+    return " and ".join(
+        dict.fromkeys(FLAG_NOUNS[f] for f in (flags or ["--state"]))
+    )
+
 
 def run(
     root: Path,
     component: str | None,
     new_vars: list[tuple[str, str, str]],
     force: bool = False,
+    flags: "list[str] | None" = None,
 ) -> None:
+    """Add *new_vars* to *component*'s state, then rebuild it.
+
+    *flags* are the CLI flags that gave each row (``--state`` /
+    ``--param``), which name what the messages say was added
+    (:func:`what_is_added`); None reads as ``--state``.
+    """
     cfg_path = root / C.FILENAME
     if not cfg_path.exists():
         print(
@@ -84,15 +117,16 @@ def run(
         taken.add(name)
 
     names = ", ".join(n for n, _, _ in new_vars)
+    what = what_is_added(flags)
     # gh-2087: the rebuild below deletes the object's files for `apply` to
     # write again, and `apply` writes nothing of a `no_generate` module.
     # Refused here, before anything is asked or saved, so the tree is left
     # as it was.
     _regenerate.refuse_hand_written(
-        cfg, component, f"add state ({names}) to '{component}'"
+        cfg, component, f"add {what} ({names}) to '{component}'"
     )
     print(
-        f"just-makeit: add state ({names}) to '{component}'. State is "
+        f"just-makeit: add {what} ({names}) to '{component}'. State is "
         f"structural, so '{component}' is rebuilt from the manifest."
     )
     print()
@@ -103,7 +137,7 @@ def run(
     # was never regenerated. The confirmation is the caller's, as for `jm
     # remove` of a state field, and the rebuild below runs forced.
     if not _confirm(
-        f"Add state ({names}) to '{component}'? This rebuilds "
+        f"Add {what} ({names}) to '{component}'? This rebuilds "
         f"'{component}' from the manifest and discards hand-written "
         "_core.c bodies (git stash or keep them in impl/create_impl "
         "first).",
