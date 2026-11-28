@@ -36,13 +36,15 @@ repos:
         files: ^(pyproject\.toml|uv\.lock)$
         pass_filenames: false
 
-      # Fires on a shell script or workflow, and then reads the whole tree
-      # (pass_filenames: false), like the rest.
+      # Fires on what it reads (a shell script or workflow) and on what
+      # decides how it reads -- the vendored rules and the Makefile recipe
+      # -- then reads the whole tree (pass_filenames: false). Not
+      # always_run: test_release_bump_is_complete needs `files` or `types`.
       - id: pipefail-readers
         name: no pipefail pipe ends in an early reader (grep -q, head)
         entry: make -s lint-pipefail-readers
         language: system
-        files: \.(sh|ya?ml)$
+        files: (\.(sh|ya?ml)|^scripts/pipefail-readers\.py|^Makefile|^local\.mk)$
         pass_filenames: false
 
   # Python + markdown formatting, dispatched through the Makefile so the hook
