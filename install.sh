@@ -255,7 +255,7 @@ _jm_install() (
     MISSING=""
 
     if command -v cmake >/dev/null 2>&1; then
-        skip "cmake $(cmake --version | head -1 | awk '{print $3}')"
+        skip "cmake $(cmake --version | sed -n 1p | awk '{print $3}')"
     else
         NEED_CMAKE=1
         _need cmake
@@ -301,7 +301,7 @@ _jm_install() (
         # -P, so the version read back empty there and just-makeit was never
         # current (gh-1993).
         _latest=$(pip index versions just-makeit 2>/dev/null \
-            | sed -n 's/^just-makeit (\([0-9.]*\)).*/\1/p' | head -1 || true)
+            | sed -n 's/^just-makeit (\([0-9.]*\)).*/\1/p' | sed -n 1p || true)
         if [[ -n "$_installed" && "$_installed" == "$_latest" ]]; then
             JM_CURRENT=1
             skip "just-makeit ${_installed} in ${VENV_DIR}"

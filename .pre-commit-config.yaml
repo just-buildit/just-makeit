@@ -36,6 +36,15 @@ repos:
         files: ^(pyproject\.toml|uv\.lock)$
         pass_filenames: false
 
+      # Fires on a shell script or workflow, and then reads the whole tree
+      # (pass_filenames: false), like the rest.
+      - id: pipefail-readers
+        name: no pipefail pipe ends in an early reader (grep -q, head)
+        entry: make -s lint-pipefail-readers
+        language: system
+        files: \.(sh|ya?ml)$
+        pass_filenames: false
+
   # Python + markdown formatting, dispatched through the Makefile so the hook
   # and `make format` cannot disagree. Each runs over the whole tree
   # (pass_filenames: false) because that is what its make target does — a hook
