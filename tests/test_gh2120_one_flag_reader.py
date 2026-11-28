@@ -38,6 +38,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _cmake import PYTHON3_ARG
 from _compilers import default_cc
 from _jmrun import run_cli
 
@@ -166,7 +167,7 @@ def test_upgraded_producer_streams(tmp_path):
     assert run_cli("apply", cwd=root).returncode == 0
     build = root / "build"
     for cmd in (
-        ["cmake", "-S", str(root), "-B", str(build)],
+        ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
         ["cmake", "--build", str(build)],
     ):
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=600)

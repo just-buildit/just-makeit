@@ -176,7 +176,7 @@ def emitted(cfg: dict) -> list[str]:
         if C.is_composer_module(cfg, mod):
             from . import _composer
 
-            if _composer.composer_cli(cfg, mod).get("enabled"):
+            if C._truthy(_composer.composer_cli(cfg, mod).get("enabled")):
                 names.append(_composer.cli_name(cfg, mod))
         # gh-1055: skipped when a same-named object already emits the pair.
         if C.module_functions(cfg, mod) and not C.collocated_object(cfg, mod):
