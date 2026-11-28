@@ -101,5 +101,5 @@ def run(args: list[str]) -> None:
         module=module,
         object_name=object_name,
         force=force,
-        view=view,
+        view_class=view,
     )
