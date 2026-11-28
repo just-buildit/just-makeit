@@ -457,7 +457,19 @@ def run(root: Path) -> None:
     # A fresh build dir on purpose: the failure this example was written after
     # was a CONFIGURE error ($<TARGET_OBJECTS:> on an INTERFACE library), which
     # only a clean configure shows.
-    _cmd(["cmake", "-S", str(proj), "-B", str(proj / "build")], proj)
+    # Name the interpreter that imports the result (gh-2857): left to itself,
+    # CMake builds for the first python3 on PATH.
+    _cmd(
+        [
+            "cmake",
+            "-S",
+            str(proj),
+            "-B",
+            str(proj / "build"),
+            f"-DPython3_EXECUTABLE={sys.executable}",
+        ],
+        proj,
+    )
     _cmd(["cmake", "--build", str(proj / "build")], proj)
 
     # ── 6. Both rings, from Python ───────────────────────────────────────

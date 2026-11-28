@@ -287,7 +287,7 @@ def _cmake_configures_name_their_interpreter(monkeypatch):
 
     class _Guarded(real):  # type: ignore[misc, valid-type]
         def __init__(self, args, *a, **kw):
-            argv = unnamed_configure(args)
+            argv = unnamed_configure(args, kw.get("cwd"))
             if argv is not None:
                 pytest.fail(
                     "a cmake configure names no interpreter, so CMake builds"

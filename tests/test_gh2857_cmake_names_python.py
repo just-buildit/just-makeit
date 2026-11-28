@@ -31,6 +31,10 @@ import _cmake
 TESTS = Path(__file__).parent
 
 
+#: The bundled examples' walkthroughs configure projects too (gh-2857).
+EXAMPLES = TESTS.parent / "src" / "just_makeit" / "examples"
+
+
 def _sources() -> "list[tuple[Path, str, ast.Module]]":
     out = []
     for f in sorted(TESTS.glob("*.py")):
@@ -172,11 +176,40 @@ def test_the_one_spelling_names_this_interpreter():
 _GUARD_FILES = frozenset({"_cmake.py", "test_gh2857_runtime_guard.py"})
 
 
+def _example_sources() -> "list[tuple[Path, str, ast.Module]]":
+    out = []
+    for f in sorted(EXAMPLES.glob("*/test.py")):
+        src = f.read_text(encoding="utf-8")
+        out.append((f, src, ast.parse(src)))
+    return out
+
+
+#: Example configures of a project that builds no Python -- the guard's
+#: `builds_python` reads that from the tree at run time; the static scan
+#: names it here. fir_filter's installed-library consumer is
+#: `project(smoke C)`.
+_C_ONLY_EXAMPLE_CONFIGURES = frozenset({("fir_filter", "CMAKE_PREFIX_PATH")})
+
+
 def test_every_configure_names_the_interpreter_or_builds_no_extension():
-    """The fast early warning. The guard that cannot miss a spelling is the
-    runtime one (`conftest._cmake_configures_name_their_interpreter`)."""
+    """The fast early warning, over the tests and the bundled examples'
+    walkthroughs. The guard that cannot miss a spelling is the runtime one
+    (`conftest._cmake_configures_name_their_interpreter`)."""
     unnamed = []
     seen = 0
+    for f, src, tree in _example_sources():
+        for node, elts in configures(tree):
+            seen += 1
+            seg = ast.get_source_segment(src, node) or ""
+            if any(
+                f.parent.name == ex and key in seg
+                for ex, key in _C_ONLY_EXAMPLE_CONFIGURES
+            ):
+                continue
+            if not _names_the_interpreter(elts):
+                unnamed.append(
+                    f"examples/{f.parent.name}/test.py:{node.lineno}"
+                )
     for f, src, tree in _sources():
         if f.name in _GUARD_FILES:
             continue
