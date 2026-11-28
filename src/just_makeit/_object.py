@@ -67,7 +67,6 @@ from ._docstring import (
     struct_members_key,
     member_doc_key,
     header_default,
-    authored_class_brief,
     inherit_ctor_params,
     is_scaffold_doc,
     declared_max_outs,
@@ -1947,6 +1946,9 @@ def _make_view_ctx(
         mutable=C.is_mutable(cfg, obj),
         step_delegates=C.step_delegates(cfg, obj),
         init_params=C.view_init_params(cfg, obj, view),
+        # gh-2401: the parent's snippet while the view inherits its parse,
+        # else the view's own.
+        init_post_parse_impl=C.view_init_post_parse(cfg, obj, view),
         class_name=view["class_name"],
         create_fn=view["create_fn"],
         # gh-2552: the view's OWN switch -- its create_fn is its own C
@@ -2114,59 +2116,57 @@ def _make_view_ctx(
         view["create_fn"],
         C.object_create_name(cfg, obj),
     )
-    _vtp = authored_class_brief(
-        doc_blocks, view["create_fn"], view.get("doc", "")
-    )
-    # gh-1177: a brief is not the only thing worth rendering. Gating on it
-    # alone meant a view whose constructor carries no `@brief` but whose
-    # PARAMS are documented (its own, or the parent's, inherited just above)
-    # fell back to the bare `"<Class> type."` while the `.pyi` beside it
-    # showed the full Parameters block. The two faces must decide from the
-    # same evidence, so the question is "is anything authored", not "is there
-    # a summary".
-    _vblk = (doc_blocks or {}).get(view["create_fn"])
+    # gh-1177: a brief is not the only thing worth rendering -- a view whose
+    # constructor's PARAMS are documented (its own, or the parent's,
+    # inherited just above) showed the full Parameters block in its `.pyi`
+    # and `"<Class> type."` at runtime. The question is "is anything
+    # authored", and since gh-2401 `_stubs.class_doc_authored` asks it of the
+    # builder itself, for every class this file and `_glue` render.
     # gh-2408: and a declared failure or warning, read from the view's
     # overlay -- the one place a view's create_error / warnings resolve for
     # the stub beside this -- so its Raises quotes the message this binding
-    # raises. This face rendered no Raises or Warns at all, while the stub
-    # quoted the PARENT's message. Gated exactly as the parent's tp_doc is
-    # (`build_component_ctxs`).
+    # raises.
     _vsynth, _vcfg = S.view_overlay(cfg, obj, view)
     _cls_raises, _cls_warns = S.class_diagnostics(_vcfg, _vsynth)
     _cls_enums = C.enum_choice_docs(cfg, doc_blocks)
-    if (
-        _vtp
-        or (_vblk is not None and _vblk.params)
-        or _cls_raises
-        or _cls_warns
-        or _cls_enums
-    ):
-        _vinit = C.view_init_params(cfg, obj, view)
-        ctx["tp_doc"] = _build_ml_doc(
-            S.class_runtime_doc(
-                obj,
-                ctx["Component"],
-                state_vars,
-                C.is_no_state(cfg, obj),
-                _vinit,
-                class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
-                ctx.get("py_create_args", ""),
-                doc_blocks=doc_blocks,
-                manifest_doc=view.get("doc", ""),
-                state_docs=C.state_docs(cfg, obj),
-                # gh-1882: the parent's reset(), the view's constructor.
-                custom_reset=Ctx.manifest_reset_is_authors(
-                    cfg, obj, init_params=_vinit
-                ),
-                create_fn=view["create_fn"],
-                raises=_cls_raises,
-                warns=_cls_warns,
-                enum_choices=_cls_enums,
-                csym=ctx["csym"],
-            )
-        )
-    else:
-        ctx["tp_doc"] = _build_ml_doc([f"{ctx['Component']} type."])
+    _vinit = C.view_init_params(cfg, obj, view)
+    _doc_args = (
+        obj,
+        ctx["Component"],
+        state_vars,
+        C.is_no_state(cfg, obj),
+        _vinit,
+        class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
+        ctx.get("py_create_args", ""),
+    )
+    # gh-1882: the parent's reset(), the view's constructor.
+    _reset = Ctx.manifest_reset_is_authors(cfg, obj, init_params=_vinit)
+    _doc_kw = dict(
+        doc_blocks=doc_blocks,
+        manifest_doc=view.get("doc", ""),
+        state_docs=C.state_docs(cfg, obj),
+        create_fn=view["create_fn"],
+        raises=_cls_raises,
+        warns=_cls_warns,
+        enum_choices=_cls_enums,
+        csym=ctx["csym"],
+    )
+    ctx["tp_doc_authored"] = S.class_doc_authored(
+        *_doc_args, custom_reset=_reset, **_doc_kw
+    )
+    # gh-2401: the same predicate, asked of the manifest's own prose --
+    # what `_docsync` may write over a sacred fragment's tp_doc.
+    ctx["tp_doc_declared"] = S.class_doc_authored(
+        *_doc_args,
+        custom_reset=_reset,
+        inputs=S.MANIFEST_CLASS_DOC_INPUTS,
+        **_doc_kw,
+    )
+    ctx["tp_doc"] = _build_ml_doc(
+        S.class_runtime_doc(*_doc_args, custom_reset=_reset, **_doc_kw)
+        if ctx["tp_doc_authored"]
+        else [f"{ctx['Component']} type."]
+    )
     ctx.update(
         Ctx.make_module_ctx(
             module,
@@ -2356,47 +2356,50 @@ def build_component_ctxs(
                 default_block=C.stream_block_default(cfg, obj),
             )
         )
-        # Class C __doc__ (tp_doc): TOML `doc` > create()'s @brief > default.
-        # gh-602: an object with a `create_fn` override (e.g.
-        # `acq_create_continuous`) is actually constructed by that function,
-        # not the derived `<obj>_create` — its Doxygen is what tp_init
-        # actually calls, so the transplant must key off it too.
-        _cdoc = authored_class_brief(
-            _doc_blocks,
-            C.object_create_name(cfg, obj),
-            cfg.get(obj, {}).get("doc", ""),
-        )
-        # gh-642: when the header documents create(), tp_doc carries the whole
-        # class block the .pyi carries — same builder, so they cannot disagree.
-        # With nothing authored there is no block to build and the generic
-        # one-liner stands, exactly as before.
+        # Class C __doc__ (tp_doc): the whole class block the .pyi carries
+        # (gh-642) -- TOML `doc` > the constructor's @brief for its summary;
+        # gh-602: the constructor is `create_fn` when one is declared -- and
+        # the generic one-liner when nothing in it is authored.
         # gh-805 §F: same derivation the .pyi beside it uses.
         _cls_raises, _cls_warns = S.class_diagnostics(cfg, obj)
         # gh-901: per-choice enum docs, from the same header read.
         _cls_enums = C.enum_choice_docs(cfg, _doc_blocks)
+        _doc_args = (
+            obj,
+            ctx["Component"],
+            state_vars,
+            C.is_no_state(cfg, obj),
+            C.init_params(cfg, obj),
+            class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
+            ctx.get("py_create_args", ""),
+        )
+        _reset = Ctx.manifest_reset_is_authors(cfg, obj)
+        _doc_kw = dict(
+            doc_blocks=_doc_blocks,
+            manifest_doc=cfg.get(obj, {}).get("doc", ""),
+            state_docs=C.state_docs(cfg, obj),
+            create_fn=C.object_create_fn(cfg, obj),
+            raises=_cls_raises,
+            warns=_cls_warns,
+            enum_choices=_cls_enums,
+            csym=ctx["csym"],
+        )
+        # gh-2401: the one predicate (`_stubs.class_doc_authored`), which
+        # `_docsync` reads back from this slot rather than asking again.
+        ctx["tp_doc_authored"] = S.class_doc_authored(
+            *_doc_args, custom_reset=_reset, **_doc_kw
+        )
+        # gh-2401: the same predicate, asked of the manifest's own prose --
+        # what `_docsync` may write over a sacred fragment's tp_doc.
+        ctx["tp_doc_declared"] = S.class_doc_authored(
+            *_doc_args,
+            custom_reset=_reset,
+            inputs=S.MANIFEST_CLASS_DOC_INPUTS,
+            **_doc_kw,
+        )
         ctx["tp_doc"] = _build_ml_doc(
-            S.class_runtime_doc(
-                obj,
-                ctx["Component"],
-                state_vars,
-                C.is_no_state(cfg, obj),
-                C.init_params(cfg, obj),
-                class_import_line(pkg, ctx["Component"], ctx["module_dir"]),
-                ctx.get("py_create_args", ""),
-                doc_blocks=_doc_blocks,
-                manifest_doc=cfg.get(obj, {}).get("doc", ""),
-                state_docs=C.state_docs(cfg, obj),
-                custom_reset=Ctx.manifest_reset_is_authors(cfg, obj),
-                create_fn=C.object_create_fn(cfg, obj),
-                raises=_cls_raises,
-                warns=_cls_warns,
-                enum_choices=_cls_enums,
-                csym=ctx["csym"],
-            )
-            # gh-805 §F: a manifest-declared failure is as much a reason to
-            # build the block as an authored @brief — and unlike doc_blocks it
-            # is readable on every path, so this cannot desync the scaffold.
-            if _cdoc or _cls_raises or _cls_warns or _cls_enums
+            S.class_runtime_doc(*_doc_args, custom_reset=_reset, **_doc_kw)
+            if ctx["tp_doc_authored"]
             else [f"{ctx['Component']} type."]
         )
         # Nested-module slots: override `module` to the cname (the fragment
@@ -4114,6 +4117,9 @@ def run(
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
     state_str_hints: "dict[str, str] | None" = None,
+    # gh-2401: each state field's manifest `doc`; manifest-only, so only
+    # `jm apply`'s replay passes it, for the manifest it composes.
+    state_docs: "dict[str, str] | None" = None,
     variable_output: bool = False,
     multi_output: list[str] = (),
     method_name: str = "run",
@@ -4318,6 +4324,7 @@ def run(
             no_ctor_names=no_ctor_names,
             controllable_names=controllable_names,
             state_str_hints=state_str_hints,
+            state_docs=state_docs,
             class_name=class_name,
             depends_on=list(depends_on),
             extra_link_libs=list(extra_link_libs),
@@ -4826,6 +4833,7 @@ def run(
         no_ctor_names_=no_ctor_names,
         controllable_names_=controllable_names,
         state_str_hints_=state_str_hints,
+        state_docs_=state_docs,  # gh-2401
         # gh-160: persist extra_link_libs/extra_include_dirs for module objects
         # too (the standalone path already did). Without this they're dropped
         # from the manifest, so the module aggregation can't propagate a

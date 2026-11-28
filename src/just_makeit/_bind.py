@@ -48,7 +48,6 @@ from . import _stubs as S
 from . import _types as T
 from . import _incpath as INC
 from ._context._parse import _build_ml_doc
-from ._docstring import authored_class_brief
 from ._init import _make_component_ctx
 
 
@@ -598,7 +597,7 @@ def _build_ctx(
     # Class docstring via the one shared builder (identical to _init.run and the
     # module path), enriched from the header's create() @brief/@param when
     # doc_blocks are supplied.
-    ctx["class_docstring"] = S.class_docstring_block(
+    _doc_args = (
         comp,
         ctx["Component"],
         state_vars,
@@ -606,31 +605,22 @@ def _build_ctx(
         init_params,
         f"from {pkg} import {ctx['Component']}",
         ctx.get("py_create_args", ""),
-        doc_blocks=doc_blocks,
-        custom_reset=authors_reset,
-        csym=ctx["csym"],
     )
-    # gh-676/gh-644: the runtime class docstring, on the same precedence
-    # every other regeneration path uses. bind reads the header alone, so
-    # without this it rendered the seeded default while `jm apply` rendered
-    # the author's create() @brief -- and the two write the SAME file, so the
-    # example's bind round-trip caught them disagreeing.
-    _tp = authored_class_brief(doc_blocks, CSYM.create_name(ctx["csym"]))
-    if _tp:
-        # gh-642: the whole class block, from the same builder that produced
-        # `class_docstring` above, so the two faces of this file agree.
+    _doc_kw = dict(doc_blocks=doc_blocks, csym=ctx["csym"])
+    ctx["class_docstring"] = S.class_docstring_block(
+        *_doc_args, custom_reset=authors_reset, **_doc_kw
+    )
+    # gh-676/gh-644: the runtime class docstring, on the predicate every
+    # other regeneration path uses (`_stubs.class_doc_authored`, gh-2401).
+    # bind reads the header alone, so without this it rendered the seeded
+    # default while `jm apply` rendered the author's create() @brief -- and
+    # the two write the SAME file, so the example's bind round-trip caught
+    # them disagreeing. gh-642: the whole class block, from the same builder
+    # that produced `class_docstring` above.
+    if S.class_doc_authored(*_doc_args, custom_reset=authors_reset, **_doc_kw):
         ctx["tp_doc"] = _build_ml_doc(
             S.class_runtime_doc(
-                comp,
-                ctx["Component"],
-                state_vars,
-                is_opaque,
-                init_params,
-                f"from {pkg} import {ctx['Component']}",
-                ctx.get("py_create_args", ""),
-                doc_blocks=doc_blocks,
-                custom_reset=authors_reset,
-                csym=ctx["csym"],
+                *_doc_args, custom_reset=authors_reset, **_doc_kw
             )
         )
     return ctx

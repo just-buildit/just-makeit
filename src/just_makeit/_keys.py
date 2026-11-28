@@ -165,6 +165,10 @@ VIEW_KEYS = frozenset(
         "create_error_message",
         # gh-2552: `create_fn` takes a trailing `const char **why`.
         "create_why",
+        # gh-2401: the view's own `tp_init` snippet; inherited from the
+        # parent only while the view inherits its `init_params`
+        # (`_config.view_init_post_parse`).
+        "init_post_parse",
         "exclude_properties",
         "exclude_methods",
         # Sub-tables: the view's own constructor shape (falling back to the

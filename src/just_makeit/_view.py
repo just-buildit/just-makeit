@@ -131,6 +131,7 @@ def run(
     create_error_message: str | None = None,
     create_why: bool = False,
     create_core: str = "",
+    init_post_parse: str = "",
     from_apply: bool = False,
 ) -> None:
     # gh-625's audit: a view's class name is not just a Python identifier —
@@ -350,6 +351,10 @@ def run(
     # Manifest-only, like the pair above; the view's own, never inherited.
     if create_why:
         view_entry["create_why"] = True
+    # gh-2401: the view's own `tp_init` snippet (`_config.
+    # view_init_post_parse`). Manifest-only, so only the replay passes it.
+    if init_post_parse:
+        view_entry["init_post_parse"] = init_post_parse
 
     # gh-1591: the view constructs the PARENT's state, named by its stem.
     csym = CSYM.stem(cfg, object_name)

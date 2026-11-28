@@ -1414,6 +1414,7 @@ struct. `jm script` names the rows in a NOTE, since no flag spells them.
 | `warnings = [{...}]`                   | `jm warning <obj> --view <Class>`                             | ✅ (0.33)    |
 | `create_error`, `create_error_message` | `jm error <obj> --view <Class> --category EXC --message TEXT` | ✅ (gh-580)  |
 | `create_why`                           | (manifest only)                                               | ✅ (gh-2552) |
+| `init_post_parse = "..."`              | (manifest only)                                               | ✅ (gh-2401) |
 
 ### `[<component>]` lifecycle impl bodies
 
@@ -2162,20 +2163,21 @@ are a module-object feature, so the object must belong to a `[module.<name>]`.
 A view's class may live in another object module (`module`, gh-2516): that
 module registers, stubs and re-exports it, and links the object's core.
 
-| Key                                    | Type             | Notes                                                                                                                                                                        |
-| -------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `class_name`                           | string           | Python class name for the view. Required; unique across every class the view's module exposes, and among the object's views.                                                 |
-| `module`                               | string           | The object module the view's class lives in (gh-2516). Absent, the object's own. Written only when it differs.                                                               |
-| `create_fn`                            | string           | C constructor the view's `__init__` calls. Required; must differ from `<pkg>_<comp>_create`. Scaffolded as a stub in the shared `_core.c`.                                   |
-| `doc`                                  | string           | Docstring for the view class.                                                                                                                                                |
-| `init_params`                          | array            | The view's own constructor params, same shape as `[[<object>.init_params]]`. Omit to inherit the parent's constructor shape.                                                 |
-| `exclude_properties`                   | array of strings | Parent property names the view omits from its Python surface.                                                                                                                |
-| `exclude_methods`                      | array of strings | Parent method names the view omits. Only the view's Python wrapper and `PyMethodDef` entry are dropped; the shared C function stays.                                         |
-| `properties`                           | array            | The view's **own** properties, same shape as `[[<object>.properties]]`: a new name ADDS a property the parent lacks, a parent's name OVERRIDES it. Merged over the parent's. |
-| `methods`                              | array            | The view's own methods, same shape as `[[<object>.methods]]`: ADD a new method (scaffolds a shared C stub) or OVERRIDE a parent method's doc.                                |
-| `warnings`                             | array            | The view's own post-construction warnings, same shape as `[[<object>.warnings]]` (gh-509). A view carries no parent warnings, so this is its only source.                    |
-| `create_error`, `create_error_message` | string           | The view's own `create()`-failure translation (gh-580). Absent, the view inherits the parent's.                                                                              |
-| `create_why`                           | bool             | The view's `create_fn` takes a trailing `const char **why`, raised as its `create_error` (gh-2552). Never inherited: the parent's `create()` is a different function.        |
+| Key                                    | Type             | Notes                                                                                                                                                                                                            |
+| -------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `class_name`                           | string           | Python class name for the view. Required; unique across every class the view's module exposes, and among the object's views.                                                                                     |
+| `module`                               | string           | The object module the view's class lives in (gh-2516). Absent, the object's own. Written only when it differs.                                                                                                   |
+| `create_fn`                            | string           | C constructor the view's `__init__` calls. Required; must differ from `<pkg>_<comp>_create`. Scaffolded as a stub in the shared `_core.c`.                                                                       |
+| `doc`                                  | string           | Docstring for the view class.                                                                                                                                                                                    |
+| `init_params`                          | array            | The view's own constructor params, same shape as `[[<object>.init_params]]`. Omit to inherit the parent's constructor shape.                                                                                     |
+| `exclude_properties`                   | array of strings | Parent property names the view omits from its Python surface.                                                                                                                                                    |
+| `exclude_methods`                      | array of strings | Parent method names the view omits. Only the view's Python wrapper and `PyMethodDef` entry are dropped; the shared C function stays.                                                                             |
+| `properties`                           | array            | The view's **own** properties, same shape as `[[<object>.properties]]`: a new name ADDS a property the parent lacks, a parent's name OVERRIDES it. Merged over the parent's.                                     |
+| `methods`                              | array            | The view's own methods, same shape as `[[<object>.methods]]`: ADD a new method (scaffolds a shared C stub) or OVERRIDE a parent method's doc.                                                                    |
+| `warnings`                             | array            | The view's own post-construction warnings, same shape as `[[<object>.warnings]]` (gh-509). A view carries no parent warnings, so this is its only source.                                                        |
+| `create_error`, `create_error_message` | string           | The view's own `create()`-failure translation (gh-580). Absent, the view inherits the parent's.                                                                                                                  |
+| `create_why`                           | bool             | The view's `create_fn` takes a trailing `const char **why`, raised as its `create_error` (gh-2552). Never inherited: the parent's `create()` is a different function.                                            |
+| `init_post_parse`                      | string           | The view's own `tp_init` snippet, run after its arguments parse (gh-2401). Absent, a view that inherits the parent's `init_params` runs the parent's snippet; one that declares its own `init_params` runs none. |
 
 ```toml
 [[acc.views]]

@@ -29,7 +29,7 @@ from . import _procglobal
 from . import _record
 from . import _report
 from ._context._parse import _build_ml_doc
-from ._docstring import authored_class_brief, class_import_line
+from ._docstring import class_import_line
 from . import _context as Ctx
 from . import _render as R
 from . import _stubs as S
@@ -315,7 +315,9 @@ def component_ctx(
     _cls_enums = C.enum_choice_docs(
         cfg, cfg.get(object_name, {}).get("_doc_blocks", {})
     )
-    ctx["class_docstring"] = _S.class_docstring_block(
+    # The class docstring's inputs, once: the `.pyi` block and the runtime
+    # `tp_doc` below are the same text (gh-642), so they read one tuple.
+    _doc_args = (
         object_name,
         Component,
         state_vars_list,
@@ -323,62 +325,33 @@ def component_ctx(
         init_params,
         class_import_line(pkg, Component, _module_dir),
         ctx.get("py_create_args", ""),
+    )
+    _reset = Ctx.manifest_reset_is_authors(cfg, object_name)
+    _doc_kw = dict(
         doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         manifest_doc=cfg.get(object_name, {}).get("doc", ""),
         state_docs=C.state_docs(cfg, object_name),
-        custom_reset=Ctx.manifest_reset_is_authors(cfg, object_name),
         create_fn=C.object_create_fn(cfg, object_name),
         raises=_cls_raises,
         warns=_cls_warns,
         enum_choices=_cls_enums,
         csym=ctx["csym"],
     )
-    # gh-644/gh-676: the runtime class docstring. The module aggregator has
-    # derived this from create()'s @brief since gh-602; the standalone template
-    # carried a fixed literal, so `help(Obj)` showed "<Component> component.
-    # Wraps <c>_state_t." however the author documented create() -- while the
-    # .pyi class docstring beside it showed the real thing. Same precedence as
-    # the module path: manifest doc= > header @brief > a generic fallback.
-    _tp = authored_class_brief(
-        cfg.get(object_name, {}).get("_doc_blocks", {}),
-        C.object_create_name(cfg, object_name),
-        cfg.get(object_name, {}).get("doc", ""),
+    ctx["class_docstring"] = _S.class_docstring_block(
+        *_doc_args, custom_reset=_reset, **_doc_kw
     )
-    # Only override when there is something authored to override WITH. An
-    # unconditional fallback here would rewrite the seeded default, and
-    # `jm object` renders this file without doc_blocks while `jm apply`
-    # renders it with them -- so a freshly scaffolded project would report
-    # STALE against itself the moment it was created.
-    # gh-805 §F: a declared `create_error` or `[[obj.warnings]]` is also
-    # "something to override with", and it does not carry the hazard the
-    # comment above describes. That hazard is about *header* doc_blocks, which
-    # `jm object` renders without and `jm apply` renders with; these two come
-    # from the MANIFEST, which both paths read alike — so widening the gate
-    # cannot make a fresh scaffold report STALE against itself. Without this
-    # the object's own `.pyi` documented an exception that `help(Obj)` did
-    # not, which is the two-faces-disagree bug gh-642 exists to prevent.
-    if _tp or _cls_raises or _cls_warns or _cls_enums:
-        # gh-642: the whole class block, not just the brief — the same text
-        # the .pyi beside it carries.
+    # gh-644/gh-676: the runtime class docstring -- the whole class block the
+    # .pyi beside it carries (gh-642) -- whenever anything in it is authored.
+    # Only then: an unconditional override would rewrite the seeded default,
+    # and `jm object` renders this file without doc_blocks while `jm apply`
+    # renders it with them. `class_doc_authored` asks the builder itself
+    # whether the authored inputs change the block, so a documented init
+    # param or state field counts as a summary does (gh-2401, the gh-1177
+    # question), and jm's own scaffold Doxygen, which changes nothing,
+    # does not.
+    if _S.class_doc_authored(*_doc_args, custom_reset=_reset, **_doc_kw):
         ctx["tp_doc"] = _build_ml_doc(
-            _S.class_runtime_doc(
-                object_name,
-                Component,
-                state_vars_list,
-                C.is_no_state(cfg, object_name),
-                init_params,
-                class_import_line(pkg, Component, _module_dir),
-                ctx.get("py_create_args", ""),
-                doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
-                manifest_doc=cfg.get(object_name, {}).get("doc", ""),
-                state_docs=C.state_docs(cfg, object_name),
-                custom_reset=Ctx.manifest_reset_is_authors(cfg, object_name),
-                create_fn=C.object_create_fn(cfg, object_name),
-                raises=_cls_raises,
-                warns=_cls_warns,
-                enum_choices=_cls_enums,
-                csym=ctx["csym"],
-            )
+            _S.class_runtime_doc(*_doc_args, custom_reset=_reset, **_doc_kw)
         )
     # gh-1117: a STANDALONE object's own `.so` is its own extension module,
     # so the rendezvous for any process-global core it links belongs in its

@@ -1446,6 +1446,7 @@ def run(
     no_ctor_names: "frozenset[str]" = frozenset(),
     controllable_names: "frozenset[str]" = frozenset(),
     state_str_hints: "dict[str, str] | None" = None,
+    state_docs: "dict[str, str] | None" = None,  # gh-2401, manifest-only
     pytest_: bool | None = None,
     pytest_benchmark_: bool | None = None,
     class_name: str | None = None,
@@ -2153,6 +2154,7 @@ def run(
         no_ctor_names_=no_ctor_names,
         controllable_names_=controllable_names,
         state_str_hints_=state_str_hints,
+        state_docs_=state_docs,
         extra_link_libs_=list(extra_link_libs),
         extra_include_dirs_=list(extra_include_dirs),
         doc_=doc,

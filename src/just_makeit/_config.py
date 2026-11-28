@@ -8113,6 +8113,37 @@ def view_init_params(cfg: dict, component: str, view: dict) -> list[tuple]:
     return init_params(cfg, component)
 
 
+def view_init_post_parse(cfg: dict, component: str, view: dict) -> str:
+    """The ``init_post_parse`` snippet a view's ``tp_init`` runs (gh-2401).
+
+    A view's own ``init_post_parse`` when it declares one. Otherwise the
+    parent's -- but only while the view inherits the parent's
+    ``init_params`` (:func:`view_init_params`): then the parse is the same
+    parse, and the snippet that completes it is the same snippet. A view
+    that declares its own ``init_params`` parses different arguments, which
+    the parent's snippet may not even name, so it runs only a snippet of
+    its own.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"init_post_parse": "n += 1;"}}
+    >>> view_init_post_parse(cfg, "o", {"class_name": "V"})
+    'n += 1;'
+    >>> view_init_post_parse(
+    ...     cfg, "o", {"init_params": [{"name": "m", "type": "int"}]}
+    ... )
+    ''
+    >>> view_init_post_parse(cfg, "o", {"init_post_parse": "m = 2;"})
+    'm = 2;'
+    """
+    own = view.get("init_post_parse")
+    if own:
+        return own
+    if view.get("init_params"):
+        return ""
+    return init_post_parse(cfg, component)
+
+
 def view_exclude_properties(view: dict) -> set[str]:
     """Parent property names a view omits from its Python surface (gh-504)."""
     return set(view.get("exclude_properties", []))
@@ -10086,6 +10117,7 @@ def add_component(
     no_ctor_names_: "frozenset[str]" = frozenset(),
     controllable_names_: "frozenset[str]" = frozenset(),
     state_str_hints_: "dict[str, str] | None" = None,
+    state_docs_: "dict[str, str] | None" = None,
     extra_link_libs_: list[str] = (),
     extra_include_dirs_: list[str] = (),
     create_fn_: str | None = None,
@@ -10116,6 +10148,10 @@ def add_component(
                 if n in (state_str_hints_ or {})
                 else {}
             ),
+            # gh-2401: and the field's `doc` (gh-1493), for the same reason:
+            # a module's `.pyi` renders from the replayed manifest, so a doc
+            # dropped here never reached a module object's class docstring.
+            **({"doc": state_docs_[n]} if n in (state_docs_ or {}) else {}),
         }
         for n, t, d in vars_
     ]

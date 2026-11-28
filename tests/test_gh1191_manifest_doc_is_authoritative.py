@@ -302,18 +302,16 @@ class TestTheSlotSetIsDerivedFromTheManifest:
                 "properties": [{"name": "prop", "doc": "y"}],
             }
         }
-        names, tp = self._call(cfg, "o", "o")
+        names = self._call(cfg, "o", "o")
         assert names == frozenset({"documented", "prop"})
-        assert tp is False
 
     def test_an_empty_doc_is_not_a_declaration(self) -> None:
         """`doc = ""` is the absence of a declaration, not a declaration of
         emptiness — refreshing on it would blank a slot from a key the author
         wrote to clear a stale value."""
         cfg = {"o": {"methods": [{"name": "m", "doc": ""}], "doc": ""}}
-        names, tp = self._call(cfg, "o", "o")
+        names = self._call(cfg, "o", "o")
         assert names == frozenset()
-        assert tp is False
 
     def test_a_view_unions_its_own_members_with_the_parents(self) -> None:
         cfg = {
@@ -328,14 +326,12 @@ class TestTheSlotSetIsDerivedFromTheManifest:
                 ],
             }
         }
-        names, tp = self._call(cfg, "o", "peek")
+        names = self._call(cfg, "o", "peek")
         assert names == frozenset({"inherited", "own"})
-        assert tp is True
 
     def test_an_unknown_fragment_claims_nothing(self) -> None:
         """A fragment jm cannot tie back to a view declares no authored
         members, so the conservative path is what runs."""
         cfg = {"o": {"methods": [{"name": "m", "doc": "x"}], "views": []}}
-        names, tp = self._call(cfg, "o", "ghost")
+        names = self._call(cfg, "o", "ghost")
         assert names == frozenset({"m"})
-        assert tp is False
