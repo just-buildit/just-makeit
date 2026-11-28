@@ -897,11 +897,13 @@ KIND_METHOD_ARG_KEYS = frozenset(
 )
 KIND_DEPENDS_ON_KEYS = frozenset({"name", "link", "test_only"})
 KIND_PROPERTY_KEYS = (
-    frozenset(
-        {"name", "type", "writable", "doc", "enum", "getter", "setter", "fn"}
-    )
-    | SETTER_ERROR_KEYS
+    frozenset({"name", "type", "writable", "doc", "enum"}) | SETTER_ERROR_KEYS
 )
+#: gh-2813: keys this vocabulary once listed and no reader ever used. The
+#: binding always calls ``<backing>_get_<name>`` / ``<backing>_set_<name>``
+#: (`_csym.property_getter` / `property_setter`), so a row naming its own
+#: function was accepted and ignored. `_capsule` refuses them.
+KIND_PROPERTY_DEAD_KEYS = ("getter", "setter", "fn")
 #: gh-1126. `enum` is optional and names a `[[enum]]` SSOT for a
 #: string-valued setting; the others are validated at render time.
 KIND_SETTING_KEYS = (
