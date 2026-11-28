@@ -36,6 +36,7 @@ from just_makeit._apply import run as apply_run
 from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
+from _cmake import PYTHON3_ARG
 
 _CODEC = {
     "kw": {
@@ -225,7 +226,7 @@ def test_build_and_call(tmp_path):
             str(d),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

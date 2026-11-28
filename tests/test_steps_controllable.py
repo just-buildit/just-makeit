@@ -41,6 +41,7 @@ from just_makeit import _stubs
 from just_makeit._init import run as init_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason():
@@ -287,7 +288,7 @@ def test_controllable_override_e2e(amp):
 
     build = amp / "build"
     cfg = subprocess.run(
-        ["cmake", "-S", str(amp), "-B", str(build)],
+        ["cmake", "-S", str(amp), "-B", str(build), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,
@@ -348,7 +349,7 @@ def scalar(tmp_path):
 
 def _cmake_build(root):
     cfg = subprocess.run(
-        ["cmake", "-S", str(root), "-B", str(root / "build")],
+        ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,

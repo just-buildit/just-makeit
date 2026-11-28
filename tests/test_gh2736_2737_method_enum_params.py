@@ -52,6 +52,7 @@ from just_makeit import _config as C  # noqa: E402
 from just_makeit import _types as T  # noqa: E402
 from just_makeit._context._parse import scalar_arg_c  # noqa: E402
 from just_makeit._report import Refusal  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -404,7 +405,7 @@ def test_the_call_decodes_the_name_to_its_int(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         root,

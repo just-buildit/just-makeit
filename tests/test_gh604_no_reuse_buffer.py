@@ -60,6 +60,7 @@ from just_makeit._context._methods import make_methods_ctx
 from just_makeit._method import run as method_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
+from _cmake import PYTHON3_ARG
 
 SINGLE = {
     "name": "steps",
@@ -179,7 +180,7 @@ class TestRuntime:
                 str(dest),
                 "-B",
                 str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             ["cmake", "--build", str(build)],
         ):

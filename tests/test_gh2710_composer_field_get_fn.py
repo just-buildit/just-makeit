@@ -41,6 +41,7 @@ from just_makeit import _keys
 sys.path.insert(0, str(Path(__file__).parent))
 from test_composer_codegen import _cfg  # noqa: E402
 from test_gh1711_composer_owned_pointer import CJSON_C, CJSON_H  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 MOD = "wfm_compose"
 
@@ -428,7 +429,7 @@ def project(tmp_path_factory) -> Path:
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         proj,

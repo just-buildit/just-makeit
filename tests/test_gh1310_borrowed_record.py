@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _no_toolchain():
@@ -262,7 +263,7 @@ class TestTheLayoutMatchesTheCompiler:
         )
         c.write_text(text[:body_start] + kernel + text[j:], encoding="utf-8")
         for args in (
-            ["cmake", "-S", str(root), "-B", str(root / "build")],
+            ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
             ["cmake", "--build", str(root / "build"), "--target", "ring"],
         ):
             r = subprocess.run(

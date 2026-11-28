@@ -52,6 +52,7 @@ from test_gh2144_int_range_refused import int_range, refusal_wrong
 from just_makeit import _composer
 from just_makeit import _config as C
 from just_makeit import _types as T
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -355,7 +356,7 @@ def test_every_ranged_field_round_trips_exactly(tmp_path):
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         proj,

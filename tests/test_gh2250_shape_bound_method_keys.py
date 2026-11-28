@@ -57,6 +57,7 @@ from just_makeit import _keys
 from just_makeit._method import _SIGNATURE_COERCIONS
 from just_makeit._keys import truthy
 from test_gh2259_batch_method_faces import SHAPES
+from _cmake import PYTHON3_ARG
 
 #: Every key whose reading depends on the shape, read off the registry.
 KEYS = sorted(set(_keys.RESULT_SHAPE_KEYS) | set(_keys.INPUT_SIDE_KEYS))
@@ -350,8 +351,7 @@ def status_built(outcomes, blank, tmp_path_factory):
     # trigger did -- `too few arguments` in the user's build).
     failed = ""
     for cmd in (
-        ["cmake", "-S", str(root), "-B", str(build),
-         f"-DPython3_EXECUTABLE={sys.executable}"],
+        ["cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG],
         ["cmake", "--build", str(build)],
     ):  # fmt: skip
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)

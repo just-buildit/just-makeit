@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from just_makeit import _composer, _config, _keys  # noqa: E402
 from test_composer_codegen import _cfg  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 HOST = "wfm_bits_parse"
 
@@ -505,7 +506,7 @@ def project(tmp_path_factory) -> Path:
             "-S",
             ".",
             "-DCMAKE_BUILD_TYPE=Release",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         root,
     )

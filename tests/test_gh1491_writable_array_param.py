@@ -41,6 +41,7 @@ import pytest
 from _compilers import default_cc
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -321,7 +322,7 @@ def test_the_kernel_writes_the_callers_array_or_the_call_refuses(tmp_path):
             str(proj),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "--parallel", "4"],
     ):

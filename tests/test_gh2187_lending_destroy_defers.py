@@ -47,6 +47,7 @@ from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import _extract_c_function_bodies  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _CLOSE = {
     "name": "close",
@@ -264,7 +265,7 @@ def _build(root: Path, target: str, clean: bool = False) -> None:
         for ext in exts:
             ext.unlink()
     for cmd in (
-        ["cmake", "-S", str(root), "-B", str(root / "build")],
+        ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
         ["cmake", "--build", str(root / "build"), "--target", target],
     ):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)

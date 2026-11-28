@@ -62,6 +62,7 @@ from just_makeit import _config as C  # noqa: E402
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._keys import INIT_PARAM_KEYS  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason() -> "str | None":
@@ -174,7 +175,7 @@ def built(tmp_path_factory):
             str(dest),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

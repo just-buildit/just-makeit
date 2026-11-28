@@ -45,6 +45,7 @@ from just_makeit import _coerce  # noqa: E402
 from just_makeit import _composer  # noqa: E402
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _keys  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 CAP = "p.wc.mix"
 _CC = default_cc()
@@ -449,7 +450,7 @@ def _pool_project(tmp_path: Path, asan: bool = False) -> Path:
         "build",
         "-S",
         ".",
-        f"-DPython3_EXECUTABLE={sys.executable}",
+        PYTHON3_ARG,
         *flags,
         timeout=600,
     )

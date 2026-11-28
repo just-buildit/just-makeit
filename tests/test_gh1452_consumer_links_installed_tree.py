@@ -45,6 +45,7 @@ import pytest
 
 from _compilers import WINDOWS_CONSUMER_GAP
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 _CONSUMER = (
     '#include "<<P>>gain/gain_core.h"\n'
@@ -196,6 +197,7 @@ class TestFindPackageConsumer:
                 "cons",
                 "-B",
                 "cons/b",
+                PYTHON3_ARG,
                 f"-DCMAKE_PREFIX_PATH={pfx}",
             ],
             ["cmake", "--build", "cons/b"],

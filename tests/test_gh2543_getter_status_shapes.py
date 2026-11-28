@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 #: Distinct per object, so a hit cannot come from the neighbour.
 MSG = {
@@ -132,8 +133,7 @@ def built(tmp_path_factory) -> Path:
     assert r.returncode == 0, r.stdout + r.stderr
 
     for cmd in (
-        ["cmake", "-S", ".", "-B", "build",
-         f"-DPython3_EXECUTABLE={sys.executable}"],
+        ["cmake", "-S", ".", "-B", "build", PYTHON3_ARG],
         ["cmake", "--build", "build"],
     ):  # fmt: skip
         r = subprocess.run(cmd, cwd=proj, capture_output=True, text=True)

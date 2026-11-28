@@ -40,6 +40,7 @@ sys.path.insert(0, SRC.as_posix())
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _capsule, _composer, _handle  # noqa: E402
 from just_makeit._report import Refusal  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -207,7 +208,7 @@ def kinds(tmp_path_factory) -> Path:
         ".",
         "-B",
         "build",
-        f"-DPython3_EXECUTABLE={sys.executable}",
+        PYTHON3_ARG,
         "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
     )
     _cmake(proj, "--build", "build", "--parallel", "4")
