@@ -3195,6 +3195,18 @@ def _relent_teardown(
     )
 
 
+def kept(path: Path) -> None:
+    """Say that a member verb left *path* alone (gh-2843).
+
+    Called where :func:`_config.may_write_module_file` answered no for a file
+    that exists: one the project names in ``[project] status_allow``, which
+    `jm apply` never rewrites either. The line stands beside the verb's
+    ``update`` lines, so a change the author now has to make by hand -- a new
+    object's registration in a kept aggregator, say -- is not a silence.
+    """
+    print(f"  keep    {path}  ([project] status_allow)")
+
+
 def _regenerate_module_now(
     root: Path,
     cfg: dict,
@@ -3206,11 +3218,12 @@ def _regenerate_module_now(
 
     def _put(path: Path, content: str, verb: str = "create") -> None:
         # gh-2116: every file this writes asks the one predicate, "may jm
-        # write this file of the module now?" -- `no_generate` today, and
-        # a `status_allow` entry next (gh-2843).
-        rel = path.resolve().relative_to(root.resolve()).as_posix()
-        if C.may_write_module_file(cfg, module, rel):
+        # write this file of the module now?" -- not in a `no_generate`
+        # module, and not over a file `status_allow` names (gh-2843).
+        if C.may_write_module_file(cfg, module, root, path):
             _write(path, content, verb)
+        elif not C.is_no_generate_module(cfg, module):
+            kept(path)
 
     object_names = C.module_objects(cfg, module)
     # cname drives the flat native dir / file prefixes; leaf is the .so basename;

@@ -420,13 +420,23 @@ def regenerate_standalone(
         root, object_name, C.extra_methods(cfg, object_name)
     )
 
+    # gh-2843: each re-render asks the question a module member's writes
+    # ask; a file `status_allow` names is the author's, as `apply` keeps it.
+    from ._object import kept
+
     ext_c = INC.src_path(root, object_name, cfg) / f"{object_name}_ext.c"
-    if ext_c.exists():
+    if ext_c.exists() and not C.may_write_module_file(cfg, None, root, ext_c):
+        kept(ext_c)
+    elif ext_c.exists():
         _textio.write_text(ext_c, R.render(R.COMPONENT_EXT_C, ctx))
         print(f"  update  {ext_c}")
 
     pyi_path = root / "src" / pkg / f"{object_name}.pyi"
-    if pyi_path.exists():
+    if pyi_path.exists() and not C.may_write_module_file(
+        cfg, None, root, pyi_path
+    ):
+        kept(pyi_path)
+    elif pyi_path.exists():
         old_pyi = pyi_path.read_text(encoding="utf-8")
         new_pyi = R.render_component_pyi(ctx)
         # gh-428: preserve any manual_stub method's hand-written text across

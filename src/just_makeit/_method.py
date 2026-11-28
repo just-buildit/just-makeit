@@ -49,7 +49,7 @@ from ._init import (
     _inject_decls_into_core_h,
     standalone_extra_include,
 )
-from ._object import _regenerate_module
+from ._object import _regenerate_module, kept
 from . import _linkcheck
 from . import _incpath as INC
 from ._context._diagnostics import (
@@ -3426,7 +3426,13 @@ def run(
             family=C.core_family(cfg, object_name),
         ):
             print(f"  update  {core_h}")
-        if ext_c.exists():
+        # gh-2843: the glue re-render asks what `_glue.regenerate_standalone`
+        # asks; a file `status_allow` names is kept, as `apply` keeps it.
+        if ext_c.exists() and not C.may_write_module_file(
+            cfg, None, root, ext_c
+        ):
+            kept(ext_c)
+        elif ext_c.exists():
             _textio.write_text(ext_c, r(R.COMPONENT_EXT_C))
             print(f"  update  {ext_c}")
         # gh-1987: the C benchmark is the AUTHOR's (`_createonly`), so the
@@ -3441,7 +3447,11 @@ def run(
             _textio.write_text(bench_c, r(bench_c_tmpl))
             print(f"  update  {bench_c}")
         pyi_path = root / "src" / pkg / f"{object_name}.pyi"
-        if pyi_path.exists():
+        if pyi_path.exists() and not C.may_write_module_file(
+            cfg, None, root, pyi_path
+        ):
+            kept(pyi_path)
+        elif pyi_path.exists():
             old_pyi = pyi_path.read_text(encoding="utf-8")
             new_pyi = R.render_component_pyi(ctx)
             # gh-428: preserve any manual_stub method's hand-written text
@@ -3468,7 +3478,13 @@ def run(
         # insert it into the Python3_add_library line in CMakeLists.txt.
         # Only varargs methods change the build-system source list; normal
         # methods have no effect on CMakeLists.
-        if varargs and obj_cmake.exists():
+        if (
+            varargs
+            and obj_cmake.exists()
+            and not C.may_write_module_file(cfg, None, root, obj_cmake)
+        ):
+            kept(obj_cmake)
+        elif varargs and obj_cmake.exists():
             _splice_varargs_source(
                 obj_cmake,
                 object_name,
