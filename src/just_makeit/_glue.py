@@ -157,6 +157,17 @@ def component_ctx(
             arg_type_,
             return_type_,
             no_step=C.is_no_step(cfg, object_name),
+            # gh-2401: the three shape inputs `_init.run` renders the
+            # object's first binding with. `controllable` is the one the
+            # binding shows: without it every member verb (`jm property`,
+            # `jm warning`, ...) rewrote `steps()` without the per-call
+            # override, calling a `<comp>_steps()` the header declares
+            # with one more argument -- a binding that does not compile,
+            # and `status --check` clean, because the replay re-renders
+            # through here too.
+            mutable=C.is_mutable(cfg, object_name),
+            delegate=C.step_delegates(cfg, object_name),
+            controllable=C.controllable_state_vars(cfg, object_name),
             doc_blocks=cfg.get(object_name, {}).get("_doc_blocks", {}),
         )
     )
