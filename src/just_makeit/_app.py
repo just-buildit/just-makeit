@@ -2251,7 +2251,7 @@ def _missing(cfg: dict, entry: dict) -> "str | None":
     if object_ is None and not C.components(cfg):
         return "no components found — run 'just-makeit object' first."
     if object_ is not None and object_ not in C.components(cfg):
-        return f"object '{object_}' not found."
+        return _not_an_object(cfg, object_)
     obj = _object_of(cfg, entry)
     # gh-1902: a `--module` naming another module than the object's is a
     # claim the manifest contradicts, and the import it asked for names a
@@ -2277,6 +2277,38 @@ def _missing(cfg: dict, entry: dict) -> "str | None":
             ' `default = "[]"` to make it omittable.'
         )
     return None
+
+
+def _not_an_object(cfg: dict, name: str) -> str:
+    """Why `jm app --object` *name* has no app, *name* not being an object.
+
+    A view (gh-504) is a second class over its parent's C core, not an
+    object: it has no state or step of its own for an app to drive, and
+    `jm app` wraps an object or a function. So naming one -- by its class
+    or its lower-cased name, either of which an author may reach for -- is
+    answered with what it is and the object to name instead, rather than
+    a bare "not found" (gh-2564).
+
+    >>> cfg = {"module": {"f": {"objects": ["bq"]}},
+    ...        "bq": {"views": [{"class_name": "Peek"}]}}
+    >>> print(_not_an_object(cfg, "Peek"))  # doctest: +ELLIPSIS
+    'Peek' is a view of object 'bq' in module 'f', not an object: ...
+    >>> _not_an_object(cfg, "ghost")
+    "object 'ghost' not found."
+    """
+    for parent in C.components(cfg):
+        for view in C.views(cfg, parent):
+            cls = view.get("class_name", "")
+            if name not in (cls, cls.lower()):
+                continue
+            return (
+                f"'{name}' is a view of object '{parent}' in module"
+                f" '{C.view_module(cfg, parent, view)}', not an object:"
+                " `jm app` wraps an object or a function. Name the parent"
+                f" (`--object {parent}`), or write a script over {cls} by"
+                " hand."
+            )
+    return f"object '{name}' not found."
 
 
 def _exit_if_missing(cfg: dict, entry: dict) -> None:
