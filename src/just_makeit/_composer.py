@@ -604,11 +604,11 @@ def _segment_sources_c(cfg: dict, module: str) -> str:
     buffer. The caller frees the array, never what it aliases, and keeps
     the list alive while the array is read. The array is never NULL on
     success: an empty list is a one-element allocation with a count of 0,
-    as the Composer has always handed its kernel. A NULL list -- a
-    Segment whose ``__init__`` never ran (``Seg.__new__(Seg)``, or a
-    subclass whose ``__init__`` skips the base's; the type is a base type
-    built by ``PyType_GenericNew``) -- is no sources too, so such a
-    segment's ``get_fn`` read gives the stored value instead of crashing.
+    as the Composer has always handed its kernel. The list is never NULL
+    (gh-2750): a Segment whose ``__init__`` never ran (``Seg.__new__(Seg)``,
+    or a subclass whose ``__init__`` skips the base's) holds the empty list
+    its ``tp_new`` allocated, so such a segment's ``get_fn`` read gives the
+    stored value instead of crashing.
 
     ``sources`` is the live list its getter returns, so it may hold
     anything a caller assigned. An element that is not the source type is
@@ -628,9 +628,9 @@ def _segment_sources_c(cfg: dict, module: str) -> str:
 static {st} *
 {_segment_sources_fn(cfg, module)}(PyObject *sources, size_t *n_out)
 {{
-    /* NULL on an instance whose __init__ never ran (Seg.__new__(Seg), a
-     * subclass that skips it): no sources, not a crash. */
-    Py_ssize_t ns = sources ? PyList_GET_SIZE(sources) : 0;
+    /* Never NULL (gh-2750): `__new__` allocates the list, so a Segment
+     * whose __init__ never ran has no sources, not a crash. */
+    Py_ssize_t ns = PyList_GET_SIZE(sources);
     {st} *srcs = ({st} *)calloc((size_t)(ns ? ns : 1), sizeof *srcs);
     if (!srcs) {{
         PyErr_NoMemory();
@@ -4012,6 +4012,26 @@ def render_segment_type(cfg: dict, module: str) -> str:
     Py_XDECREF(self->sources);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }}
+
+/* gh-2750: the type is a base type, so `__new__` alone (or a subclass whose
+   `__init__` skips ours) hands out an object nothing initialised. Its
+   `sources` is the empty list from here, never NULL, so no reader guards
+   it; `tp_init` and `sum` replace it. */
+static PyObject *
+{tname}_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{{
+    (void)args;
+    (void)kwds;
+    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
+    if (!self)
+        return NULL;
+    self->sources = PyList_New(0);
+    if (!self->sources) {{
+        Py_DECREF(self);
+        return NULL;
+    }}
+    return (PyObject *)self;
+}}
 """)
 
     # defaults applied before extraction. An enum default is a string in
@@ -4527,7 +4547,7 @@ static PyMethodDef {tname}_methods[] = {{
     .tp_name      = "{dotted}",
     .tp_basicsize = sizeof({obj}),
     .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .tp_new       = PyType_GenericNew,
+    .tp_new       = {tname}_new,
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
     .tp_getset    = {tname}_getset,
@@ -4565,6 +4585,24 @@ static void
 {{
     Py_XDECREF(self->segments);
     Py_TYPE(self)->tp_free((PyObject *)self);
+}}
+
+/* gh-2750: `segments` is the empty list from `__new__` on, as a Segment's
+   `sources` is, so an un-initialised timeline reads as empty. */
+static PyObject *
+{tname}_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{{
+    (void)args;
+    (void)kwds;
+    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
+    if (!self)
+        return NULL;
+    self->segments = PyList_New(0);
+    if (!self->segments) {{
+        Py_DECREF(self);
+        return NULL;
+    }}
+    return (PyObject *)self;
 }}
 
 static int
@@ -4639,10 +4677,10 @@ static PyTypeObject {type_obj} = {{
     .tp_name      = "{dotted}",
     .tp_basicsize = sizeof({obj}),
     .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .tp_new       = PyType_GenericNew,
+    .tp_new       = {tname}_new,
     .tp_init      = (initproc){tname}_init,
     .tp_dealloc   = (destructor){tname}_dealloc,
-    .tp_iter      = (getiterfunc){tname}_iter,
+    .tp_iter     = (getiterfunc){tname}_iter,
     .tp_as_mapping = &{tname}_as_mapping,
     .tp_getset    = {tname}_getset,
     .tp_methods   = {tname}_methods,
@@ -5922,6 +5960,22 @@ static void
 {_inflight.free("self")}    Py_TYPE(self)->tp_free((PyObject *)self);
 }}
 
+/* gh-2750: the type is a base type, so `__new__` alone (or a subclass whose
+   `__init__` skips ours) hands out a composer with no state. It is born
+   closed: every method and getter already refuses a closed composer, where
+   a zeroed one read `self->state` through NULL. `tp_init` opens it. */
+static PyObject *
+{cname}_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{{
+    (void)args;
+    (void)kwds;
+    {obj} *self = ({obj} *)type->tp_alloc(type, 0);
+    if (!self)
+        return NULL;
+    self->destroyed = 1;
+    return (PyObject *)self;
+}}
+
 static int
 _pop_flag(PyObject *kw, const char *name, int *out)
 {{
@@ -6245,7 +6299,7 @@ static PyTypeObject {type_obj} = {{
     .tp_name      = "{dotted}",
     .tp_basicsize = sizeof({obj}),
     .tp_flags     = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .tp_new       = PyType_GenericNew,
+    .tp_new       = {cname}_new,
     .tp_init      = (initproc){cname}_init,
     .tp_dealloc   = (destructor){cname}_dealloc,
     .tp_getset    = {cname}_getset,
