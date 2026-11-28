@@ -418,15 +418,10 @@ def run(args: list[str]) -> None:
             if "=" in ptype:
                 ptype, pdefault = ptype.split("=", 1)
             if T.is_array_param_type(ptype):
-                elem_ct = T.array_elem_ctype(ptype)
-                if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
-                    print(
-                        f"error: --param array element type '{elem_ct}' is"
-                        f" not supported.\n"
-                        f"Supported element types: "
-                        f"{', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
-                        file=sys.stderr,
-                    )
+                # gh-1908, gh-2132: the one predicate the manifest asks too.
+                _arr_why = T.array_type_error(ptype)
+                if _arr_why:
+                    print(f"error: --param {_arr_why}", file=sys.stderr)
                     sys.exit(1)
             elif ptype not in T._CTYPE_META:
                 print(
@@ -624,28 +619,39 @@ def run(args: list[str]) -> None:
                         file=sys.stderr,
                     )
                     sys.exit(1)
-                elem = val[:-2]
+                elem = T.array_elem_ctype(val)
                 # gh-1405: a DECLARED record is a legal element too -- rows of
                 # the author's struct, crossing as a structured array. Read
                 # from the manifest rather than a second list, so `jm record`
                 # is the only way to add one and the check cannot fall behind
                 # what the project declares.
-                _declared = C.record_names(C.load(Path.cwd()), object_name)
-                if elem not in T._CTYPE_META and elem not in _declared:
-                    _hint = (
-                        f"\nDeclared records on '{object_name}': "
-                        f"{', '.join(sorted(_declared))}"
-                        if _declared
-                        else f"\nTo pass rows of a struct, declare it first: "
-                        f"just-makeit record {object_name} {elem} "
-                        f"--field <name>:<type> ..."
-                    )
+                _cfg = C.load(Path.cwd())
+                _declared = C.record_names(_cfg, object_name)
+                # gh-2132: a declared SCALAR element is an alias for its
+                # type, so `s[]` over `type = "bool"` is `bool[]`.
+                _resolved = _record.resolve_element(
+                    val, C.records(_cfg, object_name)
+                )
+                elem = T.array_elem_ctype(_resolved)
+                _why = T.array_type_error(_resolved, frozenset(_declared))
+                if _why and _resolved != val:
+                    _why = f"(record '{val[:-2]}') {_why}"
+                if _why:
+                    # gh-1908, gh-2132: the predicate the manifest asks too.
+                    # An element jm has no row for is the record case, so it
+                    # also says how to declare one.
+                    _hint = ""
+                    if elem not in T._CTYPE_META:
+                        _hint = (
+                            f"\nDeclared records on '{object_name}': "
+                            f"{', '.join(sorted(_declared))}"
+                            if _declared
+                            else f"\nTo pass rows of a struct, declare it "
+                            f"first: just-makeit record {object_name} "
+                            f"{elem} --field <name>:<type> ..."
+                        )
                     print(
-                        f"error: --arg-type array element type '{elem}' "
-                        "is not supported.\n"
-                        f"Supported element types: "
-                        f"{', '.join(sorted(T._CTYPE_META))}"
-                        f"{_hint}",
+                        f"error: --arg-type {_why}{_hint}",
                         file=sys.stderr,
                     )
                     sys.exit(1)

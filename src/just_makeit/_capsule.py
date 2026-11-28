@@ -148,7 +148,12 @@ def _array_elem_npy(array_type: str) -> tuple[str, str]:
         elem = parsed[0]
     npy = T._CTYPE_TO_NPY.get(elem)
     if npy is None:
-        raise ValueError(f"capsule: unsupported array element type '{elem}'")
+        # gh-2132: the one predicate every array reader asks, so this
+        # face names the spelling that works, as `jm method` does.
+        why = T.array_type_error(array_type) or (
+            f"unsupported array element type '{elem}'"
+        )
+        raise ValueError(f"capsule: {why}")
     return elem, npy
 
 

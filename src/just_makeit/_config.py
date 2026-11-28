@@ -7082,6 +7082,14 @@ def _param_type_errors(entry: dict, what: str) -> list[str]:
         ) or _param_default_error(
             pm, f"{what}: {noun} {pm.get('name', '?')!r}"
         )
+        # gh-1908, gh-2132: a type `_declared_type_error` accepts may still
+        # not be a bindable ARRAY -- `float[][]` binds flat, and `bool[]`
+        # has no numpy dtype. The predicate `--param` asks on the command
+        # line, asked of the row's type so the two paths cannot disagree.
+        if not err and _foreign_free(pm):
+            why = _T.array_type_error(str(pm.get("type", "")))
+            if why:
+                err = f"{what}: {noun} {pm.get('name', '?')!r}: {why}"
         if err:
             errors.append(err)
     return errors
@@ -7140,6 +7148,39 @@ def _param_default_error(entry: dict, what: str) -> str:
     return f"{what}: {why}" if why else ""
 
 
+def _foreign_free(entry: dict) -> bool:
+    """True when *entry*'s ``type`` is jm's own spelling to judge.
+
+    A row carrying any of :data:`_FOREIGN_TYPE_KEYS` names a type jm does
+    not register (a capsule's pointer, a foreign header's struct), so no
+    predicate of jm's type tables applies to it.
+
+    >>> _foreign_free({"type": "float[]"})
+    True
+    >>> _foreign_free({"type": "dp_t *", "capsule": "dp.t"})
+    False
+    """
+    return not any(entry.get(k) for k in _FOREIGN_TYPE_KEYS)
+
+
+def _init_param_array_error(entry: dict, what: str) -> str:
+    """Why an init-param's array type has no binding, or ``""`` (gh-2132).
+
+    The constructor's half of :func:`_types.array_type_error`: its ``T[][]``
+    is legal (two extents), its element still needs a numpy dtype. The
+    predicate ``--init-param`` asks on the command line.
+
+    >>> _init_param_array_error({"name": "h", "type": "bool[]"}, "x")[:20]
+    "x: 'bool[]' has no n"
+    >>> _init_param_array_error({"name": "h", "type": "float[][]"}, "x")
+    ''
+    """
+    if not _foreign_free(entry) or entry.get("role"):
+        return ""
+    why = _T.array_type_error(str(entry.get("type", "")), allow_2d=True)
+    return f"{what}: {why}" if why else ""
+
+
 def _declared_type_error(entry: dict, what: str) -> str:
     """Validate one ``type``-bearing table; "" when it is usable.
 
@@ -7169,7 +7210,7 @@ def _declared_type_error(entry: dict, what: str) -> str:
     >>> _declared_type_error({"type": "nope"}, "x").splitlines()[0]
     "x has unknown type 'nope'."
     """
-    if any(entry.get(k) for k in _FOREIGN_TYPE_KEYS):
+    if not _foreign_free(entry):
         return ""
     # A codec param's shape comes from its `role` and the `[codec.X]` table,
     # not from a `type` beside it -- `{"name": "value", "role": "variant"}`
@@ -7189,7 +7230,10 @@ def _declared_type_error(entry: dict, what: str) -> str:
 
 
 def _arg_type_error(
-    entry: dict, what: str, elements: "frozenset[str]" = frozenset()
+    entry: dict,
+    what: str,
+    elements: "frozenset[str]" = frozenset(),
+    recs: "list[dict] | None" = None,
 ) -> str:
     """Validate one method's ``arg_type``; "" when it is usable.
 
@@ -7210,8 +7254,19 @@ def _arg_type_error(
     if any(is_set(entry, k) for k in ("varargs", "manual_stub", "codec")):
         return ""
     ctype = entry.get("arg_type", "void")
+    # gh-2132: a declared SCALAR element is an alias for its type, and the
+    # binding indexes the type: `s[]` over `type = "bool"` crashed the render
+    # where `bool[]` is refused. Resolved first, as `--arg-type` does.
+    from . import _record
+
+    named = ctype
+    ctype = _record.resolve_element(str(ctype), recs)
+    if ctype != named:
+        what = f"{what} (record {_element_base(named)!r})"
     if ctype == "void" or _usable_ctype(ctype):
-        return ""
+        # gh-1908, gh-2132: the array half of `--arg-type`'s own check.
+        why = _T.array_type_error(str(ctype), elements)
+        return f"{what}: arg_type {why}" if why else ""
     # gh-1411: as _return_type_error above -- `arg_type = "iq16_t[]"` is how
     # rows of a declared struct cross in, and this gate refused every one.
     if _element_base(ctype) in elements:
@@ -7712,6 +7767,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         exempt: tuple,
         elements: "frozenset[str]" = frozenset(),
         outputs: str = "",
+        recs: "list[dict] | None" = None,
     ) -> None:
         err = _return_type_error(entry, what, exempt, elements)
         if err:
@@ -7722,7 +7778,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         # `KeyError: 'unsigned'` -- and under `apply`, whose replay runs
         # inside deferred-flush scopes, the traceback could be replaced
         # outright by a false error about an unrelated object.
-        err = _arg_type_error(entry, what, elements)
+        err = _arg_type_error(entry, what, elements, recs)
         if err:
             errors.append(err)
         errors.extend(_param_type_errors(entry, what))
@@ -7775,12 +7831,28 @@ def manifest_type_errors(cfg: dict) -> list[str]:
         for ip in cfg.get(comp, {}).get("init_params", []) or []:
             err = _declared_type_error(
                 ip, f"{comp!r} init_param {ip.get('name', '?')!r}"
+            ) or _init_param_array_error(
+                ip, f"{comp!r} init_param {ip.get('name', '?')!r}"
             )
             if err:
                 errors.append(err)
+        # gh-2132: a view's own constructor inputs, asked what its
+        # parent's are -- the same table shape, the same renderer.
+        for v in views(cfg, comp):
+            for ip in v.get("init_params", []) or []:
+                what = (
+                    f"{comp!r} view {v.get('class_name', '?')!r} init_param"
+                    f" {ip.get('name', '?')!r}"
+                )
+                err = _declared_type_error(ip, what) or (
+                    _init_param_array_error(ip, what)
+                )
+                if err:
+                    errors.append(err)
         # gh-1411: read from the manifest rather than a second list, so the
         # gate cannot fall behind what the project declares -- the same rule
         # the CLI's own hatch follows (`_cli_method.py`).
+        comp_records = records(cfg, comp)
         comp_elements = frozenset(record_names(cfg, comp))
         for m in methods(cfg, comp):
             _check(
@@ -7789,6 +7861,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                 _RETURN_TYPE_EXEMPT_KEYS,
                 comp_elements,
                 outputs="method",
+                recs=comp_records,
             )
         for v in views(cfg, comp):
             vname = v.get("class_name", "?")
@@ -7801,6 +7874,7 @@ def manifest_type_errors(cfg: dict) -> list[str]:
                     _RETURN_TYPE_EXEMPT_KEYS,
                     comp_elements,
                     outputs="method",
+                    recs=comp_records,
                 )
     return errors
 
