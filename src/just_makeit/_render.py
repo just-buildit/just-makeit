@@ -3091,7 +3091,7 @@ def render_module_ext_fragment(comp_ctx: dict) -> str:
     )
     header = render(_FRAGMENT_FILE_HEADER, ctx)
     if _kind == "generated":
-        _fname = f"{ctx['module']}_ext_{ctx['frag_id']}.c"
+        _fname = INC.fragment_name(ctx["module"], ctx["frag_id"])
         header = owned_token(_fname) + "\n" + header
     return header + render_type_section(ctx)
 
@@ -3197,7 +3197,7 @@ def render_module_ext_aggregator(
         protos = ctx.get("extra_method_protos", "")
         if protos:
             include_parts.append(protos.strip("\n"))
-        include_parts.append(f'#include "{module}_ext_{comp}.c"')
+        include_parts.append(f'#include "{INC.fragment_name(module, comp)}"')
         obj_extra = f"{module}_ext_{comp}_extra.c"
         # ...and a declared row includes the file whether or not it is
         # written yet (gh-1516's rule): its function is defined nowhere else.

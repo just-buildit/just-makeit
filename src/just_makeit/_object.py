@@ -1867,7 +1867,8 @@ def orphan_fragments(root: Path, cfg: dict) -> "list[str]":
         if not d.is_dir():
             continue
         owned = {
-            f"{cname}_ext_{fid}.c" for _o, fid in module_fragments(cfg, mod)
+            INC.fragment_name(cname, fid)
+            for _o, fid in module_fragments(cfg, mod)
         }
         texts = {
             p.name: p.read_text(encoding="utf-8", errors="replace")
@@ -1908,13 +1909,13 @@ def refuse_stale_fragment(
     from ._extrahook import HOOK_SUFFIXES
 
     cname = C.module_paths(module).cname
-    frag = INC.src_path(root, cname, cfg) / f"{cname}_ext_{frag_id}.c"
+    frag = INC.src_path(root, cname, cfg) / INC.fragment_name(cname, frag_id)
     # Stale only as :func:`orphan_fragments` reads it: a file no OTHER
     # member owns, and no hook's name. *creating* is the object being
     # added, which *cfg* already lists; a view is checked before it is
     # recorded, and one named for its parent shares the parent's id.
     owned = {
-        f"{cname}_ext_{fid}.c"
+        INC.fragment_name(cname, fid)
         for o, fid in module_fragments(cfg, module)
         if o != creating
     }
@@ -3271,7 +3272,7 @@ def _regenerate_module_now(
         raw = ext_c_path.read_text(encoding="utf-8")
         # Only treat the file as a migration source when it is a monolith
         # (i.e. it does not yet contain #include lines for fragments).
-        first_frag = f"{cname}_ext_{comp_ctxs[0]['component']}.c"
+        first_frag = INC.fragment_name(cname, comp_ctxs[0]["component"])
         if first_frag not in raw:
             monolith_bodies = _extract_c_function_bodies(raw)
 
@@ -3280,7 +3281,7 @@ def _regenerate_module_now(
         # class_name), not the shared parent component, so it doesn't overwrite
         # the parent's fragment. Real objects have frag_id == component.
         comp = ctx.get("frag_id", ctx["component"])
-        frag_path = ext_dir / f"{cname}_ext_{comp}.c"
+        frag_path = ext_dir / INC.fragment_name(cname, comp)
         # Prefer bodies from the existing fragment; fall back to the monolith
         # during migration (only matching function names will be spliced in).
         existing_frag = (

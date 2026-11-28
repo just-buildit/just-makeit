@@ -1886,7 +1886,9 @@ def _owned_fragments(root: Path, cfg: dict) -> set:
         for obj, fid in module_fragments(cfg, mod):
             if C.fragment_kind(cfg, obj) != C.FRAGMENT_GENERATED:
                 continue
-            out.add(Path(INC.src_rel(cname, f"{cname}_ext_{fid}.c", cfg)))
+            out.add(
+                Path(INC.src_rel(cname, INC.fragment_name(cname, fid), cfg))
+            )
     return out
 
 

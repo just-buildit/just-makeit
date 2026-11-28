@@ -261,7 +261,9 @@ def _unreconciled_glue(root: Path, cfg: dict) -> "set[str]":
             # is the entire point of declaring it.
             if C.fragment_kind(cfg, obj) == C.FRAGMENT_GENERATED:
                 continue
-            rel = Path(INC.src_rel(cname, f"{cname}_ext_{frag_id}.c", cfg))
+            rel = Path(
+                INC.src_rel(cname, INC.fragment_name(cname, frag_id), cfg)
+            )
             if (root / rel).is_file():
                 out.add(rel.as_posix())
     return out
