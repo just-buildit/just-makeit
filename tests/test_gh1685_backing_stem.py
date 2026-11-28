@@ -45,6 +45,7 @@ from just_makeit import _composer
 from just_makeit import _csym
 from just_makeit import _textio
 from just_makeit._new import run as new_run
+from _cmake import PYTHON3_ARG
 
 P = FX.PREFIX
 
@@ -81,7 +82,7 @@ def _build(root, tag):
             ".",
             "-B",
             str(b),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(b)],
         [sys.executable, "-c", ROUND_TRIP],

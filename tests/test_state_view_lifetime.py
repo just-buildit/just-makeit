@@ -42,6 +42,7 @@ from _compilers import default_cc
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._new import run as new_run
+from _cmake import PYTHON3_ARG
 
 
 class TestGeneratedCode:
@@ -109,7 +110,7 @@ class TestRuntime:
                 str(dest),
                 "-B",
                 str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             ["cmake", "--build", str(build)],
         ):

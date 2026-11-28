@@ -45,6 +45,7 @@ from _jmrun import run_cli
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from just_makeit._method import run as method_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _TP_NAME = re.compile(r'^\s*\.tp_name\s*=\s*"([^"]+)"', re.M)
 
@@ -273,7 +274,7 @@ def test_every_class_pickles(matrix):
     # as written and the instance round trip carries real state.
     build = matrix / "build"
     for cmd in (
-        ["cmake", "-S", str(matrix), "-B", str(build)],
+        ["cmake", "-S", str(matrix), "-B", str(build), PYTHON3_ARG],
         ["cmake", "--build", str(build), "-j", "4"],
     ):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)

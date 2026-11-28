@@ -55,6 +55,7 @@ from _jmrun import run_cli, script_round_trip  # noqa: E402
 
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _keys  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason() -> "str | None":
@@ -184,7 +185,7 @@ def built(applied) -> Path:
             str(applied),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

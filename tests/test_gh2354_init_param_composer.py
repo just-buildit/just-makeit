@@ -44,6 +44,7 @@ SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
 from just_makeit import _config as C  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -241,7 +242,7 @@ def test_an_object_takes_a_composer_at_construction(tmp_path):
         "build",
         "-S",
         ".",
-        f"-DPython3_EXECUTABLE={sys.executable}",
+        PYTHON3_ARG,
         timeout=600,
     )
     _cmake(proj, "--build", "build", "--parallel", "4", "--clean-first")

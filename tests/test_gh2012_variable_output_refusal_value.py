@@ -51,6 +51,7 @@ from _compilers import default_cc
 from _jmrun import run_cli
 from just_makeit import _method
 from just_makeit._context import _diagnostics as D
+from _cmake import PYTHON3_ARG
 
 
 def _skip_reason() -> "str | None":
@@ -184,7 +185,7 @@ def built(tmp_path_factory) -> Path:
             str(root),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit import _config as C  # noqa: E402
 from just_makeit import _incpath as INC  # noqa: E402
 from just_makeit import _linkcheck  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _HAVE_TOOLCHAIN = bool(shutil.which("cmake")) and default_cc() is not None
 
@@ -168,7 +169,7 @@ def test_the_c_test_builds(project, tmp_path):
     """The artifact: the table compiles and every entry links."""
     bdir = tmp_path / "build"
     cfg = subprocess.run(
-        ["cmake", "-S", str(project), "-B", str(bdir)],
+        ["cmake", "-S", str(project), "-B", str(bdir), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=900,

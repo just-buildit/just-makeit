@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from just_makeit._apply import run as apply_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _SRC = Path(__file__).parent.parent / "src" / "just_makeit"
 
@@ -180,7 +181,7 @@ def built(tmp_path_factory):
             str(dest),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build)],
     ):

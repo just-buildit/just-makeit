@@ -54,6 +54,7 @@ from just_makeit._types import (  # noqa: E402
     np_dtype_doctest_lines,
     np_dtype_name,
 )
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -115,7 +116,7 @@ def test_every_scaffolded_example_passes_against_the_built_extension(
             "-S",
             ".",
             "-DCMAKE_BUILD_TYPE=Release",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         cwd=proj,
         check=True,

@@ -26,7 +26,6 @@ import ast
 import inspect
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -39,6 +38,7 @@ from just_makeit._builtins import absorbable_members
 
 
 from test_gh2498_view_member_doc_override import _runtime_docs
+from _cmake import PYTHON3_ARG
 
 VIEW_DOC = "VIEWDOC reset for the stateless view.\n\nExamples\n--------\n"
 VIEW_DOC += ">>> 1 + 1\n2\n"
@@ -181,8 +181,7 @@ class TestViewOverrideOfAStatelessReset:
         build = root / "build"
         for cmd in (
             [
-                "cmake", "-S", str(root), "-B", str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                "cmake", "-S", str(root), "-B", str(build), PYTHON3_ARG,
             ],
             ["cmake", "--build", str(build)],
         ):  # fmt: skip

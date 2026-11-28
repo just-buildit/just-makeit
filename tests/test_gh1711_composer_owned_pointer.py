@@ -47,6 +47,7 @@ from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._property import run as property_run  # noqa: E402
 from test_composer_codegen import _cfg  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 MOD = "wfm_compose"
 
@@ -1295,9 +1296,9 @@ def build_project(
                 ".",
                 "-B",
                 "build",
+                PYTHON3_ARG,
                 "-DCMAKE_BUILD_TYPE=Debug",
                 "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-                f"-DPython3_EXECUTABLE={sys.executable}",
             ],
             root,
         )

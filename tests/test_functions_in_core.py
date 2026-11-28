@@ -24,6 +24,7 @@ from just_makeit._new import run as new_run
 from just_makeit._module import run as module_run
 from just_makeit._function import run as function_run
 from just_makeit._apply import run as apply_run
+from _cmake import PYTHON3_ARG
 
 
 def _skip():
@@ -168,7 +169,7 @@ def test_functions_in_core_builds_with_shared_static(tmp_path):
     )
     core.write_text(text, encoding="utf-8")
     cfg = subprocess.run(
-        ["cmake", "-S", str(root), "-B", str(root / "build")],
+        ["cmake", "-S", str(root), "-B", str(root / "build"), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,

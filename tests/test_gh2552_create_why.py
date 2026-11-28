@@ -35,6 +35,7 @@ import pytest
 from _jmrun import run_cli
 from just_makeit import _ctorsig
 from just_makeit._context import make_errors_ctx, make_state_ctx
+from _cmake import PYTHON3_ARG
 
 COR_MSG = "cor refused"
 ACC_MSG = "acc refused"
@@ -457,8 +458,7 @@ def built(tmp_path_factory) -> Path:
     assert n == 1, text
     hdr.write_text(text, "utf-8")
     for cmd in (
-        ["cmake", "-S", ".", "-B", "build",
-         f"-DPython3_EXECUTABLE={sys.executable}"],
+        ["cmake", "-S", ".", "-B", "build", PYTHON3_ARG],
         ["cmake", "--build", "build"],
         ["ctest", "--test-dir", "build", "--output-on-failure"],
     ):  # fmt: skip

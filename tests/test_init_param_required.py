@@ -22,6 +22,7 @@ from just_makeit._apply import run as apply_run
 from just_makeit._cli_parse import parse_init_param_flag
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
+from _cmake import PYTHON3_ARG
 
 
 # (name, type, default, default_raw, real_type, real_create_fn, optional,
@@ -155,7 +156,7 @@ def test_required_raises_typeerror_at_runtime(tmp_path):
     )
     build = dest / "build"
     cfg = subprocess.run(
-        ["cmake", "-S", str(dest), "-B", str(build)],
+        ["cmake", "-S", str(dest), "-B", str(build), PYTHON3_ARG],
         capture_output=True,
         text=True,
         timeout=600,

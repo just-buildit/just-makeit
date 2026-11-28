@@ -43,6 +43,7 @@ from _compilers import WINDOWS_CONSUMER_GAP
 
 from _jmrun import run_cli
 from just_makeit import _config as C
+from _cmake import PYTHON3_ARG
 
 
 # gh-1570: run on the Windows leg, skipped there by a registered reason.
@@ -168,7 +169,18 @@ def _find_package(root: Path, pfx: Path, target: str) -> str:
         f"target_link_libraries(c PRIVATE {target})\n",
         encoding="utf-8",
     )
-    _run(["cmake", "-S", ".", "-B", "b", f"-DCMAKE_PREFIX_PATH={pfx}"], cons)
+    _run(
+        [
+            "cmake",
+            "-S",
+            ".",
+            "-B",
+            "b",
+            PYTHON3_ARG,
+            f"-DCMAKE_PREFIX_PATH={pfx}",
+        ],
+        cons,
+    )
     _run(["cmake", "--build", "b"], cons)
     return _run([cons / "b" / "c"], cons).stdout
 

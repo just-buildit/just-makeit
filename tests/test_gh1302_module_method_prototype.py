@@ -44,6 +44,7 @@ import pytest
 from _compilers import default_cc
 
 from _jmrun import JmRun, run_cli
+from _cmake import PYTHON3_ARG
 
 SRC = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(SRC))
@@ -205,7 +206,14 @@ class TestTheExtensionBuilds:
     def test_the_module_extension_compiles_and_links(self, project: Path):
         assert _cli("apply", cwd=project).returncode == 0
         r = subprocess.run(
-            ["cmake", "-S", str(project), "-B", str(project / "build")],
+            [
+                "cmake",
+                "-S",
+                str(project),
+                "-B",
+                str(project / "build"),
+                PYTHON3_ARG,
+            ],
             capture_output=True,
             text=True,
             timeout=900,
@@ -247,6 +255,7 @@ class TestTheExtensionBuilds:
                 str(project),
                 "-B",
                 str(project / "build"),
+                PYTHON3_ARG,
                 "-DCMAKE_C_FLAGS=-Werror=implicit-function-declaration",
             ],
             capture_output=True,

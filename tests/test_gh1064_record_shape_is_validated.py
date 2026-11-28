@@ -41,6 +41,7 @@ from just_makeit._module import run as module_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
 from just_makeit._record import validate_record_shape  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -263,7 +264,7 @@ class TestTheAllowedShapesStillBuild:
                 str(proj),
                 "-B",
                 str(proj / "build"),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             capture_output=True,
             text=True,

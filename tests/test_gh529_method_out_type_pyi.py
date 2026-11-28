@@ -41,6 +41,7 @@ from just_makeit._module import run as module_run
 from just_makeit._new import run as new_run
 from just_makeit._object import run as object_run
 from just_makeit._method import run as method_run
+from _cmake import PYTHON3_ARG
 
 
 def _add_read_method(root, obj, module, out_type="float _Complex"):
@@ -195,7 +196,7 @@ class TestBuildAndRun:
                 str(root),
                 "-B",
                 str(build),
-                f"-DPython3_EXECUTABLE={sys.executable}",
+                PYTHON3_ARG,
             ],
             capture_output=True,
             text=True,

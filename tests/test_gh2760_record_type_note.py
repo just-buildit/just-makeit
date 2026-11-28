@@ -20,11 +20,11 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-import sys
 
 import pytest
 from _compilers import default_cc
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 _NO_TOOLCHAIN = shutil.which("cmake") is None or default_cc() is None
 
@@ -188,7 +188,7 @@ def test_the_printed_typedef_is_the_one_that_builds(tmp_path):
             str(root),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         capture_output=True,
         text=True,

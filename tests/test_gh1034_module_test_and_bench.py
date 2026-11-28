@@ -42,6 +42,7 @@ from just_makeit._bench import runnable_comps  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._function import run as fn_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 
 @pytest.fixture()
@@ -213,7 +214,15 @@ class TestItCompiles:
         if not __import__("shutil").which("cmake"):
             pytest.skip("cmake not available")
         cfg = subprocess.run(
-            ["cmake", "-S", ".", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"],
+            [
+                "cmake",
+                "-S",
+                ".",
+                "-B",
+                "build",
+                PYTHON3_ARG,
+                "-DCMAKE_BUILD_TYPE=Release",
+            ],
             cwd=project,
             capture_output=True,
             text=True,

@@ -33,6 +33,7 @@ from _compilers import WINDOWS_CONSUMER_GAP
 
 from _jmrun import run_cli
 from just_makeit import _config as C
+from _cmake import PYTHON3_ARG
 
 
 # gh-1570: run on the Windows leg, skipped there by a registered reason.
@@ -72,7 +73,15 @@ def _run(cmd, cwd, env=None):
 def _cmake_install(src: Path, pfx: Path, env: dict, *extra: str) -> None:
     b = src / "b"
     _run(
-        ["cmake", "-S", ".", "-B", str(b), f"-DCMAKE_INSTALL_PREFIX={pfx}"]
+        [
+            "cmake",
+            "-S",
+            ".",
+            "-B",
+            str(b),
+            PYTHON3_ARG,
+            f"-DCMAKE_INSTALL_PREFIX={pfx}",
+        ]
         + list(extra),
         src,
         env,

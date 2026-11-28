@@ -40,6 +40,7 @@ sys.path.insert(0, str(SRC))
 
 from just_makeit import _borrow  # noqa: E402
 from just_makeit._context import _destroy  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 _CAP = {"name": "_capsule", "type": "capsule", "capsule": "p.tt"}
 
@@ -292,7 +293,7 @@ def _project(tmp_path: Path, asan: bool, spelling: str) -> Path:
         "build",
         "-S",
         ".",
-        f"-DPython3_EXECUTABLE={sys.executable}",
+        PYTHON3_ARG,
         *flags,
     )
     _cmake(proj, "--build", "build", "--parallel", "4")
