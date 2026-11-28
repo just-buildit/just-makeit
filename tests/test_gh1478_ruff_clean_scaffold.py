@@ -48,8 +48,7 @@ from just_makeit._docstring import STUB_TARGET_WIDTH
 #: test, its benchmark, its `.pyi` doctest and a PEP 723 app; a function
 #: there with a console and a PEP 723 app over it (each face's import of
 #: it, and its call); and a `--no-step` object, whose benchmarks time the
-#: constructor inside a `lambda`. Multi-command apps (`--command`) are not
-#: here: they are not ruff-clean even at short names (gh-2577).
+#: constructor inside a `lambda`.
 _LONG = "a_very_long_standalone_component_name"
 _GUARDED = "guarded_functions_module"
 _MOD = "pipeline_stages_and_more_of_them"
@@ -260,6 +259,12 @@ SHAPES: "dict[str, list[str]]" = {
     "app_console_generator": [
         "object s --arg-type void --return-type float",
         "app --target console --object s --name gen",
+    ],
+    # gh-2577: a multi-command app, both Python faces, one command and two.
+    "app_commands": [
+        "object g",
+        "app --target console --name tool --command run --command go",
+        "app --target pep723 --name script --command run",
     ],
 }
 

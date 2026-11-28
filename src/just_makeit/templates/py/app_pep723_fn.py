@@ -10,7 +10,7 @@ Requires <<project>>==<<version>>.
 
 import argparse
 
-<<fn_import_pep723>>
+<<import_pep723>>
 
 
 def _make_parser() -> argparse.ArgumentParser:

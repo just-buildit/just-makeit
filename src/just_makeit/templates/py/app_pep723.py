@@ -18,7 +18,7 @@ import sys
 
 import numpy as np
 
-<<class_import>>
+<<import_pep723>>
 
 
 def _make_parser() -> argparse.ArgumentParser:

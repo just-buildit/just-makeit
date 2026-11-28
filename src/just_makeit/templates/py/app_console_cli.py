@@ -13,7 +13,7 @@ import sys
 
 import numpy as np
 
-from . import <<Component>>
+<<import_console>>
 
 
 def _make_parser() -> argparse.ArgumentParser:

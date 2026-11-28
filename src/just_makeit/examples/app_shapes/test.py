@@ -1,6 +1,7 @@
 """End-to-end test: `jm app` generates working C binaries for non-scalar
 object shapes — blockwise (steps buffer→buffer) and generator (--count → N
-samples). Companion to `three_face` (scalar). Each shape is built in its own
+samples), and an object with an array init param (gh-2564). Companion to
+`three_face` (scalar). Each shape is built in its own
 project and the binary is run on real bytes.
 
 Called by tests/test_examples.py via run(root).
@@ -122,6 +123,49 @@ def run(root: Path) -> None:
     )
     assert r.returncode == 0, r.stderr
     assert list(struct.unpack("<5f", r.stdout)) == [0.0, 2.0, 4.0, 6.0, 8.0]
+
+    # ── array init param: create() takes the array as `NULL, 0` (gh-2564) ─
+    # An omittable array (`default = "[]"`) has no CLI form, so the app
+    # leaves it empty; the scalar beside it is still a flag.
+    arr = root / "arr"
+    jm_new("arr", arr)
+    jm_object(
+        arr,
+        "corr",
+        None,
+        arg_type="float",
+        return_type="float",
+        init_params=[("gain", "float", "1.0"), ("taps", "float[]", "[]")],
+        impl_body="return state->gain * x;",
+    )
+    # The stub create() discards its arguments; keep the gain, and count
+    # the taps into it, so the run shows the app passed `--gain` and an
+    # empty array.
+    core = arr / "native" / "src" / "corr" / "corr_core.c"
+    stub = "    obj->gain = 0.0f;\n    (void)gain; (void)taps; (void)taps_len;"
+    text = core.read_text(encoding="utf-8")
+    assert stub in text, "the create() stub changed shape"
+    core.write_text(
+        text.replace(
+            stub,
+            "    (void)taps;\n    obj->gain = gain + (float)taps_len;",
+        ),
+        encoding="utf-8",
+    )
+    jm_app(arr, target="c", name="corrtool", object_="corr")
+    app_c = (arr / "native" / "src" / "app" / "corrtool.c").read_text(
+        encoding="utf-8"
+    )
+    assert "arr_corr_create(gain, NULL, 0)" in app_c
+    _build(arr)
+    r = subprocess.run(
+        [str(_exe(arr, "corrtool")), "--gain", "2"],
+        input=struct.pack("<3f", 1, 2, 3),
+        capture_output=True,
+        timeout=600,
+    )
+    assert r.returncode == 0, r.stderr
+    assert list(struct.unpack("<3f", r.stdout)) == [2.0, 4.0, 6.0]
 
     # ── module function: `jm app --function` → parse flags, call, print ──
     fn = root / "fn"

@@ -1,0 +1,1 @@
+- **A multi-command app is ruff-clean (gh-2577).** Its console and PEP 723 faces left one blank line after `import argparse` and between the top-level command functions, so `ruff check --select I` and `ruff format` both changed a fresh one. They now leave two.
