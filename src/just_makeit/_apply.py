@@ -3700,87 +3700,63 @@ def _sync_aggregates(
             continue
         if only_comp is not None and comp != only_comp:
             continue
-        # The temp scaffold was replayed with a trivial header, so its .pyi
-        # carries the generic "<Component> component." class summary. If the
-        # real (sacred) header enriches create()'s @brief/@param, re-render the
-        # temp .pyi from those blocks so apply/status agree with bind/regenerate
-        # — otherwise a header-authored class docstring would read as drift. An
-        # un-enriched header returns {} and this is skipped entirely (the temp
-        # .pyi is already correct and byte-identical), so it costs nothing there.
+        # gh-2401: the binding and stub are re-rendered here, for EVERY
+        # standalone object, through `_glue.component_ctx` -- the one builder
+        # every member verb (`jm property`, `jm warning`, `jm error`, `jm
+        # remove` of a member) renders them with. The replay's own render is
+        # `_init.run`'s, a second explicit list of the same inputs, and a key
+        # one list named and the other did not came back from `apply`
+        # different from what the verbs write: `init_post_parse` missing from
+        # a re-created `tp_init`, a `[[<obj>.state]] doc` missing from the
+        # stub (gh-1493's reader is `_glue`'s alone).
+        #
+        # This was a re-render on three triggers -- an enriched header
+        # (gh-676), a process-global rendezvous (gh-1117), a manifest `doc`
+        # (gh-1165) -- each added when one more input turned out to reach
+        # only this builder. The hazard that kept it narrow is about *header*
+        # doc_blocks, which `jm object` renders without and this renders
+        # with: they are seeded only when the header enriches something, so
+        # on a fresh scaffold this render IS the verb's, and
+        # `tests/test_gh2057_verb_leaves_what_apply_writes.py` holds that.
+        # `tests/test_gh2401_apply_rerender_keys.py` holds every manifest
+        # key to it.
         from ._object import _load_doc_blocks
+        from . import _glue
+        from . import _render as _R
 
+        # The temp scaffold was replayed with a trivial header; the real
+        # (sacred) header's create() @brief/@param enrich the class doc.
         _real_blocks = _load_doc_blocks(root, comp, cfg)
-        # gh-1117: a standalone object's rendezvous is a CROSS-COMPONENT
-        # fact -- which component declared `process_global`, which modules
-        # link its core -- and none of that is known while the replay is
-        # scaffolding components one at a time. The binding rendered during
-        # the replay therefore has an empty block, and this post-replay pass
-        # is the first point where the whole manifest exists. Same reason the
-        # CMake wiring is reconciled here rather than emitted at scaffold
-        # time.
-        _pg = _procglobal.rendezvous_c(cfg, comp)
-        # gh-1165: the manifest's own `[<comp>] doc` is a third reason to
-        # re-render, and it was not one. The trigger above asks whether the
-        # HEADER enriched anything, but the render it guards carries the
-        # MANIFEST doc too -- `_glue.component_ctx` feeds it to
-        # `authored_class_brief`, where it outranks the header's @brief. With
-        # a plain header and a manifest doc there were no `_real_blocks`, so
-        # the branch was skipped and the temp scaffold's trivial text stood:
-        # the value reached NEITHER face, single- or multi-paragraph, and
-        # `jm regenerate` did not pick it up either.
-        #
-        # Safe to widen for exactly the reason gh-805 §F records in `_glue`:
-        # the hazard behind this narrow gate is about *header* doc_blocks,
-        # which `jm object` renders without and `jm apply` renders with -- so
-        # an unconditional re-render would make a fresh scaffold report STALE
-        # against itself. A manifest `doc` comes from the manifest, which both
-        # paths read alike, so it cannot produce that disagreement.
-        #
-        # gh-1172 fixed the same omission a layer down: `_object_kwargs` now
-        # carries `doc` into the replay, so the temp `.pyi` already has it and
-        # this re-render is an identity for a manifest doc alone. It stays
-        # because the OTHER two triggers are real, and because a standalone
-        # object whose only enrichment is a manifest doc is then covered
-        # twice rather than not at all -- which is the direction to be wrong
-        # in. `TestTheReplayCarriesTheKey` is what holds the layer below, since
-        # every stub assertion stays green while this branch is here.
-        _mdoc = (cfg.get(comp) or {}).get("doc", "")
-        if _real_blocks or _pg or _mdoc:
-            from . import _glue
-            from . import _render as _R
-
-            if _real_blocks:
-                cfg.setdefault(comp, {})["_doc_blocks"] = _real_blocks
-            # gh-676/gh-644: BOTH faces, from the one enriched context. Only
-            # the .pyi was re-rendered here, so a standalone object's runtime
-            # __doc__ kept the temp scaffold's trivial-header text -- which is
-            # why its tp_doc read "<Component> component. Wraps <c>_state_t."
-            # however the author documented create(), while the .pyi beside it
-            # showed the real brief.
-            # gh-994: `temp_root`, not `root` — this render's output goes into
-            # the temp tree below, and the question this answers ("did the
-            # built-in or a declared method end up owning `<comp>_reset`") is
-            # settled by the `_core.c` the replay just wrote there. The real
-            # tree's own `_core.c` is not merged until after this loop.
-            _ctx = _glue.component_ctx(cfg, comp, pkg, temp_root)
-            _ctx["extra_include"] = _glue.standalone_extra_include(
-                root, comp, C.extra_methods(cfg, comp)
-            )
-            # gh-744: the `.pyi` renders through `render_component_pyi` (which
-            # reflows to 79 cols) on this path too. `status --check` compares
-            # against what this writes, so rendering it raw here would report
-            # every project permanently stale — the gh-635 failure, one file
-            # over.
-            for _rel, _render in (
-                (f"src/{pkg}/{comp}.pyi", _R.render_component_pyi),
-                (
-                    INC.src_rel(comp, f"{comp}_ext.c", cfg),
-                    lambda c: _R.render(_R.COMPONENT_EXT_C, c),
-                ),
-            ):
-                _dst = temp_root / _rel
-                if _dst.exists():
-                    _textio.write_text(_dst, _render(_ctx))
+        if _real_blocks:
+            cfg.setdefault(comp, {})["_doc_blocks"] = _real_blocks
+        # gh-1117: the rendezvous for a process-global core is a
+        # CROSS-COMPONENT fact, unknown while the replay scaffolds components
+        # one at a time; the whole manifest first exists here.
+        # gh-676/gh-644: BOTH faces, from the one enriched context.
+        # gh-994: `temp_root`, not `root` -- this render's output goes into
+        # the temp tree below, and the question this answers ("did the
+        # built-in or a declared method end up owning `<comp>_reset`") is
+        # settled by the `_core.c` the replay just wrote there. The real
+        # tree's own `_core.c` is not merged until after this loop.
+        _ctx = _glue.component_ctx(cfg, comp, pkg, temp_root)
+        _ctx["extra_include"] = _glue.standalone_extra_include(
+            root, comp, C.extra_methods(cfg, comp)
+        )
+        # gh-744: the `.pyi` renders through `render_component_pyi` (which
+        # reflows to 79 cols) on this path too. `status --check` compares
+        # against what this writes, so rendering it raw here would report
+        # every project permanently stale — the gh-635 failure, one file
+        # over.
+        for _rel, _render in (
+            (f"src/{pkg}/{comp}.pyi", _R.render_component_pyi),
+            (
+                INC.src_rel(comp, f"{comp}_ext.c", cfg),
+                lambda c: _R.render(_R.COMPONENT_EXT_C, c),
+            ),
+        ):
+            _dst = temp_root / _rel
+            if _dst.exists():
+                _textio.write_text(_dst, _render(_ctx))
         # Glue — pure boilerplate, no user content. Overwrite from the
         # freshly-rendered scaffold so manifest edits reach the binding,
         # stub, and build wiring.

@@ -4312,6 +4312,7 @@ def run(
             reset_impl_body=reset_impl_body,
             destroy_impl_body=destroy_impl_body,
             init_params=init_params,
+            init_post_parse_impl=init_post_parse_impl,  # gh-2401
             opaque_fields=opaque_fields,
             opaque_state=opaque_state,
             no_ctor_names=no_ctor_names,
