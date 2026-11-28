@@ -146,6 +146,32 @@ _WORKER_ENV_RE = re.compile(r"jm-gw\d+-env-(?:(\d+)-)?[^/\\]+")
 _LEGACY_ENV_AGE = 24 * 3600
 
 
+#: ``ERROR_ACCESS_DENIED``, and ``STILL_ACTIVE`` (GetExitCodeProcess).
+_WIN_ACCESS_DENIED = 5
+_WIN_STILL_ACTIVE = 259
+
+
+def _pid_alive_windows(pid: int, kernel32, get_last_error) -> bool:
+    """`_pid_alive` on Windows, with *kernel32* and *get_last_error* passed
+    in so the decision is testable on any platform.
+
+    *kernel32* is loaded with ``use_last_error=True`` and *get_last_error*
+    is ``ctypes.get_last_error``. A process ``OpenProcess`` cannot open
+    because it is another user's (``ERROR_ACCESS_DENIED``) exists, so it
+    reads as alive, which is the safe answer for a reaper; any other
+    failure means the process is gone.
+    """
+    import ctypes
+
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED
+    if not handle:
+        return get_last_error() == _WIN_ACCESS_DENIED
+    code = ctypes.c_ulong()
+    ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+    kernel32.CloseHandle(handle)
+    return bool(ok) and code.value == _WIN_STILL_ACTIVE
+
+
 def _pid_alive(pid: int) -> bool:
     """Whether process *pid* exists (owned by anyone).
 
@@ -158,19 +184,21 @@ def _pid_alive(pid: int) -> bool:
     >>> _pid_alive(os.getpid())
     True
     """
-    if os.name == "nt":
+    if sys.platform == "win32":
         import ctypes
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED
-        if not handle:
-            # ERROR_ACCESS_DENIED: the process exists and is someone
-            # else's. Alive is the safe answer; anything else is gone.
-            return kernel32.GetLastError() == 5
-        code = ctypes.c_ulong()
-        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
-        kernel32.CloseHandle(handle)
-        return bool(ok) and code.value == 259  # STILL_ACTIVE
+        # `use_last_error`: ctypes saves the thread's last error right after
+        # each call and `get_last_error` reads that copy. Calling
+        # `GetLastError()` afterwards reads whatever ctypes' own calls in
+        # between left there, which can read a live process as dead.
+        kernel32 = ctypes.WinDLL(  # type: ignore[attr-defined]
+            "kernel32", use_last_error=True
+        )
+        return _pid_alive_windows(
+            pid,
+            kernel32,
+            ctypes.get_last_error,  # type: ignore[attr-defined]
+        )
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
