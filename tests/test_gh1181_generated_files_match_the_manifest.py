@@ -509,7 +509,10 @@ SWEEP: dict[str, tuple[str, str, str]] = {
 def test_every_flag_in_the_sweep_holds_a_bool():
     """A flag's row says ``true``: any other value is refused at load
     (gh-2120), so a marker such as ``field = "g"`` sweeps nothing."""
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib
 
     from just_makeit._keys import FLAG_KEYS
 
