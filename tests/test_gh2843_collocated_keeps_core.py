@@ -20,11 +20,11 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 from _compilers import default_cc
+from _cmake import PYTHON3_ARG
 from _jmrun import run_cli
 
 
@@ -73,7 +73,7 @@ def _build_and_test(proj: Path) -> None:
             str(proj),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "-j", "4"],
         ["ctest", "--test-dir", str(build), "--output-on-failure"],
