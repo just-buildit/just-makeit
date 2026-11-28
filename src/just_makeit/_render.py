@@ -1754,39 +1754,31 @@ def _build_params_parse(
             arr_names.append(arr_var)
             call_args.extend([pname, f"{pname}_len"])
         elif p.get("capsule"):
-            # gh-432: a foreign C pointer crossing as a named PyCapsule —
-            # mirrors _context/_parse.py's branch (this builder is the
-            # module-function copy). None -> NULL; a non-capsule object is
-            # unwrapped via its `_capsule` attribute. Unwrap errors happen
-            # in conv_lines, before any array/path acquisition, so the
-            # early returns need no cleanup.
-            cname = p["capsule"]
-            disp = ptype
-            if not disp.endswith("*"):
-                disp += " "
+            # gh-432: a foreign C pointer crossing as a named PyCapsule.
+            # The unwrap is `capsule_unwrap_c`, the method face's own
+            # emitter -- this branch was a second copy of it that raised the
+            # raw AttributeError of the `._capsule` lookup where the method
+            # raises gh-2355's TypeError naming the capsule wanted. It runs
+            # in conv_lines, after the parse has converted every path and
+            # before any array is acquired, so its failure owes the paths.
+            from ._context._parse import capsule_nullable, capsule_unwrap_c
+
             obj_var = f"{pname}_obj"
             decl_lines.append(f"    PyObject *{obj_var} = Py_None;")
             fmt_chars.append("O")
             addr_exprs.append(f"&{obj_var}")
-            # Error paths release any O&-converted path objects (mirrors the
-            # enum branch): ParseTuple has already run when conv executes.
-            _cap_prior = _coerce.held_release(paths=path_names)
             conv_lines.append(
-                f"    {disp}{pname} = NULL;\n"
-                f"    if ({obj_var} != Py_None) {{\n"
-                f"        PyObject *{pname}_cap = {obj_var};\n"
-                f"        Py_INCREF({pname}_cap);\n"
-                f"        if (!PyCapsule_CheckExact({pname}_cap)) {{\n"
-                f"            Py_DECREF({pname}_cap);\n"
-                f"            {pname}_cap = PyObject_GetAttrString(\n"
-                f'                {obj_var}, "_capsule");\n'
-                f"            if (!{pname}_cap) {{{_cap_prior} return NULL; }}\n"
-                f"        }}\n"
-                f"        {pname} = ({disp})PyCapsule_GetPointer(\n"
-                f'            {pname}_cap, "{cname}");\n'
-                f"        Py_DECREF({pname}_cap);\n"
-                f"        if (!{pname}) {{{_cap_prior} return NULL; }}\n"
-                f"    }}"
+                capsule_unwrap_c(
+                    pname,
+                    ptype,
+                    p["capsule"],
+                    obj_var,
+                    (
+                        _coerce.held_release(paths=path_names)
+                        + " return NULL;"
+                    ).lstrip(),
+                    allow_none=capsule_nullable(p),
+                )
             )
             call_args.append(pname)
         else:
