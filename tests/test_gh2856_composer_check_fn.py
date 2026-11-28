@@ -48,6 +48,7 @@ from pathlib import Path
 
 import pytest
 
+from _cmake import PYTHON3_ARG
 from _jmrun import run_cli
 
 from just_makeit import _composer
@@ -995,7 +996,7 @@ def _build(tmp: Path, generic: str, delegated: str, cli: dict) -> Path:
             ".",
             "-B",
             "build",
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
             "-DCMAKE_C_FLAGS=-Wall -Wextra -Werror",
         ],
         proj,
