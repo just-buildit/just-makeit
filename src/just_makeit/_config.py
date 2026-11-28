@@ -3161,9 +3161,10 @@ def namespace_errors(cfg: dict) -> "list[str]":
             fid = view_frag_id(v)
             who = f"view '{v.get('class_name')}' of '{parent}'"
             if fid in frag_at:
+                frag = f"{cname}_ext_{fid}.c"
                 errors.append(
                     f"{frag_at[fid]} and {who} in module '{m}' both bind"
-                    f" through {cname}_ext_{fid}.c, the fragment named for"
+                    f" through {frag}, the fragment named for"
                     " the lowercased class name -- rename the view"
                 )
             else:
