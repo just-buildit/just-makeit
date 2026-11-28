@@ -156,6 +156,15 @@ def run(
         )
         sys.exit(1)
 
+    # gh-2116: before anything is written. `apply` writes nothing of
+    # a `no_generate` module, so a member declared there would reach
+    # none of its files; the verb rewrote them instead.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg, module, f"add a warning to '{object_name}'"
+    )
+
     # The condition must name something the component actually computes. jm
     # can only check what it declared itself — a field the user hand-added to
     # the sacred struct is invisible here — so this warns rather than errors.

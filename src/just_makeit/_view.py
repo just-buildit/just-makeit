@@ -159,6 +159,16 @@ def run(
     parent_module = C.module_of(cfg, object_name)
     if not parent_module:
         _fail(f"object '{object_name}' not found in module '{module}'.")
+    # gh-2116: a view's create() is injected into its parent's sacred
+    # header and stubbed in its `_core.c`, which a `no_generate` module's
+    # object keeps by hand -- whichever module the view's class lives in.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg,
+        C.hand_written_module(cfg, object_name),
+        f"add view '{class_name}' over '{object_name}'",
+    )
     if module not in C.modules(cfg):
         _fail(
             f"module '{module}' not found (the view's class lives in a "

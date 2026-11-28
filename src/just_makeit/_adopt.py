@@ -357,6 +357,19 @@ def adopt(
                 file=sys.stderr,
             )
             return 2
+        # gh-2116: `survey` skips a `no_generate` module, so its object has
+        # no verdict -- and the advice below, that `apply` creates the
+        # fragment, is false for it: `apply` writes none of that module.
+        hand = C.hand_written_module(cfg, obj)
+        if hand is not None:
+            print(
+                f"error: '{obj}' is in module '{hand}', which is"
+                " `no_generate`: its binding fragment is yours, and `jm"
+                " apply` writes none of that module. Drop `no_generate` from"
+                " that module first to hand it to jm, then adopt.",
+                file=sys.stderr,
+            )
+            return 2
         if obj not in groups:
             print(
                 f"error: '{obj}' has no binding fragment on disk; `jm apply`"

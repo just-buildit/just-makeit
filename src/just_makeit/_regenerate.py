@@ -147,8 +147,8 @@ def refuse_hand_written(cfg: dict, component: str, action: str) -> None:
     >>> cfg = {"module": {"mod": {"objects": ["o"]}}}
     >>> refuse_hand_written(cfg, "o", "regenerate 'o'")
     """
-    module = C.component_module(cfg, component)
-    if module is None or not C.is_no_generate_module(cfg, module):
+    module = C.hand_written_module(cfg, component)
+    if module is None:
         return
     raise Refusal(
         f"cannot {action}: module '{module}' is `no_generate`, so"
@@ -156,6 +156,117 @@ def refuse_hand_written(cfg: dict, component: str, action: str) -> None:
         " rebuild deletes its files -- _core.c with your edits, the header,"
         " binding and tests -- and nothing writes them back. Edit the C by"
         " hand instead."
+    )
+
+
+def refuse_hand_written_member(
+    cfg: dict, module: "str | None", action: str
+) -> None:
+    """Refuse to declare a member in *module* when it is ``no_generate``.
+
+    A member verb -- `jm method`, `jm property`, `jm warning`, `jm error`,
+    `jm record`, `jm view`, `jm function` -- writes the member's row into
+    the manifest and renders it into the component's C, binding fragment,
+    ``.pyi`` and tests. A ``no_generate`` module's files are all the
+    author's, and `jm apply` writes none of them, so on one of its objects
+    the verb rewrote hand-written files and then left a manifest `apply`
+    refused, replaying a member into an object it never scaffolded
+    (gh-2116). Refused instead, before anything is written: the member is
+    the author's to write, in their own C and binding.
+
+    Every member verb asks this first, against the module that owns the
+    object (`C.hand_written_module`) or the module it names.
+    ``tests/test_gh2116_no_generate_members.py`` runs every member verb on
+    an object in a ``no_generate`` module and holds each to this refusal
+    with the tree byte-identical.
+
+    Parameters
+    ----------
+    cfg : dict
+        The loaded manifest.
+    module : str or None
+        The module the member would be declared in; None for a standalone
+        object, which always passes.
+    action : str
+        What the command was asked to do, as the refusal opens with it:
+        ``"add method 'm' to 'o'"``.
+
+    Raises
+    ------
+    Refusal
+        When *module* is ``no_generate``. It names the route instead: edit
+        the C by hand.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"mod": {"objects": ["o"], "no_generate": True}}}
+    >>> try:
+    ...     refuse_hand_written_member(cfg, "mod", "add method 'm' to 'o'")
+    ... except Refusal as exc:
+    ...     print(str(exc).split(":")[0])
+    cannot add method 'm' to 'o'
+    >>> refuse_hand_written_member(cfg, None, "add method 'm' to 'o'")
+    >>> cfg = {"module": {"mod": {"objects": ["o"]}}}
+    >>> refuse_hand_written_member(cfg, "mod", "add method 'm' to 'o'")
+    """
+    if module is None or not C.is_no_generate_module(cfg, module):
+        return
+    raise Refusal(
+        f"cannot {action}: module '{module}' is `no_generate`, so it is"
+        " yours and `jm apply` writes none of it -- not its C, its binding,"
+        " its .pyi or its tests -- and a member the manifest declares there"
+        " would reach none of them. Edit the C by hand instead."
+    )
+
+
+def rebuild_route(cfg: dict, component: str) -> str:
+    """The sentence advice gives for rebuilding *component* from the
+    manifest.
+
+    Advice that tells the author to rebuild a component -- a binding `jm
+    bind` will not write, a built-in body jm could not withdraw -- names `jm
+    regenerate`. On an object in a ``no_generate`` module that command
+    refuses (:func:`refuse_hand_written`, gh-2087), so the advice led to a
+    refusal and only then to the real route (gh-2117). This is the one
+    spelling of that advice: `jm regenerate` for a component `apply`
+    writes, editing the C by hand for one it does not.
+    ``tests/test_gh2117_regenerate_advice.py`` reads every message that
+    names `jm regenerate` from the source and holds each to coming from
+    here, or to a reason it cannot reach a ``no_generate`` object.
+
+    Parameters
+    ----------
+    cfg : dict
+        The loaded manifest.
+    component : str
+        The component the advice is about.
+
+    Returns
+    -------
+    str
+        One sentence, ending in a full stop.
+
+    Examples
+    --------
+    >>> rebuild_route({"o": {}}, "o")
+    "Run `jm regenerate o` to rebuild o's C from the manifest."
+    >>> cfg = {"module": {"mod": {"objects": ["o"], "no_generate": True}}}
+    >>> route = rebuild_route(cfg, "o")
+    >>> route.startswith("Nothing rebuilds 'o' from the manifest")
+    True
+    >>> "jm regenerate" in route, route.endswith("Edit its C by hand.")
+    (False, True)
+    """
+    module = C.hand_written_module(cfg, component)
+    if module is None:
+        return (
+            f"Run `jm regenerate {component}` to rebuild {component}'s C"
+            " from the manifest."
+        )
+    return (
+        f"Nothing rebuilds '{component}' from the manifest: module"
+        f" '{module}' is `no_generate`, so `jm apply` writes none of it."
+        " Edit its C by hand."
     )
 
 

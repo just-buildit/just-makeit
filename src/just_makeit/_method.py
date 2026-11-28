@@ -2411,6 +2411,15 @@ def run(
         )
         sys.exit(1)
 
+    # gh-2116: before anything is written. `apply` writes nothing of
+    # a `no_generate` module, so a member declared there would reach
+    # none of its files; the verb rewrote them instead.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg, module, f"add method '{method_name}' to '{object_name}'"
+    )
+
     pkg = C.project_name(cfg)
 
     # gh-504: --view retargets the method onto a VIEW of the object. Views are

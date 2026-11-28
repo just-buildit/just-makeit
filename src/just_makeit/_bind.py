@@ -663,15 +663,28 @@ def refuse_declared(root: Path, component: str) -> None:
     # The project `run` renders for is *root*'s manifest, or none (`owner`
     # there). Read fresh, not through `_incpath`'s cache: that is keyed on
     # just-makeit.toml alone, and a component lives in a fragment.
+    from ._regenerate import rebuild_route
+
     manifest = root / C.FILENAME
-    if manifest.is_file() and component in C.components(C.load(root)):
+    if not manifest.is_file():
+        return
+    cfg = C.load(root)
+    if component not in C.components(cfg):
+        return
+    # gh-2117: an object in a `no_generate` module has no binding of jm's
+    # to rebuild, and `jm regenerate` refuses it; the route is the hand.
+    if C.hand_written_module(cfg, component) is not None:
         raise Refusal(
-            f"the manifest declares '{component}', so `jm apply` owns its"
-            " binding: `jm bind` renders from the header alone and would drop"
-            " what only the manifest says (warnings, errors, records). Run"
-            f" `jm regenerate {component}` to rebuild it from the manifest,"
-            " or `jm apply`."
+            f"the manifest declares '{component}', and its binding is"
+            " yours: `jm bind` would write a second one beside it."
+            f" {rebuild_route(cfg, component)}"
         )
+    raise Refusal(
+        f"the manifest declares '{component}', so `jm apply` owns its"
+        " binding: `jm bind` renders from the header alone and would drop"
+        " what only the manifest says (warnings, errors, records)."
+        f" {rebuild_route(cfg, component)} Or run `jm apply`."
+    )
 
 
 def ext_c(root: Path, component: str) -> Path:

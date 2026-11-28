@@ -131,6 +131,15 @@ def run(
         )
         sys.exit(1)
 
+    # gh-2116: before anything is written. `apply` writes nothing of
+    # a `no_generate` module, so a member declared there would reach
+    # none of its files; the verb rewrote them instead.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg, module, f"declare a create() error on '{object_name}'"
+    )
+
     # gh-580: --view targets a view's OWN translation rather than the object's.
     # A view is module-only, so --module is required — same shape as
     # `jm warning --view` (gh-509).

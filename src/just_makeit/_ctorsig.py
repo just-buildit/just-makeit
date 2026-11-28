@@ -272,6 +272,12 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
     builders reject is a different finding, already reported elsewhere) and
     for one whose header declares no `create()` at all — `no_ctor` and
     `no_state` shapes legitimately have none.
+
+    Silent, too, for an object in a ``no_generate`` module (gh-2117): jm
+    injects no declaration into its header and renders no `create()` for
+    it, so there is nothing of jm's to check -- and the finding's advice,
+    that `jm regenerate` would write a `create()` that does not compile,
+    names a command that refuses on it (gh-2087).
     """
     from . import _glue
     from ._view import create_params_of
@@ -279,6 +285,8 @@ def drift(root: Path, cfg: dict) -> list[CtorDrift]:
     pkg = C.project_name(cfg) or ""
     out: list[CtorDrift] = []
     for comp in C.components(cfg):
+        if C.hand_written_module(cfg, comp) is not None:
+            continue
         try:
             ctx = _glue.component_ctx(cfg, comp, pkg, root)
         except Exception:
