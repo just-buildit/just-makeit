@@ -175,6 +175,12 @@ class Undo:
         owned = self._owned
         assert owned is not None
         self._files = None
+        # gh-2828: a link is removed, never followed. Something that put a
+        # symlink where the command's directory was leaves `rmtree` refusing
+        # it, and would otherwise leave the target's contents to a walk.
+        if owned.is_symlink():
+            owned.unlink()
+            return 0
         if not owned.exists():
             return 0
         if not owned.is_dir():
@@ -207,6 +213,11 @@ def guard(root: "Optional[Path]", *, creates: bool = False) -> Iterator[None]:
     under the ``update`` lines it takes back: the refusal may name a file
     the command had deleted, which is back. Not on stderr, whose last line
     stays the refusal for whatever reads it.
+
+    A put-back that itself fails (``OSError``: a link or permission change
+    under the tree, gh-2828) says which path it left, on one more line, and
+    does not raise: the command's own refusal or crash is the error the user
+    sees.
     """
     global _active, _awaiting_root
     if root is None and not creates:
@@ -218,7 +229,20 @@ def guard(root: "Optional[Path]", *, creates: bool = False) -> Iterator[None]:
         yield
     finally:
         undo, _active, _awaiting_root = _active, None, False
-        restored = undo.rollback() if undo is not None else 0
+        try:
+            restored = undo.rollback() if undo is not None else 0
+        except OSError as exc:
+            # gh-2828: this runs on the way out of a command that failed, so
+            # an error raised here would replace the one the user needs. Say
+            # what is left, on a line of its own, and let the command's own
+            # error leave.
+            assert undo is not None
+            left = Path(exc.filename) if exc.filename else undo.root
+            print(
+                f"just-makeit: could not {'remove' if undo.creates else 'put back'}"
+                f" {left}: {exc.strerror or exc}; it is left behind."
+            )
+            restored = 0
         if restored and undo is not None and undo.creates:
             print(
                 f"just-makeit: removed {undo.root} and the {restored}"
