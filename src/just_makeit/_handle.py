@@ -1071,8 +1071,10 @@ def members(
     >>> cfg = {"module": {"h": {"kind": "handle", "type_name": "Ring",
     ...     "methods": [{"name": "pop"}]}}}
     >>> [m[:3] for m in members(cfg, "h")][:2]
-    [("method 'pop'", 'Ring_pop', 'pop'), ("the generated close()", 'Ring_close', 'close')]
+    [("method 'pop'", 'Ring_pop', 'pop'), ('the generated close()', 'Ring_close', 'close')]
     """
+    from ._csym import property_getter, property_setter
+
     tname = C.handle_type_name(cfg, module)
     leaf = C.module_paths(module).leaf
     out: "list[tuple[str, str | None, str | None, str]]" = []
@@ -1114,9 +1116,9 @@ def members(
                 continue
             n = f.get("name")
             what = f"getter field '{n}'"
-            out.append((what, f"{tname}_get_{n}", str(n), "type"))
+            out.append((what, property_getter(tname, n), str(n), "type"))
             if f.get("writable_fn"):
-                out.append((what, f"{tname}_set_{n}", None, "type"))
+                out.append((what, property_setter(tname, n), None, "type"))
     for f in C.handle_factories(cfg, module):
         if isinstance(f, dict):
             n = f.get("name")
@@ -1144,7 +1146,7 @@ def member_collisions(cfg: dict, module: str) -> "list[str]":
     ...     "getters": [{"fn": "f", "out": "s_t",
     ...                  "fields": [{"name": "used"}]}]}}}
     >>> member_collisions(cfg, "h")[0][:73]
-    "handle module 'h': method 'get_used' and getter field 'used' both defin"
+    "handle module 'h': method 'get_used' and getter field 'used' both define "
     """
     who = f"handle module '{module}'"
     out: "list[str]" = []
