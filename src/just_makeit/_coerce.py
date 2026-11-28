@@ -16,6 +16,7 @@ a ``jm function`` path param) emit exactly this shape — so it lives here once.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from ._inflight import INFLIGHT_C
 from ._keys import INIT_PARAM_FIELDS, SHAPE_KEYS, truthy
@@ -1644,6 +1645,57 @@ def array_release(arr_var: str, nullable: bool = False) -> str:
     ('Py_DECREF(x_arr);', 'Py_XDECREF(x_arr);')
     """
     return f"Py_{'X' if nullable else ''}DECREF({arr_var});"
+
+
+def held_release(
+    arrays: Iterable[str] = (),
+    paths: Iterable[str] = (),
+    nullable: Iterable[str] = (),
+) -> str:
+    """Every release an early return owes: the arrays held, then the paths.
+
+    The ONE emitter of a binding's release-on-every-exit (gh-1835, gh-2689).
+    Each acquisition site that can refuse -- an array that will not convert,
+    a rank or shape guard, an enum that is not a choice, a capsule that is
+    not one -- returns early, and what it owes is what the binding holds
+    AT THAT POINT. Two facts decide it, and they were each rediscovered per
+    site:
+
+    * a ``path`` param is already converted when the parse returns, whatever
+      its position among the params, so EVERY path is held at every exit
+      after the parse -- not only those declared before the refusing param;
+    * an array is held only once it is acquired, so an exit before the array
+      acquisitions (an enum, a capsule) owes no array at all.
+
+    Parameters
+    ----------
+    arrays : iterable of str
+        The array locals acquired so far, in acquisition order.
+    paths : iterable of str
+        EVERY path param's local; ``Py_XDECREF`` is NULL-safe.
+    nullable : iterable of str
+        The subset of *arrays* that may still be ``NULL`` (a defaulted
+        array the caller omitted), released with ``Py_XDECREF``.
+
+    Returns
+    -------
+    str
+        Statements, each with a leading space, ready to precede a
+        ``return``; empty when nothing is held.
+
+    Examples
+    --------
+    >>> held_release(["x_arr"], ["p"])
+    ' Py_DECREF(x_arr); Py_XDECREF(p);'
+    >>> held_release(["x_arr"], [], ["x_arr"])
+    ' Py_XDECREF(x_arr);'
+    >>> held_release()
+    ''
+    """
+    maybe = set(nullable)
+    return "".join(
+        f" {array_release(a, a in maybe)}" for a in arrays
+    ) + "".join(f" {path_release(n)}" for n in paths)
 
 
 def defaulted_array_acq(

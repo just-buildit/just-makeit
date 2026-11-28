@@ -1599,7 +1599,12 @@ def _build_params_parse(
     # gh-353: borrowed path PyBytes (from PyUnicode_FSConverter). DECREF'd only
     # AFTER the C call (the C side copies the string during the call — gh-219
     # UAF), and on every pre-call error path before returning NULL.
-    path_names: list[str] = []
+    #
+    # gh-2689: EVERY path, not those declared so far. The parse has converted
+    # them all before any acquisition runs, so an array refused after it, an
+    # enum, a capsule -- each owes every path, whichever side of it the path
+    # was declared; `_coerce.held_release` is the one emitter of that debt.
+    path_names: list[str] = [p["name"] for p in params if p["type"] == "path"]
 
     for p in params:
         pname = p["name"]
@@ -1622,7 +1627,6 @@ def _build_params_parse(
             decl_lines.append("    " + _coerce.path_decl(pname))
             fmt_chars.append(_coerce.path_fmt())
             addr_exprs.append(_coerce.path_addr(pname))
-            path_names.append(pname)
             call_args.append(_coerce.path_call_expr(pname))
         elif ptype == "bytes":
             # gh-1272: `bytes` is the OTHER pseudo-type, and this face had an
@@ -1652,10 +1656,10 @@ def _build_params_parse(
             _edflt = p.get("default") or ""
             decl_lines.append(f'    const char *{pname} = "{_edflt}";')
             addr_exprs.append(f"&{pname}")
-            prior = "".join(
-                f" {_coerce.array_release(a, a in nullable_arrs)}"
-                for a in arr_names
-            ) + "".join(f" {_coerce.path_release(n)}" for n in path_names)
+            # The conversions run before `arr_acq`, so no array is held yet:
+            # naming one here (an array declared before the enum) was an
+            # undeclared identifier, and only the paths are owed.
+            prior = _coerce.held_release(paths=path_names)
             # gh-1026: one emitter, so the refusal a caller meets does not
             # depend on which surface the enum was declared on. This site is
             # the one the issue names: it said only `invalid sample_type
@@ -1680,10 +1684,9 @@ def _build_params_parse(
 
             # Build error path: decref all arrays + path objects (gh-353)
             # acquired so far.
-            prior_decrefs = "".join(
-                f" {_coerce.array_release(a, a in nullable_arrs)}"
-                for a in arr_names
-            ) + "".join(f" {_coerce.path_release(n)}" for n in path_names)
+            prior_decrefs = _coerce.held_release(
+                arr_names, path_names, nullable_arrs
+            )
             # gh-2657: as _context/_parse.py's branch -- a defaulted array is
             # acquired inside a branch, into `got`, only when it was passed.
             defaulted = _coerce.defaulted_array(p)
@@ -1767,9 +1770,7 @@ def _build_params_parse(
             addr_exprs.append(f"&{obj_var}")
             # Error paths release any O&-converted path objects (mirrors the
             # enum branch): ParseTuple has already run when conv executes.
-            _cap_prior = "".join(
-                f" {_coerce.path_release(n)}" for n in path_names
-            )
+            _cap_prior = _coerce.held_release(paths=path_names)
             conv_lines.append(
                 f"    {disp}{pname} = NULL;\n"
                 f"    if ({obj_var} != Py_None) {{\n"
@@ -1801,12 +1802,9 @@ def _build_params_parse(
                 pname,
                 ptype,
                 p.get("default") or "",
-                fail="".join(
-                    f"{_coerce.path_release(q['name'])} "
-                    for q in params
-                    if q["type"] == "path"
-                )
-                + "return NULL;",
+                fail=(
+                    _coerce.held_release(paths=path_names) + " return NULL;"
+                ).lstrip(),
             )
             decl_lines.append(decl)
             fmt_chars.append(fmt)

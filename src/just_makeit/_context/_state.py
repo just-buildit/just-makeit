@@ -1429,12 +1429,19 @@ def _build_no_state_init_ctx(
     # path borrow, so every `return -1` bailout here must release it too or the
     # PyBytes leaks. (The dispatch / optional-array branches below cannot be
     # reached with a path param — that combination is rejected above.)
-    _path_cleanup = "".join(f" {_coerce.path_release(p)}" for p in path_ip)
+    #
+    # gh-1835: every exit below owes what is held AT THAT POINT, and says so
+    # through `_held`, the one place that is spelled -- the optional-array
+    # branches built their own and left the arrays out.
+    def _held() -> str:
+        return _coerce.held_release(
+            [f"{n}_arr" for n in (*allocated, *maybe_allocated)],
+            path_ip,
+            [f"{n}_arr" for n in maybe_allocated],
+        )
 
     for (name, _), (ct, npy_enum) in zip(_aa, _aa_ctypes):
-        cleanup = (
-            "".join(f" Py_DECREF({n}_arr);" for n in allocated) + _path_cleanup
-        )
+        cleanup = _held()
         aapb_lines.append(
             f"    PyArrayObject *{name}_arr ="
             f"\n        {_coerce.array_arg(f'{name}_obj', npy_enum, 'NPY_ARRAY_C_CONTIGUOUS', name)};\n"
@@ -1444,9 +1451,7 @@ def _build_no_state_init_ctx(
         allocated.append(name)
 
     for aname, act, andim, anpy in arr_ip:
-        cleanup = (
-            "".join(f" Py_DECREF({n}_arr);" for n in allocated) + _path_cleanup
-        )
+        cleanup = _held()
         if aname in dispatch_meta:
             real_ect, real_npy, d_create_fn = dispatch_meta[aname]
             # gh-1825: this block only ACQUIRES the array, at the top level
@@ -1521,11 +1526,7 @@ def _build_no_state_init_ctx(
     # (create_call_args, via the ternary-guarded call_parts entry emitted in
     # the sig_parts loop above), never an alternate create_fn.
     for aname, act, andim, anpy in def_arr_ip:
-        cleanup = (
-            "".join(f" Py_DECREF({n}_arr);" for n in allocated)
-            + "".join(f" Py_XDECREF({n}_arr);" for n in maybe_allocated)
-            + _path_cleanup
-        )
+        cleanup = _held()
         aapb_lines.append(
             f"    PyArrayObject *{aname}_arr = NULL;\n"
             f"    size_t {aname}_len = 0;\n"
@@ -1543,16 +1544,14 @@ def _build_no_state_init_ctx(
     scalar_call_str = create_call_args
     # gh-2004: every array held when an optional one is acquired, which its
     # rank guard releases on top of the optional array itself.
-    _opt_cleanup = "".join(
-        f" Py_DECREF({n}_arr);" for n in allocated
-    ) + "".join(f" Py_XDECREF({n}_arr);" for n in maybe_allocated)
+    _opt_cleanup = _held()
     for oname, oact, ondim, onpy, oalt_fn in opt_arr_ip:
         if ondim == 2:
             aapb_lines.append(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
-                f"        if (!{oname}_arr) {{ return -1; }}\n"
+                f"        if (!{oname}_arr) {{{_opt_cleanup} return -1; }}\n"
                 # gh-2537: the 1-D optional path's guard, releasing every
                 # array already held, with the type's implied rank 2.
                 + _rank_guard(oname, _opt_cleanup, " " * 8, implied=2)
@@ -1574,7 +1573,7 @@ def _build_no_state_init_ctx(
                 f"    if ({oname}_obj && {oname}_obj != Py_None) {{\n"
                 f"        PyArrayObject *{oname}_arr ="
                 f"\n            {_coerce.array_arg(f'{oname}_obj', onpy, 'NPY_ARRAY_C_CONTIGUOUS', oname, _hints.get(oname, ''))};\n"
-                f"        if (!{oname}_arr) {{ return -1; }}\n"
+                f"        if (!{oname}_arr) {{{_opt_cleanup} return -1; }}\n"
                 # gh-2004: the guard releases every array this tp_init
                 # already holds. (A path param never reaches here: it is
                 # refused beside optional-array dispatch, gh-515.)
