@@ -177,7 +177,7 @@ def _run_python_tests(root: Path, extra: list[str]) -> bool:
     else:
         print(
             f"just-makeit: unittest discover: {shlex.quote(python)} "
-            "-m unittest discover -s src/ -v",
+            "-m unittest discover -s src/ -p test_*.py -v",
             flush=True,
         )
         run = _testrun.unittest(
