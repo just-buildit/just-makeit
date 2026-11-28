@@ -3757,6 +3757,13 @@ RECORD_TWICE_WHY = (
 )
 
 
+#: Why a method name twice on one type is refused (gh-2838). Both rows
+#: compile, into two `PyMethodDef` entries under one key.
+_SHADOWED_WHY = (
+    "each name is one method of the type, so the second row is unreachable."
+)
+
+
 def duplicate_row_errors(
     where: str, rows, why: str = _TWICE_WHY
 ) -> "list[str]":
@@ -3894,6 +3901,11 @@ def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
         sec = cfg.get("module", {}).get(mod, {})
         out += rows_of(f"{who} init_params", sec.get("init_params"))
         out += rows_of(f"{who} methods", sec.get("methods"))
+        out += rows_of(f"{who} properties", sec.get("properties"))
+        # gh-2838: and the functions those lists derive, across both.
+        from ._capsule import member_collisions as _capsule_collisions
+
+        out += _capsule_collisions(cfg, mod)
     elif kind == "handle":
         out += rows_of(f"{who} create_args", handle_create_args(cfg, mod))
         for m in handle_methods(cfg, mod):
@@ -3913,6 +3925,10 @@ def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
             for f in g.get("fields") or []
         ]
         out += rows_of(f"{who} getters fields", props)
+        # gh-2838: the members those lists derive, over every list at once.
+        from ._handle import member_collisions
+
+        out += member_collisions(cfg, mod)
     elif kind == "composer":
         src = composer_source(cfg, mod)
         # One row for both: a computed property is a getset member beside
@@ -3921,11 +3937,34 @@ def _kind_duplicate_errors(cfg: dict, mod: str) -> "list[str]":
         out += rows_of(f"{who} source fields and computed", rows)
         seg = composer_segment(cfg, mod).get("fields")
         out += rows_of(f"{who} segment fields", seg)
+        out += rows_of(f"{who} settings", composer_settings(cfg, mod))
         for s in composer_serializers(cfg, mod):
             if isinstance(s, dict):
                 what = f"{who} serializer '{s.get('name')}' params"
                 out += rows_of(what, s.get("params"))
         out += rows_of(f"{who} serializers", composer_serializers(cfg, mod))
+        # gh-2838: an extra method is one `PyMethodDef` row on its type, so a
+        # name twice on one type leaves the second unreachable, and one a
+        # serializer already holds on the composer type is the same pair.
+        from ._composer import _default_extra_type, extra_methods
+
+        home = _default_extra_type(cfg, mod)
+        by_type: "dict[str, list]" = {}
+        for r in extra_methods(cfg, mod):
+            if isinstance(r, dict):
+                by_type.setdefault(r.get("type") or home, []).append(r)
+        for tp, rows in by_type.items():
+            held = composer_serializers(cfg, mod) if tp == home else []
+            # Each serializer once (a repeat there is reported above), first,
+            # so an extra method repeating one reads as the second.
+            once = list(
+                {
+                    str(r.get("name")): r for r in held if isinstance(r, dict)
+                }.values()
+            )
+            out += rows_of(
+                f"{who} type '{tp}' members", once + rows, _SHADOWED_WHY
+            )
     return out
 
 

@@ -431,17 +431,69 @@ _fn_{backing}_set_{name}(PyObject *mod, PyObject *args)
 # ── whole-file assembly ──────────────────────────────────────────────────────
 
 
+def fn_members(cfg: dict, module: str) -> "list[tuple[str, str]]":
+    """``(what, function)`` for every free function the module exposes.
+
+    gh-2838. The one place a capsule row's name becomes a function: a
+    method ``<backing>_<name>``, a property's ``<backing>_get_<name>`` and,
+    when writable, ``<backing>_set_<name>``, beside the constructor and
+    ``destroy``. Each is one C function ``_fn_<function>`` and one name in
+    the module's method table, so two rows deriving one function collide in
+    both; :func:`member_collisions` asks it, and :func:`_fn_list` is it
+    without the labels.
+
+    >>> cfg = {"module": {"m": {"kind": "capsule", "backing": "cb",
+    ...     "methods": [{"name": "reset"}]}}}
+    >>> fn_members(cfg, "m")
+    [('the constructor', 'cb_create'), ("method 'reset'", 'cb_reset'), \
+('destroy', 'cb_destroy')]
+    """
+    backing = C.capsule_backing(cfg, module)
+    out = [("the constructor", f"{backing}_create")]
+    out += [
+        (f"method '{m['name']}'", f"{backing}_{m['name']}")
+        for m in C.module_methods(cfg, module)
+    ]
+    out.append(("destroy", f"{backing}_destroy"))
+    for p in C.module_properties(cfg, module):
+        what = f"property '{p['name']}'"
+        out.append((what, f"{backing}_get_{p['name']}"))
+        if truthy(p.get("writable")):
+            out.append((what, f"{backing}_set_{p['name']}"))
+    return out
+
+
+def member_collisions(cfg: dict, module: str) -> "list[str]":
+    """Two different members of a capsule module deriving one function.
+
+    gh-2838: a method ``get_gain`` beside a property ``gain`` is
+    ``_fn_<backing>_get_gain`` twice. The same row twice is the list
+    check's (gh-2804).
+
+    >>> cfg = {"module": {"m": {"kind": "capsule", "backing": "cb",
+    ...     "methods": [{"name": "get_gain"}],
+    ...     "properties": [{"name": "gain", "type": "double"}]}}}
+    >>> member_collisions(cfg, "m")[0][:68]
+    "capsule module 'm': method 'get_gain' and property 'gain' both defin"
+    """
+    out: "list[str]" = []
+    seen: "dict[str, str]" = {}
+    told: "set[tuple[str, str]]" = set()
+    for what, fn in fn_members(cfg, module):
+        first = seen.setdefault(fn, what)
+        if first == what or (first, what) in told:
+            continue
+        told.add((first, what))
+        out.append(
+            f"capsule module '{module}': {first} and {what} both define"
+            f" the C function '_fn_{fn}'; the scaffold would not compile."
+        )
+    return out
+
+
 def _fn_list(cfg: dict, module: str) -> list[str]:
     """Ordered free-function names the module exposes (for the method table)."""
-    backing = C.capsule_backing(cfg, module)
-    names = [f"{backing}_create"]
-    names += [f"{backing}_{m['name']}" for m in C.module_methods(cfg, module)]
-    names.append(f"{backing}_destroy")
-    for p in C.module_properties(cfg, module):
-        names.append(f"{backing}_get_{p['name']}")
-        if truthy(p.get("writable")):
-            names.append(f"{backing}_set_{p['name']}")
-    return names
+    return [fn for _what, fn in fn_members(cfg, module)]
 
 
 def render_ext(cfg: dict, module: str) -> str:

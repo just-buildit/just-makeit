@@ -1049,6 +1049,133 @@ def arg_scopes(
     return scopes
 
 
+def members(
+    cfg: dict, module: str
+) -> "list[tuple[str, str | None, str | None, str]]":
+    """Every C function and Python member a handle module's rows derive.
+
+    gh-2838. ``(what, C function, Python member, scope)`` per member, where
+    *what* names the row for a message (``method 'pop'``). The one place a
+    row's name becomes a C function (``<Type>_<name>`` for a method,
+    ``<Type>_get_<name>`` / ``<Type>_set_<name>`` for a getter field,
+    ``<leaf>_<name>`` for a factory) beside the ones jm writes for itself
+    (``<Type>_close``, the context-manager and state-blob members, the
+    ``_capsule`` getter, the two tables). *scope* is ``"type"`` for a member
+    of the class and ``"module"`` for a module function; a name is a
+    collision only inside one scope. The C function or the Python member is
+    ``None`` where the row has none.
+
+    ``tests/test_gh2838_member_collisions.py`` derives the set from the
+    rendered C and requires every function the render defines to be here.
+
+    >>> cfg = {"module": {"h": {"kind": "handle", "type_name": "Ring",
+    ...     "methods": [{"name": "pop"}]}}}
+    >>> [m[:3] for m in members(cfg, "h")][:2]
+    [("method 'pop'", 'Ring_pop', 'pop'), ("the generated close()", 'Ring_close', 'close')]
+    """
+    tname = C.handle_type_name(cfg, module)
+    leaf = C.module_paths(module).leaf
+    out: "list[tuple[str, str | None, str | None, str]]" = []
+    for m in C.handle_methods(cfg, module):
+        if isinstance(m, dict):
+            n = m.get("name")
+            out.append((f"method '{n}'", f"{tname}_{n}", str(n), "type"))
+    out += [
+        ("the generated close()", f"{tname}_close", "close", "type"),
+        ("the generated tp_init", f"{tname}_init", None, "type"),
+        ("the generated tp_dealloc", f"{tname}_dealloc", None, "type"),
+        ("the method table", f"{tname}_methods", None, "type"),
+        ("the getset table", f"{tname}_getset", None, "type"),
+    ]
+    if C.handle_context(cfg, module):
+        out += [
+            ("the generated __enter__", f"{tname}_enter", "__enter__", "type"),
+            ("the generated __exit__", f"{tname}_exit", "__exit__", "type"),
+        ]
+    if C.is_serializable(cfg, module):
+        out += [
+            (f"the generated {s}()", f"{tname}_{s}", s, "type")
+            for s in ("state_bytes", "get_state", "set_state")
+        ]
+    if C.published_capsule(cfg, module):
+        out.append(
+            (
+                "the generated _capsule",
+                f"{tname}_get__capsule",
+                "_capsule",
+                "type",
+            )
+        )
+    for g in C.handle_getters(cfg, module):
+        if not isinstance(g, dict):
+            continue
+        for f in g.get("fields") or []:
+            if not isinstance(f, dict):
+                continue
+            n = f.get("name")
+            what = f"getter field '{n}'"
+            out.append((what, f"{tname}_get_{n}", str(n), "type"))
+            if f.get("writable_fn"):
+                out.append((what, f"{tname}_set_{n}", None, "type"))
+    for f in C.handle_factories(cfg, module):
+        if isinstance(f, dict):
+            n = f.get("name")
+            out.append((f"factory '{n}'", f"{leaf}_{n}", str(n), "module"))
+    if C.handle_factories(cfg, module):
+        out.append(("the function table", f"{leaf}_functions", None, "module"))
+    return out
+
+
+def member_collisions(cfg: dict, module: str) -> "list[str]":
+    """Two different members of one handle module that share a name.
+
+    gh-2838. ``duplicate_row_errors`` sees a name twice in ONE list; the
+    members of a handle come from several (``methods``, every ``getters``
+    table, ``factories``) and from what jm writes itself, and they meet in
+    one C translation unit and one type dict. A method ``get_used`` beside
+    a getter field ``used`` defines ``<Type>_get_used`` twice, and a method
+    ``used`` beside the field is one Python name two ways, the second
+    silently replacing the first. Checked over :func:`members` -- the
+    derived C functions and Python members -- so a pair of lists is not a
+    case of its own. The same row twice is left to the list check.
+
+    >>> cfg = {"module": {"h": {"kind": "handle", "type_name": "Ring",
+    ...     "methods": [{"name": "get_used"}],
+    ...     "getters": [{"fn": "f", "out": "s_t",
+    ...                  "fields": [{"name": "used"}]}]}}}
+    >>> member_collisions(cfg, "h")[0][:73]
+    "handle module 'h': method 'get_used' and getter field 'used' both defin"
+    """
+    who = f"handle module '{module}'"
+    out: "list[str]" = []
+    seen: "dict[tuple[str, str], str]" = {}
+    told: "set[tuple[str, str]]" = set()
+    for what, fn, py, scope in members(cfg, module):
+        for kind, key, shown in (
+            ("C function", fn, f"'{fn}'"),
+            ("Python member", py, f"'{py}'"),
+        ):
+            if key is None:
+                continue
+            slot = (kind, f"{scope}:{key}")
+            first = seen.setdefault(slot, what)
+            # One finding per pair: a method named for jm's own `close`
+            # clashes in C and in Python, and says so once.
+            if first == what or (first, what) in told:
+                continue
+            told.add((first, what))
+            out.append(
+                f"{who}: {first} and {what} both define the {kind}"
+                f" {shown}; "
+                + (
+                    "the scaffold would not compile."
+                    if kind == "C function"
+                    else "the second silently replaces the first."
+                )
+            )
+    return out
+
+
 #: A handle ``set_state``'s one-line doc, on both faces (gh-403).
 SET_STATE_SUMMARY = "Restore mutable state from a get_state() blob."
 

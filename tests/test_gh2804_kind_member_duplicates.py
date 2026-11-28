@@ -42,11 +42,16 @@ from just_makeit import _config as C
 
 def _with_members(kind: str) -> dict:
     """The gh-1525 fixture of *kind*, plus the member lists it lacks: a
-    handle's ``getters`` (a struct table and a scalar one) and a composer
-    source's ``computed`` properties."""
+    handle's ``getters`` (a struct table and a scalar one), a capsule's
+    ``properties``, and a composer's ``settings``, ``extra_methods`` and
+    source ``computed`` properties (gh-2838: every table the kind renders,
+    held by ``test_the_fixture_declares_every_table_a_kind_renders``)."""
     gen, make_cfg, module = _KINDS[kind]
     cfg = make_cfg()
     sec = cfg["module"][module]
+    # Build wiring, not source: a row here renders no C, but a table the
+    # schema renders is declared, so the gate below can say it was tried.
+    sec["depends_on"] = [{"name": "zzdep", "link": True}]
     if kind == "handle":
         sec["getters"] = [
             {
@@ -63,10 +68,33 @@ def _with_members(kind: str) -> dict:
                 "fields": [{"name": "gain", "type": "float"}],
             },
         ]
+    elif kind == "capsule":
+        sec["properties"] = [
+            {"name": "gain", "type": "double", "writable": True},
+            {"name": "rate", "type": "double"},
+        ]
     elif kind == "composer":
         sec["source"]["computed"] = [
             {"name": "span", "type": "double", "fn": "wc_span"},
             {"name": "rate", "type": "double", "fn": "wc_rate"},
+        ]
+        sec["settings"] = [
+            {
+                "name": "mode",
+                "type": "int",
+                "setter_fn": "wc_set_mode",
+                "getter_fn": "wc_get_mode",
+            },
+            {
+                "name": "depth",
+                "type": "int",
+                "setter_fn": "wc_set_depth",
+                "getter_fn": "wc_get_depth",
+            },
+        ]
+        sec["extra_methods"] = [
+            {"name": "draws", "fn": "Wc_draws", "flags": "METH_NOARGS"},
+            {"name": "peaks", "fn": "Wc_peaks", "flags": "METH_NOARGS"},
         ]
     return cfg
 
@@ -128,6 +156,33 @@ def test_every_list_that_renders_a_function_twice_is_refused(kind) -> None:
         + "\n  ".join(map(str, unchecked))
     )
     assert redefining, f"{kind}: no list rendered a repeat; not armed"
+
+
+def test_the_fixture_declares_every_table_a_kind_renders() -> None:
+    """gh-2838: the gate above walks the lists the fixture HAS. A table a
+    kind renders and the fixture omits was never checked, so the tables come
+    from the schema -- ``_keys.KIND_TABLE_VOCAB``, whose entry is the promise
+    that a row in the table is rendered (gh-1517) -- and each one naming
+    its rows (a ``name``, or a getter's ``fields``) must be in the fixture.
+    """
+    from just_makeit import _keys
+
+    missing = []
+    for (kind, table), vocab in _keys.KIND_TABLE_VOCAB.items():
+        keys = _keys.KIND_KEYS[vocab]
+        if "name" not in keys and "fields" not in keys:
+            continue
+        if kind not in _KINDS:
+            continue
+        module = _KINDS[kind][2]
+        rows = _with_members(kind)["module"][module].get(table)
+        if not rows:
+            missing.append((kind, table))
+    assert not missing, (
+        "_with_members declares no row for these tables a kind renders, so"
+        " a repeat in them is never tried:\n  "
+        + "\n  ".join(map(str, missing))
+    )
 
 
 def test_a_getter_field_repeated_across_tables_is_refused() -> None:
