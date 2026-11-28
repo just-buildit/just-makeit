@@ -936,6 +936,20 @@ def _remove_state(
     print(f"Done!  State field '{name}' removed.")
 
 
+def _refuse_hand_written(cfg: dict, module: "str | None", action: str) -> None:
+    """Refuse a member removal on a ``no_generate`` module, up front.
+
+    gh-2116: such a module's files are all the author's, and `apply` writes
+    none of them, so a remove that re-renders the module -- or deletes a
+    function's ``.c`` and strips its declaration -- rewrote hand-written
+    files. The member verbs' refusal, asked before the manifest is touched;
+    every write here asks `C.may_write_module_file` too.
+    """
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(cfg, module, action)
+
+
 def _owner(cfg: dict, obj: str, view_class: str) -> "tuple[dict, str]":
     """The manifest table a member of *obj* -- or of its view *view* --
     lives in, and how the messages name it (gh-2066).
@@ -982,6 +996,11 @@ def _remove_method(
             file=sys.stderr,
         )
         sys.exit(1)
+    _refuse_hand_written(
+        cfg,
+        C.component_module(cfg, obj),
+        f"remove method '{name}' from {where}",
+    )
     if not _confirm(f"Remove method '{name}' from {where}?", force):
         print("Aborted.")
         return
@@ -1059,6 +1078,11 @@ def _remove_property(
             file=sys.stderr,
         )
         sys.exit(1)
+    _refuse_hand_written(
+        cfg,
+        C.component_module(cfg, obj),
+        f"remove property '{name}' from {where}",
+    )
     if not _confirm(f"Remove property '{name}' from {where}?", force):
         print("Aborted.")
         return
@@ -1133,6 +1157,11 @@ def _remove_warning(
             file=sys.stderr,
         )
         sys.exit(1)
+    _refuse_hand_written(
+        cfg,
+        C.component_module(cfg, obj),
+        f"remove the warning on {where} when {name}",
+    )
     if not _confirm(
         f"Remove the {entry.get('category', 'UserWarning')} on {where} "
         f"when {name}?",
@@ -1190,6 +1219,9 @@ def _remove_create_error(root: Path, cfg: dict, obj: str, force: bool) -> None:
         for v in C.views(cfg, obj)
         if C.view_create_why(v) and not v.get("create_error")
     ]
+    _refuse_hand_written(
+        cfg, C.component_module(cfg, obj), f"remove create_error from '{obj}'"
+    )
     if stranded:
         raise Refusal(
             f"{', '.join(stranded)} declare{'s' if len(stranded) == 1 else ''}"
@@ -1248,6 +1280,9 @@ def _remove_view_create_error(
             f"create_error, and '{obj}' declares none to inherit. Drop "
             "create_why from the manifest and run `jm apply` first."
         )
+    _refuse_hand_written(
+        cfg, C.component_module(cfg, obj), f"remove create_error from {where}"
+    )
     then = f"'{obj}''s {inherited}" if inherited else "MemoryError"
     if not _confirm(
         f"Remove the {entry.get('create_error') or 'create()'} translation "
@@ -1301,6 +1336,7 @@ def _remove_view(
         for m in C.view_methods(entry)
         if m.get("fn") or m.get("name") not in parents
     )
+    _refuse_hand_written(cfg, C.component_module(cfg, obj), f"remove {where}")
     if not _confirm(f"Remove {where} and its binding?", force):
         print("Aborted.")
         return
@@ -1376,6 +1412,9 @@ def _remove_function(
     _refuse_what_an_app_names(
         cfg, f"function '{name}'", functions={(module, name)}
     )
+    _refuse_hand_written(
+        cfg, module, f"remove function '{name}' from '{module}'"
+    )
     if not _confirm(
         f"Remove function '{name}' from module '{module}'?", force
     ):
@@ -1405,10 +1444,16 @@ def _remove_function(
     core_h = INC.core_h(root, cname, cfg)
     if not inline:
         fn_c = INC.src_path(root, cname, cfg) / f"{name}.c"
-        if fn_c.exists():
+        # The two files this writes outside the module render, each asking
+        # the question that render's writes ask (gh-2116).
+        if fn_c.exists() and C.may_write_module_file(
+            cfg, module, fn_c.relative_to(root).as_posix()
+        ):
             fn_c.unlink()
             print(f"  delete  {fn_c}")
-        if _strip_decl_from_header(core_h, name):
+        if C.may_write_module_file(
+            cfg, module, core_h.relative_to(root).as_posix()
+        ) and _strip_decl_from_header(core_h, name):
             print(f"  update  {core_h}")
 
     _regenerate_module(root, cfg, module, pkg)

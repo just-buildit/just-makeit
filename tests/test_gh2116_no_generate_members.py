@@ -30,12 +30,10 @@ GATE: every command `_cli.COMMANDS` classifies MUTATING -- read from the
         byte-identical, `jm apply` then exits 0 and leaves them so too, and
         a second `apply` changes nothing at all.
 
-      `jm remove function` is held to the same, ratcheted as a strict
-      xfail: it writes the module's function files outside the module
-      render, in `_remove.py`, which belongs to another lane of the wave
-      that fixed this; that fix deletes the mark. (`jm remove method` and
-      `property` write only through the module render, whose writes ask
-      `C.may_write_module_file`, and pass.)
+      `jm remove` of a member is a member verb here: every kind refuses
+      up front (`_remove._refuse_hand_written`), and `remove function`'s
+      own writes outside the module render ask `C.may_write_module_file`
+      too.
 """
 
 from __future__ import annotations
@@ -67,16 +65,6 @@ EDITED = {
     "src/p/mod/__init__.py": AUTHOR_PY,
     "src/p/mod/mod.pyi": AUTHOR_PY,
 }
-
-#: Why `jm remove function` is a strict xfail: a ratchet, deleted by the
-#: fix in `_remove.py`.
-_REMOVE_WHY = (
-    "gh-2116: `jm remove function` on a `no_generate` module rewrites the"
-    " module's files; `_remove.py` is another lane's"
-)
-
-#: The ratcheted case, by its argv's leading words.
-_RATCHETED = ("remove", "function")
 
 #: Each MUTATING command -> the cases run on the shape. Held to
 #: `_cli.COMMANDS` by `test_every_mutating_command_has_a_case`.
@@ -132,6 +120,8 @@ CASES: "dict[str, tuple]" = {
         ("remove", "method", "m", "--object", "o", "--force"),
         ("remove", "property", "lvl", "--object", "o", "--force"),
         ("remove", "function", "f", "--module", "mod", "--force"),
+        ("remove", "warning", "gain", "--object", "o", "--force"),
+        ("remove", "error", "o", "--object", "o", "--force"),
     ),
     "split-objects": (("split-objects",),),
     "upgrade": (("upgrade",),),
@@ -163,6 +153,7 @@ MEMBER_VERBS: "dict[str, str]" = {
     "just_makeit._object": "object",
     "just_makeit._property": "property",
     "just_makeit._recorddecl": "record",
+    "just_makeit._remove": "remove",
     "just_makeit._view": "view",
     "just_makeit._warning": "warning",
 }
@@ -280,17 +271,9 @@ def test_every_member_refusal_has_a_verb():
 
 
 def _params() -> list:
-    """Every case, the ratcheted ones marked strict xfail."""
+    """Every case, by its argv."""
     return [
-        pytest.param(
-            case,
-            id=" ".join(case),
-            marks=(
-                [pytest.mark.xfail(strict=True, reason=_REMOVE_WHY)]
-                if case[:2] == _RATCHETED
-                else []
-            ),
-        )
+        pytest.param(case, id=" ".join(case))
         for verb, cases in CASES.items()
         for case in cases
     ]
