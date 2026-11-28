@@ -463,6 +463,21 @@ def src_path(root: Path, name: str, owner: "Owner | None" = None) -> Path:
     return Path(root) / src_dir(name, root if owner is None else owner)
 
 
+def fragment_name(cname: str, frag_id: str) -> str:
+    """The file name of a module member's binding fragment.
+
+    A module's ``<cname>_ext.c`` aggregates one ``<cname>_ext_<id>.c`` per
+    member: an object's id is its name, a view's its lowercased class name.
+    The one place that spells it; every writer, reader, ownership check and
+    ``#include`` asks here. A hand-written ``*_extra.c`` hook is a different
+    file, spelled by its own writers.
+
+    >>> fragment_name("filters", "fir")
+    'filters_ext_fir.c'
+    """
+    return f"{cname}_ext_{frag_id}.c"
+
+
 def src_rel(name: str, file: str, owner: Owner) -> str:
     """*file* in *name*'s source directory, project-relative.
 

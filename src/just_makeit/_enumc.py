@@ -416,7 +416,7 @@ def fragment_publication(
     # project's, as for the `_core.h` Doxygen -- and under `status`, the
     # user's rather than its scratch copy's.
     real = Path(_object._FRAGMENT_ROOT_OVERRIDE or _real_root(Path(root)))
-    frag = INC.src_path(real, cname) / f"{cname}_ext_{obj}.c"
+    frag = INC.src_path(real, cname) / INC.fragment_name(cname, obj)
     if not frag.is_file():
         return entries
 

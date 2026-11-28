@@ -200,7 +200,9 @@ def survey(root: Path, cfg: dict, *, only_mod: str | None = None) -> list:
         for ctx in O.build_component_ctxs(root, cfg, mod, pkg):
             comp = ctx["component"]
             frag_id = ctx.get("frag_id", comp)
-            frag = ext_dir / f"{C.module_paths(mod).cname}_ext_{frag_id}.c"
+            frag = ext_dir / INC.fragment_name(
+                C.module_paths(mod).cname, frag_id
+            )
             if not frag.exists():
                 continue
             rel = frag.relative_to(root).as_posix()
@@ -466,7 +468,7 @@ def stale_tokens(root: Path, cfg: dict) -> list:
         for obj, fid in module_fragments(cfg, mod):
             if C.fragment_kind(cfg, obj) == C.FRAGMENT_GENERATED:
                 continue
-            name = f"{cname}_ext_{fid}.c"
+            name = INC.fragment_name(cname, fid)
             f = INC.src_path(root, cname, cfg) / name
             if f.is_file() and R.is_owned_render(
                 f.read_text(encoding="utf-8"), name

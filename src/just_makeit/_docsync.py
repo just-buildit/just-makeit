@@ -3641,7 +3641,7 @@ def refresh_module_fragment_docs(
         }
         for ctx in derived:
             comp = ctx.get("frag_id", ctx["component"])
-            frag = ext_dir / f"{cname}_ext_{comp}.c"
+            frag = ext_dir / INC.fragment_name(cname, comp)
             if not frag.exists():
                 continue
             existing = frag.read_text(encoding="utf-8")
