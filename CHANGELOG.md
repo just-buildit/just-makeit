@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [0.139.1] — 2026-11-28
+
+### Fixed
+
+- **A standalone component named for a module's package is refused (gh-2854).** `jm module dsp.filt` makes `<pkg>/dsp/` a package, and a standalone `jm object dsp` (`<pkg>/dsp.so`) was accepted beside it in either order, as was one named for a module's `package =`: the package wins the import, so `from <pkg>.dsp import Dsp` raised `ImportError` on a tree `jm status --check` called clean. The verb is now refused before it writes, and a hand-edited manifest at load, naming both and the Python name they claim. The same goes for jm's own packages: a standalone `tests` or `benchmarks`, or a module whose package lands in `src/<pkg>/tests/`, `benchmarks/` or a module's own `tests/` / `benchmarks/`, was hidden by jm's package of that name, and is refused too. A member of another module named like the package, the leaf name (`jm object filt` beside `dsp.filt`) and a module placed in another module's package are unaffected.
+
+- **A composer segment with an enum field compiles again (gh-2878).** 0.139.0's copy-then-commit `Segment.__init__` (gh-2864) parsed into a copy named `_s`, and an enum field's parse block declares its own `const char *_s` inside it, so the field's store wrote through the string and the generated `_ext.c` failed to compile. Every working copy jm's composer glue declares -- the segment and source `__init__`, the setters, the segment snapshot -- now takes the reserved `_jm_` prefix (`_jm_copy`, `_jm_seg`), which no field block names, and the generated-composer build test compiles with `-Werror=shadow` over a segment carrying an enum and a ranged field.
+
 ## [0.139.0] — 2026-11-28
 
 ### Added
