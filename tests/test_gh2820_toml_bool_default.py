@@ -20,8 +20,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 import pytest
 from _jmrun import run_cli
+
+from just_makeit._types import default_type_error
 
 #: (table header the row sits under, the row's other keys). Each is
 #: appended to the object's fragment as a row with `default = <value>`.
@@ -47,7 +51,7 @@ def _tree(root: Path) -> "dict[str, str]":
 
 
 @pytest.fixture(scope="module")
-def project(tmp_path_factory):
+def _module_project(tmp_path_factory):
     """ONE project, applied; each case rewrites `objects/o.toml` in place
     and puts it back (a `jm new` per case cost two minutes)."""
     tmp = tmp_path_factory.mktemp("gh2820")
@@ -58,18 +62,23 @@ def project(tmp_path_factory):
     return root, frag, frag.read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def project(_module_project):
+    """The module's project, put back as it was after EVERY case -- also a
+    failing one, so a red case cannot leave a rewritten fragment behind
+    for the next to trip over and hide the real failure."""
+    yield _module_project
+    root, frag, base = _module_project
+    frag.write_text(base, encoding="utf-8")
+    run_cli("apply", cwd=root)
+
+
 def _set(project, kind: str, ty: str, value: str) -> None:
     """Write the fragment with one row of *kind* defaulting to *value*
     (unquoted text, so `true` is a TOML bool)."""
     _root, frag, base = project
     row = _ROWS[kind].format(ty=ty) + f"default = {value}\n"
     frag.write_text(base + "\n" + row, encoding="utf-8")
-
-
-def _restore(project) -> None:
-    root, frag, base = project
-    frag.write_text(base, encoding="utf-8")
-    assert run_cli("apply", cwd=root).returncode == 0
 
 
 @pytest.mark.parametrize("kind", sorted(_ROWS))
@@ -92,13 +101,20 @@ def test_a_bool_default_is_accepted_on_a_bool_row(project, kind, value):
     want = _tree(root)
     want.pop("objects/o.toml")
     assert got == want
-    _restore(project)
 
 
 @pytest.mark.parametrize("kind", sorted(_ROWS))
 @pytest.mark.parametrize(
     ("ty", "value"),
-    [("int", "5"), ("double", "1.5"), ("int", "true"), ("bool", "[1]")],
+    [
+        ("int", "5"),
+        ("double", "1.5"),
+        ("int", "true"),
+        ("int", "false"),
+        ("double", "true"),
+        ("const char *", "true"),
+        ("bool", "[1]"),
+    ],
 )
 def test_any_other_non_string_default_is_one_refusal_line(
     project, kind, ty, value
@@ -116,4 +132,10 @@ def test_any_other_non_string_default_is_one_refusal_line(
         assert "default = " in r.stderr and "w]" in r.stderr, r.stderr
         assert "must be a string" in r.stderr, r.stderr
     assert _tree(root) == before
-    _restore(project)
+    # The advice must never name a spelling jm refuses: the string the
+    # message suggests, parsed out of it, is a valid default for the row's
+    # own type.
+    suggested = re.search(r'`default = "([^"]*)"`', r.stderr)
+    assert suggested, r.stderr
+    if suggested.group(1) != "...":
+        assert default_type_error(ty, suggested.group(1)) == "", r.stderr
