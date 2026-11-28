@@ -1,51 +1,51 @@
-"""gh-2172: a CI test leg must run the Python it names.
+"""gh-2172, gh-2816: a CI test leg must run the Python it names.
 
-Each `test (<os>, <py>)` leg reaches `make test` with its interpreter given
-only as `UV_PYTHON`, which `astral-sh/setup-uv` exports from the leg's
-`python-version`. Every test run goes through `uv run`, which honours it.
-A `--python` pin in the isolated test command, a uv default that changes, or
-a `.python-version` file would run every leg on one interpreter, and the job
-names and `CI passed` would read exactly as they do now.
+Each leg that names a Python -- ``test (<os>, <py>)``, ``Examples (<os>,
+<py>)``, ``Examples (windows-latest, clang-cl, <py>)`` -- reaches ``make``
+with its interpreter given only as ``UV_PYTHON``, which ``astral-sh/setup-uv``
+exports from the leg's ``python-version``. Every test run goes through
+``uv run``, which honours it. A ``--python`` / ``-p`` pin on that ``uv run``,
+a uv default that changes, or a ``.python-version`` file would run every leg
+on one interpreter, and the job names and ``CI passed`` would read exactly
+as they do now.
 
-This test is the one place that checks it. It runs inside the suite's own
-interpreter, so it sees what the leg actually runs. It needs no change to
-ci.yml: `UV_PYTHON` is already on the leg.
+Two halves:
 
-Off CI there is no leg, so `UV_PYTHON` is unset. The test then passes
-without a skip, because a skip not on the allow-list turns `make test` red for
-every developer. On CI a missing `UV_PYTHON` fails instead, so a leg without
-one cannot pass vacuously.
+* **Runtime** -- `_legpython.mismatch`, asked by ``tests/conftest.py`` at the
+  start of every pytest session on CI, so every leg that runs jm's tests is
+  checked, whatever files it collects. `test_a_ci_leg_runs_the_python_it_names`
+  adds the refusal of a leg with no ``UV_PYTHON`` at all.
+* **Static** -- off CI there is no leg, so the runtime half has nothing to
+  compare. `test_no_leg_pins_an_interpreter` reads what each leg would RUN:
+  the ``make`` targets ``ci.yml`` gives a Python-named job, dry-run with
+  ``make -n`` so every variable is expanded (gh-2816: reading the
+  ``PYTEST_ISOLATED`` assignment's text missed ``-p`` and a pin spelled in
+  ``PYTEST_DEPS``), and refuses a pytest that is launched any way but a
+  ``uv run`` with no interpreter pin.
 
 `.python-version` at the root (tracked, `3.12`) does not redirect a leg: uv
 gives `UV_PYTHON` precedence over it, and setup-uv sets `UV_PYTHON` per leg.
 """
 
+from __future__ import annotations
+
 import os
-import re
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
-MAKEFILE = Path(__file__).resolve().parent.parent / "Makefile"
-_VERSION = re.compile(r"^(\d+)\.(\d+)")
+import pytest
+import yaml
+from _legpython import mismatch
 
-
-def test_the_isolated_test_command_pins_no_interpreter():
-    """The pin source that overrides a leg's UV_PYTHON is `--python` in the
-    isolated test command. Read from the Makefile, so it runs on every box,
-    CI or not: no skip, which a developer's `make test` would count against
-    the skip allow-list (gh-2172 review)."""
-    text = MAKEFILE.read_text(encoding="utf-8")
-    m = re.search(r"^PYTEST_ISOLATED\s*=\s*(.*?)(?=^\S|\Z)", text, re.M | re.S)
-    assert m, "the Makefile has no PYTEST_ISOLATED"
-    assert "--python" not in m.group(1), (
-        "PYTEST_ISOLATED pins an interpreter, so every leg runs that one, "
-        "whatever its UV_PYTHON names"
-    )
+_REPO = Path(__file__).resolve().parent.parent
+_CI = _REPO / ".github" / "workflows" / "ci.yml"
 
 
 def test_a_ci_leg_runs_the_python_it_names():
-    want = os.environ.get("UV_PYTHON", "")
-    if not want:
+    """The suite's own interpreter against the leg's ``UV_PYTHON``."""
+    if not os.environ.get("UV_PYTHON"):
         # A leg without UV_PYTHON runs on whatever uv finds: the matrix
         # would be silently one interpreter. Refused on CI, not skipped.
         # Off CI there is no leg to check, and the test passes: a skip
@@ -54,11 +54,190 @@ def test_a_ci_leg_runs_the_python_it_names():
             "GITHUB_ACTIONS is set but UV_PYTHON is not: setup-uv did not "
             "name this leg's Python, so the leg would run uv's default"
         )
-        return
-    m = _VERSION.match(want)
-    assert m, f"UV_PYTHON={want!r} is not a version, so it names no Python"
-    assert sys.version_info[:2] == (int(m[1]), int(m[2])), (
-        f"this leg names Python {want} but the suite runs "
-        f"{sys.version_info.major}.{sys.version_info.minor}: a --python "
-        f"pin or another uv default is overriding the leg's interpreter"
+    why = mismatch(os.environ, tuple(sys.version_info))
+    assert why is None, why
+
+
+@pytest.mark.parametrize(
+    "env, running, refused",
+    [
+        pytest.param({}, (3, 12), False, id="off-ci"),
+        pytest.param({"UV_PYTHON": "3.12"}, (3, 12), False, id="agrees"),
+        pytest.param({"UV_PYTHON": "3.13.1"}, (3, 13), False, id="patch"),
+        pytest.param({"UV_PYTHON": "3.13"}, (3, 12), True, id="pinned"),
+        pytest.param({"UV_PYTHON": "3.9"}, (3, 13), True, id="minor-only"),
+        pytest.param({"UV_PYTHON": "cpython"}, (3, 12), True, id="no-ver"),
+    ],
+)
+def test_mismatch_reads_each_shape(env, running, refused):
+    """Offline, so the comparison is sabotage-provable on any box."""
+    assert (mismatch(env, running) is not None) is refused
+
+
+def test_conftest_asks_it_at_every_session_start(tmp_path):
+    """The runtime half reaches every leg only through the conftest hook;
+    a child session with a mismatched ``UV_PYTHON`` must refuse to run."""
+    other = f"3.{sys.version_info.minor + 1}"
+    child = tmp_path
+    (child / "test_x.py").write_text("def test_x():\n    pass\n", "utf-8")
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("PYTEST_", "COV_CORE"))
+    }
+    env.update(
+        GITHUB_ACTIONS="true",
+        UV_PYTHON=other,
+        PYTHONPATH=os.pathsep.join(
+            [str(Path(__file__).parent), str(_REPO / "src")]
+        ),
     )
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "conftest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "--rootdir",
+            str(child),
+            str(child / "test_x.py"),
+        ],
+        cwd=child,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    out = r.stdout + r.stderr
+    assert r.returncode != 0, out
+    assert f"names Python {other}" in out, out
+
+
+# -- the static half (gh-2816) ---------------------------------------------
+
+#: uv's spellings of an interpreter pin on ``uv run``.
+_PIN_FLAGS = ("--python", "-p")
+
+
+def _leg_targets() -> "list[list[str]]":
+    """The ``make`` arguments of every step in a job named for a Python."""
+    jobs = yaml.safe_load(_CI.read_text(encoding="utf-8"))["jobs"]
+    found = []
+    for job in jobs.values():
+        if "matrix.python-version" not in str(job.get("name", "")):
+            continue
+        for step in job.get("steps", []):
+            script = str(step.get("run", "")).replace("\\\n", " ")
+            for line in script.splitlines():
+                if line.split()[:1] == ["make"]:
+                    found.append(shlex.split(line, comments=True)[1:])
+    return found
+
+
+def _commands(dry_run: str) -> "list[list[str]]":
+    """Each simple command in ``make -n`` output, as words."""
+    text = dry_run.replace("\\\n", " ")
+    cmds = []
+    for line in text.splitlines():
+        lex = shlex.shlex(line, posix=True, punctuation_chars=";&|()")
+        lex.whitespace_split = True
+        cmd: "list[str]" = []
+        for word in lex:
+            if word and set(word) <= set(";&|()"):
+                cmds.append(cmd)
+                cmd = []
+            else:
+                cmd.append(word)
+        cmds.append(cmd)
+    return [c for c in cmds if c]
+
+
+def pytest_pins(cmd: "list[str]") -> "list[str]":
+    """Why *cmd*, if it runs pytest, does not run it on the leg's Python.
+
+    A pytest is launched by ``uv run [opts] pytest`` (``pytest`` not the value
+    of a ``--with``), or bare (``pytest``, ``python -m pytest``). The bare
+    forms do not read ``UV_PYTHON`` at all; the ``uv run`` form does unless
+    an option or an inline ``UV_PYTHON=`` overrides it.
+
+    Examples
+    --------
+    >>> pytest_pins(["uv", "run", "--with", "x", "pytest", "-p", "no:y"])
+    []
+    >>> pytest_pins(["uv", "run", "-p", "3.13", "pytest"])
+    ['uv run pins -p']
+    >>> pytest_pins(["uv", "run", "--python=3.13", "--with", "pytest", "pytest"])
+    ['uv run pins --python=3.13']
+    >>> pytest_pins(["UV_PYTHON=3.13", "uv", "run", "pytest"])
+    ['UV_PYTHON=3.13 overrides the leg']
+    >>> pytest_pins(["python3", "-m", "pytest", "tests"])
+    ['pytest launched without uv run']
+    >>> pytest_pins(["echo", "pytest"])
+    []
+    """
+    i = 0
+    why = []
+    while i < len(cmd) and "=" in cmd[i] and not cmd[i].startswith("-"):
+        if cmd[i].startswith("UV_PYTHON="):
+            why.append(f"{cmd[i]} overrides the leg")
+        i += 1
+    words = cmd[i:]
+    if words[:2] == ["uv", "run"]:
+        opts = []
+        for j, word in enumerate(words[2:], start=2):
+            if word == "pytest" and words[j - 1] != "--with":
+                break
+            opts.append(word)
+        else:
+            return []  # not a pytest
+        for word in opts:
+            for flag in _PIN_FLAGS:
+                # `-p 3.13`, `-p3.13`, `--python 3.13`, `--python=3.13`
+                if word == flag or word.startswith(
+                    flag + "=" if flag.startswith("--") else flag
+                ):
+                    why.append(f"uv run pins {word}")
+        return why
+    bare = Path(words[0]).name == "pytest" if words else False
+    if bare or words[1:3] == ["-m", "pytest"]:
+        return why + ["pytest launched without uv run"]
+    return []
+
+
+def test_no_leg_pins_an_interpreter():
+    """Every pytest a Python-named leg's ``make`` step runs is a ``uv run``
+    with no interpreter pin, read from ``make -n``: the expanded command, so
+    a pin in any variable the recipe reaches is in it."""
+    targets = _leg_targets()
+    assert targets, "ci.yml has no make step in a job named for a Python"
+    found = []
+    seen = 0
+    for args in targets:
+        r = subprocess.run(
+            ["make", "-n", *args],
+            cwd=_REPO,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, r.stderr
+        for cmd in _commands(r.stdout):
+            if "pytest" in cmd:
+                seen += 1
+            found += [f"make {' '.join(args)}: {w}" for w in pytest_pins(cmd)]
+    assert seen, "no leg's make step runs pytest: the scan read nothing"
+    assert not found, "\n".join(found)
+
+
+def test_the_examples_hold():
+    """The doctests above are the readers' shapes; run them here, since
+    ``make test`` collects no doctest from tests/."""
+    import doctest
+
+    import _legpython
+
+    for module in (_legpython, sys.modules[__name__]):
+        result = doctest.testmod(module)
+        assert result.attempted and not result.failed, module
