@@ -238,8 +238,10 @@ for label, call in cases:
     for _ in range(100):
         try:
             eval(call)
-        except (ValueError, TypeError, AttributeError):
-            raised += 1
+        except Exception as e:
+            # A wrong argument is a ValueError or a TypeError (gh-2355's
+            # capsule refusal included); anything else is not a refusal.
+            raised += isinstance(e, (ValueError, TypeError))
     print(label, "|", raised, sys.getrefcount(x) - r0,
           sys.getrefcount(P.held) - p0)
 """
