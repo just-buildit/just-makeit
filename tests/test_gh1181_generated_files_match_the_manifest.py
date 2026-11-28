@@ -448,7 +448,7 @@ SWEEP: dict[str, tuple[str, str, str]] = {
     "property.ctype": ("o", 'name = "level"', 'ctype = "double"'),
     "property.writable": ("o", 'name = "level"', "writable = true"),
     "property.default": ("o", 'name = "level"', 'default = "1.5"'),
-    "property.field": ("o", 'name = "level"', 'field = "g"'),
+    "property.field": ("o", 'name = "level"', "field = true"),
     # [[<obj>.views]] — the `_view.run` call
     "view.doc": ("o", 'class_name = "Peek"', 'doc = "VIEW marker."'),
     "view.exclude_methods": (
@@ -468,11 +468,7 @@ SWEEP: dict[str, tuple[str, str, str]] = {
     ),
     # [[module.X.functions]] — the `_function.run` call
     "function.doc": ("m", 'name = "calc"', 'doc = "FN marker."'),
-    "function.check_return": (
-        "m",
-        'name = "calc"',
-        'check_return = "negative"',
-    ),
+    "function.check_return": ("m", 'name = "calc"', "check_return = true"),
     "function.inline": ("m", 'name = "calc"', "inline = true"),
     "function.return_type": ("m", 'name = "calc"', 'return_type = "double"'),
     # [module.X] — `_module.run` plus the metadata copy-down
@@ -508,6 +504,22 @@ SWEEP: dict[str, tuple[str, str, str]] = {
         ' args = "x: int", doc = "SOLO_HAND marker." }]',
     ),
 }
+
+
+def test_every_flag_in_the_sweep_holds_a_bool():
+    """A flag's row says ``true``: any other value is refused at load
+    (gh-2120), so a marker such as ``field = "g"`` sweeps nothing."""
+    import tomllib
+
+    from just_makeit._keys import FLAG_KEYS
+
+    bad = {
+        row: (key, value)
+        for row, (_o, _anchor, line) in SWEEP.items()
+        for key, value in tomllib.loads(line).items()
+        if key in FLAG_KEYS and not isinstance(value, bool)
+    }
+    assert not bad, bad
 
 
 class TestEveryTableReachesTheArtefact:
