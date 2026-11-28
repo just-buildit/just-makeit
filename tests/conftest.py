@@ -49,11 +49,14 @@ tests had simply never run.
 
 from __future__ import annotations
 
+import errno
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -133,6 +136,112 @@ def _inheritable_paths(paths: list[str] | None = None) -> list[str]:
     return seen
 
 
+#: Where ``tempfile`` puts a worker's environment, and the name it gives it:
+#: ``jm-<worker>-env-<pid>-<random>``. The pid is the worker's own, so a run
+#: can tell a live peer's environment from one whose worker is gone.
+_WORKER_ENV_RE = re.compile(r"jm-gw\d+-env-(?:(\d+)-)?[^/\\]+")
+
+#: An environment named without a pid (jm before the reaper) is reaped once
+#: it is older than this: no worker lives for a day.
+_LEGACY_ENV_AGE = 24 * 3600
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether process *pid* exists (owned by anyone).
+
+    POSIX asks with signal 0, which delivers nothing. Windows has no signal
+    0 -- ``os.kill(pid, 0)`` there sends CTRL_C_EVENT -- so it opens the
+    process and reads its exit code instead.
+
+    Examples
+    --------
+    >>> _pid_alive(os.getpid())
+    True
+    """
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _reap_stale_worker_envs(tmp: Path) -> "list[Path]":
+    """Remove every worker environment under *tmp* whose worker is gone.
+
+    `pytest_unconfigure` removes a worker's environment when the worker
+    exits cleanly, and only then: a run that is killed (SIGTERM, SIGKILL,
+    the OOM killer, a cancelled CI job) leaves one per worker, ~600 files
+    each. On a shared ``/tmp`` they accumulated until its inodes ran out,
+    and every later run failed to set up. Moving them under pytest's
+    basetemp would not help: pytest keeps a numbered basetemp whose
+    ``.lock`` survives a killed run for three days.
+
+    So each worker reaps before it provisions: an environment named for a
+    pid that no longer exists is removed, and one named without a pid (an
+    older checkout's) once it is a day old. A live peer's is never
+    touched, because its pid exists; a reused pid only postpones the reap.
+
+    Returns the directories removed.
+    """
+    removed: "list[Path]" = []
+    try:
+        entries = list(tmp.iterdir())
+    except OSError:
+        return removed
+    now = time.time()
+    for d in entries:
+        m = _WORKER_ENV_RE.fullmatch(d.name)
+        if not m or not d.is_dir():
+            continue
+        if m.group(1):
+            stale = not _pid_alive(int(m.group(1)))
+        else:
+            try:
+                stale = now - d.stat().st_mtime > _LEGACY_ENV_AGE
+            except OSError:
+                continue
+        if stale:
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d)
+    return removed
+
+
+def _setup_error(worker: str, detail: str) -> pytest.UsageError:
+    """The refusal of a worker that could not provision its environment.
+
+    Naming ENOSPC when that is the cause, because it reads as anything but:
+    uv reports a failed seed install, and an exhausted ``/tmp`` with
+    gigabytes free (its *inodes* gone) looks like a broken machine.
+    """
+    tmp = tempfile.gettempdir()
+    full = ("no space left on device", "os error 28", f"errno {errno.ENOSPC}")
+    cause = ""
+    if any(s in detail.lower() for s in full):
+        cause = (
+            f"{tmp} is out of space or out of inodes (ENOSPC). Check "
+            f"`df -h {tmp}` and `df -i {tmp}`, clear it, or point TMPDIR "
+            "at a filesystem with room.\n"
+        )
+    return pytest.UsageError(
+        f"{cause}could not create the private environment for xdist worker "
+        f"{worker}, so the end-to-end tests would share one environment and "
+        f"race on numpy's headers (gh-879):\n{detail}"
+    )
+
+
 def _provision_worker_env() -> None:
     """Give this xdist worker its own environment for subprocess builds.
 
@@ -187,7 +296,14 @@ def _provision_worker_env() -> None:
     if not worker:
         return
 
-    root = Path(tempfile.mkdtemp(prefix=f"jm-{worker}-env-"))
+    tmp = Path(tempfile.gettempdir())
+    _reap_stale_worker_envs(tmp)
+    try:
+        # The pid in the name is what lets a later run reap this directory
+        # if this worker never reaches `pytest_unconfigure` (killed, OOM).
+        root = Path(tempfile.mkdtemp(prefix=f"jm-{worker}-env-{os.getpid()}-"))
+    except OSError as exc:
+        raise _setup_error(worker, f"mkdtemp in {tmp}: {exc}") from exc
     venv = root / "venv"
     # `--seed` because the gh-824 header guard in every generated Makefile
     # shells out to `$(PYTHON) -m pip install --force-reinstall numpy`, and a
@@ -199,20 +315,21 @@ def _provision_worker_env() -> None:
     )
     if proc.returncode != 0:
         shutil.rmtree(root, ignore_errors=True)
-        raise pytest.UsageError(
-            f"could not create the private environment for xdist worker "
-            f"{worker}, so the end-to-end tests would share one environment "
-            f"and race on numpy's headers (gh-879):\n{proc.stderr}"
-        )
+        raise _setup_error(worker, proc.stderr)
 
-    # Inherit the parent's packages for reading, behind this worker's own.
-    site_dirs = sorted(venv.glob("lib/python*/site-packages"))
-    if not site_dirs:  # Windows lays it out flat
-        site_dirs = sorted(venv.glob("Lib/site-packages"))
-    inherited = "\n".join(_inheritable_paths())
-    (site_dirs[0] / "_jm_inherited.pth").write_text(
-        inherited + "\n", encoding="utf-8"
-    )
+    try:
+        # Inherit the parent's packages for reading, behind this worker's
+        # own.
+        site_dirs = sorted(venv.glob("lib/python*/site-packages"))
+        if not site_dirs:  # Windows lays it out flat
+            site_dirs = sorted(venv.glob("Lib/site-packages"))
+        inherited = "\n".join(_inheritable_paths())
+        (site_dirs[0] / "_jm_inherited.pth").write_text(
+            inherited + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        shutil.rmtree(root, ignore_errors=True)
+        raise _setup_error(worker, f"writing {venv}: {exc}") from exc
 
     _worker_env_root = root
     bindir = venv / ("Scripts" if os.name == "nt" else "bin")
@@ -243,7 +360,12 @@ def _provision_worker_env() -> None:
         _numpy_version = ""
     if _numpy_version:
         constraint = root / "constraints.txt"
-        constraint.write_text(f"numpy=={_numpy_version}\n", encoding="utf-8")
+        try:
+            constraint.write_text(
+                f"numpy=={_numpy_version}\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            raise _setup_error(worker, f"writing {constraint}: {exc}") from exc
         os.environ["UV_CONSTRAINT"] = str(constraint)
     # PATH is deliberately NOT prepended with this venv's bin, though the
     # generated Makefile does fall back to `python3` off PATH. It does not need
@@ -278,6 +400,26 @@ def pytest_unconfigure(config):
     """Remove what `pytest_configure` created, if anything."""
     if _worker_env_root is not None:
         shutil.rmtree(_worker_env_root, ignore_errors=True)
+
+
+# Workers that died, as ``(id, error)``, collected on the controller.
+_crashed_workers: "list[tuple[str, str]]" = []
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """Record an xdist worker that went down with an error.
+
+    A worker that cannot set up -- its `pytest_configure` raised, as
+    `_provision_worker_env` does on ENOSPC -- dies before it is handed a
+    test. xdist replaces it, each replacement dies the same way, and once
+    the restarts run out the controller reports ``no tests ran`` and exits
+    **0**: a suite that ran nothing read as green. A worker going down with
+    an error is a broken run whatever else happened, so
+    `pytest_sessionfinish` fails it.
+    """
+    if error:
+        _crashed_workers.append((str(node.gateway.id), str(error)))
 
 
 # The fixture that runs `uv pip install -e .` in a scaffolded temp project.
@@ -426,6 +568,21 @@ def pytest_sessionfinish(session, exitstatus):
     """
     if hasattr(session.config, "workerinput"):
         return  # an xdist worker; the controller has the aggregate
+    if _crashed_workers:
+        print("\nERROR: xdist workers went down, so this run is broken:\n")
+        for wid, error in _crashed_workers:
+            lines = error.strip().splitlines() or [""]
+            # The ENOSPC sentence when `_setup_error` wrote one, else the
+            # error's last line (its exception).
+            line = next((ln for ln in lines if "ENOSPC" in ln), lines[-1])
+            print(f"  [{wid}] {line}")
+        print(
+            "\nA worker that dies in setup is handed no tests, and xdist "
+            "reports what\nis left as a pass. Each worker's full error is "
+            "above.\n"
+        )
+        session.exitstatus = pytest.ExitCode.INTERNAL_ERROR
+        return
     tr = session.config.pluginmanager.get_plugin("terminalreporter")
     if tr is None:
         return
