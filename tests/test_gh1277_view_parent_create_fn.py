@@ -61,7 +61,10 @@ def _override_parent_ctor(project, fn):
     """Point the object's `tp_init` at a differently named C ctor (gh-509).
 
     The class name moves too: the base defaults to `Frame`, and the whole
-    arrangement under test is the one where `Frame` becomes the VIEW.
+    arrangement under test is the one where the materialising class is the
+    VIEW. It is `FrameView`, not `Frame`: a view's fragment is named for
+    its lowercased class name, and `frame` is the object's own, which `load`
+    refuses (gh-1983).
     """
     cfg = C.load(project)
     cfg["frame"]["create_fn"] = fn
@@ -78,11 +81,11 @@ def test_a_view_may_use_obj_create_when_the_parent_overrode_it(
     different constructor and must be available to the view.
     """
     _override_parent_ctor(project, "frame_create_desc")
-    view_run(project, "frame", "Frame", "wfm", "frame_create")
+    view_run(project, "frame", "FrameView", "wfm", "frame_create")
     capsys.readouterr()
 
     views = C.views(C.load(project), "frame")
-    assert [v["class_name"] for v in views] == ["Frame"]
+    assert [v["class_name"] for v in views] == ["FrameView"]
     assert views[0]["create_fn"] == "frame_create"
 
 
@@ -97,7 +100,7 @@ def test_colliding_with_the_overridden_parent_is_still_refused(
     """
     _override_parent_ctor(project, "frame_create_desc")
     with pytest.raises(SystemExit):
-        view_run(project, "frame", "Frame", "wfm", "frame_create_desc")
+        view_run(project, "frame", "FrameView", "wfm", "frame_create_desc")
     err = capsys.readouterr().err
     assert "must differ from the parent's" in err
     assert "frame_create_desc" in err
@@ -107,7 +110,7 @@ def test_the_message_names_the_parents_actual_ctor(project, capsys):
     """It claimed to name the parent's and named the default instead."""
     _override_parent_ctor(project, "frame_create_desc")
     with pytest.raises(SystemExit):
-        view_run(project, "frame", "Frame", "wfm", "frame_create_desc")
+        view_run(project, "frame", "FrameView", "wfm", "frame_create_desc")
     err = capsys.readouterr().err
     assert "'frame_create_desc'" in err
     # The bug in one assertion: it used to name the default here.
@@ -120,6 +123,6 @@ def test_without_an_override_obj_create_is_still_refused(project, capsys):
     cfg["frame"]["class_name"] = "FrameBuilder"
     C.save(project, cfg)
     with pytest.raises(SystemExit):
-        view_run(project, "frame", "Frame", "wfm", "frame_create")
+        view_run(project, "frame", "FrameView", "wfm", "frame_create")
     err = capsys.readouterr().err
     assert "'frame_create'" in err

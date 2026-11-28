@@ -43,7 +43,7 @@ from test_gh1978_remove_leaves_tree_in_sync import CASES
 
 #: The `jm remove` kinds whose add and remove change an OBJECT's members,
 #: and so must leave that object's benchmark alone.
-MEMBER_KINDS = ("method", "property", "warning", "error")
+MEMBER_KINDS = ("method", "property", "warning", "error", "view")
 
 #: The rest, and why the gate above does not apply to each. Together with
 #: `MEMBER_KINDS` this is exactly `_cli_remove._KINDS`, so a new kind fails

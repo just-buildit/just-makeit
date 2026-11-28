@@ -1817,9 +1817,11 @@ def _view_frag_id(view: dict) -> str:
     Distinct from the parent's ``component`` so the view's fragment
     (``<module>_ext_<frag_id>.c``) does not overwrite the parent's. Derived
     from the lowercased class_name, which is already validated unique within
-    the module by the view generator.
+    the module by the view generator. The derivation is
+    :func:`_config.view_frag_id`'s, so `load` can refuse two members of
+    one id (gh-1983).
     """
-    return view["class_name"].lower()
+    return C.view_frag_id(view)
 
 
 def module_fragments(cfg: dict, module: str) -> "list[tuple[str, str]]":
@@ -1887,7 +1889,12 @@ def orphan_fragments(root: Path, cfg: dict) -> "list[str]":
 
 
 def refuse_stale_fragment(
-    root: Path, cfg: dict, module: str, frag_id: str, what: str
+    root: Path,
+    cfg: dict,
+    module: str,
+    frag_id: str,
+    what: str,
+    creating: str = "",
 ) -> None:
     """Refuse to add *what* to *module* over a fragment already on disk.
 
@@ -1899,9 +1906,24 @@ def refuse_stale_fragment(
     refused, naming the file. `status` reports the same file as an orphan
     (:func:`orphan_fragments`).
     """
+    from ._extrahook import HOOK_SUFFIXES
+
     cname = C.module_paths(module).cname
     frag = INC.src_path(root, cname, cfg) / f"{cname}_ext_{frag_id}.c"
-    if frag.is_file():
+    # Stale only as :func:`orphan_fragments` reads it: a file no OTHER
+    # member owns, and no hook's name. *creating* is the object being
+    # added, which *cfg* already lists; a view is checked before it is
+    # recorded, and one named for its parent shares the parent's id.
+    owned = {
+        f"{cname}_ext_{fid}.c"
+        for o, fid in module_fragments(cfg, module)
+        if o != creating
+    }
+    if (
+        frag.is_file()
+        and frag.name not in owned
+        and not frag.name.endswith(HOOK_SUFFIXES)
+    ):
         C._refuse(
             [
                 f"{what} binds through "
@@ -4731,7 +4753,9 @@ def run(
         INC.refuse_occupied(root, layout_owner, comp)
     # gh-1983: and its binding fragment, which lives in the module's
     # directory, not its own.
-    refuse_stale_fragment(root, layout_owner, module, comp, f"object '{comp}'")
+    refuse_stale_fragment(
+        root, layout_owner, module, comp, f"object '{comp}'", creating=comp
+    )
     core_h_path = INC.core_h(root, comp, layout_owner)
     # gh-2843 item 1: the collocated object's core IS its module's, which
     # may already hold the module's function declarations and the author's
