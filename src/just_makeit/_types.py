@@ -2147,6 +2147,97 @@ def array_elem_ctype(ptype: str) -> str:
     return ptype
 
 
+#: The spelling that works, for an array element that has no numpy dtype
+#: (:data:`SUPPORTED_ARRAY_CTYPES`) but is a registered scalar (gh-2132).
+_ARRAY_ELEM_ALTERNATIVE: dict[str, str] = {
+    "bool": "uint8_t",
+    "int": "int32_t",
+    "long double _Complex": "double _Complex",
+}
+
+
+def array_type_error(
+    ptype: str,
+    elements: "frozenset[str]" = frozenset(),
+    *,
+    allow_2d: bool = False,
+) -> str:
+    """Why *ptype* cannot be a method's or function's array, or ``""``.
+
+    ONE predicate for every reader of an array spelled in a method's or
+    function's ``params`` / ``arg_type`` (gh-1908, gh-2132): ``jm method``,
+    ``jm function`` and the manifest's :func:`_config.manifest_type_errors`
+    ask it, so a spelling the command line refuses is one ``apply`` refuses
+    and a spelling one accepts is one the renderer can bind. Two things
+    make a ``T[]`` unbindable and both used to pass silently on one path:
+
+    - ``T[][]``. A method's or function's array is flat: it crosses as a
+      pointer and ONE length (``a_len``). The renderer strips every ``[]``,
+      so ``float[][]`` bound as 1-D and flattened a (2, 3) array. Only an
+      init-param's ``T[][]`` passes two extents.
+    - an element with no numpy dtype. The binding indexes
+      :data:`SUPPORTED_ARRAY_CTYPES`, and ``bool[]`` / ``int[]`` /
+      ``long double _Complex[]`` are not in it, so the render died with a
+      bare ``KeyError`` after the row was saved.
+
+    A non-array spelling is not this predicate's question.
+
+    Parameters
+    ----------
+    ptype : str
+        The declared type, e.g. ``"float[]"``.
+    elements : frozenset of str, optional
+        Element names the caller accepts besides the numpy ones -- a
+        method's declared records.
+    allow_2d : bool, optional
+        A constructor's ``T[][]`` passes two extents, so an init-param
+        takes it; the element rule still holds (gh-2132).
+
+    Returns
+    -------
+    str
+        The reason, naming the spelling that works; ``""`` when *ptype* is
+        not an array or is a usable one.
+
+    Examples
+    --------
+    >>> array_type_error("float[]"), array_type_error("double")
+    ('', '')
+    >>> array_type_error("float[][]").startswith("'float[][]' is 2-D")
+    True
+    >>> "use 'uint8_t[]'" in array_type_error("bool[]")
+    True
+    >>> array_type_error("rows_t[]", frozenset({"rows_t"}))
+    ''
+    >>> array_type_error("float[][]", allow_2d=True)
+    ''
+    """
+    if not is_array_param_type(ptype):
+        return ""
+    elem = array_elem_ctype(ptype)
+    if array_param_ndim(ptype) == 2 and not allow_2d:
+        return (
+            f"'{ptype}' is 2-D, and a method's or function's array is flat:"
+            f" it crosses as a pointer and one length. Declare"
+            f" '{elem}[]' (the C function is passed the pointer and its length); a"
+            " 2-D array is a constructor's, as an --init-param."
+        )
+    if elem in SUPPORTED_ARRAY_CTYPES or elem in elements:
+        return ""
+    use = _ARRAY_ELEM_ALTERNATIVE.get(elem)
+    if use:
+        advice = f"; use '{use}{ptype[len(elem) :]}' instead.\n"
+    elif elem in _CTYPE_META:
+        advice = ".\n"
+    else:
+        advice = f"; '{elem}' is not a supported type.\n"
+    return (
+        f"'{ptype}' has no numpy dtype for its element '{elem}'{advice}"
+        f"Supported element types: "
+        f"{', '.join(sorted(SUPPORTED_ARRAY_CTYPES))}"
+    )
+
+
 def parse_out_type(out_type: str) -> tuple[str, str | None]:
     """Parse an out_type value and return (c_element_type, len_param_or_None).
 

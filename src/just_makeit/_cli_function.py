@@ -131,15 +131,10 @@ def run(args: list[str]) -> None:
             if "=" in ptype:
                 ptype, pdefault = ptype.split("=", 1)
             if T.is_array_param_type(ptype):
-                elem_ct = T.array_elem_ctype(ptype)
-                if elem_ct not in T.SUPPORTED_ARRAY_CTYPES:
-                    print(
-                        f"error: {tok} array element type '{elem_ct}'"
-                        f" is not supported.\n"
-                        f"Supported element types: "
-                        f"{', '.join(sorted(T.SUPPORTED_ARRAY_CTYPES))}",
-                        file=sys.stderr,
-                    )
+                # gh-1908, gh-2132: the one predicate the manifest asks too.
+                _arr_why = T.array_type_error(ptype)
+                if _arr_why:
+                    print(f"error: {tok} {_arr_why}", file=sys.stderr)
                     sys.exit(1)
             elif ptype not in T._CTYPE_META:
                 print(
