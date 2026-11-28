@@ -2177,13 +2177,15 @@ def default_errors(cfg: dict) -> "list[str]":
     >>> print(default_errors({"o": {"state": [
     ...     {"name": "n", "type": "int", "default": 5}]}})[0])
     ... # doctest: +NORMALIZE_WHITESPACE
-    o.state[n]: default = 5 must be a string holding a C expression
-    (`default = "5"`); only a bool field takes true or false
+    o.state[n]: default = 5 must be a string holding a C expression:
+    write it as a string (`default = "5"`); only a bool field takes true
+    or false
     >>> print(default_errors({"o": {"state": [
     ...     {"name": "n", "type": "int", "default": True}]}})[0])
     ... # doctest: +NORMALIZE_WHITESPACE
-    o.state[n]: default = True must be a string holding a C expression
-    (`default = "True"`); only a bool field takes true or false
+    o.state[n]: default = True must be a string holding a C expression:
+    this row's type is 'int', not bool; write its integer form
+    (`default = "1"`) or a C expression
     """
     out: "list[str]" = []
     for path, row in default_values(cfg):
@@ -2193,11 +2195,24 @@ def default_errors(cfg: dict) -> "list[str]":
         if isinstance(value, bool) and row.get("type") == "bool":
             row["default"] = "true" if value else "false"
             continue
-        hint = f'"{value}"' if isinstance(value, (int, float)) else '"..."'
+        if isinstance(value, bool):
+            # Before the number branch: bool is an int subclass, and
+            # `"True"` is a spelling `default_type_error` refuses.
+            hint = '"1"' if value else '"0"'
+            advice = (
+                f"this row's type is {row.get('type', 'unset')!r}, not "
+                f"bool; write its integer form (`default = {hint}`) or a "
+                "C expression"
+            )
+        else:
+            hint = f'"{value}"' if isinstance(value, (int, float)) else '"..."'
+            advice = (
+                f"write it as a string (`default = {hint}`); only a bool "
+                "field takes true or false"
+            )
         out.append(
             f"{'.'.join(path)}: default = {value!r} must be a string "
-            f"holding a C expression (`default = {hint}`); only a bool "
-            "field takes true or false"
+            f"holding a C expression: {advice}"
         )
     return out
 
