@@ -179,6 +179,13 @@ def _pid_alive(pid: int) -> bool:
     0 -- ``os.kill(pid, 0)`` there sends CTRL_C_EVENT -- so it opens the
     process and reads its exit code instead.
 
+    A ZOMBIE is dead here, though signal 0 reaches it: it has exited and
+    will never use its environment again, it only waits for its parent's
+    ``wait()``. A killed run's workers are orphans, re-parented to PID 1,
+    and in a container whose PID 1 never reaps (CI's) they stay zombies
+    for good -- read as alive, their environments were never reaped
+    (`_process_state`).
+
     Examples
     --------
     >>> _pid_alive(os.getpid())
@@ -204,8 +211,36 @@ def _pid_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
-    return True
+        pass
+    return _process_state(pid) not in ("Z", "X")
+
+
+def _process_state(pid: int) -> str:
+    """The one-letter scheduler state of *pid* (``R``, ``S``, ``Z`` ...),
+    or ``""`` when it cannot be read -- which keeps the process alive.
+
+    Linux reads ``/proc/<pid>/stat``, whose state follows the command name
+    in parentheses (a name may itself hold a parenthesis, so it is split at
+    the LAST one). Elsewhere ``ps -o stat=`` answers the same question.
+
+    Examples
+    --------
+    >>> _process_state(os.getpid()) in ("R", "S", "D")
+    True
+    """
+    try:
+        if sys.platform.startswith("linux"):
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+                return f.read().rsplit(")", 1)[1].split()[0]
+        out = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+        return out[:1]
+    except (OSError, IndexError, subprocess.SubprocessError):
+        return ""
 
 
 def _reap_stale_worker_envs(tmp: Path) -> "list[Path]":
