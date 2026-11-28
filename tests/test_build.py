@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from just_makeit import _build as B
+from just_makeit import _testrun
 
 
 class TestRequire:
@@ -49,7 +50,9 @@ class TestRunPythonTests:
                 mock_run.return_value = MagicMock(returncode=0)
                 B._run_python_tests(tmp_path, [])
                 cmd = mock_run.call_args[0][0]
-                assert "unittest" in cmd
+                # gh-2642: discovery runs through the snippet that fails an
+                # empty run on every Python.
+                assert _testrun.UNITTEST_SNIPPET in cmd
 
     def test_returns_false_on_failure(self, tmp_path):
         with patch.object(B, "_has_pytest", return_value=True):

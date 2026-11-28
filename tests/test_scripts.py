@@ -33,3 +33,11 @@ class TestRunTests:
                     S.run_tests()
             cmd = mock_run.call_args[0][0]
             assert "-v" in cmd and "-k" in cmd and "foo" in cmd
+
+    def test_an_empty_collection_fails(self):
+        """gh-2642: pytest's exit 5 (no tests collected) is not a pass."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=5)
+            with pytest.raises(SystemExit) as exc:
+                S.run_tests()
+            assert exc.value.code == 5
