@@ -166,10 +166,20 @@ def test_the_one_spelling_names_this_interpreter():
     assert _cmake.PYTHON3_ARG == f"-DPython3_EXECUTABLE={sys.executable}"
 
 
+#: Files the early-warning scan does not read: the runtime guard's own
+#: definition (its `("cmake", "cmake.exe")` names programs), and the tests
+#: that hand it unnamed configures on purpose to prove it stops them.
+_GUARD_FILES = frozenset({"_cmake.py", "test_gh2857_runtime_guard.py"})
+
+
 def test_every_configure_names_the_interpreter_or_builds_no_extension():
+    """The fast early warning. The guard that cannot miss a spelling is the
+    runtime one (`conftest._cmake_configures_name_their_interpreter`)."""
     unnamed = []
     seen = 0
     for f, src, tree in _sources():
+        if f.name in _GUARD_FILES:
+            continue
         for node, elts in configures(tree):
             seen += 1
             if not _names_the_interpreter(elts):
