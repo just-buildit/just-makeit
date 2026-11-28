@@ -52,8 +52,9 @@ INPUTS = ["void", "float"]
 PARAMS = [
     [],
     [("n", "size_t")],
-    [("x", "float[]")],
-    [("x", "float[]"), ("mu", "double")],
+    # Not `x`: a float input is read as `x` (gh-2027).
+    [("xs", "float[]")],
+    [("xs", "float[]"), ("mu", "double")],
 ]
 MULTI = [[], ["float"]]
 
