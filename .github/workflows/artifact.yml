@@ -35,6 +35,14 @@ on:
         type: boolean
         required: false
         default: false
+      only:
+        description: >
+          `linux` runs the `smoke` job alone (a plain PR, gh-2832),
+          `windows` the `smoke-windows` job alone (the push that lands one,
+          which owes what that PR skipped); empty runs both.
+        type: string
+        required: false
+        default: ""
     secrets:
       JB_RUNNER_READ_TOKEN:
         description: >
@@ -147,9 +155,9 @@ jobs:
     # identifies the pre-publish invocation. Without this the job silently
     # skips and the gate reads green while having run nothing.
     if: >
-      inputs.wheel-artifact != '' ||
+      inputs.only != 'windows' && (inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.conclusion == 'success')
     # Each leg's runner, from the `plan` job (gh-1632's `quick` and the 3.9
     # leg's image are declared there).
     runs-on: ${{ matrix.runs_on }}
@@ -819,9 +827,9 @@ jobs:
     name: Smoke test (windows-latest, clang-cl, py${{ matrix.python-version }})
     needs: legs
     if: >
-      inputs.wheel-artifact != '' ||
+      inputs.only != 'linux' && (inputs.wheel-artifact != '' ||
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.conclusion == 'success')
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:

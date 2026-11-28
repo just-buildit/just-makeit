@@ -126,6 +126,19 @@ def test_a_tested_tree_still_needs_the_legs_its_pr_trimmed(owed, code):
 def test_the_aggregator_reads_the_owed_legs():
     text = CI.read_text(encoding="utf-8")
     job = text[text.index("\n  ci-passed:") :]
-    assert (
-        "OWED: ${{ needs.toolchain.result }} ${{ needs.test.result }}" in job
-    )
+    import yaml
+
+    owed = yaml.safe_load(text)["jobs"]["ci-passed"]["env"]["OWED"]
+    # gh-2832: every job a plain PR runs only in part, so a tested push
+    # owes the rest of it.
+    for job in (
+        "toolchain",
+        "test",
+        "examples",
+        "examples-windows",
+        "install-deps-smoke",
+        "consumer-smoke",
+        "wheel",
+        "artifact-smoke",
+    ):
+        assert f"${{{{ needs.{job}.result }}}}" in owed, (job, owed)

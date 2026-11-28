@@ -14,26 +14,33 @@ from the classifiers. That step runs this, as ``make ci-test-legs``, and the
 ``test`` job reads what it prints with ``fromJSON``. It expands the matrix
 the way GitHub does and keeps the legs this run owes:
 
-``pull_request``
-    Every leg, except that an OS named in ``TRIM`` runs only its floor and
+a plain ``pull_request`` (scope ``pr``)
+    The cheap legs only (gh-2832): an OS named in ``PR_OS`` (the Linux
+    ones), and of those, an OS named in ``TRIM`` runs only its floor and
     its newest Python, plus the middle one if the OS is also named in
-    ``MIDDLE``. macOS bounded PR throughput: its runner pool is a quarter
-    of the org's, and its five legs were ~100 of a run's ~340 job-minutes.
-    The free plan's ~20 concurrent jobs then bounded it for the Linux legs
-    too (queue waits averaged ~400s on every runner label), so they are
-    trimmed the same way.
-a ``push`` whose tree its PR already tested (``TESTED=true``)
-    Exactly the legs that PR trimmed, and nothing else. gh-1801 lets such a
-    push skip what its PR ran; it may not skip what its PR did not run, or
-    the trimmed Pythons would be tested only by the nightly, which gates no
+    ``MIDDLE``. Every PR lands through a train (``make train``), which
+    cancels the PR's own run and tests the combined tree once, so the
+    macOS and Windows legs on a PR cost the most and gated nothing the
+    train does not gate again; nine per-PR runs held a release's macOS
+    smoke legs an hour in the free plan's ~20-job pool. A PR that lands
+    without a train is given the full matrix by a dispatch.
+a ``train/*`` pull request (``HEAD_REF``)
+    Every leg: it is what lands.
+a ``push`` whose tree its PR already tested (``TESTED=true``, scope
+``tested``)
+    Every leg a plain PR skips, and nothing else. gh-1801 lets such a push
+    skip what its PR ran; it may not skip what its PR did not run, or the
+    trimmed Pythons would be tested only by the nightly, which gates no
     release. So ``CI passed`` on every ``main`` commit -- what
-    ``release.yml`` reads -- still certifies the whole matrix on that tree,
-    from the PR's legs plus these.
-anything else
+    ``release.yml`` reads -- still certifies the whole matrix on that tree.
+    A train's push owes nothing its train did not run, but which kind of PR
+    a push merged is not known here yet (the org standard's #249), so
+    every tested push runs the superset (gh-2832 fork 3).
+anything else (scope ``full``)
     Every leg: a push to ``main`` the PR did not test, the nightly, a
     dispatch.
 
-The PR legs and a tested push's legs partition the matrix: neither
+A plain PR's legs and a tested push's legs partition the matrix: neither
 overlaps the other, and together they are all of it.
 
 A leg that is about ONE Python rather than all of them names it by its
@@ -54,21 +61,30 @@ run exactly what the workflow runs:
     Space-separated ``os`` values (a subset of ``TRIM``) that also keep
     the middle released Python: the one at index ``len // 2`` of that OS's
     sorted released Pythons, so it moves with the matrix.
+``PR_OS``
+    Space-separated ``os`` values a plain PR runs at all (gh-2832). Unset,
+    every OS: the planner's own examples, and artifact.yml, which passes no
+    ``EVENT``.
 ``EVENT``
     ``github.event_name``.
+``HEAD_REF``
+    ``github.head_ref``: a ``train/*`` PR is planned as a full run.
 ``TESTED``
     ``changes.yml``'s ``tested`` output: ``true`` only on such a push.
 ``LEGS_<NAME>``
-    Another job's legs, JSON: a matrix whose Pythons are tokens. Printed,
-    resolved and expanded but never trimmed, as ``<name>=`` (lower case):
-    every event owes them. ci.yml's ``examples`` jobs are planned this way
-    (gh-2626), and artifact.yml's pre-publish smoke legs.
+    Another job's legs, JSON: a matrix whose Pythons are tokens (or none).
+    Resolved and expanded, never trimmed by Python, and kept by OS the way
+    the matrix is (`owed_named`): a plain PR keeps the ``PR_OS`` legs, a
+    tested push the rest, any other run all of them. ci.yml's ``examples``
+    jobs, its ``install-deps-smoke`` and ``consumer-smoke`` are planned
+    this way (gh-2626, gh-2832), and artifact.yml's pre-publish smoke legs.
 
 Prints ``matrix={"include": [...]}`` for ``$GITHUB_OUTPUT``, or ``matrix=``
 when nothing is owed: GitHub refuses an empty matrix, so the ``test`` job
-skips on an empty output instead. Then a ``<name>=`` line per
-``LEGS_<NAME>``, in name order. With the argument ``pythons`` it prints the
-declared Pythons instead, one line, oldest first (``make ci-pythons``).
+skips on an empty output instead. Then ``scope=`` (``pr``, ``tested`` or
+``full``), then a ``<name>=`` line per ``LEGS_<NAME>``, in name order, empty
+when it owes none. With the argument ``pythons`` it prints the declared
+Pythons instead, one line, oldest first (``make ci-pythons``).
 
 Examples
 --------
@@ -88,6 +104,16 @@ Examples
 [('linux', '3.9'), ('linux', '3.11'), ('linux', '3.12')]
 >>> len(owed(m, ["mac"], [], "schedule", "")) == len(expand(m))
 True
+
+With ``PR_OS`` a plain PR runs those OSes alone, a ``train/*`` PR all of it,
+and the push a plain PR's tree lands with the rest:
+
+>>> pairs(owed(m, ["mac"], [], "pull_request", "", "fix/x", ["linux"]))
+[('linux', '3.9'), ('linux', '3.10'), ('linux', '3.11'), ('linux', '3.12')]
+>>> len(owed(m, ["mac"], [], "pull_request", "", "train/1-2", ["linux"]))
+7
+>>> pairs(owed(m, ["mac"], [], "push", "true", "", ["linux"]))
+[('mac', '3.10'), ('mac', '3.11'), ('mac', '3.12')]
 
 The tokens, against a declared list:
 
@@ -312,25 +338,91 @@ def trimmed(
     return out
 
 
+#: The head-ref prefix of the PR ``make train`` opens: what lands.
+TRAIN_PREFIX = "train/"
+
+
+def scope(event: str, tested: str, head_ref: str = "") -> str:
+    """Which run this is: ``pr``, ``tested`` or ``full``.
+
+    ``pr`` is a pull request that is not a train (gh-2832); ``tested`` a
+    push whose tree its PR already tested; ``full`` everything else,
+    including a ``train/*`` PR.
+
+    Examples
+    --------
+    >>> scope("pull_request", "", "fix/gh-1")
+    'pr'
+    >>> scope("pull_request", "", "train/2812-2815")
+    'full'
+    >>> scope("push", "true"), scope("schedule", "")
+    ('tested', 'full')
+    """
+    if tested == "true":
+        return "tested"
+    if event == "pull_request" and not head_ref.startswith(TRAIN_PREFIX):
+        return "pr"
+    return "full"
+
+
+def _on_pr(leg: Leg, pr_os: "List[str] | None") -> bool:
+    """Whether a plain PR runs *leg*'s OS at all."""
+    return pr_os is None or leg.get("os") in pr_os
+
+
 def owed(
     matrix: "dict[str, Any]",
     trim: "List[str]",
     middle: "List[str]",
     event: str,
     tested: str,
+    head_ref: str = "",
+    pr_os: "List[str] | None" = None,
 ) -> "List[Leg]":
     """The legs a run on *event* owes; see the module docstring."""
     legs = expand(matrix)
     skip = trimmed(legs, trim, middle)
-    if tested == "true":
-        return skip
-    if event == "pull_request":
-        return [x for x in legs if x not in skip]
+    pr = [x for x in legs if x not in skip and _on_pr(x, pr_os)]
+    run = scope(event, tested, head_ref)
+    if run == "tested":
+        return [x for x in legs if x not in pr]
+    if run == "pr":
+        return pr
     return legs
 
 
+def owed_named(
+    legs: "List[Leg]", run: str, pr_os: "List[str] | None"
+) -> "List[Leg]":
+    """The legs of a ``LEGS_<NAME>`` job a *run* (a `scope`) owes.
+
+    By OS alone, as the matrix is kept: a plain PR its ``PR_OS`` legs, a
+    tested push the others, any other run all. Without *pr_os* (no
+    ``PR_OS``) every run owes them all.
+
+    Examples
+    --------
+    >>> legs = [{"os": "linux"}, {"os": "mac"}]
+    >>> owed_named(legs, "pr", ["linux"])
+    [{'os': 'linux'}]
+    >>> owed_named(legs, "tested", ["linux"])
+    [{'os': 'mac'}]
+    >>> owed_named(legs, "tested", None) == legs
+    True
+    """
+    if pr_os is None or run == "full":
+        return legs
+    on_pr = [x for x in legs if _on_pr(x, pr_os)]
+    if run == "pr":
+        return on_pr
+    return [x for x in legs if x not in on_pr]
+
+
 def _names(legs: "List[Leg]") -> str:
-    return ", ".join(f"{x['os']} {x['python-version']}" for x in legs)
+    return ", ".join(
+        " ".join(str(x[k]) for k in ("name", "os", "python-version") if k in x)
+        for x in legs
+    )
 
 
 def main(argv: "List[str] | None" = None) -> int:
@@ -339,13 +431,20 @@ def main(argv: "List[str] | None" = None) -> int:
     if (sys.argv[1:] if argv is None else argv) == ["pythons"]:
         print(" ".join(pys))
         return 0
+    event = os.environ.get("EVENT", "")
+    tested = os.environ.get("TESTED", "")
+    head_ref = os.environ.get("HEAD_REF", "")
+    pr_os = os.environ["PR_OS"].split() if "PR_OS" in os.environ else None
+    run = scope(event, tested, head_ref)
     if "MATRIX" in os.environ:
         legs = owed(
             resolve(json.loads(os.environ["MATRIX"]), pys),
             os.environ.get("TRIM", "").split(),
             os.environ.get("MIDDLE", "").split(),
-            os.environ.get("EVENT", ""),
-            os.environ.get("TESTED", ""),
+            event,
+            tested,
+            head_ref,
+            pr_os,
         )
         value = json.dumps({"include": legs}) if legs else ""
         print(f"matrix={value}")
@@ -353,10 +452,14 @@ def main(argv: "List[str] | None" = None) -> int:
             f"ci-test-legs: {len(legs)} leg(s): {_names(legs)}",
             file=sys.stderr,
         )
+        print(f"scope={run}")
     for var in sorted(k for k in os.environ if k.startswith("LEGS_")):
-        legs = expand(resolve(json.loads(os.environ[var]), pys))
+        legs = owed_named(
+            expand(resolve(json.loads(os.environ[var]), pys)), run, pr_os
+        )
         name = var[len("LEGS_") :].lower()
-        print(f"{name}={json.dumps({'include': legs})}")
+        value = json.dumps({"include": legs}) if legs else ""
+        print(f"{name}={value}")
         print(f"ci-test-legs: {name}: {_names(legs)}", file=sys.stderr)
     return 0
 
