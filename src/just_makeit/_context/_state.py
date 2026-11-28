@@ -825,7 +825,13 @@ def _build_no_state_init_ctx(
     sig_parts: list[str] = []
     doc_parts: list[str] = []
     call_parts: list[str] = []
-    c_create_parts_ordered: list[str] = []
+    # gh-2564: `(param name, C seed)` per create() argument, in prototype
+    # order -- one entry per PARAMETER, which an array's pointer and length
+    # (``NULL, 0``) are together. The name is None for the trailing `why`.
+    # `c_create_args` joins the seeds; `jm app` reads the pairs, so the
+    # call it writes takes every parameter the prototype declares and puts
+    # a parsed flag where it has one.
+    c_create_parts_ordered: "list[tuple[str | None, str]]" = []
 
     for (name, dt), (ct, __) in zip(_aa, _aa_ctypes):
         disp = ct
@@ -836,7 +842,7 @@ def _build_no_state_init_ctx(
         call_parts.append(
             f"(const {disp} *)PyArray_DATA({name}_arr), {name}_len"
         )
-        c_create_parts_ordered.append("NULL, 0")
+        c_create_parts_ordered.append((name, "NULL, 0"))
 
     def _array_parts(pname: str, adisp: str, andim: int):
         """``(signature, @param doc, call, C seed)`` for one required array,
@@ -913,7 +919,7 @@ def _build_no_state_init_ctx(
             sig_parts.append(_sig)
             doc_parts.append(_doc)
             call_parts.append(_call)
-            c_create_parts_ordered.append(_seed)
+            c_create_parts_ordered.append((pname, _seed))
         elif pname in _def_arr_meta:
             # gh-611: a defaulted array's C signature is identical to a
             # required array's — the only difference is that `{pname}_arr`
@@ -929,7 +935,7 @@ def _build_no_state_init_ctx(
                 f"{pname}_arr ? (const {adisp} *)PyArray_DATA({pname}_arr)"
                 f" : NULL, {pname}_len"
             )
-            c_create_parts_ordered.append("NULL, 0")
+            c_create_parts_ordered.append((pname, "NULL, 0"))
         elif pname in _str_enum_meta:
             choices, _ = _str_enum_meta[pname]
             # gh-1096: the Python face is unchanged — a choice STRING,
@@ -950,7 +956,7 @@ def _build_no_state_init_ctx(
             # gh-2565: the choice the Python tests construct with -- the
             # declared default when there is one -- not index 0, which built
             # a different object than the binding's default one.
-            c_create_parts_ordered.append(_str_enum_c_seed(pname))
+            c_create_parts_ordered.append((pname, _str_enum_c_seed(pname)))
         elif pname in _path_names:
             # gh-515/gh-219: C sees a borrowed `const char *` valid only for the
             # duration of the call — the callee must copy it before returning.
@@ -962,7 +968,7 @@ def _build_no_state_init_ctx(
             call_parts.append(_coerce.path_call_expr(pname))
             # The zero-seeded C smoke/bench create() passes NULL — jm cannot
             # invent a valid path (see _unseedable_required).
-            c_create_parts_ordered.append("NULL")
+            c_create_parts_ordered.append((pname, "NULL"))
         elif pname in _bytes_names:
             # gh-565: an opaque blob expands to a `(const void *, size_t)` pair,
             # like a 1-D array. The buffer is borrowed for the call's duration
@@ -978,7 +984,7 @@ def _build_no_state_init_ctx(
             call_parts.append(_coerce.bytes_call_exprs(pname))
             # The zero-seeded C smoke/bench create() passes an empty buffer —
             # jm cannot invent a valid blob (see _unseedable_required).
-            c_create_parts_ordered.append("NULL, 0")
+            c_create_parts_ordered.append((pname, "NULL, 0"))
         elif pname in _capsule_meta:
             # gh-790: C sees the plain pointer. The capsule is purely the
             # Python-side transport, so the create() signature is what the
@@ -1001,7 +1007,7 @@ def _build_no_state_init_ctx(
             call_parts.append(pname)
             # The zero-seeded C smoke/bench create() passes NULL — jm has no
             # way to conjure a foreign handle (see _unseedable_required).
-            c_create_parts_ordered.append("NULL")
+            c_create_parts_ordered.append((pname, "NULL"))
         else:
             ct_s, dflt_s = _scalar_meta[pname]
             sig_parts.append(
@@ -1024,11 +1030,14 @@ def _build_no_state_init_ctx(
             # C seed too; the type's zero built a different object (0 dB-Hz
             # where the default is NaN).
             c_create_parts_ordered.append(
-                _example_values.get(pname, "")
-                or dflt_s
-                or _scalar_raw[pname]
-                or _seeds.get(pname, "")
-                or _CTYPE_META[ct_s]["zero"]
+                (
+                    pname,
+                    _example_values.get(pname, "")
+                    or dflt_s
+                    or _scalar_raw[pname]
+                    or _seeds.get(pname, "")
+                    or _CTYPE_META[ct_s]["zero"],
+                )
             )
 
     # gh-2552: `create_why`'s trailing `const char **why`, LAST -- after
@@ -1040,7 +1049,7 @@ def _build_no_state_init_ctx(
         sig_parts.append(WHY_C_PARAM)
         doc_parts.append(WHY_PARAM_DOC_LINE)
         call_parts.append(WHY_C_ARG)
-        c_create_parts_ordered.append("NULL")
+        c_create_parts_ordered.append((None, "NULL"))
 
     # gh-1072: one rule for "an empty C parameter list reads `void`", shared
     # with every prototype `_render` emits. These two sites already join the
@@ -1919,7 +1928,7 @@ def _build_no_state_init_ctx(
             )
     py_create_args = ", ".join(py_create_parts)
 
-    c_create_args = ", ".join(c_create_parts_ordered)
+    c_create_args = ", ".join(seed for _, seed in c_create_parts_ordered)
     test_obj = py_new(f"        obj = {Component}(", py_create_parts)
 
     return {
@@ -1976,6 +1985,7 @@ def _build_no_state_init_ctx(
         "py_create_parts": py_create_parts,
         **py_new_slots(Component, py_create_parts),
         "c_create_args": c_create_args,
+        "c_create_seeds": c_create_parts_ordered,
         # gh-181: on this path an empty c_create_args means the object has no
         # init params, i.e. a `create(void)` — so `<comp>_create()` is callable
         # and the bench must declare `obj` (else the unconditional destroy(obj)
@@ -3124,6 +3134,7 @@ def make_state_ctx(
                 "    pass  # no auto-state; add assertions for your reset"
             ),
             "c_create_args": "",
+            "c_create_seeds": [],
             # gh-1742: a no-state object's constructor is `create(void)` --
             # `create_params` above -- so it is callable, exactly as gh-181
             # found for a no_step one. A TODO comment in its place declared
@@ -3197,6 +3208,7 @@ def make_state_ctx(
                 create_param_docs=WHY_PARAM_DOC_LINE,
                 create_line=f"    self->handle = {_create}({WHY_C_ARG});\n",
                 c_create_args="NULL",
+                c_create_seeds=[(None, "NULL")],
                 bench_create_stmt=(
                     f"    {csym}_state_t *obj = {_create}(NULL);"
                 ),
@@ -3530,12 +3542,15 @@ def make_state_ctx(
         f"    Py_DECREF({name}_arr);\n" for name, _ in _aa
     )
 
-    c_arr_call_parts = ["NULL, 0" for _ in _aa]
-    c_create_args = ", ".join(
-        c_arr_call_parts
-        + [dflt for _, _, dflt in ctor_scalars]
-        + (["NULL"] if create_why else [])
+    # gh-2564: `(param name, C seed)` per create() argument, as the
+    # init-param path builds them: every array arg, then every ctor scalar,
+    # then the `why` (named None).
+    c_create_seeds: "list[tuple[str | None, str]]" = (
+        [(name, "NULL, 0") for name, _ in _aa]
+        + [(n, dflt) for n, _, dflt in ctor_scalars]
+        + ([(None, "NULL")] if create_why else [])
     )
+    c_create_args = ", ".join(seed for _, seed in c_create_seeds)
 
     _NP_PY_TYPE: dict[str, str] = {
         "float32": "np.float32",
@@ -4028,6 +4043,7 @@ def make_state_ctx(
             )
         ),
         "c_create_args": c_create_args,
+        "c_create_seeds": c_create_seeds,
         # gh-181: on this path an empty c_create_args means the object has no
         # init params, i.e. a `create(void)` — so `<comp>_create()` is callable
         # and the bench must declare `obj` (else the unconditional destroy(obj)
@@ -4136,6 +4152,8 @@ def make_state_ctx(
             "py_create_parts",
             *py_new_slots("", []),
             "c_create_args",
+            # gh-2564: and the parameters it joins, which `jm app` reads.
+            "c_create_seeds",
             "bench_create_stmt",
             # gh-1328: the ctor-override path rebuilds the create slots, so
             # the NAME has to come across with them or `result` keeps the

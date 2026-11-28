@@ -10,7 +10,9 @@ Requires <<project>>==<<version>>.
 
 import argparse
 
+
 <<command_fns>>
+
 
 def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(

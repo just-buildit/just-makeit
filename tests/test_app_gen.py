@@ -251,7 +251,8 @@ def test_function_app_generates_call_and_print(tmp_path: Path):
     assert "float result = proj_addn(a, b);" in c
     assert "printf(" in c
     # Python: imports from the module subpackage, required args, prints result.
-    assert "from .mathx import addn" in cli
+    # gh-2063: from its own package, which re-exports the function.
+    assert "from . import addn" in cli
     assert "required=True" in cli
     assert "result = addn(args.a, args.b)\n    print(result)" in cli
     # CMake links the module core; manifest records the function source.

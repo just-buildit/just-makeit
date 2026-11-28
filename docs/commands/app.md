@@ -59,7 +59,7 @@ project holds as many apps as you declare, and `jm apply` recreates each one
 | `--target c\|console\|pep723`       | Output target. Default: `c`. Short form: `-t`. One app per run; run `jm app` again, under another `--name`, for another face.                                                                         |
 | `--object name`                     | Component to wrap. Defaults to the first component.                                                                                                                                                   |
 | `--function name`                   | Wrap a module-level function instead of an object (see *Function CLIs*).                                                                                                                              |
-| `--module name`                     | Module the `--object` or `--function` lives in; it decides the import path and where `cli.py` goes.                                                                                                   |
+| `--module name`                     | Optional: the module the `--object` or `--function` lives in. jm reads it from the manifest, so the flag only confirms it; one naming another module than the object's is refused.                    |
 | `--name name`                       | Name of the generated app/script, unique in the project. Defaults to the project name (the function name with `--function`).                                                                          |
 | `--flag name:type[:default[:help]]` | Extra control flag, added to both parsers and persisted as `[[app.flags]]`. Repeatable.                                                                                                               |
 | `--command name[:help]`             | Declare a subcommand (multi-command CLI). Repeatable. See *Subcommands*.                                                                                                                              |
@@ -82,6 +82,14 @@ loop that fits it — no flag needed:
 Constructor state vars become `--<name>` flags wired into `create()`, each
 defaulting to its `--state` default. Extra `--flag` controls are appended to
 both the C and Python parsers.
+
+Every Python face imports the class, or the function, from the package that
+re-exports it, under the name that package exports (its `class_name`). An
+init param with no command-line form -- an array, a `path`, `bytes`, a
+handle -- gets no flag: an array declared `default = "[]"` reaches the C
+app's `create()` as `NULL, 0` and is left out of the Python call. One the
+constructor requires is refused, naming it, since the app is regenerated
+whole and nothing written into it could supply one.
 
 An object outside these four shapes — a `--no-step` object such as a
 [reader](../templates/reader.md), or one with an unsupported `--arg-type`/
