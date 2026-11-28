@@ -393,15 +393,21 @@ def test_the_list_is_refused_on_a_method_or_function_param(tmp_path, table):
 
 @pytest.mark.parametrize("table", ["method", "function"])
 @pytest.mark.parametrize("rank", [1, 2])
-def test_an_int_rank_on_a_method_or_function_t2d_still_loads(
+def test_an_int_rank_on_a_method_or_function_t2d_is_refused_as_2d(
     tmp_path, table, rank
 ):
-    """The refusal is the list's alone: `rank = 1` / `2` load as before."""
+    """gh-1908: a method's or function's `T[][]` is refused whatever `rank`.
+
+    It used to load and bind flat; the type itself is the refusal now, the
+    one a constructor's `T[][]` is exempt from.
+    """
     root = _project(tmp_path)
     row = {"name": "g", "type": "float[][]", "rank": rank}
     _write_row(root, table, dict(row))
     r = run_cli("apply", cwd=root)
-    assert r.returncode == 0, r.stderr
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("error:")]
+    assert r.returncode == 1 and len(errors) == 1, r.stderr
+    assert "'float[][]' is 2-D" in r.stderr, r.stderr
 
 
 def test_rank_1_on_a_t2d_names_the_list_that_holds(tmp_path):
