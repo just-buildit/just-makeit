@@ -751,10 +751,9 @@ class TestSourceGenerates:
         the handle (tp_alloc zero-inits the first construction, so a bare
         `_gen = NULL` would leak the built generator on re-init)."""
         s = _composer.render_source_type(_gen_cfg(), "wfm_compose")
-        assert (
-            "if (self->_gen) { wfm_synth_destroy(self->_gen); "
-            "self->_gen = NULL; }" in s
-        )
+        # gh-2758: the one spelling of the drop, shared with the setters.
+        init = s.split("Synth_init(", 1)[1].split("\n}\n", 1)[0]
+        assert _composer._gen_drop_c("wfm_synth_destroy") in init
 
     def test_ext_includes_generator_header_and_the_bridge_header(self):
         """gh-998: the bridge prototype is published, not re-declared inline."""
