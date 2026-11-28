@@ -7163,6 +7163,56 @@ def _foreign_free(entry: dict) -> bool:
     return not any(entry.get(k) for k in _FOREIGN_TYPE_KEYS)
 
 
+def _kind_array_type_errors(cfg: dict) -> "list[str]":
+    """Every array a kind module declares that has no binding (gh-2132).
+
+    The kind modules' rows that take an ARRAY are few -- every other row
+    crosses as one C scalar and `_capsule.scalar_meta` refuses an array
+    there (gh-2009), a composer's tables carry none. Those that do:
+
+    - a handle method's ``args`` rows and its ``returns``;
+    - a capsule method's ``arg_type`` (asked by the method check, which a
+      capsule's ``methods`` already pass through) and ``return_type``.
+
+    Each is asked :func:`_types.array_type_error`, the predicate ``jm
+    method`` asks, so a ``bool[]`` or a ``float[][]`` is refused at load
+    -- for ``apply``, ``status`` and every other reader -- rather than by
+    the renderer's lookup, and a ``[][]`` is named as 2-D.
+
+    Examples
+    --------
+    >>> cfg = {"module": {"h": {"kind": "handle", "methods": [
+    ...     {"name": "op", "fn": "f", "returns": "bool[]",
+    ...      "args": [{"name": "x", "type": "float[][]"}]}]}}}
+    >>> [e.split(":")[0] for e in _kind_array_type_errors(cfg)]
+    ["handle module 'h' method 'op' args row 'x'", "handle module 'h' method 'op' returns"]
+    """
+    errors: list[str] = []
+
+    def ask(where: str, spec: object) -> None:
+        why = _T.array_type_error(str(spec or ""))
+        if why:
+            errors.append(f"{where}: {why}")
+
+    for mod in modules(cfg):
+        kind = module_kind(cfg, mod)
+        if kind == "handle":
+            for m in handle_methods(cfg, mod):
+                where = f"handle module {mod!r} method {m.get('name')!r}"
+                for a in m.get("args") or []:
+                    if _foreign_free(a):
+                        ask(
+                            f"{where} args row {a.get('name')!r}",
+                            a.get("type"),
+                        )
+                ask(f"{where} returns", m.get("returns"))
+        elif kind == "capsule":
+            for m in module_methods(cfg, mod):
+                where = f"capsule module {mod!r} method {m.get('name')!r}"
+                ask(f"{where} return_type", m.get("return_type"))
+    return errors
+
+
 def _init_param_array_error(entry: dict, what: str) -> str:
     """Why an init-param's array type has no binding, or ``""`` (gh-2132).
 
@@ -7736,6 +7786,8 @@ def manifest_type_errors(cfg: dict) -> list[str]:
     # gh-2744: a hand-edited `string_enum:` spec reaches the same reader the
     # flag's spec does, so every table's spec is asked the same question.
     errors.extend(_string_enum_spec_errors(cfg))
+    # gh-2132: the array-bearing rows of the handle and capsule kinds.
+    errors.extend(_kind_array_type_errors(cfg))
 
     # gh-1450: `enumerators` binds each choice to a C constant, so a list
     # that does not line up with `values` would bind choices to the wrong

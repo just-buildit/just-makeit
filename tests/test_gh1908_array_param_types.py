@@ -349,3 +349,66 @@ def test_apply_refuses_a_param_named_for_the_input(tmp_path):
     before = _tree(root)
     _refused(run_cli("apply", cwd=root), "param 'x'", "arg_type 'float'")
     assert _tree(root) == before
+
+
+# -- the kind modules' array rows (gh-2132) ----------------------------------
+#
+# The rows of a handle or capsule module that take an array. Every other row
+# of every kind crosses as one C scalar and is refused by
+# `_capsule.scalar_meta` (gh-2009, its own gate); a composer's tables carry no
+# array type. A handle method's `args` and `returns`, a capsule method's
+# `arg_type` and `return_type`, are asked the same predicate at load.
+
+_KIND_ROWS = (
+    "handle arg",
+    "handle returns",
+    "capsule arg_type",
+    "capsule return_type",
+)
+
+
+def _kind_module(face: str, ctype: str) -> "tuple[str, dict]":
+    from test_capsule_apply import _capsule_module
+    from test_handle_apply import _ring_module
+
+    if face.startswith("handle"):
+        m = _ring_module()
+        row = {"name": "zzm", "fn": "ringbuf_zz"}
+        if face == "handle arg":
+            row["args"] = [{"name": "zz", "type": ctype}]
+        else:
+            row["returns"] = ctype
+        m["methods"] = list(m.get("methods") or []) + [row]
+        return "ringbuf", m
+    m = _capsule_module()
+    m["methods"][0][face.split()[1]] = ctype
+    return "ddc_fn", m
+
+
+_KIND_WHERE = {
+    "handle arg": "handle module 'ringbuf' method 'zzm' args row 'zz'",
+    "handle returns": "handle module 'ringbuf' method 'zzm' returns",
+    "capsule arg_type": "module 'ddc_fn' method 'execute': arg_type",
+    "capsule return_type": "capsule module 'ddc_fn' method 'execute'",
+}
+
+
+@pytest.mark.parametrize("face", _KIND_ROWS)
+@pytest.mark.parametrize(
+    "ctype, needle",
+    [("bool[]", "use 'uint8_t[]'"), ("float[][]", "is 2-D")],
+)
+def test_a_kind_module_array_row_is_refused_at_load(
+    face, ctype, needle, tmp_path
+):
+    from just_makeit import _config as C
+
+    root = _new(tmp_path, "--object", "widget")
+    mod, body = _kind_module(face, ctype)
+    cfg = C.load(root)
+    cfg.setdefault("module", {})[mod] = body
+    C.save(root, cfg)
+    before = _tree(root)
+    r = run_cli("apply", cwd=root)
+    _refused(r, needle, ctype, _KIND_WHERE[face])
+    assert _tree(root) == before
