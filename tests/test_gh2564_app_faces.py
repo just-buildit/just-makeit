@@ -280,3 +280,29 @@ def test_an_app_the_binding_cannot_construct_is_refused(
             r = run_cli("app", "--target", target, *argv, cwd=root)
             assert r.returncode == 1 and why in r.stderr, (argv, r.stderr)
     assert not C.apps(C.load(root))
+
+
+def test_an_app_over_a_view_names_its_parent(tmp_path: Path) -> None:
+    """A view is a class over its parent's core, not an object, so an app
+    over one is refused saying what it is and the object to name instead:
+    by its class name or its lower-cased one, a view in its parent's
+    module or in another, for every target."""
+    _ok(tmp_path, "new", "p")
+    root = tmp_path / "p"
+    _ok(root, "module", "filter")
+    _ok(root, "object", "biquad", "--module", "filter", *_SCALAR)
+    _ok(root, "module", "acquire")
+    views = (("Peek", "filter"), ("Tap", "acquire"))
+    for cls, mod in views:
+        _ok(root, "view", "biquad", cls, "--module", mod,
+            "--create-fn", f"biquad_create_{cls.lower()}")  # fmt: skip
+    for cls, mod in views:
+        for name in (cls, cls.lower()):
+            why = f"'{name}' is a view of object 'biquad' in module '{mod}'"
+            for target in _app.TARGETS:
+                r = run_cli("app", "--target", target, "--object", name,
+                            cwd=root)  # fmt: skip
+                assert r.returncode == 1, (name, target, r.stdout)
+                assert why in r.stderr, (name, target, r.stderr)
+                assert "--object biquad" in r.stderr, (name, r.stderr)
+    assert not C.apps(C.load(root))
