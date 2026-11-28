@@ -539,6 +539,10 @@ def capsule_unwrap_c(
     disp = ctype
     if not disp.endswith("*"):
         disp += " "
+    # gh-2689: a failure that releases what the wrapper holds is several
+    # statements, and two of the emitted sites sit under a brace-less `if`.
+    if fail.count(";") > 1:
+        fail = "{ " + fail + " }"
     cap = f"{name}_cap"
     i = indent
     inner = i + "    " if allow_none else i
@@ -1165,18 +1169,17 @@ def _build_params_parse(
     # the C call has copied the string. A method's borrow outlives the parse
     # block -- unlike an array's, which `arr_acq` owns -- so it goes in the
     # `cleanup` the caller emits before every return, next to the DECREFs.
-    path_names: list[str] = []
-    # gh-2144: a scalar's range refusal runs after the parse, which by then has
-    # made EVERY path borrow, declared before the scalar or after it; and
-    # before `arr_acq`, so no array is held yet.
-    range_fail = (
-        "".join(
-            f"{_coerce.path_release(p['name'])} "
-            for p in params
-            if p["type"] == "path"
-        )
-        + "return NULL;"
-    )
+    #
+    # gh-2689: EVERY path, not those declared so far -- the parse converted
+    # them all before any conv or acquisition runs, so each refusal after it
+    # owes every one, and `_coerce.held_release` is the one emitter of that
+    # debt (the module-function peer, `_render._build_params_parse`, calls it
+    # too).
+    path_names: list[str] = [p["name"] for p in params if p["type"] == "path"]
+    # gh-2144: a scalar's, an enum's and a capsule's refusal run after the
+    # parse, before `arr_acq`, so no array is held yet -- only the paths.
+    conv_release = _coerce.held_release(paths=path_names)
+    range_fail = (conv_release + " return NULL;").lstrip()
 
     for p in params:
         pname = p["name"]
@@ -1198,7 +1201,6 @@ def _build_params_parse(
             decl_lines.append("    " + _coerce.path_decl(pname))
             fmt_chars.append(_coerce.path_fmt())
             addr_exprs.append(_coerce.path_addr(pname))
-            path_names.append(pname)
             call_args.append(_coerce.path_call_expr(pname))
         elif ptype == "bytes":
             # No release step, deliberately: `y#` borrows the object's own
@@ -1259,7 +1261,13 @@ def _build_params_parse(
             from .. import _enumc
 
             conv_lines.append(
-                _enumc.validate_c(pname, ename, enums, prefix=Component)
+                _enumc.validate_c(
+                    pname,
+                    ename,
+                    enums,
+                    prefix=Component,
+                    cleanup=conv_release,
+                )
             )
             call_args.append(f"_arg_{pname}")
         elif is_array_param_type(ptype):
@@ -1279,9 +1287,8 @@ def _build_params_parse(
             addr_exprs.append(f"&{obj_var}")
 
             # Build error path: decref all arrays acquired so far.
-            prior_decrefs = "".join(
-                f" {_coerce.array_release(a, a in nullable_arrs)}"
-                for a in arr_names
+            prior_decrefs = _coerce.held_release(
+                arr_names, path_names, nullable_arrs
             )
             # gh-2657: a defaulted array is acquired inside a branch, into
             # `got`, and published to `arr_var` only when the caller passed
@@ -1383,7 +1390,7 @@ def _build_params_parse(
                     ptype,
                     p["capsule"],
                     obj_var,
-                    "return NULL;",
+                    range_fail,
                     allow_none=capsule_nullable(p),
                 )
             )
