@@ -4604,6 +4604,30 @@ def is_no_generate_module(cfg: dict, module: str) -> bool:
     return _truthy(cfg.get("module", {}).get(module, {}).get("no_generate"))
 
 
+def may_write_module_file(
+    cfg: dict, module: str, rel: "str | None" = None
+) -> bool:
+    """Whether jm may write *module*'s file *rel* now -- or, with *rel*
+    None, any file of it.
+
+    The one question a member verb's writes ask (gh-2116): every file
+    `_object._regenerate_module_now` writes -- the per-object fragment, the
+    aggregator, the module's CMakeLists, its ``__init__.py`` and ``.pyi``
+    -- passes through it, and so does the up-front refusal
+    (`_regenerate.refuse_hand_written_member`). Today it answers one
+    clause: a ``no_generate`` module's files are all the author's. A file
+    the project lists in ``status_allow`` is the next clause (gh-2843),
+    which is why *rel* is here: project-relative, POSIX.
+
+    >>> cfg = {"module": {"hand": {"no_generate": "true"}, "gen": {}}}
+    >>> may_write_module_file(cfg, "hand"), may_write_module_file(cfg, "gen")
+    (False, True)
+    >>> may_write_module_file(cfg, "hand", "native/src/hand/hand_ext.c")
+    False
+    """
+    return not is_no_generate_module(cfg, module)
+
+
 def hand_written_module(cfg: dict, component: str) -> "str | None":
     """The ``no_generate`` module that owns *component*, or None.
 

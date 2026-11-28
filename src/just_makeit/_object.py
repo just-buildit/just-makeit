@@ -3103,6 +3103,15 @@ def _regenerate_module_now(
     drop_members: "frozenset[str]" = frozenset(),
 ) -> None:
     """Regenerate module_ext.c, module CMakeLists, and subpackage __init__."""
+
+    def _put(path: Path, content: str, verb: str = "create") -> None:
+        # gh-2116: every file this writes asks the one predicate, "may jm
+        # write this file of the module now?" -- `no_generate` today, and
+        # a `status_allow` entry next (gh-2843).
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
+        if C.may_write_module_file(cfg, module, rel):
+            _write(path, content, verb)
+
     object_names = C.module_objects(cfg, module)
     # cname drives the flat native dir / file prefixes; leaf is the .so basename;
     # pypath is the nested Python dir. For a flat module all three equal
@@ -3238,12 +3247,12 @@ def _regenerate_module_now(
             frag = _docsync.transplant_hand_written(
                 existing_frag, frag, drop_members
             )
-        _write(frag_path, frag, "update" if frag_path.exists() else "create")
+        _put(frag_path, frag, "update" if frag_path.exists() else "create")
 
     extra_files = _module_extra_files(root, cname, comp_ctxs, cfg)
 
     # Aggregator (<module>_ext.c) — always overwritten; extra files wired in.
-    _write(
+    _put(
         ext_c_path,
         render_module_ext_c(
             root, cfg, module, pkg, comp_ctxs, functions, extra_files
@@ -3533,7 +3542,7 @@ def _regenerate_module_now(
     ask_before_rewriting_cmake(
         root, cfg, module_cmake, module_cmake_text, _report.running_verb()
     )
-    _write(module_cmake, module_cmake_text, "update")
+    _put(module_cmake, module_cmake_text, "update")
     if _fns:
         _write_module_test_and_bench(root, cname, _fns)
     # gh-981: reconcile the module's combined-library wiring against the file
@@ -3644,7 +3653,7 @@ def _regenerate_module_now(
             C.module_doc(cfg, module),
         )["module_docstring_py"],
     )
-    _write(init_path, merged, "update" if existed else "create")
+    _put(init_path, merged, "update" if existed else "create")
 
     # Type stubs — regenerated in full every time the module changes.
     pyi_path = pkg_module_dir / f"{mp.leaf}.pyi"
@@ -3652,7 +3661,7 @@ def _regenerate_module_now(
     new_pyi = S.make_module_pyi(cfg, module, root)
     # gh-428: preserve any manual_stub method's hand-written text across
     # the otherwise-blind regen above.
-    _write(
+    _put(
         pyi_path,
         S._splice_manual_stub_bodies(cfg, old_pyi, new_pyi, path=pyi_path),
         "update",
