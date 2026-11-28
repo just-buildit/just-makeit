@@ -2719,6 +2719,56 @@ def _raised(stmts: tuple) -> str:
     return " ".join(dict.fromkeys(seen)) or "nothing"
 
 
+def _c_join(toks: "tuple[str, ...]") -> str:
+    """C tokens spelled back as source: a space only between two words.
+
+    Examples
+    --------
+    >>> _c_join(("self", "-", ">", "handle", "-", ">", "hot"))
+    'self->handle->hot'
+    >>> _c_join(("a", "&", "&", "!", "b"))
+    'a&&!b'
+    >>> _c_join(("unsigned", "x", ">", "1"))
+    'unsigned x>1'
+    """
+    out = ""
+    for t in toks:
+        if (
+            out
+            and (out[-1].isalnum() or out[-1] == "_")
+            and (t[0].isalnum() or t[0] == "_")
+        ):
+            out += " "
+        out += t
+    return out
+
+
+def _warned(stmts: tuple) -> str:
+    """What warning statements *stmts* raise, and under which condition.
+
+    `_raised` plus the ``if`` head each statement sits under (gh-2848): a
+    condition is the one thing a manifest change to a warning can alter
+    while the class and message read the same on both sides of a report.
+
+    Examples
+    --------
+    >>> from just_makeit._context._diagnostics import make_warnings_ctx
+    >>> blk = make_warnings_ctx("a", "A", [{
+    ...     "condition": "hot", "category": "UserWarning",
+    ...     "message": "hot", "stacklevel": 2}])["init_warn_block"]
+    >>> _warned((tuple(_c_tokens(blk)),))
+    'UserWarning "hot" under self->handle->hot'
+    >>> _warned(())
+    'nothing'
+    """
+    seen = []
+    for s in stmts:
+        cond = _closing(list(s), 1)
+        under = _c_join(s[2:cond]) if cond > 0 else "?"
+        seen.append(f"{_raised((s,))} under {under}")
+    return "; ".join(dict.fromkeys(seen)) or "nothing"
+
+
 def _with_literal(toks: "list[str]", lit: str) -> tuple:
     """*toks* with the placeholder literal ``"m"`` replaced by *lit*."""
     return tuple(lit if t == '"m"' else t for t in toks)
@@ -2870,8 +2920,8 @@ def init_diagnostics_drift(
         )
     if e.warns != r.warns:
         detail.append(
-            f"construction warns {_raised(e.warns)}, the manifest "
-            f"{_raised(r.warns)}"
+            f"construction warns {_warned(e.warns)}, the manifest "
+            f"{_warned(r.warns)}"
         )
     if e.why != r.why:
         detail.append(
@@ -2891,6 +2941,25 @@ def init_diagnostics_drift(
             for w in e.warns
         )
     )
+    if (
+        not jm_owned
+        and e.rest == r.rest
+        and all(map(_is_rendered_fail, e.fail))
+        and all(
+            _is_rendered_warn(w, frozenset({_warn_condition(w)}))
+            for w in e.warns
+        )
+        and any(
+            _warn_condition(w) not in frozenset(map(_warn_condition, r.warns))
+            for w in e.warns
+        )
+    ):
+        # gh-2848: nothing differs but a warning's condition. jm cannot
+        # tell the manifest's change from an author's edit of the C
+        # (gh-601), so it reports; the reason says which it is.
+        detail.append(
+            "a kept warning's condition is not one the manifest renders"
+        )
     return "; ".join(detail), jm_owned
 
 
@@ -3721,8 +3790,11 @@ def refresh_module_fragment_docs(
                 _report.warn(
                     f"{_rel}: the constructor's diagnostics disagree with "
                     f"the manifest [{_diag}]. jm re-renders them only in a "
-                    "constructor that is otherwise its own render, and "
-                    f"this one is not. {INIT_DIAGNOSTICS_FIX}",
+                    "constructor it can show is its own render: the rest "
+                    "the current render's, each raise and warning a block "
+                    "jm renders, each warning under a condition the "
+                    "manifest renders. This one is not. "
+                    f"{INIT_DIAGNOSTICS_FIX}",
                     gates=True,
                 )
             _was = O._extract_c_function_bodies(updated)
