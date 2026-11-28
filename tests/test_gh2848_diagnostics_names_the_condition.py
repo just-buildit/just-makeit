@@ -46,7 +46,9 @@ def edited(tmp_path: Path) -> Path:
     path = proj / "objects" / "acc.toml"
     text = path.read_text("utf-8")
     assert text.count('condition = "hot"') == 1, text
-    path.write_text(text.replace('condition = "hot"', 'condition = "cold"'))
+    path.write_text(
+        text.replace('condition = "hot"', 'condition = "cold"'), "utf-8"
+    )
     return proj
 
 
