@@ -23,6 +23,13 @@ Two halves:
   ``PYTEST_DEPS``), and refuses a pytest that is launched any way but a
   ``uv run`` with no interpreter pin.
 
+* **setup-python legs** -- artifact.yml's ``Smoke test (<os>, py<ver>)``
+  legs take their Python from ``actions/setup-python`` and call it as
+  ``python``, ``python3`` and ``pip``, with no ``UV_PYTHON`` and no jm suite.
+  Each runs ``tests/_legpython.py <python-version>`` before any step that
+  runs Python; `test_every_smoke_leg_asks_before_it_uses_python` refuses a
+  Python-named job there that does not.
+
 `.python-version` at the root (tracked, `3.12`) does not redirect a leg: uv
 gives `UV_PYTHON` precedence over it, and setup-uv sets `UV_PYTHON` per leg.
 """
@@ -30,6 +37,7 @@ gives `UV_PYTHON` precedence over it, and setup-uv sets `UV_PYTHON` per leg.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -54,7 +62,7 @@ def test_a_ci_leg_runs_the_python_it_names():
             "GITHUB_ACTIONS is set but UV_PYTHON is not: setup-uv did not "
             "name this leg's Python, so the leg would run uv's default"
         )
-    why = mismatch(os.environ, tuple(sys.version_info))
+    why = mismatch(os.environ.get("UV_PYTHON", ""), tuple(sys.version_info))
     assert why is None, why
 
 
@@ -71,7 +79,7 @@ def test_a_ci_leg_runs_the_python_it_names():
 )
 def test_mismatch_reads_each_shape(env, running, refused):
     """Offline, so the comparison is sabotage-provable on any box."""
-    assert (mismatch(env, running) is not None) is refused
+    assert (mismatch(env.get("UV_PYTHON", ""), running) is not None) is refused
 
 
 def test_conftest_asks_it_at_every_session_start(tmp_path):
@@ -241,3 +249,55 @@ def test_the_examples_hold():
     for module in (_legpython, sys.modules[__name__]):
         result = doctest.testmod(module)
         assert result.attempted and not result.failed, module
+
+
+# -- the setup-python legs (artifact.yml) -----------------------------------
+
+_ARTIFACT = _REPO / ".github" / "workflows" / "artifact.yml"
+_ASKS = "_legpython.py"
+_LEG = "${{ matrix.python-version }}"
+
+
+def _python_named_jobs(path: Path) -> "dict[str, dict]":
+    jobs = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
+    return {
+        name: job
+        for name, job in jobs.items()
+        if "matrix.python-version" in str(job.get("name", ""))
+    }
+
+
+def test_every_smoke_leg_asks_before_it_uses_python():
+    """artifact.yml's legs take their Python from ``setup-python`` and call
+    it as ``python``, ``python3`` and ``pip``: no ``UV_PYTHON``, no jm suite
+    and so no conftest. Each asks `_legpython` itself, with its matrix
+    version, before any step that runs Python."""
+    jobs = _python_named_jobs(_ARTIFACT)
+    assert jobs, "artifact.yml has no job named for a Python"
+    for name, job in jobs.items():
+        runs = [str(s["run"]) for s in job.get("steps", []) if "run" in s]
+        first = next(
+            (i for i, r in enumerate(runs) if re.search(r"\bpy|\bpip", r)),
+            None,
+        )
+        assert first is not None, f"{name}: no step runs Python"
+        asks = runs[first]
+        assert _ASKS in asks and _LEG in asks, (
+            f"{name}: the first step that runs Python does not ask "
+            f"tests/{_ASKS} whether it is the leg's:\n{asks}"
+        )
+        if "windows" not in name:
+            for word in ("python3 ", "pip --version"):
+                assert word in asks, f"{name}: {word.strip()} is not asked"
+
+
+def test_the_script_refuses_another_python():
+    """The step's own exit codes, under the suite's interpreter."""
+    script = str(Path(__file__).parent / _ASKS)
+    mine = f"{sys.version_info.major}.{sys.version_info.minor}"
+    other = f"3.{sys.version_info.minor + 1}"
+    run = [sys.executable, script]
+    assert subprocess.run([*run, mine], capture_output=True).returncode == 0
+    r = subprocess.run([*run, other], capture_output=True, text=True)
+    assert r.returncode == 1 and f"names Python {other}" in r.stderr, r
+    assert subprocess.run([*run, ""], capture_output=True).returncode == 2
