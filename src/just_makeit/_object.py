@@ -2099,7 +2099,7 @@ def _make_view_ctx(
             codecs=C.codecs(cfg),
             builtin_members=builtin_owned_members(root, cfg, obj),
             enums=C.enums(cfg),  # gh-1021
-            records=C.records(cfg, obj),  # gh-1405
+            records=C.record_scope(cfg, obj),  # gh-1405, gh-2889
             properties=C.properties(cfg, obj),  # gh-1426
             csym=ctx["csym"],
             set_state_status_errors=C.set_state_status_errors(cfg, obj),
@@ -2380,7 +2380,7 @@ def build_component_ctxs(
                 codecs=C.codecs(cfg),
                 builtin_members=builtin_owned_members(root, cfg, obj),
                 enums=C.enums(cfg),  # gh-1021
-                records=C.records(cfg, obj),  # gh-1405
+                records=C.record_scope(cfg, obj),  # gh-1405, gh-2889
                 properties=C.properties(cfg, obj),  # gh-1426
                 csym=ctx["csym"],
                 # gh-1997: the object's own; a view (above) has none.
@@ -2789,7 +2789,7 @@ def render_module_ext_c(
     if comp_ctxs is None:
         comp_ctxs = build_component_ctxs(root, cfg, module, pkg)
     if functions is None:
-        functions = C.module_functions(cfg, module)
+        functions = C.resolved_functions(cfg, module)  # gh-2889
     if extra_files is None:
         extra_files = _module_extra_files(root, mp.cname, comp_ctxs, cfg)
     comp_ctxs = _fragment_enum_ctxs(root, mp.cname, comp_ctxs)
@@ -2899,7 +2899,25 @@ def jm_owned_functions(
     # gh-2272: the same for a teardown that waits on the in-flight count.
     if _declares_inflight(rendered) and not _declares_inflight(into):
         teardown = ()
-    return teardown + _record.dtype_builders(rendered)
+    # gh-2889: the wrapper of a `single` method whose columns are a declared
+    # struct's (`_record.resolved`). Like a dtype builder, its record build
+    # is the declaration: restored, it filled the old columns into a
+    # descriptor naming the new ones, and the new field read `<NULL>`. Every
+    # method the component and its views declare, under this fragment's
+    # wrapper prefix; a name the fragment does not hold matches nothing.
+    comp = ctx["component"]
+    scope = C.record_scope(cfg, comp)
+    rows = C.methods(cfg, comp) + [
+        m for v in C.views(cfg, comp) for m in C.view_methods(v)
+    ]
+    shared = tuple(
+        f"{_w}_{m['name']}"
+        for m in rows
+        if truthy(m.get("single"))
+        and not m.get("result_fields")
+        and _record.declared_struct(m, scope)
+    )
+    return teardown + _record.dtype_builders(rendered) + shared
 
 
 #: One struct member declaration, its name captured. Read on comment-masked
@@ -3247,7 +3265,8 @@ def _regenerate_module_now(
     # object's own methods.
     # gh-2755: a module function's record is in the same namespace.
     fn_records = _record.function_registrations(
-        C.module_functions(cfg, module), _load_module_doc_blocks(root, module)
+        C.resolved_functions(cfg, module),
+        _load_module_doc_blocks(root, module),
     )
     for _msg in _record.doc_conflict(
         [r for ctx in comp_ctxs for r in ctx.get("record_registrations", [])]
@@ -3260,7 +3279,7 @@ def _regenerate_module_now(
     # the existing fragment when present, or from the old monolithic ext.c
     # when migrating from a pre-split layout.  Only functions whose names
     # appear in the freshly rendered template survive (no cross-contamination).
-    functions = C.module_functions(cfg, module)
+    functions = C.resolved_functions(cfg, module)  # gh-2889
     ext_dir = INC.src_path(root, cname, cfg)
     ext_c_path = ext_dir / f"{cname}_ext.c"
 
@@ -3581,7 +3600,7 @@ def _regenerate_module_now(
     # functions. jm generates and owns that module's C; before this it
     # generated no test and no benchmark for it, and no target for either, so
     # every consumer hand-registered both in its root CMakeLists.
-    _fns = C.module_functions(cfg, module)
+    _fns = C.resolved_functions(cfg, module)  # gh-2889
     # gh-1046: what the PROJECT declares in its own root CMakeLists, read from
     # the real tree — under `apply` this runs against a pristine temp scaffold
     # that has none of the project's hand-written CMake, so asking `root` would

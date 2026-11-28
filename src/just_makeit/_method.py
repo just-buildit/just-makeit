@@ -1978,6 +1978,18 @@ def run(
     # rather than a list of them kept here that a new key would miss.
     _args = dict(locals())
     C.require_name(method_name, "method")  # gh-625
+    # gh-2889: a `--single` record whose `--return-type` struct is declared
+    # (`[[<obj>.records]]`, this component's or another's) takes its
+    # columns from the declaration. Resolved HERE, before any check or
+    # render reads them, and through the one resolver every other face
+    # asks; the manifest row keeps only what this command line stated
+    # (`_stated_fields`), so the declaration stays the one copy.
+    _stated_fields = list(result_fields or [])
+    if single and not result_fields and (root / C.FILENAME).is_file():
+        result_fields = _record.resolved(
+            {"single": True, "return_type": return_type},
+            C.record_scope(C.load(root), object_name),
+        ).get("result_fields")
     # gh-2498: an entry stating nothing but a doc or a refusal's message is
     # an OVERRIDE of a member the parent has, never a new method -- decided
     # before any check below reads this command's defaults as a signature.
@@ -2690,7 +2702,7 @@ def run(
     # ignored. Here rather than beside the other record gates above because
     # it is the first one that needs the manifest -- what is declared is a
     # property of the project, not of this command line.
-    _declared_records = C.records(cfg, object_name)
+    _declared_records = C.record_scope(cfg, object_name)
     # gh-2068: `--record-dtype` naming a SCALAR element wrote a prototype
     # over a type name no C type carries, and exited 0. `apply` replays the
     # manifest through here, so a hand-written row is refused by this same
@@ -2723,7 +2735,9 @@ def run(
         {
             "name": method_name,
             "record_dtype": record_dtype,
-            "result_fields": result_fields or [],
+            "single": single,
+            "return_type": return_type,
+            "result_fields": _stated_fields,
         },
         _declared_records,
     )
@@ -3260,7 +3274,7 @@ def run(
         method_entry["out_divisor"] = out_divisor
     if no_bench:
         method_entry["bench"] = False
-    if result_fields:
+    if _stated_fields:
         method_entry["result_fields"] = result_fields
         method_entry["max_results"] = max_results
     if single:

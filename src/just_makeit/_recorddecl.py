@@ -361,6 +361,34 @@ def run(
         )
         if why:
             raise _report.Refusal(why)
+    # gh-2889: a struct's declaration is in scope for EVERY component's
+    # members (`C.record_scope`), so a member anywhere that still states
+    # these columns itself would be a second copy -- refused, naming each,
+    # as `jm method` refuses it from the other side (`restated_columns`).
+    # And every component whose members return the struct is re-rendered
+    # below, not only this one.
+    elsewhere: "list[str]" = []
+    if not elem_type:
+        restating = [
+            f"'{comp}.{m.get('name', '?')}'"
+            for comp in C.components(cfg)
+            for m in list(C.methods(cfg, comp))
+            + [n for v in C.views(cfg, comp) for n in C.view_methods(v)]
+            if _record.restated_columns(m, [entry])
+        ]
+        if restating:
+            raise _report.Refusal(
+                f"{', '.join(restating)} state{'s' if len(restating) == 1 else ''}"
+                f" the columns of '{record_name}' in their own result_fields,"
+                " which this declaration replaces: drop those result_fields"
+                " from the manifest and declare the record in the same"
+                " edit, then run `jm apply` (gh-2889)."
+            )
+        elsewhere = [
+            comp
+            for comp in C.components(cfg)
+            if comp != object_name and speakers(cfg, comp, record_name)
+        ]
     for i, existing in enumerate(rows):
         if str(existing.get("name") or "") == record_name:
             rows[i] = entry
@@ -374,6 +402,12 @@ def run(
     cols = ", ".join(f"{f['name']}:{f['type']}" for f in fields)
     print(f"  type    {elem_type}" if elem_type else f"  fields  {cols}")
     print()
+    # gh-2889: every other component returning the struct reads these
+    # columns too, so its glue moves with this one's.
+    for comp in elsewhere:
+        _glue.regenerate(
+            root, cfg, comp, C.component_module(cfg, comp), C.project_name(cfg)
+        )
     if who:
         # gh-2055: the same C type, so every member keeps its prototype and
         # only jm's glue moves -- the binding, the stub, the contract.

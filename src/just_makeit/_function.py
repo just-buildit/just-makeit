@@ -310,6 +310,15 @@ def run(
     record_doc: str = "",
 ) -> None:
     C.require_name(fn_name, "function")
+    # gh-2889: `jm method`'s rule (see `_method.run`). A `--single` record
+    # whose struct a component declares takes its columns from there; the
+    # manifest row keeps only what this command line stated.
+    _stated_fields = list(result_fields or [])
+    if single and not result_fields and (root / C.FILENAME).is_file():
+        result_fields = _record.resolved(
+            {"single": True, "return_type": return_type},
+            C.record_scope(C.load(root), ""),
+        ).get("result_fields")
     # gh-1760: one row per param is what the manifest stores; the C writers
     # below read the positional form derived from it.
     rows = [_param_row(p) for p in params or []]
@@ -341,7 +350,8 @@ def run(
     _single_err = _record.function_single_why_not(
         {
             "name": fn_name,
-            "result_fields": result_fields,
+            "return_type": return_type,
+            "result_fields": _stated_fields,
             "out_type": out_type,
             "variable_output": variable_output,
             "out_size": out_size,
@@ -350,7 +360,10 @@ def run(
             "why": why,
             "status_errors": status_errors,
             **record_keys,
-        }
+        },
+        C.record_scope(C.load(root), "")
+        if (root / C.FILENAME).is_file()
+        else None,
     )
     if _single_err:
         raise Refusal(_single_err)
@@ -690,7 +703,7 @@ def run(
         fn_entry["return_type"] = return_type
     if out_type:
         fn_entry["out_type"] = out_type
-    if result_fields:
+    if _stated_fields:
         fn_entry["result_fields"] = result_fields
         # gh-2755: a single record has no buffer for a capacity to size.
         if not max_results_param and not single:

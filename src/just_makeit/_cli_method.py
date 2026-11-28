@@ -716,8 +716,11 @@ def run(args: list[str]) -> None:
             "single": single,
             "result_fields": result_fields,
             "record_doc": record_doc,
+            "return_type": return_type,
         },
         f"method {method_name!r}",
+        # gh-2889: a declared struct supplies the columns, in any component.
+        records=C.record_scope(C.load(Path.cwd()), object_name),
     )
     if _single_err:
         print(f"error: {_single_err}", file=sys.stderr)
@@ -732,6 +735,15 @@ def run(args: list[str]) -> None:
     # giving it one here is what made `--arg-type 'sample[]'` legal beside a
     # `--return-type sample` that was refused, for one declaration.
     _declared_elems = C.record_names(C.load(Path.cwd()), object_name)
+    # gh-2889: and a struct another component declares, which a `--single`
+    # record returns by value.
+    _scope_structs = {
+        str(r.get("name") or "")
+        for r in C.record_scope(C.load(Path.cwd()), object_name)
+        if r.get("fields")
+    }
+    if single:
+        _declared_elems = _declared_elems | _scope_structs
     if (
         not T.is_supported_return_type(return_type)
         and not result_fields

@@ -322,10 +322,24 @@ def run(args: list[str]) -> None:
 
     # gh-2755: the single record's own refusal first, so `--single` with no
     # `--result-field` reads as the load reads it, not as a bad return type.
+    # gh-2889: a struct a component declares supplies the columns.
+    from . import _config as C
+
+    _scope = (
+        C.record_scope(C.load(Path.cwd()), "")
+        if (Path.cwd() / C.FILENAME).is_file()
+        else []
+    )
     _single_err = _record.single_why_not(
-        {"single": fn_single, "result_fields": fn_result_fields, **fn_record},
+        {
+            "single": fn_single,
+            "result_fields": fn_result_fields,
+            "return_type": fn_return_type,
+            **fn_record,
+        },
         f"function {fn_name!r}",
         type_keys=True,
+        records=_scope,
     )
     if _single_err:
         print(f"error: {_single_err}", file=sys.stderr)
@@ -334,7 +348,14 @@ def run(args: list[str]) -> None:
     # gh-244: a result_fields function's --return-type names the user's
     # record struct (the buffer element type for a list), not a scalar — so
     # it's exempt from the scalar allowlist.
-    if not T.is_supported_return_type(fn_return_type) and not fn_result_fields:
+    _declared = fn_single and _record.declared_struct(
+        {"single": True, "return_type": fn_return_type}, _scope
+    )
+    if (
+        not T.is_supported_return_type(fn_return_type)
+        and not fn_result_fields
+        and not _declared
+    ):
         print(
             f"error: --return-type '{fn_return_type}' must be void or a scalar.\n"
             f"{T.unsupported_return_type_help(fn_return_type)}",

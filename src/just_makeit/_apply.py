@@ -1436,25 +1436,30 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
             getter_error_message=p.get("getter_error_message", ""),
         )
 
+    # gh-1411: the record declarations FIRST, and into the temp manifest
+    # rather than through a command. Every member that references one
+    # resolves it by reading the manifest it is being replayed into, so
+    # a method replayed before its record sees no declaration at all and
+    # the renderer dies on `_CTYPE_META['iq16_t']`.
+    #
+    # That is what shipped in 0.79.0: `jm method` wrote `arg_type =
+    # "iq16_t[]"` happily and `jm apply` on the same manifest refused it,
+    # so gh-1405's feature never worked on the manifest-first path its
+    # adopter uses. Same ordering rule `jm script` needed in gh-1407.
+    #
+    # gh-2889: EVERY component's, before any member: a `single` method may
+    # return another component's declared struct (`C.record_scope`), and
+    # the standalone objects replay before the module ones.
+    _with_records = [c for c in all_comps if C.records(cfg, c)]
+    if _with_records:
+        _temp_cfg = C.load(temp_root)
+        for comp in _with_records:
+            _temp_cfg.setdefault(comp, {})["records"] = [
+                dict(r) for r in C.records(cfg, comp)
+            ]
+        C.save(temp_root, _temp_cfg)
     for comp in all_comps:
         mod = C.component_module(cfg, comp)
-        # gh-1411: the record declarations FIRST, and into the temp manifest
-        # rather than through a command. Every member that references one
-        # resolves it by reading the manifest it is being replayed into, so
-        # a method replayed before its record sees no declaration at all and
-        # the renderer dies on `_CTYPE_META['iq16_t']`.
-        #
-        # That is what shipped in 0.79.0: `jm method` wrote `arg_type =
-        # "iq16_t[]"` happily and `jm apply` on the same manifest refused it,
-        # so gh-1405's feature never worked on the manifest-first path its
-        # adopter uses. Same ordering rule `jm script` needed in gh-1407.
-        _recs = C.records(cfg, comp)
-        if _recs:
-            _temp_cfg = C.load(temp_root)
-            _temp_cfg.setdefault(comp, {})["records"] = [
-                dict(r) for r in _recs
-            ]
-            C.save(temp_root, _temp_cfg)
         # gh-1426 C: properties FIRST. A method may now reference a
         # property in a status message (`{capacity}`), and a property
         # never references a method -- so this is the dependency

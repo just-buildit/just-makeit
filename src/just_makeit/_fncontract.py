@@ -438,7 +438,7 @@ def sync(root: Path, cfg: dict, module: str) -> None:
         text = render(
             class_import_path(pkg, module_dir),
             leaf,
-            C.module_functions(cfg, module),
+            C.resolved_functions(cfg, module),  # gh-2889
         )
         _textio.write_text(path, R.owned_scaffold(text, fname))
         print(f"  write   {path}")

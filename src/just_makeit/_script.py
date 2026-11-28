@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import _config as C
 from . import _context as Ctx
+from . import _record
 from ._config import _truthy
 
 
@@ -1201,12 +1202,26 @@ def run(root: Path) -> None:
     # members are emitted right after the producer's object line and
     # skipped in the sections below.
     def _refs(comp: str) -> "list[str]":
-        """The emitted components *comp*'s `object` init-params name."""
+        """The emitted components *comp*'s `object` init-params name, and
+        the ones whose declared struct one of its methods returns.
+
+        gh-2889: a `--single` method with no `--result-field` reads its
+        columns from the struct's declaration, which may be another
+        component's (`C.record_scope`); its `jm record` line must have run.
+        """
+        owners = {
+            o
+            for m in C.methods(cfg, comp)
+            if _truthy(m.get("single")) and not m.get("result_fields")
+            for o in all_comps
+            if o != comp
+            and C.record(cfg, o, _record.c_struct(m)).get("fields")
+        }
         return [
             t
             for t in C.object_ref_edges(cfg, comp)
             if t in all_comps and t != comp
-        ]
+        ] + sorted(owners - set(C.object_ref_edges(cfg, comp)))
 
     producers = {p for c in all_comps for p in _refs(c)}
 

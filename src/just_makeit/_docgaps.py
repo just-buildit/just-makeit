@@ -116,7 +116,7 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                         f"or `doc =` on the property",
                     )
                 )
-        for method in C.methods(cfg, comp):
+        for method in C.resolved_methods(cfg, comp):  # gh-2889
             _, is_stub = method_doc(comp, method, blocks, csym=csym)
             if is_stub:
                 mname = str(method.get("name") or "")
@@ -160,7 +160,9 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                             f"or `doc =` on the view's property",
                         )
                     )
-            for method in C.methods(cfg_v, synth):
+            for method in C.resolved_methods(
+                cfg, comp, C.methods(cfg_v, synth)
+            ):
                 _, is_stub = method_doc(
                     synth, method, vblocks, csym=stub_stem(cfg_v, synth)
                 )
@@ -177,7 +179,7 @@ def gaps(root: Path, cfg: dict) -> list[DocGap]:
                     )
     for module in C.modules(cfg):
         fn_blocks = _module_doc_blocks(root, module)
-        for fn in C.module_functions(cfg, module):
+        for fn in C.resolved_functions(cfg, module):  # gh-2889
             _, is_stub = function_doc(fn, fn_blocks)
             if is_stub:
                 fname = str(fn.get("name") or "")
