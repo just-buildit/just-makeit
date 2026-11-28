@@ -36,6 +36,7 @@ from pathlib import Path
 from . import _config as C
 from . import _csym as CSYM
 from . import _glue
+from . import _object
 from . import _record
 from . import _report
 from . import _script
@@ -368,6 +369,7 @@ def run(
     # And every component whose members return the struct is re-rendered
     # below, not only this one.
     elsewhere: "list[str]" = []
+    fn_modules: "list[str]" = []
     if not elem_type:
         restating = [
             f"'{comp}.{m.get('name', '?')}'"
@@ -389,6 +391,17 @@ def run(
             for comp in C.components(cfg)
             if comp != object_name and speakers(cfg, comp, record_name)
         ]
+        # A module function returning the struct binds in its module's
+        # `_ext.c`, which no component above need own: a functions-only
+        # module, or one whose objects never name the struct.
+        fn_modules = [
+            mod
+            for mod in C.modules(cfg)
+            if any(
+                _record.c_struct(f) == record_name
+                for f in C.module_functions(cfg, mod)
+            )
+        ]
     for i, existing in enumerate(rows):
         if str(existing.get("name") or "") == record_name:
             rows[i] = entry
@@ -404,10 +417,20 @@ def run(
     print()
     # gh-2889: every other component returning the struct reads these
     # columns too, so its glue moves with this one's.
+    redone: "set[str]" = set()
     for comp in elsewhere:
-        _glue.regenerate(
-            root, cfg, comp, C.component_module(cfg, comp), C.project_name(cfg)
-        )
+        mod = C.component_module(cfg, comp)
+        if mod in redone:
+            continue
+        _glue.regenerate(root, cfg, comp, mod, C.project_name(cfg))
+        if mod:
+            redone.add(mod)
+    for mod in fn_modules:
+        if mod not in redone and not (
+            who and mod == C.component_module(cfg, object_name)
+        ):
+            _object._regenerate_module(root, cfg, mod, C.project_name(cfg))
+            redone.add(mod)
     if who:
         # gh-2055: the same C type, so every member keeps its prototype and
         # only jm's glue moves -- the binding, the stub, the contract.

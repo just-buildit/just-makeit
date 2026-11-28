@@ -20,7 +20,10 @@ GATE: a compiled fixture -- the struct declared by a MODULE object, returned
       a column reaches both bindings at runtime and both stubs, with
       `status --check` at 0, and `jm script` and `apply` agree; the
       refusals (two declarations, a restatement either way round); and
-      every caller of the resolver is a face this file names.
+      every caller of the resolver is a face this file names. A function
+      in another module moves with the edit too, and removing the
+      declaring object or module is refused, the tree unchanged, until the
+      members elsewhere that read it are gone.
 """
 
 from __future__ import annotations
@@ -207,6 +210,75 @@ def test_a_restatement_is_refused_either_way_round(tmp_path):
     r = run_cli("record", "a", "a_st_t", "--field", "n:int", cwd=q)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "'a.st'" in r.stderr and "gh-2889" in r.stderr, r.stderr
+
+
+def _tree(root: Path) -> "dict[str, bytes]":
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def test_a_record_edit_reaches_another_modules_function(tmp_path):
+    """A function in a module no member of which returns the struct: its
+    module's binding moves with the declaration all the same."""
+    root = _project(tmp_path)
+    _ok(root, "module", "n")
+    _ok(root, "function", "n_report", "--module", "n", "--single",
+        "--return-type", STRUCT)  # fmt: skip
+    nh = root / "native" / "inc" / "sr" / "n" / "n_core.h"
+    _textio.write_text(
+        nh,
+        nh.read_text(encoding="utf-8").replace(
+            '#include "sr/clib_common.h"',
+            '#include "sr/clib_common.h"\n#include "sr/rx/rx_core.h"',
+            1,
+        ),
+    )
+    _clean(root)
+    _ok(root, "record", "rx", STRUCT, *COLS, "--field", "lag:int")
+    _clean(root)
+    assert "_r.lag" in (root / "native/src/n/n_ext.c").read_text(
+        encoding="utf-8"
+    )
+    assert "def lag(self) -> int" in (root / "src/sr/n/n.pyi").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    "remove, routes",
+    [
+        (
+            ("object", "rx"),
+            (
+                ("method", "status", "--object", "pool"),
+                ("function", "rx_report", "--module", "m"),
+            ),
+        ),
+        (("module", "m"), (("method", "status", "--object", "pool"),)),
+    ],
+    ids=["object", "module"],
+)
+def test_removing_the_declaration_is_refused_while_others_read_it(
+    tmp_path, remove, routes
+):
+    """The declaring object (or its module) goes only after the members
+    elsewhere that read its columns; the refusal names each one's remove."""
+    root = _project(tmp_path)
+    before = _tree(root)
+    r = run_cli("remove", *remove, "--force", cwd=root)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert r.stderr.startswith("error: ") and "gh-2889" in r.stderr, r.stderr
+    for route in routes:
+        assert f"`jm remove {' '.join(route)}`" in r.stderr, r.stderr
+    assert _tree(root) == before, "a refusal wrote to the tree"
+
+    for route in routes:
+        _ok(root, "remove", *route, "--force")
+    _ok(root, "remove", *remove, "--force")
+    _clean(root)
 
 
 def test_single_without_columns_or_declaration_is_refused(tmp_path):

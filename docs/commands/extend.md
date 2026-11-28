@@ -1482,6 +1482,10 @@ returning another component's struct needs that component's header: give it
 `depends_on` (an object) or include the header in the module's `_core.h` (a
 module function).
 
+The declaring object, or its module, cannot be removed while a member
+elsewhere still returns the struct: the refusal names each of those members'
+`just-makeit remove`, to run first.
+
 Changing the C type an element stands for -- a scalar's `--type`, or a switch
 between scalar and struct -- is **refused** while any member speaks it. It
 changes their C prototypes, and jm never rewrites your definitions of them, so
