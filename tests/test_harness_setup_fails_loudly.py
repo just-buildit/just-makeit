@@ -180,3 +180,20 @@ def test_a_killed_run_leaves_no_worker_env(tmp_path):
         "a killed run's worker environments outlived the next run",
         _envs(tmp_path),
     )
+
+
+def test_a_pidless_env_is_reaped_only_once_a_day_old(tmp_path):
+    """An environment named without a pid is an older checkout's, and may
+    belong to a run still going on a shared ``/tmp``: a fresh one survives
+    a run, and one past a day old is reaped."""
+    env = _env(tmp_path)
+    fresh = tmp_path / "t" / "jm-gw0-env-legacyfresh"
+    old = tmp_path / "t" / "jm-gw0-env-legacyold"
+    for d in (fresh, old):
+        (d / "venv").mkdir(parents=True)
+    aged = time.time() - 25 * 3600
+    os.utime(old, (aged, aged))
+    rc, out = _run(tmp_path, "def test_ok():\n    pass\n", env=env)
+    assert rc == 0, out
+    assert fresh.is_dir(), "a live old-style environment was reaped"
+    assert not old.exists(), "a day-old pid-less environment survived"
