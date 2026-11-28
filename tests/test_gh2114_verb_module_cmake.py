@@ -27,11 +27,11 @@ from __future__ import annotations
 import hashlib
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 from _compilers import default_cc
+from _cmake import PYTHON3_ARG
 from _jmrun import run_cli, warning_lines
 
 from just_makeit import _libwiring as L
@@ -193,7 +193,7 @@ def test_a_library_in_the_hook_survives_and_builds(project: Path):
             str(project),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "-j", "4"],
     ):
