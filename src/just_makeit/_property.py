@@ -165,23 +165,171 @@ def discarded_setter_status(root: Path, cfg: dict) -> "list[str]":
             continue
         for p in props:
             fn = CSYM.property_setter(CSYM.stem(cfg, comp), p["name"])
-            ret = declared_return(text, fn)
-            # `void` not followed by `*`, anywhere in the prefix: an
-            # attribute or a macro may sit between it and the name
-            # (`void JM_HOT`, `void __attribute__((nonnull))`), and only
-            # `void *` returns something.
-            if ret is None or re.search(r"\bvoid\b(?!\s*\*)", ret):
-                continue
-            out.append(
-                f"`{comp}.{p['name']}` is writable and declares no `error`,"
-                f" so its binding calls {fn}() as a bare statement, but"
-                f" {INC.core_rel(comp, cfg)} declares it returning"
-                f" `{ret}`: the status would be discarded, and an"
-                " assignment C refused would succeed in Python. Declare"
-                " `error` on the property (gh-2182) so the binding raises"
-                f" on a nonzero return, or make {fn}() return void"
-                " (gh-2302)."
+            msg = _dropped_status_msg(
+                f"`{comp}.{p['name']}` is writable and",
+                "property",
+                fn,
+                INC.core_rel(comp, cfg),
+                declared_return(text, fn),
             )
+            if msg:
+                out.append(msg)
+    return out + discarded_kind_setter_status(root, cfg)
+
+
+def _dropped_status_msg(
+    row: str, what: str, fn: str, header: str, ret: "str | None"
+) -> str:
+    """The refusal for setter *fn*, or ``""`` when its status is not dropped.
+
+    The one predicate `discarded_setter_status` (an object's property) and
+    `discarded_kind_setter_status` (a kind module's row) share: *ret* is
+    what *header* declares *fn* returning, and only a return that is not
+    ``void`` is a status the binding's bare call would throw away. ``None``
+    (no declaration) is not a finding.
+
+    Examples
+    --------
+    >>> _dropped_status_msg("`m.q` is", "row", "m_set", "h.h", "void")
+    ''
+    >>> _dropped_status_msg("`m.q` is", "row", "m_set", "h.h", "void *")[:20]
+    '`m.q` is declares no'
+    """
+    # `void` not followed by `*`, anywhere in the prefix: an attribute or a
+    # macro may sit between it and the name (`void JM_HOT`, `void
+    # __attribute__((nonnull))`), and only `void *` returns something.
+    if ret is None or re.search(r"\bvoid\b(?!\s*\*)", ret):
+        return ""
+    return (
+        f"{row} declares no `error`,"
+        f" so its binding calls {fn}() as a bare statement, but"
+        f" {header} declares it returning"
+        f" `{ret}`: the status would be discarded, and an"
+        " assignment C refused would succeed in Python. Declare"
+        f" `error` on the {what} (gh-2182) so the binding raises"
+        f" on a nonzero return, or make {fn}() return void"
+        " (gh-2302, gh-2813)."
+    )
+
+
+def _kind_setter_rows(cfg: dict) -> "list[tuple]":
+    """``(where, header, setter fn, row)`` for each kind-face setter row.
+
+    Every manifest row whose setter is the author's C function and which
+    can declare ``error`` (`SETTER_ERROR_KEYS`, gh-2214): a handle getter
+    field's ``writable_fn``, a capsule module's writable property
+    (``<backing>_set_<name>``) and a composer setting's ``setter_fn``.
+    *header* is the include spelling the module's binding uses.
+    """
+    out = []
+    for mod in C.modules(cfg):
+        kind = C.module_kind(cfg, mod)
+        if kind == "handle":
+            header = C.handle_header_resolved(cfg, mod)
+            for g in C.handle_getters(cfg, mod):
+                for f in g.get("fields", []):
+                    if f.get("writable_fn"):
+                        out.append(
+                            (
+                                f"`{mod}.{f['name']}` (a handle field)"
+                                " names a writable_fn and",
+                                header,
+                                f["writable_fn"],
+                                f,
+                            )
+                        )
+            continue
+        if kind not in ("capsule", "composer"):
+            continue
+        backing = C.capsule_backing(cfg, mod)
+        header = C.capsule_header(cfg, mod) or INC.core_include(backing, cfg)
+        if kind == "capsule":
+            sym = CSYM.backing_stem(cfg, backing)
+            for p in C.module_properties(cfg, mod):
+                if truthy(p.get("writable")):
+                    out.append(
+                        (
+                            f"`{mod}.{p['name']}` (a capsule property)"
+                            " is writable and",
+                            header,
+                            CSYM.property_setter(sym, p["name"]),
+                            p,
+                        )
+                    )
+        else:
+            for st in C.composer_settings(cfg, mod):
+                out.append(
+                    (
+                        f"`{mod}.{st['name']}` (a composer setting)"
+                        " names a setter_fn and",
+                        header,
+                        st["setter_fn"],
+                        st,
+                    )
+                )
+    return out
+
+
+def _header_closure(root: Path, spelling: str) -> str:
+    """The text of header *spelling* and every project header it includes.
+
+    A setter's prototype may sit in a header the backing one includes, as
+    the compiler would find it: quoted includes only, resolved beside the
+    including file then under the ``-I`` root, each read once. A header
+    that is absent contributes nothing.
+    """
+    from ._object import _LOCAL_INCLUDE_RE, _resolve_quoted_include
+
+    inc = INC.inc_dir(root).resolve()
+    first = INC.resolve(root, spelling).resolve()
+    seen, todo, parts = set(), [first], []
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parts.append(text)
+        for rel in _LOCAL_INCLUDE_RE.findall(text):
+            nxt = _resolve_quoted_include(inc, path.parent, rel)
+            if nxt is not None:
+                todo.append(nxt)
+    return "\n".join(parts)
+
+
+def discarded_kind_setter_status(root: Path, cfg: dict) -> "list[str]":
+    """Each kind-face setter whose C status the binding would discard.
+
+    gh-2813, `discarded_setter_status` for the faces gh-2214 gave
+    ``error`` / ``error_message``: a handle field's ``writable_fn``, a
+    capsule module's writable property, a composer setting's
+    ``setter_fn``. A row declaring no ``error`` is called as a bare
+    statement; when the backing header declares that function returning a
+    status, the assignment C refused succeeds in Python. jm writes none of
+    these prototypes, so the header the row's module names (and the
+    project headers it includes) is read, through the one predicate the
+    object face uses (`_dropped_status_msg`). Refused before anything is
+    written, naming the row and the two ways out.
+
+    Returns
+    -------
+    list of str
+        One message per row, empty when none is dropped.
+    """
+    out = []
+    cache: "dict[str, str]" = {}
+    for where, header, fn, row in _kind_setter_rows(cfg):
+        if setter_return_type(row) != "void":
+            continue
+        text = cache.setdefault(header, _header_closure(root, header))
+        msg = _dropped_status_msg(
+            where, "row", fn, header, declared_return(text, fn)
+        )
+        if msg:
+            out.append(msg)
     return out
 
 
