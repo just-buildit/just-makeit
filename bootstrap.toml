@@ -1,6 +1,6 @@
 [project]
 name    = "just-makeit"
-version = "0.138.3"
+version = "0.139.0"
 
 [tools.install-deps]
 source = "just-bashit:install-deps"
