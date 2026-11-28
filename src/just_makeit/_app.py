@@ -561,16 +561,17 @@ def _argparse_block(flags: list[dict]) -> str:
         # binding's own default, the C spelling, not by `None`. gh-2564: a
         # required one has no default to document, as a required choice
         # has none (gh-2743).
+        must = bool(f.get("required"))
         helptext = (
             f["help"] or f["name"]
-            if f.get("required")
+            if must
             else _flag_help(
                 f["name"],
                 f["help"],
                 f["c_default"] if f.get("omit_unset") else pydef,
             )
         )
-        if f.get("required"):
+        if must:
             spec = "required=True"
         elif pydef is None:
             spec = "default=None"

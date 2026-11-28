@@ -116,7 +116,12 @@ def test_a_c_app_hands_create_the_constant() -> None:
         "choices": ["auto", "debug", "warn"],
         "constants": ["LVL_AUTO", "LVL_DEBUG", "LVL_WARN"],
     }
-    assert _app._ctor_c_args([flag], parsed=True) == "jm_values_level[level]"
+    # gh-2564: create()'s parameters, as `c_create_seeds` lists them.
+    seeds = [("level", "LVL_AUTO")]
+    assert (
+        _app._ctor_c_args([flag], parsed=True, seeds=seeds)
+        == "jm_values_level[level]"
+    )
     parsers = _app._c_choice_parsers([flag])
     assert "jm_values_level[] = {LVL_AUTO, LVL_DEBUG, LVL_WARN};" in parsers
 

@@ -436,7 +436,9 @@ LONG_TEXT = {
         "Run with:  uv run a_long_fn_script_name.py --help\n"
         "Requires p==0.1.0.\n"
     ),
-    f"src/p/{MOD}/cli.py": (f"from .{MOD} import (\n    {FN},\n)\n"),
+    # gh-2063: the console face imports from its own package, which
+    # re-exports the function, so the line is short enough not to wrap.
+    f"src/p/{MOD}/cli.py": (f"from . import {FN}\n"),
     # A benchmark timing the constructor inside a `lambda`.
     f"src/p/benchmarks/bench_{LONG}_n.py": (
         "    dt = _bench(\n"
