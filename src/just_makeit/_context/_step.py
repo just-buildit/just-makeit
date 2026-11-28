@@ -17,6 +17,7 @@ from .._docstring import (
     STUB_TARGET_WIDTH,
     class_import_line,
     delegator_note,
+    ensure_np_import,
     render_numpy_doc,
     render_runtime_doc,
 )
@@ -1769,7 +1770,9 @@ def make_step_ctx(
         _passthrough = not (_is_void_arg or _is_arr_arg)
         _key = "py_one" if _passthrough else "py_zero"
         _step_demo.append(f"    {_CTYPE_META[return_type].get(_key, '0')}")
-    _step_doc_lines += _demo_unless_authored(_sblk, _step_demo)
+    _step_doc_lines += _demo_unless_authored(
+        _sblk, ensure_np_import(_step_demo)
+    )
 
     # Seeded before the branch: the stub section below reads these whether or
     # not a steps() binding was generated (`pyi_steps_stub` arrives via ctx).
