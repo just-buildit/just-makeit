@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+from _cmake import PYTHON3_ARG
 from _compilers import default_cc
 from _jmrun import run_cli
 from _pkgdirs import unaccounted
@@ -191,7 +191,7 @@ def test_every_package_jm_writes_is_owned_or_reserved(tmp_path):
             str(root),
             "-B",
             str(build),
-            f"-DPython3_EXECUTABLE={sys.executable}",
+            PYTHON3_ARG,
         ],
         ["cmake", "--build", str(build), "-j", "4"],
     ):
