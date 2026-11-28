@@ -282,11 +282,17 @@ def load(root: Path) -> dict:
     # gh-2120: every flag holds a value `_truthy` reads as meant, before
     # anything reads one -- an older jm's `streamable = "True"` read as
     # false, and `apply` dropped `stream()` and exited 0.
-    from ._keys import flag_errors
+    from ._keys import default_errors, flag_errors
 
     bad_flags = flag_errors(cfg)
     if bad_flags:
         _refuse(bad_flags)
+    # gh-2820: a default is C text; a TOML `true` on a bool field is
+    # respelled `"true"` here, any other non-string refused, before a
+    # reader calls `.strip()` on it.
+    bad_defaults = default_errors(cfg)
+    if bad_defaults:
+        _refuse(bad_defaults)
     # gh-816: an unknown key is still accepted and still round-trips (gh-257);
     # it just no longer does so in silence. Here rather than in each command
     # because this is the one place every reader passes through, and a
