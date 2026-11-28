@@ -2968,6 +2968,30 @@ PY_BENCH_DIR = "benchmarks"
 PACKAGE_DIRS = (PY_TESTS_DIR, PY_BENCH_DIR)
 
 
+def module_package_dirs(cfg: dict) -> "frozenset[str]":
+    """Every package directory below ``src/<pkg>/`` the manifest's modules
+    fill (:func:`module_package_resolved`), with each of its parents."""
+    out: "set[str]" = set()
+    for m in modules(cfg):
+        parts = [p for p in module_package_resolved(cfg, m).split("/") if p]
+        out |= {"/".join(parts[: i + 1]) for i in range(len(parts))}
+    return frozenset(out)
+
+
+def reserved_package_dirs(cfg: dict) -> "frozenset[str]":
+    """jm's own packages below ``src/<pkg>/`` for *cfg* (gh-2854): every
+    :data:`PACKAGE_DIRS` name at the package root and inside each module's
+    package directory. :func:`namespace_errors` refuses a component or
+    module there, and the completeness gates hold every directory jm writes
+    to being a component's, a module's, or one of these."""
+    packages = {module_package_resolved(cfg, m) for m in modules(cfg)} - {""}
+    return frozenset(
+        f"{base}{d}"
+        for base in ["", *(f"{p}/" for p in packages)]
+        for d in PACKAGE_DIRS
+    )
+
+
 def namespace_errors(cfg: dict) -> "list[str]":
     """Every C symbol stem two owners claim in the one native namespace
     (gh-2142).
@@ -3101,14 +3125,7 @@ def namespace_errors(cfg: dict) -> "list[str]":
     # `benchmarks/`, and the same two in every module's package directory.
     # A standalone `tests` (`<pkg>/tests.so`) or a module whose package path
     # passes through one is hidden by, or mixed into, jm's package.
-    packages = sorted(
-        {module_package_resolved(cfg, m) for m in modules(cfg)} - {""}
-    )
-    reserved = {
-        f"{base}{d}"
-        for base in ["", *(f"{p}/" for p in packages)]
-        for d in PACKAGE_DIRS
-    }
+    reserved = reserved_package_dirs(cfg)
     for comp in sorted(standalone & reserved):
         errors.append(
             f"the standalone component '{comp}' takes the name of jm's own"

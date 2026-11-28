@@ -422,7 +422,7 @@ def sync(root: Path, cfg: dict, module: str) -> None:
     pkg = C.project_name(cfg)
     module_dir = C.module_package_resolved(cfg, module)
     leaf = module_dir.rsplit("/", 1)[-1]
-    tests = root / "src" / pkg / module_dir / "tests"
+    tests = root / "src" / pkg / module_dir / C.PY_TESTS_DIR
     fname = f"test_{leaf}_functions.py"
     path = tests / fname
     owned = path.is_file() and R.is_owned_render(
