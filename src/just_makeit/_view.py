@@ -40,7 +40,11 @@ from . import _csym as CSYM
 from . import _ctorsig
 from ._init import _inject_decls_into_core_h, _inject_includes_into_core_h
 from ._method import _append_to_core_c
-from ._object import _regenerate_module
+from ._object import (
+    _regenerate_module,
+    _view_frag_id,
+    refuse_stale_fragment,
+)
 from ._keys import truthy
 
 
@@ -318,6 +322,16 @@ def run(
             ip_dicts.append(dict(p))
         else:
             ip_dicts.append(C.init_param_tuple_to_dict(p))
+
+    # gh-1983: a fragment a removed view of this name left is kept, and
+    # would bind the new class through the old one's C.
+    refuse_stale_fragment(
+        root,
+        cfg,
+        module,
+        _view_frag_id({"class_name": class_name}),
+        f"view '{class_name}'",
+    )
 
     pkg = C.project_name(cfg)
     print(

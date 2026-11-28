@@ -1839,6 +1839,81 @@ def module_fragments(cfg: dict, module: str) -> "list[tuple[str, str]]":
     ]
 
 
+def orphan_fragments(root: Path, cfg: dict) -> "list[str]":
+    """Binding fragments on disk that no member owns and nothing compiles.
+
+    gh-1983. A module object's or view's fragment
+    (``<cname>_ext_<frag_id>.c``) is sacred, so `apply` never deletes one.
+    `jm remove` does, since gh-2516, but a project whose member went by an
+    older jm -- or by a hand edit of the manifest -- still carries it. Its
+    aggregator no longer includes it, so nothing fails until a member of
+    the same name is added again: the new aggregator then includes the
+    stale fragment, whose calls name the old member's C. `status --check`
+    called that tree clean twice over.
+
+    A file counts when its name is a fragment's, its id is none of
+    :func:`module_fragments`' for that module, it is no hook
+    (``_extrahook.HOOK_SUFFIXES``), and no C file beside it includes it:
+    an author's own ``<cname>_ext_helpers.c`` wired from a hook is
+    compiled, so it is not reported. Each project-relative, sorted.
+    """
+    from ._extrahook import HOOK_SUFFIXES, _includes
+
+    out: "list[str]" = []
+    for mod in C.modules(cfg):
+        cname = C.module_paths(mod).cname
+        d = INC.src_path(root, cname, cfg)
+        if not d.is_dir():
+            continue
+        owned = {
+            f"{cname}_ext_{fid}.c" for _o, fid in module_fragments(cfg, mod)
+        }
+        texts = {
+            p.name: p.read_text(encoding="utf-8", errors="replace")
+            for p in d.glob("*.c")
+            if p.is_file()
+        }
+        for f in sorted(d.glob(f"{cname}_ext_*.c")):
+            if f.name in owned or f.name.endswith(HOOK_SUFFIXES):
+                continue
+            if any(
+                _includes(text, f.name)
+                for name, text in texts.items()
+                if name != f.name
+            ):
+                continue
+            out.append(f.relative_to(root).as_posix())
+    return out
+
+
+def refuse_stale_fragment(
+    root: Path, cfg: dict, module: str, frag_id: str, what: str
+) -> None:
+    """Refuse to add *what* to *module* over a fragment already on disk.
+
+    gh-1983: the new member's fragment is ``<cname>_ext_<frag_id>.c``, and
+    one a member of that name left there is sacred, so the add would keep
+    it -- and its calls into the old member's C -- instead of rendering the
+    new one. jm creates a component only where it can show the files are
+    its own (gh-2459, :func:`_incpath.refuse_occupied`), so the add is
+    refused, naming the file. `status` reports the same file as an orphan
+    (:func:`orphan_fragments`).
+    """
+    cname = C.module_paths(module).cname
+    frag = INC.src_path(root, cname, cfg) / f"{cname}_ext_{frag_id}.c"
+    if frag.is_file():
+        C._refuse(
+            [
+                f"{what} binds through "
+                f"{frag.relative_to(root).as_posix()}, which is already on"
+                " disk: a fragment an earlier member of that name left, and"
+                " jm keeps a fragment it finds, so the new member would call"
+                " the old one's C. Delete the file (or move it aside) and run"
+                " the command again (gh-1983)"
+            ]
+        )
+
+
 def fragment_destroy_ctx(
     cfg: dict,
     obj: str,
@@ -4654,6 +4729,9 @@ def run(
     # own files there, written a command ago.)
     if comp != C.collocated_object(layout_owner, module):
         INC.refuse_occupied(root, layout_owner, comp)
+    # gh-1983: and its binding fragment, which lives in the module's
+    # directory, not its own.
+    refuse_stale_fragment(root, layout_owner, module, comp, f"object '{comp}'")
     core_h_path = INC.core_h(root, comp, layout_owner)
     # gh-2843 item 1: the collocated object's core IS its module's, which
     # may already hold the module's function declarations and the author's

@@ -8,6 +8,10 @@
     just-makeit remove error    <obj> --object <obj>
     just-makeit remove function <name> --module <mod>
     just-makeit remove app      <name>
+    just-makeit remove view     <ClassName> --object <obj>
+
+`--view <ClassName>` on `method`, `property`, `warning` and `error` takes out
+that view's own member, as the add verbs' `--view` declared it (gh-2066).
 
 `--force` (`-f`) skips the confirmation prompt.
 """
@@ -41,6 +45,7 @@ _KINDS = (
     "function",
     "state",
     "app",
+    "view",
 )
 
 
@@ -57,6 +62,7 @@ def run(args: list[str]) -> None:
     name = args[1]
     module: str | None = None
     object_name: str | None = None
+    view = ""
     force = False
 
     rest = args[2:]
@@ -75,6 +81,12 @@ def run(args: list[str]) -> None:
                 print("error: --object requires a name", file=sys.stderr)
                 sys.exit(1)
             object_name = rest[i]
+        elif tok == "--view":
+            i += 1
+            if i >= len(rest):
+                print("error: --view requires a class name", file=sys.stderr)
+                sys.exit(1)
+            view = rest[i]
         elif tok in ("--force", "-f"):
             force = True
         else:
@@ -89,4 +101,5 @@ def run(args: list[str]) -> None:
         module=module,
         object_name=object_name,
         force=force,
+        view=view,
     )

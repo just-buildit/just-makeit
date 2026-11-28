@@ -147,20 +147,33 @@ def _retype_refusal(
         width=72,
         break_on_hyphens=False,
     )
-    on_views = [lab for lab, (_n, v) in zip(labels, who) if v]
-    if on_views:
-        return (
-            f"{head}\n{', '.join(on_views)} belongs to a view, and `jm "
-            "remove` cannot take out a view's method, so there is no "
-            "command route for this change yet."
-        )
     mod = C.component_module(cfg, comp)
     stem = CSYM.stem(cfg, comp)
-    members = {str(m["name"]): m for m in C.methods(cfg, comp)}
+    # gh-2066: a view's own method is removed and re-added with `--view`,
+    # as `jm script` replays it, so a view speaker has the same route.
+    members = {(str(m["name"]), ""): m for m in C.methods(cfg, comp)} | {
+        (str(m["name"]), str(v.get("class_name") or "")): m
+        for v in C.views(cfg, comp)
+        for m in C.view_methods(v)
+    }
+
+    def _view(v: str) -> "list[str]":
+        return [_script._flag("--view", v)] if v else []
+
     lines = [
-        f"just-makeit remove method {n} --object {comp}\n" for n, _v in who
+        f"just-makeit remove method {n} --object {comp}"
+        + (f" --view {v}" if v else "")
+        + "\n"
+        for n, v in who
     ]
-    syms = [f"{C.method_c_symbol(stem, members[n])}()" for n, _v in who]
+    # The C each remove leaves: a view's entry reusing a parent method's
+    # name without `fn` binds the parent's (gh-2498), and its remove's note
+    # names nothing; any other binds its own.
+    syms = [
+        f"{C.method_c_symbol(stem, members[n, v])}()"
+        for n, v in who
+        if not v or members[n, v].get("fn") or (n, "") not in members
+    ]
     lines.append(
         f"# then delete {' and '.join(syms)} by hand, as each remove's "
         "note says\n"
@@ -177,18 +190,18 @@ def _retype_refusal(
         if struct:
             lines.append(f"# then declare `{element}` in the sacred header\n")
         lines.append(
-            f"# and add {' and '.join(n for n, _v in who)} back as {kind} "
+            f"# and add {' and '.join(labels)} back as {kind} "
             "element is spoken:\n"
         )
         lines.append(f"#   {_record.spoken_as(element, struct)}\n")
     else:
-        for n, _v in who:
-            m = members[n]
+        for n, v in who:
+            m = members[n, v]
             lines += _script._method_notes(m)
             lines.append(
                 _script._render_cmd(
                     ["just-makeit", "method", comp, n],
-                    _script._method_flags(m, mod),
+                    _script._method_flags(m, mod) + _view(v),
                 )
             )
     route = "".join("  " + ln for ln in "".join(lines).splitlines(True))

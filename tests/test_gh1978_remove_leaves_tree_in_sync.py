@@ -194,6 +194,16 @@ CASES: "dict[str, dict[str, tuple[list, list, tuple]]]" = {
             ("mod",),
         ),
     },
+    # gh-2066: by its class name, with a member of its own.
+    "view": {
+        "module": (
+            [("module", "mod"), ("object", "o", *_M)],
+            [("view", "o", "V", *_M, "--create-fn", "o_create_v"),
+             ("method", "o", "vm", *_M, "--view", "V", "--arg-type",
+              "double", "--return-type", "double", "--fn", "o_v_vm")],
+            ("V", "--object", "o"),
+        ),
+    },
     # gh-2074: by its name; the C app's wiring is the CMake App block, the
     # console app's the package's `cli.py` and `[project.scripts]`.
     "app": {
