@@ -239,3 +239,31 @@ def test_windows_liveness(handle, exit_code, last_error, alive):
     got = conftest._pid_alive_windows(4242, k32, lambda: last_error)
     assert got is alive
     assert k32.closed is bool(handle), "an opened handle must be closed"
+
+
+def test_a_zombie_worker_is_dead(tmp_path):
+    """A killed run's workers are orphans; where PID 1 never reaps them (a
+    CI container) they stay zombies, which signal 0 still reaches. A
+    zombie never uses its environment again, so it is reaped."""
+    if os.name == "nt":
+        pytest.skip(f"{POSIX_ONLY} a zombie is a child that is not waited")
+    import conftest
+
+    # A child that exits at once and is not waited for is a zombie until
+    # it is: nothing here polls it before the `finally`.
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    pid = child.pid
+    try:
+        deadline = time.monotonic() + 30
+        while conftest._process_state(pid) != "Z":
+            assert time.monotonic() < deadline, conftest._process_state(pid)
+            time.sleep(0.05)
+        os.kill(pid, 0)  # the premise: signal 0 still reaches it
+        assert conftest._pid_alive(pid) is False
+        envs = tmp_path / "t"
+        stale = envs / f"jm-gw0-env-{pid}-zombie"
+        (stale / "venv").mkdir(parents=True)
+        assert conftest._reap_stale_worker_envs(envs) == [stale]
+        assert not stale.exists()
+    finally:
+        child.wait()
