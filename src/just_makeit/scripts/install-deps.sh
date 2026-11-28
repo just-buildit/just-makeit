@@ -164,7 +164,7 @@ _need() {
 }
 
 if command -v cmake >/dev/null 2>&1; then
-    skip "cmake $(cmake --version | head -1 | awk '{print $3}')"
+    skip "cmake $(cmake --version | sed -n 1p | awk '{print $3}')"
 else
     NEED_CMAKE=1
     _need cmake
