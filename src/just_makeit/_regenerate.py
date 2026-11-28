@@ -432,6 +432,19 @@ def run(
                 core_c.read_text(encoding="utf-8"), require_static=False
             )
 
+    # gh-2843: a file the project names in `status_allow` is the author's,
+    # and `apply` never rewrites one -- but this deletes before it applies,
+    # so apply's reconcile never sees it. Held here, through the one
+    # question every member verb's writes ask, and put back after the
+    # rebuild. Not the sacred core, whose bodies are carried above.
+    held = {
+        f: f.read_bytes()
+        for p in paths
+        for f in (sorted(p.rglob("*")) if p.is_dir() else [p])
+        if f.is_file()
+        and f not in (core_h, core_c)
+        and not C.may_write_module_file(cfg, module, root, f)
+    }
     if paths:
         print(
             f"just-makeit: regenerate '{component}' — the following are "
@@ -531,6 +544,18 @@ def run(
             for _name in changed:
                 print(f"  keep author-owned prototype {_name}()")
             _apply.run(root)
+
+    if held:
+        from . import _linkcheck
+        from ._object import kept
+
+        for f, data in held.items():
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(data)
+            kept(f)
+        # The link-check table is derived from the binding, which may be
+        # one of the files just put back.
+        _linkcheck.write(root, cfg, component)
 
     # Delete any pre-built extension module so cmake is forced to relink.
     for so in _stale_ext_modules(root, cfg, pkg, component, module):

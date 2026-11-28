@@ -25,6 +25,7 @@ from ._report import Refusal
 
 import copy as _copy
 import datetime as _dt
+import fnmatch as _fnmatch
 import re as _re
 import sys as _sys
 
@@ -4662,27 +4663,53 @@ def is_no_generate_module(cfg: dict, module: str) -> bool:
 
 
 def may_write_module_file(
-    cfg: dict, module: str, rel: "str | None" = None
+    cfg: dict,
+    module: "str | None",
+    root: "Path | None" = None,
+    path: "Path | None" = None,
 ) -> bool:
-    """Whether jm may write *module*'s file *rel* now -- or, with *rel*
-    None, any file of it.
+    """Whether a member verb may write *path* now -- or, with no *path*,
+    any file of *module*.
 
     The one question a member verb's writes ask (gh-2116): every file
     `_object._regenerate_module_now` writes -- the per-object fragment, the
-    aggregator, the module's CMakeLists, its ``__init__.py`` and ``.pyi``
-    -- passes through it, and so does the up-front refusal
-    (`_regenerate.refuse_hand_written_member`). Today it answers one
-    clause: a ``no_generate`` module's files are all the author's. A file
-    the project lists in ``status_allow`` is the next clause (gh-2843),
-    which is why *rel* is here: project-relative, POSIX.
+    aggregator, the module's CMakeLists, its ``__init__.py`` and ``.pyi``,
+    the link-check table -- and every file a standalone object's re-render
+    writes (`_glue.regenerate_standalone`, `jm method`'s own) passes through
+    it, and so does the up-front refusal
+    (`_regenerate.refuse_hand_written_member`), which asks with no *path*.
+    *module* is the owning module, None for a standalone object.
+
+    Two clauses. A ``no_generate`` module's files are all the author's.
+    And a file the project names in ``[project] status_allow`` is
+    hand-maintained (gh-2843): `jm apply` never rewrites one
+    (`_apply._overwrite_if_changed`, gh-441), so neither does a verb. That
+    clause is about the file, so it needs *root* and *path*, and only a file
+    that EXISTS is held: one the verb is creating is not anyone's yet. It
+    does not reach the sacred ``_core.h`` / ``_core.c``, where a verb
+    writes the declaration it was asked to add rather than re-rendering.
 
     >>> cfg = {"module": {"hand": {"no_generate": "true"}, "gen": {}}}
     >>> may_write_module_file(cfg, "hand"), may_write_module_file(cfg, "gen")
     (False, True)
-    >>> may_write_module_file(cfg, "hand", "native/src/hand/hand_ext.c")
+    >>> import tempfile
+    >>> root = Path(tempfile.mkdtemp())
+    >>> (root / "gen.pyi").write_text("")
+    0
+    >>> cfg["project"] = {"status_allow": ["*.pyi"]}
+    >>> may_write_module_file(cfg, "gen", root, root / "gen.pyi")
     False
+    >>> may_write_module_file(cfg, "gen", root, root / "new.pyi")
+    True
+    >>> may_write_module_file(cfg, None, root, root / "gen_ext.c")
+    True
     """
-    return not is_no_generate_module(cfg, module)
+    if module is not None and is_no_generate_module(cfg, module):
+        return False
+    if root is None or path is None or not path.is_file():
+        return True
+    rel = path.resolve().relative_to(root.resolve()).as_posix()
+    return not status_allowed(cfg, rel)
 
 
 def hand_written_module(cfg: dict, component: str) -> "str | None":
@@ -5436,6 +5463,26 @@ def status_allow(cfg: dict) -> list[str]:
     (gh-426) and a default-doc mismatch (gh-442), which are content loss
     rather than accepted difference."""
     return list(cfg.get("project", {}).get("status_allow", []))
+
+
+def status_allowed(cfg: dict, rel: str) -> bool:
+    """True when *rel* matches a ``[project] status_allow`` pattern (gh-441).
+
+    One predicate for every writer that honours the list -- `apply`'s
+    reconcile (`_apply._overwrite_if_changed`) and a member verb's writes
+    (:func:`may_write_module_file`, gh-2843) -- so a writer that re-renders a
+    file by some other route cannot quietly stop honouring it. *rel* is
+    project-relative, POSIX; an entry is an exact path or an fnmatch glob.
+
+    >>> cfg = {"project": {"status_allow": ["native/inc/*/legacy_*.h"]}}
+    >>> status_allowed(cfg, "native/inc/p/legacy_x.h")
+    True
+    >>> status_allowed(cfg, "native/inc/p/x.h"), status_allowed(cfg, "")
+    (False, False)
+    """
+    return bool(rel) and any(
+        rel == pat or _fnmatch.fnmatch(rel, pat) for pat in status_allow(cfg)
+    )
 
 
 def strict_examples(cfg: dict) -> bool:

@@ -1445,15 +1445,15 @@ def _remove_function(
     if not inline:
         fn_c = INC.src_path(root, cname, cfg) / f"{name}.c"
         # The two files this writes outside the module render, each asking
-        # the question that render's writes ask (gh-2116).
-        if fn_c.exists() and C.may_write_module_file(
-            cfg, module, fn_c.relative_to(root).as_posix()
-        ):
+        # the question that render's writes ask (gh-2116). Both are the
+        # author's C, which a verb edits as asked rather than re-renders, so
+        # only the module clause applies, not `status_allow` (gh-2843).
+        if fn_c.exists() and C.may_write_module_file(cfg, module):
             fn_c.unlink()
             print(f"  delete  {fn_c}")
-        if C.may_write_module_file(
-            cfg, module, core_h.relative_to(root).as_posix()
-        ) and _strip_decl_from_header(core_h, name):
+        if C.may_write_module_file(cfg, module) and _strip_decl_from_header(
+            core_h, name
+        ):
             print(f"  update  {core_h}")
 
     _regenerate_module(root, cfg, module, pkg)

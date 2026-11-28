@@ -20,7 +20,6 @@ from __future__ import annotations
 from . import _textio
 
 import contextlib
-import fnmatch
 import hashlib
 import io
 import os
@@ -2781,18 +2780,6 @@ def _merge_module_init_file(
     return rewrapped
 
 
-def _status_allowed(cfg: dict, rel: str) -> bool:
-    """True when *rel* matches a ``[project] status_allow`` pattern (gh-441).
-
-    One predicate for every reconcile that honours the list, so a writer that
-    re-renders a file by some other route than :func:`_overwrite_if_changed`
-    cannot quietly stop honouring it.
-    """
-    return bool(rel) and any(
-        rel == pat or fnmatch.fnmatch(rel, pat) for pat in C.status_allow(cfg)
-    )
-
-
 def _overwrite_if_changed(
     real: Path,
     temp: Path,
@@ -2821,7 +2808,7 @@ def _overwrite_if_changed(
     """
     if not real.exists() or not temp.exists():
         return False
-    if honor_status_allow and cfg is not None and _status_allowed(cfg, rel):
+    if honor_status_allow and cfg is not None and C.status_allowed(cfg, rel):
         return False
     new_bytes = temp.read_bytes()
     if cfg is not None and real.suffix == ".pyi":
@@ -3146,7 +3133,7 @@ def _refuse_cmake_that_would_lose(
         d = temp.parent.name
         rel = temp.relative_to(temp_root).as_posix()
         real = root / rel
-        if not real.is_file() or _status_allowed(cfg, rel):
+        if not real.is_file() or C.status_allowed(cfg, rel):
             continue
         original = real.read_text(encoding="utf-8")
         written = temp.read_text(encoding="utf-8")
@@ -3677,7 +3664,7 @@ def _sync_aggregates(
             # author keeping their module object's CMakeLists lost it.
             _obj_cml = INC.src_rel(obj, "CMakeLists.txt", cfg)
             if obj != C.collocated_object(cfg, mod) and not (
-                honor_status_allow and _status_allowed(cfg, _obj_cml)
+                honor_status_allow and C.status_allowed(cfg, _obj_cml)
             ):
                 obj_cmake = root / _obj_cml
                 temp_cmake = temp_root / _obj_cml
@@ -3770,7 +3757,7 @@ def _sync_aggregates(
         # same reconcile as a module object's (gh-1301), not a blind
         # overwrite.
         _cml = INC.src_rel(comp, "CMakeLists.txt", cfg)
-        if not (honor_status_allow and _status_allowed(cfg, _cml)):
+        if not (honor_status_allow and C.status_allowed(cfg, _cml)):
             if _reconcile_object_core_cmake(
                 root / _cml, temp_root / _cml, comp, []
             ):
@@ -5006,7 +4993,7 @@ def _apply_manifest(
 
     _ci_written, _ci_notes = _pythons.sync_ci(
         root,
-        skip=lambda rel: honor_status_allow and _status_allowed(cfg, rel),
+        skip=lambda rel: honor_status_allow and C.status_allowed(cfg, rel),
     )
     updated += [root / rel for rel in _ci_written]
     for _note in _ci_notes:
