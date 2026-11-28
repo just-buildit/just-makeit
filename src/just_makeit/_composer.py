@@ -850,6 +850,43 @@ def set_fn_prototype(field: dict, struct: str) -> str:
     return f"const char *{set_fn(field)}({struct} *, {field['type']});"
 
 
+def _gen_wait_c(indent: str = "    ") -> str:
+    """The wait before a source setter commits: no GIL-free ``steps()`` on
+    this source still running (gh-2272), ``return -1;`` with MemoryError
+    when no lock could be had and nothing has been changed.
+
+    >>> print(_gen_wait_c(), end="")
+        /* gh-2272: a GIL-free call may still be running on this
+           object; new ones are refused from here, so wait for those. */
+        if (jm_inflight_wait(&self->_jm_inflight) < 0) {
+            return -1;
+        }
+    """
+    return _inflight.wait("self", "return -1;", indent)
+
+
+def _gen_drop_c(destroy_fn: str, indent: str = "    ") -> str:
+    """Drop the cached generator, built from the config being replaced; the
+    next ``steps()`` builds it again from the new one (gh-2758).
+
+    The ONE spelling of the drop, shared by ``tp_init``, every
+    ``_replace_<name>`` and every field / ``fs`` setter, so a writer of a
+    source cannot leave a generator its own value no longer describes.
+
+    >>> print(_gen_drop_c("g_destroy"), end="")
+        if (self->_gen) {
+            g_destroy(self->_gen);
+            self->_gen = NULL;
+        }
+    """
+    return (
+        f"{indent}if (self->_gen) {{\n"
+        f"{indent}    {destroy_fn}(self->_gen);\n"
+        f"{indent}    self->_gen = NULL;\n"
+        f"{indent}}}\n"
+    )
+
+
 def _store_c(
     field: dict,
     member: str,
@@ -857,6 +894,7 @@ def _store_c(
     value: str,
     struct: str = "",
     check: str = "",
+    gen_destroy: str = "",
 ) -> str:
     """The setter statements that store *value*, the field's converted C
     value: through :func:`set_fn` on *struct_ptr* when the field names one,
@@ -884,25 +922,48 @@ def _store_c(
         _jm_copy.r = _i;
         CHECK(&_jm_copy);
         self->src = _jm_copy;
+
+    gh-2758: with *gen_destroy* -- the destroy function of the generator a
+    ``generates`` source caches -- the store first waits for a running
+    ``steps()`` (the conversion is done, so nothing yields from here), and
+    once it has WRITTEN drops the generator, so the next ``steps()`` builds
+    it from the new value. A refused ``set_fn`` writes nothing, so it drops
+    nothing and the generator keeps its place.
+
+    >>> print(_store_c({"name": "r"}, "self->src.r", "&self->src", "_i",
+    ...                gen_destroy="g_destroy"))
+        /* gh-2272: a GIL-free call may still be running on this
+           object; new ones are refused from here, so wait for those. */
+        if (jm_inflight_wait(&self->_jm_inflight) < 0) {
+            return -1;
+        }
+        self->src.r = _i;
+        if (self->_gen) {
+            g_destroy(self->_gen);
+            self->_gen = NULL;
+        }
     """
     fn = set_fn(field)
+    wait = _gen_wait_c() if gen_destroy else ""
+    drop = _gen_drop_c(gen_destroy).rstrip("\n") if gen_destroy else ""
+    tail = "\n" + drop if drop else ""
     if not fn and check:
         live = struct_ptr.removeprefix("&")
         copy = "_jm_copy" + member.removeprefix(live)
         return (
             f"    {struct} _jm_copy = {live};\n"
             f"    {copy} = {value};\n"
-            f"{check}"
-            f"    {live} = _jm_copy;"
+            f"{check}{wait}"
+            f"    {live} = _jm_copy;" + tail
         )
     if not fn:
-        return f"    {member} = {value};"
+        return f"{wait}    {member} = {value};" + tail
     return (
-        f"    const char *_why = {fn}({struct_ptr}, {value});\n"
+        f"{wait}    const char *_why = {fn}({struct_ptr}, {value});\n"
         "    if (_why) {\n"
         "        PyErr_SetString(PyExc_ValueError, _why);\n"
         "        return -1;\n"
-        "    }"
+        "    }" + tail
     )
 
 
@@ -1628,19 +1689,11 @@ def _replace_c(
     clear = "".join(f"    _jm_copy.{m} = {z};\n" for m, z in members)
     commit = ""
     if gen_destroy:
-        commit = (
-            _inflight.wait(
-                "self",
-                free.format(src="_jm_copy") + " return 0;",
-                "    ",
-            )
-            + "    if (self->_gen) {\n"
-            "        /* Built from the config being replaced; the next\n"
-            "           steps() builds it again from the new one. */\n"
-            f"        {gen_destroy}(self->_gen);\n"
-            "        self->_gen = NULL;\n"
-            "    }\n"
-        )
+        commit = _inflight.wait(
+            "self",
+            free.format(src="_jm_copy") + " return 0;",
+            "    ",
+        ) + _gen_drop_c(gen_destroy)
     install = "".join(
         f"    self->src.{m} = _jm_copy.{m};\n" for m, _ in members
     )
@@ -2481,7 +2534,10 @@ def _source_gen_members(gen: dict) -> "list[dict]":
     """
     build = (
         f"The first call builds the generator from this configuration, "
-        f"through `{gen['bridge_fn']}`; later calls continue it."
+        f"through `{gen['bridge_fn']}`; later calls continue it, until a "
+        "field or `fs` of this source is assigned (gh-2758): that drops it, "
+        "and the next call builds it again from the new value, so the "
+        "samples restart. `reset()` rewinds without rebuilding."
     )
     refused = _bridge_refused(gen)
     return [
@@ -3484,11 +3540,9 @@ _attach_bytes(uint8_t **dst, size_t *n_dst, PyObject *obj{bits_param})
     # the old owned members go, and the copy is the source.
     commit = ""
     if gen:
-        commit = (
-            _inflight.wait("self", init_fail.replace("\n", " "), "    ")
-            + f"    if (self->_gen) {{ {gen['destroy_fn']}(self->_gen); "
-            "self->_gen = NULL; }\n"
-        )
+        commit = _inflight.wait(
+            "self", init_fail.replace("\n", " "), "    "
+        ) + _gen_drop_c(gen["destroy_fn"])
     commit += textwrap.indent(_release("self->src"), "    ")
     commit += "    self->src = _jm_copy;\n    self->fs = fs;\n"
     parts.append(
@@ -3516,6 +3570,9 @@ static int
     # gh-2856: what a plain setter runs against its copy `_c` before it
     # commits; "" without a `check_fn`.
     chk = check_c(cfg, module, "&_jm_copy", "return -1;")
+    # gh-2758: a setter of a generating source waits for a running steps()
+    # and drops the generator its old value built; "" without `generates`.
+    _gd = gen["destroy_fn"] if gen else ""
     for f in fields:
         n = f["name"]
         # gh-2753: a `set_fn` on a field with no single value is refused
@@ -3548,7 +3605,7 @@ static int
     const char *s = PyUnicode_AsUTF8(value);
     if (!s) return -1;
 {_enum_set}
-{_store_c(f, f"self->src.{n}", "&self->src", "_i", struct, chk)}
+{_store_c(f, f"self->src.{n}", "&self->src", "_i", struct, chk, _gd)}
     return 0;
 }}""")
             getset_rows.append(
@@ -3670,14 +3727,16 @@ static int
                 f,
                 meta,
                 "value",
-                f"_jm_copy.{n}" if chk else dst,
-                "_jm_copy.ranged" if chk else "self->src.ranged",
+                f"_jm_copy.{n}" if chk or _gd else dst,
+                "_jm_copy.ranged" if chk or _gd else "self->src.ranged",
                 "return -1;",
             )
-            if chk:
+            if chk or _gd:
                 parse = (
                     f"    {struct} _jm_copy = self->src;\n{parse}{chk}"
-                    "    self->src = _jm_copy;\n"
+                    + (_gen_wait_c() if _gd else "")
+                    + "    self->src = _jm_copy;\n"
+                    + (_gen_drop_c(_gd) if _gd else "")
                 )
             _body = (
                 f"    if (self->src.ranged & {flag})\n{pair}\n"
@@ -3712,7 +3771,7 @@ static int
 {tname}_set_{n}({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-{parse}{_store_c(f, f"self->src.{n}", "&self->src", "_v", struct, chk)}
+{parse}{_store_c(f, f"self->src.{n}", "&self->src", "_v", struct, chk, _gd)}
     return 0;
 }}""")
             getset_rows.append(
@@ -3735,9 +3794,10 @@ static int
 {tname}_set_fs({obj} *self, PyObject *value, void *closure)
 {{
     (void)closure;
-    self->fs = PyFloat_AsDouble(value);
+    double _v = PyFloat_AsDouble(value);
     if (PyErr_Occurred()) return -1;
-    return 0;
+{_gen_wait_c() if _gd else ""}    self->fs = _v;
+{_gen_drop_c(_gd) if _gd else ""}    return 0;
 }}""")
     getset_rows.append(
         f'    {{"fs", (getter){tname}_get_fs, (setter){tname}_set_fs, '
