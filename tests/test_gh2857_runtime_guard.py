@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from _cmake import PYTHON3_ARG
+from _compilers import default_cc
 from _jmrun import run_cli
 
 pytestmark = pytest.mark.skipif(
@@ -86,3 +87,50 @@ def test_a_named_configure_and_a_build_go_through(project):
         text=True,
     )
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+_C_ONLY = (
+    "cmake_minimum_required(VERSION 3.16)\n"
+    "project(smoke C)\n"
+    "add_executable(smoke smoke.c)\n"
+)
+
+
+def test_a_c_only_consumer_has_no_interpreter_to_name(tmp_path):
+    """A C project (fir_filter's installed-library consumer) builds no
+    extension: its configure goes through with no interpreter named, and
+    naming one would be a false claim. Read from its CMake, not a list."""
+    if default_cc() is None:
+        pytest.skip("no C compiler found")
+    src = tmp_path / "consumer"
+    src.mkdir()
+    (src / "CMakeLists.txt").write_text(_C_ONLY, encoding="utf-8")
+    (src / "smoke.c").write_text(
+        "int main(void) { return 0; }\n", encoding="utf-8"
+    )
+    r = subprocess.run(
+        ["cmake", "-B", "build", "-S", "."],
+        cwd=src,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+def test_python_in_an_included_cmake_file_still_counts(tmp_path):
+    # The guard reads every CMakeLists.txt and .cmake file in the source
+    # tree: a project that asks for Python3 from an include is guarded.
+    src = tmp_path / "proj"
+    (src / "cmake").mkdir(parents=True)
+    (src / "CMakeLists.txt").write_text(
+        _C_ONLY + "include(cmake/py.cmake)\n", encoding="utf-8"
+    )
+    (src / "cmake" / "py.cmake").write_text(
+        "find_package(Python3 REQUIRED COMPONENTS Development)\n",
+        encoding="utf-8",
+    )
+    _stopped(
+        lambda: subprocess.run(
+            ["cmake", "-B", "build", "-S", "."], cwd=src, capture_output=True
+        )
+    )
