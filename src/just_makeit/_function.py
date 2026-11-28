@@ -484,6 +484,14 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-2116: before anything is written. `apply` writes nothing of a
+    # `no_generate` module, so the function would reach none of its files;
+    # the verb rewrote its header, binding, `__init__.py` and `.pyi`.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg, module, f"add function '{fn_name}' to module '{module}'"
+    )
 
     existing = [f["name"] for f in C.module_functions(cfg, module)]
     if fn_name in existing:

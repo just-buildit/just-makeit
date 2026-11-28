@@ -4604,6 +4604,34 @@ def is_no_generate_module(cfg: dict, module: str) -> bool:
     return _truthy(cfg.get("module", {}).get(module, {}).get("no_generate"))
 
 
+def hand_written_module(cfg: dict, component: str) -> "str | None":
+    """The ``no_generate`` module that owns *component*, or None.
+
+    An object in a ``no_generate`` module is the author's by declaration:
+    `jm apply` writes none of it -- not its ``_core.c`` / ``_core.h``, not
+    its binding fragment, ``.pyi`` or tests -- so no command may promise to
+    write, rebuild or refresh it. This is the one question every such
+    command asks (gh-2087, gh-2116, gh-2117): the rebuild verbs refuse on
+    it (`_regenerate.refuse_hand_written`), the member verbs refuse on it
+    (`_regenerate.refuse_hand_written_member`), and advice that would
+    otherwise name `jm regenerate` names editing the C by hand instead
+    (`_regenerate.rebuild_route`).
+
+    >>> cfg = {"module": {"mod": {"objects": ["o"], "no_generate": "true"},
+    ...                  "gen": {"objects": ["g"]}}}
+    >>> hand_written_module(cfg, "o")
+    'mod'
+    >>> hand_written_module(cfg, "g") is None
+    True
+    >>> hand_written_module({"s": {}}, "s") is None
+    True
+    """
+    module = component_module(cfg, component)
+    if module is None or not is_no_generate_module(cfg, module):
+        return None
+    return module
+
+
 def no_generate_findings(cfg: dict) -> "list[tuple[str, str]]":
     """``(module, problem)`` for every opt-out that does not say why (gh-1313).
 

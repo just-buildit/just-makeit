@@ -687,6 +687,15 @@ def run(
         )
         sys.exit(1)
 
+    # gh-2116: before anything is written. `apply` writes nothing of
+    # a `no_generate` module, so a member declared there would reach
+    # none of its files; the verb rewrote them instead.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg, module, f"add property '{prop_name}' to '{object_name}'"
+    )
+
     # gh-504: --view retargets the property onto a VIEW of the object (a view
     # can ADD a property the parent lacks, or OVERRIDE a parent property of the
     # same name). Views are module-only.

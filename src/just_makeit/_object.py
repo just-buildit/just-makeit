@@ -4354,6 +4354,14 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-2116: an object is a member of its module: it is registered in the
+    # module's CMakeLists, aggregator, `__init__.py` and `.pyi`, which a
+    # `no_generate` module keeps by hand.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg, module, f"add object '{object_name}' to module '{module}'"
+    )
 
     if object_name in C.module_objects(cfg, module):
         print(

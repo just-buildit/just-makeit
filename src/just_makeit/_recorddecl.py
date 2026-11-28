@@ -272,6 +272,15 @@ def run(
             file=sys.stderr,
         )
         sys.exit(1)
+    # gh-2116: a record is read only by the members that speak it, and on
+    # an object in a `no_generate` module those are the author's.
+    from . import _regenerate
+
+    _regenerate.refuse_hand_written_member(
+        cfg,
+        C.component_module(cfg, object_name),
+        f"declare record '{record_name}' on '{object_name}'",
+    )
     # gh-1404: the two kinds are declared by different keys, so asking for
     # both is asking for two elements under one name -- and asking for
     # neither describes nothing at all.
