@@ -2115,6 +2115,93 @@ def flag_errors(cfg: dict) -> "list[str]":
     return out
 
 
+def default_values(tree: object, path: "tuple[str, ...]" = ()):
+    """Yield ``(path, row)`` for every row of *tree* that carries a
+    ``default``.
+
+    The one walk of the manifest's defaults, as :func:`flag_values` is of
+    its flags: a ``default`` is a key of a ROW (a state field, an init
+    param, a method or function param, a composer field, an app flag,
+    a group field, ...), so a table that merely nests is walked and not
+    read. *path* names where the row sits, a row by its ``name``.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"state": [{"name": "g", "default": True}],
+    ...        "methods": [{"name": "m", "params": [
+    ...            {"name": "k", "default": "1"}]}]}}
+    >>> [(".".join(p), r["default"]) for p, r in default_values(cfg)]
+    [('o.state[g]', True), ('o.methods[m].params[k]', '1')]
+    """
+    if isinstance(tree, dict):
+        for key, value in tree.items():
+            if isinstance(value, (dict, list)):
+                yield from default_values(value, (*path, str(key)))
+    elif isinstance(tree, list):
+        for i, row in enumerate(tree):
+            if not isinstance(row, dict):
+                continue
+            name = row.get("name")
+            tag = name if isinstance(name, str) and name else str(i)
+            *head, last = path or ("",)
+            here = (*head, f"{last}[{tag}]")
+            if "default" in row:
+                yield here, row
+            yield from default_values(row, here)
+
+
+def default_errors(cfg: dict) -> "list[str]":
+    """Respell a TOML bool ``default`` of a ``bool`` row, and name every
+    other ``default`` that is not a string.
+
+    A default is C source text (``default = "0.5"``, ``"N_DEF"``), so jm
+    reads it as a string everywhere and a TOML value of another type
+    crashed ``apply`` in whichever reader first called ``.strip()`` on it
+    (gh-2820). ``default = true`` is the natural spelling for a ``bool``
+    field and is valid TOML, so on a row whose ``type`` is ``bool`` it is
+    accepted and rewritten IN *cfg* to ``"true"`` / ``"false"`` -- the
+    spelling jm writes, never ``str(True)``, which is ``"True"`` and which
+    `default_type_error` refuses (gh-2137). Any other non-string default
+    (a bool on a non-bool row, a number, a list) is returned as one line
+    naming the row, for the caller to refuse.
+
+    Asked at load (`_config.load`), before anything reads a default, so
+    every reader -- apply, status, bind -- sees the one spelling.
+
+    Examples
+    --------
+    >>> cfg = {"o": {"state": [{"name": "g", "type": "bool",
+    ...        "default": True}]}}
+    >>> default_errors(cfg), cfg["o"]["state"][0]["default"]
+    ([], 'true')
+    >>> print(default_errors({"o": {"state": [
+    ...     {"name": "n", "type": "int", "default": 5}]}})[0])
+    ... # doctest: +NORMALIZE_WHITESPACE
+    o.state[n]: default = 5 must be a string holding a C expression
+    (`default = "5"`); only a bool field takes true or false
+    >>> print(default_errors({"o": {"state": [
+    ...     {"name": "n", "type": "int", "default": True}]}})[0])
+    ... # doctest: +NORMALIZE_WHITESPACE
+    o.state[n]: default = True must be a string holding a C expression
+    (`default = "True"`); only a bool field takes true or false
+    """
+    out: "list[str]" = []
+    for path, row in default_values(cfg):
+        value = row["default"]
+        if isinstance(value, str):
+            continue
+        if isinstance(value, bool) and row.get("type") == "bool":
+            row["default"] = "true" if value else "false"
+            continue
+        hint = f'"{value}"' if isinstance(value, (int, float)) else '"..."'
+        out.append(
+            f"{'.'.join(path)}: default = {value!r} must be a string "
+            f"holding a C expression (`default = {hint}`); only a bool "
+            "field takes true or false"
+        )
+    return out
+
+
 def warn_unknown_keys(cfg: dict, stream=None) -> list:
     """Print one ``warning:`` line per unrecognised key, deduplicated.
 
