@@ -1421,6 +1421,108 @@ def class_runtime_doc(
     return docstring_body(lines, CLASS_INDENT)
 
 
+#: The inputs of :func:`class_docstring_block` that carry authored text: a
+#: header's Doxygen, the manifest's class `doc`, its state rows' `doc`, the
+#: declared diagnostics and the enum choices. The init-params' own `doc` is
+#: the fifth positional argument, cleared by :func:`_bare_init_params`.
+_AUTHORED_CLASS_DOC_INPUTS = {
+    "doc_blocks": None,
+    "manifest_doc": "",
+    "state_docs": None,
+    "raises": (),
+    "warns": (),
+    "enum_choices": None,
+}
+
+#: Where `_config.init_params`' tuple carries the param's manifest `doc`.
+_INIT_PARAM_DOC = 9
+
+
+def _bare_init_params(init_params: list) -> list:
+    """*init_params* with every manifest ``doc`` cleared.
+
+    Examples
+    --------
+    >>> _bare_init_params([("n", "int", "0", "", "", "", False, "", False,
+    ...                     "Count.", "", "")])[0][_INIT_PARAM_DOC]
+    ''
+    """
+    return [
+        (*p[:_INIT_PARAM_DOC], "", *p[_INIT_PARAM_DOC + 1 :])
+        if len(p) > _INIT_PARAM_DOC
+        else p
+        for p in init_params
+    ]
+
+
+#: An init-param's own ``doc``: not a keyword of the builder but a field of
+#: each row of its fifth positional argument.
+INIT_PARAM_DOC_INPUT = "init_params.doc"
+
+#: Every authored input, by name: the keywords above and the param docs.
+CLASS_DOC_INPUTS = frozenset(_AUTHORED_CLASS_DOC_INPUTS) | {
+    INIT_PARAM_DOC_INPUT
+}
+
+#: The inputs that are prose the MANIFEST declares for the class docstring.
+#: `_docsync` replaces a sacred fragment's ``tp_doc`` whatever it holds only
+#: on these (gh-1191): a declared failure or a header ``@brief`` builds the
+#: block, but is no licence to overwrite a summary a human wrote there
+#: (gh-805 §F's `test_a_hand_written_class_docstring_survives`).
+MANIFEST_CLASS_DOC_INPUTS = frozenset(
+    {"manifest_doc", "state_docs", INIT_PARAM_DOC_INPUT}
+)
+
+
+def class_doc_authored(
+    *args,
+    custom_reset: bool = False,
+    inputs: "frozenset[str]" = CLASS_DOC_INPUTS,
+    **kwargs,
+) -> bool:
+    """Whether authored *inputs* reach a class docstring (gh-2401).
+
+    Takes exactly :func:`class_docstring_block`'s arguments, and answers by
+    rendering it twice: as given, and with the *inputs* named (by default
+    every one in `CLASS_DOC_INPUTS`) removed. The two differ exactly when
+    some of that text reaches the ``.pyi``'s class docstring -- a manifest
+    or header summary, a documented constructor parameter or state field, a
+    declared ``Raises`` / ``Warns``, an enum's choices -- so the runtime
+    ``tp_doc`` renders the full block from the same evidence the stub does:
+    the gh-1177 question ("is anything authored") asked of the builder
+    itself rather than of a list of inputs beside it.
+
+    The one predicate for every runtime class docstring jm writes -- a
+    standalone object's (`_glue.component_ctx`), a module object's and a
+    view's (`_object`), `jm bind`'s -- and, asked of
+    `MANIFEST_CLASS_DOC_INPUTS`, for whether `_docsync` may replace a
+    sacred fragment's ``tp_doc``.
+
+    Examples
+    --------
+    >>> args = ("o", "O", [("g", "double", "0.0")], False, [], "", "")
+    >>> class_doc_authored(*args, csym="o")
+    False
+    >>> class_doc_authored(*args, csym="o", state_docs={"g": "Gain."})
+    True
+    >>> class_doc_authored(*args, csym="o", raises=[("ValueError", "x")],
+    ...                    inputs=MANIFEST_CLASS_DOC_INPUTS)
+    False
+    """
+    # Positional, as every caller passes them: init_params is the fifth.
+    bare = list(args)
+    if INIT_PARAM_DOC_INPUT in inputs:
+        bare[4] = _bare_init_params(bare[4])
+    stripped = {
+        k: v for k, v in _AUTHORED_CLASS_DOC_INPUTS.items() if k in inputs
+    }
+    return class_docstring_block(
+        *args, custom_reset=custom_reset, **kwargs
+    ) != class_docstring_block(
+        *bare, custom_reset=custom_reset, **{**kwargs, **stripped}
+    )
+
+
 def _method_doc_lines(
     block,
     m_name: str,

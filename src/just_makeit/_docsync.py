@@ -3472,13 +3472,15 @@ def transplant_hand_written(
     return out
 
 
-def manifest_documented(
-    cfg: dict, obj: str, frag_id: str
-) -> "tuple[frozenset[str], bool]":
-    """Which of *frag_id*'s doc slots the manifest declares the text for.
+def manifest_documented(cfg: dict, obj: str, frag_id: str) -> "frozenset[str]":
+    """Which of *frag_id*'s member doc slots the manifest declares text for.
 
-    gh-1191. Returns ``(member names, class doc declared)`` — the two things
-    :func:`transplant_docs` needs to tell a stale slot from a hand-written one.
+    gh-1191. The member names :func:`transplant_docs` needs to tell a stale
+    slot from a hand-written one. The class docstring's answer is not here:
+    it is the render's own predicate (`_stubs.class_doc_authored`) asked
+    of the manifest's prose, carried on the fragment's context as
+    ``tp_doc_declared`` (gh-2401), rather than a second reading of the
+    manifest beside it.
 
     A view's fragment takes the **union** of its own members and its parent's,
     because a view inherits every member it does not exclude: a `doc` declared
@@ -3490,7 +3492,6 @@ def manifest_documented(
     ``PyGetSetDef`` row carries and therefore what the transplant matches on.
     """
     names: set[str] = set()
-    section = cfg.get(obj) or {}
 
     def _take(entries) -> None:
         for e in entries or []:
@@ -3500,14 +3501,14 @@ def manifest_documented(
     _take(C.methods(cfg, obj))
     _take(C.properties(cfg, obj))
     if frag_id == obj:
-        return frozenset(names), bool(section.get("doc"))
+        return frozenset(names)
     for v in C.views(cfg, obj):
         if v.get("class_name", "").lower() != frag_id:
             continue
         _take(C.view_methods(v))
         _take(C.view_properties(v))
-        return frozenset(names), bool(v.get("doc"))
-    return frozenset(names), False
+        return frozenset(names)
+    return frozenset(names)
 
 
 def refresh_module_fragment_docs(
@@ -3583,16 +3584,17 @@ def refresh_module_fragment_docs(
             # than hand-written. Without this an EDIT to one reached the
             # `.pyi` and stopped — jm had the corrected text and declined to
             # write it, and `apply` said nothing.
-            _authored, _authored_tp = manifest_documented(
-                cfg, ctx["component"], comp
-            )
+            _authored = manifest_documented(cfg, ctx["component"], comp)
             updated = transplant_docs(
                 existing,
                 reference,
                 fb,
                 _reclaimed,
                 authored=_authored,
-                authored_tp_doc=_authored_tp,
+                # gh-2401: the render's own predicate, asked of the
+                # manifest's prose (`_stubs.MANIFEST_CLASS_DOC_INPUTS`),
+                # not a second, narrower reading of the manifest.
+                authored_tp_doc=ctx["tp_doc_declared"],
             )
             # gh-440: a new method/property added to the manifest since this
             # fragment was last generated is missing entirely -- splice it in

@@ -438,6 +438,9 @@ def _object_kwargs(cfg: dict, comp: str) -> dict:
         "controllable_names": C.controllable_names(cfg, comp),
         # gh-1761: manifest-only, like every key above that has no flag.
         "state_str_hints": C.state_str_hints(cfg, comp),
+        # gh-2401: manifest-only too; a module's `.pyi` renders from the
+        # replayed manifest, which had no state doc without it.
+        "state_docs": C.state_docs(cfg, comp),
         "extra_link_libs": C.component_extra_link_libs(cfg, comp),
         "extra_include_dirs": C.component_extra_include_dirs(cfg, comp),
         # gh-541/gh-544: the destructor contract is manifest-only (no CLI
@@ -1519,6 +1522,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 create_error_message=v.get("create_error_message"),
                 create_why=C.view_create_why(v),  # gh-2552
                 create_core=v.get("create_core", ""),  # gh-2681
+                # gh-2401: the view's own snippet; the parent's is inherited
+                # at render time, never copied onto the row.
+                init_post_parse=v.get("init_post_parse", ""),
                 from_apply=True,
             )
             # gh-504: the view's OWN added/overriding members, materialized
