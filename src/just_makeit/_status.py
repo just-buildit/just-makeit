@@ -530,6 +530,16 @@ def run(
         for rel in C.declined_python_benches(root, cfg)
         if not _is_allowed(rel, allow_patterns)
     ]
+    # gh-1983: and a binding fragment no member owns. The aggregator no
+    # longer includes it, so no diff shows it -- until a member of that
+    # name is added again and the add keeps it.
+    from ._object import orphan_fragments
+
+    _orphan_frag = [
+        rel
+        for rel in orphan_fragments(root, cfg)
+        if not _is_allowed(rel, allow_patterns)
+    ]
 
     # gh-1154: manifest `doc` values the renderer cannot carry whole. Static,
     # manifest-only, and nothing `apply` would rewrite — the same shape as
@@ -1263,6 +1273,7 @@ def run(
         + len(manifest_doc_entries)
         + len(_orphan_pg)
         + len(_declined_bench)
+        + len(_orphan_frag)
         # gh-823: unconditional, not opt-in. `strict_examples` above is a
         # completeness ratchet projects legitimately differ on; this is "the
         # published constructor raises when called as documented", which is
@@ -1377,6 +1388,7 @@ def run(
                     ],
                     "orphan_procglobal_headers": list(_orphan_pg),
                     "declined_python_benches": list(_declined_bench),
+                    "orphan_fragments": list(_orphan_frag),
                     # gh-1566: the UNRECONCILED buckets, from the same
                     # classifier the text prints -- one source, two faces.
                     "unreconciled": {
@@ -2778,6 +2790,22 @@ def run(
         )
         print()
 
+    # gh-1983: same treatment, and the same reason no diff can show it.
+    if _orphan_frag:
+        print(
+            f"ORPHAN ({len(_orphan_frag)}) — binding fragment(s) no member "
+            "of their module owns:"
+        )
+        for rel in _orphan_frag:
+            print(f"  ! {rel}")
+        print(
+            "  Nothing compiles it now, but adding a member of that name "
+            "again would keep it,\n  and the new member would call the old "
+            "one's C. jm does not delete files —\n  remove it yourself "
+            "(`jm remove` does since gh-2516). See gh-1983."
+        )
+        print()
+
     # gh-921: deliberately NOT the "impossible to miss" treatment the three
     # sections around it get. Nothing here is broken — gh-920 made this seam
     # safe, and the allocation is the historical clamped one, which is correct
@@ -2965,6 +2993,7 @@ def run(
         and not version_entries
         and not _orphan_pg
         and not _declined_bench
+        and not _orphan_frag
         and not manifest_doc_entries
         and not any(not e[2] for e in kwargs_entries)
         # gh-1290: and the record shapes, on the same argument — a
@@ -3141,6 +3170,11 @@ def run(
             + (
                 f", {len(_declined_bench)} declined-bench (!)"
                 if _declined_bench
+                else ""
+            )
+            + (
+                f", {len(_orphan_frag)} orphan-fragment (!)"
+                if _orphan_frag
                 else ""
             )
             + (

@@ -451,9 +451,12 @@ Commands:
     --force, -f                 Skip the rebuild confirmation.
 
   remove <kind> <name> [OPTIONS]  Delete a scaffolded object/module/method/etc.
-    kind is object|module|state|method|property|warning|error|function|app.
+    kind is object|module|state|method|property|warning|error|function|app|view.
     --object name               Object the method/property lives on (required for those).
     --module name               Module the function lives in (required for function).
+    --view ClassName            The view whose own method/property/warning/error
+                                to remove (as `--view` added it). `remove view
+                                <ClassName> --object <obj>` removes the view.
     --force, -f                 Skip the confirmation prompt.
 
   app [OPTIONS]                 Add a shippable standalone application ([[app]] row).

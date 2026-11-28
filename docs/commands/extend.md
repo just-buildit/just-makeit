@@ -1393,6 +1393,23 @@ linking. (Removing
 *state* via `just-makeit remove state <name> --object <obj>` is structural and
 rebuilds the object via the regenerate path instead.)
 
+A view's own members come out the way `--view` put them in (gh-2066):
+`--view <ClassName>` on `remove method`, `property`, `warning` or `error`
+takes out that view's entry and leaves the parent's. A whole view goes by its
+class name, with its binding fragment; its constructor and the functions its
+own methods bound stay in the core, named in the closing note:
+
+```sh
+just-makeit remove method run --object acq --view Burst
+just-makeit remove view Burst --object acq
+```
+
+Removing a module object or a view deletes its binding fragment
+(`<module>_ext_<name>.c`). One an older jm left behind is reported by
+`jm status` as `ORPHAN`, and adding a member of that name again is refused
+until you delete it: the add would keep the old fragment, and the new member
+would call the old one's C (gh-1983).
+
 An object, module or function that an [app](app.md) is built from is **not**
 removed while the app is there (gh-2075): `jm remove` refuses, names each
 such app and its route, `jm remove app <name>`, and changes nothing. Removing
