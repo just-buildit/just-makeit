@@ -24,11 +24,20 @@ from __future__ import annotations
 import ast
 import builtins
 import doctest
+import importlib.util
+import os
 import re
+import runpy
+import shutil
 from pathlib import Path
 
 import pytest
 from _jmrun import run_cli
+
+from just_makeit import _config as C
+from just_makeit import _incpath as INC
+
+EXAMPLES = Path(__file__).parent.parent / "src/just_makeit/examples"
 
 #: (kind, [argv...]) -- every step shape with an array constructor argument.
 OBJECTS = [
@@ -69,7 +78,7 @@ def _ok(*argv: str, cwd: Path) -> None:
 
 
 @pytest.fixture(scope="module")
-def proj(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def objects_proj(tmp_path_factory: pytest.TempPathFactory) -> Path:
     root = tmp_path_factory.mktemp("gh2844") / "p"
     root.parent.mkdir(exist_ok=True)
     _ok("new", "p", cwd=root.parent)
@@ -98,6 +107,96 @@ def proj(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "m_scal_create_vw",
         cwd=root,
     )
+    return root
+
+
+def _load_example(name: str):
+    spec = importlib.util.spec_from_file_location(
+        f"_gh2844_{name}", EXAMPLES / name / "test.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def capsule_proj(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A `kind = "capsule"` module: scalar ctor arg, array method param."""
+    root = tmp_path_factory.mktemp("gh2844cap") / "p"
+    _ok("new", "p", cwd=root.parent)
+    cfg = C.load(root)
+    cfg.setdefault("module", {})["cap"] = {
+        "kind": "capsule",
+        "backing": "bk",
+        "header": "p/bk/bk.h",
+        "init_params": [{"name": "gain", "type": "double"}],
+        "methods": [
+            {
+                "name": "execute",
+                "arg_type": "float[]",
+                "return_type": "float[]",
+                "caller_out": True,
+            },
+            {"name": "reset"},
+        ],
+    }
+    C.save(root, cfg)
+    _ok("apply", cwd=root)
+    return root
+
+
+@pytest.fixture(scope="module")
+def handle_proj(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The composites example's `kind = "handle"` module, applied only."""
+    ex = _load_example("composites")
+    root = tmp_path_factory.mktemp("gh2844hnd") / "composites"
+    _ok("new", "composites", cwd=root.parent)
+    inc = INC.header_root(root) / "ringbuf"
+    inc.mkdir(parents=True, exist_ok=True)
+    (inc / "ringbuf.h").write_text(ex._RINGBUF_H, encoding="utf-8")
+    rb = root / "native/src/ringbuf"
+    rb.mkdir(parents=True, exist_ok=True)
+    (rb / "ringbuf.c").write_text(ex._RINGBUF_C, encoding="utf-8")
+    (rb / "CMakeLists.txt").write_text(ex._RINGBUF_CMAKE, encoding="utf-8")
+    cfg = C.load(root)
+    cfg["project"]["c_deps"] = ["ringbuf"]
+    cfg.setdefault("module", {})["ring"] = ex._ring_module()
+    C.save(root, cfg)
+    _ok("apply", cwd=root)
+    return root
+
+
+@pytest.fixture(scope="module")
+def composer_proj(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The composer_seams example's `kind = "composer"` module, applied."""
+    steps = EXAMPLES / "composer_seams/.steps"
+    root = tmp_path_factory.mktemp("gh2844cmp") / "studio"
+    _ok("new", "studio", cwd=root.parent)
+    _ok(
+        "object",
+        "clip",
+        "--arg-type",
+        "void",
+        "--return-type",
+        "float _Complex",
+        cwd=root,
+    )
+    (INC.header_root(root) / "playlist").mkdir(parents=True, exist_ok=True)
+    backing = root / "native/src/backing"
+    backing.mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        steps / "02_playlist_core.h",
+        INC.header_root(root) / "playlist/playlist_core.h",
+    )
+    shutil.copy(steps / "02_playlist_core.c", backing / "playlist_core.c")
+    shutil.copy(steps / "02_CMakeLists.txt", backing / "CMakeLists.txt")
+    here = os.getcwd()
+    os.chdir(root)
+    try:
+        runpy.run_path(str(steps / "03_manifest.py"), run_name="__main__")
+    finally:
+        os.chdir(here)
+    _ok("apply", cwd=root)
     return root
 
 
@@ -160,6 +259,13 @@ def undefined_names(doc: str) -> list[str]:
     return missing
 
 
+def _all_docs_files(root: Path) -> list[tuple[str, str]]:
+    """Every generated file the walker reads, with or without examples."""
+    files = list(root.glob("native/src/**/*_ext*.c"))
+    files += root.glob("src/**/*.pyi")
+    return [(f.name, "") for f in sorted(files)]
+
+
 def _all_docs(root: Path) -> list[tuple[str, str]]:
     out = []
     for f in sorted(root.glob("native/src/**/*_ext*.c")):
@@ -169,16 +275,71 @@ def _all_docs(root: Path) -> list[tuple[str, str]]:
     return out
 
 
-def test_the_scaffold_has_array_constructor_examples(proj: Path) -> None:
-    """The arrangement must actually render the shape under test."""
-    docs = _all_docs(proj)
+#: kind -> (fixture, the fewest doctest examples its scaffold must carry,
+#: the fewest generated docstring FILES the walker must have read). A count
+#: that falls is a scaffold that stopped rendering the shape under test. A
+#: capsule renders no synthesized example today (an example there would be
+#: the author's), so its floor is 0 examples, but the two files the walker
+#: reads must exist: a future builder that adds an example is walked.
+KINDS = {
+    "object": ("objects_proj", 100, 12),
+    "capsule": ("capsule_proj", 0, 2),
+    "handle": ("handle_proj", 1, 2),
+    "composer": ("composer_proj", 1, 4),
+}
+
+
+def _examples(doc: str) -> int:
+    return len(doctest.DocTestParser().get_examples(doc))
+
+
+@pytest.mark.parametrize("kind", sorted(KINDS))
+def test_the_scaffold_renders_examples_of_every_kind(
+    kind: str, request: pytest.FixtureRequest
+) -> None:
+    """The vacuity guard, counted per kind: a kind whose scaffold stopped
+    rendering examples must fail here, not pass `undefined_names` empty."""
+    fixture, min_examples, min_files = KINDS[kind]
+    root = request.getfixturevalue(fixture)
+    n = sum(_examples(d) for _, d in _all_docs(root))
+    assert n >= min_examples, (kind, n)
+    files = {src for src, _ in _all_docs_files(root)}
+    assert len(files) >= min_files, (kind, sorted(files))
+
+
+def test_objects_render_array_constructor_examples(
+    objects_proj: Path,
+) -> None:
+    """The shape gh-2844 is about is actually rendered."""
+    docs = _all_docs(objects_proj)
     assert sum("np.zeros(1" in d for _, d in docs) >= 8, len(docs)
 
 
-def test_every_generated_example_defines_the_names_it_uses(proj: Path) -> None:
+@pytest.mark.parametrize("kind", sorted(KINDS))
+def test_every_generated_example_defines_the_names_it_uses(
+    kind: str, request: pytest.FixtureRequest
+) -> None:
+    root = request.getfixturevalue(KINDS[kind][0])
     bad = [
         (src, undefined_names(d), d.splitlines()[0])
-        for src, d in _all_docs(proj)
+        for src, d in _all_docs(root)
         if undefined_names(d)
     ]
     assert not bad, "\n".join(map(str, bad))
+
+
+def test_a_capsule_constructor_takes_no_array(tmp_path: Path) -> None:
+    """Why no `np.` constructor line exists for that kind: an array
+    `init_param` is refused on a capsule (only an object's takes one)."""
+    root = tmp_path / "p"
+    _ok("new", "p", cwd=tmp_path)
+    cfg = C.load(root)
+    cfg.setdefault("module", {})["cap"] = {
+        "kind": "capsule",
+        "backing": "bk",
+        "header": "p/bk/bk.h",
+        "init_params": [{"name": "taps", "type": "float[]"}],
+    }
+    C.save(root, cfg)
+    r = run_cli("apply", cwd=root)
+    assert r.returncode != 0 and "array" in r.stderr, (r.stdout, r.stderr)
