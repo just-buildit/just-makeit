@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from just_makeit._method import run as method_run  # noqa: E402
 from just_makeit._new import run as new_run  # noqa: E402
 from just_makeit._object import run as object_run  # noqa: E402
+from _cmake import PYTHON3_ARG
 
 HEADER = (
     Path(__file__).parent.parent / "src/just_makeit/templates/c/inc/jm_bench.h"
@@ -206,7 +207,15 @@ class TestItStillBuildsAndMeasures:
         import json
 
         r = subprocess.run(
-            ["cmake", "-B", "build", "-S", ".", "-DCMAKE_BUILD_TYPE=Release"],
+            [
+                "cmake",
+                "-B",
+                "build",
+                "-S",
+                ".",
+                "-DCMAKE_BUILD_TYPE=Release",
+                PYTHON3_ARG,
+            ],
             cwd=benched,
             capture_output=True,
             text=True,

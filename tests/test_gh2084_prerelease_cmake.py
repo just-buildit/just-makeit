@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from _jmrun import run_cli
+from _cmake import PYTHON3_ARG
 
 PRE = "1.1.2a47"
 RELEASE = "1.1.2"
@@ -81,7 +82,7 @@ def test_a_prerelease_project_configures(tmp_path: Path) -> None:
     _new.run("vp", root, version=PRE)
     build = tmp_path / "build"
     r = subprocess.run(
-        [cmake, "-S", str(root), "-B", str(build)],
+        [cmake, "-S", str(root), "-B", str(build), PYTHON3_ARG],
         capture_output=True,
         text=True,
     )
