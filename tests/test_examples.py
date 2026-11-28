@@ -19,6 +19,7 @@ from _compilers import default_cc
 
 import _cmakelint
 import _downstream_gates
+from _pkgdirs import unaccounted
 from just_makeit._build import run_generated_pytest
 from test_gh1287_nested_block_comment import (
     assert_no_nested_block_comments,
@@ -98,6 +99,12 @@ def test_example(example_dir, tmp_path):
     # implementation of it. Every example is swept, so a shape jm learns to
     # emit is covered as soon as an example exercises it.
     assert_no_nested_block_comments(tmp_path)
+    # gh-2854: every package directory jm wrote below `src/<pkg>/` is a
+    # component's, a module's, or jm's own -- over every kind an example
+    # builds (handle, composer, views, apps), so a writer that starts a new
+    # package fails here until `_config.PACKAGE_DIRS` reserves it.
+    for proj in sorted(p.parent for p in tmp_path.rglob("just-makeit.toml")):
+        assert unaccounted(proj) == [], (proj, unaccounted(proj))
     _generated_pytest_check(tmp_path)
     # gh-1443 Gate A: last, because a re-apply is one of its checks and must
     # not change what the checks above were run against.

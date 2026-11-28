@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from _compilers import default_cc
 from _jmrun import run_cli
+from _pkgdirs import unaccounted
 from just_makeit import _config as C
 
 
@@ -155,10 +156,13 @@ def test_jms_own_packages_are_reserved(tmp_path, case):
 )
 def test_every_package_jm_writes_is_owned_or_reserved(tmp_path):
     """Derived, not listed: build a project with a standalone object, a
-    flat module and a dotted one, and every directory jm (and the build)
-    put below `src/<pkg>/` is a component's, a module's package (or one of
-    its parents), or in `PACKAGE_DIRS` there. A new package jm starts
-    writing fails here until it is reserved."""
+    flat module, a dotted one, a functions-only module and an app,
+    and every directory jm (and the build) put below `src/<pkg>/` is a
+    component's, a module's package (or one of its parents), or jm's own
+    (`_pkgdirs.unaccounted`). A package a writer starts adding fails here
+    until `PACKAGE_DIRS` reserves it. Handle and composer modules and views
+    are swept the same way in every bundled example (`test_examples`:
+    composites, composer_seams, views_module, app_shapes ...)."""
     root = _project(
         tmp_path,
         ("object", "g"),
@@ -166,6 +170,18 @@ def test_every_package_jm_writes_is_owned_or_reserved(tmp_path):
         ("object", "x", "--module", "m"),
         ("module", "d.e"),
         ("object", "y", "--module", "d.e"),
+        ("module", "fn"),
+        (
+            "function",
+            "gain",
+            "--module",
+            "fn",
+            "--param",
+            "v:double",
+            "--return-type",
+            "double",
+        ),
+        ("app", "--target", "console", "--object", "g"),
     )
     build = root / "build"
     for cmd in (
@@ -181,30 +197,30 @@ def test_every_package_jm_writes_is_owned_or_reserved(tmp_path):
     ):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
         assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
-    cfg = C.load(root)
     src = root / "src" / "p"
     # The build ran: the standalone object's extension is there.
     assert list(src.glob("g.*.so")) or list(src.glob("g.*.pyd")), sorted(
         p.name for p in src.iterdir()
     )
-    packages = {C.module_package_resolved(cfg, m) for m in C.modules(cfg)}
-    owned = set(packages) | {
-        "/".join(p.split("/")[: i + 1])
-        for p in packages
-        for i in range(len(p.split("/")))
-    }
-    owned |= {c for c in C.components(cfg) if not C.module_of(cfg, c)}
-    reserved = {
-        f"{base}{d}"
-        for base in ["", *(f"{p}/" for p in packages)]
-        for d in C.PACKAGE_DIRS
-    }
+    assert unaccounted(root) == []
+    # Not vacuous: jm did write its own packages, at both levels.
     written = {
-        d.relative_to(src).as_posix()
-        for d in src.rglob("*")
-        if d.is_dir() and d.name != "__pycache__"
+        d.relative_to(src).as_posix() for d in src.rglob("*") if d.is_dir()
     }
-    assert written, "the build wrote nothing below src/p"
-    assert written <= owned | reserved, sorted(written - owned - reserved)
-    # Not vacuous: jm did write its own packages at both levels.
-    assert {"tests", "benchmarks", "m/tests", "d/e/tests"} <= written
+    assert {"tests", "benchmarks", "m/tests", "d/e/tests", "fn/tests"} <= (
+        written
+    ), sorted(written)
+
+
+def test_a_capsule_modules_packages_are_owned_or_reserved(tmp_path):
+    # A capsule module (gh-286), materialized by `apply`: its package and
+    # what jm writes in it are accounted for too.
+    from test_capsule_apply import _project_with_capsule
+
+    from just_makeit._apply import run as apply_run
+
+    root = tmp_path / "proj"
+    _project_with_capsule(root, package="ddc")
+    apply_run(root)
+    assert (root / "src" / "proj" / "ddc").is_dir()
+    assert unaccounted(root) == []
