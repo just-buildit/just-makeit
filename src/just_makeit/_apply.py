@@ -1284,9 +1284,9 @@ def _replay(cfg: dict, temp_root: Path, project_root: Path) -> None:
                 **_object_kwargs(cfg, comp),
             )
 
-    all_comps = standalone + [
-        o for m in mods for o in C.module_objects(cfg, m)
-    ]
+    # gh-2116: the objects the replay scaffolded above -- a `no_generate`
+    # module's are not among them, so none of their members is replayed.
+    all_comps = C.object_order(cfg)
 
     # gh-504: one replay per member, reused for both an object's members and a
     # view's own (via view=). `view` routes _property.run/_method.run onto the
@@ -1725,10 +1725,9 @@ def _patch_step_impls(root: Path, cfg: dict) -> list[Path]:
     from . import _impl as I
     from ._remove import _STUB_MARKER
 
-    mods = C.modules(cfg)
-    module_owned = {o for m in mods for o in C.module_objects(cfg, m)}
-    all_comps = [c for c in C.components(cfg) if c not in module_owned]
-    all_comps += [o for m in mods for o in C.module_objects(cfg, m)]
+    # gh-2116: the objects `apply` writes -- none of a `no_generate`
+    # module's, whose C is the author's.
+    all_comps = C.object_order(cfg)
 
     patched: list[Path] = []
     for comp in all_comps:
@@ -1813,10 +1812,9 @@ def _patch_destroy_signatures(root: Path, cfg: dict) -> list[Path]:
     from ._init import _matching_brace
 
     patched: list[Path] = []
-    mods = C.modules(cfg)
-    module_owned = {o for m in mods for o in C.module_objects(cfg, m)}
-    all_comps = [c for c in C.components(cfg) if c not in module_owned]
-    all_comps += [o for m in mods for o in C.module_objects(cfg, m)]
+    # gh-2116: the objects `apply` writes -- none of a `no_generate`
+    # module's, whose C is the author's.
+    all_comps = C.object_order(cfg)
 
     for comp in all_comps:
         if not C.destroy_returns_int(cfg, comp):
@@ -3835,6 +3833,10 @@ def _sync_aggregates(
         if only_comp is not None and comp != only_comp:
             continue
         if comp not in cfg:
+            continue
+        # gh-2116: a `no_generate` module's object keeps its header by
+        # hand; jm offers it no declaration.
+        if C.hand_written_module(cfg, comp) is not None:
             continue
         core_h = INC.core_h(root, comp, cfg)
         if not core_h.exists():

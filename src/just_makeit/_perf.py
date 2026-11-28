@@ -88,6 +88,12 @@ def run(root: Path) -> None:
         print(f"  create  {simd_h}")
 
     for comp in comps:
+        # gh-2116: an object in a `no_generate` module is the author's
+        # header, and `apply` writes none of it; the retrofit leaves it be.
+        _hand = C.hand_written_module(cfg, comp)
+        if _hand is not None:
+            print(f"  skip    {comp}  (module '{_hand}' is `no_generate`)")
+            continue
         core_h = INC.core_h(root, comp, cfg)
         if core_h.exists():
             if _patch_core_h(core_h, comp):

@@ -306,6 +306,7 @@ def withdraw_overridden_builtin(
         ``(False, msg)`` — an override jm could not make room for.
     """
     from . import _glue
+    from . import _regenerate
 
     name = method.get("name", "")
     slots = _BODY_SLOTS.get(name)
@@ -328,9 +329,8 @@ def withdraw_overridden_builtin(
             f" alone.\n"
             f"  The declared method '{name}' has a different signature, and"
             f" jm has skipped its stub rather than write a second definition."
-            f"\n  Move the body into the new signature by hand, or run"
-            f" `jm regenerate {component}` to rebuild this component's C from"
-            f" the manifest."
+            f"\n  Move the body into the new signature by hand."
+            f" {_regenerate.rebuild_route(cfg, component)}"
         )
     _textio.write_text(core_c, text.replace(body, "", 1))
     print(f"  update  {core_c}  (withdrew the built-in {name}())")

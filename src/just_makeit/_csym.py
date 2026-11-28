@@ -494,7 +494,10 @@ def property_accessors(cfg: dict) -> "dict[str, str]":
     from . import _types as T
 
     out = {}
-    for comp in C.components(cfg):
+    # gh-2116: the objects jm renders. A `no_generate` module's object has
+    # no render to own its accessors, so naming them here made the
+    # author's own declaration of one a collision `apply` refused.
+    for comp in C.object_order(cfg):
         st = stem(cfg, comp)
         props = list(C.properties(cfg, comp))
         for view in C.views(cfg, comp):
