@@ -144,14 +144,16 @@ class TestSourceType:
         # enum field validated into the struct int
         assert "_enum_index(_enum_wfm_type, type)" in s
         # gh-2864: into the copy `__init__` commits whole.
-        assert "_n.type = _i;" in s
+        assert "_jm_copy.type = _i;" in s
         # scalar assigned directly
-        assert "_n.freq = freq;" in s
+        assert "_jm_copy.freq = freq;" in s
         # bytes attached into its own field's destination
         # (gh-2274: through the field's one replace, which converts into a
         # copy of the struct and installs only once nothing can run Python.)
-        assert "_attach_bytes(&_n.bits, &_n.n_bits, bits)" in s  # gh-2864
-        assert "_attach_bytes(&_t.bits, &_t.n_bits, value)" in s
+        assert (
+            "_attach_bytes(&_jm_copy.bits, &_jm_copy.n_bits, bits)" in s
+        )  # gh-2864
+        assert "_attach_bytes(&_jm_copy.bits, &_jm_copy.n_bits, value)" in s
 
     def test_getset_enum_as_string(self):
         s = _composer.render_source_type(_cfg(), "wfm_compose")
@@ -181,9 +183,9 @@ class TestSourceType:
         s = _composer.render_source_type(cfg, "wfm_compose")
         for n in ("bits", "acq_code", "data_code"):
             # gh-2864: `__init__` attaches into its copy `_n`.
-            assert f"&_n.{n}, &_n.n_{n}, {n}" in s
+            assert f"&_jm_copy.{n}, &_jm_copy.n_{n}, {n}" in s
             assert f"Synth_replace_{n}(self, value)" in s
-            assert f"_attach_bytes(&_t.{n}, &_t.n_{n}, value)" in s
+            assert f"_attach_bytes(&_jm_copy.{n}, &_jm_copy.n_{n}, value)" in s
             assert f"free(self->src.{n});" in s
             # the getter reads its own field, not bits
             assert (
@@ -856,8 +858,8 @@ class TestComplexField:
 
     def test_init_attaches_and_dealloc_frees(self):
         s = _composer.render_source_type(_complex_cfg(), "wfm_compose")
-        assert "if (!_attach_symbols(&_n, symbols)) {" in s  # gh-2864
-        assert "_attach_symbols(&_t, value)" in s
+        assert "if (!_attach_symbols(&_jm_copy, symbols)) {" in s  # gh-2864
+        assert "_attach_symbols(&_jm_copy, value)" in s
         # dealloc frees every owned buffer — bits AND symbols
         assert "free(self->src.bits);" in s
         assert "free(self->src.symbols);" in s
@@ -1675,7 +1677,7 @@ class TestRangedFields:
     def test_non_ranged_field_unchanged(self):
         s = _composer.render_source_type(_ranged_cfg(), "wfm_compose")
         # seed is a plain uint32 scalar, still parsed directly into the struct.
-        assert "_n.seed = seed;" in s
+        assert "_jm_copy.seed = seed;" in s
 
     def test_segment_carries_range_companions(self):
         s = _composer.render_segment_type(_ranged_cfg(), "wfm_compose")

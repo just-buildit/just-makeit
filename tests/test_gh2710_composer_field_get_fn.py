@@ -103,9 +103,9 @@ class TestTheSeam:
         assert "PyFloat_FromDouble(src_freq(&self->src, fs))" in src
         assert src.count("src_freq(") == 1
         seg = _composer.render_segment_type(cfg, MOD)
-        assert "seg_n(&_seg, self->fs)" in seg
+        assert "seg_n(&_jm_seg, self->fs)" in seg
         assert seg.count("seg_n(") == 1
-        assert "_seg.off_samples = self->off_samples;" in seg
+        assert "_jm_seg.off_samples = self->off_samples;" in seg
         assert "src_freq" not in _composer.render_json_funcs(cfg, MOD)
         assert "seg_n" not in _composer.render_json_funcs(cfg, MOD)
 

@@ -185,15 +185,15 @@ class TestTheSegmentSetter:
         seg = _composer.render_segment_type(_cfg(), "win")
         body = _body(seg, "Seg_set_count")
         order = [
-            "_seg.count = self->count;",
+            "_jm_seg.count = self->count;",
             "_Seg_sources_c(self->sources, &_ns);",
             "if (!_srcs)\n        return -1;",
-            "_seg.sources = _srcs;",
-            "const char *_why = win_seg_set_count(&_seg, _v);",
+            "_jm_seg.sources = _srcs;",
+            "const char *_why = win_seg_set_count(&_jm_seg, _v);",
             "free(_srcs);",
             "PyErr_SetString(PyExc_ValueError, _why);",
-            "self->count = _seg.count;",
-            "self->span = _seg.span;",
+            "self->count = _jm_seg.count;",
+            "self->span = _jm_seg.span;",
             "return 0;",
         ]
         at = [body.index(s) for s in order]

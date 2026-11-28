@@ -106,9 +106,11 @@ class TestTheGeneratedBinding:
         # gh-2274: the constructor and the setter both reach it through the
         # field's one replace, which converts into a copy of the source.
         # gh-2864: the constructor calls it into its own copy `_n`.
-        assert f'if (!{co}(&_n.bits, &_n.n_bits, bits, "bits"))' in s
+        assert (
+            f'if (!{co}(&_jm_copy.bits, &_jm_copy.n_bits, bits, "bits"))' in s
+        )
         assert "return Synth_replace_bits(self, value) ? 0 : -1;" in s
-        assert f'{co}(&_t.bits, &_t.n_bits, value, "bits")' in s
+        assert f'{co}(&_jm_copy.bits, &_jm_copy.n_bits, value, "bits")' in s
         assert f"size_t nb = {HOST}(s, NULL, 0, &why);" in s
         assert f"nb = {HOST}(s, buf, nb, &why);" in s
         assert "PyErr_SetString(PyExc_ValueError,\n" in s

@@ -101,7 +101,7 @@ class TestTheDefaultIsUnchanged:
 
     def test_the_flat_members_are_still_the_default(self) -> None:
         c = _all_c(_cfg())
-        assert "_attach_bytes(&_t.bits, &_t.n_bits, value)" in c
+        assert "_attach_bytes(&_jm_copy.bits, &_jm_copy.n_bits, value)" in c
         assert "free(self->src.bits);" in c
         assert "src->bits && src->n_bits" in c
 
@@ -122,14 +122,15 @@ class TestTheOverrideReachesEverySite:
         return _all_c(_with_bits(**RELOCATED))
 
     def test_the_constructor(self, c: str) -> None:
-        # gh-2864: the constructor attaches into its copy `_n`, with the
+        # gh-2864: the constructor attaches into its copy `_jm_copy`, with the
         # same cast the setter's replace holds.
         assert (
-            "_attach_bytes((uint8_t **)&_n.sync.bits, &_n.sync.len, sync)" in c
+            "_attach_bytes((uint8_t **)&_jm_copy.sync.bits, &_jm_copy.sync.len, sync)"
+            in c
         )
-        assert "free((void *)_n.sync.bits);" in c
+        assert "free((void *)_jm_copy.sync.bits);" in c
         assert (
-            "_attach_bytes((uint8_t **)&_t.sync.bits, &_t.sync.len, value)"
+            "_attach_bytes((uint8_t **)&_jm_copy.sync.bits, &_jm_copy.sync.len, value)"
         ) in c
 
     def test_the_getter(self, c: str) -> None:
@@ -139,7 +140,7 @@ class TestTheOverrideReachesEverySite:
     def test_the_setter(self, c: str) -> None:
         assert "return Synth_replace_sync(self, value) ? 0 : -1;" in c
         assert (
-            "_attach_bytes((uint8_t **)&_t.sync.bits, &_t.sync.len, value)"
+            "_attach_bytes((uint8_t **)&_jm_copy.sync.bits, &_jm_copy.sync.len, value)"
         ) in c
 
     def test_the_dealloc_free(self, c: str) -> None:
@@ -260,7 +261,7 @@ def _compiles(tmp_path: Path, tag: str, call: str, free_line: str) -> int:
         "{ (void)d; (void)n; (void)o; return 1; }\n"
         "int use(obj_t *self, void *value)\n"
         "{\n"
-        "    src_t _t = self->src;\n"
+        "    src_t _jm_copy = self->src;\n"
         f"    int ok = {call};\n"
         f"    {free_line}\n"
         "    return ok;\n"
@@ -295,7 +296,8 @@ def test_the_relocated_expressions_compile(tmp_path: Path) -> None:
     attach = [
         ln.strip()
         for ln in c.splitlines()
-        if "_attach_bytes((uint8_t **)&_t.sync.bits" in ln and "value" in ln
+        if "_attach_bytes((uint8_t **)&_jm_copy.sync.bits" in ln
+        and "value" in ln
     ]
     free_line = [
         ln.strip()
