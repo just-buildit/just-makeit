@@ -1943,7 +1943,8 @@ PYTHON_SPELLINGS = {"True": True, "False": False}
 #: bool, in a message that says what the switch is for (gh-1722's ``why``,
 #: gh-2552's ``create_why``, gh-2584's ``status_out``, gh-2327's
 #: ``retain``, gh-1883's ``short_out``, ``no_count``, and a composer's
-#: ``from_json_why`` / ``from_file_why``). :func:`flag_errors` leaves them
+#: ``from_json_why`` / ``from_file_why`` / gh-1735's ``parse_why``).
+#: :func:`flag_errors` leaves them
 #: to it, so each is refused once; the ``jm upgrade`` respell still reaches
 #: them.
 BOOL_ONLY_FLAGS = frozenset(
@@ -1956,6 +1957,7 @@ BOOL_ONLY_FLAGS = frozenset(
         "no_count",
         "from_json_why",
         "from_file_why",
+        "parse_why",
     }
 )
 
@@ -2026,21 +2028,35 @@ def flag_values(tree: object, path: "tuple[str, ...]" = ()):
     ...     "methods": [{"name": "r", "params": [{"name": "o", "out": True}]}]}}}
     >>> [(".".join(p), k) for p, _t, k in flag_values(cfg)]
     [('stream', 'no_state'), ('module.m.methods[r].params[o]', 'out')]
+
+    A row's flag holding a list or an inline table is a flag (with a value
+    :func:`flag_errors` refuses), not a container to walk:
+
+    >>> cfg = {"o": {"init_params": [{"name": "w", "optional": {}}],
+    ...        "mutable": []}}
+    >>> [(".".join(p), k) for p, _t, k in flag_values(cfg)]
+    [('o.init_params[w]', 'optional'), ('o', 'mutable')]
     """
     if isinstance(tree, dict):
-        row = path[-1].split("[", 1)[0] if path else ""
+        row_tag = path[-1] if path else ""
+        row = row_tag.split("[", 1)[0]
         for key, value in tree.items():
             here = (*path, str(key))
-            if isinstance(value, (dict, list)):
-                # A table or array named like a flag (a component, a
-                # library, `[project.bench]`) is not one: walk into it.
-                yield from flag_values(value, here)
-            elif (
+            is_flag = (
                 key in FLAG_KEYS
                 and tuple(here) not in _FLAG_NAMED_TABLES
                 and row in _FLAG_ROW_SCOPE.get(key, (row,))
-            ):
+                # A TABLE named like a flag -- a component, a library, a
+                # module -- is not one, and is walked. Only a row (an
+                # array's element) never names a table: there an inline
+                # table, like a list anywhere, is a flag holding a value
+                # that is not one, and is refused (gh-2705).
+                and not (isinstance(value, dict) and "[" not in row_tag)
+            )
+            if is_flag:
                 yield path, tree, key
+            elif isinstance(value, (dict, list)):
+                yield from flag_values(value, here)
     elif isinstance(tree, list):
         for i, row in enumerate(tree):
             name = row.get("name") if isinstance(row, dict) else None

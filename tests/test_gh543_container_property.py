@@ -294,8 +294,10 @@ class TestDiagnostics:
     @pytest.mark.parametrize("clash", ["field", "buf_field", "expr", "enum"])
     def test_conflicting_backing(self, clash):
         with pytest.raises(ValueError, match="cannot be combined"):
+            # `field` is a flag (gh-2120): it backs the property as `true`.
+            value = True if clash == "field" else "x"
             validate_container_property(
-                "rdr", {"name": "k", "type": "dict", clash: "x"}
+                "rdr", {"name": "k", "type": "dict", clash: value}
             )
 
     def test_render_raises_rather_than_emitting_bad_c(self):
