@@ -209,7 +209,8 @@ def refuse_hand_written_member(
     >>> cfg = {"module": {"mod": {"objects": ["o"]}}}
     >>> refuse_hand_written_member(cfg, "mod", "add method 'm' to 'o'")
     """
-    if module is None or not C.is_no_generate_module(cfg, module):
+    # The one predicate the verb's own writes ask too, file by file.
+    if module is None or C.may_write_module_file(cfg, module):
         return
     raise Refusal(
         f"cannot {action}: module '{module}' is `no_generate`, so it is"
