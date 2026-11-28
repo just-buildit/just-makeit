@@ -494,7 +494,21 @@ def _cmake_configures_name_their_interpreter(monkeypatch):
 
 
 def pytest_configure(config):
-    """Isolate this worker before anything collects or builds."""
+    """Refuse a CI session on the wrong Python, then isolate this worker.
+
+    gh-2172: a CI leg names its Python only as ``UV_PYTHON``. Asked here,
+    at the start of every session, so every leg that runs jm's tests is
+    checked -- the unit suite, the examples, the compiled tests, the
+    goldens -- not only the one that collects a particular file. Off CI a
+    developer's own ``UV_PYTHON`` is theirs to set, so only a CI run is
+    refused here; ``tests/test_gh2172_ci_leg_python.py`` asks it anywhere.
+    """
+    from _legpython import mismatch
+
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        why = mismatch(os.environ, tuple(sys.version_info))
+        if why:
+            raise pytest.UsageError(why)
     _provision_worker_env()
 
 
